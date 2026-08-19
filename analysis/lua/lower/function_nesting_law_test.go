@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -223,7 +223,7 @@ func TestSourceNestedFunctionsUseFormalsAndCaptureRows(t *testing.T) {
 				t.Fatalf("missing Formal[%d]", index)
 			}
 			cellKind, host, _, cellOK := p.Flow().Authored().Storage().Cells().Get(formal)
-			if !cellOK || cellKind != flow.CellLocal || host != row.body {
+			if !cellOK || cellKind != authored.CellLocal || host != row.body {
 				t.Fatalf("Formal Cell = kind %v host %v ok %v, want local/%v", cellKind, host, cellOK, row.body)
 			}
 		}

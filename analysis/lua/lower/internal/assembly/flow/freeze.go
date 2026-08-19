@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	programflow "github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -29,22 +30,22 @@ func (r *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.FamilyCo
 		return programflow.Input{}, err
 	}
 	input := programflow.Input{Counts: counts}
-	input.Values = programflow.ValuesInput{Rows: append([]programflow.Value(nil), r.values.rows...), Terms: cloneTerms(r.values.terms)}
-	input.Access = programflow.AccessInput{Exact: append([]programflow.ExactLens(nil), r.access.exact...), Dynamic: append([]programflow.DynamicLens(nil), r.access.dynamic...)}
-	input.Storage = programflow.StorageInput{
-		Cells: append([]programflow.Cell(nil), r.storage.cells...), Reads: append([]programflow.Read(nil), r.storage.reads...), Varargs: append([]programflow.Vararg(nil), r.storage.varargs...), Binds: append([]programflow.Bind(nil), r.storage.binds...), Assigns: append([]programflow.Assign(nil), r.storage.assigns...), Writes: append([]programflow.Write(nil), r.storage.writes...),
+	input.Values = authored.ValuesInput{Rows: append([]authored.Value(nil), r.values.rows...), Terms: cloneTerms(r.values.terms)}
+	input.Access = authored.AccessInput{Exact: append([]authored.ExactLens(nil), r.access.exact...), Dynamic: append([]authored.DynamicLens(nil), r.access.dynamic...)}
+	input.Storage = authored.StorageInput{
+		Cells: append([]authored.Cell(nil), r.storage.cells...), Reads: append([]authored.Read(nil), r.storage.reads...), Varargs: append([]authored.Vararg(nil), r.storage.varargs...), Binds: append([]authored.Bind(nil), r.storage.binds...), Assigns: append([]authored.Assign(nil), r.storage.assigns...), Writes: append([]authored.Write(nil), r.storage.writes...),
 	}
-	input.Tables = programflow.TablesInput{Rows: append([]programflow.Table(nil), r.tables.rows...), Fields: append([]programflow.Field(nil), r.tables.fields...), Order: cloneTerms(r.tables.order)}
-	input.Functions = programflow.FunctionsInput{Rows: append([]programflow.Function(nil), r.functions.rows...), Captures: append([]programflow.Capture(nil), r.functions.captures...)}
-	input.Calls = append([]programflow.Call(nil), r.calls.rows...)
-	input.Control = programflow.ControlInput{Returns: append([]programflow.Return(nil), r.control.returns...), Breaks: append([]programflow.Break(nil), r.control.breaks...), Labels: append([]programflow.Label(nil), r.control.labels...), Gotos: append([]programflow.Goto(nil), r.control.gotos...), Branches: append([]programflow.Branch(nil), r.control.branches...), Loops: append([]programflow.Loop(nil), r.control.loops...), Cells: cloneTerms(r.control.loopCells)}
-	input.Operators = programflow.OperatorsInput{Unaries: append([]programflow.Unary(nil), r.operators.unaries...), Binaries: append([]programflow.Binary(nil), r.operators.binaries...), Selects: append([]programflow.Select(nil), r.operators.selects...)}
-	input.Claims = append([]programflow.ValueClaim(nil), r.operands.claims...)
-	input.TypeValues = append([]programflow.TypeValue(nil), r.operands.typeValues...)
+	input.Tables = authored.TablesInput{Rows: append([]authored.Table(nil), r.tables.rows...), Fields: append([]authored.Field(nil), r.tables.fields...), Order: cloneTerms(r.tables.order)}
+	input.Functions = authored.FunctionsInput{Rows: append([]authored.Function(nil), r.functions.rows...), Captures: append([]authored.Capture(nil), r.functions.captures...)}
+	input.Calls = append([]authored.Call(nil), r.calls.rows...)
+	input.Control = authored.ControlInput{Returns: append([]authored.Return(nil), r.control.returns...), Breaks: append([]authored.Break(nil), r.control.breaks...), Labels: append([]authored.Label(nil), r.control.labels...), Gotos: append([]authored.Goto(nil), r.control.gotos...), Branches: append([]authored.Branch(nil), r.control.branches...), Loops: append([]authored.Loop(nil), r.control.loops...), Cells: cloneTerms(r.control.loopCells)}
+	input.Operators = authored.OperatorsInput{Unaries: append([]authored.Unary(nil), r.operators.unaries...), Binaries: append([]authored.Binary(nil), r.operators.binaries...), Selects: append([]authored.Select(nil), r.operators.selects...)}
+	input.Claims = append([]authored.ValueClaim(nil), r.operands.claims...)
+	input.TypeValues = append([]authored.TypeValue(nil), r.operands.typeValues...)
 	keys := preimage.Keys()
 	for index := 0; index < r.storage.globalCensus.Len(); index++ {
 		row, ok := r.storage.globalCensus.At(index)
-		if !ok || index >= len(input.Storage.Cells) || row.Slot() != uint32(index) || input.Storage.Cells[index].Kind != programflow.CellGlobal {
+		if !ok || index >= len(input.Storage.Cells) || row.Slot() != uint32(index) || input.Storage.Cells[index].Kind != authored.CellGlobal {
 			return programflow.Input{}, fmt.Errorf("program/lower/collector: malformed global Cell prefix at %d", index+1)
 		}
 		key, ok := keys.Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: row.Name()})
@@ -55,7 +56,7 @@ func (r *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.FamilyCo
 		input.Storage.Cells[index].Body = 0
 	}
 	for index := r.storage.globalCensus.Len(); index < len(input.Storage.Cells); index++ {
-		if input.Storage.Cells[index].Kind == programflow.CellGlobal {
+		if input.Storage.Cells[index].Kind == authored.CellGlobal {
 			return programflow.Input{}, fmt.Errorf("program/lower/collector: global Cell outside reserved census prefix at %d", index+1)
 		}
 	}
@@ -191,12 +192,12 @@ func (r *Rows) checkCounts(counts [keyspace.FamilyCount]uint32) error {
 	}
 	for index := 0; index < globalCount; index++ {
 		row, ok := r.storage.globalCensus.At(index)
-		if !ok || row.Slot() != uint32(index) || row.Ordinal() != uint32(index+1) || r.storage.cells[index].Kind != programflow.CellGlobal {
+		if !ok || row.Slot() != uint32(index) || row.Ordinal() != uint32(index+1) || r.storage.cells[index].Kind != authored.CellGlobal {
 			return fmt.Errorf("program/lower/collector: invalid global Cell prefix at %d", index+1)
 		}
 	}
 	for index := globalCount; index < len(r.storage.cells); index++ {
-		if r.storage.cells[index].Kind == programflow.CellGlobal {
+		if r.storage.cells[index].Kind == authored.CellGlobal {
 			return fmt.Errorf("program/lower/collector: global Cell outside reserved census prefix at %d", index+1)
 		}
 	}

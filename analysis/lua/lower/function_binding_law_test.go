@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -78,7 +78,7 @@ func TestSourceBindingChunkVarargKeepsEntryStorageSeparateFromFunctionVarargs(t 
 	if !ok || cell == 0 {
 		t.Fatalf("Vararg(%v) = Cell %v/%v", occurrence, cell, ok)
 	}
-	bindingCell(t, p, cell, flow.CellLocal, 1)
+	bindingCell(t, p, cell, authored.CellLocal, 1)
 	bindingCellOwner(t, p, cell, entry)
 }
 
@@ -88,7 +88,7 @@ func bindingWitnessLocalDeclaration(t *testing.T, line int, stmts []ast.Stmt, re
 	id := bindingLocalSymbol(t, result, local, 0, "value")
 	bindingKind(t, result, id, bind.SymbolLocal)
 	cell := bindingBoundCell(t, p, bindingEntryBind(t, p, 0), 0)
-	bindingCell(t, p, cell, flow.CellLocal, line)
+	bindingCell(t, p, cell, authored.CellLocal, line)
 	bindingCellOwner(t, p, cell, bindingEntry(t, p))
 }
 
@@ -100,7 +100,7 @@ func bindingWitnessLocalFunctionAssignment(t *testing.T, line int, stmts []ast.S
 	bindingKind(t, result, id, bind.SymbolLocal)
 	bindingOrigin(t, result, fn, bind.FunctionOriginLocalAssignment, local, 0, "")
 	cell := bindingBoundCell(t, p, bindingEntryBind(t, p, 0), 0)
-	bindingCell(t, p, cell, flow.CellLocal, line)
+	bindingCell(t, p, cell, authored.CellLocal, line)
 	bindingCellOwner(t, p, cell, bindingEntry(t, p))
 	function := bindingBindFunction(t, p, bindingEntryBind(t, p, 0))
 	bindingFunction(t, p, function, line)
@@ -120,7 +120,7 @@ func bindingWitnessRecursiveLocalFunction(t *testing.T, line int, stmts []ast.St
 	}
 	bindTerm := bindingEntryBind(t, p, 0)
 	outer := bindingBoundCell(t, p, bindTerm, 0)
-	bindingCell(t, p, outer, flow.CellLocal, line)
+	bindingCell(t, p, outer, authored.CellLocal, line)
 	bindingCellOwner(t, p, outer, bindingEntry(t, p))
 	function := bindingBindFunction(t, p, bindTerm)
 	bindingFunction(t, p, function, line)
@@ -131,7 +131,7 @@ func bindingWitnessRecursiveLocalFunction(t *testing.T, line int, stmts []ast.St
 	}
 	// Closure-entry Cells are minted at the Function occurrence; the read that
 	// caused this capture remains inside its child Body at line 2.
-	bindingCell(t, p, inner, flow.CellLocal, line)
+	bindingCell(t, p, inner, authored.CellLocal, line)
 	bindingCellOwner(t, p, inner, bindingFunctionBody(t, p, function))
 }
 
@@ -180,7 +180,7 @@ func bindingWitnessImplicitGlobal(t *testing.T, line int, stmts []ast.Stmt, resu
 	if !ok {
 		t.Fatal("implicit global did not lower to Read")
 	}
-	bindingCell(t, p, source, flow.CellGlobal, line)
+	bindingCell(t, p, source, authored.CellGlobal, line)
 	if _, owner, _, ok := p.Flow().Authored().Storage().Cells().Get(source); !ok || owner != 0 {
 		t.Fatalf("global Cell owner = %v/%v, want Program scope", owner, ok)
 	}
@@ -222,20 +222,20 @@ func bindingWitnessFunctionLiteralEntry(t *testing.T, line int, stmts []ast.Stmt
 	bindingFunctionOwner(t, p, function, bindingEntry(t, p))
 	functionBody := bindingFunctionBody(t, p, function)
 	formal := bindingFormal(t, p, function, 0)
-	bindingCell(t, p, formal, flow.CellLocal, line)
+	bindingCell(t, p, formal, authored.CellLocal, line)
 	bindingCellOwner(t, p, formal, functionBody)
 	_, _, vararg, ok := p.Flow().Authored().Functions().Get(function)
 	if !ok {
 		t.Fatal("Function relation absent")
 	}
-	bindingCell(t, p, vararg, flow.CellLocal, line)
+	bindingCell(t, p, vararg, authored.CellLocal, line)
 	bindingCellOwner(t, p, vararg, functionBody)
 	outer := bindingBoundCell(t, p, bindingEntryBind(t, p, 0), 0)
 	inner, gotOuter, ok := p.Flow().Authored().Functions().CaptureAt(function, 0)
 	if !ok || gotOuter != outer {
 		t.Fatalf("FunctionCapture = %v/%v/%v, want capture of Cell %v", inner, gotOuter, ok, outer)
 	}
-	bindingCell(t, p, inner, flow.CellLocal, line)
+	bindingCell(t, p, inner, authored.CellLocal, line)
 	bindingCellOwner(t, p, inner, functionBody)
 }
 
@@ -252,8 +252,8 @@ func bindingWitnessFunctionParameters(t *testing.T, line int, stmts []ast.Stmt, 
 	bindingFunctionOwner(t, p, function, bindingEntry(t, p))
 	functionBody := bindingFunctionBody(t, p, function)
 	first, second := bindingFormal(t, p, function, 0), bindingFormal(t, p, function, 1)
-	bindingCell(t, p, first, flow.CellLocal, line)
-	bindingCell(t, p, second, flow.CellLocal, line)
+	bindingCell(t, p, first, authored.CellLocal, line)
+	bindingCell(t, p, second, authored.CellLocal, line)
 	bindingCellOwner(t, p, first, functionBody)
 	bindingCellOwner(t, p, second, functionBody)
 }
@@ -273,7 +273,7 @@ func bindingWitnessFunctionVararg(t *testing.T, line int, stmts []ast.Stmt, resu
 	if !ok {
 		t.Fatal("Function relation absent")
 	}
-	bindingCell(t, p, vararg, flow.CellLocal, line)
+	bindingCell(t, p, vararg, authored.CellLocal, line)
 	bindingCellOwner(t, p, vararg, bindingFunctionBody(t, p, function))
 }
 
@@ -323,8 +323,8 @@ func bindingWitnessMethodDeclaration(t *testing.T, line int, stmts []ast.Stmt, r
 	bindingFunctionOwner(t, p, function, bindingEntry(t, p))
 	functionBody := bindingFunctionBody(t, p, function)
 	self, value := bindingFormal(t, p, function, 0), bindingFormal(t, p, function, 1)
-	bindingCell(t, p, self, flow.CellLocal, line)
-	bindingCell(t, p, value, flow.CellLocal, line)
+	bindingCell(t, p, self, authored.CellLocal, line)
+	bindingCell(t, p, value, authored.CellLocal, line)
 	bindingCellOwner(t, p, self, functionBody)
 	bindingCellOwner(t, p, value, functionBody)
 }
@@ -707,11 +707,11 @@ func bindingLoopCell(t *testing.T, p *program.Program, loop keyspace.Term, index
 	if !ok {
 		t.Fatalf("Loop %v has no Cell at %d", loop, index)
 	}
-	bindingCell(t, p, cell, flow.CellLocal, line)
+	bindingCell(t, p, cell, authored.CellLocal, line)
 	bindingCellOwner(t, p, cell, body)
 }
 
-func bindingCell(t *testing.T, p *program.Program, cell keyspace.Term, want flow.CellKind, line int) {
+func bindingCell(t *testing.T, p *program.Program, cell keyspace.Term, want authored.CellKind, line int) {
 	t.Helper()
 	if got, _, _, ok := p.Flow().Authored().Storage().Cells().Get(cell); !ok || got != want {
 		t.Fatalf("Cell(%v) kind = %v/%v, want %v", cell, got, ok, want)
@@ -722,7 +722,7 @@ func bindingCell(t *testing.T, p *program.Program, cell keyspace.Term, want flow
 func bindingCellOwner(t *testing.T, p *program.Program, cell, want keyspace.Term) {
 	t.Helper()
 	kind, owner, _, ok := p.Flow().Authored().Storage().Cells().Get(cell)
-	if !ok || kind != flow.CellLocal || owner != want {
+	if !ok || kind != authored.CellLocal || owner != want {
 		t.Fatalf("Cell(%v) owner = %v/%v, want %v", cell, owner, ok, want)
 	}
 }

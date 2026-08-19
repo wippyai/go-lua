@@ -2,7 +2,7 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -45,9 +45,9 @@ func (program *Program) CallIDAt(index int) (identity.ContentID, bool) {
 	actualsID, actualsOK := program.callOperandID(call, actuals, callOperandRoleActuals)
 	receiverID := identity.ContentID{}
 	receiverOK := true
-	form := flow.CallFormPlain
+	form := accessgeometry.CallFormPlain
 	if receiver != 0 {
-		form = flow.CallFormMethod
+		form = accessgeometry.CallFormMethod
 		receiverID, receiverOK = program.callOperandID(call, receiver, callOperandRoleReceiver)
 	}
 	typesID, typesOK := program.callTypeArgumentsID(call)
@@ -141,18 +141,18 @@ func (program *Program) CallFormalIDAt(index int) (identity.ContentID, bool) {
 		typeCount < 0 || uint64(width) > uint64(^uint32(0)) || uint64(typeCount) > uint64(^uint32(0)) {
 		return identity.ContentID{}, false
 	}
-	form := flow.CallFormPlain
+	form := accessgeometry.CallFormPlain
 	if receiver != 0 {
-		form = flow.CallFormMethod
+		form = accessgeometry.CallFormMethod
 	}
 	roles := uint64(2)
-	if form == flow.CallFormMethod {
+	if form == accessgeometry.CallFormMethod {
 		roles = 3
 	}
 	id := programSemanticID("program/call-formal", func(writer *framing.Writer) bool {
 		return writer.Bytes(bodyPath[:]) == nil && writer.Bytes(callPath[:]) == nil && writer.Uint(1) == nil && writer.Uint(uint64(form)) == nil &&
 			writer.Count(roles) == nil && writer.Uint(callOperandRoleCallee) == nil &&
-			(form != flow.CallFormMethod || writer.Uint(callOperandRoleReceiver) == nil) && writer.Uint(callOperandRoleActuals) == nil &&
+			(form != accessgeometry.CallFormMethod || writer.Uint(callOperandRoleReceiver) == nil) && writer.Uint(callOperandRoleActuals) == nil &&
 			writer.Count(uint64(width)) == nil && writer.Bool(open) == nil && writer.Count(uint64(typeCount)) == nil
 	})
 	return id, id.Available()

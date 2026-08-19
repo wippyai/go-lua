@@ -1,7 +1,7 @@
 package assembly
 
 import (
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -30,7 +30,7 @@ func (c *Collector) DeclareFunction(span source.Span, owner keyspace.Term) keysp
 // FillFunction attaches executable body, optional vararg Cell, captures, and
 // Source formal order. Static contract rows are filled through the explicit
 // operations below, each as one atomic collector coordination with Static.
-func (c *Collector) FillFunction(function, body keyspace.Term, formals []keyspace.Term, vararg keyspace.Term, captures []programflow.Capture) bool {
+func (c *Collector) FillFunction(function, body keyspace.Term, formals []keyspace.Term, vararg keyspace.Term, captures []authored.Capture) bool {
 	if !mutationReady(c) {
 		return false
 	}

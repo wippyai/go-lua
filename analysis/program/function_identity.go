@@ -2,7 +2,7 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -30,7 +30,7 @@ func writeProgramTerm(writer *framing.Writer, term keyspace.Term) bool {
 // FunctionID returns the Program-owned identity of one exact sealed Function
 // boundary.  The boundary remains a Flow handle; only its scalar identity is
 // allowed to cross into Artifact compilation.
-func (input *Program) FunctionID(boundary flow.FunctionBoundary) (identity.ContentID, bool) {
+func (input *Program) FunctionID(boundary functionboundary.Boundary) (identity.ContentID, bool) {
 	if !input.Available() || !boundary.Available() || !input.Flow().FunctionBoundaries().OwnsFunction(boundary) {
 		return identity.ContentID{}, false
 	}
@@ -50,7 +50,7 @@ func (input *Program) FunctionID(boundary flow.FunctionBoundary) (identity.Conte
 // formal role, lexical Cell role, storage Cell role, and optional declared
 // Static type. A missing declared type is a valid unannotated formal and is
 // represented by a false declared-type result while the row remains valid.
-func (input *Program) FunctionFormalAt(boundary flow.FunctionBoundary, index int) (formalID, cellID, storageID, declaredTypeID identity.ContentID, ok bool) {
+func (input *Program) FunctionFormalAt(boundary functionboundary.Boundary, index int) (formalID, cellID, storageID, declaredTypeID identity.ContentID, ok bool) {
 	if !input.Available() || index < 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
@@ -96,7 +96,7 @@ func (input *Program) StorageCellID(term keyspace.Term) (identity.ContentID, boo
 // FunctionCaptureAt returns one ordered inner/outer capture edge and its
 // scalar Cell and Body-path identities. The inner Body must be the callable's
 // own Body; the outer Body must be a distinct existing sealed Body.
-func (input *Program) FunctionCaptureAt(boundary flow.FunctionBoundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
+func (input *Program) FunctionCaptureAt(boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
 	if !input.Available() || index < 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}

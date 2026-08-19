@@ -3,7 +3,7 @@ package flow
 import (
 	"errors"
 
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -39,7 +39,7 @@ func (r *Rows) AdmitValues(counts [keyspace.FamilyCount]uint32, term, owner keys
 	if !ok {
 		return reject("Values fixed operand range overflow")
 	}
-	row := programflow.Value{Owner: owner, Fixed: span, Tail: tail}
+	row := authored.Value{Owner: owner, Fixed: span, Tail: tail}
 	if _, ok := r.AppendValue(row, fixed); !ok {
 		return reject("Values fixed operand range overflow")
 	}
@@ -56,7 +56,7 @@ func (r *Rows) AdmitExactLens(counts [keyspace.FamilyCount]uint32, term, owner, 
 	if fieldKind == flowkind.FieldExact && !candidatePresent {
 		return reject("exact Lens key has no exact candidate")
 	}
-	r.AppendExactLens(programflow.ExactLens{Owner: owner, Base: base, Source: key, Kind: fieldKind})
+	r.AppendExactLens(authored.ExactLens{Owner: owner, Base: base, Source: key, Kind: fieldKind})
 	return nil
 }
 
@@ -64,7 +64,7 @@ func (r *Rows) AdmitDynamicLens(counts [keyspace.FamilyCount]uint32, term, owner
 	if r == nil || !body(counts, owner) || !flowrole.ValueOccurrence(counts, base) || !flowrole.ValueOccurrence(counts, key) || !denseTerm(term, keyspace.FamilyLensKey, len(r.access.dynamic)+1) {
 		return reject("invalid dynamic Lens admission")
 	}
-	r.AppendDynamicLens(programflow.DynamicLens{Owner: owner, Base: base, Key: key})
+	r.AppendDynamicLens(authored.DynamicLens{Owner: owner, Base: base, Key: key})
 	return nil
 }
 
@@ -96,7 +96,7 @@ func (r *Rows) AdmitCall(counts [keyspace.FamilyCount]uint32, term, owner, calle
 			return reject("invalid Call admission")
 		}
 	}
-	r.AppendCall(programflow.Call{Owner: owner, Callee: callee, Receiver: receiver, Actuals: actuals})
+	r.AppendCall(authored.Call{Owner: owner, Callee: callee, Receiver: receiver, Actuals: actuals})
 	return nil
 }
 
@@ -129,7 +129,7 @@ func (r *Rows) AdmitReturn(counts [keyspace.FamilyCount]uint32, term, owner, val
 	if r == nil || !body(counts, owner) || !countedFamily(counts, values, keyspace.FamilyValues) || !denseTerm(term, keyspace.FamilyReturn, len(r.control.returns)+1) {
 		return reject("invalid Return admission")
 	}
-	r.AppendReturn(programflow.Return{Owner: owner, Values: values})
+	r.AppendReturn(authored.Return{Owner: owner, Values: values})
 	return nil
 }
 
@@ -137,7 +137,7 @@ func (r *Rows) AdmitBreak(counts [keyspace.FamilyCount]uint32, term, owner keysp
 	if r == nil || !body(counts, owner) || !denseTerm(term, keyspace.FamilyBreak, len(r.control.breaks)+1) {
 		return reject("invalid Break admission")
 	}
-	r.AppendBreak(programflow.Break{Owner: owner})
+	r.AppendBreak(authored.Break{Owner: owner})
 	return nil
 }
 
@@ -145,7 +145,7 @@ func (r *Rows) AdmitLabel(counts [keyspace.FamilyCount]uint32, term, owner keysp
 	if r == nil || !body(counts, owner) || !denseTerm(term, keyspace.FamilyLabel, len(r.control.labels)+1) {
 		return reject("invalid Label admission")
 	}
-	r.AppendLabel(programflow.Label{Owner: owner})
+	r.AppendLabel(authored.Label{Owner: owner})
 	return nil
 }
 
@@ -153,7 +153,7 @@ func (r *Rows) AdmitGoto(counts [keyspace.FamilyCount]uint32, term, owner, targe
 	if r == nil || !body(counts, owner) || !countedFamily(counts, target, keyspace.FamilyLabel) || !denseTerm(term, keyspace.FamilyGoto, len(r.control.gotos)+1) {
 		return reject("invalid Goto admission")
 	}
-	r.AppendGoto(programflow.Goto{Owner: owner, Target: target})
+	r.AppendGoto(authored.Goto{Owner: owner, Target: target})
 	return nil
 }
 
@@ -161,7 +161,7 @@ func (r *Rows) AdmitBranch(counts [keyspace.FamilyCount]uint32, term, owner, con
 	if r == nil || !body(counts, owner) || !flowrole.ValueOccurrence(counts, condition) || !body(counts, whenTrue) || !body(counts, whenFalse) || owner == whenTrue || owner == whenFalse || whenTrue == whenFalse || !denseTerm(term, keyspace.FamilyBranch, len(r.control.branches)+1) {
 		return reject("invalid Branch admission")
 	}
-	r.AppendBranch(programflow.Branch{Owner: owner, Condition: condition, WhenTrue: whenTrue, WhenFalse: whenFalse})
+	r.AppendBranch(authored.Branch{Owner: owner, Condition: condition, WhenTrue: whenTrue, WhenFalse: whenFalse})
 	return nil
 }
 
@@ -192,7 +192,7 @@ func (r *Rows) AdmitLoop(counts [keyspace.FamilyCount]uint32, term, owner, bodyT
 			}
 		}
 	}
-	if _, ok := r.AppendLoop(programflow.Loop{Owner: owner, Body: bodyTerm, Kind: loopKind, Control: control}, cells); !ok {
+	if _, ok := r.AppendLoop(authored.Loop{Owner: owner, Body: bodyTerm, Kind: loopKind, Control: control}, cells); !ok {
 		return reject("Loop Cell range overflow")
 	}
 	return nil
@@ -203,7 +203,7 @@ func (r *Rows) localCell(counts [keyspace.FamilyCount]uint32, cell keyspace.Term
 		return false
 	}
 	row, ok := r.CellAt(int(keyspace.TermOrdinal(cell) - 1))
-	return ok && row.Kind == programflow.CellLocal
+	return ok && row.Kind == authored.CellLocal
 }
 
 func (r *Rows) localCellInBody(counts [keyspace.FamilyCount]uint32, cell, bodyTerm keyspace.Term) bool {
@@ -219,14 +219,14 @@ func (r *Rows) globalCell(counts [keyspace.FamilyCount]uint32, cell keyspace.Ter
 		return false
 	}
 	row, ok := r.CellAt(int(keyspace.TermOrdinal(cell) - 1))
-	return ok && row.Kind == programflow.CellGlobal
+	return ok && row.Kind == authored.CellGlobal
 }
 
 func (r *Rows) AdmitCell(counts [keyspace.FamilyCount]uint32, term, bodyTerm keyspace.Term) error {
 	if r == nil || !body(counts, bodyTerm) || !denseTerm(term, keyspace.FamilyCell, len(r.storage.cells)+1) {
 		return reject("invalid Cell body")
 	}
-	r.AppendCell(programflow.Cell{Kind: programflow.CellLocal, Body: bodyTerm})
+	r.AppendCell(authored.Cell{Kind: authored.CellLocal, Body: bodyTerm})
 	return nil
 }
 
@@ -234,7 +234,7 @@ func (r *Rows) AdmitRead(counts [keyspace.FamilyCount]uint32, term, owner, subje
 	if r == nil || !body(counts, owner) || !flowrole.Addressable(counts, subject) || (implicit && !r.globalCell(counts, subject)) || !denseTerm(term, keyspace.FamilyRead, len(r.storage.reads)+1) {
 		return reject("invalid Read admission")
 	}
-	r.AppendRead(programflow.Read{Owner: owner, Source: subject, Implicit: implicit})
+	r.AppendRead(authored.Read{Owner: owner, Source: subject, Implicit: implicit})
 	return nil
 }
 
@@ -242,7 +242,7 @@ func (r *Rows) AdmitVararg(counts [keyspace.FamilyCount]uint32, term, owner, cel
 	if r == nil || !body(counts, owner) || !r.localCell(counts, cell) || !denseTerm(term, keyspace.FamilyVararg, len(r.storage.varargs)+1) {
 		return reject("invalid Vararg admission")
 	}
-	r.AppendVararg(programflow.Vararg{Owner: owner, Cell: cell})
+	r.AppendVararg(authored.Vararg{Owner: owner, Cell: cell})
 	return nil
 }
 
@@ -263,7 +263,7 @@ func (r *Rows) AdmitBind(counts [keyspace.FamilyCount]uint32, term, owner, value
 	if !rangeOK(0, len(cells)) {
 		return reject("Bind Cell range overflow")
 	}
-	r.AppendBind(programflow.Bind{Owner: owner, Values: values})
+	r.AppendBind(authored.Bind{Owner: owner, Values: values})
 	return nil
 }
 
@@ -276,7 +276,7 @@ func (r *Rows) AdmitAssign(counts [keyspace.FamilyCount]uint32, term, owner, val
 			return reject("invalid Assign target")
 		}
 	}
-	r.AppendAssign(programflow.Assign{Owner: owner, Values: values})
+	r.AppendAssign(authored.Assign{Owner: owner, Values: values})
 	return nil
 }
 
@@ -284,7 +284,7 @@ func (r *Rows) AdmitWrite(counts [keyspace.FamilyCount]uint32, term, assign, tar
 	if r == nil || !countedFamily(counts, assign, keyspace.FamilyAssign) || !flowrole.Addressable(counts, target) || !denseTerm(term, keyspace.FamilyWrite, len(r.storage.writes)+1) {
 		return reject("invalid Write admission")
 	}
-	r.AppendWrite(programflow.Write{Assign: assign, Target: target})
+	r.AppendWrite(authored.Write{Assign: assign, Target: target})
 	return nil
 }
 
@@ -292,7 +292,7 @@ func (r *Rows) AdmitTable(counts [keyspace.FamilyCount]uint32, term, owner keysp
 	if r == nil || !body(counts, owner) || !denseTerm(term, keyspace.FamilyTable, len(r.tables.rows)+1) {
 		return reject("invalid Table owner")
 	}
-	r.AppendTable(programflow.Table{Owner: owner})
+	r.AppendTable(authored.Table{Owner: owner})
 	return nil
 }
 
@@ -303,7 +303,7 @@ func (r *Rows) AdmitTableField(counts [keyspace.FamilyCount]uint32, term, table,
 	if fieldKind == flowkind.FieldExact && !candidatePresent && keyspace.TermFamily(key) != keyspace.FamilyNil {
 		return reject("exact TableField key has no exact candidate")
 	}
-	r.AppendTableField(programflow.Field{Table: table, Key: key, Values: values, Kind: fieldKind})
+	r.AppendTableField(authored.Field{Table: table, Key: key, Values: values, Kind: fieldKind})
 	return nil
 }
 
@@ -332,14 +332,14 @@ func (r *Rows) AdmitFunction(counts [keyspace.FamilyCount]uint32, term, owner ke
 	if r == nil || !body(counts, owner) || !denseTerm(term, keyspace.FamilyFunction, len(r.functions.rows)+1) {
 		return reject("invalid Function owner")
 	}
-	r.AppendFunction(programflow.Function{Owner: owner})
+	r.AppendFunction(authored.Function{Owner: owner})
 	return nil
 }
 
 // AdmitFunctionFill closes one executable Function row and owns its capture
 // range. The Source formal-order check is deliberately supplied as an
 // immutable witness because Source remains the sole owner of Cell order.
-func (r *Rows) AdmitFunctionFill(counts [keyspace.FamilyCount]uint32, function, bodyTerm, vararg keyspace.Term, formals []keyspace.Term, captures []programflow.Capture, sourceCellsAlreadyOrdered bool) error {
+func (r *Rows) AdmitFunctionFill(counts [keyspace.FamilyCount]uint32, function, bodyTerm, vararg keyspace.Term, formals []keyspace.Term, captures []authored.Capture, sourceCellsAlreadyOrdered bool) error {
 	if r == nil || !countedFamily(counts, function, keyspace.FamilyFunction) || !body(counts, bodyTerm) || function == bodyTerm || sourceCellsAlreadyOrdered {
 		return reject("invalid Function fill")
 	}
@@ -392,7 +392,7 @@ func (r *Rows) AdmitUnary(counts [keyspace.FamilyCount]uint32, term, owner keysp
 	if r == nil || !body(counts, owner) || op < flowkind.UnaryNeg || op > flowkind.UnaryBitNot || !flowrole.ValueOccurrence(counts, operand) || !denseTerm(term, keyspace.FamilyUnary, len(r.operators.unaries)+1) {
 		return reject("invalid Unary admission")
 	}
-	r.AppendUnary(programflow.Unary{Owner: owner, Op: op, Operand: operand})
+	r.AppendUnary(authored.Unary{Owner: owner, Op: op, Operand: operand})
 	return nil
 }
 
@@ -400,7 +400,7 @@ func (r *Rows) AdmitBinary(counts [keyspace.FamilyCount]uint32, term, owner keys
 	if r == nil || !body(counts, owner) || op < flowkind.BinaryAdd || op > flowkind.BinaryGreaterEqual || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) || !denseTerm(term, keyspace.FamilyBinary, len(r.operators.binaries)+1) {
 		return reject("invalid Binary admission")
 	}
-	r.AppendBinary(programflow.Binary{Owner: owner, Op: op, Left: left, Right: right})
+	r.AppendBinary(authored.Binary{Owner: owner, Op: op, Left: left, Right: right})
 	return nil
 }
 
@@ -408,7 +408,7 @@ func (r *Rows) AdmitSelect(counts [keyspace.FamilyCount]uint32, term, owner keys
 	if r == nil || !body(counts, owner) || (op != flowkind.SelectAnd && op != flowkind.SelectOr) || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) || !denseTerm(term, keyspace.FamilySelect, len(r.operators.selects)+1) {
 		return reject("invalid Select admission")
 	}
-	r.AppendSelect(programflow.Select{Owner: owner, Op: op, Left: left, Right: right})
+	r.AppendSelect(authored.Select{Owner: owner, Op: op, Left: left, Right: right})
 	return nil
 }
 
@@ -425,7 +425,7 @@ func (r *Rows) AdmitClaim(counts [keyspace.FamilyCount]uint32, term, owner keysp
 	if claimKind != flowkind.ValueClaimNonNil && target != 0 && !targetValid {
 		return reject("invalid ValueClaim target")
 	}
-	r.AppendClaim(programflow.ValueClaim{Owner: owner, Operand: operand, Kind: claimKind})
+	r.AppendClaim(authored.ValueClaim{Owner: owner, Operand: operand, Kind: claimKind})
 	return nil
 }
 
@@ -433,7 +433,7 @@ func (r *Rows) AdmitTypeValue(counts [keyspace.FamilyCount]uint32, term, owner, 
 	if r == nil || !body(counts, owner) || !targetValid || !denseTerm(term, keyspace.FamilyTypeValue, len(r.operands.typeValues)+1) {
 		return reject("invalid TypeValue admission")
 	}
-	r.AppendTypeValue(programflow.TypeValue{Owner: owner})
+	r.AppendTypeValue(authored.TypeValue{Owner: owner})
 	return nil
 }
 

@@ -3,7 +3,7 @@ package assembly
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -157,7 +157,7 @@ func localCellAdmission(c *Collector, cell keyspace.Term) bool {
 	}
 	ordinal := keyspace.TermOrdinal(cell)
 	row, ok := c.flow.CellAt(int(ordinal - 1))
-	return ordinal != 0 && ok && row.Kind == flow.CellLocal
+	return ordinal != 0 && ok && row.Kind == authored.CellLocal
 }
 
 func localCellInBodyAdmission(c *Collector, cell, body keyspace.Term) bool {

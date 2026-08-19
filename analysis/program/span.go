@@ -2,7 +2,7 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -13,8 +13,8 @@ import (
 type Span struct {
 	program  *Program
 	authored keyspace.Term
-	entry    flow.Site
-	finish   flow.Site
+	entry    causal.Site
+	finish   causal.Site
 	context  identity.ContentID
 }
 
@@ -45,7 +45,7 @@ func (program *Program) Span(term keyspace.Term) (Span, bool) {
 }
 
 // Available proves that this is still the exact published Program join.
-// Equivalent artifact replay follows flow.Site.Equal semantics: matching
+// Equivalent artifact replay follows causal.Site.Equal semantics: matching
 // sealed-quartet Sites remain valid; foreign/mutated handles fail closed.
 func (span Span) Available() bool {
 	return span.context.Available() && span.availableGeometry()
@@ -66,16 +66,16 @@ func (span Span) availableGeometry() bool {
 		span.entry.Equal(wantEntry) && span.finish.Equal(wantFinish)
 }
 
-func (span Span) Entry() (flow.Site, bool) {
+func (span Span) Entry() (causal.Site, bool) {
 	if !span.Available() {
-		return flow.Site{}, false
+		return causal.Site{}, false
 	}
 	return span.entry, true
 }
 
-func (span Span) Finish() (flow.Site, bool) {
+func (span Span) Finish() (causal.Site, bool) {
 	if !span.Available() {
-		return flow.Site{}, false
+		return causal.Site{}, false
 	}
 	return span.finish, true
 }

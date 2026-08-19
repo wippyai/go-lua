@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
@@ -90,7 +90,7 @@ func isChannelModuleSelect(prog *program.Program, call, callee, receiver keyspac
 		return false
 	}
 	kind, _, _, kindOK := prog.Flow().Authored().Storage().Cells().Get(cell)
-	if !kindOK || kind != flow.CellGlobal {
+	if !kindOK || kind != authored.CellGlobal {
 		return false
 	}
 	cellName, namedCell := prog.Source().Spellings().CellName(cell)

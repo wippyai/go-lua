@@ -1,12 +1,13 @@
 package host
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
@@ -130,7 +131,7 @@ func globalInverseFixture(t testing.TB) (*linkproject.Component, *linkboundary.C
 	for index := 0; index < cells.Count(); index++ {
 		candidate, ok := cells.At(index)
 		kind, body, key, mapped := cells.Get(candidate)
-		if ok && mapped && kind == flow.CellGlobal && body == 0 && key != 0 {
+		if ok && mapped && kind == authored.CellGlobal && body == 0 && key != 0 {
 			cell = candidate
 			break
 		}

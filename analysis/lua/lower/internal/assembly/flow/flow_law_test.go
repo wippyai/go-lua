@@ -7,6 +7,7 @@ import (
 	assembly "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly"
 	flowowner "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/flow"
 	programflow "github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	programimports "github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -27,11 +28,11 @@ func flowView(t *testing.T, c *assembly.Collector) (programsource.View, programf
 func TestFlowRowsRangeIsHalfOpenAndBounded(t *testing.T) {
 	rows := flowowner.Rows{}
 	term := keyspace.MakeTerm(keyspace.FamilyBool, 1)
-	got, ok := rows.AppendValue(programflow.Value{}, []keyspace.Term{term})
-	if !ok || got != (programflow.Range{Start: 0, End: 1}) {
+	got, ok := rows.AppendValue(authored.Value{}, []keyspace.Term{term})
+	if !ok || got != (authored.Range{Start: 0, End: 1}) {
 		t.Fatalf("first Value range = %#v/%v", got, ok)
 	}
-	if value, ok := rows.ValueAt(0); !ok || value != (programflow.Value{}) {
+	if value, ok := rows.ValueAt(0); !ok || value != (authored.Value{}) {
 		t.Fatalf("ValueAt(0) = %#v/%v", value, ok)
 	}
 	if _, ok := rows.ValueTermAt(1); ok {

@@ -3,7 +3,7 @@ package program
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
 )
 
 func TestFunctionIdentityRequiresAnOwnedFlowBoundary(t *testing.T) {
@@ -11,7 +11,7 @@ func TestFunctionIdentityRequiresAnOwnedFlowBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	var boundary flow.FunctionBoundary
+	var boundary functionboundary.Boundary
 	if got, ok := published.FunctionID(boundary); ok || got.Available() {
 		t.Fatalf("FunctionID(zero) = %x/%v; want unavailable", got, ok)
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/coord"
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/eval"
 	modulelower "github.com/wippyai/go-lua/analysis/lua/lower/internal/module"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -38,7 +38,7 @@ type Bodies struct {
 	chunkVararg  keyspace.Term
 	reserved     []reservedCell
 	reservedIDs  map[bind.Symbol]struct{}
-	captures     []flow.Capture
+	captures     []authored.Capture
 }
 
 // New creates the one lexical authority for one unfinished Program. It binds

@@ -6,7 +6,7 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -45,7 +45,7 @@ func (c *Collector) reserveGlobalCells(census bind.GlobalCensus) error {
 			return fmt.Errorf("program/lower/collector: global %q origin: %w", cell.Name(), err)
 		}
 		c.spans[keyspace.FamilyCell][index] = span
-		if !c.flow.SetCell(index, flow.Cell{Kind: flow.CellGlobal}) {
+		if !c.flow.SetCell(index, authored.Cell{Kind: authored.CellGlobal}) {
 			return fmt.Errorf("program/lower/collector: global Cell storage slot %d", index)
 		}
 		if !c.source.SetCellSpelling(keyspace.MakeTerm(keyspace.FamilyCell, cell.Ordinal()), cell.Name()) {

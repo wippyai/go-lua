@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -211,7 +211,7 @@ end
 		}
 	}
 	cellKind, body, key, cellOK := flowView.Authored().Storage().Cells().Get(vararg)
-	if !cellOK || cellKind != flow.CellLocal || body == 0 || key != 0 {
+	if !cellOK || cellKind != authored.CellLocal || body == 0 || key != 0 {
 		t.Fatalf("method vararg Cell = kind %v body %v key %v ok %v", cellKind, body, key, cellOK)
 	}
 	varargOccurrence, occurrenceOK := flowView.Authored().Storage().Varargs().At(0)

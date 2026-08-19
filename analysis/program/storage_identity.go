@@ -6,7 +6,7 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -127,12 +127,12 @@ func (program *Program) AssignmentPredecessorID(write keyspace.Term) (id, route 
 	identityProof, identityOK := successor.Identity()
 	route, routeOK := successor.SemanticID()
 	if !finishOK || !finishSiteOK || !successorOK || !identityOK || !routeOK || !finish.Available() || !route.Available() ||
-		successor.To != finishTerm || successor.Arm != flow.BoundaryLocal || identityProof.To() != finishTerm ||
-		identityProof.Arm() != flow.BoundaryLocal || identityProof.Provenance() != view.Provenance() {
+		successor.To != finishTerm || successor.Arm != causal.BoundaryLocal || identityProof.To != finishTerm ||
+		identityProof.Arm != causal.BoundaryLocal || identityProof.Provenance() != view.Provenance() {
 		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	finishID := finish.ContextID()
-	digest := identityProof.Digest()
+	digest := identityProof.Digest
 	id = programRoleID("program/transformer/assignment-predecessor", program.ContentID(), func(writer *framing.Writer) bool {
 		return writer.Bytes(finishID[:]) == nil && writer.Bytes(route[:]) == nil && writer.Bytes(digest[:]) == nil
 	})

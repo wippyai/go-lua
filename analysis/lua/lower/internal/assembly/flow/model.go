@@ -6,7 +6,7 @@ package flow
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -30,15 +30,15 @@ func (r *Rows) Reset() {
 	}
 }
 
-func rangeFor(poolLen, add int) (programflow.Range, bool) {
+func rangeFor(poolLen, add int) (authored.Range, bool) {
 	if poolLen < 0 || add < 0 {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	end := uint64(poolLen) + uint64(add)
 	if end > uint64(keyspace.MaxTermOrdinal) {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
-	return programflow.Range{Start: uint32(poolLen), End: uint32(end)}, true
+	return authored.Range{Start: uint32(poolLen), End: uint32(end)}, true
 }
 
 // The row groups and their append/query operations live with Rows.  They are
@@ -46,77 +46,77 @@ func rangeFor(poolLen, add int) (programflow.Range, bool) {
 // own file obscured that ownership without creating a separately testable
 // behavior surface.
 type accessRows struct {
-	exact   []programflow.ExactLens
-	dynamic []programflow.DynamicLens
+	exact   []authored.ExactLens
+	dynamic []authored.DynamicLens
 }
 
-func (r *Rows) AppendExactLens(row programflow.ExactLens) {
+func (r *Rows) AppendExactLens(row authored.ExactLens) {
 	if r != nil {
 		r.access.exact = append(r.access.exact, row)
 	}
 }
 
-func (r *Rows) AppendDynamicLens(row programflow.DynamicLens) {
+func (r *Rows) AppendDynamicLens(row authored.DynamicLens) {
 	if r != nil {
 		r.access.dynamic = append(r.access.dynamic, row)
 	}
 }
 
-type callRows struct{ rows []programflow.Call }
+type callRows struct{ rows []authored.Call }
 
-func (r *Rows) AppendCall(row programflow.Call) {
+func (r *Rows) AppendCall(row authored.Call) {
 	if r != nil {
 		r.calls.rows = append(r.calls.rows, row)
 	}
 }
 
 type controlRows struct {
-	returns   []programflow.Return
-	breaks    []programflow.Break
-	labels    []programflow.Label
-	gotos     []programflow.Goto
-	branches  []programflow.Branch
-	loops     []programflow.Loop
+	returns   []authored.Return
+	breaks    []authored.Break
+	labels    []authored.Label
+	gotos     []authored.Goto
+	branches  []authored.Branch
+	loops     []authored.Loop
 	loopCells []keyspace.Term
 }
 
-func (r *Rows) AppendReturn(row programflow.Return) {
+func (r *Rows) AppendReturn(row authored.Return) {
 	if r != nil {
 		r.control.returns = append(r.control.returns, row)
 	}
 }
 
-func (r *Rows) AppendBreak(row programflow.Break) {
+func (r *Rows) AppendBreak(row authored.Break) {
 	if r != nil {
 		r.control.breaks = append(r.control.breaks, row)
 	}
 }
 
-func (r *Rows) AppendLabel(row programflow.Label) {
+func (r *Rows) AppendLabel(row authored.Label) {
 	if r != nil {
 		r.control.labels = append(r.control.labels, row)
 	}
 }
 
-func (r *Rows) AppendGoto(row programflow.Goto) {
+func (r *Rows) AppendGoto(row authored.Goto) {
 	if r != nil {
 		r.control.gotos = append(r.control.gotos, row)
 	}
 }
 
-func (r *Rows) AppendBranch(row programflow.Branch) {
+func (r *Rows) AppendBranch(row authored.Branch) {
 	if r != nil {
 		r.control.branches = append(r.control.branches, row)
 	}
 }
 
-func (r *Rows) AppendLoop(row programflow.Loop, cells []keyspace.Term) (programflow.Range, bool) {
+func (r *Rows) AppendLoop(row authored.Loop, cells []keyspace.Term) (authored.Range, bool) {
 	if r == nil {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	result, ok := rangeFor(len(r.control.loopCells), len(cells))
 	if !ok {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	r.control.loopCells = append(r.control.loopCells, cells...)
 	row.Cells = result
@@ -125,24 +125,24 @@ func (r *Rows) AppendLoop(row programflow.Loop, cells []keyspace.Term) (programf
 }
 
 type functionRows struct {
-	rows     []programflow.Function
-	captures []programflow.Capture
+	rows     []authored.Function
+	captures []authored.Capture
 }
 
-func (r *Rows) AppendFunction(row programflow.Function) {
+func (r *Rows) AppendFunction(row authored.Function) {
 	if r != nil {
 		r.functions.rows = append(r.functions.rows, row)
 	}
 }
 
-func (r *Rows) FunctionAt(index int) (programflow.Function, bool) {
+func (r *Rows) FunctionAt(index int) (authored.Function, bool) {
 	if r == nil || index < 0 || index >= len(r.functions.rows) {
-		return programflow.Function{}, false
+		return authored.Function{}, false
 	}
 	return r.functions.rows[index], true
 }
 
-func (r *Rows) SetFunction(index int, row programflow.Function) bool {
+func (r *Rows) SetFunction(index int, row authored.Function) bool {
 	if r == nil || index < 0 || index >= len(r.functions.rows) {
 		return false
 	}
@@ -150,81 +150,81 @@ func (r *Rows) SetFunction(index int, row programflow.Function) bool {
 	return true
 }
 
-func (r *Rows) AppendCaptures(captures []programflow.Capture) (programflow.Range, bool) {
+func (r *Rows) AppendCaptures(captures []authored.Capture) (authored.Range, bool) {
 	if r == nil {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	result, ok := rangeFor(len(r.functions.captures), len(captures))
 	if !ok {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	r.functions.captures = append(r.functions.captures, captures...)
 	return result, true
 }
 
 type operandRows struct {
-	claims     []programflow.ValueClaim
-	typeValues []programflow.TypeValue
+	claims     []authored.ValueClaim
+	typeValues []authored.TypeValue
 }
 
-func (r *Rows) AppendClaim(row programflow.ValueClaim) {
+func (r *Rows) AppendClaim(row authored.ValueClaim) {
 	if r != nil {
 		r.operands.claims = append(r.operands.claims, row)
 	}
 }
 
-func (r *Rows) ClaimAt(index int) (programflow.ValueClaim, bool) {
+func (r *Rows) ClaimAt(index int) (authored.ValueClaim, bool) {
 	if r == nil || index < 0 || index >= len(r.operands.claims) {
-		return programflow.ValueClaim{}, false
+		return authored.ValueClaim{}, false
 	}
 	return r.operands.claims[index], true
 }
 
-func (r *Rows) AppendTypeValue(row programflow.TypeValue) {
+func (r *Rows) AppendTypeValue(row authored.TypeValue) {
 	if r != nil {
 		r.operands.typeValues = append(r.operands.typeValues, row)
 	}
 }
 
 type operatorRows struct {
-	unaries  []programflow.Unary
-	binaries []programflow.Binary
-	selects  []programflow.Select
+	unaries  []authored.Unary
+	binaries []authored.Binary
+	selects  []authored.Select
 }
 
-func (r *Rows) AppendUnary(row programflow.Unary) {
+func (r *Rows) AppendUnary(row authored.Unary) {
 	if r != nil {
 		r.operators.unaries = append(r.operators.unaries, row)
 	}
 }
 
-func (r *Rows) UnaryAt(index int) (programflow.Unary, bool) {
+func (r *Rows) UnaryAt(index int) (authored.Unary, bool) {
 	if r == nil || index < 0 || index >= len(r.operators.unaries) {
-		return programflow.Unary{}, false
+		return authored.Unary{}, false
 	}
 	return r.operators.unaries[index], true
 }
 
-func (r *Rows) AppendBinary(row programflow.Binary) {
+func (r *Rows) AppendBinary(row authored.Binary) {
 	if r != nil {
 		r.operators.binaries = append(r.operators.binaries, row)
 	}
 }
 
-func (r *Rows) AppendSelect(row programflow.Select) {
+func (r *Rows) AppendSelect(row authored.Select) {
 	if r != nil {
 		r.operators.selects = append(r.operators.selects, row)
 	}
 }
 
 type storageRows struct {
-	cells        []programflow.Cell
+	cells        []authored.Cell
 	globalCensus bind.GlobalCensus
-	reads        []programflow.Read
-	varargs      []programflow.Vararg
-	binds        []programflow.Bind
-	assigns      []programflow.Assign
-	writes       []programflow.Write
+	reads        []authored.Read
+	varargs      []authored.Vararg
+	binds        []authored.Bind
+	assigns      []authored.Assign
+	writes       []authored.Write
 }
 
 func (r *Rows) SetGlobalCensus(census bind.GlobalCensus) {
@@ -244,11 +244,11 @@ func (r *Rows) InitGlobalCells(count int) bool {
 	if r == nil || count < 0 || uint64(count) > uint64(keyspace.MaxTermOrdinal) {
 		return false
 	}
-	r.storage.cells = make([]programflow.Cell, count)
+	r.storage.cells = make([]authored.Cell, count)
 	return true
 }
 
-func (r *Rows) SetCell(index int, row programflow.Cell) bool {
+func (r *Rows) SetCell(index int, row authored.Cell) bool {
 	if r == nil || index < 0 || index >= len(r.storage.cells) {
 		return false
 	}
@@ -256,71 +256,71 @@ func (r *Rows) SetCell(index int, row programflow.Cell) bool {
 	return true
 }
 
-func (r *Rows) AppendCell(row programflow.Cell) {
+func (r *Rows) AppendCell(row authored.Cell) {
 	if r != nil {
 		r.storage.cells = append(r.storage.cells, row)
 	}
 }
 
-func (r *Rows) CellAt(index int) (programflow.Cell, bool) {
+func (r *Rows) CellAt(index int) (authored.Cell, bool) {
 	if r == nil || index < 0 || index >= len(r.storage.cells) {
-		return programflow.Cell{}, false
+		return authored.Cell{}, false
 	}
 	return r.storage.cells[index], true
 }
 
-func (r *Rows) AppendRead(row programflow.Read) {
+func (r *Rows) AppendRead(row authored.Read) {
 	if r != nil {
 		r.storage.reads = append(r.storage.reads, row)
 	}
 }
 
-func (r *Rows) AppendVararg(row programflow.Vararg) {
+func (r *Rows) AppendVararg(row authored.Vararg) {
 	if r != nil {
 		r.storage.varargs = append(r.storage.varargs, row)
 	}
 }
 
-func (r *Rows) AppendBind(row programflow.Bind) {
+func (r *Rows) AppendBind(row authored.Bind) {
 	if r != nil {
 		r.storage.binds = append(r.storage.binds, row)
 	}
 }
 
-func (r *Rows) BindAt(index int) (programflow.Bind, bool) {
+func (r *Rows) BindAt(index int) (authored.Bind, bool) {
 	if r == nil || index < 0 || index >= len(r.storage.binds) {
-		return programflow.Bind{}, false
+		return authored.Bind{}, false
 	}
 	return r.storage.binds[index], true
 }
 
-func (r *Rows) AppendAssign(row programflow.Assign) {
+func (r *Rows) AppendAssign(row authored.Assign) {
 	if r != nil {
 		r.storage.assigns = append(r.storage.assigns, row)
 	}
 }
 
-func (r *Rows) AppendWrite(row programflow.Write) {
+func (r *Rows) AppendWrite(row authored.Write) {
 	if r != nil {
 		r.storage.writes = append(r.storage.writes, row)
 	}
 }
 
 type tableRows struct {
-	rows   []programflow.Table
-	fields []programflow.Field
+	rows   []authored.Table
+	fields []authored.Field
 	order  []keyspace.Term
 	filled []bool
 }
 
-func (r *Rows) AppendTable(row programflow.Table) {
+func (r *Rows) AppendTable(row authored.Table) {
 	if r != nil {
 		r.tables.rows = append(r.tables.rows, row)
 		r.tables.filled = append(r.tables.filled, false)
 	}
 }
 
-func (r *Rows) SetTableFields(index int, fields programflow.Range) bool {
+func (r *Rows) SetTableFields(index int, fields authored.Range) bool {
 	if r == nil || index < 0 || index >= len(r.tables.rows) {
 		return false
 	}
@@ -336,52 +336,52 @@ func (r *Rows) SetTableFilled(index int, value bool) bool {
 	return true
 }
 
-func (r *Rows) AppendTableField(row programflow.Field) {
+func (r *Rows) AppendTableField(row authored.Field) {
 	if r != nil {
 		r.tables.fields = append(r.tables.fields, row)
 	}
 }
 
-func (r *Rows) TableFieldAt(index int) (programflow.Field, bool) {
+func (r *Rows) TableFieldAt(index int) (authored.Field, bool) {
 	if r == nil || index < 0 || index >= len(r.tables.fields) {
-		return programflow.Field{}, false
+		return authored.Field{}, false
 	}
 	return r.tables.fields[index], true
 }
 
-func (r *Rows) AppendTableOrder(terms []keyspace.Term) (programflow.Range, bool) {
+func (r *Rows) AppendTableOrder(terms []keyspace.Term) (authored.Range, bool) {
 	if r == nil {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	rangeValue, ok := rangeFor(len(r.tables.order), len(terms))
 	if !ok {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	r.tables.order = append(r.tables.order, terms...)
 	return rangeValue, true
 }
 
 type valuesRows struct {
-	rows  []programflow.Value
+	rows  []authored.Value
 	terms []keyspace.Term
 }
 
-func (r *Rows) AppendValue(row programflow.Value, terms []keyspace.Term) (programflow.Range, bool) {
+func (r *Rows) AppendValue(row authored.Value, terms []keyspace.Term) (authored.Range, bool) {
 	if r == nil {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	span, ok := rangeFor(len(r.values.terms), len(terms))
 	if !ok {
-		return programflow.Range{}, false
+		return authored.Range{}, false
 	}
 	r.values.terms = append(r.values.terms, terms...)
 	r.values.rows = append(r.values.rows, row)
 	return span, true
 }
 
-func (r *Rows) ValueAt(index int) (programflow.Value, bool) {
+func (r *Rows) ValueAt(index int) (authored.Value, bool) {
 	if r == nil || index < 0 || index >= len(r.values.rows) {
-		return programflow.Value{}, false
+		return authored.Value{}, false
 	}
 	return r.values.rows[index], true
 }

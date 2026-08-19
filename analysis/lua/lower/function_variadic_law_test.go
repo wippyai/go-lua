@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -204,7 +204,7 @@ func TestSourceVarargCaptureBoundaryLaw(t *testing.T) {
 	if !ok || captured != snapshot {
 		t.Fatalf("closure capture = inner %v outer %v ok %v, want snapshot Cell %v", capture, captured, ok, snapshot)
 	}
-	if cellKind, cellBody, _, ok := p.Flow().Authored().Storage().Cells().Get(capture); !ok || cellKind != flow.CellLocal || cellBody != child {
+	if cellKind, cellBody, _, ok := p.Flow().Authored().Storage().Cells().Get(capture); !ok || cellKind != authored.CellLocal || cellBody != child {
 		t.Fatalf("closure capture Cell = kind %v body %v ok %v, want local child Cell", cellKind, cellBody, ok)
 	}
 	if parent, ok := p.Source().Index().BodyParent(child); !ok || parent != body {
@@ -239,7 +239,7 @@ func TestSourceVarargNestedOrdinaryBodyLaws(t *testing.T) {
 		if !ok || owner != nested || cell == 0 {
 			t.Fatalf("nested chunk Vararg = owner %v Cell %v/%v, want owner %v", owner, cell, ok, nested)
 		}
-		if cellKind, host, _, ok := p.Flow().Authored().Storage().Cells().Get(cell); !ok || cellKind != flow.CellLocal || host != entry {
+		if cellKind, host, _, ok := p.Flow().Authored().Storage().Cells().Get(cell); !ok || cellKind != authored.CellLocal || host != entry {
 			t.Fatalf("chunk Vararg Cell = kind %v host %v/%v, want local entry Cell %v", cellKind, host, ok, entry)
 		}
 	})
@@ -263,7 +263,7 @@ func TestSourceVarargNestedOrdinaryBodyLaws(t *testing.T) {
 		if !ok || owner != nested || cell != functionVararg {
 			t.Fatalf("nested function Vararg = owner %v Cell %v/%v, want owner %v Cell %v", owner, cell, ok, nested, functionVararg)
 		}
-		if cellKind, host, _, ok := p.Flow().Authored().Storage().Cells().Get(cell); !ok || cellKind != flow.CellLocal || host != functionBody {
+		if cellKind, host, _, ok := p.Flow().Authored().Storage().Cells().Get(cell); !ok || cellKind != authored.CellLocal || host != functionBody {
 			t.Fatalf("function Vararg Cell = kind %v host %v/%v, want local function Cell %v", cellKind, host, ok, functionBody)
 		}
 	})

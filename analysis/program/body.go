@@ -2,7 +2,8 @@ package program
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -12,7 +13,7 @@ import (
 // boundaries remain owned by Flow and are resolved on demand.
 type Body struct {
 	program  *Program
-	boundary flow.BodyBoundary
+	boundary functionboundary.BodyBoundary
 }
 
 // BodyCount forwards Source's sole canonical Body denominator. It does not
@@ -64,7 +65,7 @@ func (input *Program) OwnsBody(body Body) bool {
 
 // OwnsSite authenticates an exact hot Causal Site issued by this Program.
 // Equivalent replay Sites are intentionally rejected at mount-local joins.
-func (input *Program) OwnsSite(site flow.Site) bool {
+func (input *Program) OwnsSite(site causal.Site) bool {
 	if !input.Available() || !site.Available() {
 		return false
 	}
@@ -158,25 +159,25 @@ func (body Body) Executable() bool {
 // Function returns the existing sealed Flow boundary for this Body. Flow owns
 // that boundary; Program resolves it only while Artifact consumes scalar
 // callable identities and never retains the handle.
-func (body Body) Function() (flow.FunctionBoundary, bool) {
+func (body Body) Function() (functionboundary.Boundary, bool) {
 	if !body.Available() {
-		return flow.FunctionBoundary{}, false
+		return functionboundary.Boundary{}, false
 	}
 	term, ok := body.boundary.Body()
 	if !ok {
-		return flow.FunctionBoundary{}, false
+		return functionboundary.Boundary{}, false
 	}
 	return body.program.Flow().FunctionBoundaries().ForFunctionBody(term)
 }
 
 // EntrySite returns the existing Causal Site at this Body's boundary Entry.
-func (body Body) EntrySite() (flow.Site, bool) {
+func (body Body) EntrySite() (causal.Site, bool) {
 	if !body.Available() {
-		return flow.Site{}, false
+		return causal.Site{}, false
 	}
 	entry, ok := body.boundary.Entry()
 	if !ok {
-		return flow.Site{}, false
+		return causal.Site{}, false
 	}
 	return body.program.Flow().Causal().Sites().ForTerm(entry)
 }

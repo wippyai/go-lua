@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -39,9 +39,9 @@ func TestFlowSelectorsKeepDirectSelectorCalls(t *testing.T) {
 			t.Fatalf("direct Call[%d] root cell = %v/%v", index, root, cellOK)
 		}
 		switch form {
-		case flow.CallFormPlain:
+		case accessgeometry.CallFormPlain:
 			plain = call
-		case flow.CallFormMethod:
+		case accessgeometry.CallFormMethod:
 			method = call
 		default:
 			t.Fatalf("direct Call[%d] form = %v", index, form)
@@ -126,7 +126,7 @@ func TestFlowExactSelectorDeepPathIsAllocationFree(t *testing.T) {
 		t.Fatal("missing Call")
 	}
 	read, form, bindingOK := p.Flow().AccessGeometry().DirectCall(call)
-	if !bindingOK || form != flow.CallFormPlain {
+	if !bindingOK || form != accessgeometry.CallFormPlain {
 		t.Fatalf("direct Call binding = read %v form %v ok %v", read, form, bindingOK)
 	}
 	if _, gotDepth, ok := p.Flow().AccessGeometry().ExactRead(read); !ok || gotDepth != depth {

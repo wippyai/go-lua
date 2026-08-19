@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -37,7 +37,7 @@ func TestSourceIdentifierPayloadBoundaryClasses(t *testing.T) {
 		}
 		cellKind, _, key, cellOK := cells.Get(cell)
 		value, keyOK := p.Source().Keys().Exact(key)
-		if !cellOK || cellKind != flow.CellGlobal || !keyOK || value.String != name {
+		if !cellOK || cellKind != authored.CellGlobal || !keyOK || value.String != name {
 			t.Fatalf("Global(%d) = kind %v value %#v/%v, want %q/true", index, cellKind, value, keyOK, name)
 		}
 		assertExactPayload(t, p, key, keyspace.LiteralValue{Kind: keyspace.LiteralString, String: name})

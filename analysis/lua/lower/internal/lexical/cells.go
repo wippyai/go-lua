@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/lua/bind"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -72,7 +72,7 @@ func (b *Bodies) Capture(
 	if inner == 0 {
 		return 0, fmt.Errorf("lualower: could not create capture Cell")
 	}
-	b.captures = append(b.captures, flow.Capture{Inner: inner, Outer: outer})
+	b.captures = append(b.captures, authored.Capture{Inner: inner, Outer: outer})
 	b.install(id, inner)
 	return inner, nil
 }

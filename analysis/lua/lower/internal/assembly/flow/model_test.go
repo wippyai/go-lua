@@ -1,14 +1,15 @@
 package flow
 
 import (
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestRowsModelResetsAllOwnedPoolsAndBoundsRanges(t *testing.T) {
 	rows := Rows{}
-	if _, ok := rows.AppendValue(programflow.Value{}, []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyInteger, 1)}); !ok {
+	if _, ok := rows.AppendValue(authored.Value{}, []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyInteger, 1)}); !ok {
 		t.Fatal("AppendValue rejected a first member")
 	}
 	if got, ok := rows.ValueTermAt(0); !ok || got != keyspace.MakeTerm(keyspace.FamilyInteger, 1) {

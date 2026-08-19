@@ -3,7 +3,7 @@ package lower_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
@@ -353,5 +353,5 @@ func TestStaticSignatureRowsKeepParametersAndReturns(t *testing.T) {
 	}
 }
 
-var _ flow.CellKind
+var _ authored.CellKind
 var _ keyspace.Term

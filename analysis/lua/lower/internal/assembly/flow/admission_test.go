@@ -1,9 +1,10 @@
 package flow
 
 import (
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestRowsAdmissionRequiresDenseTermsAndRetainsValueRange(t *testing.T) {
@@ -22,7 +23,7 @@ func TestRowsAdmissionRequiresDenseTermsAndRetainsValueRange(t *testing.T) {
 		t.Fatal("duplicate Values term was admitted")
 	}
 	row, ok := rows.ValueAt(0)
-	if !ok || row.Owner != body || row.Fixed != (programflow.Range{Start: 0, End: 1}) {
+	if !ok || row.Owner != body || row.Fixed != (authored.Range{Start: 0, End: 1}) {
 		t.Fatalf("stored Values row = %#v/%v", row, ok)
 	}
 }

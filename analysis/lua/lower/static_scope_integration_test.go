@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
@@ -103,7 +103,7 @@ return outer
 	}
 	cellKind, _, key, cellOK := flowView.Authored().Storage().Cells().Get(sourceTerm)
 	value, keyOK := p.Source().Keys().Exact(key)
-	if !cellOK || cellKind != flow.CellGlobal || !keyOK || value.String != "external" {
+	if !cellOK || cellKind != authored.CellGlobal || !keyOK || value.String != "external" {
 		t.Fatalf("nested closure implicit source = cell %v key %#v/%v, want global external", cellKind, value, keyOK)
 	}
 }
@@ -210,7 +210,7 @@ func TestStaticNestedFunctionsRemainInStaticFlowContainment(t *testing.T) {
 	}
 	formal, _ := p.Source().Formals().At(function, 0)
 	cellKind, _, _, cellOK := p.Flow().Authored().Storage().Cells().Get(formal)
-	if !cellOK || cellKind != flow.CellLocal {
+	if !cellOK || cellKind != authored.CellLocal {
 		t.Fatalf("nested static Function formal cell = kind %v ok %v", cellKind, cellOK)
 	}
 }

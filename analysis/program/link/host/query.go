@@ -3,12 +3,13 @@ package host
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
+
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
@@ -462,7 +463,7 @@ func (v Globals) For(root linkmodule.AnalysisRoot, cell keyspace.Term) (GlobalBi
 		return GlobalBinding{}, false
 	}
 	kind, body, key, ok := p.Flow().Authored().Storage().Cells().Get(cell)
-	if !ok || kind != flow.CellGlobal || body != 0 || key == 0 {
+	if !ok || kind != authored.CellGlobal || body != 0 || key == 0 {
 		return GlobalBinding{}, false
 	}
 	r := c.authority.globalRanges[i]
