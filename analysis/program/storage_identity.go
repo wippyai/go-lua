@@ -112,35 +112,6 @@ func (program *Program) StorageBindTransferIDAt(index, position int) (identity.C
 	return id, id.Available()
 }
 
-// StorageAssignmentIDAt returns the canonical owner-neutral identity of one
-// executable authored assignment. Its identity is structural (Body path,
-// assignment path, and destination width), not a transport row index.
-func (program *Program) StorageAssignmentIDAt(index int) (identity.ContentID, bool) {
-	if !program.Available() || index < 0 {
-		return identity.ContentID{}, false
-	}
-	view := program.Flow()
-	assigns := view.Authored().Storage().Assigns()
-	term, present := assigns.At(index)
-	owner, values, related := assigns.Get(term)
-	width, widthOK := assigns.WriteCount(term)
-	if !present || !related || !widthOK || width <= 0 || !view.Executable().Contains(term) {
-		return identity.ContentID{}, false
-	}
-	if _, _, valuesOK := view.Authored().Values().Get(values); !valuesOK {
-		return identity.ContentID{}, false
-	}
-	bodyPath, _, bodyOK := program.scalarBody(owner)
-	assignmentPath, assignmentPathOK := view.StorageAssignmentPath(term)
-	if !bodyOK || !assignmentPathOK || !bodyPath.Available() || !assignmentPath.Available() {
-		return identity.ContentID{}, false
-	}
-	id := programSemanticID("program/transformer/storage-assignment", func(writer *framing.Writer) bool {
-		return writer.Bytes(bodyPath[:]) == nil && writer.Bytes(assignmentPath[:]) == nil && writer.Count(uint64(width)) == nil
-	})
-	return id, id.Available()
-}
-
 // AssignmentPredecessorID returns the canonical identity of the sealed local
 // reverse-commit predecessor for one authored Write. It also returns the
 // route identity used by Artifact's scalar row, without exposing any causal
@@ -175,19 +146,16 @@ func (program *Program) StorageWriteTransferIDAt(index, position int) (identity.
 	if position < 0 {
 		return identity.ContentID{}, false
 	}
-	assignmentID, assignmentOK := program.StorageAssignmentIDAt(index)
-	if !assignmentOK || !assignmentID.Available() {
-		return identity.ContentID{}, false
-	}
 	view := program.Flow()
 	assigns := view.Authored().Storage().Assigns()
 	term, present := assigns.At(index)
+	assignmentID, assignmentOK := view.StorageAssignmentID(term)
 	_, values, related := assigns.Get(term)
 	width, widthOK := assigns.WriteCount(term)
 	writeTerm, writeOK := assigns.WriteAt(term, position)
 	actualAssignment, target, writeRelated := view.Authored().Storage().Writes().Get(writeTerm)
 	_, fixed := view.Authored().Values().Member(values, position)
-	if !present || !related || !widthOK || position >= width || !writeOK || !writeRelated || actualAssignment != term || !fixed {
+	if !present || !assignmentOK || !assignmentID.Available() || !related || !widthOK || position >= width || !writeOK || !writeRelated || actualAssignment != term || !fixed {
 		return identity.ContentID{}, false
 	}
 	if _, _, _, cellOK := view.Authored().Storage().Cells().Get(target); !cellOK {

@@ -170,7 +170,7 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 		return storageAssignmentCompileRow{}, false
 	}
 	row := storageAssignmentCompileRow{term: term, values: values, body: bodyPath, context: body.ContextID(), span: span, entry: entry, finish: finish, width: width}
-	rowID, rowIDOK := input.StorageAssignmentIDAt(index)
+	rowID, rowIDOK := view.StorageAssignmentID(term)
 	row.id = rowID
 	if !rowIDOK || !row.id.Available() {
 		return storageAssignmentCompileRow{}, false

@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"crypto/sha256"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -132,18 +130,4 @@ func (view View) valuesTail(term keyspace.Term) (identity.ContentID, valuesTailK
 	}
 	path, pathOK := view.SemanticTermPath(term)
 	return path, kind, pathOK && path.Available()
-}
-
-// flowSemanticID is Flow's codec for identities derived entirely from its
-// canonical authored structure. The domain, version, record marker, and field
-// framing intentionally match the former Program equation byte-for-byte.
-func flowSemanticID(domain string, write func(*framing.Writer) bool) identity.ContentID {
-	hash := sha256.New()
-	var writer framing.Writer
-	if writer.Reset(hash, domain, 1) != nil || writer.Record(1) != nil || write == nil || !write(&writer) || writer.Finish() != nil {
-		return identity.ContentID{}
-	}
-	var id identity.ContentID
-	copy(id[:], hash.Sum(nil))
-	return id
 }
