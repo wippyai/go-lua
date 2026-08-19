@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // StaticOperandAt resolves one exact authored operand from the canonical
@@ -106,8 +107,8 @@ func (program *Program) staticRuntimeSubjectOperand(term keyspace.Term) (identit
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	readID, _, readTerm, readOK := program.StorageReadIDAt(int(keyspace.TermOrdinal(term) - 1))
-	cellID, cellOK := program.StorageCellID(source)
 	cellTerm, cellTermOK := program.Flow().Authored().Storage().Cells().At(int(keyspace.TermOrdinal(source) - 1))
+	cellID, cellOK := programschema.StorageCellIdentity(program.ContentID(), source)
 	bodyPath, bodyOK := program.Flow().BodyPath(owner)
 	return readID, cellID, bodyPath, readOK && readTerm == term && cellOK && cellTermOK && cellTerm == source && bodyOK
 }

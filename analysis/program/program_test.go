@@ -129,26 +129,19 @@ func rootAssembly(t *testing.T, name string) *flow.Assembly {
 		t.Fatalf("source.Finalizer: %v", err)
 	}
 
-	staticDraft, err := static.Build(static.Input{Counts: counts})
+	staticComponent, staticView, err := static.Build(static.Input{Counts: counts})
 	if err != nil {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
-	}
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalizer, err := moduleDraft.Finalizer()
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
@@ -156,11 +149,10 @@ func rootAssembly(t *testing.T, name string) *flow.Assembly {
 	flowDraft, err := flow.Build(flow.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("flow.Build: %v", err)
 	}
-	assembly, err := flow.Assemble(sourceFinalizer, staticFinalizer, moduleFinalizer, flowDraft, entry)
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
 	if err != nil {
 		t.Fatalf("flow.Assemble: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // sealValueSemanticIDs builds the one mounted substitution directory used by
@@ -93,7 +94,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	storage := p.Flow().Authored().Storage().Cells()
 	for index := 0; index < storage.Count(); index++ {
 		term, termOK := storage.At(index)
-		cellID, cellOK := p.StorageCellID(term)
+		cellID, cellOK := programschema.StorageCellIdentity(p.ContentID(), term)
 		ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
 		if !cellOK || !termOK {
 			return errors.New("link/boundary: malformed semantic Cell row")

@@ -159,10 +159,7 @@ func artifactStorageCellID(programID identity.ContentID, view flow.View, term ke
 	if _, _, _, cellOK := view.Authored().Storage().Cells().Get(term); !cellOK {
 		return identity.ContentID{}, false
 	}
-	id := artifactCallableRoleID("program/transformer/storage-cell", programID, func(writer *framing.Writer) bool {
-		return writeCallableTerm(writer, term)
-	})
-	return id, id.Available()
+	return programschema.StorageCellIdentity(programID, term)
 }
 
 // artifactFunctionCaptureAt joins one ordered Flow capture pair. Both Body

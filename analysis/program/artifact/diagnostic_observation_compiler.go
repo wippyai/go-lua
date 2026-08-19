@@ -552,7 +552,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() CompileFailu
 			if !writeOK || !writeRelationOK || writeAssign != term {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
-			declared, declaredOK := compiler.input.DeclaredStaticTypeID(target)
+			declared, declaredOK := artifactDeclaredStaticTypeID(compiler.key.ProgramID(), compiler.input.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := valueRow.MemberAt(position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
@@ -645,7 +645,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Compile
 			if !cellOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
-			declared, declaredOK := compiler.input.DeclaredStaticTypeID(cellTerm)
+			declared, declaredOK := artifactDeclaredStaticTypeID(compiler.key.ProgramID(), compiler.input.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := valueRow.MemberAt(position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
