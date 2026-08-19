@@ -27,12 +27,8 @@ type Artifact struct {
 	coldCatalog            identity.ContentID
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
-	occurrences            []OccurrenceRow
-	occurrenceByID         map[occurrenceLookup]uint32
-	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
 	staticTypeNodes        []StaticTypeNodeRow
-	occurrenceByKind       map[OccurrenceKind][]uint32
 }
 
 func (artifact *Artifact) Available() bool {
@@ -51,6 +47,16 @@ func (artifact *Artifact) ID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return artifact.id
+}
+
+// Program returns the canonical immutable Program publication owned by this
+// artifact. Consumers use its dense families directly; Artifact retains no
+// occurrence or rule-placement slices of its own.
+func (artifact *Artifact) Program() programschema.Program {
+	if artifact == nil || !artifact.frozen.Published() || !artifact.id.Available() || !artifact.key.SchemaDigest().Available() {
+		return programschema.Program{}
+	}
+	return programschema.Program{Frozen: artifact.frozen, ArtifactID: artifact.id, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.SchemaDigest()}
 }
 
 // CountRows returns the immutable Program denominator rows frozen into this

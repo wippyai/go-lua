@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -32,19 +33,26 @@ end
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile: %s", failure.Error())
 	}
-	if artifact.RulePlacementCount() == 0 {
+	program := artifact.Program()
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	if !rulesPublished || ruleCount == 0 {
 		t.Fatal("compiled program issued no rule placements")
 	}
 	seen := make(map[identity.ContentID]int)
-	for index := 0; index < artifact.RulePlacementCount(); index++ {
-		row, ok := artifact.RulePlacementAt(index)
+	for index := 0; index < ruleCount; index++ {
+		row, ok := program.RuleOccurrenceAt(index)
 		if !ok || !row.Available() {
 			t.Fatalf("placement %d unavailable", index)
 		}
 		if !row.Key().Available() {
 			t.Fatalf("placement %d has no declaration key", index)
 		}
-		seen[row.ID()]++
+		ordinal, ordinalOK := row.Occurrence()
+		occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+		if !ordinalOK || !occurrenceOK {
+			t.Fatalf("placement %d has no parent occurrence", index)
+		}
+		seen[occurrence.ID()]++
 	}
 	if len(seen) == 0 {
 		t.Fatal("compiled program issued no rule placements")
@@ -74,22 +82,31 @@ end
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile: %s", failure.Error())
 	}
-	if artifact.RulePlacementCountForKey("") != 0 {
+	program := artifact.Program()
+	if count, published := program.RuleOccurrenceCountForKey(""); published && count != 0 {
 		t.Fatal("empty key selected placements")
 	}
-	if artifact.RulePlacementCountForKey("value-bootstrap") != 0 {
+	if count, published := program.RuleOccurrenceCountForKey("value-bootstrap"); published && count != 0 {
 		t.Fatal("link-lane key selected mounted placements")
 	}
 	counted := 0
-	for index := 0; index < artifact.RulePlacementCount(); index++ {
-		row, ok := artifact.RulePlacementAt(index)
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	if !rulesPublished {
+		t.Fatal("rule-occurrence family is unpublished")
+	}
+	for index := 0; index < ruleCount; index++ {
+		row, ok := program.RuleOccurrenceAt(index)
 		if !ok {
 			t.Fatalf("placement %d unavailable", index)
 		}
 		counted++
 		matched := 0
-		for keyIndex := 0; keyIndex < artifact.RulePlacementCountForKey(row.Key()); keyIndex++ {
-			got, gotOK := artifact.RulePlacementForKeyAt(row.Key(), keyIndex)
+		keyCount, keyPublished := program.RuleOccurrenceCountForKey(string(row.Key()))
+		if !keyPublished {
+			t.Fatalf("key %q has no published rule-occurrence index", row.Key())
+		}
+		for keyIndex := 0; keyIndex < keyCount; keyIndex++ {
+			got, gotOK := program.RuleOccurrenceForKeyAt(string(row.Key()), keyIndex)
 			if !gotOK || got.Key() != row.Key() {
 				t.Fatalf("key %q placement %d is not that declaration", row.Key(), keyIndex)
 			}
@@ -102,8 +119,11 @@ end
 	if counted == 0 {
 		t.Fatal("compiled program issued no rule placements")
 	}
-	if _, ok := artifact.RulePlacementForKeyAt("value-binary-arithmetic", artifact.RulePlacementCountForKey("value-binary-arithmetic")); ok {
-		t.Fatal("key index accepted an out-of-range ordinal")
+	keyCount, keyPublished := program.RuleOccurrenceCountForKey("value-binary-arithmetic")
+	if keyPublished {
+		if _, ok := program.RuleOccurrenceForKeyAt("value-binary-arithmetic", keyCount); ok {
+			t.Fatal("key index accepted an out-of-range ordinal")
+		}
 	}
 }
 func TestProgramArtifactStagedRulesReadStrictlyEarlierPoints(t *testing.T) {
@@ -229,6 +249,11 @@ return run
 			if failure.Available() || artifact == nil || !artifact.Available() {
 				t.Fatalf("compile %s: %s", fixture.name, failure.Error())
 			}
+			program := artifact.Program()
+			ruleCount, rulesPublished := program.RuleOccurrenceCount()
+			if !rulesPublished {
+				t.Fatal("rule-occurrence family is unpublished")
+			}
 
 			rank := make(map[identity.ContentID]int, artifact.PointCount())
 			for eventIndex := 0; eventIndex < artifact.WTOEventCount(); eventIndex++ {
@@ -242,17 +267,17 @@ return run
 			}
 
 			staged := 0
-			for ruleIndex := 0; ruleIndex < artifact.RulePlacementCount(); ruleIndex++ {
-				rule, ruleOK := artifact.RulePlacementAt(ruleIndex)
+			for ruleIndex := 0; ruleIndex < ruleCount; ruleIndex++ {
+				rule, ruleOK := program.RuleOccurrenceAt(ruleIndex)
 				if !ruleOK {
 					t.Fatalf("placement %d unavailable", ruleIndex)
 				}
-				if rule.Stage() == programartifact.RuleStageBase {
+				if rule.Stage() == programschema.RuleStageBase {
 					continue
 				}
-				point, pointOK := rule.PointAt(0)
+				point := rule.PointID()
 				input, inputOK := rule.InputPoint()
-				if !pointOK || !inputOK {
+				if !point.Available() || !inputOK {
 					t.Fatalf("placement %d staged placement has no point pair", ruleIndex)
 				}
 				outputRank, outputRanked := rank[point]

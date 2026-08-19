@@ -38,12 +38,14 @@ type compiler struct {
 	heapAllocations            []HeapAllocationRow
 	heapIndexes                []HeapIndexRow
 	allocationRows             []allocationCompileRow
-	occurrences                []OccurrenceRow
+	occurrences                []programschema.Occurrence
+	occurrencePoints           []programschema.OccurrencePoint
+	occurrenceInputs           []programschema.OccurrenceInput
 	exactScalarSummaries       []programschema.ExactScalarSummary
 	exactScalarStates          map[identity.ContentID]exactScalarState
 	arithmeticSummaries        []programschema.ArithmeticSummary
 	unarySummaries             []programschema.UnarySummary
-	ruleOccurrences            []RuleOccurrence
+	ruleOccurrences            []programschema.RuleOccurrence
 	issuance                   IssuanceDirectory
 	diagnosticObservations     []DiagnosticObservationRow
 	staticTypeValues           []StaticTypeValueRow

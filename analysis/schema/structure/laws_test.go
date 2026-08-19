@@ -8,9 +8,9 @@ import (
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -119,19 +119,19 @@ func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	for _, member := range []struct {
 		key      schema.Key
 		spelling string
-		ordinal  programartifact.RuleStage
+		ordinal  programschema.RuleStage
 		foreign  string
 	}{
-		{"stage/base", "base", programartifact.RuleStageBase, "programartifact.RuleStageBase"},
-		{"stage/local", "local", programartifact.RuleStageLocal, "programartifact.RuleStageLocal"},
-		{"stage/call-dispatch", "call-dispatch", programartifact.RuleStageCallDispatch, "programartifact.RuleStageCallDispatch"},
-		{"stage/call-summary", "call-summary", programartifact.RuleStageCallSummary, "programartifact.RuleStageCallSummary"},
-		{"stage/call-effect", "call-effect", programartifact.RuleStageCallEffect, "programartifact.RuleStageCallEffect"},
+		{"stage/base", "base", programschema.RuleStageBase, "programschema.RuleStageBase"},
+		{"stage/local", "local", programschema.RuleStageLocal, "programschema.RuleStageLocal"},
+		{"stage/call-dispatch", "call-dispatch", programschema.RuleStageCallDispatch, "programschema.RuleStageCallDispatch"},
+		{"stage/call-summary", "call-summary", programschema.RuleStageCallSummary, "programschema.RuleStageCallSummary"},
+		{"stage/call-effect", "call-effect", programschema.RuleStageCallEffect, "programschema.RuleStageCallEffect"},
 	} {
 		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
 		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
 	}
-	counted(t, table, structure.CategoryIssuanceStage, uint16(programartifact.RuleStageCallEffect), "programartifact.RuleStageCallEffect")
+	counted(t, table, structure.CategoryIssuanceStage, uint16(programschema.RuleStageCallEffect), "programschema.RuleStageCallEffect")
 }
 
 // TestIngressVocabularyIsTheSealedTable pins the ingress boundary spellings.

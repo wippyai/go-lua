@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // transportDeclaration states one synthetic rule declaration for the transport
@@ -12,21 +13,21 @@ import (
 type transportDeclaration struct {
 	key       schema.Key
 	writes    schema.Key
-	stage     RuleStage
+	stage     programschema.RuleStage
 	transport bool
 }
 
 // declaredStageFramings is the framing every staged cut is declared under. The
 // fixtures state it once, from the pinned spelling the identity laws hold.
-func declaredStageFramings() (map[IssuanceForm]string, map[RuleStage]string) {
+func declaredStageFramings() (map[IssuanceForm]string, map[programschema.RuleStage]string) {
 	return map[IssuanceForm]string{
 			IssuanceFormLocal:            pinnedLocalStageFraming,
 			IssuanceFormComputation:      pinnedLocalComputationStageFraming,
 			IssuanceFormLocalPredecessor: pinnedLocalPredecessorStageFraming,
-		}, map[RuleStage]string{
-			RuleStageCallDispatch: pinnedCallDispatchStageFraming,
-			RuleStageCallSummary:  pinnedCallSummaryStageFraming,
-			RuleStageCallEffect:   pinnedCallEffectStageFraming,
+		}, map[programschema.RuleStage]string{
+			programschema.RuleStageCallDispatch: pinnedCallDispatchStageFraming,
+			programschema.RuleStageCallSummary:  pinnedCallSummaryStageFraming,
+			programschema.RuleStageCallEffect:   pinnedCallEffectStageFraming,
 		}
 }
 
@@ -34,17 +35,17 @@ func transportPlacements(declarations ...transportDeclaration) []IssuancePlaceme
 	placements := make([]IssuancePlacement, 0, len(declarations))
 	for _, declaration := range declarations {
 		placement := IssuancePlacement{
-			Occurrence:  OccurrenceCall,
+			Occurrence:  programschema.OccurrenceCall,
 			Form:        IssuanceFormBase,
-			Input:       RuleInputNone,
+			Input:       programschema.RuleInputNone,
 			Stage:       declaration.stage,
 			Requirement: IssuanceRequirementUnrestricted,
 			Key:         declaration.key,
 			Writes:      declaration.writes,
 			Transport:   declaration.transport,
 		}
-		if declaration.stage != RuleStageBase {
-			placement.Form, placement.Input = IssuanceFormCallStage, RuleInputFinish
+		if declaration.stage != programschema.RuleStageBase {
+			placement.Form, placement.Input = IssuanceFormCallStage, programschema.RuleInputFinish
 		}
 		placements = append(placements, placement)
 	}
@@ -66,14 +67,14 @@ func transportDirectory(t *testing.T, placements ...IssuancePlacement) IssuanceD
 // produced at the call-effect stage by more than one rule.
 func declaredCallStagePlacements() []IssuancePlacement {
 	return transportPlacements(
-		transportDeclaration{key: "value-source", writes: "value", stage: RuleStageBase, transport: true},
-		transportDeclaration{key: "raw-get", writes: "value", stage: RuleStageLocal, transport: true},
-		transportDeclaration{key: "pack-source", writes: "pack", stage: RuleStageBase, transport: true},
-		transportDeclaration{key: "heap-ingress", writes: "heap", stage: RuleStageBase, transport: true},
-		transportDeclaration{key: "call-dispatch", writes: "call", stage: RuleStageCallDispatch, transport: true},
-		transportDeclaration{key: "call-activation", writes: "call", stage: RuleStageCallSummary, transport: false},
-		transportDeclaration{key: "effect-selected", writes: "effect", stage: RuleStageCallEffect, transport: true},
-		transportDeclaration{key: "effect-body", writes: "effect", stage: RuleStageCallEffect, transport: true},
+		transportDeclaration{key: "value-source", writes: "value", stage: programschema.RuleStageBase, transport: true},
+		transportDeclaration{key: "raw-get", writes: "value", stage: programschema.RuleStageLocal, transport: true},
+		transportDeclaration{key: "pack-source", writes: "pack", stage: programschema.RuleStageBase, transport: true},
+		transportDeclaration{key: "heap-ingress", writes: "heap", stage: programschema.RuleStageBase, transport: true},
+		transportDeclaration{key: "call-dispatch", writes: "call", stage: programschema.RuleStageCallDispatch, transport: true},
+		transportDeclaration{key: "call-activation", writes: "call", stage: programschema.RuleStageCallSummary, transport: false},
+		transportDeclaration{key: "effect-selected", writes: "effect", stage: programschema.RuleStageCallEffect, transport: true},
+		transportDeclaration{key: "effect-body", writes: "effect", stage: programschema.RuleStageCallEffect, transport: true},
 	)
 }
 
@@ -107,7 +108,7 @@ func TestCallStageTransportIsDerivedFromDeclaredWrites(t *testing.T) {
 // mounted axis the compiler was never told about by name.
 func TestCallStageTransportFollowsAnAddedDeclaredAxis(t *testing.T) {
 	extended := append(declaredCallStagePlacements(), transportPlacements(
-		transportDeclaration{key: "probe-source", writes: "probe", stage: RuleStageBase, transport: true},
+		transportDeclaration{key: "probe-source", writes: "probe", stage: programschema.RuleStageBase, transport: true},
 	)...)
 	plan, planOK := transportDirectory(t, extended...).callStageTransport()
 	if !planOK {
@@ -122,7 +123,7 @@ func TestCallStageTransportFollowsAnAddedDeclaredAxis(t *testing.T) {
 // plan is the declarations, so withdrawing the write a call stage declares
 // leaves no plan to compile from rather than a stale authored list.
 func TestCallStageTransportRefusesAStageWithNoDeclaredWrite(t *testing.T) {
-	for _, withdrawn := range []RuleStage{RuleStageCallDispatch, RuleStageCallEffect} {
+	for _, withdrawn := range []programschema.RuleStage{programschema.RuleStageCallDispatch, programschema.RuleStageCallEffect} {
 		declared := declaredCallStagePlacements()
 		remaining := make([]IssuancePlacement, 0, len(declared))
 		for _, placement := range declared {

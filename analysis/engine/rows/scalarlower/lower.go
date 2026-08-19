@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -86,8 +87,12 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			usedKeys[key] = struct{}{}
 		}
 	}
-	for index := 0; index < snapshot.RulePlacementCount(); index++ {
-		placement, placementOK := snapshot.RulePlacementAt(index)
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	if !rulesPublished {
+		return nil, nil, false
+	}
+	for index := 0; index < ruleCount; index++ {
+		placement, placementOK := program.RuleOccurrenceAt(index)
 		if !placementOK || !placement.Key().Available() {
 			return nil, nil, false
 		}
@@ -98,7 +103,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
+		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: ruleCount, Bodies: snapshot.BodyTransportCount(),
 	})
 	if !specOK || !spec.InstallStageLaws(laws) {
 		return nil, nil, false
@@ -210,14 +215,16 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			return nil, nil, false
 		}
 	}
-	for index := 0; index < snapshot.RulePlacementCount(); index++ {
-		row, rowOK := snapshot.RulePlacementAt(index)
+	for index := 0; index < ruleCount; index++ {
+		row, rowOK := program.RuleOccurrenceAt(index)
 		if !rowOK {
 			return nil, nil, false
 		}
 		role, roleOK := directory.Role(row.Key())
-		stage, stageOK := ruleStage(row.Stage())
-		if !roleOK || !stageOK || !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: stage, Point: row.PointID(), Input: row.InputPointID(), ID: row.OccurrenceID(), Route: row.PredecessorRouteID()}) {
+		stage, stageOK := ruleStage(uint8(row.Stage()))
+		input, _ := row.InputPoint()
+		route, _ := row.PredecessorRouteID()
+		if !roleOK || !stageOK || !row.Available() || !spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: stage, Point: row.PointID(), Input: input, ID: occurrenceID(program, row), Route: route}) {
 			return nil, nil, false
 		}
 	}
@@ -245,6 +252,18 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 	}
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	return template, directory, templateOK
+}
+
+func occurrenceID(program programschema.Program, placement programschema.RuleOccurrence) identity.ContentID {
+	ordinal, ok := placement.Occurrence()
+	if !ok {
+		return identity.ContentID{}
+	}
+	row, ok := program.OccurrenceAt(int(ordinal))
+	if !ok {
+		return identity.ContentID{}
+	}
+	return row.ID()
 }
 
 func stageLaws(vocabulary structure.Table) ([]rows.ArtifactStageLaw, bool) {

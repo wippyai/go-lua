@@ -8,10 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -124,9 +124,14 @@ func transferFixture(t testing.TB, name string) *transferFixtureState {
 		t.Fatalf("schema seal heap=%s value=%s transfers=%d", heapFailure, valueFailure, schema.StorageTransferCount())
 	}
 	var occurrence identity.ContentID
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, rowOK := artifact.OccurrenceAt(index)
-		if rowOK && row.Kind() == programartifact.OccurrenceStorageBindTransfer {
+	program := artifact.Program()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if rowOK && row.Kind() == programschema.OccurrenceStorageBindTransfer {
 			occurrence = row.ID()
 			break
 		}

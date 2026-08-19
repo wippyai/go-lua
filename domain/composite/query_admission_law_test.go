@@ -77,15 +77,21 @@ return 42`)
 	callablePoints := make(map[identity.ContentID]struct{})
 	rootPoints := make(map[identity.ContentID]struct{})
 	for _, mount := range record.Artifacts {
-		for index := 0; index < mount.Snapshot.OccurrenceCount(); index++ {
-			occurrence, occurrenceOK := mount.Snapshot.OccurrenceAt(index)
+		program := mount.Snapshot.Program()
+		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+		if !occurrencesPublished {
+			t.Fatal("cold occurrence family")
+		}
+		for index := 0; index < occurrenceCount; index++ {
+			occurrence, occurrenceOK := program.OccurrenceAt(index)
 			body, bodyOK := occurrence.BodyID()
 			if !occurrenceOK || !bodyOK {
 				continue
 			}
-			for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-				point, pointOK := occurrence.PointAt(pointIndex)
-				if !pointOK {
+			_, pointCount, pointSpanOK := occurrence.PointSpan()
+			for pointIndex := 0; pointIndex < int(pointCount); pointIndex++ {
+				point, pointOK := program.OccurrencePointID(index, pointIndex)
+				if !pointSpanOK || !pointOK {
 					t.Fatal("sealed occurrence point")
 				}
 				if _, held := callable[body]; held {
@@ -217,8 +223,13 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 		}
 		points[body.ID()] = make(map[identity.ContentID]struct{})
 	}
-	for index := 0; index < snapshot.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
+	canonical := snapshot.Program()
+	occurrenceCount, occurrencesPublished := canonical.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("cold occurrence family")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		occurrence, occurrenceOK := canonical.OccurrenceAt(index)
 		body, bodyOK := occurrence.BodyID()
 		if !occurrenceOK || !bodyOK {
 			continue
@@ -227,9 +238,10 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 		if !callable {
 			continue
 		}
-		for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-			point, pointOK := occurrence.PointAt(pointIndex)
-			if !pointOK {
+		_, pointCount, pointSpanOK := occurrence.PointSpan()
+		for pointIndex := 0; pointIndex < int(pointCount); pointIndex++ {
+			point, pointOK := canonical.OccurrencePointID(index, pointIndex)
+			if !pointSpanOK || !pointOK {
 				t.Fatal("occurrence point")
 			}
 			held[point] = struct{}{}

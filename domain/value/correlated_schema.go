@@ -4,8 +4,8 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 
@@ -798,9 +798,15 @@ func (schema *valueBuilder) sealFormalSourceDirectory() bool {
 		if artifact == nil {
 			return false
 		}
-		for index := 0; index < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceFormalEntry)); index++ {
-			row, rowOK := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceFormalEntry), index)
-			if !rowOK || row.InputCount() != 1 {
+		program := artifact.Program()
+		count, countOK := program.OccurrenceKindCount(programschema.OccurrenceFormalEntry)
+		if !countOK {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.OccurrenceKindAt(programschema.OccurrenceFormalEntry, index)
+			_, inputCount, inputSpanOK := row.InputSpan()
+			if !rowOK || !inputSpanOK || inputCount != 1 {
 				return false
 			}
 			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
@@ -1325,9 +1331,14 @@ func (schema *valueBuilder) sealLiteralSourceDirectory() bool {
 		if artifact == nil {
 			return false
 		}
-		for index := 0; index < artifact.OccurrenceCount(); index++ {
-			row, ok := artifact.OccurrenceAt(index)
-			if !ok || row.Kind() != uint8(programartifact.OccurrenceValueSource) {
+		program := artifact.Program()
+		count, countOK := program.OccurrenceCount()
+		if !countOK {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			row, ok := program.OccurrenceAt(index)
+			if !ok || row.Kind() != programschema.OccurrenceValueSource {
 				continue
 			}
 			family, literal, literalOK := row.Literal()
@@ -1485,9 +1496,14 @@ func (schema *valueBuilder) forEachExecutableTypeValue(visit func(identity.Conte
 	}
 	for module, mount := range schema.artifacts {
 		artifact := mount.Snapshot()
-		for index := 0; index < artifact.OccurrenceCount(); index++ {
-			row, rowOK := artifact.OccurrenceAt(index)
-			if !rowOK || row.Kind() != uint8(programartifact.OccurrenceValueSource) || row.Code() != 6 {
+		program := artifact.Program()
+		count, countOK := program.OccurrenceCount()
+		if !countOK {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.OccurrenceAt(index)
+			if !rowOK || row.Kind() != programschema.OccurrenceValueSource || row.Code() != 6 {
 				continue
 			}
 			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())

@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -382,18 +383,22 @@ func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identit
 	if mount.Snapshot == nil {
 		return nil, false
 	}
+	program := mount.Snapshot.Program()
+	ruleCount, rulePublished := program.RuleOccurrenceCount()
+	if !rulePublished {
+		return nil, false
+	}
 	producers := make(map[identity.ContentID][]BranchProducer)
-	for ruleIndex := 0; ruleIndex < mount.Snapshot.RulePlacementCount(); ruleIndex++ {
-		rule, ruleOK := mount.Snapshot.RulePlacementAt(ruleIndex)
-		if !ruleOK || !rule.Key().Available() || !rule.OccurrenceID().Available() {
+	for ruleIndex := 0; ruleIndex < ruleCount; ruleIndex++ {
+		rule, ruleOK := program.RuleOccurrenceAt(ruleIndex)
+		ordinal, ordinalOK := rule.Occurrence()
+		occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+		if !ruleOK || !ordinalOK || !occurrenceOK || !rule.Key().Available() || !occurrence.ID().Available() {
 			return nil, false
 		}
-		outputID, outputOK := rule.OutputSemanticID()
-		if !outputOK {
-			continue
-		}
+		outputID := occurrence.ID()
 		value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)
-		if rule.SpanResult() {
+		if programschema.SpanResultOccurrence(occurrence.Kind()) {
 			value, valueOK = values.ForMountedSpan(mount.ModuleKey, outputID)
 		}
 		point := rule.PointID()
@@ -404,7 +409,7 @@ func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identit
 		if !valueIDOK || !point.Available() || !rule.Key().Available() {
 			return nil, false
 		}
-		candidate := BranchProducer{Key: rule.Key(), Occurrence: rule.OccurrenceID(), Point: point, ValueID: valueID}
+		candidate := BranchProducer{Key: rule.Key(), Occurrence: occurrence.ID(), Point: point, ValueID: valueID}
 		duplicate := false
 		for _, prior := range producers[valueID] {
 			if prior.Key == candidate.Key && prior.Occurrence == candidate.Occurrence && prior.Point == candidate.Point {

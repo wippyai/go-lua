@@ -3,6 +3,9 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (compiler *compiler) pointIDs(site causal.Site) []identity.ContentID {
@@ -69,7 +72,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 			}
 			seenAttachments[key] = struct{}{}
 			id := digest("analysis/program-artifact/point-attachment", artifactFormat, bytesField(key.site), bytesField(key.point))
-			if !id.Available() || !compiler.appendOccurrence(OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{key.point}, []identity.ContentID{key.site}, 0) {
+			if !id.Available() || !compiler.appendOccurrence(programschema.OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{key.point}, []identity.ContentID{key.site}, 0) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
 			compiler.pointIDsBySite[key.site] = append(compiler.pointIDsBySite[key.site], key.point)
@@ -85,7 +88,14 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func (compiler *compiler) appendOccurrence(kind OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64) bool {
+func (compiler *compiler) appendOccurrence(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64) bool {
+	return compiler.appendOccurrencePayload(kind, id, body, points, inputs, code, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
+}
+
+func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
+	if compiler == nil || !fitsUint32(len(compiler.occurrences)) || !fitsUint32(len(compiler.occurrencePoints)) || !fitsUint32(len(compiler.occurrenceInputs)) {
+		return false
+	}
 	// A Rule occurrence is attached to a semantic phase, not once per route
 	// through which that phase was reached.  Source spans can legitimately
 	// expose the same phase as both entry and finish (notably at a branch
@@ -93,16 +103,78 @@ func (compiler *compiler) appendOccurrence(kind OccurrenceKind, id, body identit
 	// artifact row. Inputs retain their parent-issued order; only the point
 	// membership relation is a set.
 	points = canonicalPoints(points)
-	row := OccurrenceRow{kind: kind, id: id, body: body, points: points, inputs: inputs, code: code}
-	if !row.Available() {
+	if !fitsUint32(len(points)) || !fitsUint32(len(inputs)) ||
+		uint64(len(compiler.occurrencePoints))+uint64(len(points)) > uint64(^uint32(0)) ||
+		uint64(len(compiler.occurrenceInputs))+uint64(len(inputs)) > uint64(^uint32(0)) {
 		return false
+	}
+	for _, pointID := range points {
+		if !pointID.Available() {
+			return false
+		}
+	}
+	for _, inputID := range inputs {
+		if !inputID.Available() {
+			return false
+		}
+	}
+	pointOffset, inputOffset := uint32(len(compiler.occurrencePoints)), uint32(len(compiler.occurrenceInputs))
+	row, rowOK := programschema.NewOccurrence(kind, id, body, code, pointOffset, uint32(len(points)), inputOffset, uint32(len(inputs)), literalFamily, literal, literalOK)
+	if !rowOK || !occurrenceSemanticAvailable(row) {
+		return false
+	}
+	for _, pointID := range points {
+		point, pointOK := programschema.NewOccurrencePoint(pointID)
+		if !pointOK {
+			return false
+		}
+		compiler.occurrencePoints = append(compiler.occurrencePoints, point)
+	}
+	for _, inputID := range inputs {
+		input, inputOK := programschema.NewOccurrenceInput(inputID)
+		if !inputOK {
+			return false
+		}
+		compiler.occurrenceInputs = append(compiler.occurrenceInputs, input)
 	}
 	compiler.occurrences = append(compiler.occurrences, row)
 	return true
 }
 
-func (compiler *compiler) recordOccurrenceSpan(kind OccurrenceKind, id identity.ContentID, entry, finish []identity.ContentID) bool {
-	if compiler == nil || compiler.occurrenceSpans == nil || !kind.valid() || !id.Available() || len(finish) == 0 {
+func (compiler *compiler) appendRuleOccurrence(key schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {
+	if compiler == nil || !fitsUint32(len(compiler.ruleOccurrences)) {
+		return false
+	}
+	row, rowOK := programschema.NewRuleOccurrence(key, occurrence, point, input, stage, inputKind, route)
+	if !rowOK {
+		return false
+	}
+	compiler.ruleOccurrences = append(compiler.ruleOccurrences, row)
+	return true
+}
+
+func (compiler *compiler) replaceRuleOccurrenceInput(index int, input identity.ContentID) bool {
+	if compiler == nil || index < 0 || index >= len(compiler.ruleOccurrences) || !input.Available() {
+		return false
+	}
+	row := compiler.ruleOccurrences[index]
+	occurrence, occurrenceOK := row.Occurrence()
+	if !occurrenceOK {
+		return false
+	}
+	replaced, replacedOK := programschema.NewRuleOccurrence(row.Key(), occurrence, row.PointID(), input, row.Stage(), row.InputKind(), func() identity.ContentID {
+		route, _ := row.PredecessorRouteID()
+		return route
+	}())
+	if !replacedOK {
+		return false
+	}
+	compiler.ruleOccurrences[index] = replaced
+	return true
+}
+
+func (compiler *compiler) recordOccurrenceSpan(kind programschema.OccurrenceKind, id identity.ContentID, entry, finish []identity.ContentID) bool {
+	if compiler == nil || compiler.occurrenceSpans == nil || !kind.Valid() || !id.Available() || len(finish) == 0 {
 		return false
 	}
 	key := occurrenceLookup{kind: kind, id: id}
@@ -120,7 +192,7 @@ func (compiler *compiler) recordOccurrenceSpan(kind OccurrenceKind, id identity.
 	return true
 }
 
-func (compiler *compiler) recordOccurrencePredecessor(kind OccurrenceKind, id, route identity.ContentID, finish []identity.ContentID) bool {
+func (compiler *compiler) recordOccurrencePredecessor(kind programschema.OccurrenceKind, id, route identity.ContentID, finish []identity.ContentID) bool {
 	if !compiler.recordOccurrenceSpan(kind, id, nil, finish) || !route.Available() {
 		return false
 	}

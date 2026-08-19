@@ -18,7 +18,7 @@ type sealValidationState struct {
 	callableBodies             int
 	environmentByRoute         map[identity.ContentID]EnvironmentEdge
 	environmentRouteDuplicates map[identity.ContentID]struct{}
-	occurrenceRows             map[OccurrenceKind]map[identity.ContentID]struct{}
+	occurrenceRows             map[programschema.OccurrenceKind]map[identity.ContentID]struct{}
 	valuesRows                 map[identity.ContentID]struct{}
 }
 

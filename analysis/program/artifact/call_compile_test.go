@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func TestProgramArtifactCopyCallsRecordsExactSpan(t *testing.T) {
@@ -49,8 +50,8 @@ return identity(true)
 		spanID, entryTerm, finishTerm, spanOK := compiled.EvaluationSpan(callTerm)
 		entry, entryOK := compiled.Flow().Causal().Sites().ForTerm(entryTerm)
 		finish, finishOK := compiled.Flow().Causal().Sites().ForTerm(finishTerm)
-		geometry, geometryOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCall, id: callID}]
-		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCallActivation, id: callID}]
+		geometry, geometryOK := transaction.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceCall, id: callID}]
+		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceCallActivation, id: callID}]
 		wantEntry, wantFinish := canonicalPoints(transaction.pointIDs(entry)), canonicalPoints(transaction.pointIDs(finish))
 		if !callOK || !callTermOK || !spanOK || !entryOK || !finishOK || !geometryOK || !activationOK ||
 			!slices.Equal(geometry.entry, wantEntry) || !slices.Equal(geometry.finish, wantFinish) ||
@@ -101,13 +102,9 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			entry:  {id: entry},
 			finish: {id: finish},
 		},
-		occurrences: []OccurrenceRow{
-			{kind: OccurrenceCall, id: callID, points: []identity.ContentID{entry, finish}},
-			{kind: OccurrenceCallActivation, id: callID, points: []identity.ContentID{finish}},
-		},
 		occurrenceSpans: map[occurrenceLookup]occurrenceSpanGeometry{
-			{kind: OccurrenceCall, id: callID}:           {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
-			{kind: OccurrenceCallActivation, id: callID}: {finish: []identity.ContentID{finish}},
+			{kind: programschema.OccurrenceCall, id: callID}:           {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
+			{kind: programschema.OccurrenceCallActivation, id: callID}: {finish: []identity.ContentID{finish}},
 		},
 		localStages: make(map[identity.ContentID]identity.ContentID),
 		callStages:  make(map[identity.ContentID]callStageSet),
@@ -116,23 +113,27 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			{kind: WTOEventPoint, point: finish},
 		},
 		issuance: transportDirectory(t, []IssuancePlacement{
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
-			{Occurrence: OccurrenceValueSource, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "value-source", Writes: "value", Transport: true},
-			{Occurrence: OccurrenceAllocation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "heap-ingress", Writes: "heap", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
-			{Occurrence: OccurrenceCallActivation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallSummary, Key: "call-activation", Writes: "call"},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
+			{Occurrence: programschema.OccurrenceValueSource, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "value-source", Writes: "value", Transport: true},
+			{Occurrence: programschema.OccurrenceAllocation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "heap-ingress", Writes: "heap", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCallActivation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallSummary, Key: "call-activation", Writes: "call"},
 		}...),
+	}
+	if !transaction.appendOccurrence(programschema.OccurrenceCall, callID, identity.ContentID{}, []identity.ContentID{entry, finish}, nil, 0) ||
+		!transaction.appendOccurrence(programschema.OccurrenceCallActivation, callID, identity.ContentID{}, []identity.ContentID{finish}, nil, 0) {
+		t.Fatal("failed to append canonical call occurrence fixture")
 	}
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		t.Fatalf("derive call rules: %+v", failure)
 	}
-	var dispatch, activation, effect RuleOccurrence
+	var dispatch, activation, effect programschema.RuleOccurrence
 	var dispatchCount, activationCount, effectCount int
 	for _, placement := range transaction.ruleOccurrences {
-		switch placement.key {
+		switch placement.Key() {
 		case "call-dispatch":
 			dispatch, dispatchCount = placement, dispatchCount+1
 		case "call-activation":
@@ -144,13 +145,16 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	if dispatchCount != 1 || activationCount != 1 || effectCount != 1 {
 		t.Fatalf("distinct Entry/Finish key counts dispatch=%d activation=%d effect=%d, want Finish count 1", dispatchCount, activationCount, effectCount)
 	}
-	if dispatch.input != finish || dispatch.stage != RuleStageCallDispatch || dispatch.point == entry || dispatch.point == finish {
+	dispatchInput, dispatchInputOK := dispatch.InputPoint()
+	activationInput, activationInputOK := activation.InputPoint()
+	effectInput, effectInputOK := effect.InputPoint()
+	if !dispatchInputOK || dispatchInput != finish || dispatch.Stage() != programschema.RuleStageCallDispatch || dispatch.PointID() == entry || dispatch.PointID() == finish {
 		t.Fatal("dispatch is not exact Finish -> Dispatch")
 	}
-	if activation.stage != RuleStageCallSummary || activation.input != dispatch.point || activation.point == activation.input {
+	if !activationInputOK || activation.Stage() != programschema.RuleStageCallSummary || activationInput != dispatch.PointID() || activation.PointID() == activationInput {
 		t.Fatal("activation is not exact Dispatch -> Summary")
 	}
-	if effect.stage != RuleStageCallEffect || effect.input != activation.point || effect.point == effect.input {
+	if !effectInputOK || effect.Stage() != programschema.RuleStageCallEffect || effectInput != activation.PointID() || effect.PointID() == effectInput {
 		t.Fatal("effect is not exact Summary -> Effect")
 	}
 
@@ -160,7 +164,7 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	wantDispatchWrites := []schema.Key{"call-dispatch", "heap-ingress", "pack-source", "value-source"}
 	found := false
 	for _, transfer := range transaction.localTransfers {
-		if transfer.from != finish || transfer.to != dispatch.point {
+		if transfer.from != finish || transfer.to != dispatch.PointID() {
 			continue
 		}
 		found = true

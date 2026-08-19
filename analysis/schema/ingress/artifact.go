@@ -6,10 +6,7 @@ package ingress
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -59,9 +56,7 @@ type Snapshot struct {
 	frozen          snapshotstore.Frozen
 	coldCatalog     identity.ContentID
 	vocabulary      structure.Table
-	placements      []RulePlacement
 	bodyExits       [][]identity.ContentID
-	occurrences     []Occurrence
 	observations    []DiagnosticObservation
 	staticTypeNodes []StaticTypeNode
 }
@@ -241,18 +236,6 @@ func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
 		return Event{}, false
 	}
 	return Event{row: row, kind: kind}, true
-}
-func (snapshot *Snapshot) RulePlacementCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.placements)
-}
-func (snapshot *Snapshot) RulePlacementAt(index int) (RulePlacement, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.placements) {
-		return RulePlacement{}, false
-	}
-	return snapshot.placements[index], true
 }
 func (snapshot *Snapshot) BodyTransportCount() int {
 	if !snapshot.Available() {
@@ -518,57 +501,6 @@ func (snapshot *Snapshot) HeapIndexAt(index int) (HeapIndex, bool) {
 	}
 	return HeapIndex{row: row}, true
 }
-func (snapshot *Snapshot) OccurrenceCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.occurrences)
-}
-func (snapshot *Snapshot) OccurrenceAt(index int) (Occurrence, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.occurrences) {
-		return Occurrence{}, false
-	}
-	return snapshot.occurrences[index], true
-}
-func (snapshot *Snapshot) OccurrenceKindCount(kind uint8) int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count := 0
-	for _, row := range snapshot.occurrences {
-		if row.kind == kind {
-			count++
-		}
-	}
-	return count
-}
-func (snapshot *Snapshot) OccurrenceKindAt(kind uint8, index int) (Occurrence, bool) {
-	if !snapshot.Available() || index < 0 {
-		return Occurrence{}, false
-	}
-	seen := 0
-	for _, row := range snapshot.occurrences {
-		if row.kind != kind {
-			continue
-		}
-		if seen == index {
-			return row, true
-		}
-		seen++
-	}
-	return Occurrence{}, false
-}
-func (snapshot *Snapshot) OccurrenceForID(kind uint8, id identity.ContentID) (Occurrence, bool) {
-	if !snapshot.Available() || !id.Available() {
-		return Occurrence{}, false
-	}
-	for _, row := range snapshot.occurrences {
-		if row.kind == kind && row.id == id {
-			return row, true
-		}
-	}
-	return Occurrence{}, false
-}
 
 type Point struct {
 	row  programschema.Point
@@ -670,33 +602,6 @@ type Event struct {
 func (row Event) Kind() EventKind              { return row.kind }
 func (row Event) RegionID() identity.ContentID { return row.row.RegionID() }
 func (row Event) PointID() identity.ContentID  { return row.row.PointID() }
-
-type RulePlacement struct {
-	key         schema.Key
-	stage       uint8
-	point       identity.ContentID
-	input       identity.ContentID
-	occurrence  identity.ContentID
-	predecessor identity.ContentID
-	output      identity.ContentID
-	hasOutput   bool
-	spanResult  bool
-	inputKind   uint8
-}
-
-func (row RulePlacement) Key() schema.Key                  { return row.key }
-func (row RulePlacement) Stage() uint8                     { return row.stage }
-func (row RulePlacement) PointID() identity.ContentID      { return row.point }
-func (row RulePlacement) InputPointID() identity.ContentID { return row.input }
-func (row RulePlacement) OccurrenceID() identity.ContentID { return row.occurrence }
-func (row RulePlacement) PredecessorRouteID() identity.ContentID {
-	return row.predecessor
-}
-func (row RulePlacement) OutputSemanticID() (identity.ContentID, bool) {
-	return row.output, row.hasOutput && row.output.Available()
-}
-func (row RulePlacement) SpanResult() bool { return row.spanResult }
-func (row RulePlacement) InputKind() uint8 { return row.inputKind }
 
 // BodyTransport is the ingress-specific engine template projection for one
 // body: its canonical entry memberships joined with the vocabulary-filtered
@@ -920,79 +825,6 @@ func (row StaticExpression) ID() identity.ContentID          { return row.row.ID
 func (row StaticExpression) ReferenceID() identity.ContentID { return row.row.ReferenceID() }
 func (row StaticExpression) Owner() identity.ContentID       { return row.row.Owner() }
 func (row StaticExpression) Available() bool                 { return row.row.Available() }
-
-type Occurrence struct {
-	kind    uint8
-	id      identity.ContentID
-	body    identity.ContentID
-	code    uint64
-	points  []identity.ContentID
-	inputs  []identity.ContentID
-	family  keyspace.Family
-	literal keyspace.LiteralValue
-	hasLit  bool
-}
-
-func (row Occurrence) ID() identity.ContentID { return row.id }
-func (row Occurrence) Code() uint64           { return row.code }
-func (row Occurrence) Kind() uint8            { return row.kind }
-func (row Occurrence) BodyID() (identity.ContentID, bool) {
-	return row.body, row.body.Available()
-}
-func (row Occurrence) PointCount() int { return len(row.points) }
-func (row Occurrence) PointAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.points) {
-		return identity.ContentID{}, false
-	}
-	return row.points[index], true
-}
-func (row Occurrence) InputCount() int { return len(row.inputs) }
-func (row Occurrence) InputAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.inputs) {
-		return identity.ContentID{}, false
-	}
-	return row.inputs[index], true
-}
-func (row Occurrence) Literal() (keyspace.Family, keyspace.LiteralValue, bool) {
-	return row.family, row.literal, row.hasLit
-}
-func (row Occurrence) ValueSourceSpanID() (identity.ContentID, bool) {
-	if row.kind != uint8(programartifact.OccurrenceValueSource) || len(row.inputs) != 1 {
-		return identity.ContentID{}, false
-	}
-	return row.inputs[0], row.inputs[0].Available()
-}
-func (row Occurrence) BinaryArithmetic() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
-	if row.kind != uint8(programartifact.OccurrenceBinaryArithmetic) || len(row.inputs) != 2 {
-		return identity.ContentID{}, identity.ContentID{}, 0, false
-	}
-	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
-}
-func (row Occurrence) BinaryEquality() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
-	if row.kind != uint8(programartifact.OccurrenceBinaryEquality) || len(row.inputs) < 2 {
-		return identity.ContentID{}, identity.ContentID{}, 0, false
-	}
-	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
-}
-func (row Occurrence) BinaryOrder() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
-	if row.kind != uint8(programartifact.OccurrenceBinaryOrder) || len(row.inputs) != 2 {
-		return identity.ContentID{}, identity.ContentID{}, 0, false
-	}
-	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
-}
-func (row Occurrence) BinaryPresenceRefinement() (identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool, bool) {
-	if row.kind != uint8(programartifact.OccurrenceBinaryPresenceRefinement) || len(row.inputs) != 4 {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false, false
-	}
-	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], row.code == 1, true
-}
-
-func (row Occurrence) OperationPredicateRefinement() (identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, uint8, bool, bool) {
-	if row.kind != uint8(programartifact.OccurrenceOperationPredicateRefinement) || len(row.inputs) != 4 {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, false, false
-	}
-	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], uint8(row.code & 0xff), row.code&(1<<8) != 0, true
-}
 
 type HeapIndex struct{ row programschema.HeapIndex }
 
@@ -1234,10 +1066,14 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 	if !coldPublished {
 		return nil, false
 	}
+	program := artifact.Program()
+	if !program.Available() {
+		return nil, false
+	}
 	snapshot := &Snapshot{
 		artifactID:  artifact.ID(),
-		programID:   artifact.CompileKey().ProgramID(),
-		schemaID:    artifact.CompileKey().SchemaDigest(),
+		programID:   program.ProgramID,
+		schemaID:    program.SchemaID,
 		frozen:      frozen,
 		coldCatalog: coldCatalog,
 		vocabulary:  vocabulary,
@@ -1275,22 +1111,30 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			return nil, false
 		}
 	}
-	snapshot.placements = make([]RulePlacement, 0, artifact.RulePlacementCount())
-	for index := 0; index < artifact.RulePlacementCount(); index++ {
-		row, ok := artifact.RulePlacementAt(index)
-		if !ok || !row.Key().Available() {
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	occurrencePointCount, occurrencePointsPublished := programschema.OccurrencePointFamily().Count(&snapshot.frozen, snapshot.coldCatalog)
+	occurrenceInputCount, occurrenceInputsPublished := programschema.OccurrenceInputFamily().Count(&snapshot.frozen, snapshot.coldCatalog)
+	if !rulesPublished || !occurrencesPublished || !occurrencePointsPublished || !occurrenceInputsPublished {
+		return nil, false
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		row, ok := program.OccurrenceAt(index)
+		pointOffset, pointWidth, pointSpanOK := row.PointSpan()
+		inputOffset, inputWidth, inputSpanOK := row.InputSpan()
+		if !ok || !row.Available() || !pointSpanOK || !inputSpanOK || uint64(pointOffset)+uint64(pointWidth) > uint64(occurrencePointCount) || uint64(inputOffset)+uint64(inputWidth) > uint64(occurrenceInputCount) {
 			return nil, false
 		}
-		point, _ := row.PointAt(0)
-		input, _ := row.InputPoint()
-		route, _ := row.PredecessorRouteID()
-		output, hasOutput := row.OutputSemanticID()
-		snapshot.placements = append(snapshot.placements, RulePlacement{
-			key: row.Key(), stage: uint8(row.Stage()), point: point, input: input,
-			occurrence: row.ID(), predecessor: route, output: output, hasOutput: hasOutput,
-			spanResult: programartifact.SpanResultOccurrence(row.OccurrenceKind()),
-			inputKind:  uint8(row.InputKind()),
-		})
+	}
+	for index := 0; index < ruleCount; index++ {
+		row, ok := program.RuleOccurrenceAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		parent, parentOK := row.Occurrence()
+		if !parentOK || uint64(parent) >= uint64(occurrenceCount) {
+			return nil, false
+		}
 	}
 	bodyCount, bodiesPublished := coldCount(snapshot.coldView(), programschema.BodyFamily())
 	if !bodiesPublished {
@@ -1333,24 +1177,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			uint64(argumentOffset)+uint64(argumentWidth) > uint64(argumentCount) {
 			return nil, false
 		}
-	}
-	snapshot.occurrences = make([]Occurrence, 0, artifact.OccurrenceCount())
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, ok := artifact.OccurrenceAt(index)
-		if !ok || !row.ID().Available() {
-			return nil, false
-		}
-		inputs, inputsOK := copyIDs(row.InputCount(), row.InputAt)
-		points, pointsOK := copyIDs(row.PointCount(), row.PointAt)
-		if !inputsOK || !pointsOK {
-			return nil, false
-		}
-		body, _ := row.BodyID()
-		family, literal, hasLit := row.Literal()
-		snapshot.occurrences = append(snapshot.occurrences, Occurrence{
-			kind: uint8(row.Kind()), id: row.ID(), body: body, code: row.Code(), points: points, inputs: inputs,
-			family: family, literal: literal, hasLit: hasLit,
-		})
 	}
 	snapshot.staticTypeNodes = make([]StaticTypeNode, 0, artifact.StaticTypeNodeCount())
 	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {

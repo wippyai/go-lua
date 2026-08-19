@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type rawHotQueryObservation struct {
@@ -330,6 +331,33 @@ type rawHotMountedPlan struct {
 	heapFacts        []heapdomain.Value
 }
 
+// rawHotRuleRows resolves the canonical RuleOccurrence ordinal to its parent
+// occurrence. RuleOccurrence carries placement metadata only; the parent
+// Program row remains the authority for the occurrence identity consumed by
+// the mounted domain schemas.
+type rawHotRuleRow struct {
+	rule       programschema.RuleOccurrence
+	occurrence programschema.Occurrence
+}
+
+func rawHotRuleRows(artifact *programartifact.Artifact, key string) []rawHotRuleRow {
+	program := artifact.Program()
+	count, published := program.RuleOccurrenceCountForKey(key)
+	if !published {
+		return nil
+	}
+	rows := make([]rawHotRuleRow, 0, count)
+	for index := 0; index < count; index++ {
+		rule, ruleOK := program.RuleOccurrenceForKeyAt(key, index)
+		ordinal, ordinalOK := rule.Occurrence()
+		occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+		if ruleOK && ordinalOK && occurrenceOK {
+			rows = append(rows, rawHotRuleRow{rule: rule, occurrence: occurrence})
+		}
+	}
+	return rows
+}
+
 func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.ContentID, artifact *programartifact.Artifact, heapMount heapdomain.ArtifactMount, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
 	t.Helper()
 	occurrenceMount, occurrenceMountOK := heapSchema.OccurrenceMountForModule(module)
@@ -342,20 +370,19 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 	var nilSourceAccess, tableSourceAccess heapdomain.IndexAccess
 	var nilSource, tableSource packdomain.SemanticSource
 	var mountedCount, fixedCount, tailCount, nilCount, sourceFactCount, nilSourceCount, tableSourceCount int
-	for index := 0; index < artifact.RulePlacementCountForKey("raw-get"); index++ {
-		row, rowOK := artifact.RulePlacementForKeyAt("raw-get", index)
-		access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), true)
+	getRows := rawHotRuleRows(artifact, "raw-get")
+	setRows := rawHotRuleRows(artifact, "raw-set")
+	for _, entry := range getRows {
+		occurrenceID := entry.occurrence.ID()
+		access, accessOK := occurrenceMount.IndexAccessForOccurrence(occurrenceID, true)
 		geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
-		if rowOK && accessOK && geometryOK && !getID.Available() {
-			getID, getAccess, getGeometry = row.ID(), access, geometry
+		if accessOK && geometryOK && !getID.Available() {
+			getID, getAccess, getGeometry = occurrenceID, access, geometry
 		}
 	}
-	for index := 0; index < artifact.RulePlacementCountForKey("raw-set"); index++ {
-		row, rowOK := artifact.RulePlacementForKeyAt("raw-set", index)
-		if !rowOK {
-			continue
-		}
-		access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), false)
+	for _, entry := range setRows {
+		occurrenceID := entry.occurrence.ID()
+		access, accessOK := occurrenceMount.IndexAccessForOccurrence(occurrenceID, false)
 		geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
 		if !accessOK || !geometryOK {
 			continue
@@ -392,7 +419,7 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 			if valueSchema.RuntimeKinds(sourceFact) == runtimekind.Bit(runtimekind.Nil) {
 				nilSourceCount++
 				if !setID.Available() {
-					setID, setGeometry, nilSourceAccess, nilSource = row.ID(), geometry, access, candidate
+					setID, setGeometry, nilSourceAccess, nilSource = occurrenceID, geometry, access, candidate
 				}
 			}
 		}
@@ -410,22 +437,19 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 		}
 	}
 	if !setID.Available() || nilSourceAccess == (heapdomain.IndexAccess{}) || !nilSource.Available() || tableSourceAccess == (heapdomain.IndexAccess{}) || !tableSource.Available() || nilSourceCount != 1 || tableSourceCount != 1 {
-		t.Fatalf("raw mounted nil/fixed write plan writes=%d mounted=%d fixed=%d tail=%d nil=%d facts=%d nilSources=%d tableSources=%d", artifact.RulePlacementCountForKey("raw-set"), mountedCount, fixedCount, tailCount, nilCount, sourceFactCount, nilSourceCount, tableSourceCount)
+		t.Fatalf("raw mounted nil/fixed write plan writes=%d mounted=%d fixed=%d tail=%d nil=%d facts=%d nilSources=%d tableSources=%d", len(setRows), mountedCount, fixedCount, tailCount, nilCount, sourceFactCount, nilSourceCount, tableSourceCount)
 	}
 	if getID == (identity.ContentID{}) {
 		t.Fatal("raw mounted read occurrence")
 	}
 	if getGeometry.BaseValueID == setGeometry.BaseValueID {
-		for index := 0; index < artifact.RulePlacementCountForKey("raw-get"); index++ {
-			row, rowOK := artifact.RulePlacementForKeyAt("raw-get", index)
-			if !rowOK {
-				continue
-			}
-			access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), true)
+		for _, entry := range getRows {
+			occurrenceID := entry.occurrence.ID()
+			access, accessOK := occurrenceMount.IndexAccessForOccurrence(occurrenceID, true)
 			geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
-			_, pointOK := row.PointAt(0)
+			pointOK := entry.rule.PointID().Available()
 			if accessOK && geometryOK && pointOK && geometry.BaseValueID != setGeometry.BaseValueID {
-				getID, getAccess, getGeometry = row.ID(), access, geometry
+				getID, getAccess, getGeometry = occurrenceID, access, geometry
 				break
 			}
 		}
@@ -435,17 +459,15 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 	}
 	var getPoint, setPoint identity.ContentID
 	var getPointOK, setPointOK bool
-	for index := 0; index < artifact.RulePlacementCountForKey("raw-get"); index++ {
-		candidate, candidateOK := artifact.RulePlacementForKeyAt("raw-get", index)
-		if candidateOK && candidate.ID() == getID {
-			getPoint, getPointOK = candidate.PointAt(0)
+	for _, entry := range getRows {
+		if entry.occurrence.ID() == getID {
+			getPoint, getPointOK = entry.rule.PointID(), entry.rule.PointID().Available()
 			break
 		}
 	}
-	for index := 0; index < artifact.RulePlacementCountForKey("raw-set"); index++ {
-		candidate, candidateOK := artifact.RulePlacementForKeyAt("raw-set", index)
-		if candidateOK && candidate.ID() == setID {
-			setPoint, setPointOK = candidate.PointAt(0)
+	for _, entry := range setRows {
+		if entry.occurrence.ID() == setID {
+			setPoint, setPointOK = entry.rule.PointID(), entry.rule.PointID().Available()
 			break
 		}
 	}

@@ -2,7 +2,7 @@ package value
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // SourceResult is the sealed Value-owned result of one unconditional Link
@@ -202,10 +202,14 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 		}
 		rows := &schema.sourceSeedMounts[mountIndex]
 		rows.occurrenceIndex = make(map[identity.ContentID]uint32)
-		artifact := mount.Snapshot()
-		for index := 0; index < artifact.OccurrenceCount(); index++ {
-			row, rowOK := artifact.OccurrenceAt(index)
-			if !rowOK || row.Kind() != uint8(programartifact.OccurrenceValueSource) && row.Kind() != uint8(programartifact.OccurrenceFormalEntry) {
+		program := mount.Program()
+		count, countOK := program.OccurrenceCount()
+		if !countOK {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.OccurrenceAt(index)
+			if !rowOK || row.Kind() != programschema.OccurrenceValueSource && row.Kind() != programschema.OccurrenceFormalEntry {
 				continue
 			}
 			id := row.ID()

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // The framing strings below are digest preimages. A staged point identity and a
@@ -84,11 +85,8 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 			entry:  {id: entry},
 			finish: {id: finish},
 		},
-		occurrences: []OccurrenceRow{
-			{kind: OccurrenceCall, id: callID, points: []identity.ContentID{entry, finish}},
-		},
 		occurrenceSpans: map[occurrenceLookup]occurrenceSpanGeometry{
-			{kind: OccurrenceCall, id: callID}: {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
+			{kind: programschema.OccurrenceCall, id: callID}: {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
 		},
 		localStages: make(map[identity.ContentID]identity.ContentID),
 		callStages:  make(map[identity.ContentID]callStageSet),
@@ -97,10 +95,13 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 			{kind: WTOEventPoint, point: finish},
 		},
 		issuance: transportDirectory(t, []IssuancePlacement{
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
-			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
 		}...),
+	}
+	if !transaction.appendOccurrence(programschema.OccurrenceCall, callID, identity.ContentID{}, []identity.ContentID{entry, finish}, nil, 0) {
+		t.Fatal("failed to append canonical call occurrence fixture")
 	}
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		t.Fatalf("derive call rules: %+v", failure)

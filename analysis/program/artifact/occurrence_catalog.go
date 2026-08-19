@@ -14,8 +14,8 @@ import (
 type occurrenceCausalIndex struct {
 	nilSources         map[identity.ContentID]struct{}
 	storageOrigins     map[identity.ContentID]identity.ContentID
-	binaries           []OccurrenceRow
-	binaryByID         map[identity.ContentID]OccurrenceRow
+	binaries           []uint32
+	binaryByID         map[identity.ContentID]uint32
 	claims             map[identity.ContentID]identity.ContentID
 	branchEdges        map[identity.ContentID][]EnvironmentEdge
 	bodyByEntry        map[identity.ContentID]identity.ContentID
@@ -36,7 +36,7 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 	index := occurrenceCausalIndex{
 		nilSources:         make(map[identity.ContentID]struct{}),
 		storageOrigins:     make(map[identity.ContentID]identity.ContentID),
-		binaryByID:         make(map[identity.ContentID]OccurrenceRow),
+		binaryByID:         make(map[identity.ContentID]uint32),
 		claims:             make(map[identity.ContentID]identity.ContentID),
 		branchEdges:        make(map[identity.ContentID][]EnvironmentEdge),
 		bodyByEntry:        make(map[identity.ContentID]identity.ContentID, len(compiler.bodies)),
@@ -92,20 +92,20 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 		}
 	}
 	for occurrenceIndex, row := range compiler.occurrences {
-		if !row.Available() {
+		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
-		case OccurrenceValueSource:
+		case programschema.OccurrenceValueSource:
 			if row.Code() == 1 {
-				span, spanOK := row.ValueSourceSpanID()
+				span, spanOK := occurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
 				if !spanOK {
 					return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceValueSourceAppend)
 				}
 				index.nilSources[span] = struct{}{}
 			}
-		case OccurrenceStorageRead:
-			cell, span, readOK := row.StorageRead()
+		case programschema.OccurrenceStorageRead:
+			cell, span, readOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
 			if !readOK {
 				return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceStorageRead)
 			}
@@ -113,11 +113,11 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 				return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceStorageRead)
 			}
 			index.storageOrigins[span] = cell
-		case OccurrenceBinaryEquality:
-			index.binaries = append(index.binaries, row)
-			index.binaryByID[row.ID()] = row
-		case OccurrenceValueClaim:
-			operand, operandOK := row.InputAt(0)
+		case programschema.OccurrenceBinaryEquality:
+			index.binaries = append(index.binaries, uint32(occurrenceIndex))
+			index.binaryByID[row.ID()] = uint32(occurrenceIndex)
+		case programschema.OccurrenceValueClaim:
+			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -174,7 +174,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			}
 			points = compiler.pointIDs(finish)
 		}
-		if !compiler.appendOccurrence(OccurrenceValues, values.ID(), values.BodyPathID(), points, nil, 0) {
+		if !compiler.appendOccurrence(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), points, nil, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
@@ -182,11 +182,11 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			memberTerm, memberTermOK := authoredValues.Member(term, memberIndex)
 			memberID, memberIDOK := compiler.input.ValueSubjectID(memberTerm)
 			if !ok || !memberTermOK || !memberIDOK ||
-				!compiler.appendOccurrence(OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberID}, uint64(memberIndex)) {
+				!compiler.appendOccurrence(programschema.OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberID}, uint64(memberIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, memberIndex, CompileReasonOccurrenceValues)
 			}
 		}
-		if tail, ok := values.Tail(); ok && !compiler.appendOccurrence(OccurrenceValuesTail, tail.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID()}, uint64(tail.Kind())) {
+		if tail, ok := values.Tail(); ok && !compiler.appendOccurrence(programschema.OccurrenceValuesTail, tail.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID()}, uint64(tail.Kind())) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 	}
@@ -237,8 +237,12 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure(index occur
 	if compiler == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	for _, binary := range index.binaries {
-		left, right, op, equalityOK := binary.BinaryEquality()
+	for _, binaryOrdinal := range index.binaries {
+		if uint64(binaryOrdinal) >= uint64(len(compiler.occurrences)) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(binaryOrdinal), -1, CompileReasonOccurrenceUnavailable)
+		}
+		binary := compiler.occurrences[binaryOrdinal]
+		left, right, op, equalityOK := occurrenceBinaryEquality(binary, compiler.occurrenceInputs)
 		if !equalityOK {
 			continue
 		}
@@ -269,10 +273,9 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure(index occur
 				code = uint64(op)
 			}
 			inputs := []identity.ContentID{call.id, call.subject, operand, routeID}
-			appended := compiler.appendOccurrence(OccurrenceOperationPredicateRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code)
+			appended := compiler.appendOccurrence(programschema.OccurrenceOperationPredicateRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code)
 			if !appended ||
-				!compiler.occurrences[len(compiler.occurrences)-1].Available() ||
-				!compiler.recordOccurrencePredecessor(OccurrenceOperationPredicateRefinement, id, routeID, []identity.ContentID{selected.To()}) {
+				!compiler.recordOccurrencePredecessor(programschema.OccurrenceOperationPredicateRefinement, id, routeID, []identity.ContentID{selected.To()}) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, armIndex, CompileReasonOccurrenceUnavailable)
 			}
 		}
@@ -289,8 +292,12 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure(index occurrenc
 	if compiler == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	for binaryIndex, binary := range index.binaries {
-		left, right, op, equalityOK := binary.BinaryEquality()
+	for binaryIndex, binaryOrdinal := range index.binaries {
+		if uint64(binaryOrdinal) >= uint64(len(compiler.occurrences)) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(binaryOrdinal), -1, CompileReasonOccurrenceUnavailable)
+		}
+		binary := compiler.occurrences[binaryOrdinal]
+		left, right, op, equalityOK := occurrenceBinaryEquality(binary, compiler.occurrenceInputs)
 		if !equalityOK {
 			continue
 		}
@@ -330,11 +337,10 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure(index occurrenc
 			if !id.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, binaryIndex, armIndex, CompileReasonOccurrenceUnavailable)
 			}
-			if !compiler.appendOccurrence(OccurrenceBinaryPresenceRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code) {
+			if !compiler.appendOccurrence(programschema.OccurrenceBinaryPresenceRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, binaryIndex, armIndex, CompileReasonOccurrenceUnavailable)
 			}
-			if !compiler.occurrences[len(compiler.occurrences)-1].Available() ||
-				!compiler.recordOccurrencePredecessor(OccurrenceBinaryPresenceRefinement, id, routeID, []identity.ContentID{selected.To()}) {
+			if !compiler.recordOccurrencePredecessor(programschema.OccurrenceBinaryPresenceRefinement, id, routeID, []identity.ContentID{selected.To()}) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, binaryIndex, armIndex, CompileReasonOccurrenceUnavailable)
 			}
 		}

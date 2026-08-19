@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // storageTransferKind is the closed Program occurrence family whose fixed
@@ -33,13 +33,13 @@ func (kind storageTransferKind) positional() bool {
 	return kind == storageTransferBind || kind == storageTransferWrite
 }
 
-func storageTransferKindForArtifact(kind programartifact.OccurrenceKind) (storageTransferKind, bool) {
+func storageTransferKindForArtifact(kind programschema.OccurrenceKind) (storageTransferKind, bool) {
 	switch kind {
-	case programartifact.OccurrenceStorageRead:
+	case programschema.OccurrenceStorageRead:
 		return storageTransferRead, true
-	case programartifact.OccurrenceStorageBindTransfer:
+	case programschema.OccurrenceStorageBindTransfer:
 		return storageTransferBind, true
-	case programartifact.OccurrenceStorageWrite:
+	case programschema.OccurrenceStorageWrite:
 		return storageTransferWrite, true
 	default:
 		return storageTransferInvalid, false
@@ -209,9 +209,14 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			return SealFailureStorageTransferMount
 		}
 		artifact := mount.Snapshot()
-		for rowIndex := 0; rowIndex < artifact.OccurrenceCount(); rowIndex++ {
-			row, rowOK := artifact.OccurrenceAt(rowIndex)
-			kind, kindOK := storageTransferKindForArtifact(programartifact.OccurrenceKind(row.Kind()))
+		program := artifact.Program()
+		occurrenceCount, occurrenceCountOK := program.OccurrenceCount()
+		if !occurrenceCountOK {
+			return SealFailureStorageTransferMount
+		}
+		for rowIndex := 0; rowIndex < occurrenceCount; rowIndex++ {
+			row, rowOK := program.OccurrenceAt(rowIndex)
+			kind, kindOK := storageTransferKindForArtifact(row.Kind())
 			if !rowOK || !kindOK {
 				continue
 			}
@@ -222,12 +227,19 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			var fromID, toID identity.ContentID
 			switch kind {
 			case storageTransferRead:
-				fromID, _ = row.InputAt(0)
+				input, inputOK := program.OccurrenceInputFor(rowIndex, 0)
+				if !inputOK {
+					return SealFailureStorageTransferMount
+				}
+				fromID = input.InputID()
 				toID = row.ID()
 			case storageTransferBind, storageTransferWrite:
-				_, _ = row.InputAt(0)
-				fromID, _ = row.InputAt(1)
-				toID, _ = row.InputAt(2)
+				from, fromOK := program.OccurrenceInputFor(rowIndex, 1)
+				to, toOK := program.OccurrenceInputFor(rowIndex, 2)
+				if !fromOK || !toOK {
+					return SealFailureStorageTransferMount
+				}
+				fromID, toID = from.InputID(), to.InputID()
 			}
 			if failure := schema.addArtifactStorageTransfer(module, kind, row.ID(), position, fromID, toID); failure != SealFailureNone {
 				return failure

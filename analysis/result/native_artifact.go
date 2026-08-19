@@ -2,8 +2,8 @@ package result
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // appendNativeArtifactSummaryRows reads the cold Program-owned native summary
@@ -25,21 +25,21 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 		}
 		for summaryIndex := 0; summaryIndex < exactCount; summaryIndex++ {
 			summary, summaryOK := mount.Program.ExactScalarSummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceBinaryArithmetic), summary.OccurrenceID())
+			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID {
 				return false
 			}
-			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, summary.OccurrenceID())
+			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, mount.Program.Program, summary.OccurrenceID())
 			if !pointOK || !appendNativeStaticScalarRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID, point) {
 				return false
 			}
 		}
 		for summaryIndex := 0; summaryIndex < arithmeticCount; summaryIndex++ {
 			summary, summaryOK := mount.Program.ArithmeticSummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceBinaryArithmetic), summary.OccurrenceID())
+			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
-			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, summary.OccurrenceID())
+			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, mount.Program.Program, summary.OccurrenceID())
 			if !summaryOK || !occurrenceOK || !bodyOK || !pointOK || summary.BodyPathID() != bodyID ||
 				!appendNativeArithmeticRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), occurrence.ID(), bodyID, point) {
 				return false
@@ -47,7 +47,7 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 		}
 		for summaryIndex := 0; summaryIndex < unaryCount; summaryIndex++ {
 			summary, summaryOK := mount.Program.UnarySummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceUnary), summary.OccurrenceID())
+			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceUnary, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID ||
 				!appendNativeUnaryRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID) {
@@ -58,23 +58,31 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 	return true
 }
 
-func exactNativeScalarRulePoint(snapshot *ingress.Snapshot, occurrence identity.ContentID) (identity.ContentID, bool) {
+func exactNativeScalarRulePoint(snapshot *ingress.Snapshot, program programschema.Program, occurrence identity.ContentID) (identity.ContentID, bool) {
 	if snapshot == nil || !snapshot.Available() || !occurrence.Available() {
+		return identity.ContentID{}, false
+	}
+	if !program.Available() {
 		return identity.ContentID{}, false
 	}
 	var point identity.ContentID
 	found := false
-	for index := 0; index < snapshot.RulePlacementCount(); index++ {
-		row, rowOK := snapshot.RulePlacementAt(index)
-		output, outputOK := row.OutputSemanticID()
+	ruleCount, rulePublished := program.RuleOccurrenceCount()
+	if !rulePublished {
+		return identity.ContentID{}, false
+	}
+	for index := 0; index < ruleCount; index++ {
+		row, rowOK := program.RuleOccurrenceAt(index)
+		ordinal, ordinalOK := row.Occurrence()
+		parent, parentOK := program.OccurrenceAt(int(ordinal))
 		candidate := row.PointID()
-		if !rowOK || !outputOK || !candidate.Available() {
+		if !rowOK || !ordinalOK || !parentOK || !candidate.Available() {
 			continue
 		}
-		if row.OccurrenceID() != occurrence || output != occurrence {
+		if parent.ID() != occurrence {
 			continue
 		}
-		if found || row.Stage() != uint8(programartifact.RuleStageLocal) {
+		if found || row.Stage() != programschema.RuleStageLocal {
 			return identity.ContentID{}, false
 		}
 		point, found = candidate, true

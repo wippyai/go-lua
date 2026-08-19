@@ -172,3 +172,19 @@ func ValuesMemberFamily() Family[ValuesMember] {
 func HeapIndexFamily() Family[HeapIndex] {
 	return Family[HeapIndex]{slot: slotHeapIndex, name: "heap-index"}
 }
+
+func OccurrenceFamily() Family[Occurrence] {
+	return Family[Occurrence]{slot: slotOccurrence, name: "occurrence"}
+}
+
+func OccurrencePointFamily() Family[OccurrencePoint] {
+	return Family[OccurrencePoint]{slot: slotOccurrencePoint, name: "occurrence-point"}
+}
+
+func OccurrenceInputFamily() Family[OccurrenceInput] {
+	return Family[OccurrenceInput]{slot: slotOccurrenceInput, name: "occurrence-input"}
+}
+
+func RuleOccurrenceFamily() Family[RuleOccurrence] {
+	return Family[RuleOccurrence]{slot: slotRuleOccurrence, name: "rule-occurrence"}
+}

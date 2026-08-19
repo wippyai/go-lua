@@ -3,7 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // IssuanceForm is the placement form one occurrence subscription takes.
@@ -52,10 +52,10 @@ func (requirement IssuanceRequirement) valid() bool {
 // IssuancePlacement is one sealed rule.Issues row as the compiler places it.
 // Key is the declaration identity.
 type IssuancePlacement struct {
-	Occurrence  OccurrenceKind
+	Occurrence  programschema.OccurrenceKind
 	Form        IssuanceForm
-	Input       RuleInputKind
-	Stage       RuleStage
+	Input       programschema.RuleInputKind
+	Stage       programschema.RuleStage
 	Requirement IssuanceRequirement
 	Code        uint64
 	HasCode     bool
@@ -65,8 +65,8 @@ type IssuancePlacement struct {
 }
 
 func (placement IssuancePlacement) Available() bool {
-	return placement.Occurrence.valid() && placement.Form.valid() &&
-		placement.Input.valid() && placement.Stage.valid() &&
+	return placement.Occurrence.Valid() && placement.Form.valid() &&
+		placement.Input.Valid() && placement.Stage.Valid() &&
 		placement.Requirement.valid() &&
 		placement.Key.Available() && placement.Writes.Available()
 }
@@ -88,13 +88,13 @@ type IssuanceDirectory struct {
 
 const (
 	issuanceFormLimit = IssuanceFormCallStage + 1
-	ruleStageLimit    = RuleStageCallEffect + 1
+	ruleStageLimit    = programschema.RuleStageCallEffect + 1
 )
 
 // NewIssuanceDirectory admits one sealed catalog. A framing names exactly one
 // cut, so two members declaring one framing are refused rather than sealed into
 // a catalog that stages two cuts onto one point.
-func NewIssuanceDirectory(placements []IssuancePlacement, formFraming map[IssuanceForm]string, stageFraming map[RuleStage]string) (IssuanceDirectory, bool) {
+func NewIssuanceDirectory(placements []IssuancePlacement, formFraming map[IssuanceForm]string, stageFraming map[programschema.RuleStage]string) (IssuanceDirectory, bool) {
 	directory := IssuanceDirectory{placements: append([]IssuancePlacement(nil), placements...)}
 	for _, placement := range directory.placements {
 		if !placement.Available() {
@@ -113,7 +113,7 @@ func NewIssuanceDirectory(placements []IssuancePlacement, formFraming map[Issuan
 		directory.forms[form] = framing
 	}
 	for stage, framing := range stageFraming {
-		if !stage.valid() || framing == "" {
+		if !stage.Valid() || framing == "" {
 			return IssuanceDirectory{}, false
 		}
 		if _, duplicate := declared[framing]; duplicate {
@@ -148,8 +148,8 @@ func (directory IssuanceDirectory) formFraming(form IssuanceForm) (string, bool)
 
 // stageFraming is the declared digest framing of the cut one native call stage
 // raises.
-func (directory IssuanceDirectory) stageFraming(stage RuleStage) (string, bool) {
-	if !stage.valid() {
+func (directory IssuanceDirectory) stageFraming(stage programschema.RuleStage) (string, bool) {
+	if !stage.Valid() {
 		return "", false
 	}
 	framing := directory.stages[stage]
@@ -250,8 +250,8 @@ func (directory IssuanceDirectory) transportKeysFor(included map[schema.Key]stru
 
 // stageAxes is the mounted factor axis set the rules issued at one execution
 // stage produce.
-func (directory IssuanceDirectory) stageAxes(stage RuleStage) (map[schema.Key]struct{}, bool) {
-	if !stage.valid() {
+func (directory IssuanceDirectory) stageAxes(stage programschema.RuleStage) (map[schema.Key]struct{}, bool) {
+	if !stage.Valid() {
 		return nil, false
 	}
 	axes := make(map[schema.Key]struct{})
@@ -283,8 +283,8 @@ type callStageTransport struct {
 }
 
 func (directory IssuanceDirectory) callStageTransport() (callStageTransport, bool) {
-	effectAxes, effectOK := directory.stageAxes(RuleStageCallEffect)
-	dispatchAxes, dispatchOK := directory.stageAxes(RuleStageCallDispatch)
+	effectAxes, effectOK := directory.stageAxes(programschema.RuleStageCallEffect)
+	dispatchAxes, dispatchOK := directory.stageAxes(programschema.RuleStageCallDispatch)
 	if !effectOK || !dispatchOK || len(effectAxes) == 0 || len(dispatchAxes) == 0 {
 		return callStageTransport{}, false
 	}
@@ -301,16 +301,16 @@ func (directory IssuanceDirectory) callStageTransport() (callStageTransport, boo
 // family it belongs to, the payload code it carries, and the operand shape the
 // row itself has. The requirement is decided here rather than after placement,
 // so a row an owner cannot seal an operand for is never placed.
-func (compiler *compiler) matching(row OccurrenceRow) ([]IssuancePlacement, bool) {
-	if !row.kind.valid() {
+func (compiler *compiler) matching(row programschema.Occurrence) ([]IssuancePlacement, bool) {
+	if !row.Kind().Valid() {
 		return nil, false
 	}
 	var matched []IssuancePlacement
 	for _, placement := range compiler.issuance.placements {
-		if !placement.Available() || placement.Occurrence != row.kind {
+		if !placement.Available() || placement.Occurrence != row.Kind() {
 			continue
 		}
-		if placement.HasCode && placement.Code != row.code {
+		if placement.HasCode && placement.Code != row.Code() {
 			continue
 		}
 		admissible, decided := compiler.requirementAdmits(placement.Requirement, row)
@@ -330,12 +330,12 @@ func (compiler *compiler) matching(row OccurrenceRow) ([]IssuancePlacement, bool
 // requirement naming a geometry the row's family does not carry is a
 // declaration the artifact cannot honor, and it refuses the compile rather
 // than placing the row on an unstated reading.
-func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row OccurrenceRow) (bool, bool) {
+func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row programschema.Occurrence) (bool, bool) {
 	switch requirement {
 	case IssuanceRequirementUnrestricted:
 		return true, true
 	case IssuanceRequirementCallPlainUnary:
-		call, found := compiler.callForID(row.id)
+		call, found := compiler.callForID(row.ID())
 		if !found {
 			return false, false
 		}
@@ -366,16 +366,22 @@ func (compiler *compiler) callForID(id identity.ContentID) (programschema.Call, 
 	return row, found
 }
 
-func (compiler *compiler) applyIssuance(row OccurrenceRow, ordinal uint32, geometry occurrenceSpanGeometry, finish []identity.ContentID, placement IssuancePlacement) bool {
+func (compiler *compiler) applyIssuance(row programschema.Occurrence, ordinal uint32, geometry occurrenceSpanGeometry, finish []identity.ContentID, placement IssuancePlacement) bool {
 	if !placement.Available() {
 		return false
 	}
-	if row.kind == OccurrenceValues && len(row.points) == 0 {
-		return true
+	if row.Kind() == programschema.OccurrenceValues {
+		_, pointCount, pointOK := row.PointSpan()
+		if !pointOK {
+			return false
+		}
+		if pointCount == 0 {
+			return true
+		}
 	}
 	switch placement.Form {
 	case IssuanceFormBase:
-		return compiler.appendBaseIssuance(row, ordinal, finish, placement)
+		return compiler.appendBaseIssuance(ordinal, finish, placement)
 	case IssuanceFormLocal:
 		return compiler.appendLocalIssuance(ordinal, geometry, finish, placement)
 	case IssuanceFormComputation:
@@ -389,22 +395,20 @@ func (compiler *compiler) applyIssuance(row OccurrenceRow, ordinal uint32, geome
 	}
 }
 
-func (compiler *compiler) appendBaseIssuance(row OccurrenceRow, ordinal uint32, finish []identity.ContentID, issued IssuancePlacement) bool {
-	if len(finish) == 0 || issued.Input != RuleInputNone {
+func (compiler *compiler) appendBaseIssuance(ordinal uint32, finish []identity.ContentID, issued IssuancePlacement) bool {
+	if len(finish) == 0 || issued.Input != programschema.RuleInputNone {
 		return false
 	}
 	for _, point := range finish {
-		placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: point, stage: RuleStageBase, inputKind: issued.Input}
-		if !placement.Available() {
+		if !compiler.appendRuleOccurrence(issued.Key, ordinal, point, identity.ContentID{}, programschema.RuleStageBase, issued.Input, identity.ContentID{}) {
 			return false
 		}
-		compiler.ruleOccurrences = append(compiler.ruleOccurrences, placement)
 	}
 	return true
 }
 
 func (compiler *compiler) appendLocalIssuance(ordinal uint32, geometry occurrenceSpanGeometry, finish []identity.ContentID, issued IssuancePlacement) bool {
-	if len(finish) == 0 || issued.Input == RuleInputNone || issued.Input == RuleInputPredecessor || issued.Input == RuleInputEntry && len(geometry.entry) != 1 {
+	if len(finish) == 0 || issued.Input == programschema.RuleInputNone || issued.Input == programschema.RuleInputPredecessor || issued.Input == programschema.RuleInputEntry && len(geometry.entry) != 1 {
 		return false
 	}
 	for _, base := range finish {
@@ -413,29 +417,27 @@ func (compiler *compiler) appendLocalIssuance(ordinal uint32, geometry occurrenc
 			return false
 		}
 		input := base
-		if issued.Input == RuleInputEntry {
+		if issued.Input == programschema.RuleInputEntry {
 			input = geometry.entry[0]
 		}
-		placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: stage, input: input, stage: RuleStageLocal, inputKind: issued.Input}
-		if !placement.Available() {
+		if !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, input, programschema.RuleStageLocal, issued.Input, identity.ContentID{}) {
 			return false
 		}
-		compiler.ruleOccurrences = append(compiler.ruleOccurrences, placement)
 	}
 	return true
 }
 
-func (compiler *compiler) appendComputationIssuance(row OccurrenceRow, ordinal uint32, finish []identity.ContentID, issued IssuancePlacement) bool {
-	if len(finish) == 0 || len(row.inputs) < 2 {
+func (compiler *compiler) appendComputationIssuance(row programschema.Occurrence, ordinal uint32, finish []identity.ContentID, issued IssuancePlacement) bool {
+	left, leftOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+	right, rightOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
+	if len(finish) == 0 || !leftOK || !rightOK {
 		return false
 	}
 	for _, base := range finish {
-		stage, stageOK := compiler.localComputationStage(base, issued.Key, row.id, row.inputs[0], row.inputs[1])
-		placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: stage, input: base, stage: RuleStageLocal, inputKind: RuleInputFinish}
-		if !stageOK || !placement.Available() {
+		stage, stageOK := compiler.localComputationStage(base, issued.Key, row.ID(), left, right)
+		if !stageOK || !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, base, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}) {
 			return false
 		}
-		compiler.ruleOccurrences = append(compiler.ruleOccurrences, placement)
 	}
 	return true
 }
@@ -459,16 +461,14 @@ func (compiler *compiler) appendLocalPredecessorIssuance(ordinal uint32, geometr
 		}
 	}
 	stage, stageOK := compiler.predecessorStage(predecessor.to)
-	placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: stage, input: predecessor.to, stage: RuleStageLocal, inputKind: RuleInputPredecessor, route: geometry.route}
-	if !finishMember || !stageOK || !placement.Available() {
+	if !finishMember || !stageOK || !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, predecessor.to, programschema.RuleStageLocal, programschema.RuleInputPredecessor, geometry.route) {
 		return false
 	}
-	compiler.ruleOccurrences = append(compiler.ruleOccurrences, placement)
 	return true
 }
 
 func (compiler *compiler) appendCallStageIssuance(ordinal uint32, finish []identity.ContentID, issued IssuancePlacement) bool {
-	if len(finish) == 0 || issued.Stage < RuleStageCallDispatch || issued.Stage > RuleStageCallEffect {
+	if len(finish) == 0 || issued.Stage < programschema.RuleStageCallDispatch || issued.Stage > programschema.RuleStageCallEffect {
 		return false
 	}
 	for _, base := range finish {
@@ -478,16 +478,14 @@ func (compiler *compiler) appendCallStageIssuance(ordinal uint32, finish []ident
 		}
 		point, input := stages.dispatch, base
 		switch issued.Stage {
-		case RuleStageCallSummary:
+		case programschema.RuleStageCallSummary:
 			point, input = stages.summary, stages.dispatch
-		case RuleStageCallEffect:
+		case programschema.RuleStageCallEffect:
 			point, input = stages.effect, stages.summary
 		}
-		placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: point, input: input, stage: issued.Stage, inputKind: RuleInputFinish}
-		if !placement.Available() {
+		if !compiler.appendRuleOccurrence(issued.Key, ordinal, point, input, issued.Stage, programschema.RuleInputFinish, identity.ContentID{}) {
 			return false
 		}
-		compiler.ruleOccurrences = append(compiler.ruleOccurrences, placement)
 	}
 	return true
 }

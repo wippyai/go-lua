@@ -198,6 +198,10 @@ func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
 		{StaticInputFamily().slot, StaticInputFamily().name},
 		{LocalTransferFamily().slot, LocalTransferFamily().name},
 		{LocalTransferWriteFamily().slot, LocalTransferWriteFamily().name},
+		{OccurrenceFamily().slot, OccurrenceFamily().name},
+		{OccurrencePointFamily().slot, OccurrencePointFamily().name},
+		{OccurrenceInputFamily().slot, OccurrenceInputFamily().name},
+		{RuleOccurrenceFamily().slot, RuleOccurrenceFamily().name},
 	}
 	slots := make(map[uint32]string, len(declared))
 	names := make(map[string]uint32, len(declared))

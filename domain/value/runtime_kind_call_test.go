@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -58,9 +58,14 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 		t.Fatalf("seal schemas heap=%s value=%s", heapFailure, valueFailure)
 	}
 
-	for index := 0; index < snapshot.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
-		if !occurrenceOK || occurrence.Kind() != uint8(programartifact.OccurrenceCall) {
+	canonical := snapshot.Program()
+	occurrenceCount, occurrencesPublished := canonical.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		occurrence, occurrenceOK := canonical.OccurrenceAt(index)
+		if !occurrenceOK || occurrence.Kind() != programschema.OccurrenceCall {
 			continue
 		}
 		operand, operandOK := values.RuntimeKindCall(module, occurrence.ID())
@@ -131,13 +136,18 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 	}
 
 	refinements := 0
-	for index := 0; index < snapshot.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
-		if !occurrenceOK || occurrence.Kind() != uint8(programartifact.OccurrenceOperationPredicateRefinement) {
+	canonical := snapshot.Program()
+	occurrenceCount, occurrencesPublished := canonical.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		occurrence, occurrenceOK := canonical.OccurrenceAt(index)
+		if !occurrenceOK || occurrence.Kind() != programschema.OccurrenceOperationPredicateRefinement {
 			continue
 		}
-		_, _, operandID, _, _, _, rowOK := occurrence.OperationPredicateRefinement()
-		if !rowOK || !operandID.Available() {
+		operandID, operandOK := canonical.OccurrenceInputID(index, 2)
+		if !operandOK || !operandID.Available() {
 			t.Fatal("operation predicate refinement row")
 		}
 		row, rowFound := values.RuntimeKindCall(module, occurrence.ID())

@@ -21,6 +21,10 @@ type Publication struct {
 	Values               []Values
 	ValuesMembers        []ValuesMember
 	HeapIndexes          []HeapIndex
+	Occurrences          []Occurrence
+	OccurrencePoints     []OccurrencePoint
+	OccurrenceInputs     []OccurrenceInput
+	RuleOccurrences      []RuleOccurrence
 	ExactScalarSummaries []ExactScalarSummary
 	ArithmeticSummaries  []ArithmeticSummary
 	UnarySummaries       []UnarySummary
@@ -67,6 +71,10 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		ValuesFamily().Put(&builder, publication.Values, catalog) &&
 		ValuesMemberFamily().Put(&builder, publication.ValuesMembers, catalog) &&
 		HeapIndexFamily().Put(&builder, publication.HeapIndexes, catalog) &&
+		OccurrenceFamily().Put(&builder, publication.Occurrences, catalog) &&
+		OccurrencePointFamily().Put(&builder, publication.OccurrencePoints, catalog) &&
+		OccurrenceInputFamily().Put(&builder, publication.OccurrenceInputs, catalog) &&
+		RuleOccurrenceFamily().Put(&builder, publication.RuleOccurrences, catalog) &&
 		ExactScalarSummaryFamily().Put(&builder, publication.ExactScalarSummaries, catalog) &&
 		ArithmeticSummaryFamily().Put(&builder, publication.ArithmeticSummaries, catalog) &&
 		UnarySummaryFamily().Put(&builder, publication.UnarySummaries, catalog) &&

@@ -50,7 +50,6 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 	}
 	states := make(map[identity.ContentID]exactScalarState)
 	var equations []exactScalarEquation
-	var arithmetic []OccurrenceRow
 
 	join := func(id identity.ContentID, incoming exactScalarState) bool {
 		if !id.Available() || !incoming.known() {
@@ -106,12 +105,12 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 	}
 
 	for index, row := range compiler.occurrences {
-		if !row.Available() {
+		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
-		case OccurrenceValueSource:
-			span, spanOK := row.ValueSourceSpanID()
+		case programschema.OccurrenceValueSource:
+			span, spanOK := occurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
 			family, literal, literalOK := row.Literal()
 			if !spanOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
@@ -123,42 +122,43 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 				join(row.ID(), unknown)
 				join(span, unknown)
 			}
-		case OccurrenceValuesMember:
-			if row.InputCount() != 2 {
+		case programschema.OccurrenceValuesMember:
+			inputCount, inputCountOK := occurrenceInputCount(row, compiler.occurrenceInputs)
+			if !inputCountOK || inputCount != 2 {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValues)
 			}
-			span, spanOK := row.InputAt(1)
+			span, spanOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
 			if !spanOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValues)
 			}
 			equations = append(equations, exactScalarEquation{kind: exactScalarEquationCopy, output: row.ID(), left: span})
-		case OccurrenceStorageRead:
-			cell, span, readOK := row.StorageRead()
+		case programschema.OccurrenceStorageRead:
+			cell, span, readOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
 			if !readOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 			}
 			equations = append(equations,
 				exactScalarEquation{kind: exactScalarEquationCopy, output: span, left: cell},
 				exactScalarEquation{kind: exactScalarEquationCopy, output: row.ID(), left: cell})
-		case OccurrenceStorageBindTransfer, OccurrenceStorageWrite:
-			if row.InputCount() < 3 {
+		case programschema.OccurrenceStorageBindTransfer, programschema.OccurrenceStorageWrite:
+			inputCount, inputCountOK := occurrenceInputCount(row, compiler.occurrenceInputs)
+			if !inputCountOK || inputCount < 3 {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
-			from, fromOK := row.InputAt(1)
-			to, toOK := row.InputAt(2)
+			from, fromOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
+			to, toOK := occurrenceInputID(row, compiler.occurrenceInputs, 2)
 			if !fromOK || !toOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
 			equations = append(equations, exactScalarEquation{kind: exactScalarEquationCopy, output: to, left: from})
-		case OccurrenceBinaryArithmetic:
-			left, right, op, arithmeticOK := row.BinaryArithmetic()
+		case programschema.OccurrenceBinaryArithmetic:
+			left, right, op, arithmeticOK := occurrenceBinaryArithmetic(row, compiler.occurrenceInputs)
 			if !arithmeticOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			equations = append(equations, exactScalarEquation{kind: exactScalarEquationArithmetic, output: row.ID(), left: left, right: right, op: op})
-			arithmetic = append(arithmetic, row)
-		case OccurrenceUnary:
-			operand, operandOK := row.InputAt(0)
+		case programschema.OccurrenceUnary:
+			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -167,15 +167,15 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 			} else {
 				join(row.ID(), unknown)
 			}
-		case OccurrenceSelect, OccurrenceValueClaim, OccurrenceBinaryEquality, OccurrenceBinaryOrder:
+		case programschema.OccurrenceSelect, programschema.OccurrenceValueClaim, programschema.OccurrenceBinaryEquality, programschema.OccurrenceBinaryOrder:
 			join(row.ID(), unknown)
-		case OccurrenceIndexRead:
-			if row.InputCount() >= 3 {
-				if result, ok := row.InputAt(2); ok {
+		case programschema.OccurrenceIndexRead:
+			if inputCount, inputCountOK := occurrenceInputCount(row, compiler.occurrenceInputs); inputCountOK && inputCount >= 3 {
+				if result, ok := occurrenceInputID(row, compiler.occurrenceInputs, 2); ok {
 					join(result, unknown)
 				}
 			}
-		case OccurrenceAllocation, OccurrenceCall:
+		case programschema.OccurrenceAllocation, programschema.OccurrenceCall:
 			join(row.ID(), unknown)
 		}
 	}
@@ -232,10 +232,13 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 		}
 	}
 
-	summaries := make([]programschema.ExactScalarSummary, 0, len(arithmetic)*3)
-	seen := make(map[identity.ContentID]struct{}, len(arithmetic)*3)
-	for index, row := range arithmetic {
-		left, right, _, endpointsOK := row.BinaryArithmetic()
+	summaries := make([]programschema.ExactScalarSummary, 0, len(compiler.occurrences)*3)
+	seen := make(map[identity.ContentID]struct{}, len(compiler.occurrences)*3)
+	for index, row := range compiler.occurrences {
+		if row.Kind() != programschema.OccurrenceBinaryArithmetic {
+			continue
+		}
+		left, right, _, endpointsOK := occurrenceBinaryArithmetic(row, compiler.occurrenceInputs)
 		if !endpointsOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -252,7 +255,11 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 			if !exactOK {
 				continue
 			}
-			summary, summaryOK := programschema.NewExactScalarSummary(row.ID(), use.subject, row.body, use.role, programschema.SummaryLiteral{
+			body, bodyOK := row.BodyID()
+			if !bodyOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			summary, summaryOK := programschema.NewExactScalarSummary(row.ID(), use.subject, body, use.role, programschema.SummaryLiteral{
 				Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits,
 			})
 			if !summaryOK {

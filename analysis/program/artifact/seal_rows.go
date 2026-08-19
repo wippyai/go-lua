@@ -204,30 +204,53 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowWTOEvent, index, -1, CompileReasonEventReference)
 		}
 	}
-	state.occurrenceRows = make(map[OccurrenceKind]map[identity.ContentID]struct{})
-	for index, row := range artifact.occurrences {
-		if !row.Available() {
+	state.occurrenceRows = make(map[programschema.OccurrenceKind]map[identity.ContentID]struct{})
+	program := artifact.Program()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if !rowOK || !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		if row.body.Available() {
-			if _, exists := state.bodyRows[row.body]; !exists {
+		body, hasBody := row.BodyID()
+		if hasBody {
+			if _, exists := state.bodyRows[body]; !exists {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 		}
-		for pointIndex, point := range row.points {
-			if _, exists := state.pointRows[point]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, pointIndex, CompileReasonOccurrenceUnavailable)
-			}
-		}
-		rows := state.occurrenceRows[row.kind]
-		if rows == nil {
-			rows = make(map[identity.ContentID]struct{})
-			state.occurrenceRows[row.kind] = rows
-		}
-		if _, duplicate := rows[row.id]; duplicate {
+		pointOffset, pointCount, pointSpanOK := row.PointSpan()
+		inputOffset, inputCount, inputSpanOK := row.InputSpan()
+		if !pointSpanOK || !inputSpanOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		rows[row.id] = struct{}{}
+		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
+			point, pointOK := program.OccurrencePointAt(int(pointOffset + pointIndex))
+			if !pointOK || !point.Available() {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(pointIndex), CompileReasonOccurrenceUnavailable)
+			}
+			if _, exists := state.pointRows[point.PointID()]; !exists {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(pointIndex), CompileReasonOccurrenceUnavailable)
+			}
+		}
+		for inputIndex := uint32(0); inputIndex < inputCount; inputIndex++ {
+			input, inputOK := program.OccurrenceInputAt(int(inputOffset + inputIndex))
+			if !inputOK || !input.Available() {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(inputIndex), CompileReasonOccurrenceUnavailable)
+			}
+		}
+		kind := row.Kind()
+		rows := state.occurrenceRows[kind]
+		if rows == nil {
+			rows = make(map[identity.ContentID]struct{})
+			state.occurrenceRows[kind] = rows
+		}
+		if _, duplicate := rows[row.ID()]; duplicate {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		rows[row.ID()] = struct{}{}
 	}
 	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !exactPublished {
@@ -240,16 +263,28 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		priorExact = row.ID()
-		_, exists := state.occurrenceRows[OccurrenceBinaryArithmetic][row.OccurrenceID()]
+		_, exists := state.occurrenceRows[programschema.OccurrenceBinaryArithmetic][row.OccurrenceID()]
 		if !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.OccurrenceID()}]
-		if !found || uint64(binary) >= uint64(len(artifact.occurrences)) || artifact.occurrences[binary].body != row.BodyPathID() {
+		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
+		if !found {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		left, right, _, endpointsOK := artifact.occurrences[binary].BinaryArithmetic()
-		wantSubject := artifact.occurrences[binary].ID()
+		binaryIndex := -1
+		for candidate := 0; candidate < occurrenceCount; candidate++ {
+			candidateRow, candidateOK := program.OccurrenceAt(candidate)
+			if candidateOK && candidateRow.ID() == binary.ID() && candidateRow.Kind() == programschema.OccurrenceBinaryArithmetic {
+				binaryIndex = candidate
+				break
+			}
+		}
+		leftRow, leftOK := program.OccurrenceInputFor(binaryIndex, 0)
+		rightRow, rightOK := program.OccurrenceInputFor(binaryIndex, 1)
+		left, right, endpointsOK := leftRow.InputID(), rightRow.InputID(), leftOK && rightOK
+		body, bodyOK := binary.BodyID()
+		endpointsOK = endpointsOK && bodyOK && body == row.BodyPathID()
+		wantSubject := binary.ID()
 		switch row.Role() {
 		case programschema.ExactScalarSummaryLeft:
 			wantSubject = left
@@ -274,13 +309,12 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		priorArithmetic = row.ID()
-		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.OccurrenceID()}]
-		if !found || uint64(binary) >= uint64(len(artifact.occurrences)) {
+		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
+		if !found {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		occurrence := artifact.occurrences[binary]
-		_, _, op, endpointsOK := occurrence.BinaryArithmetic()
-		if !endpointsOK || occurrence.body != row.BodyPathID() || op != flowkind.BinaryOp(row.Operator()) {
+		body, bodyOK := binary.BodyID()
+		if !bodyOK || body != row.BodyPathID() || flowkind.BinaryOp(binary.Code()) != flowkind.BinaryOp(row.Operator()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -295,20 +329,22 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 0, CompileReasonOccurrenceUnavailable)
 		}
 		priorUnary = row.ID()
-		unary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceUnary, id: row.OccurrenceID()}]
-		if !found || uint64(unary) >= uint64(len(artifact.occurrences)) {
+		unary, found := program.OccurrenceForID(programschema.OccurrenceUnary, row.OccurrenceID())
+		if !found {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 1, CompileReasonOccurrenceUnavailable)
 		}
-		occurrence := artifact.occurrences[unary]
-		if occurrence.body != row.BodyPathID() {
+		body, bodyOK := unary.BodyID()
+		if !bodyOK || body != row.BodyPathID() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 		}
-		if flowkind.UnaryOp(occurrence.code) != flowkind.UnaryOp(row.Operator()) {
+		if flowkind.UnaryOp(unary.Code()) != flowkind.UnaryOp(row.Operator()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 3, CompileReasonOccurrenceUnavailable)
 		}
 		pointFound := false
-		for _, point := range occurrence.points {
-			pointFound = pointFound || point == row.OutputPointID()
+		pointOffset, pointCount, pointSpanOK := unary.PointSpan()
+		for position := uint32(0); pointSpanOK && position < pointCount; position++ {
+			point, pointOK := program.OccurrencePointAt(int(pointOffset + position))
+			pointFound = pointFound || pointOK && point.PointID() == row.OutputPointID()
 		}
 		if !pointFound {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 5, CompileReasonOccurrenceUnavailable)

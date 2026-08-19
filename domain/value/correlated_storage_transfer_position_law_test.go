@@ -5,10 +5,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -48,9 +48,14 @@ func TestStorageTransferSealsEveryMultipleAssignmentTargetPosition(t *testing.T)
 	}
 
 	writes := make(map[uint64]identity.ContentID)
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, rowOK := artifact.OccurrenceAt(index)
-		if !rowOK || row.Kind() != programartifact.OccurrenceStorageWrite {
+	program := artifact.Program()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if !rowOK || row.Kind() != programschema.OccurrenceStorageWrite {
 			continue
 		}
 		if _, duplicate := writes[row.Code()]; duplicate {

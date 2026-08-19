@@ -267,17 +267,39 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(value.ValuesID()))
 	}
-	sink.add(uintField(uint64(len(artifact.occurrences))))
-	for _, row := range artifact.occurrences {
-		sink.add(uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.body), uintField(row.code), uintField(uint64(len(row.points))))
-		for _, point := range row.points {
-			sink.add(bytesField(point))
+	occurrenceCount, occurrencesPublished := coldCount(artifact, programschema.OccurrenceFamily())
+	pointCount, occurrencePointsPublished := coldCount(artifact, programschema.OccurrencePointFamily())
+	inputCount, occurrenceInputsPublished := coldCount(artifact, programschema.OccurrenceInputFamily())
+	if !occurrencesPublished || !occurrencePointsPublished || !occurrenceInputsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(occurrenceCount)))
+	for index := 0; index < occurrenceCount; index++ {
+		row, held := coldRow(artifact, programschema.OccurrenceFamily(), index)
+		pointOffset, points, pointSpanOK := row.PointSpan()
+		inputOffset, inputs, inputSpanOK := row.InputSpan()
+		literalFamily, literal, literalOK := row.Literal()
+		if !held || !pointSpanOK || !inputSpanOK || uint64(pointOffset)+uint64(points) > uint64(pointCount) || uint64(inputOffset)+uint64(inputs) > uint64(inputCount) {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(row.inputs))))
-		for _, input := range row.inputs {
-			sink.add(bytesField(input))
+		body, _ := row.BodyID()
+		sink.add(uintField(uint64(row.Kind())), bytesField(row.ID()), bytesField(body), uintField(row.Code()), uintField(uint64(points)))
+		for position := uint32(0); position < points; position++ {
+			point, pointHeld := coldRow(artifact, programschema.OccurrencePointFamily(), int(pointOffset+position))
+			if !pointHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(point.PointID()))
 		}
-		sink.add(uintField(uint64(row.literalFamily)), boolField(row.literalOK), uintField(uint64(row.literal.Kind)), boolField(row.literal.Bool), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits), field{bytes: []byte(row.literal.String), kind: fieldBytes})
+		sink.add(uintField(uint64(inputs)))
+		for position := uint32(0); position < inputs; position++ {
+			input, inputHeld := coldRow(artifact, programschema.OccurrenceInputFamily(), int(inputOffset+position))
+			if !inputHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(input.InputID()))
+		}
+		sink.add(uintField(uint64(literalFamily)), boolField(literalOK), uintField(uint64(literal.Kind)), boolField(literal.Bool), uintField(uint64(literal.Integer)), uintField(literal.FloatBits), field{bytes: []byte(literal.String), kind: fieldBytes})
 	}
 	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !exactPublished {
@@ -560,12 +582,24 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(keyField(key))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.ruleOccurrences))))
-	for _, row := range artifact.ruleOccurrences {
-		sink.add(
-			keyField(row.key), uintField(uint64(row.occurrence)), bytesField(row.point), bytesField(row.input),
-			uintField(uint64(row.stage)), uintField(uint64(row.inputKind)), bytesField(row.route),
-		)
+	ruleCount, rulesPublished := coldCount(artifact, programschema.RuleOccurrenceFamily())
+	if !rulesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(ruleCount)))
+	for index := 0; index < ruleCount; index++ {
+		row, held := coldRow(artifact, programschema.RuleOccurrenceFamily(), index)
+		occurrence, occurrenceOK := row.Occurrence()
+		input, inputOK := row.InputPoint()
+		route, routeOK := row.PredecessorRouteID()
+		if !held || !occurrenceOK || !inputOK && row.InputKind() != programschema.RuleInputNone || !routeOK && row.InputKind() == programschema.RuleInputPredecessor {
+			return identity.ContentID{}
+		}
+		key := row.Key()
+		if !key.Available() {
+			return identity.ContentID{}
+		}
+		sink.add(keyField(key), uintField(uint64(occurrence)), bytesField(row.PointID()), bytesField(input), uintField(uint64(row.Stage())), uintField(uint64(row.InputKind())), bytesField(route))
 	}
 	// The region plane, its member plane and the event bracket sequence are
 	// read out of the sealed cold publication. The member span preserves the

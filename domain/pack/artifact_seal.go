@@ -7,7 +7,7 @@ package pack
 import (
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -326,12 +326,17 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = position
 			}
 		}
-		for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
-			row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
-			if !ok || row.InputCount() == 0 {
+		occurrenceCount, occurrencePublished := mountedProgram.OccurrenceKindCount(programschema.OccurrenceStorageBind)
+		if !occurrencePublished {
+			return nil, false
+		}
+		for i := 0; i < occurrenceCount; i++ {
+			row, ok := mountedProgram.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
+			_, inputCount, spanOK := row.InputSpan()
+			if !ok || !spanOK || inputCount == 0 {
 				return nil, false
 			}
-			if width := row.InputCount() - 1; width > maximum {
+			if width := int(inputCount) - 1; width > maximum {
 				maximum = width
 			}
 		}
@@ -555,26 +560,35 @@ func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, mo
 }
 
 func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.snapshot
-	for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
-		row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
-		if !ok || row.InputCount() == 0 {
+	state := schema.state
+	program := mount.Program()
+	occurrenceCount, occurrencePublished := program.OccurrenceKindCount(programschema.OccurrenceStorageBind)
+	if !occurrencePublished {
+		return false
+	}
+	for i := 0; i < occurrenceCount; i++ {
+		row, ok := program.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
+		ordinal, ordinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceStorageBind, row.ID())
+		_, inputCount, spanOK := row.InputSpan()
+		if !ok || !ordinalOK || !spanOK || inputCount == 0 {
 			return false
 		}
-		valuesID, valuesOK := row.InputAt(0)
+		valuesInput, valuesOK := program.OccurrenceInputFor(ordinal, 0)
+		valuesID := valuesInput.InputID()
 		bodyID, bodyOK := row.BodyID()
-		if !valuesOK || !bodyOK {
+		if !valuesOK || !valuesInput.Available() || !valuesID.Available() || !bodyOK {
 			return false
 		}
 		valuesIndex, exists := state.artifactValues[artifactValuesKey{mount.module, valuesID}]
 		if !exists {
 			return false
 		}
-		cells := make([]Endpoint, row.InputCount()-1)
+		cells := make([]Endpoint, int(inputCount)-1)
 		for j := range cells {
-			id, ok := row.InputAt(j + 1)
+			input, inputOK := program.OccurrenceInputFor(ordinal, j+1)
+			id := input.InputID()
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, id}]
-			if !ok || !endpointOK {
+			if !inputOK || !input.Available() || !id.Available() || !endpointOK {
 				return false
 			}
 			cells[j] = endpoint
@@ -856,14 +870,21 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			return false
 		}
 	}
-	for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
-		row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
-		if !ok || row.InputCount() == 0 {
+	occurrenceCount, occurrencePublished := program.OccurrenceKindCount(programschema.OccurrenceStorageBind)
+	if !occurrencePublished {
+		return false
+	}
+	for i := 0; i < occurrenceCount; i++ {
+		row, ok := program.OccurrenceKindAt(programschema.OccurrenceStorageBind, i)
+		ordinal, ordinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceStorageBind, row.ID())
+		_, inputCount, spanOK := row.InputSpan()
+		if !ok || !ordinalOK || !spanOK || inputCount == 0 {
 			return false
 		}
-		for j := 1; j < row.InputCount(); j++ {
-			id, idOK := row.InputAt(j)
-			if !idOK || !add(id) {
+		for j := 1; j < int(inputCount); j++ {
+			input, inputOK := program.OccurrenceInputFor(ordinal, j)
+			id := input.InputID()
+			if !inputOK || !input.Available() || !id.Available() || !add(id) {
 				return false
 			}
 		}

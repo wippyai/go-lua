@@ -69,7 +69,7 @@ func Detach(
 		report := anadiag.NewReport(result.SourceID(), result.ContentID())
 		if !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.ConformanceObservations, geometry.StaticObservations,
 			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects) {
-				return nil, false
+			return nil, false
 		}
 		if !report.Available() {
 			return nil, false
@@ -230,13 +230,13 @@ func mountedResultID(role string, mount, artifact, local identity.ContentID) (id
 // built from sealed ingress mounts and Link value substitution. It is
 // computed when Result is detached; compiledState does not retain it.
 type Geometry struct {
-	source             identity.ContentID
-	bodies             []GeometryBody
-	values             []identity.ContentID
-	BranchObservations     []anadiag.Observation
+	source                  identity.ContentID
+	bodies                  []GeometryBody
+	values                  []identity.ContentID
+	BranchObservations      []anadiag.Observation
 	ConformanceObservations []anadiag.Observation
-	StaticObservations     []anadiag.Observation
-	PointBodies        map[Point][]int
+	StaticObservations      []anadiag.Observation
+	PointBodies             map[Point][]int
 }
 
 type GeometryBody struct {
@@ -255,13 +255,13 @@ func Project(
 		return Geometry{}, false
 	}
 	geometry := Geometry{
-		source:             sourceID,
-		bodies:             make([]GeometryBody, 0),
-		values:             make([]identity.ContentID, len(coordinates)),
+		source:                  sourceID,
+		bodies:                  make([]GeometryBody, 0),
+		values:                  make([]identity.ContentID, len(coordinates)),
 		BranchObservations:      make([]anadiag.Observation, 0, len(observations)),
 		ConformanceObservations: make([]anadiag.Observation, 0, len(observations)),
 		StaticObservations:      make([]anadiag.Observation, 0, len(observations)),
-		PointBodies:        make(map[Point][]int),
+		PointBodies:             make(map[Point][]int),
 	}
 	for _, observation := range observations {
 		if !observation.Available() {
@@ -351,8 +351,13 @@ func Project(
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], entryBody)
 			}
 		}
-		for occurrenceIndex := 0; occurrenceIndex < mount.Snapshot.OccurrenceCount(); occurrenceIndex++ {
-			occurrence, occurrenceOK := mount.Snapshot.OccurrenceAt(occurrenceIndex)
+		program := mount.Program.Program
+		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+		if !occurrencesPublished {
+			return Geometry{}, false
+		}
+		for occurrenceIndex := 0; occurrenceIndex < occurrenceCount; occurrenceIndex++ {
+			occurrence, occurrenceOK := program.OccurrenceAt(occurrenceIndex)
 			if !occurrenceOK || !occurrence.ID().Available() {
 				return Geometry{}, false
 			}
@@ -364,9 +369,14 @@ func Project(
 			if !bodyKnown {
 				return Geometry{}, false
 			}
-			for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-				point, pointOK := occurrence.PointAt(pointIndex)
-				if !pointOK || !point.Available() {
+			_, pointCount, spanOK := occurrence.PointSpan()
+			if !spanOK {
+				return Geometry{}, false
+			}
+			for pointIndex := 0; pointIndex < int(pointCount); pointIndex++ {
+				pointRow, pointOK := program.OccurrencePointFor(occurrenceIndex, pointIndex)
+				point := pointRow.PointID()
+				if !pointOK || !pointRow.Available() || !point.Available() {
 					return Geometry{}, false
 				}
 				pointKey := Point{Mount: mount.Program.ModuleKey, Point: point}

@@ -28,8 +28,13 @@ import (
 // declared keys in table order, so the law reads the same over the production
 // table and over a copy one of whose members has been displaced.
 func placementKeyAgreement(artifact *ingress.Snapshot, keys []schema.Key) (int, schema.Key, bool) {
-	for index := 0; index < artifact.RulePlacementCount(); index++ {
-		row, ok := artifact.RulePlacementAt(index)
+	program := artifact.Program()
+	count, published := program.RuleOccurrenceCount()
+	if !published {
+		return 0, "", false
+	}
+	for index := 0; index < count; index++ {
+		row, ok := program.RuleOccurrenceAt(index)
 		if !ok {
 			return index, "", false
 		}
@@ -112,7 +117,12 @@ func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
 	artifacts := placementKeyArtifacts(t)
 	placements := 0
 	for _, artifact := range artifacts {
-		placements += artifact.RulePlacementCount()
+		program := artifact.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			t.Fatal("cold rule-occurrence family")
+		}
+		placements += count
 		if index, blamed, agreed := placementKeyAgreement(artifact, keys); !agreed {
 			t.Fatalf("placement %d carries %q, which the sealed table does not declare on the mounted lane", index, blamed)
 		}
@@ -168,8 +178,13 @@ func TestRulePlacementAtWalksDeclarationKeyOrder(t *testing.T) {
 	seen := 0
 	for _, artifact := range placementKeyArtifacts(t) {
 		last := -1
-		for index := 0; index < artifact.RulePlacementCount(); index++ {
-			row, ok := artifact.RulePlacementAt(index)
+		program := artifact.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			t.Fatal("cold rule-occurrence family")
+		}
+		for index := 0; index < count; index++ {
+			row, ok := program.RuleOccurrenceAt(index)
 			if !ok {
 				t.Fatalf("placement %d unavailable", index)
 			}

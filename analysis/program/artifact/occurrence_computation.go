@@ -43,14 +43,12 @@ func (compiler *compiler) copyValueSources() CompileFailure {
 			if len(points) == 0 {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourcePoints)
 			}
-			if !spanOK || !compiler.appendOccurrence(OccurrenceValueSource, source.id, source.body, points, []identity.ContentID{spanID}, family.code) {
+			if !spanOK || !compiler.appendOccurrencePayload(programschema.OccurrenceValueSource, source.id, source.body, points, []identity.ContentID{spanID}, family.code, source.literalFamily, source.literal, source.literalOK) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceAppend)
 			}
 			if family.code != 6 && !source.literalOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, int(family.code), CompileReasonOccurrenceValueSourceAppend)
 			}
-			row := &compiler.occurrences[len(compiler.occurrences)-1]
-			row.literalFamily, row.literal, row.literalOK = source.literalFamily, source.literal, source.literalOK
 		}
 	}
 	return CompileFailure{}
@@ -89,7 +87,7 @@ func (compiler *compiler) copyFormalEntrySources() CompileFailure {
 		for formalIndex := 0; formalIndex < boundary.FormalCount(); formalIndex++ {
 			formal, ok := compiler.functionFormalAt(boundary, formalIndex)
 			if !ok || !compiler.appendOccurrence(
-				OccurrenceFormalEntry,
+				programschema.OccurrenceFormalEntry,
 				formal.StorageCellID(),
 				boundary.BodyID(),
 				points,
@@ -128,11 +126,11 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryArithmetic, span.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(programschema.OccurrenceBinaryArithmetic, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !compiler.appendOccurrence(OccurrenceBinaryArithmetic, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
+		if !compiler.appendOccurrence(programschema.OccurrenceBinaryArithmetic, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -159,7 +157,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryEquality, span.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(programschema.OccurrenceBinaryEquality, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		inputs := []identity.ContentID{leftID, rightID}
@@ -175,7 +173,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		code, codeOK := binaryEqualityCode(operation.Op, hasComparison, invert)
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !codeOK || !compiler.appendOccurrence(OccurrenceBinaryEquality, span.ContextID(), body.PathID(), points, inputs, code) {
+		if !codeOK || !compiler.appendOccurrence(programschema.OccurrenceBinaryEquality, span.ContextID(), body.PathID(), points, inputs, code) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -200,11 +198,11 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 		entryPoints := compiler.pointIDs(entry)
 		finishPoints := compiler.pointIDs(finish)
-		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(OccurrenceBinaryOrder, span.ContextID(), entryPoints, finishPoints) {
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(programschema.OccurrenceBinaryOrder, span.ContextID(), entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
 		}
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
-		if !compiler.appendOccurrence(OccurrenceBinaryOrder, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
+		if !compiler.appendOccurrence(programschema.OccurrenceBinaryOrder, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(operation.Op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -230,8 +228,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		finishPoints := compiler.pointIDs(finish)
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
 		if len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.recordOccurrenceSpan(OccurrenceUnary, span.ContextID(), entryPoints, finishPoints) ||
-			!compiler.appendOccurrence(OccurrenceUnary, span.ContextID(), body.PathID(), points, []identity.ContentID{operandID}, uint64(op)) {
+			!compiler.recordOccurrenceSpan(programschema.OccurrenceUnary, span.ContextID(), entryPoints, finishPoints) ||
+			!compiler.appendOccurrence(programschema.OccurrenceUnary, span.ContextID(), body.PathID(), points, []identity.ContentID{operandID}, uint64(op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -255,7 +253,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 			continue
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceSelect, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(op)) {
+		if !compiler.appendOccurrence(programschema.OccurrenceSelect, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(op)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -278,7 +276,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 			continue
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceValueClaim, span.ContextID(), body.PathID(), points, []identity.ContentID{operandID}, uint64(claimKind)) {
+		if !compiler.appendOccurrence(programschema.OccurrenceValueClaim, span.ContextID(), body.PathID(), points, []identity.ContentID{operandID}, uint64(claimKind)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -302,7 +300,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
-		if !compiler.appendOccurrence(OccurrenceReturnBoundary, span.ContextID(), body.PathID(), points, []identity.ContentID{valuesID}, 0) {
+		if !compiler.appendOccurrence(programschema.OccurrenceReturnBoundary, span.ContextID(), body.PathID(), points, []identity.ContentID{valuesID}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}

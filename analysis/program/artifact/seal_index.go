@@ -10,6 +10,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
+	program := artifact.Program()
 	// Calls and their ordered child columns are one sealed cold publication.
 	// Validate contiguous ranges and owner joins at the publication boundary.
 	callCount, callsPublished := coldCount(artifact, programschema.CallFamily())
@@ -41,8 +42,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		if _, valuesOK := state.valueRows[row.ValuesRootID()]; !valuesOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		occurrenceIndex, occurrenceOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceCall, id: row.ID()}]
-		if !occurrenceOK || uint64(occurrenceIndex) >= uint64(len(artifact.occurrences)) || !artifact.occurrences[occurrenceIndex].Available() {
+		if _, occurrenceOK := program.OccurrenceForID(programschema.OccurrenceCall, row.ID()); !occurrenceOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
@@ -91,42 +91,57 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	// ValuesID followed by every destination CellID. This is the canonical
 	// storage-cell column consumed by Pack; no Pack-specific refinement may
 	// duplicate it.
-	for index, row := range artifact.occurrences {
-		if row.kind != OccurrenceStorageBind && row.kind != OccurrenceStorageBindTransfer {
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if !rowOK || (row.Kind() != programschema.OccurrenceStorageBind && row.Kind() != programschema.OccurrenceStorageBindTransfer) {
 			continue
 		}
-		if _, bodyOK := state.bodyRows[row.body]; !bodyOK {
+		body, bodyOK := row.BodyID()
+		if !bodyOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 		}
-		switch row.kind {
-		case OccurrenceStorageBind:
-			if row.InputCount() < 1 {
+		if _, bodyOK := state.bodyRows[body]; !bodyOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+		}
+		_, _, inputSpanOK := row.InputSpan()
+		if !inputSpanOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
+		}
+		_, inputCount, _ := row.InputSpan()
+		switch row.Kind() {
+		case programschema.OccurrenceStorageBind:
+			if inputCount < 1 {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
-			valuesID, valuesOK := row.InputAt(0)
-			if !valuesOK {
+			valuesRow, valuesOK := program.OccurrenceInputFor(index, 0)
+			if !valuesOK || !valuesRow.Available() {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
+			valuesID := valuesRow.InputID()
 			if _, valuesKnown := state.valueRows[valuesID]; !valuesKnown {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
-			for cellIndex := 1; cellIndex < row.InputCount(); cellIndex++ {
-				cell, cellOK := row.InputAt(cellIndex)
+			for cellIndex := 1; cellIndex < int(inputCount); cellIndex++ {
+				cell, cellOK := program.OccurrenceInputFor(index, cellIndex)
 				if !cellOK || !cell.Available() {
 					return compileFailure(CompileStageSeal, CompileRowOccurrence, index, cellIndex, CompileReasonOccurrenceStorageBind)
 				}
 			}
-		case OccurrenceStorageBindTransfer:
-			if row.InputCount() != 3 {
+		case programschema.OccurrenceStorageBindTransfer:
+			if inputCount != 3 {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
-			parent, parentOK := row.InputAt(0)
-			value, valueOK := row.InputAt(1)
-			cell, cellOK := row.InputAt(2)
-			if !parentOK || !valueOK || !cellOK || !parent.Available() || !value.Available() || !cell.Available() {
+			parentRow, parentOK := program.OccurrenceInputFor(index, 0)
+			valueRow, valueOK := program.OccurrenceInputFor(index, 1)
+			cellRow, cellOK := program.OccurrenceInputFor(index, 2)
+			if !parentOK || !valueOK || !cellOK || !parentRow.Available() || !valueRow.Available() || !cellRow.Available() {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
-			if _, bindOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceStorageBind, id: parent}]; !bindOK {
+			if _, bindOK := program.OccurrenceForID(programschema.OccurrenceStorageBind, parentRow.InputID()); !bindOK {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
 		}

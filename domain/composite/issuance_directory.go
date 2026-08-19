@@ -3,6 +3,7 @@ package composite
 import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -48,9 +49,9 @@ func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 	for ordinal, framing := range forms {
 		formFraming[programartifact.IssuanceForm(ordinal)] = framing
 	}
-	stageFraming := make(map[programartifact.RuleStage]string, len(stages))
+	stageFraming := make(map[programschema.RuleStage]string, len(stages))
 	for ordinal, framing := range stages {
-		stageFraming[programartifact.RuleStage(ordinal)] = framing
+		stageFraming[programschema.RuleStage(ordinal)] = framing
 	}
 	return programartifact.NewIssuanceDirectory(placements, formFraming, stageFraming)
 }
@@ -87,10 +88,10 @@ func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport b
 		return programartifact.IssuancePlacement{}, false
 	}
 	placement := programartifact.IssuancePlacement{
-		Occurrence:  programartifact.OccurrenceKind(occurrence),
+		Occurrence:  programschema.OccurrenceKind(occurrence),
 		Form:        programartifact.IssuanceForm(form),
-		Input:       programartifact.RuleInputKind(input),
-		Stage:       programartifact.RuleStage(stage),
+		Input:       programschema.RuleInputKind(input),
+		Stage:       programschema.RuleStage(stage),
 		Requirement: programartifact.IssuanceRequirement(requirement),
 		Code:        issued.Code,
 		HasCode:     issued.HasCode,

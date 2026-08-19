@@ -30,12 +30,19 @@ func TestMountedAdmissionsMatchSealedIngressPlacements(t *testing.T) {
 		if !mount.Available() {
 			t.Fatal("sealed mount")
 		}
-		for index := 0; index < mount.Snapshot.RulePlacementCount(); index++ {
-			row, rowOK := mount.Snapshot.RulePlacementAt(index)
-			if !rowOK || !row.Key().Available() || !row.PointID().Available() || !row.OccurrenceID().Available() {
+		program := mount.Snapshot.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			t.Fatal("cold rule-occurrence family")
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.RuleOccurrenceAt(index)
+			ordinal, ordinalOK := row.Occurrence()
+			occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+			if !rowOK || !ordinalOK || !occurrenceOK || !row.Key().Available() || !row.PointID().Available() || !occurrence.ID().Available() {
 				t.Fatalf("sealed placement %d", index)
 			}
-			expected[placement{row.Key(), mount.ModuleKey, row.PointID(), row.OccurrenceID()}]++
+			expected[placement{row.Key(), mount.ModuleKey, row.PointID(), occurrence.ID()}]++
 		}
 	}
 	if len(expected) == 0 {
@@ -77,8 +84,13 @@ func TestOwnerRejectedCallShapeIsNeverPlaced(t *testing.T) {
 	const runtimeKind = schema.Key("value-runtime-kind-call")
 	placed, admitted := 0, 0
 	for _, mount := range record.Artifacts {
-		for index := 0; index < mount.Snapshot.RulePlacementCount(); index++ {
-			row, rowOK := mount.Snapshot.RulePlacementAt(index)
+		program := mount.Snapshot.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			t.Fatal("cold rule-occurrence family")
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.RuleOccurrenceAt(index)
 			if rowOK && row.Key() == runtimeKind {
 				placed++
 			}
@@ -172,8 +184,13 @@ func TestBodylessCallActivationIsFullyAdmitted(t *testing.T) {
 	const callActivation = schema.Key("call-activation")
 	placed := 0
 	for _, mount := range record.Artifacts {
-		for index := 0; index < mount.Snapshot.RulePlacementCount(); index++ {
-			row, rowOK := mount.Snapshot.RulePlacementAt(index)
+		program := mount.Snapshot.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			t.Fatal("cold rule-occurrence family")
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.RuleOccurrenceAt(index)
 			if rowOK && row.Key() == callActivation {
 				placed++
 			}

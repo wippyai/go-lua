@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -44,13 +44,17 @@ return move
 		t.Fatal("local-transfer family is unpublished")
 	}
 
-	required := map[programartifact.OccurrenceKind]bool{
-		programartifact.OccurrenceStorageRead:         false,
-		programartifact.OccurrenceStorageBindTransfer: false,
-		programartifact.OccurrenceStorageWrite:        false,
+	required := map[programschema.OccurrenceKind]bool{
+		programschema.OccurrenceStorageRead:         false,
+		programschema.OccurrenceStorageBindTransfer: false,
+		programschema.OccurrenceStorageWrite:        false,
 	}
-	for occurrenceIndex := 0; occurrenceIndex < artifact.OccurrenceCount(); occurrenceIndex++ {
-		occurrence, occurrenceOK := artifact.OccurrenceAt(occurrenceIndex)
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for occurrenceIndex := 0; occurrenceIndex < occurrenceCount; occurrenceIndex++ {
+		occurrence, occurrenceOK := program.OccurrenceAt(occurrenceIndex)
 		if !occurrenceOK {
 			t.Fatalf("artifact occurrence %d unavailable", occurrenceIndex)
 		}
@@ -60,25 +64,31 @@ return move
 		}
 		required[kind] = true
 		placements := 0
-		for ruleIndex := 0; ruleIndex < artifact.RulePlacementCountForKey("value-transfer"); ruleIndex++ {
-			rule, ruleOK := artifact.RulePlacementForKeyAt("value-transfer", ruleIndex)
-			if !ruleOK || rule.ID() != occurrence.ID() {
+		ruleCount, rulesPublished := program.RuleOccurrenceCountForKey("value-transfer")
+		if !rulesPublished {
+			t.Fatal("rule-occurrence family is unpublished")
+		}
+		for ruleIndex := 0; ruleIndex < ruleCount; ruleIndex++ {
+			rule, ruleOK := program.RuleOccurrenceForKeyAt("value-transfer", ruleIndex)
+			ordinal, ordinalOK := rule.Occurrence()
+			parent, parentOK := program.OccurrenceAt(int(ordinal))
+			if !ruleOK || !ordinalOK || !parentOK || parent.ID() != occurrence.ID() {
 				continue
 			}
 			placements++
-			point, pointOK := rule.PointAt(0)
+			point := rule.PointID()
 			input, inputOK := rule.InputPoint()
-			if !pointOK || !inputOK || point == input || rule.Stage() != programartifact.RuleStageLocal {
+			if !point.Available() || !inputOK || point == input || rule.Stage() != programschema.RuleStageLocal {
 				t.Fatalf("kind=%d rule=%d is not a distinct Local placement", kind, ruleIndex)
 			}
 			switch kind {
-			case programartifact.OccurrenceStorageRead, programartifact.OccurrenceStorageBindTransfer:
-				if rule.InputKind() != programartifact.RuleInputEntry {
+			case programschema.OccurrenceStorageRead, programschema.OccurrenceStorageBindTransfer:
+				if rule.InputKind() != programschema.RuleInputEntry {
 					t.Fatalf("kind=%d rule=%d did not retain Program Entry", kind, ruleIndex)
 				}
-			case programartifact.OccurrenceStorageWrite:
+			case programschema.OccurrenceStorageWrite:
 				route, routeOK := rule.PredecessorRouteID()
-				if rule.InputKind() != programartifact.RuleInputPredecessor || !routeOK || !route.Available() {
+				if rule.InputKind() != programschema.RuleInputPredecessor || !routeOK || !route.Available() {
 					t.Fatalf("write rule=%d did not retain exact predecessor route", ruleIndex)
 				}
 			}
@@ -88,9 +98,10 @@ return move
 				if !edgeOK || edge.To() != point {
 					continue
 				}
-				for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-					parent, parentOK := occurrence.PointAt(pointIndex)
-					if parentOK && parent == edge.From() {
+				_, pointCount, spanOK := occurrence.PointSpan()
+				for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
+					parent, parentOK := program.OccurrencePointID(occurrenceIndex, int(pointIndex))
+					if spanOK && parentOK && parent == edge.From() {
 						localParent = true
 					}
 				}

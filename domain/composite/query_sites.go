@@ -114,8 +114,13 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 		}
 		observed := make(map[identity.ContentID]struct{})
 		observedBodies := make(map[identity.ContentID]struct{}, len(selectedBodies))
-		for occurrenceIndex := 0; occurrenceIndex < snapshot.OccurrenceCount(); occurrenceIndex++ {
-			occurrence, occurrenceOK := snapshot.OccurrenceAt(occurrenceIndex)
+		program := snapshot.Program()
+		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+		if !occurrencesPublished {
+			return nil, false
+		}
+		for occurrenceIndex := 0; occurrenceIndex < occurrenceCount; occurrenceIndex++ {
+			occurrence, occurrenceOK := program.OccurrenceAt(occurrenceIndex)
 			body, bodyOK := occurrence.BodyID()
 			if !occurrenceOK {
 				return nil, false
@@ -126,9 +131,14 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 			if _, selected := selectedBodies[body]; !selected {
 				continue
 			}
-			for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-				point, pointOK := occurrence.PointAt(pointIndex)
-				if !pointOK || !point.Available() {
+			_, pointCount, spanOK := occurrence.PointSpan()
+			if !spanOK {
+				return nil, false
+			}
+			for pointIndex := 0; pointIndex < int(pointCount); pointIndex++ {
+				pointRow, pointOK := program.OccurrencePointFor(occurrenceIndex, pointIndex)
+				point := pointRow.PointID()
+				if !pointOK || !pointRow.Available() || !point.Available() {
 					return nil, false
 				}
 				if _, known := pointIDs[point]; !known {

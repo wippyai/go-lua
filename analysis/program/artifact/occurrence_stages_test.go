@@ -9,20 +9,14 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
 func summaryProgram(t testing.TB, artifact *programartifact.Artifact) programschema.Program {
 	t.Helper()
-	frozen, catalog, published := artifact.ColdPublication()
-	if !published {
-		t.Fatal("summary cold publication unavailable")
-	}
-	program := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(), ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !program.Available() || !catalog.Available() {
+	program := artifact.Program()
+	if !program.Available() {
 		t.Fatal("summary cold program unavailable")
 	}
 	return program
@@ -74,14 +68,18 @@ return total
 	if values[programschema.ExactScalarSummaryLeft] != 10 || values[programschema.ExactScalarSummaryRight] != 5 || values[programschema.ExactScalarSummaryResult] != 15 {
 		t.Fatalf("exact scalar use summary=%v, want left=10 right=5 result=15", values)
 	}
-	arithmetic, arithmeticOK := artifact.OccurrenceForID(programartifact.OccurrenceBinaryArithmetic, occurrenceID)
+	arithmetic, arithmeticOK := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, occurrenceID)
 	body, bodyOK := arithmetic.BodyID()
-	left, right, op, endpointsOK := arithmetic.BinaryArithmetic()
+	arithmeticOrdinal, arithmeticOrdinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceBinaryArithmetic, occurrenceID)
+	left, leftOK := program.OccurrenceInputID(arithmeticOrdinal, 0)
+	right, rightOK := program.OccurrenceInputID(arithmeticOrdinal, 1)
+	op := flowkind.BinaryOp(arithmetic.Code())
+	endpointsOK := arithmeticOrdinalOK && leftOK && rightOK
 	rule, ruleOK := ruleForOccurrence(artifact, "value-binary-arithmetic", occurrenceID)
-	point, pointOK := rule.PointAt(0)
+	point := rule.PointID()
 	input, inputOK := rule.InputPoint()
 	if !arithmeticOK || !bodyOK || !endpointsOK || !left.Available() || !right.Available() || op != flowkind.BinaryAdd ||
-		!ruleOK || !pointOK || !inputOK || point == input || rule.Stage() != programartifact.RuleStageLocal {
+		!ruleOK || !point.Available() || !inputOK || point == input || rule.Stage() != programschema.RuleStageLocal {
 		t.Fatalf("scalar arithmetic=%+v/%v rule=%+v/%v", arithmetic, arithmeticOK, rule, ruleOK)
 	}
 	for index := 0; index < exactCount; index++ {
@@ -260,13 +258,15 @@ return invert
 	}
 	summary, summaryOK := program.UnarySummaryAt(0)
 	operand, result, representationsOK := summary.Representations()
-	occurrence, occurrenceOK := artifact.OccurrenceForID(programartifact.OccurrenceUnary, summary.OccurrenceID())
+	occurrence, occurrenceOK := program.OccurrenceForID(programschema.OccurrenceUnary, summary.OccurrenceID())
+	occurrenceOrdinal, occurrenceOrdinalOK := program.OccurrenceOrdinalForID(programschema.OccurrenceUnary, summary.OccurrenceID())
 	outputOwned := false
-	for pointIndex := 0; pointIndex < occurrence.PointCount(); pointIndex++ {
-		point, pointOK := occurrence.PointAt(pointIndex)
-		outputOwned = outputOwned || pointOK && point == summary.OutputPointID()
+	_, pointCount, pointSpanOK := occurrence.PointSpan()
+	for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
+		point, pointOK := program.OccurrencePointID(occurrenceOrdinal, int(pointIndex))
+		outputOwned = outputOwned || pointSpanOK && pointOK && point == summary.OutputPointID()
 	}
-	if !summaryOK || !representationsOK || !occurrenceOK || !outputOwned ||
+	if !summaryOK || !representationsOK || !occurrenceOK || !occurrenceOrdinalOK || !outputOwned ||
 		summary.Operator() != programschema.SummaryOperator(flowkind.UnaryNeg) || operand != programschema.NumericRepresentationInteger || result != programschema.NumericRepresentationInteger {
 		t.Fatalf("unary summary=%+v/%v occurrence=%+v/%v output-owned=%v representations=%d/%d/%v", summary, summaryOK,
 			occurrence, occurrenceOK, outputOwned, operand, result, representationsOK)
@@ -311,29 +311,36 @@ return guard
 		t.Fatalf("compile computation fixture: %s", failure.Error())
 	}
 
-	var order programartifact.OccurrenceRow
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, ok := artifact.OccurrenceAt(index)
-		if ok && row.Kind() == programartifact.OccurrenceBinaryOrder {
+	program := summaryProgram(t, artifact)
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	var order programschema.Occurrence
+	var orderIndex int
+	for index := 0; index < occurrenceCount; index++ {
+		row, ok := program.OccurrenceAt(index)
+		if ok && row.Kind() == programschema.OccurrenceBinaryOrder {
 			if order.Available() {
 				t.Fatal("fixture issued more than one order occurrence")
 			}
 			order = row
+			orderIndex = index
 		}
 	}
-	left, _, _, orderOK := order.BinaryOrder()
-	if !orderOK {
+	left, leftOK := program.OccurrenceInputID(orderIndex, 0)
+	if !order.Available() || !leftOK {
 		t.Fatal("fixture did not issue one order occurrence")
 	}
 
-	var storage programartifact.OccurrenceRow
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, ok := artifact.OccurrenceAt(index)
-		if !ok || row.Kind() != programartifact.OccurrenceStorageRead {
+	var storage programschema.Occurrence
+	for index := 0; index < occurrenceCount; index++ {
+		row, ok := program.OccurrenceAt(index)
+		if !ok || row.Kind() != programschema.OccurrenceStorageRead {
 			continue
 		}
-		_, span, readOK := row.StorageRead()
-		if readOK && span == left {
+		span, spanOK := program.OccurrenceInputID(index, 1)
+		if spanOK && span == left {
 			if storage.Available() {
 				t.Fatal("order operand has duplicate storage origins")
 			}
@@ -346,17 +353,16 @@ return guard
 
 	storageRule, storageOK := ruleForOccurrence(artifact, "value-transfer", storage.ID())
 	orderRule, orderRuleOK := ruleForOccurrence(artifact, "value-binary-order", order.ID())
-	storagePoint, storagePointOK := storageRule.PointAt(0)
+	storagePoint := storageRule.PointID()
 	storageInput, storageInputOK := storageRule.InputPoint()
-	orderPoint, orderPointOK := orderRule.PointAt(0)
+	orderPoint := orderRule.PointID()
 	orderInput, orderInputOK := orderRule.InputPoint()
-	if !storageOK || !orderRuleOK || !storagePointOK || !storageInputOK || !orderPointOK || !orderInputOK ||
+	if !storageOK || !orderRuleOK || !storagePoint.Available() || !storageInputOK || !orderPoint.Available() || !orderInputOK ||
 		storagePoint == storageInput || orderPoint == storagePoint || orderInput != storagePoint ||
-		orderRule.Stage() != programartifact.RuleStageLocal || orderRule.InputKind() != programartifact.RuleInputFinish {
+		orderRule.Stage() != programschema.RuleStageLocal || orderRule.InputKind() != programschema.RuleInputFinish {
 		t.Fatalf("local computation chain storage=%+v/%t order=%+v/%t", storageRule, storageOK, orderRule, orderRuleOK)
 	}
 
-	program := summaryProgram(t, artifact)
 	transferCount, transfersPublished := program.LocalTransferCount()
 	if !transfersPublished {
 		t.Fatal("local-transfer family is unpublished")
@@ -403,18 +409,24 @@ return guard
 		t.Fatalf("compile nested computation fixture: %s", failure.Error())
 	}
 
-	var order, equality programartifact.OccurrenceRow
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, ok := artifact.OccurrenceAt(index)
+	program := summaryProgram(t, artifact)
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	var order, equality programschema.Occurrence
+	for index := 0; index < occurrenceCount; index++ {
+		row, ok := program.OccurrenceAt(index)
 		if !ok {
 			continue
 		}
 		switch row.Kind() {
-		case programartifact.OccurrenceBinaryOrder:
+		case programschema.OccurrenceBinaryOrder:
 			order = row
-		case programartifact.OccurrenceBinaryEquality:
-			left, right, _, binaryOK := row.BinaryEquality()
-			if binaryOK && (left == order.ID() || right == order.ID()) {
+		case programschema.OccurrenceBinaryEquality:
+			left, leftOK := program.OccurrenceInputID(index, 0)
+			right, rightOK := program.OccurrenceInputID(index, 1)
+			if leftOK && rightOK && (left == order.ID() || right == order.ID()) {
 				equality = row
 			}
 		}
@@ -423,13 +435,14 @@ return guard
 	// catalog, so resolve the dependency in a second pass rather than relying
 	// on that storage order.
 	if order.Available() && !equality.Available() {
-		for index := 0; index < artifact.OccurrenceCount(); index++ {
-			row, ok := artifact.OccurrenceAt(index)
-			if !ok || row.Kind() != programartifact.OccurrenceBinaryEquality {
+		for index := 0; index < occurrenceCount; index++ {
+			row, ok := program.OccurrenceAt(index)
+			if !ok || row.Kind() != programschema.OccurrenceBinaryEquality {
 				continue
 			}
-			left, right, _, binaryOK := row.BinaryEquality()
-			if binaryOK && (left == order.ID() || right == order.ID()) {
+			left, leftOK := program.OccurrenceInputID(index, 0)
+			right, rightOK := program.OccurrenceInputID(index, 1)
+			if leftOK && rightOK && (left == order.ID() || right == order.ID()) {
 				equality = row
 				break
 			}
@@ -437,14 +450,13 @@ return guard
 	}
 	orderRule, orderOK := ruleForOccurrence(artifact, "value-binary-order", order.ID())
 	equalityRule, equalityOK := ruleForOccurrence(artifact, "value-binary-equality", equality.ID())
-	orderPoint, orderPointOK := orderRule.PointAt(0)
-	equalityPoint, equalityPointOK := equalityRule.PointAt(0)
+	orderPoint := orderRule.PointID()
+	equalityPoint := equalityRule.PointID()
 	equalityInput, equalityInputOK := equalityRule.InputPoint()
-	if !order.Available() || !equality.Available() || !orderOK || !equalityOK || !orderPointOK || !equalityPointOK || !equalityInputOK ||
-		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputKind() != programartifact.RuleInputFinish {
+	if !order.Available() || !equality.Available() || !orderOK || !equalityOK || !orderPoint.Available() || !equalityPoint.Available() || !equalityInputOK ||
+		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputKind() != programschema.RuleInputFinish {
 		t.Fatalf("nested computation dependency order=%+v/%t equality=%+v/%t", orderRule, orderOK, equalityRule, equalityOK)
 	}
-	program := summaryProgram(t, artifact)
 	transferCount, transfersPublished := program.LocalTransferCount()
 	if !transfersPublished {
 		t.Fatal("local-transfer family is unpublished")
@@ -459,12 +471,22 @@ return guard
 	}
 }
 
-func ruleForOccurrence(artifact *programartifact.Artifact, key schema.Key, occurrence identity.ContentID) (programartifact.RuleOccurrenceRow, bool) {
-	for index := 0; index < artifact.RulePlacementCountForKey(key); index++ {
-		row, ok := artifact.RulePlacementForKeyAt(key, index)
-		if ok && row.ID() == occurrence {
+func ruleForOccurrence(artifact *programartifact.Artifact, key schema.Key, occurrence identity.ContentID) (programschema.RuleOccurrence, bool) {
+	program := artifact.Program()
+	count, published := program.RuleOccurrenceCountForKey(string(key))
+	if !published {
+		return programschema.RuleOccurrence{}, false
+	}
+	for index := 0; index < count; index++ {
+		row, ok := program.RuleOccurrenceForKeyAt(string(key), index)
+		if !ok {
+			continue
+		}
+		ordinal, ordinalOK := row.Occurrence()
+		parent, parentOK := program.OccurrenceAt(int(ordinal))
+		if ordinalOK && parentOK && parent.ID() == occurrence {
 			return row, true
 		}
 	}
-	return programartifact.RuleOccurrenceRow{}, false
+	return programschema.RuleOccurrence{}, false
 }

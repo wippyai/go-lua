@@ -49,15 +49,6 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 		}
 		points[index] = point
 	}
-	occurrenceByID := make(map[occurrenceLookup]uint32, len(compiler.occurrences))
-	occurrenceByKind := make(map[OccurrenceKind][]uint32)
-	for index, row := range compiler.occurrences {
-		if uint64(index) > uint64(^uint32(0)) {
-			return nil, compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		occurrenceByID[occurrenceLookup{kind: row.kind, id: row.id}] = uint32(index)
-		occurrenceByKind[row.kind] = append(occurrenceByKind[row.kind], uint32(index))
-	}
 	frozen, catalog, frozenOK := freezeColdPublication(compiler, points)
 	if !frozenOK {
 		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
@@ -65,7 +56,6 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts,
-		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes,
 	}
 	artifact.id = artifactID(artifact)
@@ -333,6 +323,19 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 	if !heapOK || !valuesOK || !indexesOK || !pointsOK || !edgesOK || !transfersOK || !staticOK || !regionsOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
+	for index, row := range compiler.occurrences {
+		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+			return snapshot.Frozen{}, identity.ContentID{}, false
+		}
+		if uint64(index) > uint64(^uint32(0)) {
+			return snapshot.Frozen{}, identity.ContentID{}, false
+		}
+	}
+	for _, row := range compiler.ruleOccurrences {
+		if !row.Available() {
+			return snapshot.Frozen{}, identity.ContentID{}, false
+		}
+	}
 	publication := programschema.Publication{
 		CallTargets:     compiler.callTargets,
 		HeapAllocations: allocations, HeapFields: allocationFields,
@@ -347,6 +350,10 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		EnvironmentResets:    resets,
 		LocalTransfers:       transfers,
 		LocalTransferWrites:  transferWrites,
+		Occurrences:          compiler.occurrences,
+		OccurrencePoints:     compiler.occurrencePoints,
+		OccurrenceInputs:     compiler.occurrenceInputs,
+		RuleOccurrences:      compiler.ruleOccurrences,
 		StaticTypeValues:     typeValues,
 		StaticExpressions:    staticExpressions,
 		StaticInputs:         compiler.staticInputs,

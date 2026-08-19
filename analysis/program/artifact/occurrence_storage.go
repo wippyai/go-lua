@@ -1,6 +1,9 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+)
 
 func (compiler *compiler) copyStorage() CompileFailure {
 	reads := compiler.input.Flow().Authored().Storage().Reads()
@@ -19,8 +22,8 @@ func (compiler *compiler) copyStorage() CompileFailure {
 		// Flow until it publishes an explicit occurrence-to-point pairing;
 		// never zip or cross-product attachments here.
 		if len(entryPoints) != 1 || !spanID.Available() ||
-			!compiler.appendOccurrence(OccurrenceStorageRead, row.id, row.body, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{row.cell, spanID}, 0) ||
-			!compiler.recordOccurrenceSpan(OccurrenceStorageRead, row.id, entryPoints, finishPoints) {
+			!compiler.appendOccurrence(programschema.OccurrenceStorageRead, row.id, row.body, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{row.cell, spanID}, 0) ||
+			!compiler.recordOccurrenceSpan(programschema.OccurrenceStorageRead, row.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
 	}
@@ -38,7 +41,7 @@ func (compiler *compiler) copyStorage() CompileFailure {
 		// Cell column. Pack consumes this canonical row directly; it must not
 		// receive a second bind/Cell row plane.
 		bindInputs = append(bindInputs, bind.cells...)
-		if !valuesOK || !values.Available() || !compiler.appendOccurrence(OccurrenceStorageBind, bind.id, bind.body, append(entryPoints, finishPoints...), bindInputs, 0) {
+		if !valuesOK || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceStorageBind, bind.id, bind.body, append(entryPoints, finishPoints...), bindInputs, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 		}
 		for _, transfer := range bind.transfers {
@@ -46,8 +49,8 @@ func (compiler *compiler) copyStorage() CompileFailure {
 			// As with a read, this one-input transfer rule requires one
 			// unambiguous Entry attachment.
 			if len(transferEntryPoints) != 1 ||
-				!compiler.appendOccurrence(OccurrenceStorageBindTransfer, transfer.id, bind.body, transferFinishPoints, []identity.ContentID{bind.id, transfer.value, transfer.cell}, uint64(transfer.position)) ||
-				!compiler.recordOccurrenceSpan(OccurrenceStorageBindTransfer, transfer.id, transferEntryPoints, transferFinishPoints) {
+				!compiler.appendOccurrence(programschema.OccurrenceStorageBindTransfer, transfer.id, bind.body, transferFinishPoints, []identity.ContentID{bind.id, transfer.value, transfer.cell}, uint64(transfer.position)) ||
+				!compiler.recordOccurrenceSpan(programschema.OccurrenceStorageBindTransfer, transfer.id, transferEntryPoints, transferFinishPoints) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, transfer.position, CompileReasonOccurrenceStorageBind)
 			}
 		}
@@ -60,13 +63,13 @@ func (compiler *compiler) copyStorage() CompileFailure {
 		}
 		values, valuesOK := compiler.valueRowForTerm(assignment.values)
 		entryPoints, finishPoints := compiler.pointIDs(assignment.entry), compiler.pointIDs(assignment.finish)
-		if !valuesOK || !values.Available() || !compiler.appendOccurrence(OccurrenceStorageAssignment, assignment.id, assignment.body, append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
+		if !valuesOK || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceStorageAssignment, assignment.id, assignment.body, append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageAssignment)
 		}
 		for _, write := range assignment.transfers {
 			writeFinishPoints := compiler.pointIDs(write.finish)
-			if !compiler.appendOccurrence(OccurrenceStorageWrite, write.id, assignment.body, writeFinishPoints, []identity.ContentID{assignment.id, write.value, write.cell, write.predecessor, write.route}, uint64(write.position)) ||
-				!compiler.recordOccurrencePredecessor(OccurrenceStorageWrite, write.id, write.route, writeFinishPoints) {
+			if !compiler.appendOccurrence(programschema.OccurrenceStorageWrite, write.id, assignment.body, writeFinishPoints, []identity.ContentID{assignment.id, write.value, write.cell, write.predecessor, write.route}, uint64(write.position)) ||
+				!compiler.recordOccurrencePredecessor(programschema.OccurrenceStorageWrite, write.id, write.route, writeFinishPoints) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, write.position, CompileReasonOccurrenceStorageAssignment)
 			}
 		}
@@ -91,8 +94,8 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.appendOccurrence(OccurrenceIndexRead, read.id, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{read.baseID, read.lensID, read.resultID}, 0) ||
-			!compiler.recordOccurrenceSpan(OccurrenceIndexRead, read.id, entryPoints, finishPoints) {
+		if !compiler.appendOccurrence(programschema.OccurrenceIndexRead, read.id, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{read.baseID, read.lensID, read.resultID}, 0) ||
+			!compiler.recordOccurrenceSpan(programschema.OccurrenceIndexRead, read.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}
@@ -105,8 +108,8 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 		if len(finishPoints) == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		if !compiler.appendOccurrence(OccurrenceIndexWrite, write.id, identity.ContentID{}, finishPoints, []identity.ContentID{write.baseID, write.lensID, write.valuesID, write.predecessorID, write.route}, 0) ||
-			!compiler.recordOccurrencePredecessor(OccurrenceIndexWrite, write.id, write.route, finishPoints) {
+		if !compiler.appendOccurrence(programschema.OccurrenceIndexWrite, write.id, identity.ContentID{}, finishPoints, []identity.ContentID{write.baseID, write.lensID, write.valuesID, write.predecessorID, write.route}, 0) ||
+			!compiler.recordOccurrencePredecessor(programschema.OccurrenceIndexWrite, write.id, write.route, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}

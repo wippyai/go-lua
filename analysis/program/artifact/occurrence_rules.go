@@ -4,20 +4,29 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
-	compiler.ruleOccurrences = []RuleOccurrence{}
+	compiler.ruleOccurrences = []programschema.RuleOccurrence{}
 	for index, row := range compiler.occurrences {
+		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+			compiler.ruleOccurrences = nil
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
 		if uint64(index) > uint64(^uint32(0)) {
 			compiler.ruleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		ordinal := uint32(index)
-		geometry := compiler.occurrenceSpans[occurrenceLookup{kind: row.kind, id: row.id}]
+		geometry := compiler.occurrenceSpans[occurrenceLookup{kind: row.Kind(), id: row.ID()}]
 		finish := geometry.finish
 		if len(finish) == 0 {
-			finish = row.points
+			var finishOK bool
+			finish, finishOK = occurrencePointIDs(row, compiler.occurrencePoints)
+			if !finishOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 		}
 		placements, decided := compiler.matching(row)
 		if !decided {
@@ -33,15 +42,16 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func orderPlacementsByDeclaration(directory IssuanceDirectory, rows []RuleOccurrence) []RuleOccurrence {
+func orderPlacementsByDeclaration(directory IssuanceDirectory, rows []programschema.RuleOccurrence) []programschema.RuleOccurrence {
 	if len(rows) == 0 {
 		return rows
 	}
-	byKey := make(map[schema.Key][]RuleOccurrence, directory.Count())
+	byKey := make(map[schema.Key][]programschema.RuleOccurrence, directory.Count())
 	for _, row := range rows {
-		byKey[row.key] = append(byKey[row.key], row)
+		key := row.Key()
+		byKey[key] = append(byKey[key], row)
 	}
-	ordered := make([]RuleOccurrence, 0, len(rows))
+	ordered := make([]programschema.RuleOccurrence, 0, len(rows))
 	seen := make(map[schema.Key]struct{}, directory.Count())
 	for _, issued := range directory.placements {
 		if !issued.Key.Available() {

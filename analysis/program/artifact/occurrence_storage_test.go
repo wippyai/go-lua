@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -28,16 +28,21 @@ return run
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("storage compilation failed: %s", failure.Error())
 	}
+	program := artifact.Program()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
 	read, write := 0, 0
-	for index := 0; index < artifact.OccurrenceCount(); index++ {
-		row, rowOK := artifact.OccurrenceAt(index)
+	for index := 0; index < occurrenceCount; index++ {
+		row, rowOK := program.OccurrenceAt(index)
 		if !rowOK {
 			t.Fatalf("OccurrenceAt(%d)", index)
 		}
 		switch row.Kind() {
-		case programartifact.OccurrenceStorageRead:
+		case programschema.OccurrenceStorageRead:
 			read++
-		case programartifact.OccurrenceStorageWrite:
+		case programschema.OccurrenceStorageWrite:
 			write++
 		}
 	}

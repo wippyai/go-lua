@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type computationStage struct {
@@ -122,9 +123,9 @@ func (compiler *compiler) callStage(base identity.ContentID) (callStageSet, bool
 	if _, known := compiler.pointGeometry[base]; !known {
 		return callStageSet{}, false
 	}
-	dispatch, dispatchOK := compiler.issuance.stageFraming(RuleStageCallDispatch)
-	summary, summaryOK := compiler.issuance.stageFraming(RuleStageCallSummary)
-	effect, effectOK := compiler.issuance.stageFraming(RuleStageCallEffect)
+	dispatch, dispatchOK := compiler.issuance.stageFraming(programschema.RuleStageCallDispatch)
+	summary, summaryOK := compiler.issuance.stageFraming(programschema.RuleStageCallSummary)
+	effect, effectOK := compiler.issuance.stageFraming(programschema.RuleStageCallEffect)
 	if !dispatchOK || !summaryOK || !effectOK {
 		return callStageSet{}, false
 	}
@@ -244,10 +245,10 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		if stage := compiler.predecessorStages[base]; stage.Available() {
 			written := make(map[schema.Key]struct{})
 			for _, placement := range compiler.ruleOccurrences {
-				if placement.point != stage || placement.inputKind != RuleInputPredecessor {
+				if placement.PointID() != stage || placement.InputKind() != programschema.RuleInputPredecessor {
 					continue
 				}
-				axis, axisOK := compiler.issuance.writesFor(placement.key)
+				axis, axisOK := compiler.issuance.writesFor(placement.Key())
 				if !axisOK {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 				}
@@ -350,36 +351,48 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 	}
 	for index := range compiler.ruleOccurrences {
-		if compiler.ruleOccurrences[index].inputKind == RuleInputNone {
+		placement := compiler.ruleOccurrences[index]
+		inputKind := placement.InputKind()
+		point := placement.PointID()
+		if inputKind == programschema.RuleInputNone {
 			continue
 		}
-		if compiler.ruleOccurrences[index].inputKind == RuleInputPredecessor {
-			edge, found := compiler.environmentByRoute[compiler.ruleOccurrences[index].route]
-			if !found || !edge.to.Available() || edge.to == compiler.ruleOccurrences[index].point {
+		if inputKind == programschema.RuleInputPredecessor {
+			route, routeOK := placement.PredecessorRouteID()
+			edge, found := compiler.environmentByRoute[route]
+			if !routeOK || !found || !edge.to.Available() || edge.to == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			compiler.ruleOccurrences[index].input = edge.to
+			if !compiler.replaceRuleOccurrenceInput(index, edge.to) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 			continue
 		}
-		if input, computation := computationInput[compiler.ruleOccurrences[index].point]; computation {
-			if compiler.ruleOccurrences[index].inputKind != RuleInputFinish || !input.Available() || input == compiler.ruleOccurrences[index].point {
+		if input, computation := computationInput[point]; computation {
+			if inputKind != programschema.RuleInputFinish || !input.Available() || input == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			compiler.ruleOccurrences[index].input = input
+			if !compiler.replaceRuleOccurrenceInput(index, input) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 			continue
 		}
-		if input, dispatch := callInput[compiler.ruleOccurrences[index].point]; dispatch {
-			if compiler.ruleOccurrences[index].stage != RuleStageCallDispatch || compiler.ruleOccurrences[index].inputKind != RuleInputFinish || !input.Available() || input == compiler.ruleOccurrences[index].point {
+		if input, dispatch := callInput[point]; dispatch {
+			if placement.Stage() != programschema.RuleStageCallDispatch || inputKind != programschema.RuleInputFinish || !input.Available() || input == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			compiler.ruleOccurrences[index].input = input
+			if !compiler.replaceRuleOccurrenceInput(index, input) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 			continue
 		}
-		if input, separated := localPredecessorInput[compiler.ruleOccurrences[index].point]; separated {
-			if !input.Available() || input == compiler.ruleOccurrences[index].point {
+		if input, separated := localPredecessorInput[point]; separated {
+			if !input.Available() || input == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			compiler.ruleOccurrences[index].input = input
+			if !compiler.replaceRuleOccurrenceInput(index, input) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
 			continue
 		}
 
@@ -388,18 +401,20 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		// the original base. Call Dispatch reads that Local result when one
 		// exists. Every other consumer of the staged base reads the terminal
 		// stage, so no Entry/Finish rule can bypass a prior strong write.
-		base := compiler.ruleOccurrences[index].input
+		base, baseOK := placement.InputPoint()
+		if !baseOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
 		stages := stageFor[base]
 		if len(stages) == 0 {
 			continue
 		}
 		exit := stages[len(stages)-1]
 		local := compiler.localStages[base]
-		if local.Available() && compiler.ruleOccurrences[index].point == local {
+		if local.Available() && point == local {
 			continue
 		}
-		compiler.ruleOccurrences[index].input = exit
-		if !compiler.ruleOccurrences[index].Available() {
+		if !compiler.replaceRuleOccurrenceInput(index, exit) || !compiler.ruleOccurrences[index].Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}

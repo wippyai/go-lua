@@ -35,7 +35,7 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 		if !held || !spanOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		if _, exists := state.occurrenceRows[OccurrenceAllocation][allocation.ID()]; !exists {
+		if _, exists := state.occurrenceRows[programschema.OccurrenceAllocation][allocation.ID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
 		if _, duplicate := seenHeapAllocations[allocation.ID()]; duplicate {
@@ -47,7 +47,7 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 			if !fieldHeld {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
-			if _, exists := state.occurrenceRows[OccurrenceAllocationField][field.ID()]; !exists {
+			if _, exists := state.occurrenceRows[programschema.OccurrenceAllocationField][field.ID()]; !exists {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceAllocation)
 			}
 			if _, exists := state.valuesRows[field.ValuesID()]; !exists {
@@ -65,9 +65,9 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 		if !held {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		kind := OccurrenceIndexWrite
+		kind := programschema.OccurrenceIndexWrite
 		if access.Read() {
-			kind = OccurrenceIndexRead
+			kind = programschema.OccurrenceIndexRead
 		}
 		if _, exists := state.occurrenceRows[kind][access.ID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
@@ -82,27 +82,37 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 		}
 		seenHeapIndexes[access.ID()] = struct{}{}
 	}
-	if artifact.ruleOccurrences == nil {
+	program := artifact.Program()
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
+	if !rulesPublished || !occurrencesPublished {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	for index, occurrence := range artifact.ruleOccurrences {
-		if !occurrence.Available() || int(occurrence.occurrence) >= len(artifact.occurrences) {
+	for index := 0; index < ruleCount; index++ {
+		occurrence, occurrenceOK := program.RuleOccurrenceAt(index)
+		parent, parentOK := occurrence.Occurrence()
+		if !occurrenceOK || !parentOK || uint64(parent) >= uint64(occurrenceCount) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		if _, exists := state.pointRows[occurrence.point]; !exists {
+		if _, exists := state.pointRows[occurrence.PointID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 0, CompileReasonOccurrenceUnavailable)
 		}
-		if occurrence.input.Available() {
-			if _, exists := state.pointRows[occurrence.input]; !exists {
+		input, hasInput := occurrence.InputPoint()
+		if hasInput {
+			if _, exists := state.pointRows[input]; !exists {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 1, CompileReasonOccurrenceUnavailable)
 			}
 		}
-		if occurrence.inputKind == RuleInputPredecessor {
-			if _, duplicate := state.environmentRouteDuplicates[occurrence.route]; duplicate {
+		if occurrence.InputKind() == programschema.RuleInputPredecessor {
+			route, routeOK := occurrence.PredecessorRouteID()
+			if !routeOK {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
-			edge, found := state.environmentByRoute[occurrence.route]
-			if !found || edge.to != occurrence.input {
+			if _, duplicate := state.environmentRouteDuplicates[route]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
+			}
+			edge, found := state.environmentByRoute[route]
+			if !found || edge.to != input {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
 		}

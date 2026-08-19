@@ -98,8 +98,13 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 	// places nothing for it and the operand is dead weight.
 	covered := make(map[identity.ContentID]bool)
 	refinements := 0
-	for index := 0; index < snapshot.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := snapshot.OccurrenceAt(index)
+	canonical := snapshot.Program()
+	occurrenceCount, occurrencesPublished := canonical.OccurrenceCount()
+	if !occurrencesPublished {
+		t.Fatal("occurrence family is unpublished")
+	}
+	for index := 0; index < occurrenceCount; index++ {
+		occurrence, occurrenceOK := canonical.OccurrenceAt(index)
 		if !occurrenceOK {
 			t.Fatalf("occurrence %d", index)
 		}

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -33,16 +33,23 @@ return redundant
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile: %s", failure.Error())
 	}
+	program := artifact.Program()
+	placementCount, placementsPublished := program.RuleOccurrenceCountForKey("value-presence-refinement")
+	if !placementsPublished {
+		t.Fatal("rule-occurrence family is unpublished")
+	}
 	count := 0
-	for index := 0; index < artifact.RulePlacementCountForKey("value-presence-refinement"); index++ {
-		rule, ruleOK := artifact.RulePlacementForKeyAt("value-presence-refinement", index)
-		occurrence, occurrenceOK := artifact.OccurrenceForID(programartifact.OccurrenceBinaryPresenceRefinement, rule.ID())
-		_, _, _, route, _, occurrenceOK2 := occurrence.BinaryPresenceRefinement()
+	for index := 0; index < placementCount; index++ {
+		rule, ruleOK := program.RuleOccurrenceForKeyAt("value-presence-refinement", index)
+		ordinal, ordinalOK := rule.Occurrence()
+		occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+		_, bodyOK := occurrence.BodyID()
+		route, routeInputOK := program.OccurrenceInputID(int(ordinal), 3)
 		predecessor, predecessorOK := rule.PredecessorRouteID()
-		point, pointOK := rule.PointAt(0)
+		point := rule.PointID()
 		input, inputOK := rule.InputPoint()
-		if !ruleOK || !occurrenceOK || !occurrenceOK2 || !predecessorOK || !pointOK || !inputOK || predecessor != route ||
-			rule.InputKind() != programartifact.RuleInputPredecessor || rule.Stage() != programartifact.RuleStageLocal || point == input {
+		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor != route ||
+			rule.InputKind() != programschema.RuleInputPredecessor || rule.Stage() != programschema.RuleStageLocal || point == input {
 			t.Fatalf("refinement[%d] lost exact guarded predecessor/local placement", index)
 		}
 		count++

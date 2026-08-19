@@ -16,12 +16,20 @@ func WalkSealedPlacements(mounts []programmount.MountedArtifact, visit func(key 
 		if !mount.Available() {
 			return "", false
 		}
-		for index := 0; index < mount.Snapshot.RulePlacementCount(); index++ {
-			row, ok := mount.Snapshot.RulePlacementAt(index)
-			if !ok || !row.Key().Available() || !row.PointID().Available() || !row.OccurrenceID().Available() {
+		program := mount.Snapshot.Program()
+		count, published := program.RuleOccurrenceCount()
+		if !published {
+			return "", false
+		}
+		for index := 0; index < count; index++ {
+			row, ok := program.RuleOccurrenceAt(index)
+			ordinal, ordinalOK := row.Occurrence()
+			occurrence, occurrenceOK := program.OccurrenceAt(int(ordinal))
+			occurrenceID := occurrence.ID()
+			if !ok || !ordinalOK || !occurrenceOK || !row.Key().Available() || !row.PointID().Available() || !occurrenceID.Available() {
 				return row.Key(), false
 			}
-			if !visit(row.Key(), mount.ModuleKey, row.PointID(), row.OccurrenceID()) {
+			if !visit(row.Key(), mount.ModuleKey, row.PointID(), occurrenceID) {
 				return row.Key(), false
 			}
 		}

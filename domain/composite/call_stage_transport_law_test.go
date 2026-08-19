@@ -22,7 +22,7 @@ return result
 type callStageTransportDeclarations struct {
 	axisOf   map[schema.Key]schema.Key
 	mounted  map[schema.Key]struct{}
-	byStage  map[programartifact.RuleStage]map[schema.Key]struct{}
+	byStage  map[programschema.RuleStage]map[schema.Key]struct{}
 	transfer programartifact.IssuanceDirectory
 }
 
@@ -35,7 +35,7 @@ func readCallStageTransportDeclarations(t *testing.T) callStageTransportDeclarat
 	read := callStageTransportDeclarations{
 		axisOf:   make(map[schema.Key]schema.Key),
 		mounted:  make(map[schema.Key]struct{}),
-		byStage:  make(map[programartifact.RuleStage]map[schema.Key]struct{}),
+		byStage:  make(map[programschema.RuleStage]map[schema.Key]struct{}),
 		transfer: directory,
 	}
 	for index := 0; index < directory.Count(); index++ {
@@ -130,25 +130,25 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile the call fixture: %s", failure.Error())
 	}
-	frozen, _, frozenOK := artifact.ColdPublication()
-	program := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !frozenOK || !program.Available() {
+	program := artifact.Program()
+	if !program.Available() {
 		t.Fatal("compiled Program publication is unavailable")
 	}
 	var dispatch, effect identity.ContentID
-	for index := 0; index < artifact.RulePlacementCount(); index++ {
-		row, rowOK := artifact.RulePlacementAt(index)
-		point, pointOK := row.PointAt(0)
-		if !rowOK || !pointOK {
+	ruleCount, rulesPublished := program.RuleOccurrenceCount()
+	if !rulesPublished {
+		t.Fatal("cold rule-occurrence family")
+	}
+	for index := 0; index < ruleCount; index++ {
+		row, rowOK := program.RuleOccurrenceAt(index)
+		point := row.PointID()
+		if !rowOK || !point.Available() {
 			t.Fatalf("placement %d is unavailable", index)
 		}
 		switch row.Stage() {
-		case programartifact.RuleStageCallDispatch:
+		case programschema.RuleStageCallDispatch:
 			dispatch = point
-		case programartifact.RuleStageCallEffect:
+		case programschema.RuleStageCallEffect:
 			effect = point
 		}
 	}
@@ -188,8 +188,8 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	if !full.row.Full() {
 		t.Fatal("the base to call-effect transport is not a full environment transport")
 	}
-	effectAxes := read.byStage[programartifact.RuleStageCallEffect]
-	dispatchAxes := read.byStage[programartifact.RuleStageCallDispatch]
+	effectAxes := read.byStage[programschema.RuleStageCallEffect]
+	dispatchAxes := read.byStage[programschema.RuleStageCallDispatch]
 	if len(effectAxes) == 0 || len(dispatchAxes) == 0 {
 		t.Fatal("the sealed directory issues no rule at a call stage")
 	}

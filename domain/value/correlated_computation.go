@@ -5,9 +5,8 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type computationKey struct {
@@ -308,15 +307,22 @@ func (schema *valueBuilder) sealComputationRows() bool {
 		if artifact == nil {
 			return false
 		}
-		for index := 0; index < artifact.OccurrenceCount(); index++ {
-			row, ok := artifact.OccurrenceAt(index)
+		program := artifact.Program()
+		occurrenceCount, occurrenceCountOK := program.OccurrenceCount()
+		if !occurrenceCountOK {
+			return false
+		}
+		for index := 0; index < occurrenceCount; index++ {
+			row, ok := program.OccurrenceAt(index)
 			if !ok {
 				return false
 			}
 			key := computationKey{module, row.ID()}
-			switch programartifact.OccurrenceKind(row.Kind()) {
-			case programartifact.OccurrenceBinaryArithmetic:
-				leftID, rightID, op, rowOK := row.BinaryArithmetic()
+			switch row.Kind() {
+			case programschema.OccurrenceBinaryArithmetic:
+				leftID, leftOK := program.OccurrenceInputID(index, 0)
+				rightID, rightOK := program.OccurrenceInputID(index, 1)
+				op, rowOK := flowkind.BinaryOp(row.Code()), leftOK && rightOK
 				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
 				left, leftOK := schema.sealBoundary().Values().ForMountedSpan(module, leftID)
 				right, rightOK := schema.sealBoundary().Values().ForMountedSpan(module, rightID)
@@ -335,8 +341,10 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.binaryArithmetics[key] = arithmetic
-			case programartifact.OccurrenceBinaryEquality:
-				leftID, rightID, op, rowOK := row.BinaryEquality()
+			case programschema.OccurrenceBinaryEquality:
+				leftID, leftOK := program.OccurrenceInputID(index, 0)
+				rightID, rightOK := program.OccurrenceInputID(index, 1)
+				op, rowOK := flowkind.BinaryOp(row.Code()&0xff), leftOK && rightOK
 				if !rowOK {
 					return false
 				}
@@ -360,8 +368,10 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				} else {
 					return false
 				}
-			case programartifact.OccurrenceBinaryOrder:
-				leftID, rightID, op, rowOK := row.BinaryOrder()
+			case programschema.OccurrenceBinaryOrder:
+				leftID, leftOK := program.OccurrenceInputID(index, 0)
+				rightID, rightOK := program.OccurrenceInputID(index, 1)
+				op, rowOK := flowkind.BinaryOp(row.Code()), leftOK && rightOK
 				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
 				left, leftOK := schema.sealBoundary().Values().ForMountedSpan(module, leftID)
 				right, rightOK := schema.sealBoundary().Values().ForMountedSpan(module, rightID)
@@ -381,7 +391,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				} else {
 					return false
 				}
-			case programartifact.OccurrenceCall:
+			case programschema.OccurrenceCall:
 				// The runtime-kind rule consumes only the sealed geometry of a
 				// strict unary plain call. Join the occurrence to the existing
 				// ingress Call directory by its parent-issued ID; do not infer
@@ -425,9 +435,14 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.runtimeKindCalls[key] = runtimeCall
-			case programartifact.OccurrenceOperationPredicateRefinement:
-				sourceCallID, targetID, operandID, routeID, opCode, truth, rowOK := row.OperationPredicateRefinement()
-				op := flowkind.BinaryOp(opCode)
+			case programschema.OccurrenceOperationPredicateRefinement:
+				sourceCallID, sourceOK := program.OccurrenceInputID(index, 0)
+				targetID, targetOK := program.OccurrenceInputID(index, 1)
+				operandID, operandOK := program.OccurrenceInputID(index, 2)
+				routeID, routeOK := program.OccurrenceInputID(index, 3)
+				op := flowkind.BinaryOp(row.Code() & 0xff)
+				truth := row.Code()&(1<<8) != 0
+				rowOK := sourceOK && targetOK && operandOK && routeOK
 				call, callOK := artifact.CallForID(sourceCallID)
 				if !rowOK || !routeID.Available() || !callOK || call.ID() != sourceCallID ||
 					call.Form() != uint8(programschema.CallFormPlain) || call.ArgumentCount() != 1 {
@@ -471,8 +486,8 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.runtimeKindCalls[key] = runtimeCall
-			case programartifact.OccurrenceBinaryPresenceRefinement:
-				_, targetID, _, _, present, rowOK := row.BinaryPresenceRefinement()
+			case programschema.OccurrenceBinaryPresenceRefinement:
+				_, targetID, _, _, present, rowOK := presenceRefinementInputs(program, index, row)
 				target, targetOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
 				coordinate, coordinateOK := schema.coordinateForCold(target)
 				if !rowOK || !targetOK || !coordinateOK {
@@ -487,11 +502,12 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.presenceRefinements[key] = refinement
-			case programartifact.OccurrenceUnary:
-				if row.Code() != uint64(flowkind.UnaryNot) || row.InputCount() != 1 {
+			case programschema.OccurrenceUnary:
+				_, inputCount, inputSpanOK := row.InputSpan()
+				if row.Code() != uint64(flowkind.UnaryNot) || !inputSpanOK || inputCount != 1 {
 					continue
 				}
-				operandID, ok := row.InputAt(0)
+				operandID, ok := program.OccurrenceInputID(index, 0)
 				if !ok {
 					return false
 				}
@@ -504,12 +520,13 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				}
 				content := computationContent(schema.linkID, "val-not!", module, row.ID())
 				schema.unaryNots[key] = UnaryNot{schema: schema.Schema, key: key, content: content, resultCoordinate: rc, operandCoordinate: oc}
-			case programartifact.OccurrenceSelect:
-				if row.InputCount() != 2 || (row.Code() != uint64(flowkind.SelectAnd) && row.Code() != uint64(flowkind.SelectOr)) {
+			case programschema.OccurrenceSelect:
+				_, inputCount, inputSpanOK := row.InputSpan()
+				if !inputSpanOK || inputCount != 2 || (row.Code() != uint64(flowkind.SelectAnd) && row.Code() != uint64(flowkind.SelectOr)) {
 					continue
 				}
-				leftID, leftOK := row.InputAt(0)
-				rightID, rightOK := row.InputAt(1)
+				leftID, leftOK := program.OccurrenceInputID(index, 0)
+				rightID, rightOK := program.OccurrenceInputID(index, 1)
 				if !leftOK || !rightOK {
 					return false
 				}
@@ -536,11 +553,12 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					}
 					schema.selectBranches[selectBranchKey{key, uint8(branch)}] = SelectBranch{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-sel!", module, row.ID(), uint64(branch)), branch: uint8(branch), truthy: truthy, chosenIsLeft: chosenLeft, result: rc, left: lc, chosen: chosen}
 				}
-			case programartifact.OccurrenceValueClaim:
-				if row.InputCount() != 1 {
+			case programschema.OccurrenceValueClaim:
+				_, inputCount, inputSpanOK := row.InputSpan()
+				if !inputSpanOK || inputCount != 1 {
 					continue
 				}
-				operandID, ok := row.InputAt(0)
+				operandID, ok := program.OccurrenceInputID(index, 0)
 				if !ok {
 					return false
 				}
@@ -552,11 +570,12 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				schema.valueClaims[key] = ValueClaim{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-clm!", module, row.ID()), result: rc, operand: oc, kind: flowkind.ValueClaimKind(row.Code())}
-			case programartifact.OccurrenceReturnBoundary:
-				if row.InputCount() != 1 {
+			case programschema.OccurrenceReturnBoundary:
+				_, inputCount, inputSpanOK := row.InputSpan()
+				if !inputSpanOK || inputCount != 1 {
 					continue
 				}
-				valuesID, ok := row.InputAt(0)
+				valuesID, ok := program.OccurrenceInputID(index, 0)
 				if !ok {
 					return false
 				}
@@ -570,6 +589,21 @@ func (schema *valueBuilder) sealComputationRows() bool {
 		}
 	}
 	return true
+}
+
+func presenceRefinementInputs(program programschema.Program, index int, row programschema.Occurrence) (source, target, operand, route identity.ContentID, present bool, ok bool) {
+	if !row.Available() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false, false
+	}
+	ids := [4]identity.ContentID{}
+	for position := range ids {
+		id, held := program.OccurrenceInputID(index, position)
+		if !held {
+			return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false, false
+		}
+		ids[position] = id
+	}
+	return ids[0], ids[1], ids[2], ids[3], row.Code() == 1, true
 }
 
 func computationContent(linkID identity.ContentID, label string, module, occurrence identity.ContentID, extra ...uint64) identity.ContentID {
