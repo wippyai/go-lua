@@ -351,11 +351,16 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) {
 		t.Fatal("summary Factor form binding")
 	}
-	readRuntime, bound := BindRuleWithSummaryRead[uint64, uint64, struct{}, uint64, uint64, OrderedCells[uint64]](binding, rule, read, factor, form, writeSlot, factor, HotRuleSpec[uint64, struct{}]{
+	var readRuntime Read[OrderedCells[uint64]]
+	bound := BindSelectedExactRule[uint64, uint64, struct{}](binding, rule, writeSlot, factor.Ref(), HotRuleSpec[uint64, struct{}]{
 		OperandContent: func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true },
 		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(base + 4)),
 		Transfer:       func(Access[uint64, struct{}]) bool { return true },
-	}, func(struct{}) (uint64, bool) { return 1, true })
+	}, func(struct{}) (uint64, bool) { return 1, true }, func(tx *SelectedRouteRuleBindingTransaction[uint64, uint64, struct{}]) bool {
+		var ok bool
+		readRuntime, ok = AddSelectedRouteSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](tx, read, factor.Ref(), form, nil)
+		return ok
+	})
 	if !bound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadSummary {
 		t.Fatal("summary ProgramRule binding")
 	}
