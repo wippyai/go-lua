@@ -83,6 +83,30 @@ func TestCommittedExactQueryPublishesOneEvidenceSurface(t *testing.T) {
 	t.Fatal("committed exact query runtime row")
 }
 
+// TestProgramExactQueryEvidenceRejectsForeignBindingAndGraph maps the old
+// compiler join refusal onto the current sealed Factor plane.  The exact
+// implementation and the graph Query must share both immutable authorities;
+// an equal-shaped foreign seal or an unavailable Query cannot enter the row.
+func TestProgramExactQueryEvidenceRejectsForeignBindingAndGraph(t *testing.T) {
+	fixture := newReceiptQueryMatrixFixture(t, 1, nil, nil)
+	query, queryOK := fixture.graph.Query(programMatrixID(110))
+	plane, planeOK := bindProgramPlane(fixture.graph.state, fixture.graph.graph)
+	implementation := fixture.queryImplementations[0]
+	if !queryOK || !planeOK || plane == nil || implementation == nil {
+		t.Fatal("exact query evidence plane")
+	}
+	if joined, accepted := bindReceiptExactQuery[uint64, uint64](plane, implementation, query.identity); !accepted || joined == nil {
+		t.Fatal("canonical exact query evidence refused")
+	}
+	foreign := newReceiptQueryMatrixFixture(t, 1, nil, nil)
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](plane, foreign.queryImplementations[0], query.identity); accepted {
+		t.Fatal("equal-shaped foreign exact query binding entered the program plane")
+	}
+	if _, accepted := bindReceiptExactQuery[uint64, uint64](plane, implementation, equation.Query{}); accepted {
+		t.Fatal("unavailable/foreign exact query identity entered the program plane")
+	}
+}
+
 func hotSummaryQueryLawSpec() HotSummaryQuerySpec[uint64, uint64] {
 	return HotSummaryQuerySpec[uint64, uint64]{
 		Project: func(cells OrderedCells[uint64]) uint64 { return uint64(cells.Count()) },

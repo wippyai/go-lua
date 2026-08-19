@@ -256,3 +256,155 @@ func TestSchemaRuleBindingReadCarryAndSelectedProductProof(t *testing.T) {
 		t.Fatal("read/carry/selected product proof was not sealed")
 	}
 }
+
+func lawProgramRuleAnchor(t testing.TB) ruleSurfaceAnchor {
+	t.Helper()
+	batch := equation.NewBatch()
+	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(997_500)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	occurrence, occurrenceOK := batch.At(site)
+	entity, entityOK := operandEntityForContent([32]byte{0x5a})
+	operand, operandOK := batch.AdmitOperand(occurrence, entity)
+	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !batch.Seal() {
+		t.Fatal("ProgramRule source anchor")
+	}
+	return ruleSurfaceAnchor{occurrence: occurrence, operand: operand}
+}
+
+// TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch
+// rehomes the old compiler-thread law on the current ProgramRule issuer. The
+// sealed proof, typed read origin, carry token and one write surface must all
+// survive into the declaration consumed by ConstructProgram.
+func TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *testing.T) {
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_510))
+	readForm, readOK := factor.ExactRead()
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(997_511), OperandFamily: coldKey(997_512), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(997_513)}, Output: factor.Ref(),
+	})
+	input, inputOK := rule.Input(0)
+	read, readSlotOK := SchemaRead(rule, readForm, input)
+	carry, carryOK := SchemaCarryFrom(rule, input, factor.Ref())
+	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	binding := NewSchemaBinding(schema)
+	hot := lawHotRuleSpec()
+	hot.Admission = AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_513))
+	readRuntime := Read[OrderedCells[uint64]]{}
+	bound := false
+	if factorOK && readOK && writeOK && ruleOK && inputOK && readSlotOK && carryOK && writeSlotOK && schemaOK && BindFactor(binding, factor, hotUintFactorSpec()) {
+		readRuntime, bound = BindRuleWithExactReadAndCarry[uint64, uint64, struct{}, uint64, uint64](binding, rule, read, factor, carry, writeSlot, factor, hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }, func(struct{}) (uint64, bool) { return 1, true })
+	}
+	if !bound || !binding.Seal() {
+		t.Fatalf("exact read/carry ProgramRule binding factor=%t read=%t write=%t rule=%t input=%t readSlot=%t carry=%t writeSlot=%t schema=%t bound=%t poisoned=%t", factorOK, readOK, writeOK, ruleOK, inputOK, readSlotOK, carryOK, writeSlotOK, schemaOK, bound, binding.Poisoned())
+	}
+	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !implementationOK || implementation == nil || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadExact || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 1 {
+		t.Fatal("exact read/carry proof thread")
+	}
+	installLawProgramRuleResolver(t, implementation)
+	program, programOK := SealProgramRule(implementation)
+	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
+	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
+	if !programOK || !program.Available() || !declaredOK || !surfacesOK || len(surfaces.reads) != 1 || len(surfaces.writes) != 1 || surfaces.carries != 1 || surfaces.reads[0].value.Form != equation.SurfaceReadExact {
+		t.Fatal("exact read/carry ProgramRule surfaces")
+	}
+}
+
+// TestProgramRuleThreadsSummaryReadThroughProductAndEvidence retains the
+// summary read's normalizer and ordered-cell contract at the sealed Rule
+// boundary; no exact-read fallback or parallel callback may replace it.
+func TestProgramRuleThreadsSummaryReadThroughProductAndEvidence(t *testing.T) {
+	runProgramRuleSummaryThreadLaw(t, 997_520, 8)
+}
+
+// TestProgramRuleThreadsLargeSummaryReadThroughProductAndEvidence uses a
+// wide Factor key plane, preserving the old large-summary no-alias law while
+// exercising only the current sealed binding receipt.
+func TestProgramRuleThreadsLargeSummaryReadThroughProductAndEvidence(t *testing.T) {
+	runProgramRuleSummaryThreadLaw(t, 997_530, 10_000)
+}
+
+func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
+	t.Helper()
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(base))
+	form, formOK := factor.SummaryRead(coldKey(base + 1))
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(base + 2), OperandFamily: coldKey(base + 3), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(base + 4)}, Output: factor.Ref(),
+	})
+	input, inputOK := rule.Input(0)
+	read, readOK := SchemaRead(rule, form, input)
+	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	binding := NewSchemaBinding(schema)
+	spec := hotUintFactorSpec()
+	spec.KeyEnd = keyEnd
+	if !factorOK || !formOK || !writeOK || !ruleOK || !inputOK || !readOK || !writeSlotOK || !schemaOK || !BindFactor(binding, factor, spec) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
+		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
+		func(left, right OrderedCells[uint64]) bool {
+			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
+		},
+		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) {
+		t.Fatal("summary Factor form binding")
+	}
+	readRuntime, bound := BindRuleWithSummaryRead[uint64, uint64, struct{}, uint64, uint64, OrderedCells[uint64]](binding, rule, read, factor, form, writeSlot, factor, HotRuleSpec[uint64, struct{}]{
+		OperandContent: func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true },
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(base + 4)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
+	}, func(struct{}) (uint64, bool) { return 1, true })
+	if !bound || !binding.Seal() || readRuntime.origin == nil || readRuntime.origin.kind != composition.ReadSummary {
+		t.Fatal("summary ProgramRule binding")
+	}
+	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !implementationOK || implementation == nil || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 0 {
+		t.Fatal("summary ProgramRule proof thread")
+	}
+}
+
+// TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence proves the
+// no-read carry lane still publishes one carried input and one exact write
+// through the same ProgramRule surface issuer.
+func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) {
+	// Construct the current carry lane explicitly so this test cannot pass by
+	// observing the ordinary zero-input Rule shape.
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_560))
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(997_561), OperandFamily: coldKey(997_562), Inputs: 1, Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(997_563)}, Output: factor.Ref()})
+	input, inputOK := rule.Input(0)
+	carry, carryOK := SchemaCarryFrom(rule, input, factor.Ref())
+	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	binding := NewSchemaBinding(schema)
+	hot := HotRuleSpec[uint64, struct{}]{OperandContent: func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true }, Admission: AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_563)), Transfer: func(Access[uint64, struct{}]) bool { return true }}
+	bound := BindFactor(binding, factor, hotUintFactorSpec()) && BindRuleWithCarry[uint64, uint64, struct{}](binding, rule, carry, writeSlot, factor, hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 1, true })
+	if !factorOK || !writeOK || !ruleOK || !inputOK || !carryOK || !writeSlotOK || !schemaOK || !bound || !binding.Seal() {
+		t.Fatal("carry ProgramRule binding")
+	}
+	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !implementationOK || implementation == nil || implementation.binding.proof.reads != 0 || implementation.binding.proof.carries != 1 {
+		t.Fatal("carry ProgramRule proof thread")
+	}
+	installLawProgramRuleResolver(t, implementation)
+	program, programOK := SealProgramRule(implementation)
+	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
+	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
+	if !programOK || !declaredOK || !surfacesOK || len(surfaces.reads) != 0 || len(surfaces.writes) != 1 || surfaces.carries != 1 {
+		t.Fatal("carry ProgramRule surfaces")
+	}
+}
+
+func lawProgramRuleCoords() OperandCoords {
+	return OperandCoords{Member: programMatrixID(221), Mount: programMatrixID(222), Point: programMatrixID(223), Occurrence: programMatrixID(224)}
+}
+
+func installLawProgramRuleResolver(t testing.TB, implementation *RuleImplementation[uint64, uint64, struct{}]) {
+	t.Helper()
+	if !implementation.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
+		t.Fatal("ProgramRule resolver")
+	}
+}

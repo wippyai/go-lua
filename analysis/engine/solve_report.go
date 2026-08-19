@@ -168,7 +168,10 @@ func boundaryFailure(family SolveFailureFamily, authority string, ordinals ...ui
 // compilationSealFailure mints the compile-family boundary for one ordered
 // runtime seal phase. The phase ordinal enters the site preimage.
 func compilationSealFailure(phase uint64) SolveFailure {
-	return boundaryFailure(SolveFailureFamilyCompile, "program-seal", phase)
+	// Runtime sealing and the public ProgramSealStage table are distinct
+	// authorities.  Keeping their ordinals in separate digest namespaces is
+	// what prevents ProgramSealStageOf from misclassifying a runtime phase.
+	return boundaryFailure(SolveFailureFamilyCompile, "runtime-program-seal", phase)
 }
 
 // ProgramSealFailure is the construction-plane mint for one first seal phase.

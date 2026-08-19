@@ -104,18 +104,40 @@ func TestCommittedQueryWarmStateAndCancellation(t *testing.T) {
 
 func newReceiptQueryMatrixFixture(t testing.TB, count int, _, _ []int) receiptQueryMatrixFixture {
 	t.Helper()
-	return buildReceiptQueryMatrixFixture(t, count, false)
+	return buildReceiptQueryMatrixFixtureWithOptions(t, count, false, false, false)
 }
 
 func newObservedReceiptQueryMatrixFixture(t testing.TB, count int, _, _ []int) receiptQueryMatrixFixture {
 	t.Helper()
-	return buildReceiptQueryMatrixFixture(t, count, true)
+	return buildReceiptQueryMatrixFixtureWithOptions(t, count, true, false, false)
+}
+
+// newIncompleteQueryMatrixFixture keeps the solve-report laws on the
+// current sealed-program path.  The rule cell is validly sealed, but its
+// owner transfer refuses at execution, giving SolveIncomplete a real first
+// failure boundary rather than a fabricated report.
+func newIncompleteQueryMatrixFixture(t testing.TB, count int) receiptQueryMatrixFixture {
+	t.Helper()
+	return buildReceiptQueryMatrixFixtureWithOptions(t, count, false, true, false)
+}
+
+// newFoldQueryMatrixFixture is the runtime counterpart of the direct
+// exact-fold cell law.  It uses the same committed rows and changes only the
+// sealed Query projection from Project to Fold.
+func newFoldQueryMatrixFixture(t testing.TB, count int) receiptQueryMatrixFixture {
+	t.Helper()
+	return buildReceiptQueryMatrixFixtureWithOptions(t, count, false, false, true)
 }
 
 // buildReceiptQueryMatrixFixture uses one sealed schema cell repeatedly at
 // distinct mounted artifact coordinates. The template is the authority for
 // points and stages; the declaration inventory supplies only sealed owners.
 func buildReceiptQueryMatrixFixture(t testing.TB, count int, observed bool) receiptQueryMatrixFixture {
+	t.Helper()
+	return buildReceiptQueryMatrixFixtureWithOptions(t, count, observed, false, false)
+}
+
+func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed, failTransfer, fold bool) receiptQueryMatrixFixture {
 	t.Helper()
 	if count <= 0 || count > 200 {
 		t.Fatalf("matrix width %d is outside the fixture budget", count)
@@ -144,6 +166,9 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, observed bool) rece
 		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(952_100)),
 		Transfer: func(access Access[uint64, ruleUnit]) bool {
 			*transferRuns++
+			if failTransfer {
+				return false
+			}
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
@@ -157,6 +182,22 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, observed bool) rece
 			return 0
 		}
 		return value
+	}
+	if fold {
+		querySpec.Project = nil
+		querySpec.Fold = QueryFold[OrderedCells[uint64], uint64]{
+			Begin: func() uint64 { return 37 },
+			Accumulate: func(result uint64, cells OrderedCells[uint64]) (uint64, bool) {
+				value, present, valid := cells.At(0)
+				if cells.Count() != 1 || !valid {
+					return 0, false
+				}
+				if !present {
+					return result, true
+				}
+				return result + value, true
+			},
+		}
 	}
 	if !BindFactor(binding, factor, hotUintFactorSpec()) ||
 		!BindRule[uint64, uint64, ruleUnit](binding, rule, writeSlot, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
@@ -274,7 +315,11 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, observed bool) rece
 		t.Fatal("sealed matrix query table")
 	}
 	expected := make([]uint64, count)
-	return receiptQueryMatrixFixture{solver: solver, queries: queries, expected: expected, schemaID: identity.ContentID(schema.ID().Digest()), topologyKey: program.topology.Key(), transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, binding: binding, graph: program, addressed: addressed, queryImplementations: make([]*ExactQueryImplementation[uint64, uint64], count), observations: observations, observationIDs: observationIDs}
+	implementations := make([]*ExactQueryImplementation[uint64, uint64], count)
+	for index := range implementations {
+		implementations[index] = queryImplementation
+	}
+	return receiptQueryMatrixFixture{solver: solver, queries: queries, expected: expected, schemaID: identity.ContentID(schema.ID().Digest()), topologyKey: program.topology.Key(), transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, binding: binding, graph: program, addressed: addressed, queryImplementations: implementations, observations: observations, observationIDs: observationIDs}
 }
 
 // newBorrowedQueryFixture is the current sealed-program replacement for the

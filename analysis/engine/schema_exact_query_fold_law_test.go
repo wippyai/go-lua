@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestSchemaExactQueryFoldPreservesCanonicalMultiplicity(t *testing.T) {
 	_, factor, query := exactQuerySchemaFixture(t)
@@ -68,5 +71,24 @@ func TestSchemaExactQueryFoldRejectsMixedProjectAndFoldAuthority(t *testing.T) {
 	binding := NewSchemaBinding(factor.Schema())
 	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || BindExactQuery(binding, query, factor, spec) || !binding.Poisoned() {
 		t.Fatal("mixed exact Project/Fold authority was accepted")
+	}
+}
+
+// TestSchemaExactQueryFoldMaterializesThroughCommittedProgram executes the
+// Fold after ConstructProgram and CommittedProgram.Seal.  The fold law is
+// therefore checked at the published query surface, not only by calling its
+// cell accumulator directly.
+func TestSchemaExactQueryFoldMaterializesThroughCommittedProgram(t *testing.T) {
+	fixture := newFoldQueryMatrixFixture(t, 3)
+	state, status := fixture.solver.Solve(context.Background())
+	if state == nil || status != SolveComplete {
+		t.Fatalf("fold solve = state:%t status:%v", state != nil, status)
+	}
+	for index, query := range fixture.queries {
+		key, keyed := query.PublicationKey()
+		value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
+		if !keyed || !readable || value != 37 {
+			t.Fatalf("fold query[%d] = %d/%t keyed=%t, want fold seed 37", index, value, readable, keyed)
+		}
 	}
 }
