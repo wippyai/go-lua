@@ -109,17 +109,14 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 	}
 	regionRows := make(map[identity.ContentID]struct{}, len(artifact.regions))
 	for index, row := range artifact.regions {
-		if !row.id.Available() || !row.head.Available() || !row.sourceHead.Available() || len(row.members) == 0 {
+		if !row.id.Available() || len(row.members) == 0 {
 			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
 		}
 		if _, exists := regionRows[row.id]; exists {
 			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionDuplicate)
 		}
 		regionRows[row.id] = struct{}{}
-		if _, exists := state.pointRows[row.head]; !exists || row.members[0] != row.head {
-			return compileFailure(CompileStageSeal, CompileRowRegion, index, 0, CompileReasonRegionHeaderMismatch)
-		}
-		if _, exists := state.pointRows[row.sourceHead]; !exists {
+		if _, exists := state.pointRows[row.members[0]]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowRegion, index, 0, CompileReasonRegionHeaderMismatch)
 		}
 		for memberIndex, member := range row.members {

@@ -39,7 +39,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 		}
 		regions[parent.ID()] = len(compiler.regions)
 		compiler.regions = append(compiler.regions, Region{
-			id: parent.ID(), head: header.PathID(), sourceHead: header.PathID(), parent: parent.ParentID(), cyclic: parent.Cyclic(), members: members,
+			id: parent.ID(), parent: parent.ParentID(), cyclic: parent.Cyclic(), members: members,
 		})
 	}
 
@@ -100,7 +100,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 			if len(stack) != 0 {
 				current := &stack[len(stack)-1]
 				row := compiler.regions[current.region]
-				if current.next >= len(row.members) || row.members[current.next] != id || current.next == 0 && row.head != id {
+				if current.next >= len(row.members) || row.members[current.next] != id {
 					return compileFailure(CompileStageLocalWTO, CompileRowWTOEvent, index, current.next, CompileReasonEventPointOrder)
 				}
 				current.next++

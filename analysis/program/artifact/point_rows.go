@@ -235,20 +235,22 @@ func (event WTOEvent) Available() bool {
 
 // Region is a zero-escape scalar copy of one parent-issued LocalWTO region.
 type Region struct {
-	id         identity.ContentID
-	head       identity.ContentID
-	sourceHead identity.ContentID
-	parent     identity.ContentID
-	cyclic     bool
-	members    []identity.ContentID
+	id      identity.ContentID
+	parent  identity.ContentID
+	cyclic  bool
+	members []identity.ContentID
 }
 
-func (region Region) ID() identity.ContentID         { return region.id }
-func (region Region) Head() identity.ContentID       { return region.head }
-func (region Region) SourceHead() identity.ContentID { return region.sourceHead }
-func (region Region) ParentID() identity.ContentID   { return region.parent }
-func (region Region) Cyclic() bool                   { return region.cyclic }
-func (region Region) MemberCount() int               { return len(region.members) }
+func (region Region) ID() identity.ContentID { return region.id }
+func (region Region) Head() identity.ContentID {
+	if !region.id.Available() || len(region.members) == 0 {
+		return identity.ContentID{}
+	}
+	return region.members[0]
+}
+func (region Region) ParentID() identity.ContentID { return region.parent }
+func (region Region) Cyclic() bool                 { return region.cyclic }
+func (region Region) MemberCount() int             { return len(region.members) }
 func (region Region) MemberAt(index int) (identity.ContentID, bool) {
 	if !region.id.Available() || index < 0 || index >= len(region.members) {
 		return identity.ContentID{}, false

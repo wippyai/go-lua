@@ -13,8 +13,10 @@ const (
 	// every CompileKey, not an ambient package assumption.
 	GrammarABIVersion = uint64(5)
 
-	artifactFormat          = uint64(33)
-	pointGeometryLawVersion = uint64(1)
+	artifactFormat = uint64(33)
+	// Region heads are derived from the canonical first member; the former
+	// duplicate head/sourceHead scalars no longer enter the artifact identity.
+	pointGeometryLawVersion = uint64(2)
 	// Attachment relations are emitted directly into the generic occurrence
 	// catalog; v2 removes the former retained Site-to-WTO projection from the
 	// artifact identity preimage.

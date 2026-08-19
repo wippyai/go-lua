@@ -385,7 +385,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	sink.add(uintField(uint64(len(artifact.regions))))
 	for _, region := range artifact.regions {
 		sink.add(
-			bytesField(region.id), bytesField(region.head), bytesField(region.sourceHead), bytesField(region.parent), boolField(region.cyclic),
+			bytesField(region.id), bytesField(region.parent), boolField(region.cyclic),
 			uintField(uint64(len(region.members))),
 		)
 		for _, member := range region.members {
