@@ -334,6 +334,110 @@ func TestSchemaRuleBindingDirectIncompleteSealPoisons(t *testing.T) {
 	}
 }
 
+func directNoCarryRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, struct{}], SchemaWriteSlot[uint64]) {
+	t.Helper()
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_711))
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(997_712), OperandFamily: coldKey(997_713), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(997_714)}, Output: factor.Ref(),
+	})
+	_, inputOK := rule.Input(0)
+	write, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	if !factorOK || !writeOK || !ruleOK || !inputOK || !writeSlotOK || !schemaOK || schema == nil {
+		t.Fatal("direct no-carry Rule schema")
+	}
+	return schema, factor, rule, write
+}
+
+func directNoCarryRuleHotLaw() HotRuleSpec[uint64, struct{}] {
+	return HotRuleSpec[uint64, struct{}]{
+		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7b}, true },
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_714)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
+	}
+}
+
+func TestSchemaRuleBindingDirectNoCarryExactCompletes(t *testing.T) {
+	schema, factor, rule, write := directNoCarryRuleLawSchema(t)
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSelectedExactRuleDirect[uint64](binding, rule, write, factor.Ref(), directNoCarryRuleHotLaw(), func(struct{}) (uint64, bool) { return 0, true }) || !binding.Seal() {
+		t.Fatal("direct no-carry exact Rule binding")
+	}
+	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !ok || implementation == nil || implementation.binding.proof == nil || implementation.binding.proof.inputs != 1 || implementation.binding.proof.reads != 0 || implementation.binding.proof.carries != 0 || implementation.binding.proof.writes != 1 {
+		t.Fatal("direct no-carry exact Rule proof")
+	}
+}
+
+func directRouteRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *RuleSlot[uint64, struct{}], SchemaReadSlot[uint64], SchemaReadSlot[uint64], SchemaReadSlot[uint64], SchemaCarrySlot[uint64], SchemaWriteSlot[uint64]) {
+	t.Helper()
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_721))
+	readForm, readOK := factor.ExactRead()
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(997_722), OperandFamily: coldKey(997_723), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(997_724)}, Output: factor.Ref(),
+	})
+	input, inputOK := rule.Input(0)
+	exact, exactOK := SchemaRead(rule, readForm, input)
+	static, staticOK := SchemaSelectedRead[uint64](rule, readForm, input, exact.Ref())
+	operand, operandOK := SchemaSelectedRead[uint64](rule, readForm, input, exact.Ref())
+	carry, carryOK := SchemaCarryFrom(rule, input, factor.Ref())
+	write, writeSlotOK := SchemaRouteWrite(rule, writeForm, static)
+	schema, schemaOK := builder.Seal()
+	if !factorOK || !readOK || !writeOK || !ruleOK || !inputOK || !exactOK || !staticOK || !operandOK || !carryOK || !writeSlotOK || !schemaOK || schema == nil {
+		t.Fatal("direct routed Rule schema")
+	}
+	return schema, factor, rule, exact, static, operand, carry, write
+}
+
+func directRouteRuleHotLaw() HotRuleSpec[uint64, struct{}] {
+	return HotRuleSpec[uint64, struct{}]{
+		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7c}, true },
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_724)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
+	}
+}
+
+func TestSchemaRuleBindingDirectRouteAndSelectedReadsComplete(t *testing.T) {
+	schema, factor, rule, exact, static, operand, carry, write := directRouteRuleLawSchema(t)
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSelectedRouteRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), directRouteRuleHotLaw(), HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }) {
+		t.Fatal("direct routed Rule cell")
+	}
+	operandRead, operandOK := BindSelectedRuleDirectOperandRead[uint64, uint64, struct{}, uint64, uint64](binding, rule, operand, factor.Ref(), func(SelectorContext, struct{}) bool { return true })
+	staticRead, staticOK := BindSelectedRuleDirectSelectedRead[uint64, uint64, struct{}, uint64, uint64](binding, rule, static, factor.Ref(), func(SelectorContext) bool { return true })
+	exactRead, exactOK := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, exact, factor.Ref(), func(struct{}) (uint64, bool) { return 0, true })
+	if !operandOK || !staticOK || !exactOK || operandRead.index != 2 || staticRead.index != 1 || exactRead.index != 0 || operandRead.origin == nil || staticRead.origin == nil || exactRead.origin == nil || operandRead.origin.kind != composition.ReadSelect || staticRead.origin.kind != composition.ReadSelect || exactRead.origin.kind != composition.ReadExact || !binding.Seal() {
+		t.Fatalf("direct route reads operand=%t/%d static=%t/%d exact=%t/%d sealed=%t", operandOK, operandRead.index, staticOK, staticRead.index, exactOK, exactRead.index, binding.Sealed())
+	}
+	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !ok || implementation == nil || implementation.binding.proof == nil || implementation.binding.proof.reads != 3 || implementation.binding.proof.carries != 1 || implementation.binding.proof.writes != 1 {
+		t.Fatal("direct routed Rule proof")
+	}
+	if _, ok := implementation.routeWrite(); !ok {
+		t.Fatal("direct routed write proof")
+	}
+}
+
+func TestSchemaRuleBindingDirectConstructorsRejectWrongGeometry(t *testing.T) {
+	schema, factor, rule, _, _, _, carry, write := directRouteRuleLawSchema(t)
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || BindSelectedExactRuleDirect[uint64](binding, rule, write, factor.Ref(), directRouteRuleHotLaw(), func(struct{}) (uint64, bool) { return 0, true }) || !binding.Poisoned() {
+		t.Fatal("no-carry direct constructor admitted routed shape")
+	}
+
+	schema, factor, rule, _, _, _, carry, write = directRouteRuleLawSchema(t)
+	binding = NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || BindSelectedRouteRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), directRouteRuleHotLaw(), HotCarrySpec[uint64, struct{}]{Apply: func(value struct{}, input uint64) (uint64, bool) { return input, true }}, func(struct{}) (uint64, bool) { return 0, true }) || !binding.Poisoned() {
+		t.Fatal("mismatched direct carry transform admitted")
+	}
+}
+
 func lawProgramRuleAnchor(t testing.TB) ruleSurfaceAnchor {
 	t.Helper()
 	batch := equation.NewBatch()
