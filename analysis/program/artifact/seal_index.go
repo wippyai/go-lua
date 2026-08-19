@@ -147,16 +147,6 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		}
 		seenCallAllocations[target.Allocation], seenCallBodies[target.Context] = struct{}{}, struct{}{}
 	}
-	seenBoundaries := make(map[identity.ContentID]struct{}, len(artifact.boundaries))
-	for index, row := range artifact.boundaries {
-		if !row.Available() || (row.kind == BoundaryCapture && uint64(row.position) > uint64(^uint32(0))) {
-			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
-		}
-		if _, duplicate := seenBoundaries[row.id]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyDuplicate)
-		}
-		seenBoundaries[row.id] = struct{}{}
-	}
 	if state.outcomeCursor != uint32(len(artifact.outcomes)) {
 		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyRange)
 	}

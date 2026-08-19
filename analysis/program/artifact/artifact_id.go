@@ -119,10 +119,6 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(target.Allocation), bytesField(target.Body), bytesField(target.Context), bytesField(target.Function), bytesField(target.Formal))
 	}
-	sink.add(uintField(uint64(len(artifact.boundaries))))
-	for _, row := range artifact.boundaries {
-		sink.add(uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.owner), uintField(uint64(row.position)), boolField(row.eligible))
-	}
 	sink.add(uintField(uint64(len(artifact.outcomes))))
 	for _, outcome := range artifact.outcomes {
 		sink.add(

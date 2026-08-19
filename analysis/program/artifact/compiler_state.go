@@ -28,7 +28,6 @@ type compiler struct {
 	bodies                     []BodyRow
 	functionBoundaries         []FunctionBoundaryRow
 	callTargets                []cold.CallTarget
-	boundaries                 []BoundaryRow
 	outcomes                   []OutcomeRow
 	returnValues               []ReturnValue
 	heapAllocations            []HeapAllocationRow

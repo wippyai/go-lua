@@ -38,7 +38,6 @@ type Artifact struct {
 	callTypeArguments      []CallTypeArgumentRow
 	bodies                 []BodyRow
 	functionBoundaries     []FunctionBoundaryRow
-	boundaries             []BoundaryRow
 	outcomes               []OutcomeRow
 	returnValues           []ReturnValue
 	occurrences            []OccurrenceRow
