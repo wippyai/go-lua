@@ -120,7 +120,9 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 	staticMounts := make([]staticdomain.MountedArtifact, len(state.artifacts.mounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
 	staticValues := source.Boundary().Values()
-	seenStaticValues := make(map[[2]identity.ContentID]struct{})
+	// Row shape and cross-family membership are sealed by the owning axes below;
+	// this loop retains only the Link-local semantic-value substitution Static
+	// must consume while it seals its own authority.
 	for index, published := range state.artifacts.mounts {
 		if !published.valid() {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
@@ -136,66 +138,9 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 		}
 		snapshot := published.snapshot
-		for rowIndex := 0; rowIndex < snapshot.StaticTypeNodeCount(); rowIndex++ {
-			row, rowOK := snapshot.StaticTypeNodeAt(rowIndex)
-			if !rowOK || !row.Available() || row.Owner() != published.programID {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.StaticExpressionCount(); rowIndex++ {
-			row, rowOK := snapshot.StaticExpressionAt(rowIndex)
-			if !rowOK || !row.Available() || row.Owner() != published.programID {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.StaticInputCount(); rowIndex++ {
-			row, rowOK := snapshot.StaticInputAt(rowIndex)
-			if !rowOK || !row.Available() || row.Owner() != published.programID {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		seenCalls := make(map[identity.ContentID]struct{}, snapshot.CallCount())
-		for rowIndex := 0; rowIndex < snapshot.CallCount(); rowIndex++ {
-			row, rowOK := snapshot.CallAt(rowIndex)
-			if !rowOK || !row.ID().Available() || !row.BodyID().Available() || !row.TypeArgumentsID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			if _, duplicate := seenCalls[row.ID()]; duplicate {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			seenCalls[row.ID()] = struct{}{}
-			var callee ingress.CallOperand
-			calleeOK := false
-			for operandIndex := 0; operandIndex < row.OperandCount(); operandIndex++ {
-				operand, operandOK := row.OperandAt(operandIndex)
-				if !operandOK || operand.CallID() != row.ID() {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-				if !operand.Callee() {
-					continue
-				}
-				if calleeOK {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-				callee, calleeOK = operand, true
-			}
-			if !calleeOK || callee.ID() != row.CalleeID() || callee.ValueID() != row.CalleeID() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.StaticTypeArgumentCount(); rowIndex++ {
-			row, rowOK := snapshot.StaticTypeArgumentAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
 		for rowIndex := 0; rowIndex < snapshot.StaticTypeValueCount(); rowIndex++ {
 			row, rowOK := snapshot.StaticTypeValueAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			key := [2]identity.ContentID{published.moduleKey, row.ID()}
-			if _, duplicate := seenStaticValues[key]; duplicate {
+			if !rowOK {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 			value, valueOK := staticValues.ForMountedSemantic(published.moduleKey, row.ID())
@@ -203,112 +148,9 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 			if !valueOK || !valueIDOK || !valueID.Available() {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
-			seenStaticValues[key] = struct{}{}
 			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
 				ModuleID: published.moduleKey, SemanticID: row.ID(), ValueID: valueID,
 			})
-		}
-		for rowIndex := 0; rowIndex < snapshot.ValuesCount(); rowIndex++ {
-			row, rowOK := snapshot.ValuesAt(rowIndex)
-			if !rowOK || !row.ID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.HeapIndexCount(); rowIndex++ {
-			row, rowOK := snapshot.HeapIndexAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.HeapAllocationCount(); rowIndex++ {
-			row, rowOK := snapshot.HeapAllocationAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		bodies := make(map[identity.ContentID]ingress.BodyTransport, snapshot.BodyTransportCount())
-		for rowIndex := 0; rowIndex < snapshot.BodyTransportCount(); rowIndex++ {
-			row, rowOK := snapshot.BodyTransportAt(rowIndex)
-			if !rowOK || !row.ID().Available() || !row.ContextID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			if _, duplicate := bodies[row.ID()]; duplicate {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			_, callable := snapshot.FunctionBoundaryForBody(row.ID())
-			if row.Callable() != callable {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			bodies[row.ID()] = row
-		}
-		targetCount, targetsPublished := published.program.CallTargetCount()
-		if !targetsPublished {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-		}
-		for rowIndex := 0; rowIndex < targetCount; rowIndex++ {
-			row, rowOK := published.program.CallTargetAt(rowIndex)
-			body, bodyOK := bodies[row.Body]
-			function, formal := body.FunctionID(), body.CallFormalID()
-			if !rowOK || !row.Available() || !bodyOK || !body.Callable() || !function.Available() || !formal.Available() ||
-				row.Context != body.ContextID() || row.Function != function || row.Formal != formal {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.FunctionBoundaryCount(); rowIndex++ {
-			row, rowOK := snapshot.FunctionBoundaryAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			for formalIndex := 0; formalIndex < row.FormalCount(); formalIndex++ {
-				formal, formalOK := row.FormalAt(formalIndex)
-				if !formalOK || !formal.Available() || !formal.StorageCellID().Available() {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.OutcomeCount(); rowIndex++ {
-			row, rowOK := snapshot.OutcomeAt(rowIndex)
-			if !rowOK || !row.ID().Available() || !row.BodyID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			for valueIndex := 0; valueIndex < row.ReturnValueCount(); valueIndex++ {
-				value, valueOK := snapshot.OutcomeReturnValueAt(rowIndex, valueIndex)
-				if !valueOK || !value.ID().Available() {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); rowIndex++ {
-			row, rowOK := snapshot.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), rowIndex)
-			if !rowOK || row.InputCount() == 0 {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.OccurrenceKindCount(uint8(programartifact.OccurrenceAllocation)); rowIndex++ {
-			row, rowOK := snapshot.OccurrenceKindAt(uint8(programartifact.OccurrenceAllocation), rowIndex)
-			if !rowOK || !row.ID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-			if recovered, recoveredOK := snapshot.OccurrenceForID(uint8(programartifact.OccurrenceAllocation), row.ID()); !recoveredOK || recovered.ID() != row.ID() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
-		}
-		for _, kind := range []uint8{uint8(programartifact.OccurrenceIndexRead), uint8(programartifact.OccurrenceIndexWrite)} {
-			for rowIndex := 0; rowIndex < snapshot.OccurrenceKindCount(kind); rowIndex++ {
-				row, rowOK := snapshot.OccurrenceKindAt(kind, rowIndex)
-				if !rowOK || !row.ID().Available() {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-				if recovered, recoveredOK := snapshot.OccurrenceForID(kind, row.ID()); !recoveredOK || recovered.ID() != row.ID() {
-					return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-				}
-			}
-		}
-		for rowIndex := 0; rowIndex < snapshot.OccurrenceCount(); rowIndex++ {
-			row, rowOK := snapshot.OccurrenceAt(rowIndex)
-			if !rowOK || !row.ID().Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
-			}
 		}
 	}
 	staticTarget, staticTargetOK := source.Boundary().Target()
