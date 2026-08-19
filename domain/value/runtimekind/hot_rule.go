@@ -43,7 +43,7 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 	var valueRead engine.Read[engine.OrderedCells[valuedomain.Value]]
 	var comparisonRead engine.Read[engine.OrderedCells[valuedomain.Value]]
 	var implementation *valueowner.RuleImplementation[valuedomain.RuntimeKindCall]
-	bound := valueowner.BindSelectedRule(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, valuedomain.RuntimeKindCall]{
+	var bindSpec = engine.HotRuleSpec[valuedomain.Value, valuedomain.RuntimeKindCall]{
 		OperandContent: func(row valuedomain.RuntimeKindCall) (valuedomain.RuntimeKindCall, [32]byte, bool) {
 			return hotContent(values.Schema(), row)
 		},
@@ -90,35 +90,36 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 				}
 			})
 		},
-	}, engine.HotCarrySpec[valuedomain.Value, valuedomain.RuntimeKindCall]{}, func(row valuedomain.RuntimeKindCall) (uint64, bool) {
+	}
+	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), bindSpec, engine.HotCarrySpec[valuedomain.Value, valuedomain.RuntimeKindCall]{}, func(row valuedomain.RuntimeKindCall) (uint64, bool) {
 		target, ok := hotWriteTarget(values.Schema(), row)
 		index, indexOK := values.Schema().CoordinateIndex(target)
 		return uint64(index), ok && indexOK
-	}, func(tx *valueowner.SelectedRuleBinding[valuedomain.RuntimeKindCall]) bool {
-		var callOK, valueOK, comparisonOK, implementationOK bool
-		callRead, callOK = valueowner.AddSelectedRuleExactRead(tx, fragment.callRead, calls.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
-			module, occurrence, ok := callOccurrence(values.Schema(), row)
-			return projectCall(calls.Algebra(), module, occurrence, ok)
-		})
-		valueRead, valueOK = valueowner.AddSelectedRuleExactRead(tx, fragment.valueRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
+	})
+	if !bound {
+		return nil, false
+	}
+	var callOK, valueOK, comparisonOK bool
+	callRead, callOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.callRead, calls.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
+		module, occurrence, ok := callOccurrence(values.Schema(), row)
+		return projectCall(calls.Algebra(), module, occurrence, ok)
+	})
+	valueRead, valueOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.valueRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
+		_, input, ok := hotEndpoints(values.Schema(), row)
+		index, indexOK := values.Schema().CoordinateIndex(input)
+		return uint64(index), ok && indexOK
+	})
+	comparisonRead, comparisonOK = valueowner.AddSelectedRuleDirectExactRead(implementation, fragment.comparisonRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
+		comparison, _, _, refinement := row.Refinement()
+		if !refinement {
 			_, input, ok := hotEndpoints(values.Schema(), row)
 			index, indexOK := values.Schema().CoordinateIndex(input)
 			return uint64(index), ok && indexOK
-		})
-		comparisonRead, comparisonOK = valueowner.AddSelectedRuleExactRead(tx, fragment.comparisonRead, values.FactorRef(), func(row valuedomain.RuntimeKindCall) (uint64, bool) {
-			comparison, _, _, refinement := row.Refinement()
-			if !refinement {
-				_, input, ok := hotEndpoints(values.Schema(), row)
-				index, indexOK := values.Schema().CoordinateIndex(input)
-				return uint64(index), ok && indexOK
-			}
-			index, indexOK := values.Schema().CoordinateIndex(comparison)
-			return uint64(index), indexOK
-		})
-		implementation, implementationOK = tx.Implementation()
-		return callOK && valueOK && comparisonOK && implementationOK
+		}
+		index, indexOK := values.Schema().CoordinateIndex(comparison)
+		return uint64(index), indexOK
 	})
-	if !bound {
+	if !callOK || !valueOK || !comparisonOK {
 		return nil, false
 	}
 	hot.callRead, hot.valueRead, hot.comparisonRead, hot.implementation = callRead, valueRead, comparisonRead, implementation
