@@ -118,6 +118,7 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 	props.includeStaticMembers(members)
 	props.includeTypes(metatable, mapKey, mapValue)
 
+	zzProbeConstruct(uint64(kind.Record), h) // ZZPROBE
 	return &Record{
 		Fields:            sorted,
 		StaticMembers:     members,

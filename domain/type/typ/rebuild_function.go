@@ -85,6 +85,7 @@ func newCanonicalFunction(
 	if functionSemanticNamesCanonical(paramsCopy) {
 		fn.semantic.Store(fn)
 	}
+	zzProbeConstruct(uint64(kind.Function), h) // ZZPROBE
 	return fn
 }
 

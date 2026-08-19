@@ -38,6 +38,7 @@ func NewInterface(name string, methods []Method) *Interface {
 	}
 	props := typePropertiesOfMethods(copied)
 
+	zzProbeConstruct(uint64(kind.Interface), h) // ZZPROBE
 	return &Interface{
 		Name:           name,
 		Methods:        copied,

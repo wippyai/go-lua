@@ -50,6 +50,10 @@ func NewRecursive(name string, builder RecursiveBuilder) *Recursive {
 	}
 
 	rec.SetBody(builder(rec))
+	// ZZPROBE: rec.Hash() is lazy/memoizing; only forced when the probe is active.
+	if zzProbeConstructHook != nil {
+		zzProbeConstruct(uint64(kind.Recursive), rec.Hash())
+	}
 	return rec
 }
 
@@ -57,10 +61,15 @@ func NewRecursive(name string, builder RecursiveBuilder) *Recursive {
 // Use SetBody to assign the body after creation. This is useful for mutual recursion.
 func NewRecursivePlaceholder(name string) *Recursive {
 	id := atomic.AddUint64(&recursiveIDCounter, 1)
-	return &Recursive{
+	rec := &Recursive{
 		ID:   id,
 		Name: name,
 	}
+	// ZZPROBE: rec.Hash() is lazy/memoizing; only forced when the probe is active.
+	if zzProbeConstructHook != nil {
+		zzProbeConstruct(uint64(kind.Recursive), rec.Hash())
+	}
+	return rec
 }
 
 // SetBody assigns the body to a placeholder recursive type.

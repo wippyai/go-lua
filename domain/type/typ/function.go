@@ -189,6 +189,7 @@ func CloneFunction(fn *Function) *Function {
 	if functionSemanticNamesCanonical(clone.Params) {
 		clone.semantic.Store(clone)
 	}
+	zzProbeConstruct(uint64(kind.Function), clone.hash) // ZZPROBE
 	return clone
 }
 

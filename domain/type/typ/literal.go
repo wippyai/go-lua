@@ -36,9 +36,11 @@ var (
 // LiteralBool returns the canonical boolean literal type.
 func LiteralBool(v bool) *Literal {
 	if v {
+		zzProbeConstruct(uint64(kind.Literal), trueHash) // ZZPROBE
 		return trueLiteral
 	}
 
+	zzProbeConstruct(uint64(kind.Literal), falseHash) // ZZPROBE
 	return falseLiteral
 }
 
@@ -47,6 +49,7 @@ func LiteralInt(v int64) *Literal {
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.Integer))
 	h = hash.MixHash(h, uint64(v))
 
+	zzProbeConstruct(uint64(kind.Literal), h) // ZZPROBE
 	return &Literal{base: kind.Integer, value: v, hash: h, str: strconv.FormatInt(v, 10)}
 }
 
@@ -59,6 +62,7 @@ func LiteralNumber(v float64) *Literal {
 	// zero without borrowing Go's non-reflexive floating equality.
 	h = hash.MixHash(h, math.Float64bits(v))
 
+	zzProbeConstruct(uint64(kind.Literal), h) // ZZPROBE
 	return &Literal{base: kind.Number, value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
@@ -67,6 +71,7 @@ func LiteralString(v string) *Literal {
 	h := hash.MixHash(uint64(kind.Literal), uint64(kind.String))
 	h = hash.MixHash(h, hash.FnvString(v))
 
+	zzProbeConstruct(uint64(kind.Literal), h) // ZZPROBE
 	return &Literal{base: kind.String, value: v, hash: h, str: strconv.Quote(v)}
 }
 

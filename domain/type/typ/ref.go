@@ -31,6 +31,7 @@ func NewRef(module, name string) *Ref {
 	if module != "" {
 		str = module + "." + name
 	}
+	zzProbeConstruct(uint64(kind.Ref), h) // ZZPROBE
 	return &Ref{Module: module, Name: name, hash: h, str: str}
 }
 
@@ -87,6 +88,7 @@ func NewAlias(name string, target Type) *Alias {
 	}
 	resolved := flattenAliasTarget(target)
 	a.unaliasedMemo.Store(&resolved)
+	zzProbeConstruct(uint64(kind.Alias), h) // ZZPROBE
 	return a
 }
 
@@ -164,6 +166,7 @@ type Meta struct {
 // NewMeta creates a metatype.
 func NewMeta(of Type) *Meta {
 	h := hash.MixHash(uint64(kind.Meta), of.Hash())
+	zzProbeConstruct(uint64(kind.Meta), h) // ZZPROBE
 	return &Meta{
 		Of:             of,
 		hash:           h,

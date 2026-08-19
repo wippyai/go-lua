@@ -62,6 +62,7 @@ func newCanonicalIntersection(members []Type, memberHashes []uint64) Type {
 	}
 	props := typePropertiesOf(membersCopy...)
 
+	zzProbeConstruct(uint64(kind.Intersection), h) // ZZPROBE
 	return &Intersection{
 		Members:        membersCopy,
 		hash:           h,

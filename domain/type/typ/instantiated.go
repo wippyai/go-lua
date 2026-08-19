@@ -34,6 +34,7 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 		props.include(a)
 	}
 
+	zzProbeConstruct(uint64(kind.Instantiated), h) // ZZPROBE
 	return &Instantiated{
 		Generic:           g,
 		TypeArgs:          args,

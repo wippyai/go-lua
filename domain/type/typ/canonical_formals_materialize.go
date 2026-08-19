@@ -79,6 +79,7 @@ func canonicalOwnedTuple(ctx context.Context, admission *canonicalFormalsAdmissi
 		h = hash.MixHash(h, element.Hash())
 		props.include(element)
 	}
+	zzProbeConstruct(uint64(kind.Tuple), h) // ZZPROBE
 	return &Tuple{Elements: cleaned, hash: h, typeProperties: props}, nil
 }
 
@@ -106,6 +107,7 @@ func canonicalScopedUnion(ctx context.Context, admission *canonicalFormalsAdmiss
 		h = hash.MixHash(h, hashes[index])
 		props.includeUnionMember(member)
 	}
+	zzProbeConstruct(uint64(kind.Union), h) // ZZPROBE
 	return &Union{Members: memberCopy, memberHashes: hashes, hash: h, typeProperties: props}, nil
 }
 
@@ -124,6 +126,7 @@ func canonicalScopedIntersection(ctx context.Context, admission *canonicalFormal
 		h = hash.MixHash(h, unionMemberHash(member))
 		props.include(member)
 	}
+	zzProbeConstruct(uint64(kind.Intersection), h) // ZZPROBE
 	return &Intersection{Members: memberCopy, hash: h, typeProperties: props}, nil
 }
 
@@ -274,6 +277,7 @@ func canonicalOwnedRecord(ctx context.Context, admission *canonicalFormalsAdmiss
 		h = hash.MixHash(h, mapValue.Hash())
 	}
 	props.includeTypes(metatable, mapKey, mapValue)
+	zzProbeConstruct(uint64(kind.Record), h) // ZZPROBE
 	return &Record{Fields: fields, StaticMembers: members, Metatable: metatable, MapKey: mapKey, MapValue: mapValue, Open: open, sorted: true, hash: h, equalityHashCache: &equalityHashCache{}, typeProperties: props}, nil
 }
 
@@ -487,6 +491,7 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 	if semantic {
 		fn.semantic.Store(fn)
 	}
+	zzProbeConstruct(uint64(kind.Function), h) // ZZPROBE
 	return fn, nil
 }
 
@@ -541,6 +546,7 @@ func canonicalOwnedGeneric(ctx context.Context, admission *canonicalFormalsAdmis
 		h = hash.MixHash(h, body.Hash())
 		props.include(body)
 	}
+	zzProbeConstruct(uint64(kind.Generic), h) // ZZPROBE
 	return &Generic{Name: name, TypeParams: copyParams, Body: body, hash: h, typeProperties: props}, nil
 }
 
@@ -596,6 +602,7 @@ func canonicalOwnedInstantiation(ctx context.Context, admission *canonicalFormal
 		h = hash.MixHash(h, argument.Hash())
 		props.include(argument)
 	}
+	zzProbeConstruct(uint64(kind.Instantiated), h) // ZZPROBE
 	return &Instantiated{Generic: generic, TypeArgs: arguments, hash: h, equalityHashCache: &equalityHashCache{}, typeProperties: props}, nil
 }
 
@@ -630,5 +637,6 @@ func canonicalOwnedInterface(ctx context.Context, admission *canonicalFormalsAdm
 	if reader.at != len(reader.raw) {
 		return nil, invalidCanonicalFormals("interface scalar")
 	}
+	zzProbeConstruct(uint64(kind.Interface), h) // ZZPROBE
 	return &Interface{Name: string(name), Methods: methods, hash: h, typeProperties: props}, nil
 }

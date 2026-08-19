@@ -52,6 +52,7 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 	props := typePropertiesOfTypeParams(copied)
 	props.include(body)
 
+	zzProbeConstruct(uint64(kind.Generic), h) // ZZPROBE
 	return &Generic{
 		Name:           name,
 		TypeParams:     copied,

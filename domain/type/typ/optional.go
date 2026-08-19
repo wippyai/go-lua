@@ -42,6 +42,7 @@ func newRawOptionalNode(inner Type) Type {
 
 	h := hash.MixHash(uint64(kind.Optional), inner.Hash())
 
+	zzProbeConstruct(uint64(kind.Optional), h) // ZZPROBE
 	return &Optional{
 		Inner:          inner,
 		hash:           h,

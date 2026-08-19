@@ -10,6 +10,11 @@ import (
 
 const annotatedHashSalt = 0x9e3779b97f4a7c15
 
+// zzProbeAnnotatedKind is a synthetic (kind,hash) tag for the M2 probe:
+// Annotated has no kind.Kind of its own (Kind() delegates to Inner), so a
+// small integer collision with a real kind constant must be avoided.
+const zzProbeAnnotatedKind = ^uint64(0) // ZZPROBE
+
 // Annotated wraps a type with runtime validation annotations.
 // The underlying type determines structural typing while annotations
 // add runtime constraints like @min(0), @max(100), @pattern("^.+$").
@@ -34,6 +39,7 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 	for _, ann := range annotations {
 		h = hash.MixHash(h, ann.Hash())
 	}
+	zzProbeConstruct(zzProbeAnnotatedKind, h) // ZZPROBE
 	return &Annotated{
 		Inner:          inner,
 		Annotations:    annotations,

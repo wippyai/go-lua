@@ -28,6 +28,7 @@ func NewTypeParam(name string, constraint Type) *TypeParam {
 	props := typePropertiesOf(constraint)
 	props.containsTypeParam = true
 
+	zzProbeConstruct(uint64(kind.TypeParam), h) // ZZPROBE
 	return &TypeParam{
 		Name:           name,
 		Constraint:     constraint,

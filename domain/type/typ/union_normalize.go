@@ -59,6 +59,7 @@ func newCanonicalUnion(members []Type, memberHashes []uint64) Type {
 	}
 	props := typePropertiesOfUnionMembers(membersCopy)
 
+	zzProbeConstruct(uint64(kind.Union), h) // ZZPROBE
 	return &Union{
 		Members:        membersCopy,
 		memberHashes:   hashesCopy,

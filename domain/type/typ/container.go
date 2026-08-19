@@ -21,6 +21,7 @@ func NewArray(elem Type) *Array {
 		elem = Unknown
 	}
 	h := hash.MixHash(uint64(kind.Array), elem.Hash())
+	zzProbeConstruct(uint64(kind.Array), h) // ZZPROBE
 	return &Array{
 		Element:        elem,
 		hash:           h,
@@ -57,6 +58,7 @@ func NewMap(key, value Type) *Map {
 // RebuildMap rebuilds a hash-stable map node from already-computed key/value types.
 func RebuildMap(key, value Type) *Map {
 	key, value, h, props := canonicalMapParts(kind.Map, key, value)
+	zzProbeConstruct(uint64(kind.Map), h) // ZZPROBE
 
 	return &Map{
 		Key:            key,
@@ -97,6 +99,7 @@ func NewReadonlyMap(key, value Type) *ReadonlyMap {
 // RebuildReadonlyMap rebuilds a hash-stable read-only map node from already-computed key/value types.
 func RebuildReadonlyMap(key, value Type) *ReadonlyMap {
 	key, value, h, props := canonicalMapParts(kind.ReadonlyMap, key, value)
+	zzProbeConstruct(uint64(kind.ReadonlyMap), h) // ZZPROBE
 
 	return &ReadonlyMap{
 		Key:            key,
@@ -153,6 +156,7 @@ func NewTuple(elems ...Type) *Tuple {
 		props.include(e)
 	}
 
+	zzProbeConstruct(uint64(kind.Tuple), h) // ZZPROBE
 	return &Tuple{
 		Elements:       cleaned,
 		hash:           h,

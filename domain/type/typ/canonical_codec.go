@@ -1158,6 +1158,18 @@ func (e *CanonicalEncoder) refine() error {
 	if err != nil {
 		return err
 	}
+	// ZZPROBE: M1 intra-graph duplication ratio (nodes discovered vs
+	// distinct bisimulation classes). e.classes holds a contiguous class id
+	// per node in both branches above; nil unless typprobe hook installed.
+	if zzProbeRefineHook != nil {
+		classes := 0
+		for _, c := range e.classes {
+			if c+1 > classes {
+				classes = c + 1
+			}
+		}
+		zzProbeRefine(len(e.nodes), classes)
+	}
 	return e.buildClassRepresentatives()
 }
 
