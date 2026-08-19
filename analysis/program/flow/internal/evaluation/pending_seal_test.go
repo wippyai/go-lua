@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -333,7 +334,7 @@ func openPendingFixture(
 		closePendingFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(index)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(index)
 	if err != nil {
 		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
@@ -345,8 +346,14 @@ func openPendingFixture(
 		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
+	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticFinalize.View().ContentID(), moduleView.ContentID())
+	if err != nil {
+		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult,
-		staticFinalize.View().ContentID(), moduleView.ContentID())
+		staticFinalize.View().ContentID(), moduleView.ContentID(), paths)
 	if err != nil {
 		closePendingFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("executable.Seal: %v", err)

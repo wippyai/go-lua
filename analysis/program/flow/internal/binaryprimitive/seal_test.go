@@ -233,7 +233,7 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID)
+	executableResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID, certificate)
 	if err != nil {
 		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)

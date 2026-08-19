@@ -97,21 +97,21 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			}
 			callable = true
 		}
-		rootCatalog, rootsOK := body.ExecutableRoots()
-		rootCount := rootCatalog.Count()
-		if !rootsOK || !compiler.input.OwnsExecutableRoots(rootCatalog) || !fitsUint32(rootCount) {
+		executableRoots := flowView.Executable()
+		rootCount, rootsOK := executableRoots.RootCount(bodyTerm)
+		if !rootsOK || !fitsUint32(rootCount) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		roots := make([]RootRow, rootCount)
 		seenRoots := make(map[identity.ContentID]struct{}, rootCount)
 		for rootIndex := 0; rootIndex < rootCount; rootIndex++ {
-			root, rootOK := rootCatalog.At(rootIndex)
-			if !rootOK || !compiler.input.OwnsExecutableRoot(root) {
+			rootID, rootFamily, rootOK := executableRoots.RootAt(bodyTerm, rootIndex)
+			if !rootOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyUnavailable)
 			}
-			row := RootRow{id: root.ID(), family: root.Family()}
+			row := RootRow{id: rootID, family: rootFamily}
 			if !row.Available() {
-				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyIdentity)
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyUnavailable)
 			}
 			if _, duplicate := seenRoots[row.id]; duplicate {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, rootIndex, CompileReasonBodyDuplicate)

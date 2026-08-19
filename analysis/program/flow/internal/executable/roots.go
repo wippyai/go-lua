@@ -13,6 +13,7 @@ type rootSeed struct {
 	result *Result
 	work   []keyspace.Term
 	entry  keyspace.Term
+	roots  [][]keyspace.Term
 }
 
 func seedRoots(
@@ -21,7 +22,7 @@ func seedRoots(
 	control *sourcecontrol.Result,
 	input validated,
 ) (rootSeed, error) {
-	seed := rootSeed{result: newResult(input.counts, input.source, input.flow, input.static, input.module)}
+	seed := rootSeed{result: newResult(input.counts, input.source, input.flow, input.static, input.module), roots: make([][]keyspace.Term, int(input.counts[keyspace.FamilyBody]))}
 	if input.entry == 0 || !validTerm(input.entry, input.counts) {
 		return rootSeed{}, errors.New("program/flow/executable: invalid Entry Body")
 	}
@@ -51,6 +52,7 @@ func seedRoots(
 		if !lengthOK || length < 0 {
 			return rootSeed{}, errors.New("program/flow/executable: Body root denominator is unavailable")
 		}
+		rootRows := make([]keyspace.Term, 0, length)
 		for cursor := 0; cursor < length; cursor++ {
 			root, rootOK := index.BodyRootAt(body, cursor)
 			if !rootOK || !validTerm(root, input.counts) {
@@ -64,7 +66,9 @@ func seedRoots(
 				continue
 			}
 			add(root)
+			rootRows = append(rootRows, root)
 		}
+		seed.roots[ordinal-1] = rootRows
 	}
 	seed.entry = input.entry
 	return seed, nil

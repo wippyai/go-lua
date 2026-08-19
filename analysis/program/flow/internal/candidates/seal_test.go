@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -151,7 +152,7 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 		closeCandidateFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeCandidateFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
@@ -164,8 +165,14 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 		closeCandidateFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
+	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleView.ContentID())
+	if err != nil {
+		closeCandidateFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
 	proof, err := executable.Seal(sourceView, flowView, forest, controlProof,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleView.ContentID(), paths)
 	if err != nil {
 		closeCandidateFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("executable.Seal: %v", err)

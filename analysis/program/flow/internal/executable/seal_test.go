@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -31,6 +32,7 @@ type sealFixture struct {
 	flow       authored.View
 	forest     *containment.Result
 	control    *sourcecontrol.Result
+	paths      *semanticpath.Certificate
 
 	staticFinalize static.Finalizer
 	flowFinalize   authored.Finalizer
@@ -184,7 +186,7 @@ func openSealFixtureWithSource(
 		closeSealFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeSealFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
@@ -196,12 +198,19 @@ func openSealFixtureWithSource(
 		closeSealFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
+	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleView.ContentID())
+	if err != nil {
+		closeSealFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
 
 	fixture := &sealFixture{
 		sourceView:     sourceView,
 		flow:           flowView,
 		forest:         forest,
 		control:        controlResult,
+		paths:          paths,
 		staticFinalize: staticFinalize,
 		flowFinalize:   flowFinalize,
 		moduleFinalize: moduleFinalize,
@@ -347,7 +356,7 @@ func TestSealFinalSourceExcludesOutcomeAndClosesRuntimeOperands(t *testing.T) {
 		[]source.BindCells{{Bind: bind, Cells: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyCell, 1)}}}, nil, nil)
 
 	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
 	}
@@ -397,11 +406,11 @@ func TestSealRejectsForeignEqualCardinalityProvenance(t *testing.T) {
 		t.Fatal("provenance fixtures are not equal-cardinality")
 	}
 	if _, err := Seal(first.sourceView, first.flow, foreignSource.forest, first.control,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil || !strings.Contains(err.Error(), "containment provenance") {
+		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "containment provenance") {
 		t.Fatalf("foreign equal-cardinality containment splice was accepted or failed outside provenance fence: %v", err)
 	}
 	if _, err := Seal(first.sourceView, first.flow, first.forest, foreignSource.control,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
+		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
 		t.Fatalf("foreign equal-cardinality source-control splice was accepted or failed outside provenance fence: %v", err)
 	}
 	flowVariant := matrixFlow()
@@ -418,11 +427,11 @@ func TestSealRejectsForeignEqualCardinalityProvenance(t *testing.T) {
 		t.Fatal("same-source Flow provenance fixtures are not equal-cardinality")
 	}
 	if _, err := Seal(first.sourceView, first.flow, foreignFlow.forest, first.control,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil || !strings.Contains(err.Error(), "containment provenance") {
+		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "containment provenance") {
 		t.Fatalf("foreign equal-cardinality Flow forest splice was accepted or failed outside provenance fence: %v", err)
 	}
 	if _, err := Seal(first.sourceView, first.flow, first.forest, foreignFlow.control,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
+		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID(), first.paths); err == nil || !strings.Contains(err.Error(), "source-control provenance") {
 		t.Fatalf("foreign equal-cardinality Flow source-control splice was accepted or failed outside provenance fence: %v", err)
 	}
 }
@@ -574,7 +583,7 @@ func TestSealClosesCompleteRuntimeOperandMatrix(t *testing.T) {
 			{Bind: bindRoots[2], Cells: []keyspace.Term{term(keyspace.FamilyCell, 4)}},
 		}, nil, nil, extras)
 	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("complete operand executable.Seal: %v", err)
 	}
@@ -687,7 +696,7 @@ func TestSealClosesBranchAndRepeatLoopControls(t *testing.T) {
 		branchFlowKind(keyspace.MakeTerm(keyspace.FamilyBody, 4), keyspace.MakeTerm(keyspace.FamilyBody, 2), keyspace.MakeTerm(keyspace.FamilyBody, 3), kind.LoopRepeat),
 		nil, nil, []keyspace.Term{body1, keyspace.MakeTerm(keyspace.FamilyBody, 4)})
 	result, err := Seal(fixture.sourceView, fixture.flow, fixture.forest, fixture.control,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("branch/repeat executable.Seal: %v", err)
 	}

@@ -158,7 +158,7 @@ func Assemble(
 	if !outcomePathsOK || err != nil || outcomePhases == nil {
 		return fail("Source control Outcome phases", errors.New("Outcome phase issuance failed"))
 	}
-	executableResult, err := executable.Seal(sourceView, authoredLive, forest, controlGraph, staticID, moduleID)
+	executableResult, err := executable.Seal(sourceView, authoredLive, forest, controlGraph, staticID, moduleID, pathCertificate)
 	if err != nil {
 		return fail("Executable", err)
 	}

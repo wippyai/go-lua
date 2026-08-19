@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
@@ -105,7 +106,9 @@ func (view Pending) At(subject keyspace.Term, index int) (keyspace.Term, bool) {
 	return view.result.At(subject, index)
 }
 
-type Executable struct{ result *executable.Result }
+type Executable struct {
+	result *executable.Result
+}
 
 func (view Executable) Count() int {
 	if view.result == nil {
@@ -121,6 +124,26 @@ func (view Executable) FamilyCount(family keyspace.Family) int {
 }
 func (view Executable) Contains(term keyspace.Term) bool {
 	return view.result != nil && view.result.Executable(term)
+}
+
+// RootCount returns Flow's sealed dense executable-root denominator for one
+// Body. The rows were issued during Flow assembly from the exact Source root
+// order, executable membership, and semantic-path certificate; unavailable
+// Bodies fail closed separately from valid empty root sets.
+func (view Executable) RootCount(body keyspace.Term) (int, bool) {
+	if view.result == nil {
+		return 0, false
+	}
+	return view.result.RootCount(body)
+}
+
+// RootAt returns one already-issued executable-root identity and authored
+// family in dense Source order. It never reopens Source or rebuilds a join.
+func (view Executable) RootAt(body keyspace.Term, index int) (identity.ContentID, keyspace.Family, bool) {
+	if view.result == nil {
+		return identity.ContentID{}, keyspace.FamilyInvalid, false
+	}
+	return view.result.RootAt(body, index)
 }
 
 type DirectFunctions struct{ result *directfunction.Result }

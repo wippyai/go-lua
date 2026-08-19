@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -142,7 +143,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinalize.Commit(index)
+	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(index)
 	if err != nil {
 		t.Fatalf("source.Commit: %v", err)
 	}
@@ -151,7 +152,12 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticView.ContentID(), moduleFinalize.View().ContentID())
+	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
+	if err != nil {
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
+	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult, staticView.ContentID(), moduleFinalize.View().ContentID(), paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
 	}

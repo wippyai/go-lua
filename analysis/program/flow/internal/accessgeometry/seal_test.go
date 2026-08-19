@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -140,7 +141,7 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, err := sourceFinal.Commit(indexInput)
+	sourceComponent, issuance, err := sourceFinal.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
 		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
@@ -151,7 +152,13 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	proof, err := executable.Seal(sourceView, flowView, forest, controlProof, staticID, moduleID)
+	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+		flowView.Cold().ContentID(), staticID, moduleID)
+	if err != nil {
+		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		t.Fatalf("semanticpath.Seal: %v", err)
+	}
+	proof, err := executable.Seal(sourceView, flowView, forest, controlProof, staticID, moduleID, paths)
 	if err != nil {
 		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)

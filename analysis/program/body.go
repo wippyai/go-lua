@@ -186,19 +186,6 @@ func (body Body) Executable() bool {
 	return ok && body.program.Flow().Executable().Contains(term)
 }
 
-// RootCount returns Source's existing root denominator for this Body. The
-// Body term remains internal to this proof-native join.
-func (body Body) RootCount() (int, bool) {
-	if !body.Available() {
-		return 0, false
-	}
-	term, ok := body.boundary.Body()
-	if !ok {
-		return 0, false
-	}
-	return body.program.Source().Index().BodyRootLen(term)
-}
-
 // Function returns the existing sealed Flow boundary for this Body. It is the
 // remaining construction seam: Artifact consumes scalar callable identities
 // through Program queries and never retains this handle.

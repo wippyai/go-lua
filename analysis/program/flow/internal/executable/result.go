@@ -4,7 +4,8 @@
 // control supplies the reachable direct roots; containment supplies static
 // classification and the complete pre-Outcome denominator. Authored Flow
 // operands are then closed iteratively. No source position table, causal
-// edge, Outcome, or consumer-specific projection is retained here. The
+// edge, Outcome, or consumer-specific projection is retained here beyond the
+// dense per-Body executable-root rows issued from the same seed. The
 // containment and source-control owners retain only scalar owner value fences
 // and expose narrow Matches checks; there is no pointer authority
 // or generic assembly token to splice. This package validates its complete
@@ -12,9 +13,17 @@
 package executable
 
 import (
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
+
+type root struct {
+	id     identity.ContentID
+	family keyspace.Family
+}
 
 // Result is the immutable pre-Outcome executable membership proof.  Counts
 // are copied from Source's exact pre-Outcome identity and bits are dense by
@@ -23,6 +32,7 @@ import (
 type Result struct {
 	counts   [keyspace.FamilyCount]uint32
 	bits     [keyspace.FamilyCount][]uint64
+	roots    [][]root
 	members  uint32
 	sourceID identity.ContentID
 	flowID   identity.ContentID
@@ -72,6 +82,50 @@ func (r *Result) FamilyCount(family keyspace.Family) int {
 		return 0
 	}
 	return int(r.counts[family])
+}
+
+// RootCount returns the already-issued dense executable Source roots for one
+// Body. A valid Body may have no roots; malformed or foreign Bodies fail
+// closed separately.
+func (r *Result) RootCount(body keyspace.Term) (int, bool) {
+	if r == nil || r.roots == nil || len(r.roots) != int(r.counts[keyspace.FamilyBody]) || !r.sourceID.Available() || !r.flowID.Available() || !r.staticID.Available() || !r.moduleID.Available() ||
+		keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 || uint64(keyspace.TermOrdinal(body)) > uint64(len(r.roots)) {
+		return 0, false
+	}
+	return len(r.roots[keyspace.TermOrdinal(body)-1]), true
+}
+
+func (r *Result) RootAt(body keyspace.Term, index int) (identity.ContentID, keyspace.Family, bool) {
+	count, ok := r.RootCount(body)
+	if !ok || index < 0 || index >= count {
+		return identity.ContentID{}, keyspace.FamilyInvalid, false
+	}
+	row := r.roots[keyspace.TermOrdinal(body)-1][index]
+	return row.id, row.family, row.id.Available() && row.family != keyspace.FamilyInvalid
+}
+
+func (r *Result) installRoots(terms [][]keyspace.Term, paths *semanticpath.Certificate) error {
+	if r == nil || !Matches(r, r.sourceID, r.flowID, r.staticID, r.moduleID) || !paths.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) || len(terms) != int(r.counts[keyspace.FamilyBody]) {
+		return errors.New("program/flow/executable: root path owners disagree")
+	}
+	rows := make([][]root, len(terms))
+	for bodyIndex, bodyTerms := range terms {
+		rootRows := make([]root, 0, len(bodyTerms))
+		for _, authored := range bodyTerms {
+			if !r.Executable(authored) {
+				return errors.New("program/flow/executable: executable root membership changed")
+			}
+			family, ordinal := keyspace.TermFamily(authored), keyspace.TermOrdinal(authored)
+			id, idOK := paths.TermPathAt(r.sourceID, r.flowID, r.staticID, r.moduleID, family, ordinal)
+			if !idOK || !id.Available() || family == keyspace.FamilyInvalid {
+				return errors.New("program/flow/executable: executable root identity is unavailable")
+			}
+			rootRows = append(rootRows, root{id: id, family: family})
+		}
+		rows[bodyIndex] = rootRows
+	}
+	r.roots = rows
+	return nil
 }
 
 func (r *Result) mark(term keyspace.Term) bool {
