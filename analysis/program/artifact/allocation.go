@@ -102,7 +102,7 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 			table, selector, values, kind, authoredFieldOK := authored.Fields().Get(fieldTerm)
 			resolved, finalOpen, valuesOK := authored.Fields().Values(fieldTerm)
 			width, widthOK := authored.Values().Len(values)
-			valueRow, valueRowOK := compiler.valuesOccurrence(values)
+			valueRow, valueRowOK := compiler.valueRowForTerm(values)
 			_, valueSpanOK := valueRow.RootSpanID()
 			fieldSpan, fieldSpanOK := compiler.input.Span(fieldTerm)
 			normalized, normalizedOK := flowView.AccessGeometry().TableFields().Get(fieldTerm)

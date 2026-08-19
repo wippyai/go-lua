@@ -127,10 +127,6 @@ func (compiler *compiler) indexWriteAt(index int) (artifactIndexWrite, bool) {
 	return row, baseOK && predecessorOK && row.id.Available() && row.baseID.Available() && row.lensID.Available() && row.valuesID.Available() && row.predecessorID.Available()
 }
 
-func (compiler *compiler) valuesOccurrence(term keyspace.Term) (ValuesRow, bool) {
-	return compiler.valueRowForTerm(term)
-}
-
 // roleID and accessRoleID intentionally use the old Program framing while
 // the artifact schema is migrated. This preserves published row identity
 // across the ownership move; no access row or transformer object is
