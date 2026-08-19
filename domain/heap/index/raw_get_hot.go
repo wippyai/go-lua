@@ -34,8 +34,16 @@ func (rule *RawGetHotRule) Implementation() (*valueowner.RuleImplementation[Acce
 	return rule.implementation, ok
 }
 
-func (rule *RawGetHotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealRawGetProgramRule(rule *RawGetHotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func (rule *RawGetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {

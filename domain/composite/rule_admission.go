@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 )
 
 // WalkSealedPlacements enumerates sealed ingress placements in issuance order.
@@ -37,12 +36,12 @@ func (rules *RuleBinding) LinkAdmissions() ([]engine.LinkRuleAdmission, bool) {
 	}
 	rows := make([]engine.LinkRuleAdmission, 0)
 	ok := walkLinkCatalogs(rules, func(key schema.Key, id identity.ContentID) bool {
-		declaration, declarationOK := rules.ProgramDeclarationByKey(key)
+		program, programOK := rules.ProgramRuleByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !declarationOK || !capabilityOK || !capability.Link() {
+		if !programOK || !capabilityOK || !capability.Link() {
 			return false
 		}
-		rows = append(rows, engine.LinkRuleAdmission{Declaration: declaration, Capability: capability, Occurrence: id})
+		rows = append(rows, engine.LinkRuleAdmission{Declaration: program, Capability: capability, Occurrence: id})
 		return true
 	})
 	if !ok {
@@ -80,20 +79,20 @@ func (rules *RuleBinding) MountedAdmissions(mounts []axis.MountedArtifact) ([]en
 	mounted := make([]engine.MountedRuleAdmission, 0)
 	activations := make([]engine.MountedActivationAdmit, 0)
 	key, ok := WalkSealedPlacements(mounts, func(key schema.Key, mount, point, occurrence identity.ContentID) bool {
-		if hot, hotOK := RuleHandleByKey[*callactivation.HotRule](rules, key); hotOK {
-			admit, admitOK := hot.MountedAdmit(mount, point, occurrence)
+		if key == "call-activation" && rules.activation != nil {
+			admit, admitOK := rules.activation.MountedAdmit(mount, point, occurrence)
 			if !admitOK {
 				return false
 			}
 			activations = append(activations, admit)
 			return true
 		}
-		declaration, declarationOK := rules.ProgramDeclarationByKey(key)
+		program, programOK := rules.ProgramRuleByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !declarationOK || !capabilityOK || !capability.Mounted() {
+		if !programOK || !capabilityOK || !capability.Mounted() {
 			return false
 		}
-		mounted = append(mounted, engine.MountedRuleAdmission{Declaration: declaration, Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
+		mounted = append(mounted, engine.MountedRuleAdmission{Declaration: program, Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
 		return true
 	})
 	if !ok {

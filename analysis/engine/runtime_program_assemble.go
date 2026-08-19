@@ -36,14 +36,14 @@ const (
 
 // LinkRuleAdmission is one Link-global occurrence to admit.
 type LinkRuleAdmission struct {
-	Declaration RuleProgramDeclaration
+	Declaration ProgramRule
 	Capability  RuleSlotCapability
 	Occurrence  identity.ContentID
 }
 
 // MountedRuleAdmission is one mounted occurrence to admit.
 type MountedRuleAdmission struct {
-	Declaration RuleProgramDeclaration
+	Declaration ProgramRule
 	Capability  RuleSlotCapability
 	Mount       identity.ContentID
 	Point       identity.ContentID

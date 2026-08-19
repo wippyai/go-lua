@@ -77,8 +77,16 @@ func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.
 	return rule.implementation, true
 }
 
-func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return packowner.ResolveRuleImplementation(rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := packowner.ResolveRuleImplementation(rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[packdomain.Value, packdomain.Source] {

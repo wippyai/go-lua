@@ -107,8 +107,16 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Bina
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func hotContent(schema *value.Schema, row value.BinaryArithmetic) (value.BinaryArithmetic, [32]byte, bool) {

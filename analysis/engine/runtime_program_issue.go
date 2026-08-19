@@ -39,7 +39,7 @@ type pendingRuleIssuance struct {
 	// binder is the sealed cell that mints this issuance's runtime row, and
 	// coords the neutral coordinates it resolves its operand from. Both are
 	// stated here and bound by the committed program, never by this pass.
-	binder programMemberBinder
+	binder ProgramRule
 	coords OperandCoords
 }
 
@@ -225,7 +225,7 @@ func claimAnchoredSurfaces(claimed map[equation.Surface]struct{}, surfaces decla
 // mount+point+occurrence qualified, so equal reusable artifacts and same IDs
 // on different mounts cannot alias.
 func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
-	if row.Declaration == nil || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
+	if !row.Declaration.Available() || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
 	if !rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence) {
@@ -256,7 +256,7 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 // occurrence: the witness assigned the role, and each occurrence is claimed
 // once.
 func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
-	if row.Declaration == nil || !row.Capability.link() || !row.Occurrence.Available() {
+	if !row.Declaration.Available() || !row.Capability.link() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
 	assigned, found := rows.bootstrap.roles[row.Occurrence]
@@ -287,7 +287,7 @@ func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows
 // declareIssuanceSurfaces is the shared half of every rule issuance: mint the
 // Occurrence and Operand, then read the declaration's two pure projections
 // against that anchor.
-func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration RuleProgramDeclaration, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
+func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration ProgramRule, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
 	semantic, family, semanticOK := declaration.declaredRuleSchema()
 	if !semanticOK || !declaredRoleOwnsRuleSchema(state, issuance.role, semantic) {
 		return pendingRuleIssuance{}, false
@@ -357,11 +357,15 @@ func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifa
 	if !anchorOK {
 		return pendingRuleIssuance{}, false, false
 	}
+	program, programOK := SealActivationProgramRule(admit.Implementation)
+	if !programOK {
+		return pendingRuleIssuance{}, false, false
+	}
 	return pendingRuleIssuance{
 		plane: declaredMemberMount, role: admit.Capability,
 		mount: admit.Mount, point: admit.Point, occurrence: admit.Occurrence,
 		member: member, activationID: activation, activation: true,
-		binder:   admit.Implementation,
+		binder:   program,
 		semantic: semantic, family: family, anchor: anchor,
 		surfaces:    declaredActivationSurfaces(admit.Read),
 		candidates:  admit.Candidates,

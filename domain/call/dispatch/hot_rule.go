@@ -184,8 +184,16 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	return hot, true
 }
 
-func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (dispatchReceipt, bool) {

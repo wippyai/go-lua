@@ -43,14 +43,10 @@ func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
 	return implementation.binding.cell.impl.operandResolver != nil
 }
 
-// RuleProgramDeclaration is the erased declaration of one sealed rule cell.
-// The engine enumerates neutral member coordinates and this handle declares
-// the row it issues at each of them; the typed operand never leaves the cell.
-//
-// Every method is unexported, so the engine is the only package that can
-// publish one: a Link hands the construction inventory the handle its sealed
-// cell issued and never a declaration of its own.
-type RuleProgramDeclaration interface {
+// programRule is the engine's private row issuer. It is wrapped by ProgramRule
+// before crossing the schema/composition boundary; callers can only hand back
+// the sealed primitive and cannot implement or forge this surface.
+type programRule interface {
 	// declaredRuleSchema names the cold rule this handle issues rows for.
 	declaredRuleSchema() (semantic, family composition.Key, ok bool)
 	// declareRuleOperand resolves one issuance's canonical operand.
@@ -58,8 +54,68 @@ type RuleProgramDeclaration interface {
 	// declareRuleSurfaces places the cold shape's surfaces over that operand
 	// at the sealed anchor the engine minted.
 	declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool)
-	// bindProgramMember mints the runtime row of one published member.
+}
+
+type programMemberBinder interface {
 	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool)
+}
+
+// ProgramRule is one sealed, engine-owned rule row issuer. Composition emits
+// these values in catalog order; the constructor consumes the aligned slice
+// directly and never recovers a program from a hot schema cell.
+type ProgramRule struct {
+	issuer programRule
+	binder programMemberBinder
+}
+
+// Available reports whether the primitive was issued by the engine.
+func (program ProgramRule) Available() bool { return program.binder != nil }
+
+func (program ProgramRule) declaredRuleSchema() (composition.Key, composition.Key, bool) {
+	if program.issuer == nil {
+		return composition.Key{}, composition.Key{}, false
+	}
+	return program.issuer.declaredRuleSchema()
+}
+
+func (program ProgramRule) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
+	if program.issuer == nil {
+		return declaredRuleOperand{}, false
+	}
+	return program.issuer.declareRuleOperand(coords)
+}
+
+func (program ProgramRule) declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
+	if program.issuer == nil {
+		return declaredRuleSurfaces{}, false
+	}
+	return program.issuer.declareRuleSurfaces(operand, anchor)
+}
+
+func (program ProgramRule) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool) {
+	if program.binder == nil {
+		return nil, false
+	}
+	return program.binder.bindProgramMember(plane, topology, member, coords)
+}
+
+// SealProgramRule turns the exact sealed typed implementation into the one
+// primitive construction input. The generic boundary is deliberately here so
+// schema composition never needs to name engine's private issuer interface.
+func SealProgramRule[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O]) (ProgramRule, bool) {
+	if implementation == nil || !implementation.binding.valid() {
+		return ProgramRule{}, false
+	}
+	return ProgramRule{issuer: implementation, binder: implementation}, true
+}
+
+// SealActivationProgramRule publishes the activation issuer through the same
+// sealed primitive while preserving activation's separate admission path.
+func SealActivationProgramRule(implementation *ActivationRuleImplementation) (ProgramRule, bool) {
+	if implementation == nil || !implementation.binding.valid() {
+		return ProgramRule{}, false
+	}
+	return ProgramRule{binder: implementation}, true
 }
 
 func (implementation *RuleImplementation[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
@@ -76,13 +132,6 @@ func (implementation *ActivationRuleImplementation) declaredRuleSchema() (compos
 	}
 	semantic, family := implementation.binding.proof.semantic, implementation.binding.proof.operandFamily
 	return semantic, family, semantic.Available() && family.Available()
-}
-
-// RuleProgramSource is the hot-cell surface that publishes the one program
-// declaration for a mounted or Link rule. The composition recovers it from the
-// opaque cell; the engine never switches on a domain type.
-type RuleProgramSource interface {
-	ProgramDeclaration() (RuleProgramDeclaration, bool)
 }
 
 func (implementation *RuleImplementation[K, V, O]) resolveOperand(coords OperandCoords) (O, bool) {

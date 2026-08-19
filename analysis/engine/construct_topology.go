@@ -68,7 +68,7 @@ type declaredMemberRow struct {
 	// Coords the neutral coordinates it resolves its operand from. The
 	// declaration states both; the committed program binds them at every
 	// seal and the geometry reads neither.
-	Bind             programMemberBinder
+	Bind             ProgramRule
 	Coords           OperandCoords
 	Activation       bool
 	EnvironmentInput equation.Input

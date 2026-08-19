@@ -265,6 +265,123 @@ func TestQueryRowsArePublishedLikeAnyColumn(t *testing.T) {
 	}
 }
 
+var (
+	queryMembershipSchema = identity.ContentID{0xD1, 0x01}
+	queryMembershipFamily = identity.ContentID{0xD1, 0x02}
+	queryMembershipBase   = identity.ContentID{0xD1, 0x03}
+	queryMembershipAxis   = Axis[identity.ContentID, int]{SchemaID: queryMembershipSchema, Slot: 0}
+)
+
+func queryMembershipID(value byte) identity.ContentID {
+	return identity.ContentID{0xD1, value}
+}
+
+func queryMembershipSnapshot(t testing.TB, generation identity.Generation, members []identity.ContentID, rows map[identity.ContentID]int, denominator identity.ContentID) (Snapshot, QueryPlan[identity.ContentID, int]) {
+	t.Helper()
+	builder := NewBuilder(queryMembershipSchema, identity.StoreID(31), generation)
+	plan, err := DeclareQuery(&builder, queryMembershipFamily, queryMembershipAxis.Slot, Content[identity.ContentID, int]{
+		Rows: rows, Denominator: denominator, Members: members,
+	})
+	if err != nil {
+		t.Fatalf("declare query: %v", err)
+	}
+	sealed, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("seal query snapshot: %v", err)
+	}
+	return sealed, plan
+}
+
+func queryMembershipRows(t testing.TB, base Snapshot, plan QueryPlan[identity.ContentID, int], members []identity.ContentID) map[identity.ContentID]int {
+	t.Helper()
+	rows := make(map[identity.ContentID]int, len(members))
+	for _, member := range members {
+		value, status := Query(&base, plan, member)
+		switch status {
+		case ReadHit:
+			rows[member] = value
+		case ReadProvenAbsent, ReadMiss:
+		default:
+			t.Fatalf("source query member %x = %s", member[:4], status)
+		}
+	}
+	return rows
+}
+
+func reissueQueryMembership(t testing.TB, base Snapshot, plan QueryPlan[identity.ContentID, int], members []identity.ContentID, generation identity.Generation) Snapshot {
+	t.Helper()
+	delta := NewDelta(base, generation)
+	if _, err := DeclareQuery(&delta, queryMembershipFamily, plan.Axis().Slot, Content[identity.ContentID, int]{
+		Rows:        queryMembershipRows(t, base, plan, members),
+		Denominator: identity.ContentID{0xD2, byte(generation)},
+		Members:     members,
+	}); err != nil {
+		t.Fatalf("reissue query membership: %v", err)
+	}
+	sealed, err := delta.Seal()
+	if err != nil {
+		t.Fatalf("seal reissued query membership: %v", err)
+	}
+	return sealed
+}
+
+// TestQueryMembershipIsClosedOverItsDeclaredUniverse fixes the three-way
+// owner contract: stored subjects hit, covered missing subjects are proven
+// absent, and subjects outside the declared universe remain unknown.
+func TestQueryMembershipIsClosedOverItsDeclaredUniverse(t *testing.T) {
+	present := queryMembershipID(0x11)
+	absent := queryMembershipID(0x12)
+	foreign := queryMembershipID(0x13)
+	sealed, plan := queryMembershipSnapshot(t, identity.Generation(1), []identity.ContentID{present, absent}, map[identity.ContentID]int{present: 17}, queryMembershipBase)
+	opened, opens := OpenQuery[identity.ContentID, int](&sealed, queryMembershipFamily)
+	if !opens || opened != plan {
+		t.Fatal("the published query family did not reopen its own plan")
+	}
+	if value, status := Query(&sealed, opened, present); value != 17 || status != ReadHit {
+		t.Fatalf("stored subject = (%d, %s), want (17, hit)", value, status)
+	}
+	if _, status := Query(&sealed, opened, absent); status != ReadProvenAbsent {
+		t.Fatalf("declared zero-row subject = %s, want proven-absent", status)
+	}
+	if _, status := Query(&sealed, opened, foreign); status != ReadMiss {
+		t.Fatalf("foreign subject = %s, want miss", status)
+	}
+}
+
+// TestQueryMembershipMutationChangesCoverageWithoutMutatingTheBase proves
+// that a derived publication may narrow or widen its closed universe without
+// mutating the base snapshot.
+func TestQueryMembershipMutationChangesCoverageWithoutMutatingTheBase(t *testing.T) {
+	present := queryMembershipID(0x21)
+	absent := queryMembershipID(0x22)
+	foreign := queryMembershipID(0x23)
+	base, plan := queryMembershipSnapshot(t, identity.Generation(1), []identity.ContentID{present, absent}, map[identity.ContentID]int{present: 29}, queryMembershipBase)
+
+	narrowed := reissueQueryMembership(t, base, plan, []identity.ContentID{present}, identity.Generation(2))
+	narrowedPlan, opens := OpenQuery[identity.ContentID, int](&narrowed, queryMembershipFamily)
+	if !opens {
+		t.Fatal("narrowed publication did not reopen its query family")
+	}
+	if _, status := Query(&narrowed, narrowedPlan, absent); status != ReadMiss {
+		t.Fatalf("narrowed absent subject = %s, want miss", status)
+	}
+	if _, status := Query(&base, plan, absent); status != ReadProvenAbsent {
+		t.Fatalf("narrowing changed the base covered absence to %s", status)
+	}
+
+	widened := reissueQueryMembership(t, base, plan, []identity.ContentID{present, absent, foreign}, identity.Generation(3))
+	widenedPlan, opens := OpenQuery[identity.ContentID, int](&widened, queryMembershipFamily)
+	if !opens {
+		t.Fatal("widened publication did not reopen its query family")
+	}
+	if _, status := Query(&widened, widenedPlan, foreign); status != ReadProvenAbsent {
+		t.Fatalf("widened foreign subject = %s, want proven-absent", status)
+	}
+	if _, status := Query(&base, plan, foreign); status != ReadMiss {
+		t.Fatalf("widening changed the base foreign miss to %s", status)
+	}
+}
+
 // BenchmarkQuery reports the cost of reading a published answer, which the
 // law above fixes at zero allocations on every outcome.
 func BenchmarkQuery(b *testing.B) {

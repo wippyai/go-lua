@@ -110,8 +110,16 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Root
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func ingressContent(schema heapdomain.Schema, operand source.Root) (source.Root, [32]byte, bool) {

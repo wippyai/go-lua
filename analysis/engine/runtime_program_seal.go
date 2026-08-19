@@ -17,21 +17,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// programMemberBinder mints one declared member's runtime row against a bound
-// plane. The typed operand never leaves the sealed cell: the binder resolves
-// it from the neutral coordinates the declaration published, exactly as the
-// declaration pass did when it stated the row.
-type programMemberBinder interface {
-	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool)
-}
-
 // programMemberBinding is one member row of a committed program: the identity
 // the graph publishes it under and the sealed cell that mints its runtime row.
 type programMemberBinding struct {
 	member     identity.ContentID
 	activation identity.ContentID
 	coords     OperandCoords
-	binder     programMemberBinder
+	binder     ProgramRule
 	activated  bool
 }
 
@@ -105,7 +97,7 @@ func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtim
 	drafts := make([]runtimeMember, 0, len(committed.members))
 	bound := make(map[composition.Key]struct{}, len(committed.members))
 	for _, declared := range committed.members {
-		if declared.binder == nil {
+		if !declared.binder.Available() {
 			return nil, false
 		}
 		member, resolved := committed.declaredMember(declared)

@@ -38,8 +38,16 @@ func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Acces
 	return rule.implementation, ok
 }
 
-func (rule *RawSetHotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealRawSetProgramRule(rule *RawSetHotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {

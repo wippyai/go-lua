@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/compose"
 	"github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -23,7 +24,7 @@ import (
 // dense declaration position, numbered from one. Slot zero is the absent rule.
 type ruleCells []rule.Cell
 
-func newRuleCells(entries []*template) ruleCells { return make(ruleCells, len(entries)+1) }
+func newRuleCells(entries []*rule.Template) ruleCells { return make(ruleCells, len(entries)+1) }
 
 // registry is the sealed analyzer declaration table. It is built once and is
 // immutable afterwards; a rejected law leaves the table unavailable rather
@@ -32,8 +33,8 @@ var registry struct {
 	once             sync.Once
 	sealed           *schema.Schema
 	failure          schema.SealFailure
-	templates        []*template
-	ruleContributors []ruleContributor
+	templates        []*rule.Template
+	ruleContributors []compose.RuleContributor[principals, authorities]
 	axes             []*axisTemplate
 	axisContributors []axisContributor
 	// queries is the admitted query inventory, in catalog order. The sealed
@@ -87,7 +88,7 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
-		templates, ruleContributors, ok := ruleTemplates()
+		templates, ruleContributors, ok := compose.RuleTemplates[principals, authorities]()
 		if !ok {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
@@ -258,7 +259,7 @@ func LinkKeys() []schema.Key {
 	return keys
 }
 
-func templateForKey(key schema.Key) (*template, bool) {
+func templateForKey(key schema.Key) (*rule.Template, bool) {
 	slot, ok := ruleSlotForKey(key)
 	if !ok {
 		return nil, false
@@ -274,7 +275,7 @@ func MountedRuleKey(key schema.Key) bool {
 
 // templateAtSlot resolves one rule by its slot. The slot is the declaration
 // position numbered from one, so slot zero names no rule.
-func templateAtSlot(slot int) (*template, bool) {
+func templateAtSlot(slot int) (*rule.Template, bool) {
 	sealRegistry()
 	if registry.sealed == nil || slot <= 0 || slot > len(registry.templates) {
 		return nil, false
@@ -350,7 +351,7 @@ func declareRules(builder *engine.SchemaBuilder, roles vocabulary.Roles, owners 
 		if !owners.writes(entry.Writes()) || !owners.writes(entry.Owner()) {
 			return fragments, DiagnosticRule(slot), false
 		}
-		fragment, ok := registry.ruleContributors[position].declare(builder, roles, owners)
+		fragment, ok := registry.ruleContributors[position].Declare(builder, roles, owners)
 		if !ok {
 			return fragments, DiagnosticRule(slot), false
 		}
@@ -405,9 +406,10 @@ func (stage RuleBindStage) String() string {
 // sealed row admission and classification through the table, never through a
 // domain type.
 type RuleBinding struct {
-	binding      *engine.SchemaBinding
-	hot          ruleCells
-	declarations map[schema.Key]engine.RuleProgramDeclaration
+	binding    *engine.SchemaBinding
+	hot        ruleCells
+	programs   []engine.ProgramRule
+	activation compose.ActivationRule
 }
 
 func (rules *RuleBinding) cellByKey(key schema.Key) (rule.Cell, bool) {
@@ -466,41 +468,45 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
-func (rules *RuleBinding) programDeclaration(key schema.Key) (engine.RuleProgramDeclaration, bool) {
-	if rules == nil || rules.declarations == nil || !key.Available() {
-		return nil, false
+func (rules *RuleBinding) programRule(key schema.Key) (engine.ProgramRule, bool) {
+	if rules == nil || !key.Available() {
+		return engine.ProgramRule{}, false
 	}
-	declaration, ok := rules.declarations[key]
-	return declaration, ok && declaration != nil
+	slot, ok := ruleSlotForKey(key)
+	if !ok || slot <= 0 || slot >= len(rules.programs) {
+		return engine.ProgramRule{}, false
+	}
+	program := rules.programs[slot]
+	return program, program.Available()
 }
 
-// ProgramDeclarationByKey is the sealed construction join for one declared rule.
-// Mounted operand and Link rules publish exactly one declaration; activation
-// publishes none.
-func (rules *RuleBinding) ProgramDeclarationByKey(key schema.Key) (engine.RuleProgramDeclaration, bool) {
-	return rules.programDeclaration(key)
+// ProgramRuleByKey is the sealed construction join for one declared rule.
+// Mounted operand and Link rules publish one primitive; activation publishes
+// none because it has its own admission plane.
+func (rules *RuleBinding) ProgramRuleByKey(key schema.Key) (engine.ProgramRule, bool) {
+	return rules.programRule(key)
 }
 
 func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
 	hot, hotOK := rules.cellByKey(key)
 	contributor, contributorOK := ruleContributorFor(key)
-	if !hotOK || !contributorOK || contributor.linkCatalog == nil {
+	if !hotOK || !contributorOK {
 		return nil, false
 	}
-	return contributor.linkCatalog(hot)
+	return contributor.LinkCatalog(hot)
 }
 
-func ruleContributorFor(key schema.Key) (ruleContributor, bool) {
+func ruleContributorFor(key schema.Key) (compose.RuleContributor[principals, authorities], bool) {
 	sealRegistry()
 	if len(registry.ruleContributors) != len(registry.templates) {
-		return ruleContributor{}, false
+		return compose.RuleContributor[principals, authorities]{}, false
 	}
 	for index, entry := range registry.templates {
 		if entry != nil && entry.Key() == key {
 			return registry.ruleContributors[index], true
 		}
 	}
-	return ruleContributor{}, false
+	return compose.RuleContributor[principals, authorities]{}, false
 }
 
 // bindRules drives the whole rule table in one transaction: bind every hot
@@ -517,7 +523,8 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 	if registry.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(registry.templates)+1 || len(registry.ruleContributors) != len(registry.templates) {
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
-	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), declarations: make(map[schema.Key]engine.RuleProgramDeclaration, len(registry.templates))}
+	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), programs: make([]engine.ProgramRule, len(registry.templates)+1)}
+	programIssuers := make([]compose.ProgramIssuer, len(registry.templates)+1)
 	for position, entry := range registry.templates {
 		slot := position + 1
 		if !set.writes(entry.Writes()) || !set.writes(entry.Owner()) {
@@ -526,11 +533,18 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 		if !fragments[slot].Available() {
 			return nil, DiagnosticRule(slot), RuleBindStageFragment
 		}
-		hot, ok := registry.ruleContributors[position].bind(binding, set, fragments[slot])
+		hot, issuer, activation, ok := registry.ruleContributors[position].Bind(binding, set, fragments[slot])
 		if !ok {
 			return nil, DiagnosticRule(slot), RuleBindStageBind
 		}
 		rules.hot[slot] = hot
+		programIssuers[slot] = issuer
+		if activation != nil {
+			if rules.activation != nil {
+				return nil, DiagnosticRule(slot), RuleBindStageBind
+			}
+			rules.activation = activation
+		}
 	}
 	// Slots are handed to their owners one lane at a time: every artifact
 	// mounted plane before the Link-owned plane. The grouping is the entry's
@@ -546,7 +560,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 				continue
 			}
 			slot := position + 1
-			capability, ok := registry.ruleContributors[position].register(binding, fragments[slot])
+			capability, ok := registry.ruleContributors[position].Register(binding, fragments[slot])
 			if !ok {
 				return nil, DiagnosticRule(slot), RuleBindStageRegister
 			}
@@ -566,7 +580,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 	}
 	for position := range registry.templates {
 		slot := position + 1
-		if contributor := registry.ruleContributors[position]; contributor.pair != nil && !contributor.pair(binding, fragments[slot], resolve) {
+		if contributor := registry.ruleContributors[position]; !contributor.Pair(binding, fragments[slot], resolve) {
 			return nil, DiagnosticRule(slot), RuleBindStagePair
 		}
 	}
@@ -585,41 +599,30 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 	}
 	for position := range registry.templates {
 		slot := position + 1
-		if contributor := registry.ruleContributors[position]; contributor.finalize != nil && !contributor.finalize(set, rules.hot[slot]) {
+		if contributor := registry.ruleContributors[position]; !contributor.Finalize(set, rules.hot[slot]) {
 			return nil, DiagnosticRule(slot), RuleBindStageFinalize
 		}
 	}
-	// Operand and Link rules publish one cell-owned program declaration. Activation
-	// keeps its own member bridge. Missing or duplicate declarations leave the
-	// binding unusable rather than half constructed.
+	// Schema composition emits one engine primitive from each typed hot row only
+	// after the shared binding and every domain finalizer have sealed. The
+	// aligned slice is the only implementation join; no key-indexed recovery
+	// map or issuer closure survives this pass.
 	for position, entry := range registry.templates {
 		slot := position + 1
 		if entry.Lane() == rule.LaneActivation {
 			continue
 		}
-		source, sourceOK := rule.Payload[engine.RuleProgramSource](rules.hot[slot])
-		declaration, declarationOK := source.ProgramDeclaration()
-		if !sourceOK || !declarationOK || declaration == nil {
+		issuer := programIssuers[slot]
+		if issuer == nil {
 			return nil, DiagnosticRule(slot), RuleBindStageProgram
 		}
-		if _, duplicate := rules.declarations[entry.Key()]; duplicate {
+		program, programOK := issuer()
+		if !programOK || !program.Available() {
 			return nil, DiagnosticRule(slot), RuleBindStageProgram
 		}
-		rules.declarations[entry.Key()] = declaration
+		rules.programs[slot] = program
 	}
 	return rules, DiagnosticRuleUnknown, RuleBindStageNone
-}
-
-// RuleHandle recovers one bound hot rule at its declared type. Production
-// wiring drives the table instead; this exists for the owning domain's own
-// laws, which must reach the implementation they are stating a law about.
-func RuleHandleByKey[H any](rules *RuleBinding, key schema.Key) (H, bool) {
-	var absent H
-	hot, ok := rules.cellByKey(key)
-	if !ok {
-		return absent, false
-	}
-	return rule.Payload[H](hot)
 }
 
 // SemanticRoles is the resolved semantic role vocabulary the sealed table was

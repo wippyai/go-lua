@@ -152,8 +152,16 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[valuedomai
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
-	return valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
+// SealProgramRule is this typed rule's schema registration.
+func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
+	if rule == nil {
+		return engine.ProgramRule{}, false
+	}
+	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
+	if !ok {
+		return engine.ProgramRule{}, false
+	}
+	return engine.SealProgramRule(implementation)
 }
 
 func hotContent(schema *valuedomain.Schema, row valuedomain.RuntimeKindCall) (valuedomain.RuntimeKindCall, [32]byte, bool) {
