@@ -30,11 +30,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
-// Assemble is the one and only Flow publication transaction.  The owner
-// finalizers must already be claimed by the root.  Assemble derives every
-// cross-owner relation in the fixed DAG, consumes each finalizer exactly once,
+// Assemble is the one and only Flow publication transaction. The Source,
+// Module, and Flow owners use their construction capabilities; Static arrives
+// as an immutable component and its build-time validation view remains local
+// to this call. Assemble derives every cross-owner relation in the fixed DAG
 // and publishes no Assembly until all four child components exist.
 //
 // The entry is the canonical top-level Body.  It is checked by every
@@ -42,7 +44,8 @@ import (
 // root or to use an alternate entry.
 func Assemble(
 	sourceFinalizer source.Finalizer,
-	staticFinalizer static.Finalizer,
+	staticComponent *static.Component,
+	staticView staticquery.View,
 	moduleFinalizer imports.Finalizer,
 	draft *Draft,
 	entry keyspace.Term,
@@ -54,13 +57,12 @@ func Assemble(
 
 	var (
 		sourceTerminal bool
-		staticTerminal bool
 		moduleTerminal bool
 		flowTerminal   bool
 	)
 	abort := func() {
-		abortOwners(sourceFinalizer, staticFinalizer, moduleFinalizer, flowFinalizer,
-			sourceTerminal, staticTerminal, moduleTerminal, flowTerminal)
+		abortOwners(sourceFinalizer, moduleFinalizer, flowFinalizer,
+			sourceTerminal, moduleTerminal, flowTerminal)
 	}
 	fail := func(stage string, cause error) (*Assembly, error) {
 		abort()
@@ -71,14 +73,14 @@ func Assemble(
 	}
 
 	preimage := sourceFinalizer.Preimage()
-	staticView := staticFinalizer.View()
 	moduleView := moduleFinalizer.View()
 	authoredLive := flowFinalizer.View()
 	sourceID := preimage.Identity().ContentID()
 	flowID := authoredLive.Cold().ContentID()
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()
-	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
+	if staticComponent == nil || staticComponent.ContentID() != staticID ||
+		!sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return fail("owner preflight", errors.New("one or more claimed owner views are unavailable"))
 	}
 	if keyspace.TermFamily(entry) != keyspace.FamilyBody || keyspace.TermOrdinal(entry) == 0 {
@@ -128,7 +130,7 @@ func Assemble(
 	// terminal even on malformed input, so mark the capability closed before
 	// invoking it and never attempt a second terminal action in cleanup.
 	sourceTerminal = true
-	sourceComponent, semanticPathIssuance, err := sourceFinalizer.CommitWithSemanticPathIssuance(indexInput)
+	sourceComponent, err := sourceFinalizer.Commit(indexInput)
 	if err != nil {
 		return fail("Source commit", err)
 	}
@@ -141,7 +143,7 @@ func Assemble(
 	// control proofs remain local to this call.
 	sourceView := sourceComponent.View()
 	cellRoles := sourceView.CellRoles()
-	pathCertificate, err := semanticpath.Seal(semanticPathIssuance, cellRoles, sourceView, authoredLive, bodies, bindings, forest, outcomes, flowID, staticID, moduleID)
+	pathCertificate, err := semanticpath.Seal(cellRoles, sourceView, authoredLive, bodies, bindings, forest, outcomes, flowID, staticID, moduleID)
 	if err != nil {
 		return fail("Semantic path certificate", err)
 	}
@@ -262,21 +264,12 @@ func Assemble(
 		return fail("Module commit", errors.New("module returned no Component"))
 	}
 
-	// Static validation consumes the full transient forest/scope proof and
-	// the still-live authored Flow view, then returns only Static-owned result
-	// terms. The result itself is not retained by Flow or Assembly.
-	staticResult, err := staticcheck.Validate(sourceView, authoredLive, staticView, bodies, bindings, forest, scopeProof, accessGeometryResult, moduleID, entry)
+	// Static validation consumes the full transient forest/scope proof and the
+	// authored Flow view. Its scratch is discarded; the immutable Static
+	// component remains local until Assembly is returned for root publication.
+	err = staticcheck.Validate(sourceView, authoredLive, staticView, bodies, bindings, forest, scopeProof, accessGeometryResult, moduleID, entry)
 	if err != nil {
 		return fail("StaticCheck", err)
-	}
-
-	staticTerminal = true
-	staticComponent, err := staticFinalizer.Commit(staticResult)
-	if err != nil {
-		return fail("Static commit", err)
-	}
-	if staticComponent == nil {
-		return fail("Static commit", errors.New("Static returned no Component"))
 	}
 
 	// Authored Flow commits last. Every consumer above observes the lifecycle-
@@ -327,16 +320,12 @@ func Assemble(
 
 func abortOwners(
 	sourceFinalizer source.Finalizer,
-	staticFinalizer static.Finalizer,
 	moduleFinalizer imports.Finalizer,
 	flowFinalizer authored.Finalizer,
-	sourceTerminal, staticTerminal, moduleTerminal, flowTerminal bool,
+	sourceTerminal, moduleTerminal, flowTerminal bool,
 ) {
 	if !moduleTerminal {
 		_ = moduleFinalizer.Abort()
-	}
-	if !staticTerminal {
-		_ = staticFinalizer.Abort()
 	}
 	if !sourceTerminal {
 		_ = sourceFinalizer.Abort()

@@ -34,10 +34,9 @@
 //	the joint laws    the combined containment forest, exactly-once TypeParam
 //	                  ownership, the interface-method scope join, and the
 //	                  bound-assertion direct-return rule
-//	the lifecycle     Draft and Finalizer: one publication transaction. The
-//	                  Finalizer lends a lifecycle-bound static/query.View;
+//	the publication   Build returns an immutable Component and a composed
+//	                  validation view carrying its local containment proof;
 //	                  Component.View returns the permanent published view.
 //	the stream        section order and record framing for the artifact
 //	                  payload, shared with the ContentID digest
-//
 package static

@@ -12,8 +12,7 @@ import (
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
-// ContentID returns the authored Static identity while this view is live.
-// Expired construction views return the unavailable identity.
+// ContentID returns the authored Static identity when this view is available.
 func (view View) ContentID() identity.ContentID {
 	if !view.available() {
 		return identity.ContentID{}
@@ -28,7 +27,7 @@ func (view View) Operators() staticoperators.View {
 	if !view.available() {
 		return staticoperators.View{}
 	}
-	return staticoperators.NewView(&view.snapshot.operators, view.live)
+	return staticoperators.NewView(&view.snapshot.operators)
 }
 
 // Operands returns the sealed operand owner view under the canonical census

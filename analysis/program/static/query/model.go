@@ -1,12 +1,10 @@
 // Package query owns the composed immutable query surface of one authored
 // Static publication. The enclosing static owner supplies already-sealed
-// canonical tables and a lifecycle cell; this package never reaches back into
-// the owner's Component or construction callbacks.
+// canonical tables; this package never reaches back into the owner's
+// Component or construction callbacks.
 package query
 
 import (
-	"sync/atomic"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
@@ -114,31 +112,24 @@ func (snapshot Snapshot) Tables() (
 // View returns a permanently available query view over the snapshot.
 func (snapshot Snapshot) View() View { return View{snapshot: snapshot} }
 
-// View is the immutable composed Static query surface. A non-nil live cell
-// binds it to an active construction transaction; a nil cell denotes a
-// published snapshot that remains available forever.
+// View is the immutable composed Static query surface.
 type View struct {
 	snapshot Snapshot
-	live     *uint32
 }
 
-// NewView creates a view over immutable canonical values. The owner supplies
-// live as nil for a published snapshot or as its one-shot lifecycle cell for a
-// construction view.
-func NewView(snapshot Snapshot, live *uint32) View {
-	return View{snapshot: snapshot, live: live}
+// NewView creates a view over immutable canonical values.
+func NewView(snapshot Snapshot) View {
+	return View{snapshot: snapshot}
 }
 
 func (view View) available() bool {
-	return view.snapshot.contentID.Available() &&
-		(view.live == nil || atomic.LoadUint32(view.live) != 0)
+	return view.snapshot.contentID.Available()
 }
 
 // Available reports whether this view can currently observe its snapshot.
 func (view View) Available() bool { return view.available() }
 
-// Snapshot returns the immutable canonical values when this view is live.
-// The second result is false for a zero or expired construction view.
+// Snapshot returns the immutable canonical values when this view is available.
 func (view View) Snapshot() (Snapshot, bool) {
 	if !view.available() {
 		return Snapshot{}, false

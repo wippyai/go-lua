@@ -1,19 +1,16 @@
 package query
 
 import (
-	"sync/atomic"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
 // StaticTypes is the post-seal hot view over Static's complete authored type
-// forest. It retains only the immutable canonical census/identity values and
-// the lifecycle cell, never the enclosing Component or a copied term list.
+// forest. It retains only the immutable canonical census/identity values,
+// never the enclosing Component or a copied term list.
 type StaticTypes struct {
 	authority staticTypeAuthority
-	live      *uint32
 }
 
 // StaticTypeRef is a capability for one published Static type. Its owner is
@@ -21,7 +18,6 @@ type StaticTypes struct {
 // local (family, ordinal) encoding used by the canonical keyspace.
 type StaticTypeRef struct {
 	authority staticTypeAuthority
-	live      *uint32
 	term      keyspace.Term
 }
 
@@ -35,18 +31,14 @@ type staticTypeAuthority struct {
 
 // StaticTypes returns the composed Static type capability.
 func (view View) StaticTypes() StaticTypes {
-	// Static type capabilities are post-publication references. A claimed
-	// construction view deliberately cannot mint one that could outlive the
-	// owner transaction; construction consumers use the local proof instead.
-	if !view.available() || view.live != nil {
+	if !view.available() {
 		return StaticTypes{}
 	}
-	return StaticTypes{authority: staticTypeAuthority{contentID: view.snapshot.contentID, census: view.snapshot.census}, live: view.live}
+	return StaticTypes{authority: staticTypeAuthority{contentID: view.snapshot.contentID, census: view.snapshot.census}}
 }
 
 func (types StaticTypes) available() bool {
-	return types.authority.contentID.Available() &&
-		(types.live == nil || atomic.LoadUint32(types.live) != 0)
+	return types.authority.contentID.Available()
 }
 
 // Count returns the complete canonical Static type forest cardinality.
@@ -77,7 +69,7 @@ func (types StaticTypes) At(index int) (StaticTypeRef, bool) {
 		count := uint64(types.authority.census[family])
 		if offset < count {
 			term := keyspace.MakeTerm(family, uint32(offset+1))
-			return StaticTypeRef{authority: types.authority, live: types.live, term: term}, true
+			return StaticTypeRef{authority: types.authority, term: term}, true
 		}
 		offset -= count
 	}
@@ -91,7 +83,7 @@ func (types StaticTypes) Ref(term keyspace.Term) (StaticTypeRef, bool) {
 	if !types.available() || !types.staticTypeTerm(term) {
 		return StaticTypeRef{}, false
 	}
-	return StaticTypeRef{authority: types.authority, live: types.live, term: term}, true
+	return StaticTypeRef{authority: types.authority, term: term}, true
 }
 
 func (types StaticTypes) staticTypeTerm(term keyspace.Term) bool {
@@ -103,11 +95,9 @@ func (types StaticTypes) staticTypeTerm(term keyspace.Term) bool {
 	return ordinal != 0 && uint64(ordinal) <= uint64(types.authority.census[family])
 }
 
-// Term recovers the checked local Term. A zero/expired ref returns zero.
+// Term recovers the checked local Term. A zero ref returns zero.
 func (ref StaticTypeRef) Term() keyspace.Term {
-	if ref.authority.contentID.Available() &&
-		(ref.live == nil || atomic.LoadUint32(ref.live) != 0) &&
-		staticTypeTerm(ref.authority.census, ref.term) {
+	if ref.authority.contentID.Available() && staticTypeTerm(ref.authority.census, ref.term) {
 		return ref.term
 	}
 	return 0

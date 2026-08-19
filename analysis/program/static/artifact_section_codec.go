@@ -55,11 +55,9 @@ func WriteArtifactSection(writer *framing.Writer, view staticquery.View) error {
 }
 
 // writeArtifactViewContent is the publication-facing entry to Static's one
-// canonical authored-row writer. A construction View keeps the lifecycle
-// fence held for the complete write, so an expired copied View cannot emit a
-// payload after its owner has been consumed. Published Views use their
-// immutable authored stores directly. No aggregate artifact representation is
-// constructed at this boundary.
+// canonical authored-row writer. It consumes the immutable authored stores
+// directly; no aggregate artifact representation is constructed at this
+// boundary.
 
 func writeArtifactViewContent(writer *framing.Writer, view staticquery.View) error {
 	snapshot, ok := view.Snapshot()

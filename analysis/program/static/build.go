@@ -2,7 +2,6 @@ package static
 
 import (
 	"errors"
-	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
@@ -30,9 +29,9 @@ import (
 //	dependent   the verticals that consume an already-sealed sibling table
 //	joint       the laws no single vertical can close alone
 //	identity    the content digest over the sealed sections
-func Build(input Input) (*Draft, error) {
+func Build(input Input) (*Component, staticquery.View, error) {
 	if !validCounts(input.Counts) {
-		return nil, errors.New("program/static: inconsistent authored cardinality")
+		return nil, staticquery.View{}, errors.New("program/static: inconsistent authored cardinality")
 	}
 	// Counts are the already-sealed family column supplied by the enclosing
 	// owner. Each typed child validates its own native rows below; Static does
@@ -41,45 +40,45 @@ func Build(input Input) (*Draft, error) {
 
 	typeTable, err := statictypes.Build(input.Types, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !typeTable.CountsMatch(census) {
-		return nil, errors.New("program/static: type cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: type cardinality disagrees with sealed column")
 	}
 	referenceTable, err := staticrefs.Build(input.References, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !referenceTable.CountsMatch(census) {
-		return nil, errors.New("program/static: reference cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: reference cardinality disagrees with sealed column")
 	}
 	declarationTable, err := staticdecl.Build(input.Declarations, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !declarationTable.CountsMatch(census) {
-		return nil, errors.New("program/static: declaration cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: declaration cardinality disagrees with sealed column")
 	}
 	signatureTable, err := staticsig.Build(input.Signatures, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !signatureTable.CountsMatch(census) {
-		return nil, errors.New("program/static: signature cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: signature cardinality disagrees with sealed column")
 	}
 	contractTable, err := staticcontracts.Build(input.Contracts, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !contractTable.CountsMatch(census) {
-		return nil, errors.New("program/static: contract cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: contract cardinality disagrees with sealed column")
 	}
 	operatorTable, err := staticoperators.Build(input.Operators, census)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !operatorTable.CountsMatch(census) {
-		return nil, errors.New("program/static: operator cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: operator cardinality disagrees with sealed column")
 	}
 
 	// Publications admits only a reference disposition References published;
@@ -87,17 +86,17 @@ func Build(input Input) (*Draft, error) {
 	// published. Both take those tables as sealed values.
 	publicationTable, err := staticpubs.Build(input.Publications, census, referenceTable)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !publicationTable.CountsMatch(census) {
-		return nil, errors.New("program/static: publication cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: publication cardinality disagrees with sealed column")
 	}
 	operandTable, err := staticoperands.Build(input.Operands, census, typeTable, referenceTable)
 	if err != nil {
-		return nil, err
+		return nil, staticquery.View{}, err
 	}
 	if !operandTable.CountsMatch(census) {
-		return nil, errors.New("program/static: operand cardinality disagrees with sealed column")
+		return nil, staticquery.View{}, errors.New("program/static: operand cardinality disagrees with sealed column")
 	}
 
 	component := &Component{
@@ -112,142 +111,21 @@ func Build(input Input) (*Draft, error) {
 		publications: publicationTable,
 	}
 	if !interfaceMethodScopes(component) {
-		return nil, errors.New("program/static: interface method signature scope mismatch")
+		return nil, staticquery.View{}, errors.New("program/static: interface method signature scope mismatch")
 	}
 	if !completeTypeParamOwnership(component, census) {
-		return nil, errors.New("program/static: incomplete or multiply-owned type parameter")
+		return nil, staticquery.View{}, errors.New("program/static: incomplete or multiply-owned type parameter")
 	}
 	localProof, ok := localForest(component)
 	if !ok {
-		return nil, errors.New("program/static: cyclic, shared, or incomplete static declaration child")
+		return nil, staticquery.View{}, errors.New("program/static: cyclic, shared, or incomplete static declaration child")
 	}
 
 	component.contentID = contentID(component)
 	if !component.contentID.Available() {
-		return nil, errors.New("program/static: unavailable content identity")
+		return nil, staticquery.View{}, errors.New("program/static: unavailable content identity")
 	}
-	return &Draft{state: &draftState{
-		component:        component,
-		localContainment: localProof,
-		live:             0,
-		phase:            draftOpen,
-	}}, nil
-}
-
-// Finalizer claims the authored component for the single owner-defined
-// publication transaction. The returned capability exposes only lifecycle-
-// bound View and LocalContainment validation surfaces; Commit or Abort must
-// terminate it before another copy can act.
-func (draft *Draft) Finalizer() (Finalizer, error) {
-	if draft == nil || draft.state == nil {
-		return Finalizer{}, errors.New("program/static: invalid draft finalizer")
-	}
-	state := draft.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftOpen || state.component == nil || !state.component.contentID.Available() {
-		return Finalizer{}, errors.New("program/static: draft already finalized")
-	}
-	state.phase = draftClaimed
-	atomic.StoreUint32(&state.live, 1)
-	return Finalizer{state: state}, nil
-}
-
-// View returns the immutable authored Static surface used by the coordinating
-// finalizer. It contains no mutation or publication operation.
-func (finalizer Finalizer) View() staticquery.View {
-	if finalizer.state == nil {
-		return staticquery.View{}
-	}
-	state := finalizer.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftClaimed || state.component == nil || state.localContainment == nil {
-		return staticquery.View{}
-	}
-	return staticquery.NewView(
-		state.component.querySnapshotWithProof(state.localContainment),
-		&state.live,
-	)
-}
-
-// Commit consumes the claimed finalizer exactly once. The input is checked
-// against this draft's authored denominators before publication. Both a
-// valid and an invalid input are terminal: construction views and copied
-// finalizers expire before the result is returned, and no input data is
-// retained in Component, ContentID, or Cold.
-func (finalizer Finalizer) Commit(input CommitInput) (*Component, error) {
-	if finalizer.state == nil {
-		return nil, errors.New("program/static: invalid finalizer commit")
-	}
-	state := finalizer.state
-	state.mu.Lock()
-	if state.phase != draftClaimed || state.component == nil {
-		state.mu.Unlock()
-		return nil, errors.New("program/static: finalizer is terminal")
-	}
-	component := state.component
-	// Close the lifecycle before validating caller input. This makes a
-	// rejected input terminal as well as a successful one, and expires every
-	// copied construction view at the same state transition.
-	state.component = nil
-	state.localContainment = nil
-	state.phase = draftCommitted
-	atomic.StoreUint32(&state.live, 0)
-	state.mu.Unlock()
-
-	if err := validateCommitInput(component, input); err != nil {
-		return nil, err
-	}
-	return component, nil
-}
-
-func validateCommitInput(component *Component, input CommitInput) error {
-	if component == nil {
-		return errors.New("program/static: missing authored component")
-	}
-	if !validCommitTerms(input.TypeOf, keyspace.FamilyTypeOf, component.operators.Count(keyspace.FamilyTypeOf)) {
-		return errors.New("program/static: invalid TypeOf input")
-	}
-	if !validCommitTerms(input.Annotations, keyspace.FamilyAnnotation, component.operands.Count(keyspace.FamilyAnnotation)) {
-		return errors.New("program/static: invalid Annotation input")
-	}
-	if !validCommitTerms(input.Publications, keyspace.FamilyTypePublication, component.publications.Count()) {
-		return errors.New("program/static: invalid Publication input")
-	}
-	return nil
-}
-
-func validCommitTerms(terms []keyspace.Term, family keyspace.Family, count int) bool {
-	if count < 0 || !keyspace.TermOrdinalFits(count) || count != len(terms) {
-		return false
-	}
-	for index, term := range terms {
-		if term != keyspace.MakeTerm(family, uint32(index+1)) {
-			return false
-		}
-	}
-	return true
-}
-
-// Abort terminates the claimed publication without publishing a component.
-// It returns an error when another copied capability has already won the
-// terminal action, making lifecycle races observable to the coordinator.
-func (finalizer Finalizer) Abort() error {
-	if finalizer.state == nil {
-		return errors.New("program/static: invalid finalizer abort")
-	}
-	state := finalizer.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != draftClaimed || state.component == nil {
-		return errors.New("program/static: finalizer is terminal")
-	}
-	state.component = nil
-	state.localContainment = nil
-	state.phase = draftAborted
-	atomic.StoreUint32(&state.live, 0)
-	return nil
+	return component, staticquery.NewView(component.querySnapshotWithProof(localProof)), nil
 }
 
 func validCounts(counts [keyspace.FamilyCount]uint32) bool {

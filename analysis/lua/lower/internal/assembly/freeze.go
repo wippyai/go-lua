@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
 // Publish is Collector's terminal publication transaction. It privately
@@ -34,19 +35,16 @@ func (c *Collector) Publish() (*program.Program, error) {
 
 	var (
 		sourceFinalizer source.Finalizer
-		staticFinalizer static.Finalizer
+		staticComponent *static.Component
+		staticView      staticquery.View
 		moduleFinalizer programimports.Finalizer
 		sourceClaimed   bool
-		staticClaimed   bool
 		moduleClaimed   bool
 	)
 	abortClaimed := func() error {
 		var cleanup error
 		if moduleClaimed && !moduleFinalizer.Abort() {
 			cleanup = errors.Join(cleanup, errors.New("program/lower/collector: Module abort failed"))
-		}
-		if staticClaimed {
-			cleanup = errors.Join(cleanup, staticFinalizer.Abort())
 		}
 		if sourceClaimed {
 			cleanup = errors.Join(cleanup, sourceFinalizer.Abort())
@@ -118,15 +116,10 @@ func (c *Collector) Publish() (*program.Program, error) {
 		return fail("Module freeze", err)
 	}
 
-	staticDraft, err := static.Build(staticInput)
+	staticComponent, staticView, err = static.Build(staticInput)
 	if err != nil {
 		return fail("Static build", err)
 	}
-	staticFinalizer, err = staticDraft.Finalizer()
-	if err != nil {
-		return fail("Static claim", err)
-	}
-	staticClaimed = true
 
 	moduleDraft, err := programimports.Build(moduleInput)
 	if err != nil {
@@ -146,7 +139,7 @@ func (c *Collector) Publish() (*program.Program, error) {
 	// The Collector scratch is no longer needed once all owner inputs and
 	// drafts are local. Flow owns cleanup for every claimed owner from here.
 	terminalize(c)
-	sealed, err := flow.Assemble(sourceFinalizer, staticFinalizer, moduleFinalizer, flowDraft, entry)
+	sealed, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
 	if err != nil {
 		return nil, fmt.Errorf("program/lower: Flow publication: %w", err)
 	}

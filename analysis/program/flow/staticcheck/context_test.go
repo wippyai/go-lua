@@ -107,16 +107,13 @@ func TestStaticCheckFunctionGenericHeaderAndFormalPhases(t *testing.T) {
 	if err := validateStaticReadAt(fixture.flowView, fixture.forest, fixture.bindings, points, readCapture); err != nil {
 		t.Fatalf("capture Read visibility: %v", err)
 	}
-	result, err := Validate(
+	err = Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("integrated Validate: %v", err)
-	}
-	if len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("integrated result = %#v", result)
 	}
 }
 
@@ -176,13 +173,13 @@ func TestStaticCheckValidateRejectsInvisibleNonSelfFunctionCapture(t *testing.T)
 	if !fixture.forest.Static(function) {
 		t.Fatal("non-self capture Function occurrence is not static")
 	}
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("invisible non-self capture Validate = %#v/%v", result, err)
+	if err == nil {
+		t.Fatal("Validate accepted an invisible non-self function capture")
 	}
 }
 
@@ -260,12 +257,12 @@ func TestStaticCheckRepeatUsesPositionAnchorNotFrontier(t *testing.T) {
 	if ok && childBase == frontier {
 		t.Fatal("Repeat child inherited Frontier instead of Position")
 	}
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("Repeat integrated Validate = %#v/%v", result, err)
+	); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 
@@ -315,12 +312,12 @@ func TestStaticCheckNumericLoopCellsStartAtChildGapZero(t *testing.T) {
 	if !tree.cellVisible(childGap, cell) {
 		t.Fatal("numeric loop Cell is not visible at child gap zero")
 	}
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("Loop integrated Validate = %#v/%v", result, err)
+	); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 
@@ -360,12 +357,12 @@ func TestStaticCheckChunkVarargIsVisibleAtEntryGapZero(t *testing.T) {
 	if !tree.cellVisible(point, cell) {
 		t.Fatal("chunk Vararg Cell is not visible at entry gap zero")
 	}
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("Chunk vararg integrated Validate = %#v/%v", result, err)
+	); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }
 
@@ -436,11 +433,11 @@ func TestStaticCheckBranchPositionAnchorsAndValidate(t *testing.T) {
 	if tree.bodies[keyspace.TermOrdinal(body2)].base != want || tree.bodies[keyspace.TermOrdinal(body3)].base != want {
 		t.Fatalf("Branch child bases = %d/%d, want %d", tree.bodies[keyspace.TermOrdinal(body2)].base, tree.bodies[keyspace.TermOrdinal(body3)].base, want)
 	}
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("Branch integrated Validate = %#v/%v", result, err)
+	); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }

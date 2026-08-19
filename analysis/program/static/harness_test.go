@@ -58,55 +58,18 @@ func staticFixture(t *testing.T) Input {
 	return input
 }
 
-func validCommitInputForFixture() CommitInput {
-	return CommitInput{
-		TypeOf:       canonicalCommitTerms(keyspace.FamilyTypeOf, 2),
-		Annotations:  canonicalCommitTerms(keyspace.FamilyAnnotation, 2),
-		Publications: canonicalCommitTerms(keyspace.FamilyTypePublication, 1),
-	}
-}
-
-// commitStaticDraft is the test-only spelling of the complete owner
-// lifecycle. Production callers must retain the Finalizer while validating
-// its View and then choose exactly one terminal operation.
-func commitStaticDraft(t *testing.T, draft *Draft) (*Component, error) {
-	t.Helper()
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		return nil, err
-	}
-	return finalizer.Commit(commitInputForDraft(draft))
-}
-
-func commitInputForDraft(draft *Draft) CommitInput {
-	component := draft.state.component
-	return CommitInput{
-		TypeOf:       canonicalCommitTerms(keyspace.FamilyTypeOf, component.operators.Count(keyspace.FamilyTypeOf)),
-		Annotations:  canonicalCommitTerms(keyspace.FamilyAnnotation, component.operands.Count(keyspace.FamilyAnnotation)),
-		Publications: canonicalCommitTerms(keyspace.FamilyTypePublication, component.publications.Count()),
-	}
-}
-
-func canonicalCommitTerms(family keyspace.Family, count int) []keyspace.Term {
-	terms := make([]keyspace.Term, count)
-	for index := range terms {
-		terms[index] = keyspace.MakeTerm(family, uint32(index+1))
-	}
-	return terms
-}
-
-func primitiveDraft(t *testing.T) *Draft {
+func primitiveComponent(t *testing.T) *Component {
 	t.Helper()
 	counts := [keyspace.FamilyCount]uint32{}
 	counts[keyspace.FamilyTypePrimitive] = 1
-	draft, err := Build(Input{
+	component, _, err := Build(Input{
 		Counts: counts,
 		Types:  statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
 	})
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	return draft
+	return component
 }
 
 // referenceInput supplies complete declaration rows whenever a TypeRef test
@@ -145,11 +108,7 @@ func referenceInput(counts [keyspace.FamilyCount]uint32, refs staticrefs.Input) 
 
 func staticContentComponent(t *testing.T, input Input) *Component {
 	t.Helper()
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	component, err := commitStaticDraft(t, draft)
+	component, _, err := Build(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,16 +454,4 @@ func staticTypeDenominatorInput(t *testing.T) Input {
 			}},
 		},
 	}
-}
-
-// emptyDraft is the minimal admissible Static draft: no authored relation in
-// any vertical. The lifecycle laws use it because they are about the
-// publication capability, not about any row.
-func emptyDraft(t *testing.T) *Draft {
-	t.Helper()
-	draft, err := Build(Input{})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	return draft
 }

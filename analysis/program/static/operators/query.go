@@ -1,37 +1,30 @@
 package operators
 
 import (
-	"sync/atomic"
-
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
-// View is the immutable query surface over a sealed operator table.  When a
-// Static finalizer lends a construction view, live points to its lifecycle
-// cell; publication views leave live nil and remain permanently available.
+// View is the immutable query surface over a sealed operator table.
 type View struct {
 	table *Table
-	live  *uint32
 }
 
-// NewView creates a lifecycle-bound operator view for the enclosing Static
-// owner. The owner supplies only the one-shot lifetime cell, never row data.
-func NewView(table *Table, live *uint32) View { return View{table: table, live: live} }
+// NewView creates a view over a sealed operator table.
+func NewView(table *Table) View { return View{table: table} }
 
 // View returns a permanently available view over a published table.
 func (table *Table) View() View { return View{table: table} }
 
 func (view View) available() bool {
-	return view.table != nil && (view.live == nil || atomic.LoadUint32(view.live) != 0)
+	return view.table != nil
 }
 
 // Available reports whether the table can currently be queried.
 func (view View) Available() bool { return view.available() }
 
-// The four cursors hold their sealed relation by value. Deriving one is the
-// single lifetime check: a cursor minted from an expired view is empty, and a
-// cursor already held observes rows that can no longer change.
+// The four cursors hold their sealed relation by value. A cursor already held
+// observes rows that can no longer change.
 type TypeOfs struct{ table rows.Table[TypeOf] }
 type KeyOfs struct{ table rows.Table[KeyOf] }
 type IndexAccesses struct{ table rows.Table[IndexAccess] }

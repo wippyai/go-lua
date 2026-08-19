@@ -58,13 +58,13 @@ func TestStaticCheckValidateRejectsImplicitStaticRead(t *testing.T) {
 			Operators:    staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: read}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("implicit static Read Validate = %#v/%v", result, err)
+	if err == nil {
+		t.Fatal("Validate accepted an implicit static Read")
 	}
 }
 
@@ -124,16 +124,13 @@ func TestStaticCheckValidateCombinedCanonicalResult(t *testing.T) {
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("combined Validate: %v", err)
-	}
-	if len(result.TypeOf) != 1 || len(result.Annotations) != 1 || len(result.Publications) != 1 {
-		t.Fatalf("combined result = %#v", result)
 	}
 }
 
@@ -178,11 +175,11 @@ func TestStaticCheckValidateFunctionVarargHeader(t *testing.T) {
 			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err != nil || len(result.TypeOf) != 1 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("Function vararg integrated Validate = %#v/%v", result, err)
+	); err != nil {
+		t.Fatalf("Validate: %v", err)
 	}
 }

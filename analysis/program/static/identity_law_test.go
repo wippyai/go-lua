@@ -269,7 +269,7 @@ func TestStaticContentIDExcludesDerivativesAndExternalClaimCardinality(t *testin
 
 func TestStaticContentIDIsImmutableAndAllocationFree(t *testing.T) {
 	input := publicationFixture(t)
-	draft, err := Build(input)
+	component, _, err := Build(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,10 +277,6 @@ func TestStaticContentIDIsImmutableAndAllocationFree(t *testing.T) {
 	// observable. Mutating caller storage cannot change the Component hash.
 	input.References.TypeRef[0].Source[0] = 99
 	input.Publications.Type[0].Pair = 19
-	component, err := commitStaticDraft(t, draft)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if got, want := component.Cold().ContentID(), staticContentComponent(t, publicationFixture(t)).Cold().ContentID(); got != want {
 		t.Fatalf("caller mutation after Build changed ContentID: %x != %x", got, want)
 	}

@@ -1,8 +1,6 @@
 package static
 
 import (
-	"sync"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
@@ -48,42 +46,13 @@ type Component struct {
 	publications staticpubs.Table
 }
 
-type draftState struct {
-	component        *Component
-	localContainment *staticquery.Proof
-	live             uint32
-	phase            draftPhase
-	mu               sync.Mutex
-}
-
-type draftPhase uint8
-
-const (
-	draftOpen draftPhase = iota + 1
-	draftClaimed
-	draftCommitted
-	draftAborted
-)
-
-// Draft is a shared construction capability. Copies share state; publication
-// is possible only by first claiming the owner-defined Finalizer.
-type Draft struct{ state *draftState }
-
-// Finalizer is an owner-defined one-shot publication capability. Copies share
-// the Draft state, so exactly one terminal action (Commit or Abort) can win.
-// The View is a read-only validation surface for the owner that coordinates
-// finalization; it carries no construction state or sibling projection.
-type Finalizer struct {
-	state *draftState
-}
-
 // View returns the immutable composed Static query surface. The query child
 // receives only the sealed canonical values and no root Component capability.
 func (component *Component) View() staticquery.View {
 	if component == nil {
 		return staticquery.View{}
 	}
-	return staticquery.NewView(component.querySnapshot(), nil)
+	return component.querySnapshot().View()
 }
 
 func (component *Component) querySnapshot() staticquery.Snapshot {

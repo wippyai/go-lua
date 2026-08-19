@@ -41,7 +41,6 @@ type certificateState struct {
 // exact failed structural invariant without exposing a way to construct a
 // certificate.  The wrapped detail identifies the offending row or family.
 var (
-	ErrIssuanceRejected        = errors.New("semanticpath: commit issuance rejected")
 	ErrDeriveFailure           = errors.New("semanticpath: derive failed")
 	ErrOwnerMismatch           = errors.New("semanticpath: owner identities are unavailable or disagree")
 	ErrBodyCardinalityMismatch = errors.New("semanticpath: Body cardinality mismatch")
@@ -92,11 +91,8 @@ func (c *Certificate) TermPathAt(sourceID, flowID, staticID, moduleID identity.C
 // It derives its planes directly from exact Source/Authored/Body/Containment/
 // Outcome proofs. No ContentID plane crosses this boundary, so an adjacent
 // package cannot authenticate fabricated sibling paths by matching lengths.
-func Seal(issuance *source.SemanticPathIssuance, cellRoles source.CellRoles, view source.View, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, flowID, staticID, moduleID identity.ContentID) (*Certificate, error) {
+func Seal(cellRoles source.CellRoles, view source.View, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, flowID, staticID, moduleID identity.ContentID) (*Certificate, error) {
 	sourceID := view.Identity().ContentID()
-	if issuance == nil || !issuance.ConsumeSemanticPathIssuance(view) {
-		return nil, ErrIssuanceRejected
-	}
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() || authoredView.Cold().ContentID() != flowID {
 		return nil, ErrOwnerMismatch
 	}

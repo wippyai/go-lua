@@ -110,15 +110,10 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	staticInput.Counts[keyspace.FamilyFunction] = counts[keyspace.FamilyFunction]
 	staticInput.Contracts.Function = []staticcontracts.FunctionContract{{}}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
-	staticDraft, err := static.Build(staticInput)
+	_, staticView, err := static.Build(staticInput)
 	if err != nil {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("static.Build: %v", err)
-	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
 	}
 
 	flowDraft, err := authored.Build(authored.Input{
@@ -135,29 +130,25 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 		},
 	})
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("Build: %v", err)
 	}
 	flowFinalizer, err := flowDraft.Finalizer()
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("Finalizer: %v", err)
 	}
 	flowView := flowFinalizer.View()
 	entry := entryBody
-	bodies, err := body.Seal(preimage, flowView, staticFinalizer.View(), entry)
+	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
 		_ = flowFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
 		_ = flowFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("binding.Seal: %v", err)
 	}
@@ -170,15 +161,14 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinalizer.View()
-	forest, _, err := containment.Prove(preimage, staticFinalizer.View(), flowView, bodies, bindingResult, moduleView, entry)
+	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
 		_ = moduleFinalizer.Abort()
 		_ = flowFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("containment.Prove: %v", err)
 	}
-	staticID, moduleID := staticFinalizer.View().ContentID(), moduleView.ContentID()
+	staticID, moduleID := staticView.ContentID(), moduleView.ContentID()
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticID, moduleID)
 	if err != nil {
 		t.Fatalf("control.Seal: %v", err)
@@ -191,7 +181,7 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	if err != nil {
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, issuance, err := sourceFinalizer.CommitWithSemanticPathIssuance(indexInput)
+	sourceComponent, err := sourceFinalizer.Commit(indexInput)
 	if err != nil {
 		t.Fatalf("source.Commit: %v", err)
 	}
@@ -200,7 +190,7 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	if err != nil {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.Cold().ContentID(), staticID, moduleID)
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
@@ -216,7 +206,6 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	t.Cleanup(func() {
 		_ = moduleFinalizer.Abort()
 		_ = flowFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 	})
 	return &moduleEntryFunctionFixture{
 		source: sourceView, flow: flowView, module: moduleView, bodies: bodies,

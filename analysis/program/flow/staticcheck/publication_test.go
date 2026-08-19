@@ -24,7 +24,6 @@ func TestStaticCheckPublicationUsesExactWritePairAndCanonicalPath(t *testing.T) 
 	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
 	assign := keyspace.MakeTerm(keyspace.FamilyAssign, 1)
 	typeRef := keyspace.MakeTerm(keyspace.FamilyTypeRef, 1)
-	publication := keyspace.MakeTerm(keyspace.FamilyTypePublication, 1)
 	counts := checkCounts(
 		checkCount(keyspace.FamilyBody, 1), checkCount(keyspace.FamilyNil, 1), checkCount(keyspace.FamilyCell, 1),
 		checkCount(keyspace.FamilyKey, 1), checkCount(keyspace.FamilyLensExact, 1),
@@ -52,16 +51,13 @@ func TestStaticCheckPublicationUsesExactWritePairAndCanonicalPath(t *testing.T) 
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 1 || result.Publications[0] != publication {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }
 
@@ -77,7 +73,6 @@ func TestStaticCheckPublicationAcceptsDeclarationTarget(t *testing.T) {
 	typeRef := keyspace.MakeTerm(keyspace.FamilyTypeRef, 1)
 	primitive := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	alias := keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)
-	publication := keyspace.MakeTerm(keyspace.FamilyTypePublication, 1)
 	coordinate, coordinateOK := source.CoordinateFromParts(1, 1, 1, 2)
 	if !coordinateOK {
 		t.Fatal("CoordinateFromParts rejected declaration fixture")
@@ -116,16 +111,13 @@ func TestStaticCheckPublicationAcceptsDeclarationTarget(t *testing.T) {
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 1 || result.Publications[0] != publication {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }
 
@@ -149,8 +141,6 @@ func TestStaticCheckPublicationAcceptsQualifiedDeclarationTarget(t *testing.T) {
 	refTwo := keyspace.MakeTerm(keyspace.FamilyTypeRef, 2)
 	primitive := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	alias := keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)
-	publicationOne := keyspace.MakeTerm(keyspace.FamilyTypePublication, 1)
-	publicationTwo := keyspace.MakeTerm(keyspace.FamilyTypePublication, 2)
 	coordinate, coordinateOK := source.CoordinateFromParts(1, 1, 1, 2)
 	if !coordinateOK {
 		t.Fatal("CoordinateFromParts rejected qualified declaration fixture")
@@ -198,16 +188,13 @@ func TestStaticCheckPublicationAcceptsQualifiedDeclarationTarget(t *testing.T) {
 			}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 2 || result.Publications[0] != publicationOne || result.Publications[1] != publicationTwo {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }
 
@@ -251,16 +238,13 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathIdentity(t *testing
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err == nil {
 		t.Fatal("Validate accepted a publication with a foreign canonical path key")
-	}
-	if len(result.Publications) != 0 {
-		t.Fatalf("invalid Publication result = %#v", result.Publications)
 	}
 }
 
@@ -307,12 +291,12 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathRoot(t *testing.T) 
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	if result, err := Validate(
+	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
-	); err == nil || len(result.Publications) != 0 {
-		t.Fatalf("Validate accepted a foreign canonical path root: %#v/%v", result, err)
+	); err == nil {
+		t.Fatal("Validate accepted a publication with a foreign canonical path root")
 	}
 }
 
@@ -354,16 +338,13 @@ func TestStaticCheckPublicationAcceptsVisibleLocalRoot(t *testing.T) {
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 1 || result.Publications[0] != keyspace.MakeTerm(keyspace.FamilyTypePublication, 1) {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }
 
@@ -411,16 +392,13 @@ func TestStaticCheckPublicationAcceptsDeepDottedPath(t *testing.T) {
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 1 || result.Publications[0] != keyspace.MakeTerm(keyspace.FamilyTypePublication, 1) {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }
 
@@ -459,15 +437,12 @@ func TestStaticCheckPublicationAcceptsAdjustedTailPair(t *testing.T) {
 			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Publications) != 1 || result.Publications[0] != keyspace.MakeTerm(keyspace.FamilyTypePublication, 1) {
-		t.Fatalf("Publication result = %#v", result.Publications)
 	}
 }

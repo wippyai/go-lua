@@ -11,17 +11,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
-// CloseFinalizers aborts a Source/Static/Authored/Imports finalizer set in
-// reverse construction order. Each Abort is independent: it locks only its
-// own owner's state and has no cross-owner precondition, so the order of
-// these calls does not change which finalizers end up aborted.
-func CloseFinalizers(sourceFinal source.Finalizer, staticFinal static.Finalizer, flowFinal authored.Finalizer, moduleFinal imports.Finalizer) {
+// CloseFinalizers aborts a Source/Authored/Imports finalizer set in reverse
+// construction order. Static is an immutable value and needs no abort.
+func CloseFinalizers(sourceFinal source.Finalizer, flowFinal authored.Finalizer, moduleFinal imports.Finalizer) {
 	_ = moduleFinal.Abort()
 	_ = flowFinal.Abort()
-	_ = staticFinal.Abort()
 	_ = sourceFinal.Abort()
 }
 

@@ -1,30 +1,23 @@
 package query
 
-import (
-	"sync/atomic"
+import "github.com/wippyai/go-lua/analysis/program/keyspace"
 
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
-)
-
-// LocalContainment is a lifecycle-bound Static proof query surface. It holds
-// the validated immutable relation image supplied by Static's constructor;
-// copied views observe the same lifecycle cell and expire together.
+// LocalContainment is the validated immutable local Static containment proof
+// supplied by Static's constructor.
 type LocalContainment struct {
 	proof *Proof
-	live  *uint32
 }
 
-// LocalContainment returns the validated local proof while this view remains
-// live. Published Component views deliberately expose no construction proof.
+// LocalContainment returns the validated local proof carried by this view.
 func (view View) LocalContainment() LocalContainment {
-	if !view.available() || !view.snapshot.proof.availableProof() || view.live == nil {
+	if !view.available() || !view.snapshot.proof.availableProof() {
 		return LocalContainment{}
 	}
-	return LocalContainment{proof: view.snapshot.proof, live: view.live}
+	return LocalContainment{proof: view.snapshot.proof}
 }
 
 func (proof LocalContainment) snapshot() *Proof {
-	if proof.proof == nil || !proof.proof.available || proof.live == nil || atomic.LoadUint32(proof.live) == 0 {
+	if proof.proof == nil || !proof.proof.available {
 		return nil
 	}
 	return proof.proof

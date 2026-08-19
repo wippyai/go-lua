@@ -58,16 +58,13 @@ func TestStaticCheckTypeOfScopeAndStaticOperandIntegration(t *testing.T) {
 			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: formalCell, Operand: read}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate seeded static Read: %v", err)
-	}
-	if len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) {
-		t.Fatalf("TypeOf result = %#v", result.TypeOf)
 	}
 }
 
@@ -102,16 +99,13 @@ func TestStaticCheckAnnotationScopeOwnerAndStaticValuesIntegration(t *testing.T)
 			}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.Annotations) != 1 || result.Annotations[0] != keyspace.MakeTerm(keyspace.FamilyAnnotation, 1) {
-		t.Fatalf("Annotation result = %#v", result.Annotations)
 	}
 }
 
@@ -141,16 +135,13 @@ func TestStaticCheckTypeFunctionSourceOccurrenceIntegration(t *testing.T) {
 			}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("SourceOccurrence Validate: %v", err)
-	}
-	if len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("SourceOccurrence result = %#v", result)
 	}
 }
 
@@ -200,16 +191,13 @@ func TestStaticCheckSeededFunctionLensBaseReadIntegration(t *testing.T) {
 			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Function lens Validate: %v", err)
-	}
-	if len(result.TypeOf) != 1 || result.TypeOf[0] != keyspace.MakeTerm(keyspace.FamilyTypeOf, 1) {
-		t.Fatalf("seeded Function lens TypeOf result = %#v", result.TypeOf)
 	}
 }
 
@@ -250,9 +238,9 @@ func TestStaticCheckRejectsInvisibleStaticLensBaseRead(t *testing.T) {
 	if !fixture.forest.Static(baseRead) || !fixture.forest.Static(outerRead) {
 		t.Fatal("lens reads were not static test occurrences")
 	}
-	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("invisible lens base Validate = %#v/%v", result, err)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	if err == nil {
+		t.Fatal("Validate accepted an invisible lens base read")
 	}
 }
 
@@ -305,16 +293,13 @@ func TestStaticCheckSeededFunctionCaptureIntegration(t *testing.T) {
 	if !fixture.forest.Static(function) {
 		t.Fatal("capture Function occurrence is not static")
 	}
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Function capture Validate: %v", err)
-	}
-	if len(result.TypeOf) != 1 {
-		t.Fatalf("seeded Function capture TypeOf result = %#v", result.TypeOf)
 	}
 }
 
@@ -359,16 +344,13 @@ func TestStaticCheckSeededAnnotationReadClosureIntegration(t *testing.T) {
 			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: alias, Target: primitive, Name: 1, Values: values}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Annotation Read Validate: %v", err)
-	}
-	if len(result.Annotations) != 1 || result.Annotations[0] != keyspace.MakeTerm(keyspace.FamilyAnnotation, 1) {
-		t.Fatalf("seeded Annotation result = %#v", result.Annotations)
 	}
 }
 
@@ -410,13 +392,13 @@ func TestStaticCheckRejectsConflictingSharedAnnotationSeed(t *testing.T) {
 			}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("conflicting shared seed Validate = %#v/%v", result, err)
+	if err == nil {
+		t.Fatal("Validate accepted conflicting shared annotation seeds")
 	}
 }
 
@@ -431,13 +413,11 @@ func TestStaticCheckObservationSeedChainIsRowOrderIndependent(t *testing.T) {
 	values1 := keyspace.MakeTerm(keyspace.FamilyValues, 1)
 	values2 := keyspace.MakeTerm(keyspace.FamilyValues, 2)
 	values3 := keyspace.MakeTerm(keyspace.FamilyValues, 3)
-	typeOf1 := keyspace.MakeTerm(keyspace.FamilyTypeOf, 1)
-	typeOf2 := keyspace.MakeTerm(keyspace.FamilyTypeOf, 2)
 	counts := checkCounts(
 		checkCount(keyspace.FamilyBody, 1), checkCount(keyspace.FamilyCell, 1), checkCount(keyspace.FamilyNil, 2),
 		checkCount(keyspace.FamilyCall, 2), checkCount(keyspace.FamilyBind, 1), checkCount(keyspace.FamilyValues, 3), checkCount(keyspace.FamilyTypeOf, 2),
 	)
-	build := func(t *testing.T, rows []staticoperators.TypeOf) (*checkFixture, static.CommitInput, error) {
+	build := func(t *testing.T, rows []staticoperators.TypeOf) (*checkFixture, error) {
 		fixture := newCheckFixture(t, checkSpec{
 			name: "staticcheck-seed-chain.lua", counts: counts, rows: [][]keyspace.Term{{bind}},
 			binds: []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
@@ -453,16 +433,16 @@ func TestStaticCheckObservationSeedChainIsRowOrderIndependent(t *testing.T) {
 				Operators: staticoperators.Input{TypeOf: rows},
 			},
 		})
-		result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
-		return fixture, result, err
+		err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+		return fixture, err
 	}
-	first, result, err := build(t, []staticoperators.TypeOf{{Scope: cell, Operand: call1}, {Scope: call1, Operand: call2}})
-	if err != nil || len(result.TypeOf) != 2 || result.TypeOf[0] != typeOf1 || result.TypeOf[1] != typeOf2 {
-		t.Fatalf("forward seed chain = %#v/%v", result, err)
+	first, err := build(t, []staticoperators.TypeOf{{Scope: cell, Operand: call1}, {Scope: call1, Operand: call2}})
+	if err != nil {
+		t.Fatalf("forward seed chain: %v", err)
 	}
-	second, result, err := build(t, []staticoperators.TypeOf{{Scope: call1, Operand: call2}, {Scope: cell, Operand: call1}})
-	if err != nil || len(result.TypeOf) != 2 || result.TypeOf[0] != typeOf1 || result.TypeOf[1] != typeOf2 {
-		t.Fatalf("permuted seed chain = %#v/%v", result, err)
+	second, err := build(t, []staticoperators.TypeOf{{Scope: call1, Operand: call2}, {Scope: cell, Operand: call1}})
+	if err != nil {
+		t.Fatalf("permuted seed chain: %v", err)
 	}
 	_ = first
 	_ = second
@@ -492,9 +472,9 @@ func TestStaticCheckRejectsCyclicObservationSeedDescriptors(t *testing.T) {
 			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: call2, Operand: call1}, {Scope: call1, Operand: call2}}},
 		},
 	})
-	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("cyclic seed descriptors = %#v/%v", result, err)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	if err == nil {
+		t.Fatal("Validate accepted cyclic seed descriptors")
 	}
 }
 
@@ -524,8 +504,8 @@ func TestStaticCheckRejectsSamePointConflictingDescriptors(t *testing.T) {
 			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: cell1, Target: primitive, Name: 1, Values: values2}, {Scope: cell2, Target: primitive, Name: 2, Values: values2}}},
 		},
 	})
-	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
-	if err == nil || len(result.TypeOf) != 0 || len(result.Annotations) != 0 || len(result.Publications) != 0 {
-		t.Fatalf("same-point conflicting descriptors = %#v/%v", result, err)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	if err == nil {
+		t.Fatal("Validate accepted same-point conflicting descriptors")
 	}
 }

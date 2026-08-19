@@ -48,16 +48,13 @@ func TestStaticCheckValidateGenericScopeScaling(t *testing.T) {
 			Contracts:    staticcontracts.Input{Function: []staticcontracts.FunctionContract{{TypeParams: contractParams}}},
 		},
 	})
-	result, err := Validate(
+	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
 		fixture.moduleView.ContentID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
-	}
-	if len(result.TypeOf) != n {
-		t.Fatalf("TypeOf result length = %d, want %d", len(result.TypeOf), n)
 	}
 }
 
@@ -92,11 +89,8 @@ func TestStaticCheckValidatePositionlessFunctionBodyScaling(t *testing.T) {
 		},
 		static: static.Input{Contracts: staticcontracts.Input{Function: contracts}, Operators: staticoperators.Input{TypeOf: typeOfs}},
 	})
-	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
 	if err != nil {
 		t.Fatalf("Validate positionless Function scaling: %v", err)
-	}
-	if len(result.TypeOf) != n {
-		t.Fatalf("TypeOf result length = %d, want %d", len(result.TypeOf), n)
 	}
 }

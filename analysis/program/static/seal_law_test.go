@@ -1,7 +1,6 @@
 package static
 
 import (
-	"sync"
 	"testing"
 
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
@@ -24,403 +23,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static/operators"
 )
-
-func TestStaticCommitAcceptsExactCanonicalInputAndRetainsNone(t *testing.T) {
-	draft, err := Build(staticFixture(t))
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	wantID := draft.state.component.ContentID()
-	if got := view.ContentID(); got != wantID {
-		t.Fatalf("claimed View.ContentID() = %x, want %x", got, wantID)
-	}
-	copiedView := view
-	if got := copiedView.ContentID(); got != wantID {
-		t.Fatalf("copied claimed View.ContentID() = %x, want %x", got, wantID)
-	}
-	input := validCommitInputForFixture()
-	component, err := finalizer.Commit(input)
-	if err != nil {
-		t.Fatalf("Commit(exact input) error = %v", err)
-	}
-	input.TypeOf[0] = 0
-	input.Annotations[0] = 0
-	input.Publications[0] = 0
-	if component == nil {
-		t.Fatal("Commit returned nil Component for exact input")
-	}
-	if component.ContentID() != wantID {
-		t.Fatalf("Commit changed authored identity: got %x want %x", component.ContentID(), wantID)
-	}
-	if view.Available() {
-		t.Fatal("construction View remained available after Commit")
-	}
-	if got := view.ContentID(); got.Available() {
-		t.Fatalf("committed construction View retained ContentID %x", got)
-	}
-	if got := copiedView.ContentID(); got.Available() {
-		t.Fatalf("copied committed construction View retained ContentID %x", got)
-	}
-	if !component.View().Available() {
-		t.Fatal("published Component View unavailable")
-	}
-	if got := component.View().ContentID(); got != wantID {
-		t.Fatalf("published View.ContentID() = %x, want %x", got, wantID)
-	}
-}
-
-func TestStaticCommitRejectsNonCanonicalInputsAndClosesTerminalState(t *testing.T) {
-	cases := []struct {
-		name string
-		edit func(*CommitInput)
-	}{
-		{"missing TypeOf", func(input *CommitInput) { input.TypeOf = input.TypeOf[:1] }},
-		{"permuted staticoperands.Annotations", func(input *CommitInput) {
-			input.Annotations[0], input.Annotations[1] = input.Annotations[1], input.Annotations[0]
-		}},
-		{"foreign Publication family", func(input *CommitInput) { input.Publications[0] = keyspace.MakeTerm(keyspace.FamilyTypeRef, 1) }},
-		{"duplicate TypeOf", func(input *CommitInput) { input.TypeOf[1] = input.TypeOf[0] }},
-	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			draft, err := Build(staticFixture(t))
-			if err != nil {
-				t.Fatalf("Build() error = %v", err)
-			}
-			finalizer, err := draft.Finalizer()
-			if err != nil {
-				t.Fatalf("Finalizer() error = %v", err)
-			}
-			view := finalizer.View()
-			copied := finalizer
-			wantID := view.ContentID()
-			if !wantID.Available() {
-				t.Fatal("claimed View did not expose ContentID")
-			}
-			input := validCommitInputForFixture()
-			test.edit(&input)
-			if _, err := finalizer.Commit(input); err == nil {
-				t.Fatal("Commit accepted invalid canonical input")
-			}
-			if view.Available() {
-				t.Fatal("invalid Commit left construction View available")
-			}
-			if got := view.ContentID(); got.Available() {
-				t.Fatalf("invalid Commit left construction View ContentID %x", got)
-			}
-			if _, err := copied.Commit(validCommitInputForFixture()); err == nil {
-				t.Fatal("copied Finalizer retried after invalid terminal Commit")
-			}
-			if _, err := draft.Finalizer(); err == nil {
-				t.Fatal("Draft reopened after invalid terminal Commit")
-			}
-		})
-	}
-}
-
-func TestStaticCommitRejectsForeignInputDenominatorWithoutChangingContent(t *testing.T) {
-	draft, err := Build(staticFixture(t))
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	wantID := draft.state.component.ContentID()
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	input := validCommitInputForFixture()
-	input.Publications = append(input.Publications, keyspace.MakeTerm(keyspace.FamilyTypePublication, 2))
-	component, err := finalizer.Commit(input)
-	if err == nil || component != nil {
-		t.Fatalf("Commit accepted extra input row: component=%v err=%v", component, err)
-	}
-	if got := draft.state.component; got != nil {
-		t.Fatal("invalid Commit retained construction Component")
-	}
-	if got := wantID; !got.Available() {
-		t.Fatal("invalid input test lost pre-commit identity")
-	}
-}
-
-func TestStaticViewContentIDExpiresOnAbortCopies(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	copied := view
-	want := view.ContentID()
-	if !want.Available() {
-		t.Fatal("claimed View did not expose ContentID")
-	}
-	if err := finalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-	if got := view.ContentID(); got.Available() {
-		t.Fatalf("aborted View retained ContentID %x", got)
-	}
-	if got := copied.ContentID(); got.Available() {
-		t.Fatalf("copied aborted View retained ContentID %x", got)
-	}
-}
-
-func TestStaticViewAvailabilityLaws(t *testing.T) {
-	if (staticquery.View{}).Available() {
-		t.Fatal("zero View is available")
-	}
-	var nilComponent *Component
-	if nilComponent.View().Available() {
-		t.Fatal("nil Component View is available")
-	}
-
-	draft := emptyDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	if !view.Available() {
-		t.Fatal("live empty Finalizer View is unavailable")
-	}
-	if view.Types().Primitives().Count() != 0 {
-		t.Fatal("live empty Finalizer View gained primitive rows")
-	}
-
-	component, err := finalizer.Commit(CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if view.Available() {
-		t.Fatal("committed Finalizer View remained available")
-	}
-	if !component.View().Available() {
-		t.Fatal("published Component View is unavailable")
-	}
-
-	abortDraft := emptyDraft(t)
-	aborted, err := abortDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	abortedView := aborted.View()
-	if !abortedView.Available() {
-		t.Fatal("second live empty Finalizer View is unavailable")
-	}
-	if err := aborted.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-	if abortedView.Available() {
-		t.Fatal("aborted Finalizer View remained available")
-	}
-}
-
-func TestStaticFinalizerClaimsViewAndCommitsOnce(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	copiedView := view
-	if !view.Available() || !copiedView.Available() {
-		t.Fatal("live Finalizer View copy is unavailable")
-	}
-	if got := view.Types().Primitives().Count(); got != 1 {
-		t.Fatalf("finalizer View primitive count = %d, want 1", got)
-	}
-	component, err := finalizer.Commit(CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if component == nil || !component.ContentID().Available() {
-		t.Fatal("Commit() did not publish the sealed component")
-	}
-	if got := view.Types().Primitives().Count(); got != 0 {
-		t.Fatalf("committed Finalizer View retained %d primitive rows", got)
-	}
-	if view.Available() || copiedView.Available() {
-		t.Fatal("committed Finalizer View copy remained available")
-	}
-	if got := copiedView.Types().Primitives().Count(); got != 0 {
-		t.Fatalf("copied committed Finalizer View retained %d primitive rows", got)
-	}
-	if got := component.View().Types().Primitives().Count(); got != 1 {
-		t.Fatalf("ordinary sealed Component View lost %d primitive rows", got)
-	}
-	if _, err := finalizer.Commit(CommitInput{}); err == nil {
-		t.Fatal("copied Finalizer committed twice")
-	}
-	if _, err := draft.Finalizer(); err == nil {
-		t.Fatal("Draft was claimable after Commit")
-	}
-}
-
-func TestStaticFinalizerAbortIsTerminal(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	copiedView := view
-	if !view.Available() || !copiedView.Available() {
-		t.Fatal("live Finalizer View copy is unavailable")
-	}
-	if err := finalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-	if got := view.Types().Primitives().Count(); got != 0 {
-		t.Fatalf("aborted Finalizer View retained %d primitive rows", got)
-	}
-	if view.Available() || copiedView.Available() {
-		t.Fatal("aborted Finalizer View copy remained available")
-	}
-	if got := copiedView.Types().Primitives().Count(); got != 0 {
-		t.Fatalf("copied aborted Finalizer View retained %d primitive rows", got)
-	}
-	if _, err := finalizer.Commit(CommitInput{}); err == nil {
-		t.Fatal("aborted Finalizer committed")
-	}
-	if err := finalizer.Abort(); err == nil {
-		t.Fatal("aborted Finalizer aborted twice")
-	}
-	if _, err := draft.Finalizer(); err == nil {
-		t.Fatal("Draft was claimable after Abort")
-	}
-}
-
-func TestStaticFinalizerDraftCopiesClaimExactlyOnceUnderContention(t *testing.T) {
-	draft := primitiveDraft(t)
-	const contenders = 32
-	start := make(chan struct{})
-	results := make(chan bool, contenders)
-	var group sync.WaitGroup
-	group.Add(contenders)
-	for range contenders {
-		copy := *draft
-		go func() {
-			defer group.Done()
-			<-start
-			finalizer, err := copy.Finalizer()
-			if err != nil {
-				results <- false
-				return
-			}
-			_, err = finalizer.Commit(CommitInput{})
-			results <- err == nil
-		}()
-	}
-	close(start)
-	group.Wait()
-	close(results)
-
-	successes := 0
-	for result := range results {
-		if result {
-			successes++
-		}
-	}
-	if successes != 1 {
-		t.Fatalf("contended Finalizer commits = %d, want exactly 1", successes)
-	}
-}
-
-func TestStaticFinalizerCopiesTerminalActionExactlyOnceUnderContention(t *testing.T) {
-	draft := primitiveDraft(t)
-	claimed, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	const contenders = 32
-	start := make(chan struct{})
-	results := make(chan bool, contenders)
-	var group sync.WaitGroup
-	group.Add(contenders)
-	for range contenders {
-		copy := claimed
-		go func() {
-			defer group.Done()
-			<-start
-			_, err := copy.Commit(CommitInput{})
-			results <- err == nil
-		}()
-	}
-	close(start)
-	group.Wait()
-	close(results)
-
-	successes := 0
-	for result := range results {
-		if result {
-			successes++
-		}
-	}
-	if successes != 1 {
-		t.Fatalf("contended copied Finalizer commits = %d, want exactly 1", successes)
-	}
-}
-
-func TestStaticFinalizerViewReadConcurrentCommit(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	start := make(chan struct{})
-	var group sync.WaitGroup
-	group.Add(2)
-	go func() {
-		defer group.Done()
-		<-start
-		for range 1000 {
-			_ = view.Available()
-			_ = view.Types().Primitives().Count()
-			_, _ = view.Types().Primitives().Get(keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1))
-		}
-	}()
-	go func() {
-		defer group.Done()
-		<-start
-		_, _ = finalizer.Commit(CommitInput{})
-	}()
-	close(start)
-	group.Wait()
-}
-
-func TestStaticFinalizerViewReadConcurrentAbort(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	view := finalizer.View()
-	start := make(chan struct{})
-	var group sync.WaitGroup
-	group.Add(2)
-	go func() {
-		defer group.Done()
-		<-start
-		for range 1000 {
-			_ = view.Available()
-			_ = view.Types().Primitives().Count()
-			_, _ = view.Types().Primitives().Get(keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1))
-		}
-	}()
-	go func() {
-		defer group.Done()
-		<-start
-		_ = finalizer.Abort()
-	}()
-	close(start)
-	group.Wait()
-}
 
 func TestStaticColdRetainsOnlyContentIDSnapshot(t *testing.T) {
 	component := staticContentComponent(t, Input{
@@ -508,19 +110,15 @@ func compositeLocalContainmentInput(t *testing.T) Input {
 
 func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 	input := compositeLocalContainmentInput(t)
-	draft, err := Build(input)
+	component, staticView, err := Build(input)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	wantID := draft.state.component.ContentID()
+	wantID := component.ContentID()
 	if !wantID.Available() {
 		t.Fatal("composite fixture produced unavailable authored identity")
 	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	proof := finalizer.View().LocalContainment()
+	proof := staticView.LocalContainment()
 	primitive := func(ordinal uint32) keyspace.Term {
 		return keyspace.MakeTerm(keyspace.FamilyTypePrimitive, ordinal)
 	}
@@ -628,16 +226,9 @@ func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 	if _, ok := proof.Parent(primitive(input.Counts[keyspace.FamilyTypePrimitive] + 1)); ok {
 		t.Fatal("Parent accepted out-of-range ordinal")
 	}
-	coldID := draft.state.component.ContentID()
+	coldID := component.ContentID()
 	if coldID != wantID {
 		t.Fatalf("repeated Build identity = %x, want %x", coldID, wantID)
-	}
-	component, err := finalizer.Commit(commitInputForDraft(draft))
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if got := component.ContentID(); got != coldID {
-		t.Fatalf("published identity = %x, before proof = %x", got, coldID)
 	}
 	if got := component.Cold().ContentID(); got != coldID {
 		t.Fatalf("Cold identity = %x, before proof = %x", got, coldID)
@@ -645,15 +236,11 @@ func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 }
 
 func TestStaticLocalContainmentRowsAndBounds(t *testing.T) {
-	draft, err := Build(declarationFixture(t))
+	_, staticView, err := Build(declarationFixture(t))
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	proof := finalizer.View().LocalContainment()
+	proof := staticView.LocalContainment()
 	primitive := func(ordinal uint32) keyspace.Term {
 		return keyspace.MakeTerm(keyspace.FamilyTypePrimitive, ordinal)
 	}
@@ -708,117 +295,6 @@ func TestStaticLocalContainmentRowsAndBounds(t *testing.T) {
 	if _, ok := proof.At(proof.Count()); ok {
 		t.Fatal("LocalContainment.At accepted out-of-range index")
 	}
-	if err := finalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-}
-
-func TestStaticLocalContainmentExpiresCopiesAndPreservesIdentity(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	proof := finalizer.View().LocalContainment()
-	copied := proof
-	if _, ok := proof.At(0); !ok {
-		t.Fatal("claimed LocalContainment unavailable")
-	}
-	want := finalizer.View().Types().Primitives().Count()
-	component, err := finalizer.Commit(CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if got := component.View().Types().Primitives().Count(); got != want {
-		t.Fatalf("published Component count = %d, want %d", got, want)
-	}
-	if _, ok := proof.At(0); ok {
-		t.Fatal("LocalContainment survived Commit")
-	}
-	if _, ok := copied.At(0); ok {
-		t.Fatal("copied LocalContainment survived Commit")
-	}
-	if draft.state.localContainment != nil {
-		t.Fatal("Draft retained local proof after Commit")
-	}
-	cold := component.Cold()
-	if got := cold.ContentID(); got != component.ContentID() {
-		t.Fatalf("Cold identity = %x, Component identity = %x", got, component.ContentID())
-	}
-	componentProof := component.View().LocalContainment()
-	if componentProof.Count() != 0 {
-		t.Fatalf("published Component View exposed LocalContainment count %d", componentProof.Count())
-	}
-	if _, ok := componentProof.At(0); ok {
-		t.Fatal("published Component View exposed LocalContainment rows")
-	}
-
-	abortDraft := primitiveDraft(t)
-	abortFinalizer, err := abortDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("Abort Finalizer() error = %v", err)
-	}
-	abortProof := abortFinalizer.View().LocalContainment()
-	if err := abortFinalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-	if _, ok := abortProof.At(0); ok {
-		t.Fatal("LocalContainment survived Abort")
-	}
-	if abortDraft.state.localContainment != nil {
-		t.Fatal("Draft retained local proof after Abort")
-	}
-}
-
-func TestStaticLocalContainmentReadsRaceTerminal(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	proof := finalizer.View().LocalContainment()
-	primitive := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-	start := make(chan struct{})
-	var group sync.WaitGroup
-	group.Add(2)
-	go func() {
-		defer group.Done()
-		<-start
-		for range 1000 {
-			proof.Parent(primitive)
-			proof.FieldOwner(keyspace.MakeTerm(keyspace.FamilyTypeField, 1))
-			proof.Count()
-			proof.At(0)
-		}
-	}()
-	go func() {
-		defer group.Done()
-		<-start
-		_, _ = finalizer.Commit(CommitInput{})
-	}()
-	close(start)
-	group.Wait()
-}
-
-func TestStaticLocalContainmentQueriesDoNotAllocate(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	proof := finalizer.View().LocalContainment()
-	primitive := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-	if allocations := testing.AllocsPerRun(100, func() {
-		proof.Parent(primitive)
-		proof.FieldOwner(keyspace.MakeTerm(keyspace.FamilyTypeField, 1))
-		proof.Count()
-		proof.At(0)
-	}); allocations != 0 {
-		t.Fatalf("LocalContainment queries allocated %.2f times", allocations)
-	}
-	if err := finalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
 }
 
 // The closed authored-static family set and its immutable owner stores must
@@ -868,69 +344,12 @@ func TestTypesContainmentLongChainAndCycle(t *testing.T) {
 		Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}},
 		Optional:  rows,
 	}}
-	if _, err := Build(input); err != nil {
+	if _, _, err := Build(input); err != nil {
 		t.Fatalf("Build() rejected acyclic containment chain: %v", err)
 	}
 	input.Types.Optional[0].Inner = keyspace.MakeTerm(keyspace.FamilyTypeOptional, length)
-	if _, err := Build(input); err == nil {
+	if _, _, err := Build(input); err == nil {
 		t.Fatal("Build() accepted a containment cycle through a long chain")
-	}
-}
-
-func TestTypesDraftIsOneShot(t *testing.T) {
-	counts := [keyspace.FamilyCount]uint32{}
-	counts[keyspace.FamilyTypePrimitive] = 1
-	draft, err := Build(Input{Counts: counts, Types: statictypes.Input{
-		Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}},
-	}})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	copy := *draft
-	if _, err := commitStaticDraft(t, draft); err != nil {
-		t.Fatalf("first take() error = %v", err)
-	}
-	if _, err := commitStaticDraft(t, &copy); err == nil {
-		t.Fatal("copied Draft acquired a second component")
-	}
-}
-
-func TestTypesDraftCopiesConsumeOnceUnderContention(t *testing.T) {
-	counts := [keyspace.FamilyCount]uint32{}
-	counts[keyspace.FamilyTypePrimitive] = 1
-	draft, err := Build(Input{Counts: counts, Types: statictypes.Input{
-		Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}},
-	}})
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-
-	const contenders = 32
-	start := make(chan struct{})
-	results := make(chan bool, contenders)
-	var group sync.WaitGroup
-	group.Add(contenders)
-	for range contenders {
-		copy := *draft
-		go func() {
-			defer group.Done()
-			<-start
-			_, err := commitStaticDraft(t, &copy)
-			results <- err == nil
-		}()
-	}
-	close(start)
-	group.Wait()
-	close(results)
-
-	successes := 0
-	for result := range results {
-		if result {
-			successes++
-		}
-	}
-	if successes != 1 {
-		t.Fatalf("contended Draft takes = %d successes, want exactly 1", successes)
 	}
 }
 
@@ -1023,7 +442,7 @@ func TestStaticCensusRejectsIncompleteRelationCoverage(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := test.input(t)
 			test.edit(&input)
-			if _, err := Build(input); err == nil {
+			if _, _, err := Build(input); err == nil {
 				t.Fatal("Build() accepted an incomplete authored relation denominator")
 			}
 		})
@@ -1075,7 +494,7 @@ func TestStaticTypeParamOwnershipIsExactlyOnce(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := contractsFixture(t)
 			test.edit(t, &input)
-			if _, err := Build(input); err == nil {
+			if _, _, err := Build(input); err == nil {
 				t.Fatal("Build() accepted a type parameter that is not claimed exactly once")
 			}
 		})
@@ -1089,7 +508,7 @@ func TestStaticInterfaceMethodScopeMustBeItsInterface(t *testing.T) {
 	input := declarationFixture(t)
 	input.Signatures.TypeFunction[0].Scope = keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	input.Counts[keyspace.FamilyCell] = 1
-	if _, err := Build(input); err == nil {
+	if _, _, err := Build(input); err == nil {
 		t.Fatal("Build() accepted an interface method scoped outside its interface")
 	}
 }
@@ -1149,7 +568,7 @@ func TestStaticCombinedForestRejectsSharingAndCycles(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := test.input(t)
 			test.edit(t, &input)
-			if _, err := Build(input); err == nil {
+			if _, _, err := Build(input); err == nil {
 				t.Fatal("Build() accepted a shared or cyclic concrete child")
 			}
 		})
@@ -1158,7 +577,7 @@ func TestStaticCombinedForestRejectsSharingAndCycles(t *testing.T) {
 	// A cycle wholly inside one vertical is the same law.
 	counts := [keyspace.FamilyCount]uint32{}
 	counts[keyspace.FamilyTypeOptional] = 1
-	if _, err := Build(Input{Counts: counts, Types: statictypes.Input{
+	if _, _, err := Build(Input{Counts: counts, Types: statictypes.Input{
 		Optional: []statictypes.Optional{{Inner: keyspace.MakeTerm(keyspace.FamilyTypeOptional, 1)}},
 	}}); err == nil {
 		t.Fatal("Build() accepted a cyclic static type forest")
@@ -1169,7 +588,7 @@ func TestStaticCombinedForestRejectsSharingAndCycles(t *testing.T) {
 	counts = [keyspace.FamilyCount]uint32{}
 	counts[keyspace.FamilyTypeOptional] = 1
 	counts[keyspace.FamilyTypeKeyOf] = 1
-	if _, err := Build(Input{Counts: counts,
+	if _, _, err := Build(Input{Counts: counts,
 		Types:     statictypes.Input{Optional: []statictypes.Optional{{Inner: keyspace.MakeTerm(keyspace.FamilyTypeKeyOf, 1)}}},
 		Operators: staticoperators.Input{KeyOf: []staticoperators.KeyOf{{Inner: keyspace.MakeTerm(keyspace.FamilyTypeOptional, 1)}}},
 	}); err == nil {
@@ -1185,7 +604,7 @@ func TestStaticCombinedForestRejectsSharingAndCycles(t *testing.T) {
 	}}}
 	input.Types.Field[0].Type = keyspace.MakeTerm(keyspace.FamilyTypeRecord, 1)
 	input.Declarations.Interface[0].Members = input.Declarations.Interface[0].Members[1:]
-	if _, err := Build(input); err == nil {
+	if _, _, err := Build(input); err == nil {
 		t.Fatal("Build() accepted a field type cycle through its record owner")
 	}
 }
@@ -1203,7 +622,7 @@ func TestStaticBoundAssertionRequiresADirectReturn(t *testing.T) {
 	}}
 	input.References.TypeRef = []staticrefs.TypeRef{{Resolution: staticrefs.Unresolved, Source: []keyspace.Key{1}}}
 	input.Contracts.Function[0].Returns = []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyTypeGeneric, 1)}
-	if _, err := Build(input); err == nil {
+	if _, _, err := Build(input); err == nil {
 		t.Fatal("Build() accepted a bound assertion nested in a function return")
 	}
 }
@@ -1227,35 +646,9 @@ func TestStaticOperandTargetsComeFromSealedSiblingTables(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := operandsFixture(t)
 			test.edit(&input)
-			if _, err := Build(input); err == nil {
+			if _, _, err := Build(input); err == nil {
 				t.Fatal("Build() admitted a runtime type target no sibling published")
 			}
 		})
-	}
-}
-
-func TestCommitInputCanonicalStreamsAreConsumedAtPublicationBoundary(t *testing.T) {
-	draft, err := Build(staticFixture(t))
-	if err != nil {
-		t.Fatalf("Build() error = %v", err)
-	}
-	wantID := draft.state.component.ContentID()
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	input := validCommitInputForFixture()
-	component, err := finalizer.Commit(input)
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	input.TypeOf[0] = 0
-	input.Annotations[0] = 0
-	input.Publications[0] = 0
-	if component == nil || component.ContentID() != wantID {
-		t.Fatal("CommitInput mutation changed the published authored identity")
-	}
-	if got := component.View().Publications().Count(); got != 1 {
-		t.Fatalf("published view lost publication relation after caller mutation: count=%d", got)
 	}
 }

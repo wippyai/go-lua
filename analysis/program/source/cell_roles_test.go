@@ -16,7 +16,7 @@ func TestSourceCellRolesUseStableExactAtomSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Finalizer first: %v", err)
 	}
-	firstComponent, _, err := firstFinalizer.CommitWithSemanticPathIssuance(ownedIndex(firstDraft, firstIndex))
+	firstComponent, err := firstFinalizer.Commit(ownedIndex(firstDraft, firstIndex))
 	if err != nil {
 		t.Fatalf("Commit first: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestSourceCellRolesUseStableExactAtomSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Finalizer second: %v", err)
 	}
-	secondComponent, _, err := secondFinalizer.CommitWithSemanticPathIssuance(ownedIndex(secondDraft, secondIndex))
+	secondComponent, err := secondFinalizer.Commit(ownedIndex(secondDraft, secondIndex))
 	if err != nil {
 		t.Fatalf("Commit second: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSourceCellRolesFenceDenominatorAndOrderedRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	component, issuance, err := finalizer.CommitWithSemanticPathIssuance(ownedIndex(draft, index))
+	component, err := finalizer.Commit(ownedIndex(draft, index))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +74,6 @@ func TestSourceCellRolesFenceDenominatorAndOrderedRoles(t *testing.T) {
 	roles := view.CellRoles()
 	if !roles.Matches(view) || roles.CellCount() != int(view.Identity().FamilyCount(keyspace.FamilyCell)) {
 		t.Fatal("Cell denominator disagreed with Source identity")
-	}
-	if !issuance.ConsumeSemanticPathIssuance(view) {
-		t.Fatal("parent semantic-path issuance was not preserved")
 	}
 	bindCell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	formalCell := keyspace.MakeTerm(keyspace.FamilyCell, 2)

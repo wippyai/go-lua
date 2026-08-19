@@ -57,11 +57,11 @@ func TestArtifactSectionRoundTripRebuildsAuthoredContentID(t *testing.T) {
 			}
 
 			decoded.Counts = originalInput.Counts
-			rebuilt, err := Build(decoded)
+			rebuilt, _, err := Build(decoded)
 			if err != nil {
 				t.Fatalf("Build(decoded): %v", err)
 			}
-			if got, want := rebuilt.state.component.contentID, component.contentID; got != want {
+			if got, want := rebuilt.contentID, component.contentID; got != want {
 				t.Fatalf("rebuilt ContentID = %x, want %x", got, want)
 			}
 		})
@@ -120,48 +120,15 @@ func TestArtifactSectionExcludesCommittedDerivedState(t *testing.T) {
 	}
 }
 
-func TestArtifactSectionConstructionViewMatchesPublishedViewAndExpires(t *testing.T) {
-	draft, err := Build(staticFixture(t))
+func TestArtifactSectionBuildViewMatchesPublishedView(t *testing.T) {
+	component, constructionView, err := Build(staticFixture(t))
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	constructionView := finalizer.View()
 	live := encodeStaticArtifactView(t, constructionView, false)
-	component, err := finalizer.Commit(validCommitInputForFixture())
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
 	published := encodeStaticArtifactComponent(t, component, false)
 	if !bytes.Equal(live, published) {
 		t.Fatal("construction View artifact bytes differ from published Component View")
-	}
-
-	abortDraft, err := Build(staticFixture(t))
-	if err != nil {
-		t.Fatalf("Build(abort) error = %v", err)
-	}
-	abortFinalizer, err := abortDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer(abort) error = %v", err)
-	}
-	abortedView := abortFinalizer.View()
-	if err := abortFinalizer.Abort(); err != nil {
-		t.Fatalf("Abort() error = %v", err)
-	}
-	var data bytes.Buffer
-	var writer framing.Writer
-	if err := writer.Reset(&data, staticArtifactTestDomain, staticArtifactTestVersion); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Record(staticArtifactTestRoot); err != nil {
-		t.Fatal(err)
-	}
-	if err := WriteArtifactSection(&writer, abortedView); err == nil {
-		t.Fatal("expired construction View artifact write succeeded")
 	}
 }
 

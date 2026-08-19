@@ -386,33 +386,19 @@ func TestStaticTypesRawTermsRebindLocally(t *testing.T) {
 	}
 }
 
-func TestStaticTypesConstructionViewCannotLeakReferences(t *testing.T) {
-	draft := primitiveDraft(t)
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
+func TestStaticTypesBuildAndPublishedViewsShareCanonicalReferences(t *testing.T) {
+	component := primitiveComponent(t)
+	built := component.View().StaticTypes()
+	if built.Count() != 1 {
+		t.Fatalf("built StaticTypes count = %d, want 1", built.Count())
 	}
-	construction := finalizer.View().StaticTypes()
-	if construction.Count() != 0 {
-		t.Fatal("claimed construction View exposed post-commit StaticTypes")
-	}
-	if _, ok := construction.At(0); ok {
-		t.Fatal("claimed construction View minted a StaticTypeRef")
+	if _, ok := built.At(0); !ok {
+		t.Fatal("built StaticTypes failed to mint a StaticTypeRef")
 	}
 
-	component, err := finalizer.Commit(CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if construction.Count() != 0 {
-		t.Fatal("expired construction StaticTypes view regained rows")
-	}
-	if _, ok := construction.Ref(keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)); ok {
-		t.Fatal("expired construction StaticTypes view minted a ref")
-	}
 	ref, ok := component.View().StaticTypes().Ref(keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1))
 	if !ok || ref.Term() == 0 {
-		t.Fatal("published Component StaticTypes failed to mint a ref")
+		t.Fatal("built Component StaticTypes failed to mint a ref")
 	}
 }
 

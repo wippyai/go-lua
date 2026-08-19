@@ -18,44 +18,23 @@ func primitiveInput() static.Input {
 
 func primitiveComponent(t *testing.T) *static.Component {
 	t.Helper()
-	draft, err := static.Build(primitiveInput())
+	component, _, err := static.Build(primitiveInput())
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
-	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	component, err := finalizer.Commit(static.CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
 	}
 	return component
 }
 
-func TestLifecycleViewExpiresAndPublishedViewRetainsCanonicalQueries(t *testing.T) {
-	draft, err := static.Build(primitiveInput())
+func TestBuildViewAndPublishedViewRetainCanonicalQueries(t *testing.T) {
+	component, construction, err := static.Build(primitiveInput())
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	finalizer, err := draft.Finalizer()
-	if err != nil {
-		t.Fatalf("Finalizer() error = %v", err)
-	}
-	construction := finalizer.View()
 	if !construction.Available() || construction.Types().Primitives().Count() != 1 {
-		t.Fatal("claimed construction View did not expose its authored owner rows")
+		t.Fatal("Build view did not expose its authored owner rows")
 	}
-	if construction.StaticTypes().Count() != 0 || construction.LocalContainment().Count() != 1 {
-		t.Fatal("construction View exposed an enduring type capability or lost its proof")
-	}
-	component, err := finalizer.Commit(static.CommitInput{})
-	if err != nil {
-		t.Fatalf("Commit() error = %v", err)
-	}
-	if construction.Available() || construction.Types().Primitives().Count() != 0 ||
-		construction.StaticTypes().Count() != 0 || construction.LocalContainment().Count() != 0 {
-		t.Fatal("expired construction View retained a query projection")
+	if construction.StaticTypes().Count() != 1 || construction.LocalContainment().Count() != 1 {
+		t.Fatal("Build view omitted its authored type capability or local proof")
 	}
 	published := component.View()
 	if !published.Available() || published.Types().Primitives().Count() != 1 ||

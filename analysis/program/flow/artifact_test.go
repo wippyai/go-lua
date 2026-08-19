@@ -10,8 +10,8 @@ import (
 
 func TestFlowArtifactSectionTopLevelPayloadAndDerivedExclusion(t *testing.T) {
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	sourceFinalizer, staticFinalizer, moduleFinalizer, draft := emptyAssemblyOwners(t, "flow-artifact-law.lua")
-	assembly, err := Assemble(sourceFinalizer, staticFinalizer, moduleFinalizer, draft, entry)
+	sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft := emptyAssemblyOwners(t, "flow-artifact-law.lua")
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
