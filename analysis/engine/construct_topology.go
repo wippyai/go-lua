@@ -197,11 +197,9 @@ func constructionOrdinal(ordinal int) uint32 {
 	return uint32(ordinal)
 }
 
-// constructedTopology is the committed geometry: the committed program and
-// the point plane its declaration folded into.
+// constructedTopology is the committed geometry produced by construction.
 type constructedTopology struct {
 	program *CommittedProgram
-	points  constructedPointPlane
 }
 
 func (constructed constructedTopology) Available() bool {
@@ -347,7 +345,6 @@ func constructTopology(declaration topologyDeclaration) (constructedTopology, to
 		return constructedTopology{}, refusal
 	}
 	constructed, refusal := sealConstructedTopology(declaration, source, mounts, points, edges, members, queries, activations, semantic)
-	constructed.points = points
 	return constructed, refusal
 }
 
