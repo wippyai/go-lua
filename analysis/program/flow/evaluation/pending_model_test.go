@@ -60,7 +60,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	}
 	preimage := sourceFinalize.Preimage()
 
-	staticDraft, err := static.Build(static.Input{
+	_, staticView, err := static.Build(static.Input{
 		Counts:    counts,
 		Contracts: staticcontracts.Input{Call: make([]staticcontracts.CallContract, counts[keyspace.FamilyCall])},
 	})
@@ -68,12 +68,6 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 		_ = sourceFinalize.Abort()
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalize, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalize.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	t.Cleanup(func() { _ = staticFinalize.Abort() })
 
 	flowDraft, err := authored.Build(authored.Input{
 		Counts: counts,
@@ -108,7 +102,6 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = flowFinalize.Abort() })
 	flowView := flowFinalize.View()
-	staticView := staticFinalize.View()
 
 	bodies, err := body.Seal(preimage, flowView, staticView, bodyTerm)
 	if err != nil {
@@ -143,7 +136,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("position.Seal: %v", err)
 	}
-	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(index)
+	sourceComponent, err := sourceFinalize.Commit(index)
 	if err != nil {
 		t.Fatalf("source.Commit: %v", err)
 	}
@@ -152,7 +145,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
-	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
+	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)

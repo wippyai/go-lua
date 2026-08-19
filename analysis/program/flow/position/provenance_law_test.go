@@ -31,7 +31,7 @@ func TestSealRejectsEqualCountForeignOwnerIdentities(t *testing.T) {
 		},
 	}
 	current := openPositionFixture(t, base)
-	staticID := current.staticFinalize.View().ContentID()
+	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if _, err := Seal(current.preimage, current.flow, current.bodies, current.forest, current.outcomes, current.entry, staticID, moduleID); err != nil {
 		t.Fatalf("valid position owners rejected: %v", err)

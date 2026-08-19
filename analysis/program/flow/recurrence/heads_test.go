@@ -38,7 +38,7 @@ func TestSealLexicalLabelHeadKeepsWhileInterval(t *testing.T) {
 		}},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}

@@ -36,11 +36,11 @@ func TestSealRejectsEqualCardinalityForeignOwnerSplices(t *testing.T) {
 		t.Fatal("foreign Source fixtures unexpectedly share ContentID")
 	}
 	if _, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, foreignSource.graph,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("recurrence accepted an equal-cardinality foreign sourcecontrol Source splice")
 	}
 	if _, err := Seal(foreignSource.sourceView, first.flow, first.bodies, first.forest, first.graph,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("recurrence accepted an equal-cardinality foreign Source splice")
 	}
 
@@ -57,7 +57,7 @@ func TestSealRejectsEqualCardinalityForeignOwnerSplices(t *testing.T) {
 		t.Fatal("foreign Flow fixtures unexpectedly share ContentID")
 	}
 	if _, err := Seal(first.sourceView, foreignFlow.flow, first.bodies, first.forest, first.graph,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("recurrence accepted an equal-cardinality foreign Flow splice")
 	}
 }
@@ -80,13 +80,13 @@ func TestRecurrenceMatchesAndQueriesFailClosedWithoutOwnerIDs(t *testing.T) {
 		}},
 	})
 	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
 	sourceID := fixture.sourceView.Identity().ContentID()
 	flowID := fixture.flow.Cold().ContentID()
-	staticID := fixture.staticFinalize.View().ContentID()
+	staticID := fixture.staticView.ContentID()
 	moduleID := fixture.moduleFinalize.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("recurrence result did not retain its owner identities")

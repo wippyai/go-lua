@@ -10,7 +10,7 @@ import (
 
 func TestRoutePlanDeclarationCannotBeSwappedBeforeBinding(t *testing.T) {
 	f := openCausalFixture(t, directCallSpec("causal-plan-route-swap.lua"))
-	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("newSealState: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestRoutePlanDeclarationCannotBeSwappedBeforeBinding(t *testing.T) {
 	if first < 0 {
 		t.Skip("fixture has no distinct local final route declarations")
 	}
-	recur, binding, err := recurrence.SealWithPlan(f.sourceView, f.flow, f.bodies, f.forest, f.control, plan, f.outcomePhases, f.staticFinalize.View().ContentID(), f.moduleFinalize.View().ContentID())
+	recur, binding, err := recurrence.SealWithPlan(f.sourceView, f.flow, f.bodies, f.forest, f.control, plan, f.outcomePhases, f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.SealWithPlan: %v", err)
 	}

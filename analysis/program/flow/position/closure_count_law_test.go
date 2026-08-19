@@ -20,7 +20,7 @@ func TestAnchorClosureCountsSharedDirectAndRootlessPaths(t *testing.T) {
 		ints:   []source.IntegerLiteral{{Owner: body, Value: 7}},
 		flow:   authoredInputForPositionCountLaw(body, values, integer),
 	})
-	staticID := fixture.staticFinalize.View().ContentID()
+	staticID := fixture.staticView.ContentID()
 	moduleID := fixture.moduleFinalize.View().ContentID()
 	validatedCounts, total, err := validateInputs(fixture.preimage, fixture.flow, fixture.bodies, fixture.forest, fixture.outcomes, fixture.entry, staticID, moduleID)
 	if err != nil {

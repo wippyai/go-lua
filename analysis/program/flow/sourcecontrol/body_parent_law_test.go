@@ -49,7 +49,7 @@ func TestSealRejectsEqualCardinalityForeignBodyResultSplice(t *testing.T) {
 		t.Fatal("splice fixtures unexpectedly share Body 2 parent")
 	}
 	if _, err := Seal(first.sourceView, first.flow, foreign.bodies, first.forest, first.shape, entry,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("equal-cardinality foreign Body Result splice was accepted")
 	} else if !strings.Contains(err.Error(), "Body provenance disagrees") {
 		t.Fatalf("foreign Body splice failed outside central parent proof: %v", err)

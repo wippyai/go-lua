@@ -50,7 +50,7 @@ func TestSealAllLoopFormsThroughOwners(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestSealWhileRangeIncludesShortCircuitAndNestedBranch(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestSealWhileRangeIncludesShortCircuitAndNestedBranch(t *testing.T) {
 		t.Fatalf("while recurrent Arc count = %d, want 1", resets)
 	}
 	replay, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("replayed recurrence.Seal: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestSealWhileUsesTypedSelectOrderThroughOwners(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestSealTraversesBodyRootChildrenWithoutSourcePosition(t *testing.T) {
 		}},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestSealRejectsSameShapeForeignSourceControl(t *testing.T) {
 	spec.name = "recurrence-owner-b.lua"
 	second := openOwnerFixture(t, spec)
 	if _, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, second.graph,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("recurrence accepted a same-shape foreign sourcecontrol proof")
 	}
 }
@@ -298,7 +298,7 @@ func TestSealBackwardGotoKeepsEmptyRecurrenceRange(t *testing.T) {
 		}},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestSealForwardGotoDoesNotCreateRecurrence(t *testing.T) {
 		}},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -391,7 +391,7 @@ func TestSealNestedNumericRangesRemainNested(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestSealNumericHeaderSelectIsOutsideResetRange(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestSealRepeatPlacesBodyBeforeCondition(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}

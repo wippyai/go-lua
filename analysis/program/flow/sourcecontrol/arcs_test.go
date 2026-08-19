@@ -649,32 +649,32 @@ func TestSemanticRejectsMalformedOwners(t *testing.T) {
 	}{
 		{name: "zero Source owner", call: func() error {
 			_, err := Seal(source.View{}, first.flow, first.bodies, first.forest, first.shape, entry,
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 		{name: "zero Flow owner", call: func() error {
 			_, err := Seal(first.sourceView, authored.View{}, first.bodies, first.forest, first.shape, entry,
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 		{name: "nil Body proof", call: func() error {
 			_, err := Seal(first.sourceView, first.flow, nil, first.forest, first.shape, entry,
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 		{name: "nil containment proof", call: func() error {
 			_, err := Seal(first.sourceView, first.flow, first.bodies, nil, first.shape, entry,
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 		{name: "nil control proof", call: func() error {
 			_, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, nil, entry,
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 		{name: "foreign Entry", call: func() error {
 			_, err := Seal(first.sourceView, first.flow, first.bodies, first.forest, first.shape, term(keyspace.FamilyBody, 2),
-				first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+				first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 			return err
 		}},
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/static"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
@@ -23,7 +24,7 @@ type portsFixture struct {
 	sourceFinalize source.Finalizer
 	view           authored.View
 	flowFinalize   authored.Finalizer
-	staticFinalize static.Finalizer
+	staticView     staticquery.View
 	moduleFinalize imports.Finalizer
 	forest         *containment.Result
 }
@@ -31,7 +32,6 @@ type portsFixture struct {
 func (fixture *portsFixture) close() {
 	_ = fixture.moduleFinalize.Abort()
 	_ = fixture.flowFinalize.Abort()
-	_ = fixture.staticFinalize.Abort()
 	_ = fixture.sourceFinalize.Abort()
 }
 
@@ -188,41 +188,31 @@ func openPortsFixture(t *testing.T, counts [keyspace.FamilyCount]uint32, flow au
 	if callCount := int(counts[keyspace.FamilyCall]); callCount != 0 {
 		staticInput.Contracts.Call = make([]staticcontracts.CallContract, callCount)
 	}
-	staticDraft, err := static.Build(staticInput)
+	_, staticView, err := static.Build(staticInput)
 	if err != nil {
 		_ = finalize.Abort()
 		t.Fatalf("static.Build: %v", err)
 	}
-	staticFinalize, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = finalize.Abort()
-		t.Fatalf("static.Finalizer: %v", err)
-	}
-	staticView := staticFinalize.View()
 	flowDraft, err := authored.Build(flow)
 	if err != nil {
 		_ = finalize.Abort()
-		_ = staticFinalize.Abort()
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
 		_ = finalize.Abort()
-		_ = staticFinalize.Abort()
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
 	bodies, err := body.Seal(finalize.Preimage(), flowView, staticView, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	if err != nil {
 		_ = finalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = flowFinalize.Abort()
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindings, err := binding.Seal(finalize.Preimage(), flowView, bodies, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	if err != nil {
 		_ = finalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = flowFinalize.Abort()
 		t.Fatalf("binding.Seal: %v", err)
 	}
@@ -239,7 +229,6 @@ func openPortsFixture(t *testing.T, counts [keyspace.FamilyCount]uint32, flow au
 	if err != nil {
 		_ = moduleFinalize.Abort()
 		_ = finalize.Abort()
-		_ = staticFinalize.Abort()
 		_ = flowFinalize.Abort()
 		t.Fatalf("containment.Prove: %v", err)
 	}
@@ -247,7 +236,7 @@ func openPortsFixture(t *testing.T, counts [keyspace.FamilyCount]uint32, flow au
 	if err != nil {
 		t.Fatalf("authored.Commit: %v", err)
 	}
-	return portsFixture{identity: identity, sourceFinalize: finalize, view: view, flowFinalize: flowFinalize, staticFinalize: staticFinalize, moduleFinalize: moduleFinalize, forest: forest}
+	return portsFixture{identity: identity, sourceFinalize: finalize, view: view, flowFinalize: flowFinalize, staticView: staticView, moduleFinalize: moduleFinalize, forest: forest}
 }
 
 func TestPortsResolveDeepEntryIteratively(t *testing.T) {
@@ -270,7 +259,7 @@ func TestPortsResolveDeepEntryIteratively(t *testing.T) {
 	}, 1)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +302,7 @@ func TestPortsWideValuesEntryCursorIsNotByteSized(t *testing.T) {
 	}, width)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +420,7 @@ func TestPortsLocalCellWriteThroughFunctionChild(t *testing.T) {
 		t.Fatalf("Function = owner %v body %v/%v; want Body1 -> Body2", owner, body, ok)
 	}
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("SealPorts rejected a captured outer Cell write from Function Body: %v", err)
 	}
@@ -486,7 +475,7 @@ func TestPortsAssignAndTableFormulas(t *testing.T) {
 	fixture := openPortsFixture(t, counts, flow, 7)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +516,7 @@ func TestPortsMethodCallReceiverMetadata(t *testing.T) {
 	}, 1)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +574,7 @@ func TestPortsAllTableFieldKinds(t *testing.T) {
 	fixture := openPortsFixture(t, counts, flow, 4)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +623,7 @@ func TestPortsOpenValuesCallAndSelectDisposition(t *testing.T) {
 	fixture := openPortsFixture(t, counts, flow, 3)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +658,7 @@ func TestPortsBranchAndRepeatLoopEntries(t *testing.T) {
 	}}, 2)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +701,7 @@ func TestPortsAllLoopControlKinds(t *testing.T) {
 	fixture := openPortsFixture(t, counts, flow, 2)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -864,12 +853,12 @@ func TestPortsRejectExpiredSourceAndRetainNoAuthority(t *testing.T) {
 		Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
 	}, 1)
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := SealPorts(source.Identity{}, fixture.view, fixture.forest,
-		fixture.staticFinalize.View().ContentID(), fixture.moduleFinalize.View().ContentID()); err == nil {
+		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("expired Source identity was accepted")
 	}
 	fixture.close()
@@ -902,7 +891,7 @@ func TestPortsRejectForeignEqualCardinalityForest(t *testing.T) {
 		t.Fatal("fixture Flow identities unexpectedly match")
 	}
 	if _, err := SealPorts(second.identity, second.view, first.forest,
-		second.staticFinalize.View().ContentID(), second.moduleFinalize.View().ContentID()); err == nil {
+		second.staticView.ContentID(), second.moduleFinalize.View().ContentID()); err == nil {
 		t.Fatal("equal-cardinality foreign containment proof was accepted")
 	}
 }
@@ -930,18 +919,18 @@ func TestPortsMatchesRejectsUnavailableAndEqualDenominatorForeignOwners(t *testi
 	foreignFlow := openPortsFixture(t, counts, input([]keyspace.Term{nilTwo, nilOne}), 2)
 	defer foreignFlow.close()
 	firstPorts, err := SealPorts(first.identity, first.view, first.forest,
-		first.staticFinalize.View().ContentID(), first.moduleFinalize.View().ContentID())
+		first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("SealPorts(first): %v", err)
 	}
 	foreignPorts, err := SealPorts(foreignFlow.identity, foreignFlow.view, foreignFlow.forest,
-		foreignFlow.staticFinalize.View().ContentID(), foreignFlow.moduleFinalize.View().ContentID())
+		foreignFlow.staticView.ContentID(), foreignFlow.moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("SealPorts(foreignFlow): %v", err)
 	}
 	sourceID := first.identity.ContentID()
 	flowID := first.view.Cold().ContentID()
-	staticID := first.staticFinalize.View().ContentID()
+	staticID := first.staticView.ContentID()
 	moduleID := first.moduleFinalize.View().ContentID()
 	if !Matches(firstPorts, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("sealed Ports did not match its exact owners")

@@ -49,7 +49,7 @@ func TestOutcomeProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	result := current.seal(t)
 	sourceID := current.preimage.Identity().ContentID()
 	flowID := current.flow.Cold().ContentID()
-	staticID := current.staticFinalize.View().ContentID()
+	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("Outcome did not retain its exact Source/Flow identities")
@@ -85,7 +85,7 @@ func TestOutcomeProvenanceFailsClosedForNilAndZero(t *testing.T) {
 	result := current.seal(t)
 	sourceID := current.preimage.Identity().ContentID()
 	flowID := current.flow.Cold().ContentID()
-	staticID := current.staticFinalize.View().ContentID()
+	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if Matches(result, identity.ContentID{}, flowID, staticID, moduleID) || Matches(result, sourceID, identity.ContentID{}, staticID, moduleID) ||
 		Matches(result, sourceID, flowID, identity.ContentID{}, moduleID) || Matches(result, sourceID, flowID, staticID, identity.ContentID{}) {
