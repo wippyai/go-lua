@@ -3,7 +3,6 @@ package program
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -113,26 +112,6 @@ func (span Span) Finish() (flow.Site, bool) {
 		return flow.Site{}, false
 	}
 	return span.finish, true
-}
-
-// TailReturn returns the exact terminal Outcome owned by this Call span's
-// already-sealed causal boundary. It never exposes the Flow Outcome term or
-// scans authored Return rows; the boundary and Body outcome range are the
-// sole proof chain.
-func (span Span) TailReturn() (Outcome, bool) {
-	if !span.Available() {
-		return Outcome{}, false
-	}
-	boundary, boundaryOK := span.program.Flow().Causal().Boundaries().For(span.authored)
-	if !boundaryOK || boundary.Call != span.authored || boundary.TailReturn == 0 {
-		return Outcome{}, false
-	}
-	outcome, ok := span.program.Outcome(boundary.TailReturn)
-	body, bodyOK := span.program.ContainingBody(span.authored)
-	outcomeKind, kindOK := outcome.Kind()
-	target, targetOK := outcome.Target()
-	return outcome, ok && bodyOK && span.program.OwnsBody(body) && outcome.body.program == span.program && outcome.Available() &&
-		outcome.BelongsTo(body) && kindOK && outcomeKind == kind.OutcomeReturn && targetOK && target == 0
 }
 
 // Equal follows the published Site replay policy: equivalent sealed Programs

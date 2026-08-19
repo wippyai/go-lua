@@ -28,8 +28,11 @@ func (compiler *compiler) copyBoundaryRowsFailure() CompileFailure {
 				rows = append(rows, BoundaryRow{kind: BoundaryCapture, id: id, owner: functionID, position: uint32(captureIndex), eligible: true})
 			}
 		}
-		if returned, returnedOK := body.Return(); returnedOK {
-			id := returned.ContextID()
+		bodyBoundary, bodyBoundaryOK := compiler.input.Flow().FunctionBoundaries().ResolveBodyContextID(body.ContextID())
+		returned, returnedOK := compiler.input.Flow().BodyReturns().ForBody(bodyBoundary)
+		returnSite, returnSiteOK := returned.Outcome()
+		if bodyBoundaryOK && returnedOK && returnSiteOK {
+			id := returnSite.ContextID()
 			if !id.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowBody, bodyIndex, -1, CompileReasonOccurrenceUnavailable)
 			}
