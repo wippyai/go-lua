@@ -192,7 +192,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	factorKey := origin.state.schema.factorSemanticAt(origin.factor)
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || !factor.receipt.valid() || factor.receipt.state != origin.state || factor.receipt.authority != origin.state.authority || factor.receipt.ordinal != origin.factor || factor.receipt.algebra != cell.impl.algebra {
+	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != origin.factor || factor.implementation.binding.algebra != cell.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(int(origin.readOrdinal))
@@ -201,7 +201,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
-	readLocal, localOK := exactReadLocal(factor.receipt, surface)
+	readLocal, localOK := exactReadLocal(factor.implementation.binding, surface)
 	if !unitOK || !localOK {
 		return false
 	}
@@ -212,7 +212,7 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindExactRead(bound readB
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, cell.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(origin.input), binding: factor.binding, unit: unit, exactFactor: factor.receipt, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(origin.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.binding, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
 }
 
 func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBindingState, authority *schemaBindingAuthority) (*FactorImplementation[K, V], bool) {
@@ -440,9 +440,9 @@ func (cell *schemaSummaryReadCell[K, V, S]) schemaSummaryRuleReadBind(bound read
 	factorKey := origin.state.schema.factorSemanticAt(origin.factor)
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || !factor.receipt.valid() || factor.receipt.state != origin.state ||
-		factor.receipt.authority != origin.state.authority || factor.receipt.ordinal != origin.factor ||
-		factor.receipt.algebra != cell.factor.impl.algebra {
+	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state ||
+		factor.implementation.binding.authority != origin.state.authority || factor.implementation.binding.ordinal != origin.factor ||
+		factor.implementation.binding.algebra != cell.factor.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(int(origin.readOrdinal))

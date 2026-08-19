@@ -224,7 +224,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		return nil, false
 	}
 	boundOutput, outputOK := output.(*boundFactor[K, V])
-	if !outputOK || boundOutput == nil || !boundOutput.receipt.valid() || boundOutput.receipt.state != receipt.state || boundOutput.receipt.authority != receipt.authority || boundOutput.receipt.schema != receipt.output.schema || boundOutput.receipt.ordinal != receipt.output.ordinal || boundOutput.receipt.semantic != receipt.output.semantic || boundOutput.receipt.algebra != receipt.output.algebra || boundOutput.receipt.semantic != shape.Output {
+	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !boundOutput.implementation.binding.valid() || boundOutput.implementation.binding.state != receipt.state || boundOutput.implementation.binding.authority != receipt.authority || boundOutput.implementation.binding.schema != receipt.output.schema || boundOutput.implementation.binding.ordinal != receipt.output.ordinal || boundOutput.implementation.binding.semantic != receipt.output.semantic || boundOutput.implementation.binding.algebra != receipt.output.algebra || boundOutput.implementation.binding.semantic != shape.Output {
 		return nil, false
 	}
 	surface, memberOK := exactSchemaRuleMemberGeometry(proof, member)
@@ -238,11 +238,11 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	if memberOK {
 		var targetOK, targetAddressOK bool
 		target, targetOK = output.writeTarget(surface)
-		targetRaw, targetAddressOK = exactWriteLocal(boundOutput.receipt, surface)
+		targetRaw, targetAddressOK = exactWriteLocal(boundOutput.implementation.binding, surface)
 		if !targetOK || !targetAddressOK {
 			return nil, false
 		}
-		targetBinding = boundOutput.receipt
+		targetBinding = boundOutput.implementation.binding
 	} else if !output.hasRouteUniverse() {
 		return nil, false
 	}
@@ -404,7 +404,7 @@ func bindActivationMember(member equation.RuleMember, implementation *Activation
 		member.OperandFamily() != implementation.binding.proof.operandFamily || uint64(member.ReadCount()) != implementation.binding.proof.reads || member.WriteCount() != 0 || factors == nil {
 		return nil, false
 	}
-	compiled, ok := compileActivationRuleReceipt(implementation, topology, trigger, graph)
+	compiled, ok := compileActivationRule(implementation, topology, trigger, graph)
 	if !ok {
 		return nil, false
 	}

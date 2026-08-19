@@ -81,7 +81,6 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	}
 	bound := &boundFactor[K, V]{
 		implementation:  implementation,
-		receipt:         receipt,
 		reads:           make(map[equation.Surface]boundUnit, len(catalog.exactReads)+len(catalog.summaryAliases)),
 		writes:          make(map[equation.Surface]boundTarget, len(catalog.strongWrites)+len(catalog.weakWrites)),
 		carryTargets:    make(map[composition.Key][]carrier.Target, len(catalog.carryTargets)),

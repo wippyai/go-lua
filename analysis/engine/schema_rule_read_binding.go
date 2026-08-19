@@ -85,7 +85,7 @@ func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) bind(bound readBinding,
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
 	target, staged := runtime.(stagedFactor[V])
-	if !present || !typed || !staged || factor == nil || !factor.receipt.valid() || factor.receipt.state != binding.origin.state || factor.receipt.authority != binding.origin.state.authority || factor.receipt.ordinal != binding.origin.factor || factor.receipt.algebra != binding.factor.impl.algebra {
+	if !present || !typed || !staged || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != binding.origin.state || factor.implementation.binding.authority != binding.origin.state.authority || factor.implementation.binding.ordinal != binding.origin.factor || factor.implementation.binding.algebra != binding.factor.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(binding.read.index)
@@ -355,7 +355,7 @@ func (binding *schemaSummaryRuleReadBinding[K, V, S]) bind(bound readBinding, me
 	factorKey := binding.origin.state.schema.factorSemanticAt(binding.origin.factor)
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || !factor.receipt.valid() || factor.receipt.state != binding.origin.state || factor.receipt.authority != binding.origin.state.authority || factor.receipt.ordinal != binding.origin.factor || factor.receipt.algebra != binding.factor.impl.algebra {
+	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != binding.origin.state || factor.implementation.binding.authority != binding.origin.state.authority || factor.implementation.binding.ordinal != binding.origin.factor || factor.implementation.binding.algebra != binding.factor.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(binding.read.index)
@@ -403,7 +403,7 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 	factorKey := binding.origin.state.schema.factorSemanticAt(binding.origin.factor)
 	runtime, present := factors[factorKey]
 	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || !factor.receipt.valid() || factor.receipt.state != binding.origin.state || factor.receipt.authority != binding.origin.state.authority || factor.receipt.ordinal != binding.origin.factor || factor.receipt.algebra != binding.factor.impl.algebra {
+	if !present || !typed || factor == nil || factor.implementation == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != binding.origin.state || factor.implementation.binding.authority != binding.origin.state.authority || factor.implementation.binding.ordinal != binding.origin.factor || factor.implementation.binding.algebra != binding.factor.impl.algebra {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(binding.read.index)
@@ -412,7 +412,7 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 		return false
 	}
 	unit, unitOK := factor.readUnit(surface)
-	readLocal, localOK := exactReadLocal(factor.receipt, surface)
+	readLocal, localOK := exactReadLocal(factor.implementation.binding, surface)
 	if !unitOK || !localOK {
 		return false
 	}
@@ -423,7 +423,7 @@ func (binding *schemaExactRuleReadBinding[K, V]) bind(bound readBinding, member 
 	fingerprint := func(value OrderedCells[V]) uint64 {
 		return fingerprintOrderedCellRecord(value.record, binding.factor.impl.algebra.Fingerprint)
 	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.origin.input), binding: factor.binding, unit: unit, exactFactor: factor.receipt, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
+	return bound.appendReadRuntime(&typedReadRuntime[K, V, OrderedCells[V]]{input: int(binding.origin.input), binding: factor.binding, unit: unit, exactFactor: factor.implementation.binding, exactRaw: readLocal, exact: true, normalize: normalize, equal: equal, fingerprint: fingerprint})
 }
 
 func (binding *schemaExactRuleReadBinding[K, V]) exactAdmitFactor() schemaFactorBinding {

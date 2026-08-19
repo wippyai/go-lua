@@ -30,7 +30,6 @@ type boundTarget struct {
 // receives a carrier slot, binding, Unit, Target, or Selector.
 type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	implementation *FactorImplementation[K, V]
-	receipt        factorRuntimeBinding
 	binding        *factbinding.Binding[K, V]
 	slot           shape.Slot
 	hasSlot        bool
@@ -128,14 +127,15 @@ func (bound *boundFactor[K, V]) readUnit(surface equation.Surface) (carrier.Unit
 // caller already owns the declaration-time shape checks; runtime keeps the
 // row directly instead of minting a second summary proof object.
 func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, formOrdinal uint64, semantic composition.Key) (factorRuntimeBinding, factorFormReceipt, []uint64, [32]byte, bool) {
-	if bound == nil || !bound.receipt.valid() || !semantic.Available() {
+	if bound == nil || bound.implementation == nil || !bound.implementation.binding.valid() || !semantic.Available() {
 		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
+	binding := bound.implementation.binding
 	unit, found := bound.reads[surface]
-	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(bound.receipt.schema, bound.receipt.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
+	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || !matchesFactorReadShape(binding.schema, binding.ordinal, surface, summaryReadForm) || surface.Semantic != semantic || surface.Normalizer != semantic {
 		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
-	formReceipt, formOK := bound.receipt.formAt(formOrdinal, SchemaFormReadSummary, semantic)
+	formReceipt, formOK := binding.formAt(formOrdinal, SchemaFormReadSummary, semantic)
 	if !formOK {
 		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
@@ -143,7 +143,7 @@ func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, for
 	if digest == ([32]byte{}) {
 		return factorRuntimeBinding{}, factorFormReceipt{}, nil, [32]byte{}, false
 	}
-	return bound.receipt, formReceipt, unit.summaryKeys, digest, true
+	return binding, formReceipt, unit.summaryKeys, digest, true
 }
 
 // stagedUnit resolves only a Factor-issued exact Ref through the predeclared
@@ -151,7 +151,7 @@ func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, for
 // raw coordinate is used; no key, Unit, or graph lookup is exposed to the
 // locator.
 func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
-	if bound == nil || len(bound.dynamicUnits) == 0 || ref == nil {
+	if bound == nil || bound.implementation == nil || !bound.implementation.binding.valid() || len(bound.dynamicUnits) == 0 || ref == nil {
 		return carrier.Unit{}, false
 	}
 	var raw uint64
@@ -161,7 +161,7 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 		rawAddress() uint64
 	}); valid {
 		address := typed.factorBinding()
-		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.receipt)
+		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.implementation.binding)
 	}
 	if !ok || raw >= uint64(len(bound.dynamicUnits)) {
 		return carrier.Unit{}, false
@@ -178,7 +178,7 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 // established during Factor binding, so runtime never declares a target or
 // reconstructs a key after sealing.
 func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, factorRuntimeBinding, uint64, bool) {
-	if bound == nil || len(bound.routeTargets) != len(bound.dynamicUnits) || len(bound.routeTargets) == 0 || ref == nil {
+	if bound == nil || bound.implementation == nil || !bound.implementation.binding.valid() || len(bound.routeTargets) != len(bound.dynamicUnits) || len(bound.routeTargets) == 0 || ref == nil {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
 	var raw uint64
@@ -188,7 +188,7 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, fact
 		rawAddress() uint64
 	}); valid {
 		address := typed.factorBinding()
-		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.receipt)
+		raw, ok = typed.rawAddress(), factorAddressMatches(address, bound.implementation.binding)
 	}
 	if !ok || raw >= uint64(len(bound.routeTargets)) {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
@@ -197,11 +197,11 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, fact
 	if target == (carrier.Target{}) || target.Mode() != carrier.StrongTarget {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
-	targetRaw, proven := exactWriteLocal(bound.receipt, exactWriteReceiptSurface(bound.receipt, raw+1))
+	targetRaw, proven := exactWriteLocal(bound.implementation.binding, exactWriteReceiptSurface(bound.implementation.binding, raw+1))
 	if !proven || targetRaw != raw {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
-	return target, bound.receipt, targetRaw, true
+	return target, bound.implementation.binding, targetRaw, true
 }
 
 func (bound *boundFactor[K, V]) routeUniverse() []carrier.Target {

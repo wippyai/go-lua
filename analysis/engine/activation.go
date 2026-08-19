@@ -141,7 +141,6 @@ type activationSelection struct {
 type compiledActivationRule struct {
 	proof       *ruleRuntimeProof
 	schema      *Schema
-	receipt     *ActivationRuleImplementation
 	admission   RuleAdmission[ActivationResult, ruleUnit]
 	run         func(*activationExecution) bool
 	topology    *equation.Topology
@@ -157,11 +156,8 @@ func (compiled *compiledActivationRule) executableInstance() bool {
 	if compiled == nil || compiled.proof == nil || !compiled.proof.valid() || !compiled.admission.valid() || compiled.run == nil || compiled.topology == nil || !compiled.trigger.Available() || !compiled.application.Available() || !compiled.anchor.Available() || compiled.graph == nil {
 		return false
 	}
-	if compiled.receipt != nil {
-		shape, ok := compiled.proof.schema.ruleShapeAt(compiled.proof.ordinal)
-		return compiled.schema == compiled.proof.schema && compiled.receipt.binding.valid() && compiled.proof.state != nil && compiled.proof.outputKind == composition.StructuralOutput && compiled.proof.output == (composition.Key{}) && ok && shape.ActivationFamily.Available()
-	}
-	return false
+	shape, ok := compiled.proof.schema.ruleShapeAt(compiled.proof.ordinal)
+	return compiled.schema == compiled.proof.schema && compiled.proof.state != nil && compiled.admission.same(compiled.proof.admission) && compiled.proof.outputKind == composition.StructuralOutput && compiled.proof.output == (composition.Key{}) && ok && shape.ActivationFamily.Available()
 }
 
 func (compiled *compiledActivationRule) runtimeRuleProof() *ruleRuntimeProof {
@@ -172,13 +168,10 @@ func (compiled *compiledActivationRule) runtimeRuleProof() *ruleRuntimeProof {
 }
 
 func (compiled *compiledActivationRule) declaredReadCount() uint64 {
-	if compiled == nil {
+	if compiled == nil || compiled.proof == nil {
 		return 0
 	}
-	if compiled.receipt != nil {
-		return compiled.proof.reads
-	}
-	return 0
+	return compiled.proof.reads
 }
 
 func (compiled *compiledActivationRule) requiresDerivation() bool {
@@ -487,9 +480,9 @@ func activationPremise(graph *equation.Graph, region support.Mask, checkpoint fu
 	return equation.NewExprDAGWithCheckpoint(rows, ordinal, checkpoint)
 }
 
-func retainActivationRunReceipt(compiled *compiledActivationRule, run func(Activation) bool) func(*activationExecution) bool {
+func retainActivationRun(compiled *compiledActivationRule, run func(Activation) bool) func(*activationExecution) bool {
 	return func(execution *activationExecution) bool {
-		if compiled == nil || compiled.receipt == nil || run == nil || execution == nil || execution.owner != compiled || !execution.active.holds(execution.epoch) || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || execution.row < 0 {
+		if compiled == nil || compiled.proof == nil || run == nil || execution == nil || execution.owner != compiled || !execution.active.holds(execution.epoch) || execution.frame == nil || execution.frame.product == nil || !execution.frame.product.requireCheckpoint() || execution.row < 0 {
 			return false
 		}
 		call, issued := execution.nextCall.issue()
@@ -503,11 +496,11 @@ func retainActivationRunReceipt(compiled *compiledActivationRule, run func(Activ
 }
 
 func (compiled *compiledActivationRule) derivation(execution *ruleExecution, reads []demand.Observation, dispositions []RuleDisposition[ActivationResult]) (RuleDerivation[ActivationResult, ruleUnit], *ruleAdmissionTicket, bool) {
-	if compiled == nil || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || !execution.active.holds(execution.epoch) || !compiled.anchor.Available() || !compiled.admission.valid() || compiled.receipt == nil {
+	if compiled == nil || execution == nil || execution.owner != compiled || execution.product == nil || !execution.product.requireCheckpoint() || !execution.active.holds(execution.epoch) || !compiled.anchor.Available() || !compiled.admission.valid() || compiled.proof == nil {
 		return RuleDerivation[ActivationResult, ruleUnit]{}, nil, false
 	}
 	proof := compiled.proof
-	if proof == nil || !proof.valid() || !compiled.admission.same(proof.admission) {
+	if !proof.valid() || !compiled.admission.same(proof.admission) {
 		return RuleDerivation[ActivationResult, ruleUnit]{}, nil, false
 	}
 	compositionID := proof.compositionID()
@@ -542,10 +535,10 @@ func (compiled *compiledActivationRule) derivation(execution *ruleExecution, rea
 	return RuleDerivation[ActivationResult, ruleUnit]{proof: proof, composition: compositionID, identity: compiled.admission.identity, epoch: execution.epoch, anchor: compiled.anchor, inputs: inputs, reads: proofReads, dispositions: dispositions, product: execution.product, ticket: ticket}, ticket, execution.product.requireCheckpoint()
 }
 
-// compileActivationRuleReceipt is the receipt-native activation compiler for a
-// compiler. It consumes the exact SchemaBinding proof and graph-owned trigger
-// member; it never reconstructs a declaration-shaped rule.
-func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
+// compileActivationRule is the generation-fenced activation compiler. It
+// consumes the exact SchemaBinding proof and graph-owned trigger member; it
+// never reconstructs a declaration-shaped rule.
+func compileActivationRule(implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
 	if implementation == nil || !implementation.binding.valid() || topology == nil || graph == nil ||
 		!topology.OwnsComposition(implementation.binding.proof.schema.cold) || !topology.OwnsGraph(graph) || !trigger.Available() {
 		return nil, false
@@ -566,8 +559,8 @@ func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, 
 	if !applicationSemanticOK {
 		return nil, false
 	}
-	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.binding.cell.impl.admission, topology: topology, trigger: trigger, application: applicationSemantic, graph: graph}
-	compiled.run = retainActivationRunReceipt(compiled, implementation.binding.cell.impl.run)
+	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, admission: implementation.binding.cell.impl.admission, topology: topology, trigger: trigger, application: applicationSemantic, graph: graph}
+	compiled.run = retainActivationRun(compiled, implementation.binding.cell.impl.run)
 	return compiled, true
 }
 

@@ -55,10 +55,10 @@ type stagedTargetProvider[V any] interface {
 func (factor *boundFactor[K, V]) stagedFactorTarget() stagedFactor[V] { return factor }
 
 func (factor *boundFactor[K, V]) stagedFactorReceiptMatches(origin *schemaRuleReadOrigin) bool {
-	if factor == nil || origin == nil || !factor.receipt.valid() || factor.receipt.state != origin.state || factor.receipt.schema != origin.state.schema || factor.receipt.ordinal != origin.factor || factor.receipt.semantic != origin.state.schema.factorSemanticAt(origin.factor) {
+	if factor == nil || factor.implementation == nil || origin == nil || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.schema != origin.state.schema || factor.implementation.binding.ordinal != origin.factor || factor.implementation.binding.semantic != origin.state.schema.factorSemanticAt(origin.factor) {
 		return false
 	}
-	return factor.receipt.authority == origin.state.authority
+	return factor.implementation.binding.authority == origin.state.authority
 }
 
 // stagedReadRuntime is one dynamic exact-read node. It has no candidate
