@@ -186,8 +186,16 @@ func (c *Contract) sealSemanticIdentities() error {
 	outcomeOrdinals := make([]uint32, len(c.outcomes))
 	c.operationContentIDs = make([]identity.ContentID, len(c.operations))
 	c.outcomeContentIDs = make([]identity.ContentID, len(c.outcomes))
-	c.transferContentIDs = make([]identity.ContentID, len(c.transfers))
-	c.transferOutcomeIDs = make([]identity.ContentID, len(c.transferOutcomes))
+	transferCount, transferOutcomeCount := 0, 0
+	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		transferCount += c.TransferCount(op)
+		for transferIndex := 0; transferIndex < c.TransferCount(op); transferIndex++ {
+			transferOutcomeCount += c.TransferOutcomeCount(op, transferIndex)
+		}
+	}
+	c.transferContentIDs = make([]identity.ContentID, transferCount)
+	c.transferOutcomeIDs = make([]identity.ContentID, transferOutcomeCount)
 	c.callbackContentIDs = make([]identity.ContentID, len(c.callbacks))
 	c.callbackContentIndex = make([]callbackContentIDRow, 0, len(c.callbacks))
 	c.resumeContentIDs = make([]identity.ContentID, len(c.resumes))
@@ -386,40 +394,50 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 		c.outcomeContentIDs[oi] = id
 	}
-	for i, row := range c.transfers {
-		ownerID := c.operationContentIDs[row.owner-1]
-		id, err := c.semanticID(semanticTransfer, func(w *framing.Writer) error {
-			if err := w.Bytes(ownerID[:]); err != nil {
-				return err
+	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+		owner := vocabulary.Operation(operationIndex + 1)
+		ownerID := c.operationContentIDs[operationIndex]
+		for transferIndex := 0; transferIndex < c.TransferCount(owner); transferIndex++ {
+			transfer, transferOK := c.Core.TransferIDAt(owner, transferIndex)
+			if !transferOK {
+				return errors.New("target: malformed transfer handle")
 			}
-			return c.encodeTransferRow(w, row)
-		})
-		if err != nil {
-			return err
-		}
-		c.transferContentIDs[i] = id
-		for j := row.outcomes.start; j < row.outcomes.end; j++ {
-			outcome := int(j - row.outcomes.start)
-			oi, ok := c.outcomeIndex(row.owner, outcome)
-			if !ok {
-				return errors.New("target: malformed transfer outcome")
-			}
-			outcomeID := c.outcomeContentIDs[oi]
-			transferID := id
-			possibility := c.transferOutcomes[j]
-			outID, err := c.semanticID(semanticTransferOutcome, func(w *framing.Writer) error {
-				if err := w.Bytes(transferID[:]); err != nil {
+			id, err := c.semanticID(semanticTransfer, func(w *framing.Writer) error {
+				if err := w.Bytes(ownerID[:]); err != nil {
 					return err
 				}
-				if err := w.Bytes(outcomeID[:]); err != nil {
-					return err
-				}
-				return w.Uint(uint64(possibility))
+				return c.encodeTransfer(w, owner, transferIndex)
 			})
 			if err != nil {
 				return err
 			}
-			c.transferOutcomeIDs[j] = outID
+			c.transferContentIDs[transfer-1] = id
+			for outcome := 0; outcome < c.TransferOutcomeCount(owner, transferIndex); outcome++ {
+				oi, ok := c.outcomeIndex(owner, outcome)
+				if !ok {
+					return errors.New("target: malformed transfer outcome")
+				}
+				outcomeID := c.outcomeContentIDs[oi]
+				_, possibility, possibilityOK := c.Core.TransferDeclarationOutcomeAt(transfer, outcome)
+				position, positionOK := c.Core.TransferOutcomePositionAt(transfer, outcome)
+				if !possibilityOK || !positionOK || position >= len(c.transferOutcomeIDs) {
+					return errors.New("target: malformed transfer outcome")
+				}
+				transferID := id
+				outID, err := c.semanticID(semanticTransferOutcome, func(w *framing.Writer) error {
+					if err := w.Bytes(transferID[:]); err != nil {
+						return err
+					}
+					if err := w.Bytes(outcomeID[:]); err != nil {
+						return err
+					}
+					return w.Uint(uint64(possibility))
+				})
+				if err != nil {
+					return err
+				}
+				c.transferOutcomeIDs[position] = outID
+			}
 		}
 	}
 	return c.sealHostIdentityRelations(outcomeOwners, outcomeOrdinals)

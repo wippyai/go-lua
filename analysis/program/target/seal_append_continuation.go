@@ -49,23 +49,3 @@ func (c *Contract) appendResumes(owner vocabulary.Operation, input []resumeDraft
 	}
 	return rangeOut, nil
 }
-
-func (c *Contract) appendTransfers(owner vocabulary.Operation, input []transferDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("transfer table", len(c.transfers), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, transfer := range input {
-		outcomes, outcomeErr := appendStoredRange(
-			&c.transferOutcomes, transfer.outcomes, "transfer outcome table",
-		)
-		if outcomeErr != nil {
-			return indexRange{}, outcomeErr
-		}
-		c.transfers = append(c.transfers, transferRow{
-			owner: owner, endpoint: transfer.endpoint, payload: transfer.payload, alias: transfer.alias, identity: transfer.identity,
-			capabilities: transfer.capabilities, outcomes: outcomes,
-		})
-	}
-	return rangeOut, nil
-}

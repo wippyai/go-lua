@@ -4,26 +4,10 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
-// QueryInput is the immutable value handoff for Target's operation query
-// plane. It contains only sealed handles and values; it has no Target
-// callback, builder, or draft reference. CompileQuery copies it into Core and
-// the caller may then discard its construction columns.
-//
-// The operation owner already issued Operation, Values, and Type handles
-// before this handoff. QueryInput preserves those handles while taking
-// ownership of the rows and their pools.
-type QueryInput struct {
-	Operations []QueryOperationInput
-	Types      []TypeInput
-	Values     []ValuesInput
-	Effects    []EffectInput
-}
-
 // QueryOperationInput is one canonical operation's query projection. The
-// nested slices are construction-only and are copied by CompileQuery.
+// nested slices are construction-only and are consumed by QueryBuilder.
 type QueryOperationInput struct {
 	Input              vocabulary.Values
 	Outcomes           []QueryOutcomeInput
@@ -36,20 +20,6 @@ type QueryOperationInput struct {
 	RowFormals         uint32
 	EffectTail         vocabulary.RowTail
 	EffectVar          vocabulary.RowVar
-}
-
-type TypeInput struct {
-	Handle      vocabulary.Type
-	Declaration schematype.Type
-}
-
-type ValuesInput struct {
-	Handle vocabulary.Values
-	Owner  vocabulary.Operation
-	Types  []vocabulary.Type
-	Tail   vocabulary.ValuesTail
-	VarID  vocabulary.ValuesVar
-	Suffix []vocabulary.Type
 }
 
 type QueryOutcomeInput struct {

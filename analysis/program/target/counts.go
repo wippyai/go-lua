@@ -74,6 +74,14 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
 		bindingCount += c.BindingCount(vocabulary.Operation(operationIndex + 1))
 	}
+	transferCount, transferOutcomeCount := 0, 0
+	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		transferCount += c.TransferCount(op)
+		for index := 0; index < c.TransferCount(op); index++ {
+			transferOutcomeCount += c.TransferOutcomeCount(op, index)
+		}
+	}
 
 	ok := put(ids.TargetContract, 1) &&
 		put(ids.TargetOpaque, 1) &&
@@ -99,8 +107,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		put(ids.TargetSpawnSibling, len(c.spawns)*spawnSiblingAlternatives) &&
 		put(ids.TargetResume, len(c.resumes)) &&
 		put(ids.TargetResumeOutcome, len(c.resumes)*crossActivationOutcomes) &&
-		put(ids.TargetTransfer, len(c.transfers)) &&
-		put(ids.TargetTransferOutcome, len(c.transferOutcomes)) &&
+		put(ids.TargetTransfer, transferCount) &&
+		put(ids.TargetTransferOutcome, transferOutcomeCount) &&
 		put(ids.TargetProtocol, protocolCounts.Protocols) &&
 		put(ids.TargetProtocolState, protocolCounts.States) &&
 		put(ids.TargetProtocolAcquisition, protocolCounts.Acquisitions) &&

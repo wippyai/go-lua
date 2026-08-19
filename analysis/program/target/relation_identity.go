@@ -18,14 +18,18 @@ func validIdentityRange(value indexRange, length int) bool {
 // direct paths remain dense operation/outcome ranges.
 func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operation, outcomeOrdinals []uint32) error {
 	c.inputFormalRanges = make([]indexRange, len(c.operations))
-	for operationIndex, row := range c.operations {
-		start, err := checkedStoredRange("semantic input formal table", len(c.inputFormalIDs), c.ValuesCount(row.input))
+	for operationIndex := range c.operations {
+		op := vocabulary.Operation(operationIndex + 1)
+		input, inputOK := c.Input(op)
+		if !inputOK {
+			return errors.New("target: malformed semantic input")
+		}
+		start, err := checkedStoredRange("semantic input formal table", len(c.inputFormalIDs), c.ValuesCount(input))
 		if err != nil {
 			return err
 		}
-		op := vocabulary.Operation(operationIndex + 1)
 		operationID := c.operationContentIDs[operationIndex]
-		for formal := 0; formal < c.ValuesCount(row.input); formal++ {
+		for formal := 0; formal < c.ValuesCount(input); formal++ {
 			selector := vocabulary.ValueFormal(formal)
 			id, err := c.semanticID(semanticInputFormal, func(w *framing.Writer) error {
 				if err := w.Bytes(operationID[:]); err != nil {

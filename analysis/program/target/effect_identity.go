@@ -66,17 +66,21 @@ func (c *Contract) sealEffectIdentities() error {
 // effect substitution can observe.  Outcomes, callbacks, effects,
 // transfers, and every other operation relation are intentionally absent.
 func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Operation) error {
-	row, ok := c.operation(op)
-	if !ok {
+	if _, ok := c.operation(op); !ok {
 		return errors.New("target: malformed effect operation")
 	}
-	if err := encodeValues(w, c, row.input); err != nil {
+	input, inputOK := c.Input(op)
+	if !inputOK {
+		return errors.New("target: malformed effect operation input")
+	}
+	if err := encodeValues(w, c, input); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.typeFormals.len())); err != nil {
+	typeFormals := c.TypeFormalCount(op)
+	if err := w.Count(uint64(typeFormals)); err != nil {
 		return err
 	}
-	for index := 0; index < row.typeFormals.len(); index++ {
+	for index := 0; index < typeFormals; index++ {
 		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
 		if !valueOK {
 			value = 0
@@ -94,9 +98,6 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 	if err := w.Count(uint64(valuesVars)); err != nil {
 		return err
 	}
-	if row.valuesTypes.len() != valuesVars {
-		return errors.New("target: malformed effect Values ABI")
-	}
 	for index := 0; index < valuesVars; index++ {
 		value, valueOK := c.ValuesVarType(op, vocabulary.ValuesVar(index))
 		if !valueOK {
@@ -106,7 +107,7 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 			return err
 		}
 	}
-	return w.Count(uint64(row.rowFormals))
+	return w.Count(uint64(c.RowFormalCount(op)))
 }
 
 func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary.CallbackID, effects indexRange) error {

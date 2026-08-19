@@ -94,10 +94,11 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 	if err := c.encodeBindings(w, op); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.typeFormals.len())); err != nil {
+	typeFormals := c.TypeFormalCount(op)
+	if err := w.Count(uint64(typeFormals)); err != nil {
 		return err
 	}
-	for i := 0; i < row.typeFormals.len(); i++ {
+	for i := 0; i < typeFormals; i++ {
 		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(i))
 		if !valueOK {
 			value = 0
@@ -124,10 +125,14 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if err := w.Uint(uint64(row.rowFormals)); err != nil {
+	if err := w.Uint(uint64(c.RowFormalCount(op))); err != nil {
 		return err
 	}
-	if err := encodeValues(w, c, row.input); err != nil {
+	input, inputOK := c.Input(op)
+	if !inputOK {
+		return errors.New("target: malformed operation input")
+	}
+	if err := encodeValues(w, c, input); err != nil {
 		return err
 	}
 	callbackCount := c.Core.CallbackCount(op)
@@ -227,11 +232,12 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			}
 		}
 	}
-	if err := w.Count(uint64(row.transfers.len())); err != nil {
+	transferCount := c.TransferCount(op)
+	if err := w.Count(uint64(transferCount)); err != nil {
 		return err
 	}
-	for i := row.transfers.start; i < row.transfers.end; i++ {
-		if err := c.encodeTransferRow(w, c.transfers[i]); err != nil {
+	for i := 0; i < transferCount; i++ {
+		if err := c.encodeTransfer(w, op, i); err != nil {
 			return err
 		}
 	}
@@ -567,32 +573,48 @@ func (c *Contract) encodePortableOutcome(w *framing.Writer, owner vocabulary.Ope
 	return nil
 }
 
-func (c *Contract) encodeTransferRow(w *framing.Writer, row transferRow) error {
-	if err := w.Uint(uint64(row.endpoint.Kind)); err != nil {
+func (c *Contract) encodeTransfer(w *framing.Writer, op vocabulary.Operation, index int) error {
+	endpoint, payload, alias, identity, capabilities, ok := c.Core.TransferDeclaration(func() vocabulary.TransferID {
+		id, _ := c.Core.TransferIDAt(op, index)
+		return id
+	}())
+	if !ok {
+		return errors.New("target: malformed transfer")
+	}
+	if err := w.Uint(uint64(endpoint.Kind)); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(row.endpoint.Input)); err != nil {
+	if err := w.Uint(uint64(endpoint.Input)); err != nil {
 		return err
 	}
-	if err := encodeInput(w, row.payload); err != nil {
+	if err := encodeInput(w, payload); err != nil {
 		return err
 	}
-	if err := encodeInput(w, row.alias); err != nil {
+	if err := encodeInput(w, alias); err != nil {
 		return err
 	}
-	for _, v := range []uint64{uint64(row.identity), uint64(row.capabilities)} {
+	for _, v := range []uint64{uint64(identity), uint64(capabilities)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	if err := w.Count(uint64(row.outcomes.len())); err != nil {
+	transfer, transferOK := c.Core.TransferIDAt(op, index)
+	if !transferOK {
+		return errors.New("target: malformed transfer handle")
+	}
+	outcomes := c.Core.TransferOutcomeCount(op, index)
+	if err := w.Count(uint64(outcomes)); err != nil {
 		return err
 	}
-	for i := row.outcomes.start; i < row.outcomes.end; i++ {
-		if err := w.Uint(uint64(i - row.outcomes.start)); err != nil {
+	for i := 0; i < outcomes; i++ {
+		if err := w.Uint(uint64(i)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(c.transferOutcomes[i])); err != nil {
+		_, possibility, possibilityOK := c.Core.TransferDeclarationOutcomeAt(transfer, i)
+		if !possibilityOK {
+			return errors.New("target: malformed transfer outcome")
+		}
+		if err := w.Uint(uint64(possibility)); err != nil {
 			return err
 		}
 	}

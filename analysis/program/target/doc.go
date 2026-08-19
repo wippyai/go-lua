@@ -38,11 +38,12 @@
 // and no mutating public method. Target root publishes the Table directly; it
 // does not wrap or re-derive its rows.
 //
-// The operation query cut crosses the boundary as operation.QueryInput. Seal
-// drops the root construction columns after CompileQuery returns; downstream
-// operation queries therefore read the Core-owned immutable value rather than
-// a root walk or callback. The remaining relation columns are still root-owned
-// until they receive the same complete value handoff.
+// The operation query cut crosses the boundary through operation.QueryBuilder.
+// Seal gives the builder one construction phase and consumes it into the
+// immutable Core before returning; downstream operation queries therefore read
+// the Core-owned value rather than a root walk or callback. The remaining
+// relation columns are still root-owned until they receive the same complete
+// value handoff.
 //
 // # Why identity sits above read
 //

@@ -8,7 +8,6 @@ import (
 	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
@@ -18,37 +17,16 @@ import (
 // produced edges; this row retains only ranges into Target-owned pools and
 // the aggregate's input/value/effect projections.
 type operationRow struct {
-	input              vocabulary.Values
-	outcomes           indexRange
-	behavior           indexRange
-	behaviorPredicates indexRange
-	valuesTypes        indexRange
-	subedges           indexRange
-	suspensions        indexRange
-	spawns             indexRange
-	resumes            indexRange
-	transfers          indexRange
-	subedgeRelation    uint32
-	releases           indexRange
-	effects            indexRange
-	typeFormals        indexRange
-	rowFormals         uint32
-	effectTail         vocabulary.RowTail
-	effectVar          vocabulary.RowVar
-}
-
-type valuesRow struct {
-	owner  vocabulary.Operation
-	types  indexRange
-	tail   vocabulary.ValuesTail
-	varID  vocabulary.ValuesVar
-	suffix indexRange
-}
-
-type typeRow struct {
-	owner       vocabulary.Operation
-	declaration schematype.Type
-	bytes       []byte
+	outcomes        indexRange
+	subedges        indexRange
+	suspensions     indexRange
+	spawns          indexRange
+	resumes         indexRange
+	subedgeRelation uint32
+	releases        indexRange
+	effects         indexRange
+	effectTail      vocabulary.RowTail
+	effectVar       vocabulary.RowVar
 }
 
 type outcomeRow struct {
@@ -58,20 +36,6 @@ type outcomeRow struct {
 	fresh           indexRange
 	callbackResults indexRange
 	resultAliases   indexRange
-}
-
-type behaviorResultRow struct {
-	outcome  uint32
-	result   uint32
-	source   vocabulary.InputSource
-	relation schema.EntryID
-}
-
-type behaviorPredicateRow struct {
-	outcome  uint32
-	result   uint32
-	subject  vocabulary.InputSource
-	relation schema.EntryID
 }
 
 type freshResultRow struct {
@@ -114,16 +78,6 @@ type resumeRow struct {
 	carrier   vocabulary.ValueFormal
 	arguments vocabulary.Values
 	outcomes  [5]uint32
-}
-
-type transferRow struct {
-	owner        vocabulary.Operation
-	endpoint     vocabulary.TransferEndpoint
-	payload      vocabulary.InputSource
-	alias        vocabulary.InputSource
-	identity     vocabulary.TransferIdentity
-	capabilities vocabulary.TransferCapabilities
-	outcomes     indexRange
 }
 
 type subedgeRelationRow struct {
@@ -236,20 +190,16 @@ func (r indexRange) len() int { return int(r.end - r.start) }
 type Contract struct {
 	bootvalue.Table
 	operationvalue.Core
+	// queryBuilder exists only during Seal. It is consumed before the
+	// Contract is published; the immutable Core is the sole query owner.
+	queryBuilder           *operationvalue.QueryBuilder
 	operations             []operationRow
-	types                  []typeRow
-	values                 []valuesRow
-	valueTypes             []vocabulary.Type
 	outcomes               []outcomeRow
-	behaviorResults        []behaviorResultRow
-	behaviorPredicates     []behaviorPredicateRow
 	effects                []effectRow
 	effectVals             []vocabulary.ValueFormal
 	effectType             []vocabulary.TypeFormal
 	effectVars             []vocabulary.ValuesVar
-	valuesVarTypes         []vocabulary.Type
 	effectRows             []vocabulary.RowVar
-	formals                []vocabulary.Type
 	callbacks              []callbackRow
 	subedges               []subedgeRow
 	subedgeOrigins         []subedgeArgumentOriginRow
@@ -258,10 +208,8 @@ type Contract struct {
 	suspensions            []suspensionRow
 	spawns                 []spawnRow
 	resumes                []resumeRow
-	transfers              []transferRow
 	subedgeRelations       []subedgeRelationRow
 	subedgeRelationEffects []uint32
-	transferOutcomes       []vocabulary.TransferPossibility
 	callbackReleases       []callbackReleaseRow
 	protocols              protocolvalue.Table
 	produced               []producedRow

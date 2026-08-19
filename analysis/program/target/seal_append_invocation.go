@@ -3,6 +3,7 @@ package target
 import (
 	"errors"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 )
@@ -104,6 +105,24 @@ func (c *Contract) appendEffects(owner effectOwner, input []effectDraft) (indexR
 			return indexRange{}, err
 		}
 		c.effects = append(c.effects, row)
+		query := operationvalue.EffectInput{
+			Target: effect.target, Values: append([]vocabulary.ValueFormal(nil), effect.values...),
+			Types:          append([]vocabulary.TypeFormal(nil), effect.types...),
+			ValuesVar:      append([]vocabulary.ValuesVar(nil), effect.valuesVar...),
+			Rows:           append([]vocabulary.RowVar(nil), effect.rows...),
+			HasPublication: row.hasPublication,
+		}
+		if row.hasPublication {
+			query.Publication = vocabulary.PublicationEffectSpec{
+				Kind: row.publication.Kind(), Subject: row.publication.Subject(),
+				Destination: row.publication.DestinationRole(), Context: row.publication.Context(),
+				Escape: row.publication.Escape(), Mutability: row.publication.Mutability(),
+				Lifetime: row.publication.Lifetime(),
+			}
+		}
+		if err := c.queryBuilder.AppendQueryEffect(query); err != nil {
+			return indexRange{}, err
+		}
 	}
 	return rangeOut, nil
 }

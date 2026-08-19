@@ -18,32 +18,10 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	if op != vocabulary.Operation(expected) {
 		return errors.New("target: noncanonical operation handle")
 	}
-	typeHandle, err := c.appendTypes(op, draft.types, draft.declarations)
+	typeHandle, err := c.queryBuilder.AppendQueryTypes(draft.types, draft.declarations)
 	if err != nil {
 		return err
 	}
-	rowFormals := draft.rowFormals
-	effectTail, effectVar := draft.effectTail, draft.effectVar
-	formalRange, err := checkedStoredRange("type formal pool", len(c.formals), len(draft.constraints))
-	if err != nil {
-		return err
-	}
-	for _, constraint := range draft.constraints {
-		c.formals = append(c.formals, typeHandle[constraint])
-	}
-	operationTypeFormals := formalRange
-	valuesTypes, valuesTypeErr := checkedStoredRange("Values variable type pool", len(c.valuesVarTypes), len(draft.valuesTypes))
-	if valuesTypeErr != nil {
-		return valuesTypeErr
-	}
-	for _, key := range draft.valuesTypes {
-		handle, found := typeHandle[key]
-		if !found || handle == 0 {
-			return errors.New("target: unresolved Values variable type")
-		}
-		c.valuesVarTypes = append(c.valuesVarTypes, handle)
-	}
-	operationValuesTypes := valuesTypes
 
 	valuesHandle := make(map[string]vocabulary.Values)
 	allValues := make(map[string]valuesDraft)
@@ -94,7 +72,8 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	}
 	sort.Strings(valueKeys)
 	for _, key := range valueKeys {
-		handle, appendErr := c.appendValues(op, allValues[key], typeHandle)
+		declaration := queryValuesDeclaration(op, allValues[key])
+		handle, appendErr := c.queryBuilder.AppendQueryValues(declaration, typeHandle)
 		if appendErr != nil {
 			return appendErr
 		}
@@ -147,11 +126,6 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		outcomeValues = append(outcomeValues, valuesHandle[key])
 	}
 	operationOutcomes := outcomeRange
-	behaviorRange, behaviorPredicateRange, behaviorErr := c.appendBehavior(draft.behavior)
-	if behaviorErr != nil {
-		return behaviorErr
-	}
-	operationBehavior, operationPredicates := behaviorRange, behaviorPredicateRange
 	subedgeRange, subedgeErr := c.appendSubedges(op, draft.subedges, callbackIDs, valuesHandle, keys)
 	if subedgeErr != nil {
 		return subedgeErr
@@ -162,11 +136,6 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		return spawnErr
 	}
 	operationSpawns := spawns
-	transfers, transferErr := c.appendTransfers(op, draft.transfers)
-	if transferErr != nil {
-		return transferErr
-	}
-	operationTransfers := transfers
 	effectRange, err := c.appendEffects(effectOwnerOperation, draft.effects)
 	if err != nil {
 		return err
@@ -181,98 +150,66 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		operationRelation = branch
 	}
 	c.operations = append(c.operations, operationRow{
-		input: operationInput, outcomes: operationOutcomes,
-		behavior: operationBehavior, behaviorPredicates: operationPredicates,
-		valuesTypes: operationValuesTypes, subedges: operationSubedges,
+		outcomes: operationOutcomes, subedges: operationSubedges,
 		suspensions: operationSuspensions, spawns: operationSpawns,
-		resumes: operationResumes, transfers: operationTransfers,
+		resumes:         operationResumes,
 		subedgeRelation: operationRelation, effects: operationEffects,
-		typeFormals: operationTypeFormals, rowFormals: rowFormals,
-		effectTail: effectTail, effectVar: effectVar,
+		effectTail: draft.effectTail, effectVar: draft.effectVar,
 	})
+	query := operationvalue.QueryOperationInput{
+		Input: operationInput, RowFormals: draft.rowFormals,
+		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
+		EffectIndices: make([]int, operationEffects.len()),
+		TypeFormals:   make([]vocabulary.Type, len(draft.constraints)),
+		ValuesTypes:   make([]vocabulary.Type, len(draft.valuesTypes)),
+	}
+	for index, constraint := range draft.constraints {
+		// A missing declaration is the canonical unconstrained formal and is
+		// represented by the zero handle.
+		query.TypeFormals[index] = typeHandle[constraint]
+	}
+	for index, key := range draft.valuesTypes {
+		handle, found := typeHandle[key]
+		if !found || handle == 0 {
+			return errors.New("target: unresolved Values variable type")
+		}
+		query.ValuesTypes[index] = handle
+	}
+	for index := range query.EffectIndices {
+		query.EffectIndices[index] = int(operationEffects.start) + index
+	}
+	for _, outcome := range draft.outcomes {
+		key, keyErr := outcome.values.key()
+		if keyErr != nil {
+			return keyErr
+		}
+		value, found := valuesHandle[key]
+		if !found {
+			return errors.New("target: unresolved operation outcome Values")
+		}
+		query.Outcomes = append(query.Outcomes, operationvalue.QueryOutcomeInput{Kind: outcome.kind, Values: value})
+	}
+	for _, result := range draft.behavior.results {
+		query.Behavior = append(query.Behavior, operationvalue.BehaviorResultInput{
+			Outcome: result.outcome, Result: result.result, Source: result.source, Relation: result.relation,
+		})
+	}
+	for _, predicate := range draft.behavior.predicates {
+		query.BehaviorPredicates = append(query.BehaviorPredicates, operationvalue.BehaviorPredicateInput{
+			Outcome: predicate.outcome, Result: predicate.result, Subject: predicate.subject, Relation: predicate.relation,
+		})
+	}
+	for _, transfer := range draft.transfers {
+		query.Transfers = append(query.Transfers, operationvalue.TransferInput{
+			Endpoint: transfer.endpoint, Payload: transfer.payload, Alias: transfer.alias,
+			Identity: transfer.identity, Capabilities: transfer.capabilities,
+			Outcomes: append([]vocabulary.TransferPossibility(nil), transfer.outcomes...),
+		})
+	}
+	if err := c.queryBuilder.AppendQueryOperation(op, query); err != nil {
+		return err
+	}
 	return nil
-}
-
-func (c *Contract) appendBehavior(input behaviorDraft) (indexRange, indexRange, error) {
-	resultRange, err := checkedStoredRange("behavior result table", len(c.behaviorResults), len(input.results))
-	if err != nil {
-		return indexRange{}, indexRange{}, err
-	}
-	predicateRange, err := checkedStoredRange("behavior predicate table", len(c.behaviorPredicates), len(input.predicates))
-	if err != nil {
-		return indexRange{}, indexRange{}, err
-	}
-	for _, result := range input.results {
-		c.behaviorResults = append(c.behaviorResults, behaviorResultRow{
-			outcome: result.outcome, result: result.result, source: result.source, relation: result.relation,
-		})
-	}
-	for _, predicate := range input.predicates {
-		c.behaviorPredicates = append(c.behaviorPredicates, behaviorPredicateRow{
-			outcome: predicate.outcome, result: predicate.result, subject: predicate.subject, relation: predicate.relation,
-		})
-	}
-	if len(input.results) == 0 && len(input.predicates) == 0 {
-		return indexRange{}, indexRange{}, nil
-	}
-	return resultRange, predicateRange, nil
-}
-
-func (c *Contract) appendTypes(owner vocabulary.Operation, input map[string][]byte, declarations map[string]schematype.Type) (map[string]vocabulary.Type, error) {
-	keys := make([]string, 0, len(input))
-	for key := range input {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	if _, err := checkedStoredRange("type table", len(c.types), len(keys)); err != nil {
-		return nil, err
-	}
-	handles := make(map[string]vocabulary.Type, len(keys))
-	for _, key := range keys {
-		declaration, declarationOK := declarations[key]
-		if !declarationOK || !declaration.Available() {
-			return nil, errors.New("target: missing neutral type declaration")
-		}
-		if _, err := vocabulary.CheckedStoredLength("type bytes", len(input[key])); err != nil {
-			return nil, err
-		}
-		handle, err := checkedStoredHandle("type table", len(c.types))
-		if err != nil {
-			return nil, err
-		}
-		c.types = append(c.types, typeRow{
-			owner: owner, declaration: declaration,
-			bytes: append([]byte(nil), input[key]...),
-		})
-		handles[key] = vocabulary.Type(handle)
-	}
-	return handles, nil
-}
-
-func (c *Contract) appendValues(owner vocabulary.Operation, input valuesDraft, handles map[string]vocabulary.Type) (vocabulary.Values, error) {
-	handle, err := checkedStoredHandle("Values table", len(c.values))
-	if err != nil {
-		return 0, err
-	}
-	typeRange, err := checkedStoredRange("Values type pool", len(c.valueTypes), len(input.types))
-	if err != nil {
-		return 0, err
-	}
-	suffixRange, err := checkedStoredRange("Values suffix type pool", len(c.valueTypes)+len(input.types), len(input.suffix))
-	if err != nil {
-		return 0, err
-	}
-	row := valuesRow{owner: owner, tail: input.tail, varID: input.varID}
-	row.types = typeRange
-	row.suffix = suffixRange
-	for _, key := range input.types {
-		c.valueTypes = append(c.valueTypes, handles[key])
-	}
-	for _, key := range input.suffix {
-		c.valueTypes = append(c.valueTypes, handles[key])
-	}
-	c.values = append(c.values, row)
-	return vocabulary.Values(handle), nil
 }
 
 func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (vocabulary.Values, error) {
@@ -295,7 +232,9 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		return err
 	}
 	unknownDraft := valuesDraft{tail: vocabulary.ValuesUnknown}
-	unknown, err := c.appendValues(opaque, unknownDraft, nil)
+	unknown, err := c.queryBuilder.AppendQueryValues(operationvalue.QueryValuesDeclaration{
+		Owner: opaque, Tail: vocabulary.ValuesUnknown,
+	}, nil)
 	if err != nil {
 		return err
 	}
@@ -312,22 +251,19 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 	} {
 		c.outcomes = append(c.outcomes, outcomeRow{kind: kind, values: unknown})
 	}
-	transfers, err := c.appendTransfers(opaque, []transferDraft{{
-		endpoint:     vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal},
-		payload:      vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
-		alias:        vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
-		identity:     vocabulary.TransferIdentityUnspecified,
-		capabilities: vocabulary.TransferCapabilitiesUnspecified,
-		outcomes: []vocabulary.TransferPossibility{
+	transfers := []operationvalue.TransferInput{{
+		Endpoint:     vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal},
+		Payload:      vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
+		Alias:        vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
+		Identity:     vocabulary.TransferIdentityUnspecified,
+		Capabilities: vocabulary.TransferCapabilitiesUnspecified,
+		Outcomes: []vocabulary.TransferPossibility{
 			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 		},
-	}})
-	if err != nil {
-		return err
-	}
+	}}
 	issuedOpaque := callbackIDForOpaque(c.Core, opaque)
 	_, _, err = c.appendCallbacks(opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
@@ -343,10 +279,19 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		return err
 	}
 	c.operations = append(c.operations, operationRow{
-		input: unknown, outcomes: outcomes, transfers: transfers,
+		outcomes:   outcomes,
 		effectTail: vocabulary.RowUnknownOpen,
 	})
-	return nil
+	return c.queryBuilder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
+		Input: unknown,
+		Outcomes: []operationvalue.QueryOutcomeInput{
+			{Kind: flowkind.OutcomeNormal, Values: unknown},
+			{Kind: flowkind.OutcomeThrow, Values: unknown},
+			{Kind: flowkind.OutcomeYield, Values: unknown},
+			{Kind: flowkind.OutcomeCancel, Values: unknown},
+		},
+		Transfers: transfers, EffectTail: vocabulary.RowUnknownOpen,
+	})
 }
 
 func callbackIDForOpaque(core operationvalue.Core, opaque vocabulary.Operation) vocabulary.CallbackID {
@@ -355,4 +300,12 @@ func callbackIDForOpaque(core operationvalue.Core, opaque vocabulary.Operation) 
 		return 0
 	}
 	return callback
+}
+
+func queryValuesDeclaration(owner vocabulary.Operation, draft valuesDraft) operationvalue.QueryValuesDeclaration {
+	return operationvalue.QueryValuesDeclaration{
+		Owner: owner, Types: append([]string(nil), draft.types...),
+		Tail: draft.tail, VarID: draft.varID,
+		Suffix: append([]string(nil), draft.suffix...),
+	}
 }
