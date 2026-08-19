@@ -38,12 +38,19 @@ type hashFrame struct {
 	input      Type
 	node       Type
 	rec        *Recursive
+	generic    *Generic
 	result     uint64
 	child      uint64
 	hash       uint64
 	ops        []hashOp
 	next       int
 	activeNode Type
+	// transparent marks an *Instantiated node's frame: it is an application of
+	// its Generic, not a declaration of its own, so it never registers in
+	// active/memo. Its value is always a fresh function of the Generic's
+	// current (possibly cycle-anchored) hash and its own TypeArgs, which keeps
+	// it independent of whichever Instantiated wrapper started the traversal.
+	transparent bool
 }
 
 type hashMachine struct {
@@ -85,8 +92,16 @@ func (m *hashMachine) step(frame *hashFrame) {
 		m.complete(frame, frame.child)
 	case hashRunOps:
 		if frame.next == len(frame.ops) {
-			m.scratch.memoSet(frame.node, frame.hash)
-			m.scratch.activePop(frame.activeNode)
+			switch {
+			case frame.generic != nil:
+				m.scratch.memoSet(frame.node, frame.hash)
+				m.scratch.visitedPopGeneric(frame.generic)
+			case frame.transparent:
+				// No registration: see the *Instantiated case in enterBody.
+			default:
+				m.scratch.memoSet(frame.node, frame.hash)
+				m.scratch.activePop(frame.activeNode)
+			}
 			m.complete(frame, frame.hash)
 			return
 		}
@@ -123,6 +138,7 @@ func (m *hashMachine) enterWith(frame *hashFrame) {
 	}
 	if rec, ok := frame.input.(*Recursive); ok {
 		if m.scratch.visitedContains(rec) {
+			m.scratch.sawCycle = true
 			m.complete(frame, hash.MixHash(uint64(kind.Recursive), hash.FnvString("$self")))
 			return
 		}
@@ -143,6 +159,28 @@ func (m *hashMachine) enterWith(frame *hashFrame) {
 		}
 		frame.phase = hashFinishRecursive
 		m.push(hashBodyNode, rec.Body)
+		return
+	}
+	if g, ok := frame.input.(*Generic); ok {
+		// A self-referential generic declaration (e.g. List<T> = {..., tail:
+		// List<T>}) is reached again through its own Body during this walk.
+		// Anchoring the cycle break on g itself, rather than on whichever
+		// Instantiated wrapper is active, makes the closed hash the same
+		// regardless of which application in the component started the walk.
+		if m.scratch.visitedContainsGeneric(g) {
+			m.scratch.sawCycle = true
+			m.complete(frame, hash.MixHash(uint64(kind.Generic), hash.FnvString("$self")))
+			return
+		}
+		if value, ok := m.scratch.memoGet(g); ok {
+			m.complete(frame, value)
+			return
+		}
+		m.scratch.visitedPushGeneric(g)
+		frame.node = g
+		frame.generic = g
+		frame.hash, frame.ops = hashNodeOperations(g)
+		frame.phase = hashRunOps
 		return
 	}
 	if value, ok := m.scratch.memoGet(frame.input); ok {
@@ -170,11 +208,55 @@ func (m *hashMachine) enterBody(frame *hashFrame) {
 		m.push(hashWithNode, rec)
 		return
 	}
+	if g, ok := value.(*Generic); ok {
+		// A closed g whose own computation never crossed a productive cycle
+		// (equalityHashCache.interior) hashes the same from every position, so
+		// reading its published value directly - instead of re-walking its
+		// whole body - is what keeps a chain of N nested declarations linear
+		// rather than quadratic. A self-referential g is excluded: entering it
+		// from its own body sees itself already active and returns the $self
+		// sentinel, which a query rooted at g itself never does, so its value
+		// is position-dependent and only trustworthy as its own query root.
+		if h, ok := cachedEqualityHashInterior(g); ok {
+			m.complete(frame, h)
+			return
+		}
+		frame.phase = hashFinishAlias
+		m.push(hashWithNode, g)
+		return
+	}
+	if inst, ok := value.(*Instantiated); ok {
+		// An Instantiated node is an application, not a declaration: it never
+		// anchors a cycle and is not registered in active. A self-application
+		// reachable from its own Generic's Body would otherwise be caught by
+		// the general active check below whenever it happens to be the
+		// traversal root, producing a different hash than when the same
+		// application is reached as an interior node; the Generic branch above
+		// is the sole cycle anchor for both cases, so the result is the same
+		// regardless of which application started the walk. Its published
+		// cache is consulted under the same interior-safety rule as Generic.
+		if h, ok := cachedEqualityHashInterior(inst); ok {
+			m.complete(frame, h)
+			return
+		}
+		frame.node = inst
+		frame.transparent = true
+		frame.hash, frame.ops = hashNodeOperations(inst)
+		frame.phase = hashRunOps
+		return
+	}
+	// Record/Function reach here (Optional/Union/... have no cache and always
+	// miss); same interior-safety rule as Generic and Instantiated.
+	if h, ok := cachedEqualityHashInterior(value); ok {
+		m.complete(frame, h)
+		return
+	}
 	if result, ok := m.scratch.memoGet(value); ok {
 		m.complete(frame, result)
 		return
 	}
 	if m.scratch.activeContains(value) {
+		m.scratch.sawCycle = true
 		m.complete(frame, hash.MixHash(uint64(value.Kind()), hash.FnvString("$cycle")))
 		return
 	}

@@ -78,14 +78,20 @@ func newCanonicalFunction(
 		Params:            paramsCopy,
 		Variadic:          variadic,
 		Returns:           returnsCopy,
-		hash:              h,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    props,
 	}
+	// h is computed eagerly from each child's CURRENT hash and published only
+	// when closed: a param, variadic, or return type can itself still reach a
+	// still-open self-referential generic application, and fn cannot itself be
+	// part of that cycle (its children already exist). Function.Hash falls
+	// back to a close-gated recompute when this does not publish, exactly like
+	// EqualityHash.
+	cacheEqualityHash(fn, h, true)
 	if functionSemanticNamesCanonical(paramsCopy) {
 		fn.semantic.Store(fn)
 	}
-	zzProbeConstruct(uint64(kind.Function), h) // ZZPROBE
+	zzProbeConstructLazy(uint64(kind.Function), fn.Hash) // ZZPROBE
 	return fn
 }
 
@@ -113,15 +119,22 @@ func newSemanticFunction(source *Function) *Function {
 			semanticParams[i].Name = "self"
 		}
 	}
+	// Parameter names are presentation only and do not participate in the
+	// structural hash (see hashNodeOperations' *Function case), so the
+	// semantic view shares source's value. source.Hash() is always the
+	// correct value to ask about source itself regardless of source's own
+	// interior-reuse status, and semantic is reachable only through
+	// source.semantic (never a WalkChildren edge), so it can never itself be
+	// an interior node of another traversal either.
 	semantic := &Function{
 		TypeParams:        source.TypeParams,
 		Params:            semanticParams,
 		Variadic:          source.Variadic,
 		Returns:           source.Returns,
-		hash:              source.hash,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    source.typeProperties.copyStatic(),
 	}
+	cacheEqualityHash(semantic, source.Hash(), true)
 	semantic.semantic.Store(semantic)
 	return semantic
 }

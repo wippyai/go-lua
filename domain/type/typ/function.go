@@ -25,7 +25,6 @@ type Function struct {
 	Params            []Param      // Positional parameters
 	Variadic          Type         // Variadic element type (nil if not variadic)
 	Returns           []Type       // Return types (empty for void functions)
-	hash              uint64
 	equalityHashCache *equalityHashCache
 	typeProperties
 	strCache stringCache
@@ -182,14 +181,20 @@ func CloneFunction(fn *Function) *Function {
 		Params:            append([]Param(nil), fn.Params...),
 		Variadic:          fn.Variadic,
 		Returns:           append([]Type(nil), fn.Returns...),
-		hash:              fn.hash,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    fn.typeProperties.copyStatic(),
 	}
+	// Unlike the other constructors in this file, a clone's exported fields
+	// (Params, Returns, ...) are a documented mutation surface for the
+	// caller (see TestCloneFunctionDoesNotShareEqualityHashCache): the copy
+	// exists so a caller can cheaply tweak a field without a full semantic
+	// rebuild. Publishing a hash here would freeze it against a mutation the
+	// contract still permits, so clone's cache starts empty and is derived
+	// lazily like any other node whose graph was still open at construction.
 	if functionSemanticNamesCanonical(clone.Params) {
 		clone.semantic.Store(clone)
 	}
-	zzProbeConstruct(uint64(kind.Function), clone.hash) // ZZPROBE
+	zzProbeConstructLazy(uint64(kind.Function), clone.Hash) // ZZPROBE
 	return clone
 }
 
@@ -199,7 +204,17 @@ func (f *Function) String() string {
 	return f.strCache.get(func() string { return renderTypeString(f) })
 }
 
-func (f *Function) Hash() uint64 { return f.hash }
+// Hash returns the structural hash. It is derived lazily rather than sealed
+// at construction: a parameter, variadic, or return type can itself be a
+// still-open self-referential generic application, so the value is read
+// through the same close-gated cache as EqualityHash instead of a field
+// frozen at construction.
+func (f *Function) Hash() uint64 {
+	if f == nil {
+		return 0
+	}
+	return closeGatedHash(f)
+}
 
 func (f *Function) Equals(other Type) bool {
 	return typeEquals(f, other)

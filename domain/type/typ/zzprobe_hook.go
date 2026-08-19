@@ -17,6 +17,17 @@ func zzProbeConstruct(k uint64, h uint64) {
 	}
 }
 
+// zzProbeConstructLazy is zzProbeConstruct for a hash that is itself lazily
+// derived (Generic, Instantiated, Record, Function): it must not force that
+// derivation - a full graph walk, one construction at a time, while a large
+// product is still being built bottom-up - just to feed a hook that is nil
+// outside the typprobe build tag.
+func zzProbeConstructLazy(k uint64, h func() uint64) {
+	if zzProbeConstructHook != nil {
+		zzProbeConstructHook(k, h())
+	}
+}
+
 // zzProbeRefine records one encoder refine() exit: nodes discovered and
 // distinct bisimulation classes assigned (M1). No-op unless the typprobe
 // build tag is set.

@@ -71,6 +71,10 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 		mapValue = Unknown
 	}
 
+	props := typePropertiesOfFields(sorted)
+	props.includeStaticMembers(members)
+	props.includeTypes(metatable, mapKey, mapValue)
+
 	h := uint64(kind.Record)
 	for _, f := range sorted {
 		h = hash.MixHash(h, hash.FnvString(f.Name))
@@ -99,7 +103,6 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 			h = hash.MixHash(h, 2)
 		}
 	}
-
 	if metatable != nil {
 		h = hash.MixHash(h, metatable.Hash())
 	}
@@ -114,12 +117,8 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 		h = hash.MixHash(h, recordMapValueHash)
 		h = hash.MixHash(h, mapValue.Hash())
 	}
-	props := typePropertiesOfFields(sorted)
-	props.includeStaticMembers(members)
-	props.includeTypes(metatable, mapKey, mapValue)
 
-	zzProbeConstruct(uint64(kind.Record), h) // ZZPROBE
-	return &Record{
+	r := &Record{
 		Fields:            sorted,
 		StaticMembers:     members,
 		Metatable:         metatable,
@@ -127,10 +126,21 @@ func newCanonicalRecord(fields []Field, staticMembers []StaticMember, metatable,
 		MapValue:          mapValue,
 		Open:              open,
 		sorted:            true,
-		hash:              h,
 		equalityHashCache: &equalityHashCache{},
 		typeProperties:    props,
 	}
+	// h is computed eagerly from each child's CURRENT hash - cheap, since a
+	// closed child's Hash is an O(1) cache read - and published only when a
+	// field, static member, or map/metatable type does not itself still reach
+	// a still-open self-referential generic application. A Record's fields are
+	// always already-built values (a field cannot reference the Record being
+	// built, since its pointer does not exist yet), so a closed graph here can
+	// never later become open, and the published value is permanent; when open,
+	// Record.Hash instead falls back to a close-gated recompute, exactly like
+	// EqualityHash.
+	cacheEqualityHash(r, h, true)
+	zzProbeConstructLazy(uint64(kind.Record), r.Hash) // ZZPROBE
+	return r
 }
 
 func fieldsSortedByName(fields []Field) bool {

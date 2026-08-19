@@ -226,12 +226,13 @@ func canonicalOwnedRecord(ctx context.Context, admission *canonicalFormalsAdmiss
 	if !fieldsSortedByName(fields) || !staticMembersSorted(members) {
 		return nil, invalidCanonicalFormals("record member order")
 	}
-	h := uint64(kind.Record)
 	var props typeProperties
+	h := uint64(kind.Record)
 	for _, field := range fields {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return nil, err
 		}
+		props.include(field.Type)
 		h = hash.MixHash(h, hash.FnvString(field.Name))
 		h = hash.MixHash(h, field.Type.Hash())
 		if field.Optional {
@@ -240,12 +241,12 @@ func canonicalOwnedRecord(ctx context.Context, admission *canonicalFormalsAdmiss
 		if field.Readonly {
 			h = hash.MixHash(h, 2)
 		}
-		props.include(field.Type)
 	}
 	for _, member := range members {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return nil, err
 		}
+		props.include(member.Type)
 		h = hash.MixHash(h, recordStaticHash)
 		h = hash.MixHash(h, uint64(member.Kind))
 		if member.Kind == StaticMemberStringIndex {
@@ -260,8 +261,8 @@ func canonicalOwnedRecord(ctx context.Context, admission *canonicalFormalsAdmiss
 		if member.Readonly {
 			h = hash.MixHash(h, 2)
 		}
-		props.include(member.Type)
 	}
+	props.includeTypes(metatable, mapKey, mapValue)
 	if metatable != nil {
 		h = hash.MixHash(h, metatable.Hash())
 	}
@@ -276,9 +277,16 @@ func canonicalOwnedRecord(ctx context.Context, admission *canonicalFormalsAdmiss
 		h = hash.MixHash(h, recordMapValueHash)
 		h = hash.MixHash(h, mapValue.Hash())
 	}
-	props.includeTypes(metatable, mapKey, mapValue)
-	zzProbeConstruct(uint64(kind.Record), h) // ZZPROBE
-	return &Record{Fields: fields, StaticMembers: members, Metatable: metatable, MapKey: mapKey, MapValue: mapValue, Open: open, sorted: true, hash: h, equalityHashCache: &equalityHashCache{}, typeProperties: props}, nil
+	r := &Record{Fields: fields, StaticMembers: members, Metatable: metatable, MapKey: mapKey, MapValue: mapValue, Open: open, sorted: true, equalityHashCache: &equalityHashCache{}, typeProperties: props}
+	// h is computed eagerly and published only when closed: a field, static
+	// member, or map/metatable type can be materialized while still reaching
+	// an open Generic during a self-referential decode, and this Record
+	// cannot itself be part of that cycle (its children already exist, so it
+	// cannot be one of them). Record.Hash falls back to a close-gated
+	// recompute when this does not publish, exactly like EqualityHash.
+	cacheEqualityHash(r, h, true)
+	zzProbeConstructLazy(uint64(kind.Record), r.Hash) // ZZPROBE
+	return r, nil
 }
 
 func canonicalOwnedFunction(ctx context.Context, admission *canonicalFormalsAdmission, steps *uint64, scalar []byte, children []Type) (*Function, error) {
@@ -426,8 +434,8 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 		return nil, err
 	}
 	paramCopy := make([]*TypeParam, len(typeParams))
-	h := uint64(kind.Function)
 	var props typeProperties
+	h := uint64(kind.Function)
 	for index, param := range typeParams {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return nil, err
@@ -436,8 +444,8 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 			return nil, invalidCanonicalFormals("function type parameter")
 		}
 		paramCopy[index] = param
-		h = hash.MixHash(h, param.Hash())
 		props.include(param)
+		h = hash.MixHash(h, param.Hash())
 	}
 	if err := canonicalFormalsPreflight(ctx, admission, steps, len(params), canonicalFormalsParamBytes); err != nil {
 		return nil, err
@@ -457,6 +465,7 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 			semantic = false
 		}
 		paramsCopy[index] = param
+		props.include(param.Type)
 		h = hash.MixHash(h, param.Type.Hash())
 		if param.Receiver {
 			h = hash.MixHash(h, 2)
@@ -464,12 +473,11 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 		if param.Optional {
 			h = hash.MixHash(h, 1)
 		}
-		props.include(param.Type)
 	}
 	variadic = NormalizeNil(variadic)
 	if variadic != nil {
-		h = hash.MixHash(h, variadic.Hash())
 		props.include(variadic)
+		h = hash.MixHash(h, variadic.Hash())
 	}
 	if err := canonicalFormalsPreflight(ctx, admission, steps, len(returns), canonicalFormalsTypeBytes); err != nil {
 		return nil, err
@@ -484,14 +492,20 @@ func canonicalOwnedFunctionParts(ctx context.Context, admission *canonicalFormal
 			return nil, invalidCanonicalFormals("function return type")
 		}
 		returnsCopy[index] = result
-		h = hash.MixHash(h, result.Hash())
 		props.include(result)
+		h = hash.MixHash(h, result.Hash())
 	}
-	fn := &Function{TypeParams: paramCopy, Params: paramsCopy, Variadic: variadic, Returns: returnsCopy, hash: h, equalityHashCache: &equalityHashCache{}, typeProperties: props}
+	fn := &Function{TypeParams: paramCopy, Params: paramsCopy, Variadic: variadic, Returns: returnsCopy, equalityHashCache: &equalityHashCache{}, typeProperties: props}
+	// h is computed eagerly and published only when closed: a param, variadic,
+	// or return type can itself still reach a still-open self-referential
+	// generic application, and fn cannot itself be part of that cycle (its
+	// children already exist). Function.Hash falls back to a close-gated
+	// recompute when this does not publish, exactly like EqualityHash.
+	cacheEqualityHash(fn, h, true)
 	if semantic {
 		fn.semantic.Store(fn)
 	}
-	zzProbeConstruct(uint64(kind.Function), h) // ZZPROBE
+	zzProbeConstructLazy(uint64(kind.Function), fn.Hash) // ZZPROBE
 	return fn, nil
 }
 
@@ -529,8 +543,8 @@ func canonicalOwnedGeneric(ctx context.Context, admission *canonicalFormalsAdmis
 		return nil, err
 	}
 	copyParams := make([]*TypeParam, len(params))
-	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(name))
 	var props typeProperties
+	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(name))
 	for index, param := range params {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return nil, err
@@ -539,15 +553,22 @@ func canonicalOwnedGeneric(ctx context.Context, admission *canonicalFormalsAdmis
 			return nil, invalidCanonicalFormals("generic type parameter")
 		}
 		copyParams[index] = param
-		h = hash.MixHash(h, param.Hash())
 		props.include(param)
+		h = hash.MixHash(h, param.Hash())
 	}
 	if body != nil {
-		h = hash.MixHash(h, body.Hash())
 		props.include(body)
+		h = hash.MixHash(h, body.Hash())
 	}
-	zzProbeConstruct(uint64(kind.Generic), h) // ZZPROBE
-	return &Generic{Name: name, TypeParams: copyParams, Body: body, hash: h, typeProperties: props}, nil
+	g := &Generic{Name: name, TypeParams: copyParams, Body: body, equalityHashCache: &equalityHashCache{}, typeProperties: props}
+	// h is computed eagerly and published only when closed: openCanonicalFormalGeneric
+	// calls this with a nil body to open a provisional self-referential
+	// declaration, and even a present body can itself still be open elsewhere
+	// in a mutual recurrence component. Generic.Hash reads a close-gated cache
+	// instead when this does not publish, exactly like EqualityHash.
+	cacheEqualityHash(g, h, true)
+	zzProbeConstructLazy(uint64(kind.Generic), g.Hash) // ZZPROBE
+	return g, nil
 }
 
 func canonicalOwnedSetGenericBody(ctx context.Context, admission *canonicalFormalsAdmission, steps *uint64, generic *Generic, body Type) error {
@@ -581,9 +602,9 @@ func canonicalOwnedInstantiation(ctx context.Context, admission *canonicalFormal
 		return nil, err
 	}
 	arguments := make([]Type, len(children)-1)
-	h := hash.MixHash(uint64(kind.Instantiated), generic.Hash())
 	props := typePropertiesOf(generic)
 	props.containsInstantiated = true
+	h := hash.MixHash(uint64(kind.Instantiated), generic.Hash())
 	for index, argument := range children[1:] {
 		if err := canonicalFormalsCheckpoint(ctx, admission, steps); err != nil {
 			return nil, err
@@ -592,11 +613,22 @@ func canonicalOwnedInstantiation(ctx context.Context, admission *canonicalFormal
 			return nil, invalidCanonicalFormals("instantiated argument")
 		}
 		arguments[index] = argument
-		h = hash.MixHash(h, argument.Hash())
 		props.include(argument)
+		h = hash.MixHash(h, argument.Hash())
 	}
-	zzProbeConstruct(uint64(kind.Instantiated), h) // ZZPROBE
-	return &Instantiated{Generic: generic, TypeArgs: arguments, hash: h, equalityHashCache: &equalityHashCache{}, typeProperties: props}, nil
+	inst := &Instantiated{Generic: generic, TypeArgs: arguments, equalityHashCache: &equalityHashCache{}, typeProperties: props}
+	// h is computed eagerly and published only when closed: this node can be
+	// materialized while generic's own Body is still open during a
+	// self-referential decode (the generic component queue in
+	// materializeCanonicalFormalsGraph opens a provisional Generic before its
+	// dependents are finalized). When generic is already closed at this point
+	// it was finalized before inst existed, so inst cannot itself be part of
+	// generic's cycle and this published value is permanent; otherwise
+	// Instantiated.Hash falls back to a close-gated recompute, exactly like
+	// EqualityHash.
+	cacheEqualityHash(inst, h, true)
+	zzProbeConstructLazy(uint64(kind.Instantiated), inst.Hash) // ZZPROBE
+	return inst, nil
 }
 
 func canonicalOwnedInterface(ctx context.Context, admission *canonicalFormalsAdmission, steps *uint64, scalar []byte, children []Type) (*Interface, error) {

@@ -137,7 +137,7 @@ func TestEqualityHashSelfInstantiatingGenericTerminates(t *testing.T) {
 	inst := Instantiate(g, String)
 
 	first, second := EqualityHash(inst), EqualityHash(inst)
-	const wantHash uint64 = 4478555391772677995
+	const wantHash uint64 = 18179416691384307677
 	if first != wantHash || second != wantHash {
 		t.Fatalf("self-instantiating generic equality hash calls = %d, %d; want %d", first, second, wantHash)
 	}

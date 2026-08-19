@@ -33,7 +33,6 @@ type Record struct {
 	MapValue          Type // Map component value type (nil if no map component)
 	Open              bool // Allow access to undefined fields
 	sorted            bool
-	hash              uint64
 	equalityHashCache *equalityHashCache
 	typeProperties
 	strCache stringCache
@@ -41,7 +40,16 @@ type Record struct {
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
 
-func (r *Record) Hash() uint64 { return r.hash }
+// Hash returns the structural hash. It is derived lazily rather than sealed
+// at construction: a field or static member type can itself be a still-open
+// self-referential generic application, so the value is read through the same
+// close-gated cache as EqualityHash instead of a field frozen at construction.
+func (r *Record) Hash() uint64 {
+	if r == nil {
+		return 0
+	}
+	return closeGatedHash(r)
+}
 
 func (r *Record) Equals(other Type) bool {
 	return typeEquals(r, other)

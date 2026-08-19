@@ -39,7 +39,18 @@ func knownContainsRecursive(t Type) bool {
 	case *Generic:
 		return n.containsRecursive
 	case *Instantiated:
-		return n.containsRecursive
+		// Read live rather than from the construction-time snapshot for the
+		// same reason as instantiatedContainsAny/Never: the Generic's own flag
+		// self-heals in place on SetBody, a copy taken before that does not.
+		if knownContainsRecursive(n.Generic) {
+			return true
+		}
+		for _, argument := range n.TypeArgs {
+			if knownContainsRecursive(argument) {
+				return true
+			}
+		}
+		return false
 	case *TypeParam:
 		return n.containsRecursive
 	case *Interface:

@@ -14,7 +14,11 @@ func cachedContainsFlags(t Type) (containsAny, containsNever, containsTypeParam,
 		// A Generic's declaration-owned formals are bound by an
 		// Instantiated node.  They are not free formals of the application;
 		// only an argument that itself remains open keeps the application open.
-		return n.containsAny, n.containsNever, instantiatedContainsTypeParam(n), true
+		// containsAny/containsNever are read live rather than from the
+		// construction-time snapshot: a self application can be built before
+		// its own Generic.Body exists, and the Generic's own flags self-heal in
+		// place on SetBody, but a snapshot copied out of it earlier would not.
+		return instantiatedContainsAny(n), instantiatedContainsNever(n), instantiatedContainsTypeParam(n), true
 	case *TypeParam:
 		return n.containsAny, n.containsNever, true, n.containsInstantiated
 	case *Optional:
@@ -95,6 +99,41 @@ func instantiatedContainsTypeParam(value *Instantiated) bool {
 	}
 	for _, argument := range value.TypeArgs {
 		if ContainsTypeParam(argument) {
+			return true
+		}
+	}
+	return false
+}
+
+// instantiatedContainsAny and instantiatedContainsNever read the Generic's
+// current flags rather than the copy captured at construction. Generic
+// mutates its own flags in place when SetBody completes a forward-declared
+// body, so a live read is always current at O(1) cost; a copy taken before
+// SetBody would freeze the pre-completion answer forever.
+func instantiatedContainsAny(value *Instantiated) bool {
+	if value == nil {
+		return false
+	}
+	if knownContainsAny(value.Generic) {
+		return true
+	}
+	for _, argument := range value.TypeArgs {
+		if knownContainsAny(argument) {
+			return true
+		}
+	}
+	return false
+}
+
+func instantiatedContainsNever(value *Instantiated) bool {
+	if value == nil {
+		return false
+	}
+	if knownContainsNever(value.Generic) {
+		return true
+	}
+	for _, argument := range value.TypeArgs {
+		if knownContainsNever(argument) {
 			return true
 		}
 	}

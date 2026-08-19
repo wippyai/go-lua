@@ -36,10 +36,15 @@ func (s *recursiveHashScratch) reset() {
 	s.ctx = nil
 	s.steps = 0
 	s.err = nil
+	s.sawCycle = false
 	for i := 0; i < s.visitedLen; i++ {
 		s.visited[i] = nil
 	}
 	s.visitedLen = 0
+	for i := 0; i < s.visitedGenericLen; i++ {
+		s.visitedGeneric[i] = nil
+	}
+	s.visitedGenericLen = 0
 	for i := 0; i < s.activeLen; i++ {
 		s.active[i] = nil
 	}
@@ -49,6 +54,7 @@ func (s *recursiveHashScratch) reset() {
 	}
 	s.memoLen = 0
 	s.visitedMap = clearOrDropHashScratchMap(s.visitedMap)
+	s.visitedGenericMap = clearOrDropHashScratchMap(s.visitedGenericMap)
 	s.activeMap = clearOrDropHashScratchMap(s.activeMap)
 	s.memoMap = clearOrDropHashScratchMap(s.memoMap)
 }
@@ -74,9 +80,26 @@ type recursiveHashScratch struct {
 	steps uint64
 	err   error
 
+	// sawCycle records whether this call emitted a $self/$cycle sentinel
+	// anywhere in the walk: a productive back-edge was crossed, so at least
+	// one contributing value depended on which node the walk started from.
+	// See the equalityHashCache.interior field comment.
+	sawCycle bool
+
 	visited    [recursiveHashSmallVisitedCap]*Recursive
 	visitedLen int
 	visitedMap map[*Recursive]bool
+
+	// visitedGeneric anchors cycle detection for a self-referential generic
+	// declaration on the *Generic pointer itself, mirroring visited/visitedMap
+	// for *Recursive. An Instantiated node is a transparent application of its
+	// Generic, not an identity of its own, so anchoring on the declaration
+	// (rather than on whichever Instantiated wrapper happens to start the
+	// traversal) makes the closed hash independent of which application is
+	// queried first.
+	visitedGeneric    [recursiveHashSmallVisitedCap]*Generic
+	visitedGenericLen int
+	visitedGenericMap map[*Generic]bool
 
 	active    [recursiveHashSmallActiveCap]Type
 	activeLen int
@@ -144,6 +167,47 @@ func (s *recursiveHashScratch) visitedPop(r *Recursive) {
 	}
 	s.visitedLen--
 	s.visited[s.visitedLen] = nil
+}
+
+func (s *recursiveHashScratch) visitedContainsGeneric(g *Generic) bool {
+	if s.visitedGenericMap != nil {
+		return s.visitedGenericMap[g]
+	}
+	for i := 0; i < s.visitedGenericLen; i++ {
+		if s.visitedGeneric[i] == g {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *recursiveHashScratch) visitedPushGeneric(g *Generic) {
+	if s.visitedGenericMap != nil {
+		s.visitedGenericMap[g] = true
+		return
+	}
+	if s.visitedGenericLen < len(s.visitedGeneric) {
+		s.visitedGeneric[s.visitedGenericLen] = g
+		s.visitedGenericLen++
+		return
+	}
+	s.visitedGenericMap = make(map[*Generic]bool, len(s.visitedGeneric)+1)
+	for i := 0; i < s.visitedGenericLen; i++ {
+		s.visitedGenericMap[s.visitedGeneric[i]] = true
+	}
+	s.visitedGenericMap[g] = true
+}
+
+func (s *recursiveHashScratch) visitedPopGeneric(g *Generic) {
+	if s.visitedGenericMap != nil {
+		delete(s.visitedGenericMap, g)
+		return
+	}
+	if s.visitedGenericLen == 0 {
+		return
+	}
+	s.visitedGenericLen--
+	s.visitedGeneric[s.visitedGenericLen] = nil
 }
 
 func (s *recursiveHashScratch) activeContains(t Type) bool {

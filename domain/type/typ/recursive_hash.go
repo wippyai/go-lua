@@ -18,8 +18,9 @@ func EqualityHash(t Type) uint64 {
 		}
 		scratch := getRecursiveHashScratch()
 		h := hashBodyWithVisitedMemo(t, scratch)
+		interior := !scratch.sawCycle
 		putRecursiveHashScratch(scratch)
-		cacheEqualityHash(t, h)
+		cacheEqualityHash(t, h, interior)
 		return h
 	}
 	return t.Hash()
@@ -55,6 +56,28 @@ func EqualityHashContext(ctx context.Context, t Type) (uint64, error) {
 		return 0, err
 	}
 	return h, nil
+}
+
+// closeGatedHash computes t's structural hash through the equality-hash
+// cache unconditionally, without EqualityHash's equalityHashNeedsRefresh
+// branch. It is the shared Hash() body for every node kind whose own
+// equalityHashCache can predate a reachable Generic/Recursive completing:
+// Generic and Instantiated always need a refresh (equalityHashNeedsRefresh is
+// unconditionally true for them), but Record and Function do not when they
+// contain no Generic/Recursive at all, and EqualityHash's fallback for that
+// case is t.Hash() itself - the exact call this function is the body of.
+// Delegating Hash() straight to EqualityHash would recurse forever on that
+// path, so those four Hash() methods call this instead.
+func closeGatedHash(t Type) uint64 {
+	if h, ok := cachedEqualityHash(t); ok {
+		return h
+	}
+	scratch := getRecursiveHashScratch()
+	h := hashBodyWithVisitedMemo(t, scratch)
+	interior := !scratch.sawCycle
+	putRecursiveHashScratch(scratch)
+	cacheEqualityHash(t, h, interior)
+	return h
 }
 
 func equalityHashNeedsRefresh(t Type) bool {
