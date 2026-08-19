@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
-	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -121,8 +120,9 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		return nil, CompileUnsupported, diagnostics
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseAssemble)
-	_, binding, bindingFailure, mountFailure, allocationFailure := state.newProgramBinding(source)
+	_, binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source)
 	diagnostics.Binding = bindingFailure
+	diagnostics.AllocationCatalog = bindFailure.Allocation
 	// The mount phase's verdict carries the rejecting domain's own evidence
 	// erased. Recovering it at the value schema's own failure type is this
 	// projection's job; a verdict from another axis carries no value evidence
@@ -131,7 +131,6 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 	// The axis-authority verdict names one rejection; which axis raised it is
 	// the sealed table's identity and travels here beside it.
 	diagnostics.Axis = mountFailure.Axis
-	diagnostics.AllocationCatalog = allocationFailure
 	diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageBinding
 	if bindingFailure != anadiag.ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {
 		state.release()
@@ -529,15 +528,14 @@ type committedProgramGraph struct {
 }
 
 type assembleDiagnostic struct {
-	stage      anadiag.AnalyzeDiagnosticAssembleStage
-	rule       anadiag.AnalyzeDiagnosticRule
-	seal       engine.SolveFailure
-	ordinal    uint32
-	lowering   engine.SolveFailure
-	binding    anadiag.ProgramBindingFailure
-	allocation allocationcatalog.SealFailure
-	commit     engine.SolveFailure
-	schedule   uint32
+	stage    anadiag.AnalyzeDiagnosticAssembleStage
+	rule     anadiag.AnalyzeDiagnosticRule
+	seal     engine.SolveFailure
+	ordinal  uint32
+	lowering engine.SolveFailure
+	binding  anadiag.ProgramBindingFailure
+	commit   engine.SolveFailure
+	schedule uint32
 }
 
 func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram, []composite.QuerySite, assembleDiagnostic, bool) {
@@ -663,9 +661,6 @@ func applyAssembleDiagnostic(diagnostics *anadiag.AnalyzeDiagnostics, detail ass
 	diagnostics.AssembleOrdinal = detail.ordinal
 	diagnostics.AssembleLowering = detail.lowering
 	diagnostics.Binding = detail.binding
-	if detail.allocation != 0 {
-		diagnostics.AllocationCatalog = detail.allocation
-	}
 	diagnostics.AssembleCommit = detail.commit
 	diagnostics.AssembleScheduleOrdinal = detail.schedule
 }

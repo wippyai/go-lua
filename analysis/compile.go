@@ -13,7 +13,6 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
-	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
@@ -93,29 +92,29 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 // newProgramBinding constructs the Link-local typed owners required by
 // compile. Sealed ingress rows supply the identities those owners admit;
 // domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link) (composite.LinkInputs, *composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, allocationcatalog.SealFailure) {
+func (state *compiledState) newProgramBinding(source *link.Link) (composite.LinkInputs, *composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, composite.BindFailure) {
 	if state == nil || source == nil || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	// A Shard is a cold Project coordinate. It is reissued only while Link is
 	// live, to authenticate this mount set against the Project.
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
 	for _, artifact := range state.artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
 		artifactTypes = append(artifactTypes, artifact)
 	}
 	types, typesErr := typeauthority.SealArtifactRows(state.sourceID, artifactTypes)
 	if typesErr != nil {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
 	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
 	if !sealedOK {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	staticMounts := make([]staticdomain.MountedArtifact, len(state.artifacts.mounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
@@ -125,28 +124,28 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 	// must consume while it seals its own authority.
 	for index, published := range state.artifacts.mounts {
 		if !published.valid() {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
 		artifact, have := state.artifacts.byProgram[published.programID]
 		if !have || artifact == nil || !artifact.Available() ||
 			published.snapshot.ArtifactID() != artifact.ID() ||
 			artifact.CompileKey().ProgramID() != published.programID {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
 		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: published.moduleKey, ProgramID: published.programID, NamespaceID: published.moduleKey}
 		if index >= len(sealed) || sealed[index].ModuleKey != published.moduleKey || sealed[index].Snapshot != published.snapshot {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
 		snapshot := published.snapshot
 		for rowIndex := 0; rowIndex < snapshot.StaticTypeValueCount(); rowIndex++ {
 			row, rowOK := snapshot.StaticTypeValueAt(rowIndex)
 			if !rowOK {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 			}
 			value, valueOK := staticValues.ForMountedSemantic(published.moduleKey, row.ID())
 			valueID, valueIDOK := staticValues.ID(value)
 			if !valueOK || !valueIDOK || !valueID.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 			}
 			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
 				ModuleID: published.moduleKey, SemanticID: row.ID(), ValueID: valueID,
@@ -155,7 +154,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 	}
 	staticTarget, staticTargetOK := source.Boundary().Target()
 	if !staticTargetOK {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
 	static, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{
 		LinkID:   state.sourceID,
@@ -163,7 +162,7 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 		ValueIDs: staticValueIDs,
 	}, types, staticMounts)
 	if err != nil || static == nil {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
 	// The neutral sealed artifact view is the mount phase's whole artifact
 	// input. Every axis that owns its mount seals its own Link authority from
@@ -180,13 +179,13 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 	// phase derives both itself, after every mount has sealed, and names the
 	// derivation that refused in its own verdict.
 	if mountFailure.Available() {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, allocationcatalog.SealFailureNone
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, composite.BindFailure{}
 	}
 	binding, failure := composite.BindProgram(state.receipt, inputs)
 	if failure.Available() {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromBind(failure), composite.MountFailure{}, failure.Allocation
+		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromBind(failure), composite.MountFailure{}, failure
 	}
-	return inputs, binding, anadiag.ProgramBindingFailureNone, composite.MountFailure{}, allocationcatalog.SealFailureNone
+	return inputs, binding, anadiag.ProgramBindingFailureNone, composite.MountFailure{}, composite.BindFailure{}
 }
 
 func nextCompositionStore() (identity.StoreID, bool) {
