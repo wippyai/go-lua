@@ -50,6 +50,22 @@ func TestPublishedColumnIsAddressedByItsDeclaration(t *testing.T) {
 	}
 
 	builder := snapshot.NewBuilder(schemaID, pilotStore, pilotGeneration)
+	requests, requestsOK := WriteRequests()
+	if !requestsOK {
+		t.Fatal("the sealed table issues no write requests")
+	}
+	for _, request := range requests {
+		if request.Slot >= column.Slot {
+			break
+		}
+		peer := snapshot.Axis[uint64, uint64]{SchemaID: schemaID, Slot: request.Slot}
+		if err := snapshot.PutColumn(&builder, peer, snapshot.Content[uint64, uint64]{
+			Denominator: columnDenominator(request.Slot),
+			Members:     []uint64{1},
+		}); err != nil {
+			t.Fatalf("fill engine prefix slot %d: %v", request.Slot, err)
+		}
+	}
 	if err := snapshot.PutColumn(&builder, column, snapshot.Content[uint64, uint64]{
 		Denominator: pilotDenominator,
 		Members:     []uint64{1, 2},

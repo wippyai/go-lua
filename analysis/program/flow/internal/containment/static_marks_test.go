@@ -8,6 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // buildStaticCallChain creates one Call-owned type argument with a long
@@ -22,21 +25,21 @@ func buildStaticCallChain(t *testing.T, width uint32) (static.LocalContainment, 
 		keyspace.FamilyCall:          1,
 	}
 	primitive := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
-	optionals := make([]static.Optional, width)
+	optionals := make([]statictypes.Optional, width)
 	for ordinal := uint32(1); ordinal <= width; ordinal++ {
 		inner := primitive
 		if ordinal > 1 {
 			inner = keyspace.MakeTerm(keyspace.FamilyTypeOptional, ordinal-1)
 		}
-		optionals[ordinal-1] = static.Optional{Inner: inner}
+		optionals[ordinal-1] = statictypes.Optional{Inner: inner}
 	}
 	input := static.Input{
 		Counts: counts,
-		Types: static.TypesInput{
-			Primitive: []static.Primitive{{Kind: static.PrimitiveAny}},
+		Types: statictypes.Input{
+			Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}},
 			Optional:  optionals,
 		},
-		Contracts: static.ContractsInput{Call: []static.CallContract{{
+		Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{
 			TypeArguments: []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyTypeOptional, width)},
 		}}},
 	}
@@ -181,8 +184,8 @@ func TestProveStaticMarksStorageIdentitiesAndReferenceExclusions(t *testing.T) {
 		},
 	}
 	staticInput := static.Input{
-		Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}},
-		Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}, Call: []static.CallContract{{}}},
+		Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}},
+		Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}, Call: []staticcontracts.CallContract{{}}},
 	}
 	fixture := newProofFixture(t, proofSpec{
 		counts: counts,

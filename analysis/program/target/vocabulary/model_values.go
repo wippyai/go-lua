@@ -2,6 +2,7 @@ package vocabulary
 
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/schema"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
@@ -246,6 +247,45 @@ type OutcomeSpec struct {
 	ResultAliases   []ResultAliasSpec
 }
 
+// OperationResultSpec declares one neutral relation between an operation's
+// fixed result and an existing operation input. Relation is an opaque schema
+// entry identity supplied by the owner of the behavior vocabulary. Target
+// stores and authenticates it but never interprets its category, spelling, or
+// ordinal. Outcome is the zero-based authored outcome ordinal and is resolved
+// to the sealed canonical outcome while Target seals the operation.
+//
+// A provider can therefore declare that a result classifies an input without
+// teaching Target what the class means. The runtime-kind provider uses this
+// shape for its result rows; other domains may use the same shape for a
+// different declared vocabulary.
+type OperationResultSpec struct {
+	Outcome  uint32
+	Result   uint32
+	Source   InputSource
+	Relation schema.EntryID
+}
+
+// OperationPredicateSpec declares one neutral predicate relation between an
+// operation's fixed result and an existing input subject. Relation is opaque
+// provider-issued schema identity, exactly as in OperationResultSpec. The
+// branch consumer decides whether the observed predicate is used positively
+// or negatively; Target only preserves the declared correspondence.
+type OperationPredicateSpec struct {
+	Outcome  uint32
+	Result   uint32
+	Subject  InputSource
+	Relation schema.EntryID
+}
+
+// OperationBehaviorSpec is the optional behavior descriptor attached to one
+// OperationSpec. It contains declarations only: no builtin name, runtime
+// value, domain enum, evaluator, or execution strategy crosses this boundary.
+// Empty or nil behavior is equivalent to no behavior rows.
+type OperationBehaviorSpec struct {
+	Results    []OperationResultSpec
+	Predicates []OperationPredicateSpec
+}
+
 // EffectSpec is one authored Koka effect occurrence. Each argument vector is
 // checked against Target's ABI after SpecRef resolution. RowArgs carries the
 // target operation's row formal substitution. Publication is absent unless an
@@ -359,6 +399,7 @@ type OperationSpec struct {
 	RowFormals      uint32
 	Input           ValuesSpec
 	Outcomes        []OutcomeSpec
+	Behavior        *OperationBehaviorSpec
 	Callbacks       []CallbackSpec
 	Subedges        []SubedgeSpec
 	Suspensions     []SuspensionSpec

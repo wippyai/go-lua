@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 // TestSourceAlphaRenamingPreservesProgramMeaning fixes the alpha boundary for
@@ -295,7 +295,7 @@ func assertAlphaQualifiedType(t *testing.T, left, right *program.Program) {
 	}
 	leftState, leftTargetTerm, leftRoot, leftStateOK := leftStatic.References().Get(leftRef)
 	rightState, rightTargetTerm, rightRoot, rightStateOK := rightStatic.References().Get(rightRef)
-	if !leftStateOK || !rightStateOK || leftState != rightState || leftState != static.TypeRefUnresolved || leftTargetTerm != 0 || rightTargetTerm != 0 || leftRoot == 0 || rightRoot == 0 {
+	if !leftStateOK || !rightStateOK || leftState != rightState || leftState != staticrefs.Unresolved || leftTargetTerm != 0 || rightTargetTerm != 0 || leftRoot == 0 || rightRoot == 0 {
 		t.Fatalf("qualified TypeRef states = %v/%v/%v/%v vs %v/%v/%v/%v", leftState, leftTargetTerm, leftRoot, leftStateOK, rightState, rightTargetTerm, rightRoot, rightStateOK)
 	}
 	if left.Module().Count() != 1 || right.Module().Count() != 1 {

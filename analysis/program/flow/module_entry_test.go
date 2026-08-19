@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 // These laws exercise actual Source/authored owner views and one complete
@@ -106,7 +107,7 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 	staticInput.Counts[keyspace.FamilyBody] = counts[keyspace.FamilyBody]
 	staticInput.Counts[keyspace.FamilyValues] = counts[keyspace.FamilyValues]
 	staticInput.Counts[keyspace.FamilyFunction] = counts[keyspace.FamilyFunction]
-	staticInput.Contracts.Function = []static.FunctionContract{{}}
+	staticInput.Contracts.Function = []staticcontracts.FunctionContract{{}}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {

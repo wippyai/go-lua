@@ -5,8 +5,8 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Derived causal ports deliberately do not affect this authored identity.

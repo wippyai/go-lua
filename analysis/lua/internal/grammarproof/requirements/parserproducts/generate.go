@@ -199,7 +199,7 @@ func renderFiles(e Evidence) (map[string][]byte, error) {
 func renderAssembly(e Evidence) string {
 	var out strings.Builder
 	out.WriteString(generatedHeader())
-	out.WriteString("\nfunc init() {\n\tGenerated = Evidence{\n")
+	out.WriteString("\nvar Generated = Evidence{\n")
 	fmt.Fprintf(&out, "\t\tGrammarDigest: %q,\n", e.GrammarDigest)
 	fmt.Fprintf(&out, "\t\tParserSourceDigest: %q,\n", e.ParserSourceDigest)
 	fmt.Fprintf(&out, "\t\tSchemaDigest: %q,\n", e.SchemaDigest)
@@ -209,7 +209,7 @@ func renderAssembly(e Evidence) string {
 	out.WriteString("\t\tProductLaws: generatedProductLaws(),\n\t\tHelperLaws: generatedHelperLaws(),\n")
 	out.WriteString("\t\tSequences: generatedSequences(),\n\t\tMutations: generatedMutations(),\n")
 	out.WriteString("\t\tActionTerms: generatedActionTerms(),\n\t\tCarriers: generatedCarriers(),\n\t\tRecursion: generatedRecursion(),\n")
-	out.WriteString("\t}\n}\n")
+	out.WriteString("\t}\n")
 	return out.String()
 }
 

@@ -142,16 +142,24 @@ func TestGrammarJoinRejectsUndeclaredRole(t *testing.T) {
 	value := grammarCensus(t)
 	restore := grammarDispositions
 	edited := append([]grammarEntry(nil), grammarDispositions...)
-	// Every ordinal the artifact carries is declared by the table, so the one
-	// role a disposition can name and the table cannot resolve is the invalid
-	// ordinal. Naming it must be refused rather than read as an empty set.
-	absentSlot := 21
-	if _, declared := templateAtSlot(absentSlot); declared {
-		t.Fatalf("slot %d is declared; pick a slot the table does not declare", absentSlot)
+	// Select an unused grammar-role tag from the closed role vocabulary rather
+	// than pinning a dense rule-table position. Rule insertion must not turn
+	// this negative law into a valid declaration by accident.
+	absentBit := -1
+	known := roleNone.known()
+	for bit := 1; bit < 32; bit++ {
+		candidate := grammarRoles(1) << bit
+		if known&candidate == 0 {
+			absentBit = bit
+			break
+		}
+	}
+	if absentBit < 0 {
+		t.Fatal("grammar role vocabulary has no unused tag for the negative law")
 	}
 	edited[0].Disposition = grammarRuleOwned
 	edited[0].Reason = grammarReasonInvalid
-	edited[0].Roles = grammarRoles(1) << absentSlot
+	edited[0].Roles = grammarRoles(1) << absentBit
 	grammarDispositions = edited
 	t.Cleanup(func() { grammarDispositions = restore })
 

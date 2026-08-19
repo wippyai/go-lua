@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	artifactDomain  = "program/artifact"
+	artifactDomain = "program/artifact"
 	// v21 adds the Source-owned authored debug-spelling record to the fixed
 	// quartet payload grammar. Older streams are intentionally rejected; the
 	// artifact codec has no compatibility representation.

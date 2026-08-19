@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"testing"
 
 	typedomain "github.com/wippyai/go-lua/domain/type"
@@ -27,23 +28,23 @@ return identity(1)
 		t.Fatalf("compile = %v plan=%t", status, plan != nil)
 	}
 	t.Cleanup(func() { plan.Close() })
-	offResult, offReport, offStatus, _ := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), DiagnosticPolicy{})
+	offResult, offReport, offStatus, _ := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), anadiag.DiagnosticPolicy{})
 	if offStatus != AnalyzeComplete || offResult == nil || offReport != nil {
 		t.Fatalf("policy-off solve = %v result=%t report=%t", offStatus, offResult != nil, offReport != nil)
 	}
-	policy := DiagnosticPolicy{Enabled: []DiagnosticCode{typedomain.CallArgumentCode}}
+	policy := anadiag.DiagnosticPolicy{Enabled: []anadiag.DiagnosticCode{typedomain.CallArgumentCode}}
 	result, report, solveStatus, diagnostics := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), policy)
 	if solveStatus != AnalyzeComplete || result == nil || report == nil || result.ContentID() != offResult.ContentID() {
 		t.Fatalf("policy solve = %v result=%t report=%t identity=%v/%v diagnostics=%+v", solveStatus, result != nil, report != nil, result.ContentID(), offResult.ContentID(), diagnostics)
 	}
-	if report.CollectionFailure() != DiagnosticCollectionOK || report.FindingCount() != 1 {
+	if report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 1 {
 		t.Fatalf("call-argument report failure=%d findings=%d, want OK/1", report.CollectionFailure(), report.FindingCount())
 	}
 	finding, findingOK := report.FindingAt(0)
 	location, locationOK := finding.Location()
 	line, column := location.Start()
 	if !findingOK || !locationOK || finding.Code() != typedomain.CallArgumentCode ||
-		finding.Severity() != FindingSeverityError || location.File() != "analysis.lua" ||
+		finding.Severity() != anadiag.FindingSeverityError || location.File() != "analysis.lua" ||
 		line != 4 || column == 0 {
 		t.Fatalf("call-argument finding is not the selected identity(1) site: finding=%+v location=%+v", finding, location)
 	}
@@ -68,10 +69,10 @@ return identity(1)
 	result, report, solveStatus, diagnostics := plan.SolveWithReport(
 		context.Background(),
 		fixtureSolveOptions(),
-		DiagnosticPolicy{Enabled: []DiagnosticCode{typedomain.CallArgumentCode}},
+		anadiag.DiagnosticPolicy{Enabled: []anadiag.DiagnosticCode{typedomain.CallArgumentCode}},
 	)
 	if solveStatus != AnalyzeComplete || result == nil || report == nil ||
-		report.CollectionFailure() != DiagnosticCollectionOK || report.FindingCount() != 0 {
+		report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 0 {
 		t.Fatalf("conforming call-argument report = %v result=%t report=%t failure=%d findings=%d diagnostics=%+v",
 			solveStatus, result != nil, report != nil, report.CollectionFailure(), report.FindingCount(), diagnostics)
 	}

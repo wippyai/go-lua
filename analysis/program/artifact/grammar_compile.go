@@ -6,6 +6,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 const (
@@ -29,7 +30,7 @@ const (
 	// SharesFirstValueCell relation. Keep this generic occurrence law separate
 	// from Pack's row law: changing Heap rows must invalidate only the
 	// reusable occurrence/artifact identity contract.
-	occurrenceLawVersion = uint64(11)
+	occurrenceLawVersion = uint64(12)
 	// v3 records the closed DiagnosticObservation union, including detached
 	// unresolved-reference proof and exact branch payload masks.
 	diagnosticLawVersion = uint64(5)
@@ -190,7 +191,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	}
 	transaction := compiler{
 		input: input, key: key, counts: counts, issuance: issuance, points: make(map[identity.ContentID]struct{}), pointGeometry: make(map[identity.ContentID]Point),
-		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), routeOccurrences: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
+		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), routeOccurrences: make(map[identity.ContentID]identity.ContentID), predecessorStages: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
 		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]EnvironmentEdge), environmentRouteDuplicates: make(map[identity.ContentID]struct{}),
 		diagnosticObservationByID: make(map[identity.ContentID]int),
@@ -267,6 +268,29 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 
 // Compile compiles one sealed Program under the supplied cold grammar and
 // reports whether the immutable artifact was published.
+const compileSizeHintCap = 1 << 20
+
+func compileSizeHint(counts denominator.CountRows) int {
+	if !counts.Available() {
+		return 0
+	}
+	var total uint64
+	for index := 0; index < counts.Count(); index++ {
+		row, ok := counts.At(index)
+		if !ok {
+			return 0
+		}
+		if row.Count() > uint64(^uint(0))-total {
+			return compileSizeHintCap
+		}
+		total += row.Count()
+	}
+	if total > compileSizeHintCap {
+		return compileSizeHintCap
+	}
+	return int(total)
+}
+
 func Compile(input *program.Program, grammar GrammarIdentity, issuance IssuanceDirectory) (*Artifact, bool) {
 	artifact, failure := CompileDetailed(input, grammar, issuance)
 	return artifact, artifact != nil && !failure.Available()

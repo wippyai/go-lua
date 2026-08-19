@@ -15,7 +15,7 @@ import (
 // ValueSummaryObservation to this path, and cannot substitute a handle that
 // this attachment's identity did not authorize.
 type DirectAllocationMembershipAttachment struct {
-	observation engine.ReceiptObservation[valuedomain.ValueSummaryObservation]
+	observation engine.ProgramObservation[valuedomain.ValueSummaryObservation]
 	id          identity.ContentID
 	mount       identity.ContentID
 	point       identity.ContentID
@@ -33,7 +33,7 @@ func directAllocationMembershipAttachmentID(mount, point, call identity.ContentI
 
 func (attachment DirectAllocationMembershipAttachment) valid() bool {
 	want, ok := directAllocationMembershipAttachmentID(attachment.mount, attachment.point, attachment.call, attachment.width)
-	return ok && attachment.id == want && attachment.observation.MatchesID(attachment.id)
+	return ok && attachment.id == want && attachment.observation.SealedAs(attachment.id)
 }
 
 func (attachment DirectAllocationMembershipAttachment) Valid() bool { return attachment.valid() }
@@ -66,8 +66,8 @@ func AttachSelectedDirectAllocationMembership(
 	if !idOK {
 		return DirectAllocationMembershipAttachment{}, false
 	}
-	observation, failure := engine.AttachMountedSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, call)
-	if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
+	observation, failure := engine.AttachMountedSummary[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, call)
+	if failure.Available() || !observation.Available() {
 		return DirectAllocationMembershipAttachment{}, false
 	}
 	attachment := DirectAllocationMembershipAttachment{observation: observation, id: id, mount: mount, point: point, call: call, width: width}

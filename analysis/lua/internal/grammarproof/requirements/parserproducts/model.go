@@ -299,5 +299,3 @@ type Evidence struct {
 
 func (e Evidence) FieldCount() int   { return len(e.Fields) }
 func (e Evidence) ProductCount() int { return len(e.Products) }
-
-var Generated Evidence

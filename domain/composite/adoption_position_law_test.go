@@ -56,13 +56,14 @@ func rulePositionPins() []positionPin {
 		{11, "effect-opaque"},
 		{12, "effect-body"},
 		{13, "call-activation"},
-		{14, "value-bootstrap"},
-		{15, "heap-bootstrap"},
-		{16, "value-transfer"},
-		{17, "value-binary-arithmetic"},
-		{18, "value-binary-equality"},
-		{19, "value-binary-order"},
-		{20, "value-presence-refinement"},
+		{14, "value-runtime-kind-call"},
+		{15, "value-bootstrap"},
+		{16, "heap-bootstrap"},
+		{17, "value-transfer"},
+		{18, "value-binary-arithmetic"},
+		{19, "value-binary-equality"},
+		{20, "value-binary-order"},
+		{21, "value-presence-refinement"},
 	}
 }
 

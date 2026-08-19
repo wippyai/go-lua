@@ -137,6 +137,14 @@ const (
 	// occurrence is placed at. Its ordinals are the artifact's own stage
 	// numbering.
 	CategoryIssuanceStage
+	// CategoryIssuanceRequirement is the vocabulary of declared operand
+	// admissibility: the structural shape a subscribing rule consumes at one
+	// issuance. A placement pass admits an occurrence row only when the row
+	// carries the shape the subscription names, so the cold placement set and
+	// the owner's operand seal are one denominator rather than two that a
+	// construction pass has to reconcile. Its ordinals are the artifact's own
+	// requirement numbering.
+	CategoryIssuanceRequirement
 	// CategorySemanticRole is the vocabulary of global semantic roles: the
 	// identities the engine binds factors, rules, queries, activations, and
 	// contract payloads under. Its members are named by reference from every

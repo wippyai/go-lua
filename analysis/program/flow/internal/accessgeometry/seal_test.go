@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 type accessGeometryFixture struct {
@@ -44,13 +45,13 @@ func openAccessGeometryFixture(t *testing.T) *accessGeometryFixture {
 }
 
 func openAccessGeometryFixtureNamed(t *testing.T, name string) *accessGeometryFixture {
-	return openAccessGeometryFixtureWithStaticTypeOfs(t, name, []static.TypeOf{{
+	return openAccessGeometryFixtureWithStaticTypeOfs(t, name, []staticoperators.TypeOf{{
 		Scope:   accessTerm(keyspace.FamilyCell, 1),
 		Operand: accessTerm(keyspace.FamilyRead, 2),
 	}})
 }
 
-func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeOfs []static.TypeOf) *accessGeometryFixture {
+func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeOfs []staticoperators.TypeOf) *accessGeometryFixture {
 	t.Helper()
 	counts := accessGeometryCounts()
 	counts[keyspace.FamilyTypeOf] = uint32(len(typeOfs))
@@ -582,7 +583,7 @@ func TestAccessGeometrySealRejectsUnavailableForeignAndMalformedOwners(t *testin
 	if _, err := Seal(fixture.sourceView, fixture.flowView, nil, fixture.bodies, fixture.bindings, fixture.staticView, fixture.moduleView); err == nil {
 		t.Fatal("Seal accepted a nil candidate provenance fence")
 	}
-	foreign := openAccessGeometryFixtureWithStaticTypeOfs(t, "foreign-access-geometry.lua", []static.TypeOf{
+	foreign := openAccessGeometryFixtureWithStaticTypeOfs(t, "foreign-access-geometry.lua", []staticoperators.TypeOf{
 		{Scope: accessTerm(keyspace.FamilyCell, 1), Operand: accessTerm(keyspace.FamilyRead, 2)},
 		{Scope: accessTerm(keyspace.FamilyCell, 1), Operand: accessTerm(keyspace.FamilyRead, 2)},
 	})

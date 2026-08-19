@@ -17,3 +17,22 @@ func TestArtifactDigestUsesFramedFieldKinds(t *testing.T) {
 		t.Fatal("digest admitted an unknown field kind")
 	}
 }
+
+func TestSequentialArtifactDigestsMatchIndependentWriters(t *testing.T) {
+	zero := identity.ContentID{}
+	wantLeft := digest("artifact/test/digest", 1, bytesField(zero), uintField(1))
+	wantRight := digest("artifact/test/digest", 1, bytesField(zero), uintField(2))
+	if !wantLeft.Available() || !wantRight.Available() || wantLeft == wantRight {
+		t.Fatal("independent digests were not distinct")
+	}
+	for index := 0; index < 8; index++ {
+		gotLeft := digest("artifact/test/digest", 1, bytesField(zero), uintField(1))
+		gotRight := digest("artifact/test/digest", 1, bytesField(zero), uintField(2))
+		if gotLeft != wantLeft {
+			t.Fatalf("left digest %d diverged from the independent writer", index)
+		}
+		if gotRight != wantRight {
+			t.Fatalf("right digest %d diverged from the independent writer", index)
+		}
+	}
+}

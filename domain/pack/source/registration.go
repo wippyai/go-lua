@@ -28,36 +28,39 @@ type ruleAuthorities interface {
 // RuleEntry is this package's pack-source rule declaration. P and A are the
 // composition's own principal and authority records, admitted by the need
 // interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
-	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
+func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "pack-source",
 		Writes: "pack",
 		Owner:  "pack",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/values", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
-			{Occurrence: "occurrence/call", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/values", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/call", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/pack/source",
 		Roles:    []schema.Key{"semantic/operand/pack/source", "semantic/evidence/pack/source"},
-		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics, ok := context.Roles.Rule("pack/source")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.PackPrincipal())
-		},
-		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterMountedSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-			return BindHot(context.Fragment, context.Authorities.PackAuthority(), context.Authorities.PackSchema())
-		},
-		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
-			return context.Rule.SealOccurrenceReceipts()
-		},
-
 	}
+}
+
+func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
+	semantics, ok := context.Roles.Rule("pack/source")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.PackPrincipal())
+}
+
+func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
+}
+
+func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
+	return BindHot(context.Fragment, context.Authorities.PackAuthority(), context.Authorities.PackSchema())
+}
+
+func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
+	return context.Rule.SealOccurrenceReceipts()
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

@@ -11,22 +11,6 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// StorageCellIDAt returns the former storage Cell ContextID in authored Cell
-// order. The Cell term remains available from Flow.Storage.Cells().At.
-func (program *Program) StorageCellIDAt(index int) (identity.ContentID, bool) {
-	if !program.Available() || index < 0 {
-		return identity.ContentID{}, false
-	}
-	term, ok := program.Flow().Authored().Storage().Cells().At(index)
-	if !ok || term == 0 {
-		return identity.ContentID{}, false
-	}
-	id := programRoleID("program/transformer/storage-cell", program.ContentID(), func(writer *framing.Writer) bool {
-		return writeProgramTerm(writer, term)
-	})
-	return id, id.Available()
-}
-
 // StorageReadIDAt returns (read identity, exact evaluation span identity,
 // authored Read term). Dead or malformed rows remain in the denominator and
 // fail closed rather than being compacted into a new one.

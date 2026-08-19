@@ -55,6 +55,18 @@ const (
 	// result, so later Reads observe the reusable branch fact.
 	OccurrenceBinaryPresenceRefinement
 	OccurrenceReturnBoundary
+	// OccurrenceFormalEntry is one callable formal's unconditional entry
+	// contribution. Program owns only its storage identity and entry placement;
+	// the consuming domain chooses the abstract value written there.
+	// It is appended to preserve every existing occurrence ordinal.
+	OccurrenceFormalEntry
+	// OccurrenceOperationPredicateRefinement is one exact guarded arm of an
+	// operation-result equality.  Program retains the authenticated operation
+	// occurrence, the subject and comparison operands, and the parent-issued
+	// route certificate; the consuming domain interprets the opaque operation
+	// predicate relation.
+	// It is appended to preserve every existing occurrence ordinal.
+	OccurrenceOperationPredicateRefinement
 )
 
 // SpanResultOccurrence reports whether the family's result identity is the
@@ -64,7 +76,7 @@ func SpanResultOccurrence(kind OccurrenceKind) bool {
 }
 
 func (kind OccurrenceKind) valid() bool {
-	return kind >= OccurrencePointAttachment && kind <= OccurrenceReturnBoundary
+	return kind >= OccurrencePointAttachment && kind <= OccurrenceOperationPredicateRefinement
 }
 
 // OccurrenceRow is one immutable generic operand record. Body and points are
@@ -137,12 +149,19 @@ func (row OccurrenceRow) Available() bool {
 	}
 	if row.kind == OccurrenceBinaryOrder {
 		op := flowkind.BinaryOp(row.code)
-		if !binaryOrderOperator(op) || len(row.inputs) != 2 {
+		if !flowkind.IsBinaryOrder(op) || len(row.inputs) != 2 {
 			return false
 		}
 	}
 	if row.kind == OccurrenceBinaryPresenceRefinement &&
 		(!row.body.Available() || len(row.points) != 1 || len(row.inputs) != 4 || row.code > 1) {
+		return false
+	}
+	if row.kind == OccurrenceOperationPredicateRefinement &&
+		(!row.body.Available() || len(row.points) != 1 || len(row.inputs) != 4 ||
+			row.code&^(operationPredicateCodeOpMask|operationPredicateCodeTruth) != 0 ||
+			flowkind.BinaryOp(row.code&operationPredicateCodeOpMask) != flowkind.BinaryEqual &&
+				flowkind.BinaryOp(row.code&operationPredicateCodeOpMask) != flowkind.BinaryNotEqual) {
 		return false
 	}
 	if row.kind == OccurrenceStorageRead && len(row.inputs) != 2 {
@@ -262,10 +281,6 @@ func (row OccurrenceRow) BinaryOrder() (left, right identity.ContentID, op flowk
 	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
 }
 
-func binaryOrderOperator(op flowkind.BinaryOp) bool {
-	return op >= flowkind.BinaryLess && op <= flowkind.BinaryGreaterEqual
-}
-
 // BinaryComparison returns the optional exact Branch and two causal body
 // identities retained beside a Binary equality occurrence.
 func (row OccurrenceRow) BinaryComparison() (branch, whenTrue, whenFalse identity.ContentID, invert bool, ok bool) {
@@ -285,6 +300,23 @@ func (row OccurrenceRow) BinaryPresenceRefinement() (source, target, operand, ro
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false, false
 	}
 	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], row.code == 1, true
+}
+
+const (
+	operationPredicateCodeOpMask = uint64(0xff)
+	operationPredicateCodeTruth  = uint64(1 << 8)
+)
+
+// OperationPredicateRefinement returns one neutral guarded operation
+// predicate proof. Source is the existing operation occurrence, Target is
+// the subject Value semantic identity, Operand is the comparison Value
+// identity, and Route is the exact parent-issued environment edge. Truth is
+// the edge polarity; the equality operator is retained in the closed code.
+func (row OccurrenceRow) OperationPredicateRefinement() (source, target, operand, route identity.ContentID, op flowkind.BinaryOp, truth bool, ok bool) {
+	if !row.Available() || row.kind != OccurrenceOperationPredicateRefinement || len(row.inputs) != 4 {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, false, false
+	}
+	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], flowkind.BinaryOp(row.code & operationPredicateCodeOpMask), row.code&operationPredicateCodeTruth != 0, true
 }
 
 // StorageRead returns the existing Cell and exact expression Span identities

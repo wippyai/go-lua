@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 func TestSealRejectsEqualCountForeignOwnerIdentities(t *testing.T) {
@@ -23,7 +24,7 @@ func TestSealRejectsEqualCountForeignOwnerIdentities(t *testing.T) {
 		counts: counts,
 		rows:   [][]keyspace.Term{{calls[0], calls[1]}},
 		ints:   []source.IntegerLiteral{{Owner: body, Value: 7}, {Owner: body, Value: 8}},
-		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}, {}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}, {}}}},
 		flow: authored.Input{
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body}, {Owner: body}}},
 			Calls:  []authored.Call{{Owner: body, Callee: integers[0], Actuals: values[0]}, {Owner: body, Callee: integers[1], Actuals: values[1]}},

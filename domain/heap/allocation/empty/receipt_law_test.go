@@ -2,6 +2,7 @@ package empty_test
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -147,7 +148,11 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 	}
 	mounts := emptyArtifactMounts(t, linked)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("empty schemas heap=%v value=%v", heapFailure, valueFailure)
 	}
@@ -181,8 +186,8 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}
 		var heapOK, valueOK bool
-		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		mounts.value[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
+		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !heapOK || !valueOK {
 			t.Fatal("empty artifact mount receipt")
 		}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis"
 )
 
 var corpusInlineDiagnosticExpectation = regexp.MustCompile(`--\s*expect-(error|warning)(?::\s*(.+?))?\s*$`)
@@ -688,17 +687,17 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 			if len(manifest.Check.Diagnostics) != 0 {
 				inventory.structuredManifests++
 			}
-			for ordinal, diagnostic := range manifest.Check.Diagnostics {
-				if diagnostic.Code == "" {
+			for ordinal, row := range manifest.Check.Diagnostics {
+				if row.Code == "" {
 					return fmt.Errorf("%s: structured diagnostic has no code", path)
 				}
 				inventory.structuredFindings++
-				inventory.structuredCodes[diagnostic.Code]++
+				inventory.structuredCodes[row.Code]++
 				ref := corpusStructuredDiagnosticRef{project: project.name, ordinal: ordinal}
-				catalog.structuredByCode[diagnostic.Code] = append(catalog.structuredByCode[diagnostic.Code], ref)
-				key := corpusStructuredDiagnosticLocationKey{project: project.name, code: diagnostic.Code, file: diagnostic.File, line: diagnostic.Line, severity: diagnostic.Severity}
+				catalog.structuredByCode[row.Code] = append(catalog.structuredByCode[row.Code], ref)
+				key := corpusStructuredDiagnosticLocationKey{project: project.name, code: row.Code, file: row.File, line: row.Line, severity: row.Severity}
 				catalog.structuredByLocation[key] = append(catalog.structuredByLocation[key], ref)
-				switch diagnostic.Severity {
+				switch row.Severity {
 				case "error":
 					inventory.structuredErrors++
 				case "warning":
@@ -706,7 +705,7 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 				case "hint":
 					inventory.structuredHints++
 				default:
-					return fmt.Errorf("%s: structured diagnostic %q has invalid severity %q", path, diagnostic.Code, diagnostic.Severity)
+					return fmt.Errorf("%s: structured diagnostic %q has invalid severity %q", path, row.Code, row.Severity)
 				}
 			}
 			for _, rule := range manifest.Check.DiagnosticRules {
@@ -911,18 +910,18 @@ func validateCorpusDiagnosticManifest(manifest *corpusDiagnosticManifest) error 
 			return fmt.Errorf("diagnostic_rules duplicates code %q", rule.Code)
 		}
 		seenRules[rule.Code] = struct{}{}
-		if rule.Severity != "" && corpusDiagnosticSeverity(rule.Severity) == analysis.FindingSeverityInvalid {
+		if rule.Severity != "" && corpusDiagnosticSeverity(rule.Severity) == anadiag.FindingSeverityInvalid {
 			return fmt.Errorf("diagnostic_rules[%d] has invalid severity %q", index, rule.Severity)
 		}
 	}
-	for index, diagnostic := range manifest.Check.Diagnostics {
-		if strings.TrimSpace(diagnostic.File) == "" || diagnostic.Line <= 0 {
+	for index, row := range manifest.Check.Diagnostics {
+		if strings.TrimSpace(row.File) == "" || row.Line <= 0 {
 			return fmt.Errorf("diagnostics[%d] must declare file and positive line", index)
 		}
-		if strings.TrimSpace(diagnostic.Code) == "" || corpusDiagnosticSeverity(diagnostic.Severity) == analysis.FindingSeverityInvalid {
+		if strings.TrimSpace(row.Code) == "" || corpusDiagnosticSeverity(row.Severity) == anadiag.FindingSeverityInvalid {
 			return fmt.Errorf("diagnostics[%d] must declare code and valid severity", index)
 		}
-		if diagnostic.Column < 0 || diagnostic.MinEvidence < 0 || diagnostic.MinLabels < 0 {
+		if row.Column < 0 || row.MinEvidence < 0 || row.MinLabels < 0 {
 			return fmt.Errorf("diagnostics[%d] has a negative location or minimum", index)
 		}
 		contains := []struct {
@@ -930,33 +929,33 @@ func validateCorpusDiagnosticManifest(manifest *corpusDiagnosticManifest) error 
 			values   []string
 			required bool
 		}{
-			{"message_contains", diagnostic.MessageContains, true},
-			{"evidence_contains", diagnostic.EvidenceContains, !diagnostic.AllowEmptyEvidence && len(diagnostic.Evidence) == 0},
-			{"render_contains", diagnostic.RenderContains, true},
-			{"render_ordered_contains", diagnostic.RenderOrderedContains, false},
-			{"render_not_contains", diagnostic.RenderNotContains, false},
-			{"help_contains", diagnostic.HelpContains, true},
-			{"label_contains", diagnostic.LabelContains, len(diagnostic.Labels) == 0},
+			{"message_contains", row.MessageContains, true},
+			{"evidence_contains", row.EvidenceContains, !row.AllowEmptyEvidence && len(row.Evidence) == 0},
+			{"render_contains", row.RenderContains, true},
+			{"render_ordered_contains", row.RenderOrderedContains, false},
+			{"render_not_contains", row.RenderNotContains, false},
+			{"help_contains", row.HelpContains, true},
+			{"label_contains", row.LabelContains, len(row.Labels) == 0},
 		}
 		for _, field := range contains {
 			if err := validateCorpusContainsRequired(field.name, field.values, field.required); err != nil {
 				return fmt.Errorf("diagnostics[%d]: %w", index, err)
 			}
 		}
-		if diagnostic.Evidence != nil && len(diagnostic.Evidence) == 0 || diagnostic.Labels != nil && len(diagnostic.Labels) == 0 {
+		if row.Evidence != nil && len(row.Evidence) == 0 || row.Labels != nil && len(row.Labels) == 0 {
 			return fmt.Errorf("diagnostics[%d] declares an empty evidence or labels list", index)
 		}
-		for evidenceIndex, evidence := range diagnostic.Evidence {
+		for evidenceIndex, evidence := range row.Evidence {
 			if err := validateCorpusDiagnosticEvidence(evidence); err != nil {
 				return fmt.Errorf("diagnostics[%d].evidence[%d]: %w", index, evidenceIndex, err)
 			}
 		}
-		for labelIndex, label := range diagnostic.Labels {
+		for labelIndex, label := range row.Labels {
 			if err := validateCorpusDiagnosticLabel(label); err != nil {
 				return fmt.Errorf("diagnostics[%d].labels[%d]: %w", index, labelIndex, err)
 			}
 		}
-		if !diagnostic.AllowEmptyEvidence && diagnostic.MinEvidence <= 0 && len(diagnostic.Evidence) == 0 {
+		if !row.AllowEmptyEvidence && row.MinEvidence <= 0 && len(row.Evidence) == 0 {
 			return fmt.Errorf("diagnostics[%d].min_evidence must be positive unless allow_empty_evidence is true", index)
 		}
 	}

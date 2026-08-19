@@ -108,15 +108,6 @@ func (span Span) Entry() (flow.Site, bool) {
 	return span.entry, true
 }
 
-// Authored is retained only for the construction path that still needs the
-// authored coordinate while its artifact column is assembled.
-func (span Span) Authored() (keyspace.Term, bool) {
-	if !span.Available() {
-		return 0, false
-	}
-	return span.authored, true
-}
-
 func (span Span) Finish() (flow.Site, bool) {
 	if !span.Available() {
 		return flow.Site{}, false

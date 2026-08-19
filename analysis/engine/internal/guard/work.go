@@ -20,17 +20,23 @@ type Work struct {
 	// sealed operands, but their entries are cleared at every terminal outcome;
 	// retaining them across Seal would pin all prior published pages.
 	unique     map[nodeFingerprint][]Guard
-	not        map[Guard]Guard
+	not        map[nodeKey]Guard
 	applyCache map[applyKey]Guard
 	restrict   map[restrictKey]Guard
 	exists     map[existsKey]Guard
-	hashes     map[Guard]uint64
+	hashes     map[nodeKey]uint64
 
 	// Per-transaction traversal scratch. It never survives Seal or Discard.
 	compareStack []comparePair
-	compareSeen  map[comparePair]uint64
+	compareSeen  map[compareKey]uint64
 	satStack     []satisfiablePair
-	satSeen      map[satisfiablePair]uint64
+	satSeen      map[satisfiableKey]uint64
+	foldStack    []foldFrame
+	foldItems    []foldItem
+	foldSeen     map[nodeKey]struct{}
+	foldBusy     bool
+	notStack     []unaryFrame
+	applyStack   []applyFrame
 	hashStack    []hashFrame
 	readEpoch    uint64
 }
@@ -51,6 +57,27 @@ type nodeFingerprint struct {
 	high uint64
 }
 
+// nodeKey is the private physical identity of one already-issued BDD node.
+// A page is owned by exactly one Work transaction and is never reused; its
+// address therefore distinguishes Work generations and Managers without
+// re-hashing the full Guard wrapper. Terminals use the Manager's embedded
+// terminalKeys page, so they remain distinct across Managers as well.
+//
+// This is deliberately not a semantic identity and is never exposed outside
+// guard. It is valid only for exact Work-local memo/seen tables.
+type nodeKey struct {
+	owner *page
+	slot  uint32
+}
+
+func keyOf(g Guard) nodeKey {
+	owner := g.page
+	if owner == nil && g.manager != nil {
+		owner = &g.manager.terminalKeys
+	}
+	return nodeKey{owner: owner, slot: g.slot}
+}
+
 type hashFrame struct {
 	guard Guard
 	phase uint8
@@ -65,18 +92,18 @@ const (
 
 type applyKey struct {
 	operation operation
-	left      Guard
-	right     Guard
+	left      nodeKey
+	right     nodeKey
 }
 
 type restrictKey struct {
-	guard Guard
+	guard nodeKey
 	rank  uint64
 	value bool
 }
 
 type existsKey struct {
-	guard Guard
+	guard nodeKey
 	rank  uint64
 }
 
@@ -222,13 +249,18 @@ func (w *Work) resetTransaction() {
 		return
 	}
 	w.checkpoint = nil
+	w.clearFoldScratch()
 	clear(w.compareSeen)
 	clear(w.satSeen)
 	clear(w.compareStack)
 	clear(w.satStack)
+	clear(w.notStack)
+	clear(w.applyStack)
 	clear(w.hashStack)
 	w.compareStack = w.compareStack[:0]
 	w.satStack = w.satStack[:0]
+	w.notStack = w.notStack[:0]
+	w.applyStack = w.applyStack[:0]
 	w.hashStack = w.hashStack[:0]
 	w.pages = nil
 	w.current = nil
@@ -279,7 +311,7 @@ func (w *Work) makeNode(rank uint64, low, high Guard) Guard {
 		w.unique = make(map[nodeFingerprint][]Guard)
 	}
 	if w.hashes == nil {
-		w.hashes = make(map[Guard]uint64)
+		w.hashes = make(map[nodeKey]uint64)
 	}
 	key := nodeFingerprint{rank: rank, low: w.fingerprint(low), high: w.fingerprint(high)}
 	for _, candidate := range w.unique[key] {
@@ -295,8 +327,30 @@ func (w *Work) makeNode(rank uint64, low, high Guard) Guard {
 	guard := Guard{manager: w.manager, page: w.current, slot: slot}
 	w.current.nodes = append(w.current.nodes, node{rank: rank, low: low, high: high})
 	w.unique[key] = append(w.unique[key], guard)
-	w.hashes[guard] = mixFingerprint(mixFingerprint(mixFingerprint(0x517cc1b727220a95, rank), key.low), key.high)
+	w.hashes[keyOf(guard)] = mixFingerprint(mixFingerprint(mixFingerprint(0x517cc1b727220a95, rank), key.low), key.high)
 	return guard
+}
+
+// nodeOrExisting retains an exact source operand when a transformation has
+// reconstructed its node geometry unchanged.  The operand check is
+// deliberately stricter than Equivalent: a matching rank is insufficient
+// unless both successor handles are the exact ones held by the source node.
+// This is owner-local and does not consult Manager state or a prior
+// transaction's interner; makeNode remains the canonical fallback.
+func (w *Work) nodeOrExisting(rank uint64, low, high, first, second Guard) Guard {
+	if first.manager == w.manager && !isTerminal(first) && w.owns(first) {
+		n := w.node(first)
+		if n.rank == rank && n.low == low && n.high == high {
+			return first
+		}
+	}
+	if second.manager == w.manager && !isTerminal(second) && w.owns(second) {
+		n := w.node(second)
+		if n.rank == rank && n.low == low && n.high == high {
+			return second
+		}
+	}
+	return w.makeNode(rank, low, high)
 }
 
 // Literal constructs the positive literal only when atom belongs to the
@@ -361,9 +415,9 @@ func (w *Work) Close() {
 // equality: makeNode always follows it with exact iterative comparison.
 func (w *Work) fingerprint(root Guard) uint64 {
 	if w.hashes == nil {
-		w.hashes = make(map[Guard]uint64)
+		w.hashes = make(map[nodeKey]uint64)
 	}
-	if value, exists := w.hashes[root]; exists {
+	if value, exists := w.hashes[keyOf(root)]; exists {
 		return value
 	}
 	if isTerminal(root) {
@@ -371,13 +425,13 @@ func (w *Work) fingerprint(root Guard) uint64 {
 		if terminalValue(root) {
 			value = 0xc2b2ae3d27d4eb4f
 		}
-		w.hashes[root] = value
+		w.hashes[keyOf(root)] = value
 		return value
 	}
 	w.hashStack = append(w.hashStack[:0], hashFrame{guard: root})
 	for len(w.hashStack) != 0 {
 		current := &w.hashStack[len(w.hashStack)-1]
-		if _, exists := w.hashes[current.guard]; exists {
+		if _, exists := w.hashes[keyOf(current.guard)]; exists {
 			w.hashStack = w.hashStack[:len(w.hashStack)-1]
 			continue
 		}
@@ -386,7 +440,7 @@ func (w *Work) fingerprint(root Guard) uint64 {
 			if terminalValue(current.guard) {
 				value = 0xc2b2ae3d27d4eb4f
 			}
-			w.hashes[current.guard] = value
+			w.hashes[keyOf(current.guard)] = value
 			w.hashStack = w.hashStack[:len(w.hashStack)-1]
 			continue
 		}
@@ -394,22 +448,22 @@ func (w *Work) fingerprint(root Guard) uint64 {
 		switch current.phase {
 		case 0:
 			current.phase = 1
-			if _, exists := w.hashes[n.low]; !exists {
+			if _, exists := w.hashes[keyOf(n.low)]; !exists {
 				w.hashStack = append(w.hashStack, hashFrame{guard: n.low})
 			}
 		case 1:
 			current.phase = 2
-			if _, exists := w.hashes[n.high]; !exists {
+			if _, exists := w.hashes[keyOf(n.high)]; !exists {
 				w.hashStack = append(w.hashStack, hashFrame{guard: n.high})
 			}
 		default:
-			low, high := w.hashes[n.low], w.hashes[n.high]
+			low, high := w.hashes[keyOf(n.low)], w.hashes[keyOf(n.high)]
 			value := mixFingerprint(mixFingerprint(mixFingerprint(0x517cc1b727220a95, n.rank), low), high)
-			w.hashes[current.guard] = value
+			w.hashes[keyOf(current.guard)] = value
 			w.hashStack = w.hashStack[:len(w.hashStack)-1]
 		}
 	}
-	return w.hashes[root]
+	return w.hashes[keyOf(root)]
 }
 
 func mixFingerprint(value, next uint64) uint64 {

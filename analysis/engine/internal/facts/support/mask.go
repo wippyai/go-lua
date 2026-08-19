@@ -8,9 +8,13 @@ import "github.com/wippyai/go-lua/analysis/engine/internal/guard"
 // Mask is one exact Boolean region over a sealed guard manager.  It says
 // where a fact is defined, never what terminal the fact carries.
 type Mask struct {
-	manager *guard.Manager
-	root    guard.Guard
+	root guard.Guard
 }
+
+// owner follows the Guard's issued owner instead of duplicating that pointer
+// in every Mask value. Mask is copied widely through Work-local tuples; the
+// duplicate field made those exact physical keys larger than necessary.
+func (mask Mask) owner() *guard.Manager { return mask.root.Manager() }
 
 // Split is one exact left/right three-region decomposition.  It belongs beside
 // Mask because every consumer—carrier and typed semantic plane alike—must use
@@ -31,9 +35,9 @@ type Split struct {
 // six Boolean relations at every semantic merge.
 func (split Split) Valid(manager *guard.Manager) bool {
 	return split.sealed && manager != nil &&
-		split.left.manager == manager && split.right.manager == manager &&
-		split.leftOnly.manager == manager && split.rightOnly.manager == manager &&
-		split.overlap.manager == manager && split.union.manager == manager &&
+		split.left.owner() == manager && split.right.owner() == manager &&
+		split.leftOnly.owner() == manager && split.rightOnly.owner() == manager &&
+		split.overlap.owner() == manager && split.union.owner() == manager &&
 		split.left.Valid() && split.right.Valid() && split.leftOnly.Valid() &&
 		split.rightOnly.Valid() && split.overlap.Valid() && split.union.Valid()
 }
@@ -78,7 +82,7 @@ func FromGuard(manager *guard.Manager, region guard.Guard) (Mask, bool) {
 	if manager == nil || !manager.Valid(region) {
 		return Mask{}, false
 	}
-	return Mask{manager: manager, root: region}, true
+	return Mask{root: region}, true
 }
 
 // New opens one exact BDD construction scope for manager.
@@ -169,7 +173,7 @@ func (work *Work) True() Mask {
 	if !work.live() || !work.markActive() {
 		return Mask{}
 	}
-	return Mask{manager: work.manager, root: work.work.True()}
+	return Mask{root: work.work.True()}
 }
 
 // False returns the empty candidate region.
@@ -177,7 +181,7 @@ func (work *Work) False() Mask {
 	if !work.live() || !work.markActive() {
 		return Mask{}
 	}
-	return Mask{manager: work.manager, root: work.work.False()}
+	return Mask{root: work.work.False()}
 }
 
 // Literal returns atom or its exact complement.
@@ -195,7 +199,7 @@ func (work *Work) Literal(atom guard.Atom, value bool) (Mask, bool) {
 	if !work.live() {
 		return Mask{}, false
 	}
-	return Mask{manager: work.manager, root: root}, true
+	return Mask{root: root}, true
 }
 
 // Conjoin adds one literal to an arbitrary candidate or sealed region.  BDD
@@ -210,7 +214,7 @@ func (work *Work) Conjoin(mask Mask, atom guard.Atom, value bool) (Mask, bool) {
 	if !work.live() {
 		return Mask{}, false
 	}
-	return Mask{manager: work.manager, root: root}, true
+	return Mask{root: root}, true
 }
 
 // And intersects two exact regions.
@@ -219,7 +223,7 @@ func (work *Work) And(left, right Mask) (Mask, bool) {
 		return Mask{}, false
 	}
 	root := work.work.And(left.root, right.root)
-	return Mask{manager: work.manager, root: root}, work.live()
+	return Mask{root: root}, work.live()
 }
 
 // Or unions two exact regions.
@@ -228,7 +232,7 @@ func (work *Work) Or(left, right Mask) (Mask, bool) {
 		return Mask{}, false
 	}
 	root := work.work.Or(left.root, right.root)
-	return Mask{manager: work.manager, root: root}, work.live()
+	return Mask{root: root}, work.live()
 }
 
 // Decision reconstructs one ordered Boolean cofactor pair.  It is used by
@@ -254,7 +258,7 @@ func (work *Work) Decision(atom guard.Atom, low, high Mask) (Mask, bool) {
 		return Mask{}, false
 	}
 	root := work.work.Or(negative, positive)
-	return Mask{manager: work.manager, root: root}, work.live()
+	return Mask{root: root}, work.live()
 }
 
 // Not complements one exact region.
@@ -263,7 +267,7 @@ func (work *Work) Not(mask Mask) (Mask, bool) {
 		return Mask{}, false
 	}
 	root := work.work.Not(mask.root)
-	return Mask{manager: work.manager, root: root}, work.live()
+	return Mask{root: root}, work.live()
 }
 
 // Exists discharges one exact guard atom.  It is used only at a proven
@@ -277,7 +281,7 @@ func (work *Work) Exists(mask Mask, atom guard.Atom) (Mask, bool) {
 		return Mask{}, false
 	}
 	root := work.work.Exists(mask.root, atom)
-	return Mask{manager: work.manager, root: root}, work.live()
+	return Mask{root: root}, work.live()
 }
 
 // Reindex transports one support region through a sealed source-to-target
@@ -308,10 +312,11 @@ func ReindexWithWork(work *Work, mask Mask, plan guard.Reindex) (Mask, bool) {
 		}
 		return mask, true
 	}
+	manager := mask.owner()
 	if work == nil {
-		work = New(mask.manager)
+		work = New(manager)
 	}
-	if work == nil || work.manager != mask.manager || !work.BeginTransaction(nil) {
+	if work == nil || work.manager != manager || !work.BeginTransaction(nil) {
 		return Mask{}, false
 	}
 	root, ok := work.work.Reindex(mask.root, plan)
@@ -319,7 +324,7 @@ func ReindexWithWork(work *Work, mask Mask, plan guard.Reindex) (Mask, bool) {
 		work.Discard()
 		return Mask{}, false
 	}
-	result := Mask{manager: mask.manager, root: root}
+	result := Mask{root: root}
 	if !work.Seal() {
 		work.Discard()
 		return Mask{}, false
@@ -342,7 +347,7 @@ func (work *Work) OwnsManager(manager *guard.Manager) bool {
 // Valid accepts sealed regions from this manager and candidate regions built
 // by this Work.  guard.Work is the exact candidate-page authority.
 func (work *Work) Valid(mask Mask) bool {
-	return work != nil && work.manager != nil && mask.manager == work.manager && work.work != nil && work.work.Valid(mask.root)
+	return work != nil && work.manager != nil && mask.owner() == work.manager && work.work != nil && work.work.Valid(mask.root)
 }
 
 // Entails proves inclusion while either side may still belong to this one
@@ -367,7 +372,7 @@ func (work *Work) Reindex(mask Mask, plan guard.Reindex) (Mask, bool) {
 	if !ok || !work.live() {
 		return Mask{}, false
 	}
-	return Mask{manager: mask.manager, root: root}, true
+	return Mask{root: root}, true
 }
 
 // EntailsWithCheckpoint proves exact Boolean support inclusion through this
@@ -426,13 +431,13 @@ func (work *Work) Decompose(mask Mask) (Decomposition, bool) {
 	}
 	return Decomposition{
 		Atom: view.Atom,
-		Low:  Mask{manager: work.manager, root: view.Low},
-		High: Mask{manager: work.manager, root: view.High},
+		Low:  Mask{root: view.Low},
+		High: Mask{root: view.High},
 	}, true
 }
 
 // Seal publishes every Mask constructed by this Work in one BDD cut.  A Mask
-// then becomes valid through its manager and no construction cache survives.
+// then becomes valid through its Guard owner and no construction cache survives.
 func (work *Work) Seal() bool {
 	if !work.live() {
 		return false
@@ -472,14 +477,17 @@ func (work *Work) Close() {
 }
 
 // Valid reports whether mask is a sealed, readable exact BDD region.
-func (mask Mask) Valid() bool { return mask.manager != nil && mask.manager.Valid(mask.root) }
+func (mask Mask) Valid() bool {
+	manager := mask.owner()
+	return manager != nil && manager.Valid(mask.root)
+}
 
 // Manager returns mask's exact sealed BDD manager.
 func (mask Mask) Manager() *guard.Manager {
 	if !mask.Valid() {
 		return nil
 	}
-	return mask.manager
+	return mask.owner()
 }
 
 // Guard returns Mask's exact already-sealed guard handle.  Together with
@@ -514,14 +522,15 @@ func (mask Mask) IdentityWithCheckpoint(checkpoint func() bool) (guard.FormulaID
 // only a fast path inside guard; cross-generation structural equality remains
 // the authority.
 func (mask Mask) Equal(other Mask) bool {
-	return mask.Valid() && other.Valid() && mask.manager == other.manager && mask.manager.Equivalent(mask.root, other.root)
+	manager := mask.owner()
+	return mask.Valid() && other.Valid() && manager == other.owner() && manager.Equivalent(mask.root, other.root)
 }
 
 // SameHandle reports whether two valid masks retain the same physical BDD
 // handle.  It is an immutable-predecessor identity check, not semantic
 // equality: Equal remains the authority for cross-generation BDD equivalence.
 func (mask Mask) SameHandle(other Mask) bool {
-	return mask.Valid() && other.Valid() && mask.manager == other.manager && mask.root == other.root
+	return mask.Valid() && other.Valid() && mask.owner() == other.owner() && mask.root == other.root
 }
 
 // IsTrue reports the canonical unrestricted formula without opening a BDD
@@ -529,14 +538,16 @@ func (mask Mask) SameHandle(other Mask) bool {
 // allocation-free identity fast path; semantic filtering always goes through
 // Restrict/Transfer below it.
 func (mask Mask) IsTrue() bool {
-	return mask.Valid() && mask.root == mask.manager.True()
+	manager := mask.owner()
+	return mask.Valid() && mask.root == manager.True()
 }
 
 // Entails proves exact Boolean support inclusion without exposing a raw guard
 // handle.  `premise.Entails(conclusion)` means every supported valuation of
 // premise is also supported by conclusion.
 func (mask Mask) Entails(conclusion Mask) bool {
-	return mask.Valid() && conclusion.Valid() && mask.manager == conclusion.manager && mask.manager.Entails(mask.root, conclusion.root)
+	manager := mask.owner()
+	return mask.Valid() && conclusion.Valid() && manager == conclusion.owner() && manager.Entails(mask.root, conclusion.root)
 }
 
 // Decomposition is one read-only BDD view.  A terminal has Terminal set and
@@ -555,7 +566,8 @@ func (mask Mask) Decompose() (Decomposition, bool) {
 	if !mask.Valid() {
 		return Decomposition{}, false
 	}
-	view, valid := mask.manager.Decompose(mask.root)
+	manager := mask.owner()
+	view, valid := manager.Decompose(mask.root)
 	if !valid {
 		return Decomposition{}, false
 	}
@@ -564,7 +576,7 @@ func (mask Mask) Decompose() (Decomposition, bool) {
 	}
 	return Decomposition{
 		Atom: view.Atom,
-		Low:  Mask{manager: mask.manager, root: view.Low}, High: Mask{manager: mask.manager, root: view.High},
+		Low:  Mask{root: view.Low}, High: Mask{root: view.High},
 	}, true
 }
 
@@ -575,7 +587,7 @@ func (mask Mask) Matches(valuation func(guard.Atom) bool) bool {
 	}
 	current := mask.root
 	for {
-		view, valid := mask.manager.Decompose(current)
+		view, valid := mask.owner().Decompose(current)
 		if !valid {
 			return false
 		}
@@ -609,20 +621,21 @@ func ThreeWithCheckpoint(checkpoint func() bool, left, right Mask) (Split, bool)
 // reusable shell. A shell that is already active is rejected, preserving the
 // single-owner rule for nested symbolic operations.
 func ThreeWithWork(work *Work, checkpoint func() bool, left, right Mask) (Split, bool) {
-	if !left.Valid() || !right.Valid() || left.manager != right.manager {
+	manager := left.owner()
+	if !left.Valid() || !right.Valid() || manager != right.owner() {
 		return Split{}, false
 	}
 	if left == right {
-		falseMask := Mask{manager: left.manager, root: left.manager.False()}
+		falseMask := Mask{root: manager.False()}
 		return Split{
 			left: left, right: right, leftOnly: falseMask, rightOnly: falseMask,
 			overlap: left, union: left, sealed: true,
 		}, true
 	}
 	if work == nil {
-		work = New(left.manager)
+		work = New(manager)
 	}
-	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
+	if work == nil || work.manager != manager || !work.BeginTransaction(checkpoint) {
 		return Split{}, false
 	}
 	notLeft, ok := work.Not(left)
@@ -673,16 +686,17 @@ func IntersectWithCheckpoint(checkpoint func() bool, left, right Mask) (Mask, bo
 
 // IntersectWithWork is Intersect over one caller-owned reusable shell.
 func IntersectWithWork(work *Work, checkpoint func() bool, left, right Mask) (Mask, bool) {
-	if !left.Valid() || !right.Valid() || left.manager != right.manager {
+	manager := left.owner()
+	if !left.Valid() || !right.Valid() || manager != right.owner() {
 		return Mask{}, false
 	}
 	if left == right {
 		return left, true
 	}
 	if work == nil {
-		work = New(left.manager)
+		work = New(manager)
 	}
-	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
+	if work == nil || work.manager != manager || !work.BeginTransaction(checkpoint) {
 		return Mask{}, false
 	}
 	result, ok := work.And(left, right)
@@ -707,16 +721,17 @@ func UnionWithCheckpoint(checkpoint func() bool, left, right Mask) (Mask, bool) 
 
 // UnionWithWork is Union over one caller-owned reusable shell.
 func UnionWithWork(work *Work, checkpoint func() bool, left, right Mask) (Mask, bool) {
-	if !left.Valid() || !right.Valid() || left.manager != right.manager {
+	manager := left.owner()
+	if !left.Valid() || !right.Valid() || manager != right.owner() {
 		return Mask{}, false
 	}
 	if left == right {
 		return left, true
 	}
 	if work == nil {
-		work = New(left.manager)
+		work = New(manager)
 	}
-	if work == nil || work.manager != left.manager || !work.BeginTransaction(checkpoint) {
+	if work == nil || work.manager != manager || !work.BeginTransaction(checkpoint) {
 		return Mask{}, false
 	}
 	result, ok := work.Or(left, right)

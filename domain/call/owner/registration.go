@@ -1,6 +1,7 @@
 package owner
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -67,7 +68,7 @@ func mountCallAlgebra[A axisInputs](inputs A) (*call.Algebra, MountRejection, bo
 			return nil, MountRejectionInput, false
 		}
 		seen[row.ModuleKey] = struct{}{}
-		mounts = append(mounts, call.MountedArtifact{ModuleKey: row.ModuleKey, Artifact: row.Artifact})
+		mounts = append(mounts, call.MountedArtifact{ModuleKey: row.ModuleKey, Snapshot: row.Snapshot})
 	}
 	algebra, sealed := call.NewWithMountedArtifacts(source, mounts)
 	if !sealed || algebra == nil || !algebra.Valid() {
@@ -78,8 +79,8 @@ func mountCallAlgebra[A axisInputs](inputs A) (*call.Algebra, MountRejection, bo
 
 // AxisEntry is this package's call axis declaration. A is the composition's
 // own Link input record, admitted by the need interface above.
-func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, call.Value] {
-	return axis.Spec[A, *SchemaFragment, *HotOwner, call.Value]{
+func AxisEntry[A axisInputs]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:         "call",
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
@@ -94,24 +95,39 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, call.Val
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*call.Algebra, MountRejection, bool) {
 			return mountCallAlgebra[A](context.Inputs)
 		}),
-		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			semantic, ok := context.Roles.Key("semantic/factor/call")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantic)
-		},
-		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-			return BindHot(context.Binding, context.Fragment, context.Inputs.CallInput())
-		},
-		Algebra: func(owner *HotOwner) (axis.Algebra[call.Value], bool) {
-			spec, ok := owner.FactorSpec()
-			if !ok {
-				return axis.Algebra[call.Value]{}, false
-			}
-			return axis.Adopt(spec)
-		},
 	}
+}
+
+func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*SchemaFragment, bool) {
+	semantic, ok := context.Roles.Key("semantic/factor/call")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantic)
+}
+
+func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
+	return BindHot(binding, context.Fragment, context.Inputs.CallInput())
+}
+
+func AlgebraAxis(owner *HotOwner) (axis.Algebra[call.Value], bool) {
+	spec, ok := owner.FactorSpec()
+	if !ok {
+		return axis.Algebra[call.Value]{}, false
+	}
+	return adoptFactor(spec)
+}
+
+func adoptFactor(spec engine.HotFactorSpec[coordinate, call.Value]) (axis.Algebra[call.Value], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[coordinate, call.Value]{
+		KeyEnd:      spec.KeyEnd,
+		Lattice:     spec.Lattice,
+		Default:     spec.Default,
+		AdmitAt:     spec.AdmitAt,
+		Fingerprint: spec.Fingerprint,
+		Widen:       axis.CarrierRank[coordinate, call.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[coordinate, call.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+	})
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

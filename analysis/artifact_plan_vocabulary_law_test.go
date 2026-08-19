@@ -6,14 +6,13 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
-// The plan hands the engine its three artifact vocabularies through hand
+// Compile hands the engine its three artifact vocabularies through hand
 // switches. Every spelling those switches read and write is pinned ordinal for
 // ordinal to the sealed structural table by the vocabulary pin laws, so a
 // switch that carries an ordinal through unchanged carries the sealed member
@@ -83,8 +82,6 @@ func translationLaw[In ~uint8, Out ~uint8](table structure.Table, category struc
 	return ""
 }
 
-
-
 // TestEngineArtifactVocabularySwitchesAreSealedBijections states the agreement
 // the engine hand-off rests on: the plan's three switches carry the sealed
 // vocabularies across unchanged.
@@ -138,13 +135,13 @@ func TestEngineArtifactVocabularyLawsNameADriftedMember(t *testing.T) {
 		t.Fatalf("an exchanged event mapping reads as %q, which names neither exchanged member", verdict)
 	}
 
-	swappedStage := func(stage programartifact.RuleStage) (rows.ArtifactRuleStage, bool) {
+	swappedStage := func(stage uint8) (rows.ArtifactRuleStage, bool) {
 		translated, admitted := engineArtifactRuleStage(stage)
 		switch translated {
-		case rows.ArtifactRuleStageCallDispatch:
-			return rows.ArtifactRuleStageCallSummary, admitted
-		case rows.ArtifactRuleStageCallSummary:
-			return rows.ArtifactRuleStageCallDispatch, admitted
+		case rows.ArtifactRuleStageIssued3:
+			return rows.ArtifactRuleStageIssued4, admitted
+		case rows.ArtifactRuleStageIssued4:
+			return rows.ArtifactRuleStageIssued3, admitted
 		default:
 			return translated, admitted
 		}
@@ -154,8 +151,8 @@ func TestEngineArtifactVocabularyLawsNameADriftedMember(t *testing.T) {
 		t.Fatalf("an exchanged execution cut mapping reads as %q, which names neither exchanged member", verdict)
 	}
 
-	droppedStage := func(stage programartifact.RuleStage) (rows.ArtifactRuleStage, bool) {
-		if stage == programartifact.RuleStageCallEffect {
+	droppedStage := func(stage uint8) (rows.ArtifactRuleStage, bool) {
+		if stage == uint8(rows.ArtifactRuleStageIssued5) {
 			return rows.ArtifactRuleStageInvalid, false
 		}
 		return engineArtifactRuleStage(stage)

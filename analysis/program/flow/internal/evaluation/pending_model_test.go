@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
@@ -60,7 +61,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 
 	staticDraft, err := static.Build(static.Input{
 		Counts:    counts,
-		Contracts: static.ContractsInput{Call: make([]static.CallContract, counts[keyspace.FamilyCall])},
+		Contracts: staticcontracts.Input{Call: make([]staticcontracts.CallContract, counts[keyspace.FamilyCall])},
 	})
 	if err != nil {
 		_ = sourceFinalize.Abort()

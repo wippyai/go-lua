@@ -122,6 +122,7 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 		axisKeyCall:                  "semantic/factor/call",
 		axisKeyEffect:                "semantic/factor/effect",
 		axisKeyExecutionReachability: "semantic/axis/execution-reachability",
+		axisKeyChannelSelectCase:     "semantic/axis/channel-select-case",
 	} {
 		expected, expectedOK := roles.Key(role)
 		semantic, ok := AxisSemantic(key)

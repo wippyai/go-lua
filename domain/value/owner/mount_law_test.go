@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -34,6 +35,8 @@ func (inputs stubInputs) MountedArtifactAt(index int) (axis.MountedArtifact, boo
 func (inputs stubInputs) HeapInput() heap.Schema { return inputs.heaps }
 
 func (inputs stubInputs) ValueInput() *value.Schema { return inputs.values }
+
+func (inputs stubInputs) StructureInput() structure.Table { return structure.Table{} }
 
 // TestValueMountRejectsAnAbsentArtifactView states the mount's admission: the
 // value universe is derived from the mounted artifacts, so an input that

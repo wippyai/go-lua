@@ -37,15 +37,24 @@ func (schema *Schema) Not(input Value) (Value, bool) {
 	return schema.booleanResult(includeFalse, includeTrue)
 }
 
-// CompareEquality applies Lua ==/~= to two complete Value relations. The
-// first reusable slice intentionally proves only the owner-complete nil
-// partition: nil equals nil and cannot equal a non-nil value. Other present
-// pairs remain may-equal/may-differ until their owning scalar/reference
-// domains publish stronger generic relations. Returning both booleans is a
-// conservative semantic fact, never a diagnostic fallback.
+// CompareEquality applies Lua ==/~= to two complete Value relations. Exact
+// singleton scalars are compared here because Value owns their complete
+// payload; nilability remains exact for wider relations. Other present pairs
+// remain may-equal/may-differ until their owning reference domains publish a
+// stronger relation. Returning both booleans is a conservative semantic fact,
+// never a diagnostic fallback.
 func (schema *Schema) CompareEquality(left, right Value, notEqual bool) (Value, bool) {
 	if schema == nil || !schema.owns(left) || !schema.owns(right) {
 		return Value{}, false
+	}
+	if leftScalar, leftOK := schema.ExactScalar(left); leftOK {
+		if rightScalar, rightOK := schema.ExactScalar(right); rightOK {
+			equal := exactScalarEqual(leftScalar, rightScalar)
+			if notEqual {
+				equal = !equal
+			}
+			return schema.booleanResult(!equal, equal)
+		}
 	}
 	leftPresence, rightPresence := schema.Presence(left), schema.Presence(right)
 	if leftPresence == PresenceNone || rightPresence == PresenceNone {
@@ -63,13 +72,44 @@ func (schema *Schema) CompareEquality(left, right Value, notEqual bool) (Value, 
 	return schema.booleanResult(includeFalse, includeTrue)
 }
 
+func exactScalarEqual(left, right ExactScalar) bool {
+	if left.Kind() == ExactScalarNil || right.Kind() == ExactScalarNil {
+		return left.Kind() == ExactScalarNil && right.Kind() == ExactScalarNil
+	}
+	leftLiteral, leftOK := left.Literal()
+	rightLiteral, rightOK := right.Literal()
+	if !leftOK || !rightOK {
+		return false
+	}
+	leftNumeric := leftLiteral.Kind == keyspace.LiteralInteger || leftLiteral.Kind == keyspace.LiteralFloat
+	rightNumeric := rightLiteral.Kind == keyspace.LiteralInteger || rightLiteral.Kind == keyspace.LiteralFloat
+	if leftNumeric || rightNumeric {
+		if !leftNumeric || !rightNumeric {
+			return false
+		}
+		leftNumber, rightNumber := literalNumber(leftLiteral), literalNumber(rightLiteral)
+		return !math.IsNaN(leftNumber) && !math.IsNaN(rightNumber) && leftNumber == rightNumber
+	}
+	if leftLiteral.Kind != rightLiteral.Kind {
+		return false
+	}
+	switch leftLiteral.Kind {
+	case keyspace.LiteralBool:
+		return leftLiteral.Bool == rightLiteral.Bool
+	case keyspace.LiteralString:
+		return leftLiteral.String == rightLiteral.String
+	default:
+		return false
+	}
+}
+
 // CompareOrder applies Lua </<=/>/>= to two complete correlated Value
 // relations. Exact numeric and string literals produce an exact Boolean.
 // Compatible opaque scalar or metamethod-capable pairs conservatively produce
 // both Booleans; incompatible pairs produce no candidate. Capabilities never
 // travel into the Boolean result.
 func (schema *Schema) CompareOrder(left, right Value, op flowkind.BinaryOp) (Value, bool) {
-	if schema == nil || !schema.owns(left) || !schema.owns(right) || !binaryOrderOperator(op) {
+	if schema == nil || !schema.owns(left) || !schema.owns(right) || !flowkind.IsBinaryOrder(op) {
 		return Value{}, false
 	}
 	includeFalse, includeTrue := false, false
@@ -90,7 +130,7 @@ func (schema *Schema) CompareOrder(left, right Value, op flowkind.BinaryOp) (Val
 }
 
 func (schema *Schema) compareOrderAtoms(left, right Atom, op flowkind.BinaryOp) (mayFalse, mayTrue bool) {
-	if schema == nil || !schema.OwnsAtom(left) || !schema.OwnsAtom(right) || !binaryOrderOperator(op) {
+	if schema == nil || !schema.OwnsAtom(left) || !schema.OwnsAtom(right) || !flowkind.IsBinaryOrder(op) {
 		return false, false
 	}
 	leftRow, rightRow := schema.atoms[left.id-1], schema.atoms[right.id-1]

@@ -283,10 +283,10 @@ func bindRuntimeProgram(receiptState *schemaBindingState, receiptAuthority *sche
 	return program, folds, true
 }
 
-// assembleReceiptRuntime is the one entry from attached drafts to an
+// assembleProgramRuntime is the one entry from attached drafts to an
 // executable runtime. It seals the program first and assembles from it, so the
 // drafts are unreachable the moment this call returns.
-func assembleReceiptRuntime(state *schemaBindingState, authority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
+func assembleProgramRuntime(state *schemaBindingState, authority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
 	program, folds, bound := bindRuntimeProgram(state, authority, graph, runtime, factors, drafts, queries, observations)
 	if !bound {
 		return nil, false

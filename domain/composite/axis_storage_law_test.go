@@ -19,7 +19,7 @@ import (
 // what the passes below run on is a production-shaped inventory row.
 func enginePublishedProbe(t *testing.T, key, semantic schema.Key) *axisTemplate {
 	t.Helper()
-	template, ok := axis.New(axis.Spec[LinkInputs, struct{}, struct{}, uint64]{
+	template, ok := axis.New(axis.Spec[LinkInputs]{
 		Key:         key,
 		Storage:     axis.StorageEngine,
 		Cardinality: axis.CardinalitySparse,

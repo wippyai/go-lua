@@ -17,6 +17,7 @@ type sparseContributionTripwireOperation struct {
 	target     Target
 	withTarget bool
 	calls      int
+	closeCalls int
 }
 
 func (operation *sparseContributionTripwireOperation) Preflight() (SlotOperation, bool) {
@@ -67,6 +68,14 @@ func (work *sparseContributionTripwireWork) MergeContributionUnder(left, right R
 	}
 	work.operation.calls++
 	return work.carryOnlyWork.MergeContributionUnder(left, right, leftSupport, rightSupport, leftCoverage, rightCoverage, delta)
+}
+
+func (work *sparseContributionTripwireWork) CloseContributionUnder(left, right RootHandle, split support.Split, coverage SlotCoverage, delta *support.Work) (ChangeHandle, bool) {
+	if work == nil || work.operation == nil {
+		return ChangeHandle{}, false
+	}
+	work.operation.closeCalls++
+	return work.carryOnlyWork.CloseContributionUnder(left, right, split, coverage, delta)
 }
 
 func TestMergeContributionRightEmptySlotSkipsTypedTraversalAndRetainsSupportChange(t *testing.T) {

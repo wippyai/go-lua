@@ -1,7 +1,7 @@
 package bind
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -49,7 +49,7 @@ func (r *Result) RuntimeTypeValue(ident *ast.IdentExpr) (RuntimeTypeValue, bool)
 // canonical primitive vocabulary. `function` is a static primitive spelling
 // but has no runtime type singleton, while `self` is context-relative.
 func runtimePrimitiveTypeName(name string) bool {
-	kind, ok := static.PrimitiveKindForName(name)
+	kind, ok := statictypes.PrimitiveKindForName(name)
 	return ok && kind.RuntimeLoadable()
 }
 

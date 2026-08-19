@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 func TestDirectFunctionRetainsDominatedReadAndCall(t *testing.T) {
@@ -569,10 +570,10 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 	staticInput.Counts[keyspace.FamilyTypePrimitive] = uint32(len(staticInput.Types.Primitive))
 	staticInput.Counts[keyspace.FamilyTypeAlias] = uint32(len(staticInput.Declarations.Alias))
 	if spec.counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, spec.counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, spec.counts[keyspace.FamilyFunction])
 	}
 	if spec.counts[keyspace.FamilyCall] != 0 {
-		staticInput.Contracts.Call = make([]static.CallContract, spec.counts[keyspace.FamilyCall])
+		staticInput.Contracts.Call = make([]staticcontracts.CallContract, spec.counts[keyspace.FamilyCall])
 	}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
 	staticInput.Counts[keyspace.FamilyCall] = uint32(len(staticInput.Contracts.Call))

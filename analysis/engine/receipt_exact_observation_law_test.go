@@ -63,13 +63,13 @@ func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testi
 	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(92), fixture.member); attached {
 		t.Fatal("exact observation accepted duplicate ID")
 	}
-	points, pointsOK := indexReceiptObservationPoints(fixture.member.graph.graph)
+	points, pointsOK := indexReceiptObservationPoints(fixture.member.graph)
 	memberPoint, memberPointOK := points[fixture.member.member.Key()]
 	otherPoint, otherPointOK := points[fixture.otherMember.member.Key()]
 	if !pointsOK || !memberPointOK || !otherPointOK || memberPoint.Key() != otherPoint.Key() {
 		t.Fatal("exact observation fixture did not retain two members at one output point")
 	}
-	if _, failure := AttachRuleExactObservationWithFailure(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(95), fixture.otherMember); failure != ReceiptObservationAttachFailureMapping {
+	if _, failure := AttachRuleExactObservationWithFailure(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(95), fixture.otherMember); failure != receiptObservationAttachFailureMapping {
 		t.Fatalf("exact observation accepted same-point foreign-factor member failure=%v", failure)
 	}
 	foreignFixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
@@ -153,6 +153,7 @@ func hotMutableExactQuerySpec(project func(OrderedCells[uint64]) []uint64) HotEx
 				}
 				return fingerprint
 			},
+			Present: func(value []uint64) bool { return true },
 		},
 	}
 }
@@ -213,8 +214,8 @@ func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
 type exactRuleObservationFixture[R any] struct {
 	compilation    *ProgramConstruction
 	implementation *ExactQueryImplementation[uint64, R]
-	member         ReceiptRuleMember
-	otherMember    ReceiptRuleMember
+	member         ProgramMember
+	otherMember    ProgramMember
 }
 
 func newExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQuerySpec[uint64, R]) exactRuleObservationFixture[R] {
@@ -275,69 +276,70 @@ func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQue
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	otherImplementation, otherImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, otherRule)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, R](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !implementationOK || implementation == nil || !otherImplementationOK || otherImplementation == nil || !queryImplementationOK || queryImplementation == nil || !assemblyOK || assembly == nil {
 		t.Fatal("exact observation assembly")
 	}
 
-	proof := implementation.receipt.proof
-	otherProof := otherImplementation.receipt.proof
+	proof := implementation.binding.proof
+	otherProof := otherImplementation.binding.proof
 	if proof == nil || otherProof == nil {
 		t.Fatal("exact observation rule proof")
 	}
-	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_900)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.builder.admitAt(site)
+	site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(949_900)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	occurrence, occurrenceOK := assembly.admitAt(site)
 	operandValue := ruleUnitForSemantic(coldKey(949_901))
 	entity, entityOK := operandEntityForContent(operandValue.content)
-	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
-	otherOccurrence, otherOccurrenceOK := assembly.builder.admitAt(site)
+	operand, operandOK := assembly.admitOperand(occurrence, entity)
+	otherOccurrence, otherOccurrenceOK := assembly.admitAt(site)
 	otherOperandValue := ruleUnitForSemantic(coldKey(949_903))
 	otherEntity, otherEntityOK := operandEntityForContent(otherOperandValue.content)
-	otherOperand, otherOperandOK := assembly.builder.admitOperand(otherOccurrence, otherEntity)
+	otherOperand, otherOperandOK := assembly.admitOperand(otherOccurrence, otherEntity)
 	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !otherOccurrenceOK || !otherEntityOK || !otherOperandOK || !assembly.SealSources() {
 		t.Fatal("exact observation source")
 	}
-	point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: site})
-	_, pointSemanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(90), point)
-	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 		Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand,
 		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}}},
 	})
-	draft, draftOK := implementation.BeginBindingRuleRow(source)
+	draft, draftOK := implementation.beginBindingRuleRow(source)
 	part, partOK := implementation.WritePart(source, 0)
-	if !pointOK || !pointSemanticOK || !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
+	if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
 		t.Fatal("exact observation rule row")
 	}
-	ruleRow, ruleRowOK := assembly.builder.issueRuleRow(draft)
-	_, ruleSemanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(91), ruleRow)
-	otherSource, otherSourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+	ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
+	otherSource, otherSourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 		Schema: otherProof.semantic, OperandFamily: otherProof.operandFamily, Occurrence: otherOccurrence, Operand: otherOperand,
 		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: otherProof.output, Form: equation.SurfaceWriteExact, Local: 9, Mode: equation.TargetModeStrong}}},
 	})
-	otherDraft, otherDraftOK := otherImplementation.BeginBindingRuleRow(otherSource)
+	otherDraft, otherDraftOK := otherImplementation.beginBindingRuleRow(otherSource)
 	otherPart, otherPartOK := otherImplementation.WritePart(otherSource, 0)
 	if !otherSourceOK || !otherDraftOK || !otherPartOK || !otherDraft.AddWrite(otherPart) {
 		t.Fatal("exact observation foreign-factor rule row")
 	}
-	otherRuleRow, otherRuleRowOK := assembly.builder.issueRuleRow(otherDraft)
-	_, otherRuleSemanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(96), otherRuleRow)
-	if !ruleRowOK || !ruleSemanticOK || !otherRuleRowOK || !otherRuleSemanticOK {
+	otherRuleRow, otherRuleRowOK := assembly.issueRuleRow(otherDraft)
+	if !ruleRowOK || !otherRuleRowOK {
 		t.Fatal("exact observation topology")
 	}
-	var graph *ReceiptGraph
-	var committed bool
-	if deferredQueries {
-		_, graph, committed = assembly.CommitObservationTopology()
-	} else {
-		_, graph, committed = assembly.Commit()
+	declaration := topologyDeclaration{
+		binding: binding, batch: assembly.inner.batch,
+		points: []declaredPointRow{{ID: receiptAssemblySemanticID(90), Site: site}},
+		members: []declaredMemberRow{
+			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(91), Row: ruleRow.row},
+			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(96), Row: otherRuleRow.row},
+		},
+		observationQueries: deferredQueries,
 	}
-	if !committed || graph == nil {
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !committed || issued == nil {
 		if deferredQueries {
-			failure, failureAvailable := assembly.CommitFailure()
-			topologyFailure, topologyAvailable := failure.Topology()
-			precondition, preconditionAvailable := failure.Precondition()
-			t.Fatalf("exact observation deferred commit committed=%t graph=%t failure=%t phase=%v topology=%t/%v precondition=%t/%v", committed, graph != nil, failureAvailable, failure.Phase(), topologyAvailable, topologyFailure, preconditionAvailable, precondition)
+			t.Fatalf("exact observation deferred commit committed=%t graph=%t stage=%v step=%v", committed, issued != nil, refusal.Stage(), refusal.Step())
 		}
+		return exactRuleObservationFixture[R]{}, false
+	}
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
 		return exactRuleObservationFixture[R]{}, false
 	}
 	member, memberOK := graph.RuleMember(receiptAssemblySemanticID(91))

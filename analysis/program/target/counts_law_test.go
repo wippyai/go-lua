@@ -108,19 +108,19 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 		}
 	}
 
-	for index := 0; index < contract.protocolCount(); index++ {
-		protocol, ok := contract.protocolAt(index)
+	for index := 0; index < contract.protocols.ProtocolCount(); index++ {
+		protocol, ok := contract.protocols.ProtocolAt(index)
 		if !ok {
 			t.Fatalf("protocol %d is not readable", index)
 		}
 		add(ids.TargetProtocol, 1)
-		add(ids.TargetProtocolState, contract.stateCount(protocol))
-		add(ids.TargetProtocolAcquisition, contract.protocolAcquisitionCount(protocol))
-		add(ids.TargetProtocolEscape, contract.escapeCount(protocol))
-		add(ids.TargetProtocolCallbackHolder, contract.protocolCallbackHolderCount(protocol))
-		for transition := 0; transition < contract.transitionCount(protocol); transition++ {
+		add(ids.TargetProtocolState, contract.protocols.StateCount(protocol))
+		add(ids.TargetProtocolAcquisition, contract.protocols.ProtocolAcquisitionCount(protocol))
+		add(ids.TargetProtocolEscape, contract.protocols.EscapeCount(protocol))
+		add(ids.TargetProtocolCallbackHolder, contract.protocols.ProtocolCallbackHolderCount(protocol))
+		for transition := 0; transition < contract.protocols.TransitionCount(protocol); transition++ {
 			add(ids.TargetProtocolTransition, 1)
-			add(ids.TargetProtocolTransitionOutcome, contract.transitionOutcomeCount(protocol, transition))
+			add(ids.TargetProtocolTransitionOutcome, contract.protocols.TransitionOutcomeCount(protocol, transition))
 		}
 	}
 

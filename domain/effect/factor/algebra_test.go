@@ -1,6 +1,7 @@
 package factor_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
@@ -79,11 +80,11 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 			t.Fatalf("compile effect artifact %d: %s", index, failure.Error())
 		}
 		artifacts[index] = artifact
-		packMounts[index], ok = pack.NewArtifactMount(artifact, module, programID)
+		packMounts[index], ok = pack.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !ok {
 			t.Fatalf("pack artifact mount %d", index)
 		}
-		effectMounts[index] = effectfactor.MountedArtifact{ModuleKey: module, Artifact: artifact}
+		effectMounts[index] = effectfactor.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
 		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
@@ -200,7 +201,7 @@ func TestEffectFactorMountedOwnerAndRootLaws(t *testing.T) {
 	if ok || foreign != nil {
 		t.Fatal("Effect accepted an incomplete mounted-artifact set")
 	}
-	foreign, ok = effectfactor.NewWithMountedArtifacts(fixture.linked, fixture.packs, fixture.contract, []effectfactor.MountedArtifact{{ModuleKey: fixture.factor.LinkID(), Artifact: nil}})
+	foreign, ok = effectfactor.NewWithMountedArtifacts(fixture.linked, fixture.packs, fixture.contract, []effectfactor.MountedArtifact{{ModuleKey: fixture.factor.LinkID(), Snapshot: nil}})
 	if ok || foreign != nil {
 		t.Fatal("Effect accepted an invalid mounted-artifact receipt")
 	}

@@ -390,6 +390,21 @@ func (view RegionView) PointAt(index int) (Point, bool) {
 	return view.graph.PointAt(view.graph.eventPoints[data.pointBegin+index])
 }
 
+// Contains proves Point membership from the graph-issued event permutation
+// and this Region's immutable interval. It is the sole recurrence geometry
+// authority for callers that need to classify an already-issued source.
+func (view RegionView) Contains(point Point) (bool, bool) {
+	data, ok := view.data()
+	if !ok || !point.Available() || !view.graph.ownsNode(point.graph) {
+		return false, false
+	}
+	node, indexed := view.graph.pointAt[point.key]
+	if !indexed {
+		return false, false
+	}
+	return regionContainsPoint(view.graph, *data, node), true
+}
+
 func (view RegionView) InterfaceCount() int {
 	data, ok := view.data()
 	if !ok {

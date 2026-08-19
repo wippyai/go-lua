@@ -28,18 +28,11 @@ type runtimeBinding struct {
 	schema    *Schema
 	state     *schemaBindingState
 	authority *schemaBindingAuthority
-	mode      runtimeBindingMode
 	graph     *equation.Graph
 	guards    *guard.Manager
 	catalog   *graphBindingCatalog // cold only; sole compiler releases it after binding
 	validated bool                 // newRuntimeBinding checked the dense atom catalog once
 }
-
-type runtimeBindingMode uint8
-
-const (
-	runtimeBindingReceipt runtimeBindingMode = iota + 1
-)
 
 // newRuntimeBinding derives dense atoms in the Graph catalog order.
 // Atom numbers are implementation-local dense ranks; equation Decisions stay
@@ -67,7 +60,7 @@ func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, 
 	if err != nil || manager == nil {
 		return nil, false
 	}
-	return &runtimeBinding{schema: schema, mode: runtimeBindingReceipt, graph: graph, guards: manager, catalog: catalog, validated: true}, true
+	return &runtimeBinding{schema: schema, graph: graph, guards: manager, catalog: catalog, validated: true}, true
 }
 
 // newSealedRuntimeBinding is the pre-fenced constructor for the callback-free
@@ -90,7 +83,7 @@ func newSealedRuntimeBinding(state *schemaBindingState, graph *equation.Graph) (
 	if !ok || runtime == nil {
 		return nil, false
 	}
-	runtime.mode, runtime.state, runtime.authority = runtimeBindingReceipt, state, authority
+	runtime.state, runtime.authority = state, authority
 	return runtime, true
 }
 
@@ -98,11 +91,11 @@ func (binding *runtimeBinding) valid() bool {
 	// The Graph and Manager are immutable after successful construction. The
 	// complete decision/atom correspondence is proved above once; rewalking it
 	// for every Factor would turn cold binding into F×Decision work.
-	return binding != nil && binding.validated && binding.mode == runtimeBindingReceipt && binding.schema != nil && binding.schema.Available() && binding.graph != nil && binding.graph.CompositionID() == binding.schema.coldID() && binding.guards != nil && binding.state != nil && binding.authority != nil && binding.state.authority == binding.authority && binding.state.schema == binding.schema && binding.state.phase == schemaBindingSealed
+	return binding != nil && binding.validated && binding.schema != nil && binding.schema.Available() && binding.graph != nil && binding.graph.CompositionID() == binding.schema.coldID() && binding.guards != nil && binding.state != nil && binding.authority != nil && binding.state.authority == binding.authority && binding.state.schema == binding.schema && binding.state.phase == schemaBindingSealed
 }
 
-func (binding *runtimeBinding) pinReceipt(receipt factorRuntimeReceipt) bool {
-	if binding == nil || binding.mode != runtimeBindingReceipt || !receipt.valid() || receipt.schema != binding.schema {
+func (binding *runtimeBinding) pinBinding(receipt factorRuntimeBinding) bool {
+	if binding == nil || !receipt.valid() || receipt.schema != binding.schema {
 		return false
 	}
 	return binding.state == receipt.state && binding.authority == receipt.authority

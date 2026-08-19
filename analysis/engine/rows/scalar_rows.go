@@ -46,17 +46,20 @@ const (
 	ArtifactRuleStageInvalid ArtifactRuleStage = iota
 	ArtifactRuleStageBase
 	ArtifactRuleStageLocal
-	ArtifactRuleStageCallDispatch
-	ArtifactRuleStageCallSummary
-	ArtifactRuleStageCallEffect
+	// Issued native cuts. Schema structure CategoryIssuanceStage owns
+	// spelling and predecessor; these are the dense ordinals that table
+	// numbers.
+	ArtifactRuleStageIssued3
+	ArtifactRuleStageIssued4
+	ArtifactRuleStageIssued5
 )
 
 func (stage ArtifactRuleStage) Valid() bool {
-	return stage >= ArtifactRuleStageBase && stage <= ArtifactRuleStageCallEffect
+	return stage >= ArtifactRuleStageBase && stage <= ArtifactRuleStageIssued5
 }
 
 func (stage ArtifactRuleStage) NativeCall() bool {
-	return stage >= ArtifactRuleStageCallDispatch && stage <= ArtifactRuleStageCallEffect
+	return stage >= ArtifactRuleStageIssued3 && stage <= ArtifactRuleStageIssued5
 }
 
 // ArtifactStageLaw is one declared execution-cut relation: whether the stage

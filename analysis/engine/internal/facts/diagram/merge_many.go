@@ -34,31 +34,35 @@ type SoleManyRegions[K scalar.Key] func(key K, output []support.Mask) bool
 // sampled independently of zipper exhaustion and once more before every
 // successful return.
 func (builder *Builder[F, K, V]) MergeSoleFactorMany(previous Root[F, K, V], inputs []Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], covers SoleManyRegions[K]) (Root[F, K, V], bool) {
-	DbgMergeMany.Add(1)
-	DbgMergeManyOperand.Add(int64(len(inputs)))
 	if builder == nil || !builder.open || builder.diagram == nil || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || combine == nil || covers == nil || !builder.diagram.Valid(previous) {
 		return Root[F, K, V]{}, false
+	}
+	for _, input := range inputs {
+		if !builder.diagram.Valid(input) {
+			return Root[F, K, V]{}, false
+		}
 	}
 	factor, sole := builder.diagram.SoleFactor()
 	rank, ranked := builder.diagram.ranks[factor]
 	if !sole || !ranked {
 		return Root[F, K, V]{}, false
 	}
-	roots := make([]*keyNode[K, V], len(inputs)+1)
+	// The caller owns the operation scratch. Keep the key-root view there so
+	// every fold reuses its backing storage and no diagram-local wrapper vector
+	// survives the publication transaction.
+	scratch.clearManyWork()
+	roots := scratch.borrowManyRootNodes(len(inputs) + 1)
 	roots[0] = factorKeys(findFactor(previous.root, rank))
 	for index, input := range inputs {
-		if !builder.diagram.Valid(input) {
-			return Root[F, K, V]{}, false
-		}
 		roots[index+1] = factorKeys(findFactor(input.root, rank))
 	}
+	defer scratch.Clear()
 	if !scratch.prepareMany(roots) {
 		return Root[F, K, V]{}, false
 	}
 	// Cursor width includes the reconstruction-only predecessor; semantic
 	// support/terminal vectors contain only the real fold operands.
 	scratch.manySupports = resizeClear(scratch.manySupports, len(inputs))
-	defer scratch.Clear()
 
 	baseKeys := roots[0]
 	delta := 0
@@ -214,8 +218,6 @@ func (builder *Builder[F, K, V]) seedSoleManyPredecessor(root *node[V], scratch 
 }
 
 func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], supports []support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V], prior []terminal.ID[V]) (*node[V], bool) {
-	DbgMergeManyRows.Add(1)
-	DbgPatchRow.Add(1)
 	if len(nodes) == 0 || len(nodes) != len(supports) {
 		return nil, false
 	}
@@ -302,6 +304,12 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 	}
 	nodes := scratch.manyTupleNodes[state.offset : state.offset+width]
 	supports := scratch.manyTupleSupport[state.offset : state.offset+width]
+	scratch.manyViews = resizeClear(scratch.manyViews, width)
+	scratch.manyRegionRanks = resizeClear(scratch.manyRegionRanks, width)
+	scratch.manyNodeRanks = resizeClear(scratch.manyNodeRanks, width)
+	views := scratch.manyViews
+	regionRanks := scratch.manyRegionRanks
+	nodeRanks := scratch.manyNodeRanks
 	minRank := noRelationRank
 	active := 0
 	allSupportTerminal, allActiveTerminal := true, true
@@ -310,12 +318,15 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 		if !valid {
 			return false, nil, 0, 0, 0, false
 		}
+		views[index] = view
+		regionRank := noRelationRank
 		if !view.Terminal {
 			allSupportTerminal = false
 			rank, ranked := builder.diagram.regionRank(view)
 			if !ranked {
 				return false, nil, 0, 0, 0, false
 			}
+			regionRank = rank
 			if rank < minRank {
 				minRank = rank
 			}
@@ -325,11 +336,13 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 				allActiveTerminal = false
 			}
 		}
+		rank, ranked := builder.diagram.nodeRank(nodes[index])
+		if !ranked {
+			return false, nil, 0, 0, 0, false
+		}
+		regionRanks[index] = regionRank
+		nodeRanks[index] = rank
 		if !view.Terminal || view.Value {
-			rank, ranked := builder.diagram.nodeRank(nodes[index])
-			if !ranked {
-				return false, nil, 0, 0, 0, false
-			}
 			if rank < minRank {
 				minRank = rank
 			}
@@ -347,8 +360,8 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 			// them without a separate semantic node-equality pass.
 			clear(scratch.manyPresent)
 			for index := 0; index < width; index++ {
-				view, valid := regions.Decompose(supports[index])
-				if !valid || !view.Terminal {
+				view := views[index]
+				if !view.Terminal {
 					return false, nil, 0, 0, 0, false
 				}
 				scratch.manyPresent[index] = view.Value
@@ -378,15 +391,8 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 	var selected guard.Atom
 	selectedSet := false
 	for index := 0; index < width && !selectedSet; index++ {
-		view, valid := regions.Decompose(supports[index])
-		if !valid {
-			return false, nil, 0, 0, 0, false
-		}
-		regionRank, regionOK := builder.diagram.regionRank(view)
-		nodeRank, nodeOK := builder.diagram.nodeRank(nodes[index])
-		if !regionOK || !nodeOK {
-			return false, nil, 0, 0, 0, false
-		}
+		view := views[index]
+		regionRank, nodeRank := regionRanks[index], nodeRanks[index]
 		switch {
 		case regionRank == minRank:
 			selected, selectedSet = view.Atom, true
@@ -398,15 +404,8 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 		return false, nil, 0, 0, 0, false
 	}
 	for index := 0; index < width; index++ {
-		view, valid := regions.Decompose(supports[index])
-		if !valid {
-			return false, nil, 0, 0, 0, false
-		}
-		regionRank, regionOK := builder.diagram.regionRank(view)
-		nodeRank, nodeOK := builder.diagram.nodeRank(nodes[index])
-		if !regionOK || !nodeOK {
-			return false, nil, 0, 0, 0, false
-		}
+		view := views[index]
+		regionRank, nodeRank := regionRanks[index], nodeRanks[index]
 		scratch.manyLowSupports[index], scratch.manyHighSupports[index] = supports[index], supports[index]
 		if regionRank == minRank {
 			scratch.manyLowSupports[index], scratch.manyHighSupports[index] = view.Low, view.High

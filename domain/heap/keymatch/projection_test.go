@@ -2,6 +2,7 @@ package keymatch_test
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"reflect"
 	"testing"
 
@@ -305,7 +306,11 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 		t.Fatal(err)
 	}
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked))
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("domain schema")
 	}
@@ -333,7 +338,11 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 		t.Fatal(err)
 	}
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked))
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("boot domain schema")
 	}
@@ -393,8 +402,8 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artif
 			t.Fatalf("keymatch artifact: %v", failure)
 		}
 		var heapOK, valueOK bool
-		heapMounts[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		valueMounts[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
+		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !heapOK || !valueOK {
 			t.Fatal("keymatch artifact mount receipt")
 		}

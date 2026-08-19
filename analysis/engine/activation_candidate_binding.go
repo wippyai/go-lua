@@ -6,7 +6,7 @@ import (
 )
 
 // Solver-side mounted activation candidate issuer binding; the compile-side
-// candidate admission lives in activation_candidate_issuer.go.
+// candidate admission lives in runtime_activation_candidate.go.
 
 // MountedActivationCandidateIssuer is bound once to the sole activation slot
 // and to the declared transport vector which makes its existing-body transport
@@ -34,7 +34,7 @@ type directActivationTransportSetKey struct {
 // engine admits any arity the Schema's own declared Factors cover, and each
 // reference must name a distinct bound Factor of this Binding's Schema. The
 // issuer becomes usable only after the activation row itself is admitted to a
-// ReceiptAssembly.
+// BindingTopologyBuilder.
 func BindMountedActivationCandidateIssuer(binding *SchemaBinding, slot *SchemaActivationRuleSlot, imports []AnyFactorRef, export AnyFactorRef) (*MountedActivationCandidateIssuer, bool) {
 	state := bindingState(binding)
 	if state == nil || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || len(imports) == 0 {

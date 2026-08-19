@@ -139,18 +139,6 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 			}
 			bound.points[index] = pointIndex
 		}
-		faces := make(map[int]struct{}, region.FaceCount())
-		for index := 0; index < region.FaceCount(); index++ {
-			face, faceOK := region.FaceAt(index)
-			pointIndex, indexed := graph.PointIndex(face)
-			if !faceOK || !indexed {
-				return nil, nil, false
-			}
-			if _, duplicate := faces[pointIndex]; !duplicate {
-				faces[pointIndex] = struct{}{}
-				bound.faces = append(bound.faces, pointIndex)
-			}
-		}
 		for index := 0; index < region.ExternalHeadProducerCount(); index++ {
 			group, ok := region.ExternalHeadProducerAt(index)
 			groupIndex, indexed := graph.GroupIndex(group)

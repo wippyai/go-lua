@@ -3,6 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
@@ -29,6 +30,7 @@ const (
 	axisKeyCall                  schema.Key = "call"
 	axisKeyEffect                schema.Key = "effect"
 	axisKeyExecutionReachability schema.Key = "execution-reachability"
+	axisKeyChannelSelectCase     schema.Key = "channel-select-case"
 )
 
 // axisCells is one pass's per-axis payload, indexed by axis slot: the axis's
@@ -87,40 +89,45 @@ func axisPayloadForKey[T any](cells axisCells, key schema.Key) (T, bool) {
 //
 // The declaration itself lives with the domain that owns the factor, so the
 // inventory here states membership and order alone.
-func axisTemplates() ([]*axisTemplate, bool) {
+func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	var admitted []*axisTemplate
+	var contributors []axisContributor
 	rejected := false
-	add := func(entry *axisTemplate, ok bool) {
+	addBound := func(entry *axisTemplate, contributor axisContributor, ok bool) {
+		if !ok || !contributor.complete() {
+			rejected = true
+			return
+		}
+		admitted = append(admitted, entry)
+		contributors = append(contributors, contributor)
+	}
+	addPublished := func(entry *axisTemplate, ok bool) {
 		if !ok {
 			rejected = true
 			return
 		}
 		admitted = append(admitted, entry)
+		contributors = append(contributors, axisContributor{})
 	}
 
-	add(axis.New(valueowner.AxisEntry[LinkInputs]()))
-	add(axis.New(packowner.AxisEntry[LinkInputs]()))
-	add(axis.New(heapowner.AxisEntry[LinkInputs]()))
-	add(axis.New(callowner.AxisEntry[LinkInputs]()))
-	add(axis.New(effectowner.AxisEntry[LinkInputs]()))
-	// The execution-reachability axis is declared after the factor axes. It is
-	// an engine-published space: no artifact factor lane addresses it, so the
-	// lane-addressed axes keep the positions their ordinals name and this one
-	// follows them.
-	//
-	// What is registered here is the declaration. That every engine-published
-	// column reaches this inventory is not guarded yet: the cold and hot passes
-	// below index by principal slot, and a coverage guard stated over them
-	// would state the factor pass's shape rather than the publication's, so the
-	// guard belongs beside the publication and the gap is named here rather
-	// than approximated.
-	add(axis.New(executionowner.AxisEntry[LinkInputs]()))
-	add(axis.New(denominatorpublication.AxisEntry[LinkInputs]()))
+	addBound(wireAxis(valueowner.AxisEntry[LinkInputs](), valueowner.DeclareAxis, valueowner.BindAxis[LinkInputs], valueowner.AlgebraAxis))
+	addBound(wireAxis(packowner.AxisEntry[LinkInputs](), packowner.DeclareAxis, packowner.BindAxis[LinkInputs], packowner.AlgebraAxis))
+	addBound(wireAxis(heapowner.AxisEntry[LinkInputs](), heapowner.DeclareAxis, heapowner.BindAxis[LinkInputs], heapowner.AlgebraAxis))
+	addBound(wireAxis(callowner.AxisEntry[LinkInputs](), callowner.DeclareAxis, callowner.BindAxis[LinkInputs], callowner.AlgebraAxis))
+	addBound(wireAxis(effectowner.AxisEntry[LinkInputs](), effectowner.DeclareAxis, effectowner.BindAxis[LinkInputs], effectowner.AlgebraAxis))
+	// Engine-published axes are declared after the factor axes so artifact
+	// lane ordinals keep the prefix they address. Snapshot slots are assigned
+	// separately: engine-published outputs lead that range, and the first
+	// engine axis is the compile-time ChannelSelect column so a select-only
+	// publication can seal the prefix.
+	addPublished(axis.New(selectapply.AxisEntry[LinkInputs]()))
+	addPublished(axis.New(executionowner.AxisEntry[LinkInputs]()))
+	addPublished(axis.New(denominatorpublication.AxisEntry[LinkInputs]()))
 
 	if rejected {
-		return nil, false
+		return nil, nil, false
 	}
-	return admitted, true
+	return admitted, contributors, true
 }
 
 // DiagnosticAxis is the closed analyzer-owned classification of one axis. It
@@ -261,6 +268,20 @@ func AxisLifetime(key schema.Key) (axis.Lifetime, bool) {
 // cell at its principal. It is the only place a factor's Schema shape is
 // recorded, and it runs before the rule pass because a rule declares against
 // the principals produced here.
+func axisContributorFor(key schema.Key) (axisContributor, bool) {
+	sealRegistry()
+	if len(registry.axisContributors) != len(registry.axes) {
+		return axisContributor{}, false
+	}
+	for index, entry := range registry.axes {
+		if entry != nil && entry.Key() == key {
+			contributor := registry.axisContributors[index]
+			return contributor, contributor.complete()
+		}
+	}
+	return axisContributor{}, false
+}
+
 func declareAxes(builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
 	sealRegistry()
 	if registry.sealed == nil {
@@ -278,12 +299,15 @@ func declareAxisInventory(entries []*axisTemplate, builder *engine.SchemaBuilder
 	if builder == nil {
 		return fragments, DiagnosticAxisUnknown, false
 	}
-	context := axis.Declaration{Builder: builder, Roles: roles}
 	for position, entry := range entries {
 		if !entry.Storage().Bound() {
 			continue
 		}
-		fragment, ok := entry.Declare(context)
+		contributor, contributorOK := axisContributorFor(entry.Key())
+		if !contributorOK {
+			return fragments, DiagnosticAxis(position + 1), false
+		}
+		fragment, ok := contributor.declare(builder, roles)
 		if !ok {
 			return fragments, DiagnosticAxis(position + 1), false
 		}
@@ -321,7 +345,11 @@ func bindAxisInventory(entries []*axisTemplate, binding *engine.SchemaBinding, f
 			continue
 		}
 		slot := position + 1
-		hot, ok := entry.Bind(binding, inputs, fragments[slot])
+		contributor, contributorOK := axisContributorFor(entry.Key())
+		if !contributorOK {
+			return bound, DiagnosticAxis(slot), false
+		}
+		hot, ok := contributor.bind(binding, inputs, fragments[slot])
 		if !ok {
 			return bound, DiagnosticAxis(slot), false
 		}

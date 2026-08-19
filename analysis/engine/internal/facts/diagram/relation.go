@@ -17,7 +17,6 @@ import (
 // roots. Returning false from visit stops both the current FDD walk and the
 // outer key merge immediately.
 func (diagram *Diagram[F, K, V]) RelateSoleFactorUnder(left, right Root[F, K, V], within support.Mask, visit func(K, terminal.ID[V], terminal.ID[V]) bool) bool {
-	DbgRelate.Add(1)
 	if diagram == nil || !diagram.Valid(left) || !diagram.Valid(right) || !within.Valid() || within.Manager() != diagram.guards || visit == nil {
 		return false
 	}

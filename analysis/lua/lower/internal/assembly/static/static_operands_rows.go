@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 )
 
 // Annotation is the only public Static operand construction path. Flow owns
@@ -49,7 +49,7 @@ func (rows *staticRows) ClaimDeclare(term, claim keyspace.Term) error {
 			return errors.New("program/lower/collector: duplicate sparse Claim declaration")
 		}
 	}
-	rows.claims = append(rows.claims, programstatic.ClaimTarget{Claim: claim})
+	rows.claims = append(rows.claims, staticoperands.ClaimTarget{Claim: claim})
 	return nil
 }
 
@@ -66,7 +66,7 @@ func (rows *staticRows) ClaimOneShot(term, claim, target keyspace.Term) error {
 		}
 		return errors.New("program/lower/collector: duplicate one-shot sparse Claim")
 	}
-	rows.claims = append(rows.claims, programstatic.ClaimTarget{Claim: claim, Target: target})
+	rows.claims = append(rows.claims, staticoperands.ClaimTarget{Claim: claim, Target: target})
 	return nil
 }
 
@@ -97,6 +97,6 @@ func (rows *staticRows) TypeValueTarget(term, target keyspace.Term) error {
 	if target == 0 {
 		return errors.New("program/lower/collector: missing TypeValue target")
 	}
-	rows.typeValues = append(rows.typeValues, programstatic.TypeValueTarget{Target: target})
+	rows.typeValues = append(rows.typeValues, staticoperands.TypeValueTarget{Target: target})
 	return nil
 }

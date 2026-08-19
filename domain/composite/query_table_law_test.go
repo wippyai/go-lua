@@ -24,7 +24,7 @@ func publishedQueryFamilies() []schema.Key {
 // space the same table declares.
 func TestQueryTableSeals(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	registrations, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -75,7 +75,7 @@ func TestQueryTableSeals(t *testing.T) {
 // families declared.
 func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	registrations, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -104,7 +104,7 @@ func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 // reached through one row and there is no second list to disagree with it.
 func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	registrations, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -128,7 +128,7 @@ func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
 // name two contracts.
 func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	registrations, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -163,14 +163,10 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	value := valueowner.QueryEntry()
-	value.Bind = nil
-	if _, admitted := query.New(value, roles); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery); admitted {
 		t.Fatal("value-summary was admitted without the contributor that folds it")
 	}
-	effect := effectowner.QueryEntry()
-	effect.Declare = nil
-	if _, admitted := query.New(effect, roles); admitted {
+	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
 	}
 }
@@ -181,7 +177,7 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 // does not issue.
 func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	queries, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles)
 	specs, specsOK := observationSpecs(queries)
 	if !rolesOK || !queriesOK || !specsOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")
@@ -208,7 +204,7 @@ func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
 // declared.
 func TestObservationIssuanceIsTheSealedInventory(t *testing.T) {
 	roles, rolesOK := SemanticRoles()
-	queries, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles)
 	entries, entriesOK := observationEntries(queries)
 	if !rolesOK || !queriesOK || !entriesOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")

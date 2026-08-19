@@ -4,12 +4,14 @@ import (
 	"errors"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"sort"
 )
 
-func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraft, keys map[keyspace.LiteralValue]vocabulary.ExactKey) error {
+func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraft, keys exactkey.Table, callbackIDs []vocabulary.CallbackID) error {
 	expected, err := checkedStoredHandle("operation table", len(c.operations))
 	if err != nil {
 		return err
@@ -109,7 +111,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		valuesHandle[key] = handle
 	}
 	row.input = valuesHandle[inputKey]
-	callbackIDs, callbackRange, err := c.appendCallbacks(op, draft.callbacks, valuesHandle)
+	callbackIDs, callbackRange, err := c.appendCallbacks(op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
@@ -156,6 +158,12 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		outcomeValues = append(outcomeValues, valuesHandle[key])
 	}
 	row.outcomes = outcomeRange
+	behaviorRange, behaviorPredicateRange, behaviorErr := c.appendBehavior(draft.behavior)
+	if behaviorErr != nil {
+		return behaviorErr
+	}
+	row.behavior = behaviorRange
+	row.behaviorPredicates = behaviorPredicateRange
 	subedgeRange, subedgeErr := c.appendSubedges(op, draft.subedges, callbackIDs, valuesHandle, keys)
 	if subedgeErr != nil {
 		return subedgeErr
@@ -188,6 +196,31 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		c.boundCount++
 	}
 	return nil
+}
+
+func (c *Contract) appendBehavior(input behaviorDraft) (indexRange, indexRange, error) {
+	resultRange, err := checkedStoredRange("behavior result table", len(c.behaviorResults), len(input.results))
+	if err != nil {
+		return indexRange{}, indexRange{}, err
+	}
+	predicateRange, err := checkedStoredRange("behavior predicate table", len(c.behaviorPredicates), len(input.predicates))
+	if err != nil {
+		return indexRange{}, indexRange{}, err
+	}
+	for _, result := range input.results {
+		c.behaviorResults = append(c.behaviorResults, behaviorResultRow{
+			outcome: result.outcome, result: result.result, source: result.source, relation: result.relation,
+		})
+	}
+	for _, predicate := range input.predicates {
+		c.behaviorPredicates = append(c.behaviorPredicates, behaviorPredicateRow{
+			outcome: predicate.outcome, result: predicate.result, subject: predicate.subject, relation: predicate.relation,
+		})
+	}
+	if len(input.results) == 0 && len(input.predicates) == 0 {
+		return indexRange{}, indexRange{}, nil
+	}
+	return resultRange, predicateRange, nil
 }
 
 func (c *Contract) appendTypes(owner vocabulary.Operation, input map[string][]byte, declarations map[string]schematype.Type) (map[string]vocabulary.Type, error) {
@@ -247,7 +280,7 @@ func (c *Contract) appendValues(owner vocabulary.Operation, input valuesDraft, h
 	return vocabulary.Values(handle), nil
 }
 
-func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (indexRange, error) {
+func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys exactkey.Table) (indexRange, error) {
 	output, err := checkedStoredRange("binding table", len(c.bindings), len(input))
 	if err != nil {
 		return indexRange{}, err
@@ -262,7 +295,7 @@ func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys map[keysp
 	return output, nil
 }
 
-func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (bindingRange, error) {
+func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys exactkey.Table) (bindingRange, error) {
 	owner, err := checkedStoredRange("binding segment pool", len(c.segments), len(input.Owner))
 	if err != nil {
 		return bindingRange{}, err
@@ -312,12 +345,10 @@ func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (
 	return handle, nil
 }
 
-func (c *Contract) appendOpaque() error {
-	opHandle, err := checkedStoredHandle("operation table", len(c.operations))
-	if err != nil {
-		return err
+func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
+	if opaque == 0 || uint64(opaque) != uint64(len(c.operations)+1) {
+		return errors.New("target: noncanonical opaque operation handle")
 	}
-	opaque := vocabulary.Operation(opHandle)
 	if _, err := checkedStoredRange("outcome table", len(c.outcomes), 4); err != nil {
 		return err
 	}
@@ -355,6 +386,7 @@ func (c *Contract) appendOpaque() error {
 	if err != nil {
 		return err
 	}
+	issuedOpaque := callbackIDForOpaque(c.operationCore, opaque)
 	_, callbacks, err := c.appendCallbacks(opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
@@ -364,7 +396,7 @@ func (c *Contract) appendOpaque() error {
 		},
 		lifecycle: vocabulary.CallbackRetainedOptionalMany,
 		effects:   rowDraft{tail: vocabulary.RowUnknownOpen},
-	}}, map[string]vocabulary.Values{unknownKey: unknown})
+	}}, map[string]vocabulary.Values{unknownKey: unknown}, []vocabulary.CallbackID{issuedOpaque})
 	if err != nil {
 		return err
 	}
@@ -377,6 +409,14 @@ func (c *Contract) appendOpaque() error {
 	})
 	c.opaque = opaque
 	return nil
+}
+
+func callbackIDForOpaque(core operationvalue.Core, opaque vocabulary.Operation) vocabulary.CallbackID {
+	callback, ok := core.CallbackAt(opaque, 0)
+	if !ok {
+		return 0
+	}
+	return callback
 }
 
 func (c *Contract) buildLookup() error {
@@ -401,35 +441,4 @@ func (c *Contract) buildLookup() error {
 		}
 	}
 	return nil
-}
-
-func (c *Contract) appendProtocolTransitions(input []transitionDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("protocol transition table", len(c.transitions), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, item := range input {
-		outcomes := make([]transitionOutcomeRow, len(item.outcomes))
-		for i, outcome := range item.outcomes {
-			outcomes[i] = transitionOutcomeRow{outcome: outcome.outcome, to: outcome.to}
-		}
-		rangeItems, appendErr := appendStoredRange(&c.transitionOutcomes, outcomes, "protocol transition outcome table")
-		if appendErr != nil {
-			return indexRange{}, appendErr
-		}
-		c.transitions = append(c.transitions, transitionRow{operation: item.operation, input: item.input, from: item.from, outcomes: rangeItems})
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendInitialValueBinding(input vocabulary.BindingSpec, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (uint32, error) {
-	if _, err := checkedStoredRange("initial value binding table", len(c.initialValueBinds), 1); err != nil {
-		return 0, err
-	}
-	binding, err := c.appendBinding(input, keys)
-	if err != nil {
-		return 0, err
-	}
-	c.initialValueBinds = append(c.initialValueBinds, binding)
-	return uint32(len(c.initialValueBinds)), nil
 }

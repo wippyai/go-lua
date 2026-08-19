@@ -391,6 +391,22 @@ func GeneratedProgramSourceIDs() GeneratedProgramSourceRelationIDs {
 	}
 }
 
+var generatedProgramSourceOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[0].ID(),
+	generatedRelationEntries[1].ID(),
+	generatedRelationEntries[2].ID(),
+	generatedRelationEntries[3].ID(),
+	generatedRelationEntries[4].ID(),
+	generatedRelationEntries[5].ID(),
+	generatedRelationEntries[39].ID(),
+	generatedRelationEntries[40].ID(),
+}
+
+// GeneratedProgramSourceOwnerIDs is the immutable catalog-order totality of ProgramSource relation identities.
+func GeneratedProgramSourceOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedProgramSourceOwnerIDs...)
+}
+
 // GeneratedProgramFlowRelationIDs contains the stable denominator identities owned by ProgramFlow.
 type GeneratedProgramFlowRelationIDs struct {
 	ProgramFlowValues            schema.EntryID
@@ -466,6 +482,47 @@ func GeneratedProgramFlowIDs() GeneratedProgramFlowRelationIDs {
 	}
 }
 
+var generatedProgramFlowOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[6].ID(),
+	generatedRelationEntries[7].ID(),
+	generatedRelationEntries[8].ID(),
+	generatedRelationEntries[9].ID(),
+	generatedRelationEntries[10].ID(),
+	generatedRelationEntries[11].ID(),
+	generatedRelationEntries[12].ID(),
+	generatedRelationEntries[13].ID(),
+	generatedRelationEntries[14].ID(),
+	generatedRelationEntries[15].ID(),
+	generatedRelationEntries[16].ID(),
+	generatedRelationEntries[17].ID(),
+	generatedRelationEntries[18].ID(),
+	generatedRelationEntries[19].ID(),
+	generatedRelationEntries[20].ID(),
+	generatedRelationEntries[21].ID(),
+	generatedRelationEntries[22].ID(),
+	generatedRelationEntries[23].ID(),
+	generatedRelationEntries[24].ID(),
+	generatedRelationEntries[25].ID(),
+	generatedRelationEntries[26].ID(),
+	generatedRelationEntries[27].ID(),
+	generatedRelationEntries[28].ID(),
+	generatedRelationEntries[29].ID(),
+	generatedRelationEntries[30].ID(),
+	generatedRelationEntries[31].ID(),
+	generatedRelationEntries[32].ID(),
+	generatedRelationEntries[33].ID(),
+	generatedRelationEntries[34].ID(),
+	generatedRelationEntries[35].ID(),
+	generatedRelationEntries[36].ID(),
+	generatedRelationEntries[37].ID(),
+	generatedRelationEntries[38].ID(),
+}
+
+// GeneratedProgramFlowOwnerIDs is the immutable catalog-order totality of ProgramFlow relation identities.
+func GeneratedProgramFlowOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedProgramFlowOwnerIDs...)
+}
+
 // GeneratedProgramStaticRelationIDs contains the stable denominator identities owned by ProgramStatic.
 type GeneratedProgramStaticRelationIDs struct {
 	ProgramStatic                  schema.EntryID
@@ -495,6 +552,24 @@ func GeneratedProgramStaticIDs() GeneratedProgramStaticRelationIDs {
 	}
 }
 
+var generatedProgramStaticOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[41].ID(),
+	generatedRelationEntries[42].ID(),
+	generatedRelationEntries[43].ID(),
+	generatedRelationEntries[44].ID(),
+	generatedRelationEntries[45].ID(),
+	generatedRelationEntries[46].ID(),
+	generatedRelationEntries[47].ID(),
+	generatedRelationEntries[48].ID(),
+	generatedRelationEntries[49].ID(),
+	generatedRelationEntries[50].ID(),
+}
+
+// GeneratedProgramStaticOwnerIDs is the immutable catalog-order totality of ProgramStatic relation identities.
+func GeneratedProgramStaticOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedProgramStaticOwnerIDs...)
+}
+
 // GeneratedProgramModuleRelationIDs contains the stable denominator identities owned by ProgramModule.
 type GeneratedProgramModuleRelationIDs struct {
 	ProgramModuleImport            schema.EntryID
@@ -514,6 +589,20 @@ func GeneratedProgramModuleIDs() GeneratedProgramModuleRelationIDs {
 		ProgramModuleEntryMember:       generatedRelationEntries[55].ID(),
 		ProgramModuleEntryRootFunction: generatedRelationEntries[56].ID(),
 	}
+}
+
+var generatedProgramModuleOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[51].ID(),
+	generatedRelationEntries[52].ID(),
+	generatedRelationEntries[53].ID(),
+	generatedRelationEntries[54].ID(),
+	generatedRelationEntries[55].ID(),
+	generatedRelationEntries[56].ID(),
+}
+
+// GeneratedProgramModuleOwnerIDs is the immutable catalog-order totality of ProgramModule relation identities.
+func GeneratedProgramModuleOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedProgramModuleOwnerIDs...)
 }
 
 // GeneratedTargetRelationIDs contains the stable denominator identities owned by Target.
@@ -599,6 +688,51 @@ func GeneratedTargetIDs() GeneratedTargetRelationIDs {
 	}
 }
 
+var generatedTargetOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[57].ID(),
+	generatedRelationEntries[58].ID(),
+	generatedRelationEntries[59].ID(),
+	generatedRelationEntries[60].ID(),
+	generatedRelationEntries[61].ID(),
+	generatedRelationEntries[62].ID(),
+	generatedRelationEntries[63].ID(),
+	generatedRelationEntries[64].ID(),
+	generatedRelationEntries[65].ID(),
+	generatedRelationEntries[66].ID(),
+	generatedRelationEntries[67].ID(),
+	generatedRelationEntries[68].ID(),
+	generatedRelationEntries[69].ID(),
+	generatedRelationEntries[70].ID(),
+	generatedRelationEntries[71].ID(),
+	generatedRelationEntries[72].ID(),
+	generatedRelationEntries[73].ID(),
+	generatedRelationEntries[74].ID(),
+	generatedRelationEntries[75].ID(),
+	generatedRelationEntries[76].ID(),
+	generatedRelationEntries[77].ID(),
+	generatedRelationEntries[78].ID(),
+	generatedRelationEntries[79].ID(),
+	generatedRelationEntries[80].ID(),
+	generatedRelationEntries[81].ID(),
+	generatedRelationEntries[82].ID(),
+	generatedRelationEntries[83].ID(),
+	generatedRelationEntries[84].ID(),
+	generatedRelationEntries[85].ID(),
+	generatedRelationEntries[86].ID(),
+	generatedRelationEntries[87].ID(),
+	generatedRelationEntries[88].ID(),
+	generatedRelationEntries[89].ID(),
+	generatedRelationEntries[90].ID(),
+	generatedRelationEntries[91].ID(),
+	generatedRelationEntries[92].ID(),
+	generatedRelationEntries[93].ID(),
+}
+
+// GeneratedTargetOwnerIDs is the immutable catalog-order totality of Target relation identities.
+func GeneratedTargetOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedTargetOwnerIDs...)
+}
+
 // GeneratedLinkProjectRelationIDs contains the stable denominator identities owned by LinkProject.
 type GeneratedLinkProjectRelationIDs struct {
 	LinkProjectShardMount      schema.EntryID
@@ -612,6 +746,16 @@ func GeneratedLinkProjectIDs() GeneratedLinkProjectRelationIDs {
 	}
 }
 
+var generatedLinkProjectOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[94].ID(),
+	generatedRelationEntries[95].ID(),
+}
+
+// GeneratedLinkProjectOwnerIDs is the immutable catalog-order totality of LinkProject relation identities.
+func GeneratedLinkProjectOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedLinkProjectOwnerIDs...)
+}
+
 // GeneratedLinkBoundaryRelationIDs contains the stable denominator identities owned by LinkBoundary.
 type GeneratedLinkBoundaryRelationIDs struct {
 	LinkBoundary schema.EntryID
@@ -621,6 +765,15 @@ func GeneratedLinkBoundaryIDs() GeneratedLinkBoundaryRelationIDs {
 	return GeneratedLinkBoundaryRelationIDs{
 		LinkBoundary: generatedRelationEntries[96].ID(),
 	}
+}
+
+var generatedLinkBoundaryOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[96].ID(),
+}
+
+// GeneratedLinkBoundaryOwnerIDs is the immutable catalog-order totality of LinkBoundary relation identities.
+func GeneratedLinkBoundaryOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedLinkBoundaryOwnerIDs...)
 }
 
 // GeneratedLinkModuleRelationIDs contains the stable denominator identities owned by LinkModule.
@@ -648,6 +801,22 @@ func GeneratedLinkModuleIDs() GeneratedLinkModuleRelationIDs {
 	}
 }
 
+var generatedLinkModuleOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[97].ID(),
+	generatedRelationEntries[98].ID(),
+	generatedRelationEntries[99].ID(),
+	generatedRelationEntries[100].ID(),
+	generatedRelationEntries[101].ID(),
+	generatedRelationEntries[102].ID(),
+	generatedRelationEntries[103].ID(),
+	generatedRelationEntries[104].ID(),
+}
+
+// GeneratedLinkModuleOwnerIDs is the immutable catalog-order totality of LinkModule relation identities.
+func GeneratedLinkModuleOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedLinkModuleOwnerIDs...)
+}
+
 // GeneratedLinkStaticRelationIDs contains the stable denominator identities owned by LinkStatic.
 type GeneratedLinkStaticRelationIDs struct {
 	LinkStatic schema.EntryID
@@ -657,6 +826,15 @@ func GeneratedLinkStaticIDs() GeneratedLinkStaticRelationIDs {
 	return GeneratedLinkStaticRelationIDs{
 		LinkStatic: generatedRelationEntries[105].ID(),
 	}
+}
+
+var generatedLinkStaticOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[105].ID(),
+}
+
+// GeneratedLinkStaticOwnerIDs is the immutable catalog-order totality of LinkStatic relation identities.
+func GeneratedLinkStaticOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedLinkStaticOwnerIDs...)
 }
 
 // GeneratedLinkHostRelationIDs contains the stable denominator identities owned by LinkHost.
@@ -675,5 +853,45 @@ func GeneratedLinkHostIDs() GeneratedLinkHostRelationIDs {
 		LinkHostBoot:           generatedRelationEntries[108].ID(),
 		LinkHostMember:         generatedRelationEntries[109].ID(),
 		LinkHostEndpointTarget: generatedRelationEntries[110].ID(),
+	}
+}
+
+var generatedLinkHostOwnerIDs = []schema.EntryID{
+	generatedRelationEntries[106].ID(),
+	generatedRelationEntries[107].ID(),
+	generatedRelationEntries[108].ID(),
+	generatedRelationEntries[109].ID(),
+	generatedRelationEntries[110].ID(),
+}
+
+// GeneratedLinkHostOwnerIDs is the immutable catalog-order totality of LinkHost relation identities.
+func GeneratedLinkHostOwnerIDs() []schema.EntryID {
+	return append([]schema.EntryID(nil), generatedLinkHostOwnerIDs...)
+}
+
+func generatedOwnerIDs(owner RelationOwner) []schema.EntryID {
+	switch owner {
+	case RelationOwnerProgramSource:
+		return generatedProgramSourceOwnerIDs
+	case RelationOwnerProgramFlow:
+		return generatedProgramFlowOwnerIDs
+	case RelationOwnerProgramStatic:
+		return generatedProgramStaticOwnerIDs
+	case RelationOwnerProgramModule:
+		return generatedProgramModuleOwnerIDs
+	case RelationOwnerTarget:
+		return generatedTargetOwnerIDs
+	case RelationOwnerLinkProject:
+		return generatedLinkProjectOwnerIDs
+	case RelationOwnerLinkBoundary:
+		return generatedLinkBoundaryOwnerIDs
+	case RelationOwnerLinkModule:
+		return generatedLinkModuleOwnerIDs
+	case RelationOwnerLinkStatic:
+		return generatedLinkStaticOwnerIDs
+	case RelationOwnerLinkHost:
+		return generatedLinkHostOwnerIDs
+	default:
+		return nil
 	}
 }

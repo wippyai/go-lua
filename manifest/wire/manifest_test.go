@@ -114,6 +114,57 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManifestBehaviorRowsCloneRoundTripAndSortCanonically(t *testing.T) {
+	m := New("behavior/module")
+	fn := typ.Func().Param("value", typ.Any).Returns(typ.String).Build()
+	m.DefineFunctionSignature("type", signature.Function{Type: fn})
+	op := Operation{
+		Behavior: &OperationBehavior{
+			Results: []OperationResult{
+				{Outcome: 1, Result: 0, Source: InputSource{Kind: InputSourceValue, Ordinal: 0}, Relation: "semantic/runtime-kind/throw"},
+				{Outcome: 0, Result: 0, Source: InputSource{Kind: InputSourceValue, Ordinal: 0}, Relation: "semantic/runtime-kind/result"},
+			},
+			Predicates: []OperationPredicate{
+				{Outcome: 0, Result: 0, Subject: InputSource{Kind: InputSourceValue, Ordinal: 0}, Relation: "semantic/runtime-kind/predicate"},
+			},
+		},
+	}
+	m.DefineFunctionOperation("type", op)
+	// DefineFunctionOperation owns the nested declaration. Mutating the input
+	// after registration must not alter the manifest's behavior rows.
+	op.Behavior.Results[0].Relation = "mutated"
+	stored := m.FunctionOperations["type"]
+	if stored.Behavior == nil || stored.Behavior.Results[0].Relation != "semantic/runtime-kind/result" {
+		t.Fatalf("stored behavior = %#v, want an ownership-isolated canonical copy", stored.Behavior)
+	}
+	if len(stored.Behavior.Results) != 2 || stored.Behavior.Results[0].Outcome != 0 {
+		t.Fatalf("stored result rows = %#v, want canonical outcome order", stored.Behavior.Results)
+	}
+
+	encoded, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	got := decoded.FunctionOperations["type"]
+	if got.Behavior == nil || len(got.Behavior.Results) != 2 || got.Behavior.Results[0].Relation != "semantic/runtime-kind/result" {
+		t.Fatalf("decoded behavior = %#v, want canonical result rows", got.Behavior)
+	}
+	if len(got.Behavior.Predicates) != 1 || got.Behavior.Predicates[0].Relation != "semantic/runtime-kind/predicate" {
+		t.Fatalf("decoded predicates = %#v", got.Behavior.Predicates)
+	}
+	reencoded, err := Encode(decoded)
+	if err != nil {
+		t.Fatalf("re-Encode: %v", err)
+	}
+	if string(encoded) != string(reencoded) {
+		t.Fatalf("behavior manifest bytes changed across round trip:\n%s\n%s", encoded, reencoded)
+	}
+}
+
 func TestManifestRoundTripPreservesDerivedReceiverWithoutChangingWireShape(t *testing.T) {
 	m := New("receiver/roundtrip")
 	m.SetExport(typ.Func().Param("self", typ.Self).Param("value", typ.String).Returns(typ.Boolean).Build())

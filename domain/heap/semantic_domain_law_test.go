@@ -1,6 +1,7 @@
 package heap_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
@@ -556,7 +557,7 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec target.Spec) s
 	programID, programOK := linked.Project().Mounts().ProgramID(shard)
 	receipt, receiptOK := composite.Global()
 	compiled, failure := composite.CompileArtifactDetailed(program, receipt)
-	mount, mountOK := heapdomain.NewArtifactMount(compiled, module, programID)
+	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, compiled), module, programID)
 	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
 	if !shardOK || !moduleOK || !programOK || !receiptOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
 		t.Fatalf("receipt Heap fixture shard=%t module=%t program=%t receipt=%t artifact=%v mount=%t seal=%v", shardOK, moduleOK, programOK, receiptOK, failure, mountOK, sealFailure)

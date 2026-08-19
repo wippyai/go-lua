@@ -56,18 +56,14 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 		return nil, false
 	}
 	descriptor := implementation.descriptor
-	receipt := implementation.receipt
-	if runtime.mode == runtimeBindingReceipt {
-		if !receipt.valid() {
-			return nil, false
-		}
-		if !runtime.pinReceipt(receipt) {
-			return nil, false
-		}
-		descriptor = factorRuntimeDescriptor{schema: receipt.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
-	} else {
+	receipt := implementation.binding
+	if !receipt.valid() {
 		return nil, false
 	}
+	if !runtime.pinBinding(receipt) {
+		return nil, false
+	}
+	descriptor = factorRuntimeDescriptor{schema: receipt.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
 	if runtime.graph.CompositionID() != descriptor.schema.coldID() {
 		return nil, false
 	}
@@ -225,7 +221,7 @@ func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64
 	return equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: local}
 }
 
-func exactWriteReceiptSurface(receipt factorRuntimeReceipt, local uint64) equation.Surface {
+func exactWriteReceiptSurface(receipt factorRuntimeBinding, local uint64) equation.Surface {
 	return equation.Surface{Factor: receipt.semantic, Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
 }
 
@@ -305,13 +301,14 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		if !represented || !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, representative, summaryReadForm) {
 			return false
 		}
-		count, counted := graph.SummaryKeyCount(representative)
-		if !counted || count == 0 {
+		keyRange, ranged := graph.SummaryKeyRange(representative)
+		count := keyRange.Count()
+		if !ranged || count == 0 {
 			return false
 		}
 		keys := make([]K, count)
 		for index := range keys {
-			raw, present := graph.SummaryKeyAt(representative, index)
+			raw, present := keyRange.At(index)
 			if !present || raw >= descriptor.keyEnd {
 				return false
 			}

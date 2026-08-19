@@ -3,8 +3,8 @@ package composite
 import (
 	"testing"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
 // A compiled artifact carries no rule catalog of its own. Every placement it
@@ -27,7 +27,7 @@ import (
 // and names the first placement that disagrees. The inventory is given as the
 // declared keys in table order, so the law reads the same over the production
 // table and over a copy one of whose members has been displaced.
-func placementKeyAgreement(artifact *programartifact.Artifact, keys []schema.Key) (int, schema.Key, bool) {
+func placementKeyAgreement(artifact *ingress.Snapshot, keys []schema.Key) (int, schema.Key, bool) {
 	for index := 0; index < artifact.RulePlacementCount(); index++ {
 		row, ok := artifact.RulePlacementAt(index)
 		if !ok {
@@ -85,19 +85,19 @@ return classify(total), classify(nil), total
 // placementKeyArtifacts compiles every fixture through the mount phase and
 // returns each mounted artifact. The artifacts are the phase's own output, so
 // the placements the law reads are the ones a consumer of the analyzer receives.
-func placementKeyArtifacts(t *testing.T) []*programartifact.Artifact {
+func placementKeyArtifacts(t *testing.T) []*ingress.Snapshot {
 	t.Helper()
-	var artifacts []*programartifact.Artifact
+	var artifacts []*ingress.Snapshot
 	for _, fixture := range placementKeySources() {
 		record := mountedRecord(t, fixture.name, fixture.source)
 		if len(record.Artifacts) == 0 {
 			t.Fatalf("fixture %q mounted no artifact", fixture.name)
 		}
 		for index, row := range record.Artifacts {
-			if row.Artifact == nil || !row.Artifact.Available() {
-				t.Fatalf("fixture %q mount %d carries no sealed artifact", fixture.name, index)
+			if row.Snapshot == nil || !row.Snapshot.Available() {
+				t.Fatalf("fixture %q mount %d carries no sealed snapshot", fixture.name, index)
 			}
-			artifacts = append(artifacts, row.Artifact)
+			artifacts = append(artifacts, row.Snapshot)
 		}
 	}
 	return artifacts

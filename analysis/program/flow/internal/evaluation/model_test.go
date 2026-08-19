@@ -13,6 +13,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 type portsFixture struct {
@@ -158,9 +161,9 @@ func openPortsFixture(t *testing.T, counts [keyspace.FamilyCount]uint32, flow au
 	identity := finalize.Preimage().Identity()
 	staticInput := static.Input{Counts: counts}
 	if primitiveCount := int(counts[keyspace.FamilyTypePrimitive]); primitiveCount != 0 {
-		staticInput.Types.Primitive = make([]static.Primitive, primitiveCount)
+		staticInput.Types.Primitive = make([]statictypes.Primitive, primitiveCount)
 		for index := range staticInput.Types.Primitive {
-			staticInput.Types.Primitive[index] = static.Primitive{Kind: static.PrimitiveNumber}
+			staticInput.Types.Primitive[index] = statictypes.Primitive{Kind: statictypes.PrimitiveNumber}
 		}
 	}
 	if typeValueCount := int(counts[keyspace.FamilyTypeValue]); typeValueCount != 0 {
@@ -172,18 +175,18 @@ func openPortsFixture(t *testing.T, counts [keyspace.FamilyCount]uint32, flow au
 			_ = finalize.Abort()
 			t.Fatalf("TypeValue fixture requires a primitive target")
 		}
-		staticInput.Operands.TypeValue = make([]static.TypeValueTarget, typeValueCount)
+		staticInput.Operands.TypeValue = make([]staticoperands.TypeValueTarget, typeValueCount)
 		for index := range staticInput.Operands.TypeValue {
-			staticInput.Operands.TypeValue[index] = static.TypeValueTarget{
+			staticInput.Operands.TypeValue[index] = staticoperands.TypeValueTarget{
 				Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, uint32(index+1)),
 			}
 		}
 	}
 	if functionCount := int(counts[keyspace.FamilyFunction]); functionCount != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, functionCount)
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, functionCount)
 	}
 	if callCount := int(counts[keyspace.FamilyCall]); callCount != 0 {
-		staticInput.Contracts.Call = make([]static.CallContract, callCount)
+		staticInput.Contracts.Call = make([]staticcontracts.CallContract, callCount)
 	}
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {

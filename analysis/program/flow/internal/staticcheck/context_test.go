@@ -8,6 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
 )
 
 func TestStaticCheckFunctionGenericHeaderAndFormalPhases(t *testing.T) {
@@ -57,10 +61,10 @@ func TestStaticCheckFunctionGenericHeaderAndFormalPhases(t *testing.T) {
 			Control: authored.ControlInput{Returns: []authored.Return{{Owner: body1, Values: values2}, {Owner: body2, Values: values3}}},
 		},
 		static: static.Input{
-			Declarations: static.DeclarationsInput{TypeParam: []static.TypeParam{{Owner: function, Name: 1}}},
-			Signatures:   static.SignaturesInput{TypeFunction: []static.TypeFunction{{Scope: function}}},
-			Contracts:    static.ContractsInput{Function: []static.FunctionContract{{TypeParams: []keyspace.Term{param}}}},
-			Operators:    static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: function, Operand: readHeader}}},
+			Declarations: staticdecl.Input{TypeParam: []staticdecl.TypeParam{{Owner: function, Name: 1}}},
+			Signatures:   staticsig.Input{TypeFunction: []staticsig.TypeFunction{{Scope: function}}},
+			Contracts:    staticcontracts.Input{Function: []staticcontracts.FunctionContract{{TypeParams: []keyspace.Term{param}}}},
+			Operators:    staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: function, Operand: readHeader}}},
 		},
 	})
 	tree, err := buildContext(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.entry)
@@ -165,8 +169,8 @@ func TestStaticCheckValidateRejectsInvisibleNonSelfFunctionCapture(t *testing.T)
 			Control: authored.ControlInput{Returns: []authored.Return{{Owner: body2, Values: values3}}},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: selfCell, Operand: function}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: selfCell, Operand: function}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	if !fixture.forest.Static(function) {
@@ -231,8 +235,8 @@ func TestStaticCheckRepeatUsesPositionAnchorNotFrontier(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	positionBody, _, positionCursor, ok := fixture.sourceView.Index().Position(loop)
@@ -295,7 +299,7 @@ func TestStaticCheckNumericLoopCellsStartAtChildGapZero(t *testing.T) {
 				Returns: []authored.Return{{Owner: body2, Values: values2}},
 			},
 		},
-		static: static.Input{Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}}},
+		static: static.Input{Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: read}}}},
 	})
 	tree, err := buildContext(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.entry)
 	if err != nil {
@@ -343,7 +347,7 @@ func TestStaticCheckChunkVarargIsVisibleAtEntryGapZero(t *testing.T) {
 			},
 			Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
 		},
-		static: static.Input{Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: vararg}}}},
+		static: static.Input{Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: vararg}}}},
 	})
 	tree, err := buildContext(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.entry)
 	if err != nil {
@@ -413,8 +417,8 @@ func TestStaticCheckBranchPositionAnchorsAndValidate(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	positionBody, _, cursor, ok := fixture.sourceView.Index().Position(branch)

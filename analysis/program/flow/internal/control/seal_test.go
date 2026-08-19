@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 // shapeFixture deliberately keeps every owner capability alive. Shape is a
@@ -63,7 +64,7 @@ func openShapeFixture(t *testing.T, spec shapeSpec) *shapeFixture {
 
 	staticInput := static.Input{Counts: spec.counts}
 	if spec.counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, spec.counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, spec.counts[keyspace.FamilyFunction])
 	}
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {
@@ -811,7 +812,7 @@ func openShapeFixtureWithExactAtoms(t *testing.T, spec shapeSpec, exactAtoms []k
 
 	staticInput := static.Input{Counts: spec.counts}
 	if spec.counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, spec.counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, spec.counts[keyspace.FamilyFunction])
 	}
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {

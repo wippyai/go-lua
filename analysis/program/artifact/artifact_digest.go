@@ -1,10 +1,14 @@
 package artifact
 
 import (
+	"sync"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
+
+var digestSinks sync.Pool
 
 type field struct {
 	bytes []byte
@@ -29,26 +33,55 @@ func boolField(value bool) field {
 }
 
 func digest(domain string, version uint64, fields ...field) identity.ContentID {
-	var writer canonical.DigestWriter
-	if writer.Reset(domain, version) != nil {
-		return identity.ContentID{}
+	sink, _ := digestSinks.Get().(*digestSink)
+	if sink == nil {
+		sink = new(digestSink)
 	}
-	for _, value := range fields {
+	sink.ok = sink.writer.Reset(domain, version) == nil
+	sink.add(fields...)
+	id := sink.sum()
+	digestSinks.Put(sink)
+	return id
+}
+
+type digestSink struct {
+	writer canonical.DigestWriter
+	ok     bool
+}
+
+func newDigestSink(domain string, version uint64) digestSink {
+	var sink digestSink
+	sink.ok = sink.writer.Reset(domain, version) == nil
+	return sink
+}
+
+func (sink *digestSink) add(values ...field) {
+	if sink == nil || !sink.ok {
+		return
+	}
+	for _, value := range values {
 		var err error
 		switch value.kind {
 		case fieldBytes:
-			err = writer.Bytes(value.bytes)
+			err = sink.writer.Bytes(value.bytes)
 		case fieldUint, fieldBool:
-			err = writer.Uint(value.uint)
+			err = sink.writer.Uint(value.uint)
 		default:
-			return identity.ContentID{}
+			sink.ok = false
+			return
 		}
 		if err != nil {
-			return identity.ContentID{}
+			sink.ok = false
+			return
 		}
 	}
-	if writer.Finish() != nil {
+}
+
+func (sink *digestSink) fail() { sink.ok = false }
+
+func (sink *digestSink) sum() identity.ContentID {
+	if sink == nil || !sink.ok || sink.writer.Finish() != nil {
 		return identity.ContentID{}
 	}
-	return identity.ContentID(writer.Sum())
+	return identity.ContentID(sink.writer.Sum())
 }

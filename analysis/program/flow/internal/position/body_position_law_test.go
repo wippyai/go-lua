@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 func TestSealDirectDoBodyPositionAndCommit(t *testing.T) {
@@ -62,7 +63,7 @@ func TestSealFunctionBodyIsTypedButItsDirectContentsArePositioned(t *testing.T) 
 			Functions: authored.FunctionsInput{Rows: []authored.Function{{Owner: body1, Body: body2}}},
 			Control:   authored.ControlInput{Returns: []authored.Return{{Owner: body1, Values: values[0]}, {Owner: body2, Values: values[1]}}},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}}},
 	})
 	index, err := sealPositionFixture(fixture)
 	if err != nil {

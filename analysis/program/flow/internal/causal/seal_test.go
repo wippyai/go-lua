@@ -24,6 +24,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestSemanticMatrixDirectCallPublishesExactBoundaryDenominator(t *testing.T) {
@@ -1370,11 +1372,11 @@ func TestSemanticMatrixStaticCallTypeSubtreeIsExcludedFromCausalPlane(t *testing
 		rows:      [][]keyspace.Term{{call}},
 		nilOwners: []keyspace.Term{body},
 		static: static.Input{
-			Types: static.TypesInput{
-				Primitive: []static.Primitive{{Kind: static.PrimitiveAny}},
-				Optional:  []static.Optional{{Inner: primitive}},
+			Types: statictypes.Input{
+				Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}},
+				Optional:  []statictypes.Optional{{Inner: primitive}},
 			},
-			Contracts: static.ContractsInput{Call: []static.CallContract{{TypeArguments: []keyspace.Term{optional}}}},
+			Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{TypeArguments: []keyspace.Term{optional}}}},
 		},
 		flow: authored.Input{
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body}}},
@@ -1978,10 +1980,10 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 	staticInput.Counts[keyspace.FamilyTypeOf] = uint32(len(staticInput.Operators.TypeOf))
 	staticInput.Counts[keyspace.FamilyAnnotation] = uint32(len(staticInput.Operands.Annotation))
 	if len(staticInput.Contracts.Function) == 0 && spec.counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, spec.counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, spec.counts[keyspace.FamilyFunction])
 	}
 	if len(staticInput.Contracts.Call) == 0 && spec.counts[keyspace.FamilyCall] != 0 {
-		staticInput.Contracts.Call = make([]static.CallContract, spec.counts[keyspace.FamilyCall])
+		staticInput.Contracts.Call = make([]staticcontracts.CallContract, spec.counts[keyspace.FamilyCall])
 	}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
 	staticInput.Counts[keyspace.FamilyCall] = uint32(len(staticInput.Contracts.Call))

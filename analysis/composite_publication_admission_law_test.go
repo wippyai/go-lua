@@ -8,10 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	publication "github.com/wippyai/go-lua/domain/composite/publication"
 	"github.com/wippyai/go-lua/domain/effect/callsite"
@@ -23,8 +23,12 @@ import (
 // selectedEffectMemberPoint resolves the one selected CallEffect point the
 // sealed artifact issued for this call occurrence.
 func selectedEffectMemberPoint(mounts []mountedProgramArtifact, mount, occurrence identity.ContentID) (identity.ContentID, bool) {
+	sealed, sealedOK := linkArtifactRows(mounts)
+	if !sealedOK {
+		return identity.ContentID{}, false
+	}
 	var found identity.ContentID
-	_, ok := walkArtifactRulePlacements(mounts, func(key schema.Key, candidateMount, point, candidateOccurrence identity.ContentID) bool {
+	_, ok := composite.WalkSealedPlacements(sealed, func(key schema.Key, candidateMount, point, candidateOccurrence identity.ContentID) bool {
 		if key != "effect-selected" || candidateMount != mount || candidateOccurrence != occurrence {
 			return true
 		}
@@ -40,7 +44,6 @@ func selectedEffectMemberPoint(mounts []mountedProgramArtifact, mount, occurrenc
 func attachSelectedDirectAllocationMembership(
 	compilation *engine.ProgramConstruction,
 	binding *composite.ProgramBinding,
-	graph *engine.ReceiptGraph,
 	mounts []mountedProgramArtifact,
 	mount, call identity.ContentID,
 ) (publication.DirectAllocationMembershipAttachment, bool) {
@@ -109,7 +112,7 @@ func publicationAllocationContextEventPlan(t testing.TB) *Plan {
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.binding == nil {
 		t.Fatalf("compile publication allocation context event fixture=%v diagnostics=%+v", status, diagnostics)
 	}
-	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.graph == nil || plan.state.queryPlan == nil {
+	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.committed.program == nil || len(plan.state.querySites) == 0 {
 		t.Fatalf("publication allocation context event runtime topology=%+v", runtimeDiagnostic)
 	}
 	return plan
@@ -183,40 +186,40 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
 	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
-	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence)
+	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, occurrence)
 	attachmentID, attachmentIDOK := attachment.ContentID()
 	if !candidatesOK || !candidates.Available() || candidates.Count() < 2 || !attached || !attachment.Valid() || !attachmentIDOK {
 		t.Fatal("direct allocation membership pre-solve attachment")
 	}
-	if _, duplicate := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence); duplicate {
+	if _, duplicate := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, occurrence); duplicate {
 		t.Fatal("direct allocation membership attached more than one Value observation for one selected member")
 	}
-	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, publicationPlacementPolicyID("wrong-membership-mount"), occurrence); accepted {
+	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, publicationPlacementPolicyID("wrong-membership-mount"), occurrence); accepted {
 		t.Fatal("direct allocation membership accepted a foreign mount")
 	}
-	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, publicationPlacementPolicyID("wrong-membership-call")); accepted {
+	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, publicationPlacementPolicyID("wrong-membership-call")); accepted {
 		t.Fatal("direct allocation membership accepted a foreign call")
 	}
 	var nonSelectedOccurrence identity.ContentID
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.moduleKey != mount || mounted.artifact == nil {
+		if mounted.moduleKey != mount || !mounted.valid() {
 			continue
 		}
-		for index := 0; index < mounted.artifact.RulePlacementCount() && !nonSelectedOccurrence.Available(); index++ {
-			row, rowOK := mounted.artifact.RulePlacementAt(index)
-			if !rowOK || row.Key() == "effect-selected" || !row.ID().Available() || row.ID() == occurrence {
+		for index := 0; index < mounted.snapshot.RulePlacementCount() && !nonSelectedOccurrence.Available(); index++ {
+			row, rowOK := mounted.snapshot.RulePlacementAt(index)
+			if !rowOK || row.Key() == "effect-selected" || !row.OccurrenceID().Available() || row.OccurrenceID() == occurrence {
 				continue
 			}
-			nonSelectedOccurrence = row.ID()
+			nonSelectedOccurrence = row.OccurrenceID()
 		}
 	}
 	if !nonSelectedOccurrence.Available() {
 		t.Fatal("direct allocation membership non-selected role fixture")
 	}
-	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, nonSelectedOccurrence); accepted {
+	if _, accepted := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, nonSelectedOccurrence); accepted {
 		t.Fatal("direct allocation membership accepted a non-EffectSelected role")
 	}
-	secondAttachment, secondAttached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, secondOccurrence)
+	secondAttachment, secondAttached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, secondOccurrence)
 	secondAttachmentID, secondAttachmentIDOK := secondAttachment.ContentID()
 	if !secondAttached || !secondAttachment.Valid() || !secondAttachmentIDOK || secondAttachmentID == attachmentID {
 		t.Fatal("direct allocation membership second observation fixture")
@@ -233,7 +236,7 @@ func TestSelectedDirectAllocationMembershipOwnerLaw(t *testing.T) {
 	if !postSolverOK || postSolver == nil {
 		t.Fatal("direct allocation membership post-Solver fixture")
 	}
-	if _, accepted := attachSelectedDirectAllocationMembership(postSolverCompilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence); accepted {
+	if _, accepted := attachSelectedDirectAllocationMembership(postSolverCompilation, plan.state.binding, plan.state.artifacts.mounts, mount, occurrence); accepted {
 		t.Fatal("direct allocation membership attached after Solver closed compilation")
 	}
 	state, status := solver.Solve(context.Background())
@@ -449,9 +452,9 @@ func TestPublicationAllocationContextEventOwnerLaw(t *testing.T) {
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
 	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
-	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence)
+	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, occurrence)
 	secondCandidates, secondCandidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, secondOccurrence)
-	secondAttachment, secondAttached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, secondOccurrence)
+	secondAttachment, secondAttached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, secondOccurrence)
 	if !candidatesOK || !candidates.Available() || !attached || !attachment.Valid() || !secondCandidatesOK || !secondCandidates.Available() || !secondAttached || !secondAttachment.Valid() {
 		t.Fatal("publication allocation context event pre-solve attachments")
 	}
@@ -668,7 +671,7 @@ func TestPublicationDirectAllocationSubjectPlanOwnerLaw(t *testing.T) {
 	mount, occurrence, secondOccurrence := selectedCallEffectOccurrences(t, plan)
 	compilation := publicationTransitionCompilationFor(t, plan, mount, occurrence)
 	candidates, candidatesOK := selectedEffectRule(plan.state.binding).AttachMountedPublicationCandidates(compilation, plan.state.binding.EffectQuery(), mount, occurrence)
-	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.graph, plan.state.artifacts.mounts, mount, occurrence)
+	attachment, attached := attachSelectedDirectAllocationMembership(compilation, plan.state.binding, plan.state.artifacts.mounts, mount, occurrence)
 	solver, _, solverOK := compilation.Seal()
 	if !candidatesOK || !candidates.Available() || candidates.Count() == 0 || !attached || !attachment.Valid() || !solverOK || solver == nil {
 		t.Fatal("publication direct allocation candidate fixture")

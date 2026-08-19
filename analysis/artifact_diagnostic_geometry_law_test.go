@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -92,36 +92,36 @@ return 0`,
 
 			found := false
 			for _, mount := range plan.state.artifacts.mounts {
-				transfers, transfersOK := diagnosticLocalTransfersByDestination(mount.artifact)
+				transfers, transfersOK := diagnosticLocalTransfersByDestination(mount.snapshot)
 				if !transfersOK {
 					t.Fatal("sealed LocalTransfer index unavailable")
 				}
-				for _, observation := range mustResultGeometry(t, plan.state).branchObservations {
-					if observation.mount != mount.moduleKey {
+				for _, observation := range mustResultGeometry(t, plan.state).BranchObservations {
+					if observation.Mount != mount.moduleKey {
 						continue
 					}
-					for _, producer := range observation.producers {
-						if producer.key != testCase.key {
+					for _, producer := range observation.Producers {
+						if producer.Key != testCase.key {
 							continue
 						}
 						found = true
-						if producer.point == producer.anchor {
-							t.Fatalf("producer %x was not retained at its Local execution point", producer.occurrence)
+						if producer.Point == producer.Anchor {
+							t.Fatalf("producer %x was not retained at its Local execution point", producer.Occurrence)
 						}
-						edge, edgeOK := transfers[producer.point]
-						anchor, anchorOK := diagnosticEvidenceAnchor(observation.points, producer.point, transfers)
-						if !edgeOK || !edge.FullEnvironment() || edge.To() != producer.point || !anchorOK || anchor != producer.anchor {
-							t.Fatalf("producer geometry lost exact Program->Local chain: producer=%x anchor=%x/%x execution=%x edge=%+v/%t", producer.occurrence, producer.anchor, anchor, producer.point, edge, edgeOK)
+						edge, edgeOK := transfers[producer.Point]
+						anchor, anchorOK := diagnosticEvidenceAnchor(observation.Points, producer.Point, transfers)
+						if !edgeOK || !edge.Full() || edge.To() != producer.Point || !anchorOK || anchor != producer.Anchor {
+							t.Fatalf("producer geometry lost exact Program->Local chain: producer=%x anchor=%x/%x execution=%x edge=%+v/%t", producer.Occurrence, producer.Anchor, anchor, producer.Point, edge, edgeOK)
 						}
 						baseEvidence := false
-						for _, point := range observation.points {
-							if point == producer.anchor {
+						for _, point := range observation.Points {
+							if point == producer.Anchor {
 								baseEvidence = true
 								break
 							}
 						}
 						if !baseEvidence {
-							t.Fatalf("producer anchor %x is not a Program evidence point", producer.anchor)
+							t.Fatalf("producer anchor %x is not a Program evidence point", producer.Anchor)
 						}
 					}
 				}
@@ -154,12 +154,12 @@ return 0`, contract)
 	if !artifactsOK || artifacts == nil || len(artifacts.mounts) == 0 {
 		t.Fatal("artifact compile unavailable")
 	}
-	artifact := artifacts.mounts[0].artifact
-	var full programartifact.LocalTransfer
+	snapshot := artifacts.mounts[0].snapshot
+	var full ingress.LocalTransfer
 	fullOK := false
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		candidate, candidateOK := artifact.LocalTransferAt(index)
-		if candidateOK && candidate.FullEnvironment() {
+	for index := 0; index < snapshot.LocalTransferCount(); index++ {
+		candidate, candidateOK := snapshot.LocalTransferAt(index)
+		if candidateOK && candidate.Full() {
 			full, fullOK = candidate, true
 			break
 		}
@@ -171,7 +171,7 @@ return 0`, contract)
 	if anchor, ok := diagnosticEvidenceAnchor(evidence, full.To(), nil); ok || anchor.Available() {
 		t.Fatal("missing transfer was accepted")
 	}
-	transfers := make(map[identity.ContentID]programartifact.LocalTransfer)
+	transfers := make(map[identity.ContentID]ingress.LocalTransfer)
 	if !addDiagnosticFullLocalTransfer(transfers, full) {
 		t.Fatal("exact transfer index rejected its own sealed row")
 	}
@@ -203,7 +203,70 @@ return negate(true)`, contract)
 		t.Fatalf("unsupported producer branch rejected plan: %v/%v diagnostics=%+v", status, plan, diagnostics)
 	}
 	defer plan.Close()
-	if len(mustResultGeometry(t, plan.state).branchObservations) != 0 {
-		t.Fatalf("unsupported producer branch escaped mounted result: %d rows", len(mustResultGeometry(t, plan.state).branchObservations))
+	if len(mustResultGeometry(t, plan.state).BranchObservations) != 0 {
+		t.Fatalf("unsupported producer branch escaped mounted result: %d rows", len(mustResultGeometry(t, plan.state).BranchObservations))
 	}
+}
+
+// diagnosticEvidenceAnchor resolves a mounted producer's execution point to
+// the Program-issued base evidence point used by the branch observation. A
+// producer may execute directly at that base point, or after an acyclic chain
+// of exact Local stages whose sealed full-environment transfers lead back to
+// that base point.
+func diagnosticEvidenceAnchor(evidence []identity.ContentID, execution identity.ContentID, transfers map[identity.ContentID]ingress.LocalTransfer) (identity.ContentID, bool) {
+	if !execution.Available() || len(evidence) == 0 {
+		return identity.ContentID{}, false
+	}
+	for _, point := range evidence {
+		if execution == point {
+			return point, true
+		}
+	}
+	seen := make(map[identity.ContentID]struct{}, len(transfers))
+	current := execution
+	for steps := 0; steps <= len(transfers); steps++ {
+		if _, duplicate := seen[current]; duplicate {
+			return identity.ContentID{}, false
+		}
+		seen[current] = struct{}{}
+		edge, found := transfers[current]
+		if !found || !edge.Available() || !edge.Full() || edge.To() != current {
+			return identity.ContentID{}, false
+		}
+		current = edge.From()
+		for _, point := range evidence {
+			if current == point {
+				return point, true
+			}
+		}
+	}
+	return identity.ContentID{}, false
+}
+
+func diagnosticLocalTransfersByDestination(snapshot *ingress.Snapshot) (map[identity.ContentID]ingress.LocalTransfer, bool) {
+	if snapshot == nil || !snapshot.Available() {
+		return nil, false
+	}
+	transfers := make(map[identity.ContentID]ingress.LocalTransfer, snapshot.LocalTransferCount())
+	for index := 0; index < snapshot.LocalTransferCount(); index++ {
+		edge, edgeOK := snapshot.LocalTransferAt(index)
+		if !edgeOK || !addDiagnosticFullLocalTransfer(transfers, edge) {
+			return nil, false
+		}
+	}
+	return transfers, true
+}
+
+func addDiagnosticFullLocalTransfer(transfers map[identity.ContentID]ingress.LocalTransfer, edge ingress.LocalTransfer) bool {
+	if transfers == nil || !edge.Available() {
+		return false
+	}
+	if !edge.Full() {
+		return true
+	}
+	if _, duplicate := transfers[edge.To()]; duplicate {
+		return false
+	}
+	transfers[edge.To()] = edge
+	return true
 }

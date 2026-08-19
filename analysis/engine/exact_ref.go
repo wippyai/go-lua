@@ -1,7 +1,7 @@
 package engine
 
 type exactRef interface {
-	receiptRaw(factorRuntimeReceipt) (uint64, bool)
+	receiptRaw(factorRuntimeBinding) (uint64, bool)
 }
 
 // exactRef is the private factor-coordinate projection shared by receipt
@@ -12,13 +12,13 @@ type exactRef interface {
 // the exact same sealed factor authority directly.
 // receiptRaw requires the exact sealed Binding receipt before exposing the
 // factor-local coordinate to receipt-native runtime code.
-func (ref Ref[K]) receiptRaw(receipt factorRuntimeReceipt) (uint64, bool) {
+func (ref Ref[K]) receiptRaw(receipt factorRuntimeBinding) (uint64, bool) {
 	if !validateRefForReceipt(receipt, ref) {
 		return 0, false
 	}
 	return uint64(ref.raw), true
 }
 
-func validateRefForReceipt[K ~uint32 | ~uint64](receipt factorRuntimeReceipt, ref Ref[K]) bool {
+func validateRefForReceipt[K ~uint32 | ~uint64](receipt factorRuntimeBinding, ref Ref[K]) bool {
 	return receipt.valid() && ref.bindingAuthority == receipt.authority && ref.compositionID == receipt.schema.ID() && ref.factorKey == receipt.semantic && ref.factorIndex == receipt.ordinal && uint64(ref.raw) < receipt.keyEnd
 }

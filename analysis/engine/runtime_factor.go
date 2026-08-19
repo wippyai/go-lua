@@ -30,7 +30,7 @@ type boundTarget struct {
 // receives a carrier slot, binding, Unit, Target, or Selector.
 type boundFactor[K ~uint32 | ~uint64, V any] struct {
 	implementation *FactorImplementation[K, V]
-	receipt        factorRuntimeReceipt
+	receipt        factorRuntimeBinding
 	binding        *factbinding.Binding[K, V]
 	slot           shape.Slot
 	hasSlot        bool
@@ -161,7 +161,7 @@ func (bound *boundFactor[K, V]) stagedUnit(ref exactRef) (carrier.Unit, bool) {
 	var ok bool
 	if bound.receipt.valid() {
 		if typed, valid := ref.(interface {
-			receiptRaw(factorRuntimeReceipt) (uint64, bool)
+			receiptRaw(factorRuntimeBinding) (uint64, bool)
 		}); valid {
 			raw, ok = typed.receiptRaw(bound.receipt)
 		}
@@ -188,7 +188,7 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, rule
 	var ok bool
 	if bound.receipt.valid() {
 		if typed, valid := ref.(interface {
-			receiptRaw(factorRuntimeReceipt) (uint64, bool)
+			receiptRaw(factorRuntimeBinding) (uint64, bool)
 		}); valid {
 			raw, ok = typed.receiptRaw(bound.receipt)
 		}

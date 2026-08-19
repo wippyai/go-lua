@@ -40,11 +40,11 @@ func (fragment *SummaryQueryFragment) Available() bool {
 	return fragment != nil && fragment.slot != nil && fragment.freezer.Available()
 }
 
-// QueryEntry is this package's value-summary query declaration. The family
+// QuerySpec is this package's value-summary query declaration. The family
 // reads the value axis, folds coordinatewise, and is answered by the summary
 // observation this domain owns.
-func QueryEntry() query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation] {
-	return query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation]{
+func QuerySpec() query.Spec {
+	return query.Spec{
 		Family:   "value-summary",
 		Semantic: "semantic/query/value-summary",
 		Codec:    "semantic/query-result/value-summary",
@@ -57,41 +57,44 @@ func QueryEntry() query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation]
 		Subjects:   []schema.Key{"value"},
 		Population: query.PopulationSelectedPoint,
 		Projection: query.ProjectionSummary,
-		Declare: func(context query.Declaration) (*SummaryQueryFragment, bool) {
-			cell, cellOK := context.Subjects.At("value")
-			declared, declaredOK := axis.Payload[*SchemaFragment](cell)
-			if !cellOK || !declaredOK {
-				return nil, false
-			}
-			// The read is the axis's own coordinatewise fold form, taken while
-			// the schema is still open: a form that already names a sealed
-			// schema belongs to another declaration.
-			read := declared.FoldSummaryRead()
-			if read.Schema() != nil {
-				return nil, false
-			}
-			slot, slotOK := engine.NewQuerySlot[value.ValueSummaryObservation](context.Builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
-			if !slotOK || !engine.SchemaQueryRead(slot, read) {
-				return nil, false
-			}
-			fragment := &SummaryQueryFragment{slot: slot, read: read, freezer: context.Freezer}
-			return fragment, fragment.Available()
-		},
-		Bind: func(context query.Binding[*SummaryQueryFragment]) bool {
-			cell, cellOK := context.Subjects.At("value")
-			owner, ownerOK := axis.Payload[*HotOwner](cell)
-			if !cellOK || !ownerOK || !context.Fragment.Available() || context.Fragment.read.Schema() == nil {
-				return false
-			}
-			return BindSummaryQuery(owner, context.Fragment.slot, context.Fragment.read, summaryQuerySpec(owner.Schema(), context.Fragment.freezer))
-		},
-		Recover: func(context query.Sealed[*SummaryQueryFragment]) (*SummaryQueryImplementation, bool) {
-			if !context.Fragment.Available() {
-				return nil, false
-			}
-			return engine.SummaryQueryImplementationAt[value.Value, value.ValueSummaryObservation](context.Binding, context.Fragment.slot)
-		},
 	}
+}
+
+// DeclareQuery opens the value-summary query slot against the open schema.
+func DeclareQuery(builder *engine.SchemaBuilder, context query.Declaration) (*SummaryQueryFragment, bool) {
+	cell, cellOK := context.Subjects.At("value")
+	declared, declaredOK := axis.Payload[*SchemaFragment](cell)
+	if !cellOK || !declaredOK {
+		return nil, false
+	}
+	read := declared.FoldSummaryRead()
+	if read.Schema() != nil {
+		return nil, false
+	}
+	slot, slotOK := engine.NewQuerySlot[value.ValueSummaryObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
+	if !slotOK || !engine.SchemaQueryRead(slot, read) {
+		return nil, false
+	}
+	fragment := &SummaryQueryFragment{slot: slot, read: read, freezer: context.Freezer}
+	return fragment, fragment.Available()
+}
+
+// BindQuery installs the value-summary fold on the bound principal.
+func BindQuery(_ *engine.SchemaBinding, context query.Binding[*SummaryQueryFragment]) bool {
+	cell, cellOK := context.Subjects.At("value")
+	owner, ownerOK := axis.Payload[*HotOwner](cell)
+	if !cellOK || !ownerOK || !context.Fragment.Available() || context.Fragment.read.Schema() == nil {
+		return false
+	}
+	return BindSummaryQuery(owner, context.Fragment.slot, context.Fragment.read, summaryQuerySpec(owner.Schema(), context.Fragment.freezer))
+}
+
+// RecoverQuery recovers the sealed value-summary implementation.
+func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*SummaryQueryFragment]) (*SummaryQueryImplementation, bool) {
+	if !context.Fragment.Available() {
+		return nil, false
+	}
+	return engine.SummaryQueryImplementationAt[value.Value, value.ValueSummaryObservation](binding, context.Fragment.slot)
 }
 
 // summaryQuerySpec is the family's hot half against one Link's sealed value
@@ -102,7 +105,9 @@ func QueryEntry() query.Spec[*SummaryQueryFragment, *SummaryQueryImplementation]
 func summaryQuerySpec(schema *value.Schema, freezer identity.SemanticKey) engine.HotSummaryQuerySpec[value.Value, value.ValueSummaryObservation] {
 	return engine.HotSummaryQuerySpec[value.Value, value.ValueSummaryObservation]{
 		Fold: engine.QueryFold[engine.OrderedCells[value.Value], value.ValueSummaryObservation]{
-			Begin: func() value.ValueSummaryObservation { return value.BeginValueSummary(schema) },
+			Begin:          func() value.ValueSummaryObservation { return value.BeginValueSummary(schema) },
+			BorrowIssued:   true,
+			TransferResult: true,
 			Accumulate: func(result value.ValueSummaryObservation, cells engine.OrderedCells[value.Value]) (value.ValueSummaryObservation, bool) {
 				return value.AccumulateValueSummary(schema, result, cells)
 			},
@@ -115,6 +120,9 @@ func summaryQuerySpec(schema *value.Schema, freezer identity.SemanticKey) engine
 			},
 			Fingerprint: func(observation value.ValueSummaryObservation) uint64 {
 				return value.FingerprintValueSummary(schema, observation)
+			},
+			Present: func(observation value.ValueSummaryObservation) bool {
+				return observation.Rows != 0
 			},
 		},
 	}

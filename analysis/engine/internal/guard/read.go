@@ -15,7 +15,7 @@ func (w *Work) Compare(left, right Guard) (int, bool) {
 		return result, true
 	}
 	if w.compareSeen == nil {
-		w.compareSeen = make(map[comparePair]uint64)
+		w.compareSeen = make(map[compareKey]uint64)
 	}
 	epoch := w.beginRead()
 	w.compareStack = append(w.compareStack[:0], comparePair{left: left, right: right})
@@ -32,10 +32,11 @@ func (w *Work) Compare(left, right Guard) (int, bool) {
 			}
 			continue
 		}
-		if w.compareSeen[pair] == epoch {
+		key := compareKey{left: keyOf(pair.left), right: keyOf(pair.right)}
+		if w.compareSeen[key] == epoch {
 			continue
 		}
-		w.compareSeen[pair] = epoch
+		w.compareSeen[key] = epoch
 		leftNode, rightNode := w.node(pair.left), w.node(pair.right)
 		w.compareStack = append(w.compareStack,
 			comparePair{left: leftNode.high, right: rightNode.high},
@@ -106,7 +107,13 @@ func (w *Work) Entails(premise, conclusion Guard) bool {
 
 func (w *Work) satisfiable(left, right Guard, negateRight bool) bool {
 	if w.satSeen == nil {
-		w.satSeen = make(map[satisfiablePair]uint64)
+		w.satSeen = make(map[satisfiableKey]uint64)
+	} else {
+		// The seen set is valid only for this product traversal. Reusing the
+		// map's buckets keeps the hot read allocation-free, while clearing the
+		// entries prevents one long-lived Work from retaining the union of every
+		// pair visited by prior entailment calls.
+		clear(w.satSeen)
 	}
 	epoch := w.beginRead()
 	w.satStack = append(w.satStack[:0], satisfiablePair{left: left, right: right})
@@ -117,10 +124,11 @@ func (w *Work) satisfiable(left, right Guard, negateRight bool) bool {
 		last := len(w.satStack) - 1
 		pair := w.satStack[last]
 		w.satStack = w.satStack[:last]
-		if w.satSeen[pair] == epoch {
+		key := satisfiableKey{left: keyOf(pair.left), right: keyOf(pair.right)}
+		if w.satSeen[key] == epoch {
 			continue
 		}
-		w.satSeen[pair] = epoch
+		w.satSeen[key] = epoch
 		if isTerminal(pair.left) && isTerminal(pair.right) {
 			rightValue := terminalValue(pair.right)
 			if negateRight {

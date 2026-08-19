@@ -38,7 +38,7 @@ var postMountDerivationPackages = map[string]string{
 	"github.com/wippyai/go-lua/domain/call/activation": "the mounted activation catalog",
 }
 
-const artifactPlanSourcePath = "analysis/artifact_plan.go"
+const artifactPlanSourcePath = "analysis/compile.go"
 
 // artifactPlanImports reads the Link construction root's own import set. It is
 // the one source both mount laws below are stated over, and is named

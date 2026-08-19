@@ -3,6 +3,7 @@ package composite
 import (
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/schema"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -22,6 +23,7 @@ import (
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
 	"github.com/wippyai/go-lua/domain/runtimekind"
+	typedomain "github.com/wippyai/go-lua/domain/type"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
@@ -29,6 +31,7 @@ import (
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
 )
@@ -95,8 +98,9 @@ func analyzerVocabulary() []structure.Spec {
 
 // occurrenceVocabulary is the analyzer's contribution of the compiled
 // occurrence geometry: the occurrence families a program artifact carries, the
-// placement forms a subscription takes, the operand polarities an issued
-// occurrence reads, and the execution cuts it is placed at.
+// placement forms a subscription takes, the operand shapes a subscription
+// requires those rows to carry, the operand polarities an issued occurrence
+// reads, and the execution cuts it is placed at.
 //
 // A rule declares which occurrence families issue it, in which form, so this is
 // the vocabulary those declarations resolve against. Position in each list is
@@ -122,11 +126,13 @@ func occurrenceVocabulary() []structure.Spec {
 		"call-activation", "call-boundary", "call-arm", "call-argument", "call-type-argument",
 		"body", "outcome", "return-value", "unary", "select",
 		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
-		"binary-presence-refinement", "return-boundary")
+		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement")
 	declare(structure.CategoryIssuanceForm,
 		"base", "local", "computation", "local-predecessor", "call-stage")
 	declare(structure.CategoryIssuanceInput,
 		"none", "finish", "entry", "predecessor")
+	declare(structure.CategoryIssuanceRequirement,
+		"unrestricted", "call-plain-unary")
 	declare(structure.CategoryIssuanceStage,
 		"base", "local")
 	specs = append(specs,
@@ -151,6 +157,8 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 		return "input/"
 	case structure.CategoryIssuanceStage:
 		return "stage/"
+	case structure.CategoryIssuanceRequirement:
+		return "requirement/"
 	default:
 		return ""
 	}
@@ -169,6 +177,7 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 // the identity it resolves to is derived from its declared spelling.
 func semanticRoleVocabulary() []structure.Spec {
 	contributions := [][]structure.Spec{
+		runtimekind.BehaviorStructureSpecs(),
 		valueowner.StructureSpecs(),
 		packowner.StructureSpecs(),
 		heapowner.StructureSpecs(),
@@ -192,7 +201,10 @@ func semanticRoleVocabulary() []structure.Spec {
 		valueequality.StructureSpecs(),
 		valueorder.StructureSpecs(),
 		valuerefinement.StructureSpecs(),
+		valueruntimekind.StructureSpecs(),
 		denominatorpublication.StructureSpecs(),
+		typedomain.ChannelSelectStructureSpecs(),
+		selectapply.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {

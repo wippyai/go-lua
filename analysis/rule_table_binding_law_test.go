@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -68,15 +69,15 @@ func TestProgramBindingFailureNamesItsRuleFromTheTable(t *testing.T) {
 			t.Fatalf("table position %d has no key", position)
 		}
 		diagnostic := composite.DiagnosticRuleForKey(key)
-		failure := programBindingFailureForRule(diagnostic)
-		if failure == ProgramBindingFailureNone {
+		failure := anadiag.ProgramBindingFailureForRule(diagnostic)
+		if failure == anadiag.ProgramBindingFailureNone {
 			t.Fatalf("key %q has no binding failure ordinal", key)
 		}
 		if failure.String() != "rule/"+diagnostic.String() {
 			t.Fatalf("binding failure of key %q = %q, want the table name", key, failure.String())
 		}
 	}
-	if ProgramBindingFailureNone.String() != "none" || ProgramBindingFailureInput.String() != "input" {
+	if anadiag.ProgramBindingFailureNone.String() != "none" || anadiag.ProgramBindingFailureInput.String() != "input" {
 		t.Fatal("the binding boundary lost its own phase names")
 	}
 }

@@ -427,25 +427,26 @@ func MatchSummaryReceipt[V, O, S any](owner *HotOwner, receipt SummaryReceipt, d
 	return owner != nil && receipt.owner == owner && receipt.ValidForSchema(owner.schema) && engine.DerivationReadMatchesSummaryRefs(derivation, read, receipt.refs)
 }
 
-// AddSummaryReceiptRead bridges a Value-owned summary witness into a mounted
-// RuleSourceTransaction without exposing Value's private coordinate type or
-// its ClosedRefs vector. The caller supplies the sealed Rule-owned summary
-// read proof (normally obtained from its own RuleImplementation); the engine
-// validates the exact rule/read/factor semantic before receiving refs.
-func AddSummaryReceiptRead(owner *HotOwner, transaction *engine.RuleSourceTransaction, receipt SummaryReceipt, read engine.SchemaSummaryReadReceipt) bool {
-	return owner != nil && transaction != nil && receipt.IssuedBy(owner) && read.Valid() && engine.AddSummaryRead(transaction, read, receipt.refs)
+func summaryRefs(owner *HotOwner, receipt SummaryReceipt) (*engine.ClosedRefs[coordinate], bool) {
+	if owner == nil || !receipt.IssuedBy(owner) {
+		return nil, false
+	}
+	return receipt.refs, true
 }
 
 // SummarySurfaceAdmit is the owner-supplied summary projector the sealed
-// cell invokes while placing one summary read. The returned function is
-// stored on the read binding and type-asserted at admit time.
+// cell invokes while placing one summary read. The returned function
+// extracts the sealed refs; the engine places the surface.
 func SummarySurfaceAdmit[O any](owner *HotOwner, extract func(O) SummaryReceipt) any {
 	if owner == nil || extract == nil {
 		return nil
 	}
-	return func(transaction *engine.RuleSourceTransaction, read engine.SchemaSummaryReadReceipt, operand any) bool {
+	return func(operand any) (any, bool) {
 		typed, ok := operand.(O)
-		return ok && AddSummaryReceiptRead(owner, transaction, extract(typed), read)
+		if !ok {
+			return nil, false
+		}
+		return summaryRefs(owner, extract(typed))
 	}
 }
 

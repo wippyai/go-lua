@@ -438,10 +438,19 @@ func (s Successor) IsLocal() bool { return isLocalArm(s.Arm) }
 // Identity returns the owner-fenced semantic route identity. A manufactured,
 // unavailable, or partially sealed Successor has no identity.
 func (s Successor) Identity() (RouteIdentity, bool) {
-	if !s.route.available() || s.route.Digest != s.routeDigest {
+	if s.result == nil || !s.refValid || !s.result.routesReady || !s.route.Issued() || s.route.Digest != s.routeDigest {
 		return RouteIdentity{}, false
 	}
 	return s.route, true
+}
+
+// IssuedBy is the sealed-owner fence for a successor projection.  The route
+// directory has already validated the complete route preimage; this hot
+// check verifies only that the projection still points at that issued row and
+// owner, without rebuilding the digest.
+func (s Successor) IssuedBy(owner *Result) bool {
+	return owner != nil && s.result == owner && s.refValid && s.result.routesReady &&
+		s.route.Issued() && s.route.Digest == s.routeDigest
 }
 
 func (s Successor) SemanticID() (identity.ContentID, bool) {

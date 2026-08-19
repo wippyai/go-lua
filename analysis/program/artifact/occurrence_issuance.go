@@ -23,43 +23,172 @@ func (form IssuanceForm) valid() bool {
 	return form >= IssuanceFormBase && form <= IssuanceFormCallStage
 }
 
+// IssuanceRequirement is the declared operand shape one subscription consumes.
+// Ordinals match structure.CategoryIssuanceRequirement: unrestricted,
+// call-plain-unary.
+//
+// The requirement is the placement half of one denominator. A rule's owner
+// seals an operand for the rows carrying the shape it interprets; the same
+// shape is stated here, so the compiler places exactly those rows and no
+// construction pass has to discover the difference.
+type IssuanceRequirement uint8
+
+const (
+	IssuanceRequirementInvalid IssuanceRequirement = iota
+	// IssuanceRequirementUnrestricted consumes every row of the occurrence
+	// family the subscription names.
+	IssuanceRequirementUnrestricted
+	// IssuanceRequirementCallPlainUnary consumes an authored call of the strict
+	// unary plain shape: plain form, exactly one positional argument, no
+	// receiver, and no tail expansion.
+	IssuanceRequirementCallPlainUnary
+)
+
+func (requirement IssuanceRequirement) valid() bool {
+	return requirement >= IssuanceRequirementUnrestricted && requirement <= IssuanceRequirementCallPlainUnary
+}
+
 // IssuancePlacement is one sealed rule.Issues row as the compiler places it.
 // Key is the declaration identity.
 type IssuancePlacement struct {
-	Occurrence OccurrenceKind
-	Form       IssuanceForm
-	Input      RuleInputKind
-	Stage      RuleStage
-	Code       uint64
-	HasCode    bool
-	Key        schema.Key
+	Occurrence  OccurrenceKind
+	Form        IssuanceForm
+	Input       RuleInputKind
+	Stage       RuleStage
+	Requirement IssuanceRequirement
+	Code        uint64
+	HasCode     bool
+	Key         schema.Key
+	Writes      schema.Key
+	Transport   bool
 }
 
 func (placement IssuancePlacement) Available() bool {
 	return placement.Occurrence.valid() && placement.Form.valid() &&
 		placement.Input.valid() && placement.Stage.valid() &&
-		placement.Key.Available()
+		placement.Requirement.valid() &&
+		placement.Key.Available() && placement.Writes.Available()
 }
 
 // IssuanceDirectory is the sealed subscription catalog the compiler places
 // from. It is built at the composition root from rule.Issues.
 type IssuanceDirectory []IssuancePlacement
 
-func (directory IssuanceDirectory) matching(kind OccurrenceKind, code uint64) []IssuancePlacement {
-	if !kind.valid() {
-		return nil
+func (directory IssuanceDirectory) writesFor(key schema.Key) (schema.Key, bool) {
+	if !key.Available() {
+		return "", false
 	}
-	var matched []IssuancePlacement
+	var writes schema.Key
 	for _, placement := range directory {
-		if !placement.Available() || placement.Occurrence != kind {
+		if !placement.Available() {
+			return "", false
+		}
+		if placement.Key != key {
 			continue
 		}
-		if placement.HasCode && placement.Code != code {
+		if writes.Available() && writes != placement.Writes {
+			return "", false
+		}
+		writes = placement.Writes
+	}
+	return writes, writes.Available()
+}
+
+// transportKeysExcept returns one deterministic declared rule key for every
+// mounted factor axis except those a strong-write stage produces itself. The
+// keys remain schema vocabulary; Program never resolves them to engine slots.
+func (directory IssuanceDirectory) transportKeysExcept(excluded map[schema.Key]struct{}) ([]schema.Key, bool) {
+	representative := make(map[schema.Key]schema.Key)
+	for _, placement := range directory {
+		if !placement.Available() {
+			return nil, false
+		}
+		if !placement.Transport {
+			continue
+		}
+		if _, omitted := excluded[placement.Writes]; omitted {
+			continue
+		}
+		prior := representative[placement.Writes]
+		if !prior.Available() || placement.Key < prior {
+			representative[placement.Writes] = placement.Key
+		}
+	}
+	keys := make([]schema.Key, 0, len(representative))
+	for _, key := range representative {
+		keys = append(keys, key)
+	}
+	ordered, ok := orderedWrites(keys)
+	return ordered, ok
+}
+
+// matching selects the subscriptions one compiled occurrence row issues: the
+// family it belongs to, the payload code it carries, and the operand shape the
+// row itself has. The requirement is decided here rather than after placement,
+// so a row an owner cannot seal an operand for is never placed.
+func (compiler *compiler) matching(row OccurrenceRow) ([]IssuancePlacement, bool) {
+	if !row.kind.valid() {
+		return nil, false
+	}
+	var matched []IssuancePlacement
+	for _, placement := range compiler.issuance {
+		if !placement.Available() || placement.Occurrence != row.kind {
+			continue
+		}
+		if placement.HasCode && placement.Code != row.code {
+			continue
+		}
+		admissible, decided := compiler.requirementAdmits(placement.Requirement, row)
+		if !decided {
+			return nil, false
+		}
+		if !admissible {
 			continue
 		}
 		matched = append(matched, placement)
 	}
-	return matched
+	return matched, true
+}
+
+// requirementAdmits decides one declared operand shape against one compiled
+// row. The second result is whether the shape could be decided at all: a
+// requirement naming a geometry the row's family does not carry is a
+// declaration the artifact cannot honor, and it refuses the compile rather
+// than placing the row on an unstated reading.
+func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row OccurrenceRow) (bool, bool) {
+	switch requirement {
+	case IssuanceRequirementUnrestricted:
+		return true, true
+	case IssuanceRequirementCallPlainUnary:
+		call, found := compiler.callForID(row.id)
+		if !found {
+			return false, false
+		}
+		_, hasReceiver := call.ReceiverID()
+		_, hasTail := call.TailID()
+		return call.Form() == CallFormPlain && call.ArgumentCount() == 1 && !hasReceiver && !hasTail, true
+	default:
+		return false, false
+	}
+}
+
+// callForID resolves one authored call row by the parent-issued identity an
+// occurrence row carries. The inverse is built once for the whole occurrence
+// walk, so deciding a requirement stays constant-time per row.
+func (compiler *compiler) callForID(id identity.ContentID) (CallRow, bool) {
+	if !id.Available() {
+		return CallRow{}, false
+	}
+	if compiler.callsByID == nil {
+		compiler.callsByID = make(map[identity.ContentID]CallRow, len(compiler.calls))
+		for _, row := range compiler.calls {
+			if row.Available() {
+				compiler.callsByID[row.ID()] = row
+			}
+		}
+	}
+	row, found := compiler.callsByID[id]
+	return row, found
 }
 
 func (compiler *compiler) applyIssuance(row OccurrenceRow, ordinal uint32, geometry occurrenceSpanGeometry, finish []identity.ContentID, placement IssuancePlacement) bool {
@@ -154,8 +283,8 @@ func (compiler *compiler) appendLocalPredecessorIssuance(ordinal uint32, geometr
 			break
 		}
 	}
-	stage, stageOK := compiler.localStage(predecessor.to)
-	placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: stage, input: predecessor.from, stage: RuleStageLocal, inputKind: RuleInputPredecessor, route: geometry.route}
+	stage, stageOK := compiler.predecessorStage(predecessor.to)
+	placement := RuleOccurrence{key: issued.Key, occurrence: ordinal, point: stage, input: predecessor.to, stage: RuleStageLocal, inputKind: RuleInputPredecessor, route: geometry.route}
 	if !finishMember || !stageOK || !placement.Available() {
 		return false
 	}

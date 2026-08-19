@@ -85,7 +85,6 @@ type soleTreeFrame[K scalar.Key, V any] struct {
 // worker that performs repeated merges owns its own work storage rather than
 // smuggling mutable scratch into a Domain or global pool.
 func (builder *Builder[F, K, V]) MergeSoleFactor(left, right Root[F, K, V], leftSupport, rightSupport, referenceSupport support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K]) (Root[F, K, V], bool) {
-	DbgMergeSole.Add(1)
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.diagram.Valid(left) || !builder.diagram.Valid(right) ||
 		!validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) ||
 		scratch == nil || combine == nil || report != nil && (regions == nil || !regions.Open() || equal == nil) {
@@ -102,7 +101,6 @@ func (builder *Builder[F, K, V]) MergeSoleFactor(left, right Root[F, K, V], left
 // absent from both roots need no physical output: their explicit Default
 // authorship remains in carrier coverage, not in a second fact plane.
 func (builder *Builder[F, K, V]) MergeSoleFactorRegions(left, right Root[F, K, V], scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K], covers SoleRegions[K]) (Root[F, K, V], bool) {
-	DbgMergeSoleRegions.Add(1)
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.diagram.Valid(left) || !builder.diagram.Valid(right) || scratch == nil || combine == nil || covers == nil || report != nil && (regions == nil || !regions.Open() || equal == nil) {
 		return Root[F, K, V]{}, false
 	}
@@ -115,8 +113,6 @@ func (builder *Builder[F, K, V]) MergeSoleFactorRegions(left, right Root[F, K, V
 // key and exact right region from an owner-issued change proof, while Diagram
 // retains sole ownership of FDD traversal and immutable AVL publication.
 func (builder *Builder[F, K, V]) MergeSoleFactorKey(left, right Root[F, K, V], key K, leftSupport, rightSupport, referenceSupport support.Mask, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V]) (Root[F, K, V], support.Mask, bool) {
-	DbgMergeSoleKey.Add(1)
-	DbgMergeSoleRows.Add(1)
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(left) || !builder.Valid(right) ||
 		!validSoleSupport(builder.diagram.guards, regions, leftSupport) || !validSoleSupport(builder.diagram.guards, regions, rightSupport) || !validSoleSupport(builder.diagram.guards, regions, referenceSupport) ||
 		scratch == nil || regions == nil || !regions.Open() || combine == nil || equal == nil {
@@ -156,10 +152,6 @@ func (builder *Builder[F, K, V]) MergeSoleFactorKey(left, right Root[F, K, V], k
 // mutations are batched, so untouched AVL subtrees remain shared and a dense
 // change does not copy the same persistent search paths once per key.
 func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V], count int, scratch *SoleScratch[K, V], regions *support.Work, combine SoleCombine[K, V], equal SoleEqual[V], report SoleChange[K], covers SoleChangeRegions[K]) (Root[F, K, V], bool) {
-	DbgMergeSoleChanges.Add(1)
-	if count > 0 {
-		DbgMergeSoleRows.Add(int64(count))
-	}
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(left) || !builder.Valid(right) ||
 		count <= 0 || scratch == nil || regions == nil || !regions.Open() || combine == nil || equal == nil || report == nil || covers == nil || !scratch.live() {
 		return Root[F, K, V]{}, false
@@ -199,7 +191,6 @@ func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V
 		if !merged {
 			return Root[F, K, V]{}, false
 		}
-		DbgPatchRow.Add(1)
 		view, valid := regions.Decompose(changed)
 		if !valid {
 			return Root[F, K, V]{}, false
@@ -241,7 +232,6 @@ func (builder *Builder[F, K, V]) MergeSoleFactorChanges(left, right Root[F, K, V
 // Arbitrary subtree height changes are joined with joinKey3 rather than the
 // one-edit balance path used by setKey/deleteKey.
 func applySolePatches[K scalar.Key, V any](root *keyNode[K, V], patches []soleOutput[K, V], live func() bool) (*keyNode[K, V], bool) {
-	DbgApplyPatches.Add(1)
 	if live == nil || !live() {
 		return nil, false
 	}
@@ -297,7 +287,6 @@ func solePatchLowerBound[K scalar.Key, V any](patches []soleOutput[K, V], key K)
 }
 
 func buildSolePatchKeys[K scalar.Key, V any](patches []soleOutput[K, V], live func() bool) (*keyNode[K, V], bool) {
-	DbgBuildPatchKeys.Add(1)
 	if live == nil || !live() {
 		return nil, false
 	}
@@ -321,7 +310,6 @@ func buildSolePatchKeys[K scalar.Key, V any](patches []soleOutput[K, V], live fu
 // lawful when a batch replaces one child with a subtree whose height changed
 // by more than one level.
 func joinKey3[K scalar.Key, V any](left *keyNode[K, V], key K, value *node[V], right *keyNode[K, V]) *keyNode[K, V] {
-	DbgJoinKey3.Add(1)
 	if keyHeight(left) > keyHeight(right)+1 {
 		joined := joinKey3(left.right, key, value, right)
 		return balanceKey(makeKey(left.key, left.value, left.left, joined))
@@ -334,7 +322,6 @@ func joinKey3[K scalar.Key, V any](left *keyNode[K, V], key K, value *node[V], r
 }
 
 func concatKeys[K scalar.Key, V any](left, right *keyNode[K, V]) *keyNode[K, V] {
-	DbgConcatKeys.Add(1)
 	if left == nil {
 		return right
 	}
@@ -482,12 +469,7 @@ func (builder *Builder[F, K, V]) mergeSoleColumn(key K, left, right *node[V], le
 			if !lowOK || !highOK {
 				return nil, support.Mask{}, false
 			}
-			output := builder.decision(frame.atom, low.value, high.value)
-			if sameDecision(frame.triple.left, frame.atom, low.value, high.value) {
-				output = frame.triple.left
-			} else if sameDecision(frame.triple.right, frame.atom, low.value, high.value) {
-				output = frame.triple.right
-			}
+			output := builder.decisionOrExisting(frame.atom, low.value, high.value, frame.triple.left, frame.triple.right)
 			var changed support.Mask
 			if regions != nil {
 				var changedOK bool
@@ -685,6 +667,16 @@ func sameSparseNode[V any](stored, output *node[V]) bool {
 
 func sameDecision[V any](candidate *node[V], atom guard.Atom, low, high *node[V]) bool {
 	return candidate != nil && !candidate.terminal && candidate.atom == atom && candidate.low == low && candidate.high == high
+}
+
+func (builder *Builder[F, K, V]) decisionOrExisting(atom guard.Atom, low, high, first, second *node[V]) *node[V] {
+	if sameDecision(first, atom, low, high) {
+		return first
+	}
+	if sameDecision(second, atom, low, high) {
+		return second
+	}
+	return builder.decision(atom, low, high)
 }
 
 func buildSoleKeys[K scalar.Key, V any](scratch *SoleScratch[K, V]) *keyNode[K, V] {

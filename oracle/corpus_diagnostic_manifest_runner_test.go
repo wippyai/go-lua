@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"fmt"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,8 +59,8 @@ func unsupportedCorpusDiagnosticFamily(code string, expected int, reason string)
 }
 
 type corpusDiagnosticNativeFamilyRegistration struct {
-	code    analysis.DiagnosticCode
-	enabled []analysis.DiagnosticCode
+	code    anadiag.DiagnosticCode
+	enabled []anadiag.DiagnosticCode
 	cases   []corpusDiagnosticNativeFamilyCase
 }
 
@@ -84,26 +85,26 @@ func (key corpusDiagnosticFixtureKey) String() string { return key.project + "/"
 // pass. Fixture text and engine rules cannot widen this set implicitly.
 var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistration{
 	{
-		code:    analysis.DiagnosticCodeAlwaysTrueGuard,
-		enabled: []analysis.DiagnosticCode{analysis.DiagnosticCodeAlwaysTrueGuard},
+		code:    anadiag.DiagnosticCodeAlwaysTrueGuard,
+		enabled: []anadiag.DiagnosticCode{anadiag.DiagnosticCodeAlwaysTrueGuard},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "advice/always-true-guard", expect: 1}},
 	},
 	{
-		code:    analysis.DiagnosticCodeAlwaysFalseGuard,
-		enabled: []analysis.DiagnosticCode{analysis.DiagnosticCodeAlwaysFalseGuard},
+		code:    anadiag.DiagnosticCodeAlwaysFalseGuard,
+		enabled: []anadiag.DiagnosticCode{anadiag.DiagnosticCodeAlwaysFalseGuard},
 		cases: []corpusDiagnosticNativeFamilyCase{
 			{project: "native/truthy-false-literal-is-falsy", expect: 1},
 			{project: "native/branch-always-not-taken", expect: 1},
 		},
 	},
 	{
-		code:    analysis.DiagnosticCodeUnresolvedTypeReference,
-		enabled: []analysis.DiagnosticCode{analysis.DiagnosticCodeUnresolvedTypeReference},
+		code:    anadiag.DiagnosticCodeUnresolvedTypeReference,
+		enabled: []anadiag.DiagnosticCode{anadiag.DiagnosticCodeUnresolvedTypeReference},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "semantic/unresolved-reference-diagnostics-evidence-chain", expect: 1}},
 	},
 	{
-		code:    analysis.DiagnosticCodeUnresolvedValueReference,
-		enabled: []analysis.DiagnosticCode{analysis.DiagnosticCodeUnresolvedValueReference},
+		code:    anadiag.DiagnosticCodeUnresolvedValueReference,
+		enabled: []anadiag.DiagnosticCode{anadiag.DiagnosticCodeUnresolvedValueReference},
 		cases:   []corpusDiagnosticNativeFamilyCase{{project: "semantic/unresolved-reference-diagnostics-evidence-chain", expect: 1}},
 	},
 }
@@ -210,24 +211,24 @@ func corpusDiagnosticProjectExpectedCount(project *corpusDiagnosticProjectExpect
 		return 0
 	}
 	count := 0
-	for _, diagnostic := range project.manifest.Check.Diagnostics {
-		if diagnostic.Code == code {
+	for _, row := range project.manifest.Check.Diagnostics {
+		if row.Code == code {
 			count++
 		}
 	}
 	return count
 }
 
-func corpusDiagnosticSeverity(value string) analysis.FindingSeverity {
+func corpusDiagnosticSeverity(value string) anadiag.FindingSeverity {
 	switch value {
 	case "error":
-		return analysis.FindingSeverityError
+		return anadiag.FindingSeverityError
 	case "warning":
-		return analysis.FindingSeverityWarning
+		return anadiag.FindingSeverityWarning
 	case "hint":
-		return analysis.FindingSeverityHint
+		return anadiag.FindingSeverityHint
 	default:
-		return analysis.FindingSeverityInvalid
+		return anadiag.FindingSeverityInvalid
 	}
 }
 
@@ -235,7 +236,7 @@ func corpusDiagnosticSeverity(value string) analysis.FindingSeverity {
 // structure vocabulary spells it. The spelling is read from that vocabulary
 // rather than restated here, so a fixture's inline marker and a report row are
 // compared through the analyzer's own naming.
-func corpusDiagnosticSeveritySpelling(severity analysis.FindingSeverity) (string, bool) {
+func corpusDiagnosticSeveritySpelling(severity anadiag.FindingSeverity) (string, bool) {
 	vocabulary, vocabularyOK := composite.StructureVocabulary()
 	if !vocabularyOK || !severity.Available() {
 		return "", false
@@ -259,7 +260,7 @@ func corpusDiagnosticOrderedContains(rendered string, parts []string) bool {
 	return true
 }
 
-func corpusManifestDiagnosticEvidenceMatches(project *corpusDiagnosticProjectExpectations, want corpusDiagnosticEvidenceExpectation, findingFile string, evidence analysis.DiagnosticEvidence) bool {
+func corpusManifestDiagnosticEvidenceMatches(project *corpusDiagnosticProjectExpectations, want corpusDiagnosticEvidenceExpectation, findingFile string, evidence anadiag.DiagnosticEvidence) bool {
 	location, ok := evidence.Location()
 	if !ok {
 		return false
@@ -286,7 +287,7 @@ func corpusManifestDiagnosticEvidenceMatches(project *corpusDiagnosticProjectExp
 	return true
 }
 
-func corpusDiagnosticLabelMatches(project *corpusDiagnosticProjectExpectations, want corpusDiagnosticLabelExpectation, findingFile string, label analysis.DiagnosticLabel) bool {
+func corpusDiagnosticLabelMatches(project *corpusDiagnosticProjectExpectations, want corpusDiagnosticLabelExpectation, findingFile string, label anadiag.DiagnosticLabel) bool {
 	location, ok := label.Location()
 	if !ok {
 		return false
@@ -310,12 +311,12 @@ func corpusDiagnosticLabelMatches(project *corpusDiagnosticProjectExpectations, 
 	return true
 }
 
-func matchCorpusDiagnosticDetails(result *corpusDiagnosticFamilyResult, want corpusStructuredDiagnosticExpectation, finding analysis.Finding, findingFile string, sourceText func(string) (string, bool)) {
+func matchCorpusDiagnosticDetails(result *corpusDiagnosticFamilyResult, want corpusStructuredDiagnosticExpectation, finding anadiag.Finding, findingFile string, sourceText func(string) (string, bool)) {
 	matchCorpusDiagnosticDetailsForProject(result, nil, want, finding, findingFile, sourceText)
 }
 
-func matchCorpusDiagnosticDetailsForProject(result *corpusDiagnosticFamilyResult, project *corpusDiagnosticProjectExpectations, want corpusStructuredDiagnosticExpectation, finding analysis.Finding, findingFile string, sourceText func(string) (string, bool)) {
-	actualEvidence := make([]analysis.DiagnosticEvidence, 0)
+func matchCorpusDiagnosticDetailsForProject(result *corpusDiagnosticFamilyResult, project *corpusDiagnosticProjectExpectations, want corpusStructuredDiagnosticExpectation, finding anadiag.Finding, findingFile string, sourceText func(string) (string, bool)) {
+	actualEvidence := make([]anadiag.DiagnosticEvidence, 0)
 	for index := 0; ; index++ {
 		evidence, ok := finding.EvidenceAt(index)
 		if !ok {
@@ -365,7 +366,7 @@ func matchCorpusDiagnosticDetailsForProject(result *corpusDiagnosticFamilyResult
 		}
 	}
 
-	actualLabels := make([]analysis.DiagnosticLabel, 0)
+	actualLabels := make([]anadiag.DiagnosticLabel, 0)
 	for index := 0; ; index++ {
 		label, ok := finding.LabelAt(index)
 		if !ok {
@@ -447,7 +448,7 @@ func matchCorpusDiagnosticDetailsForProject(result *corpusDiagnosticFamilyResult
 // manifest remains an expectation source, never an input to Plan/Link or the
 // inference pipeline. Evidence/render/label fields are intentionally not
 // guessed here because they are not part of DiagnosticReport's public API.
-func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticProjectExpectations, report *analysis.DiagnosticReport, code string, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
+func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport, code string, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
 	result := corpusDiagnosticFamilyResult{Project: project, Code: code}
 	if expectation == nil || expectation.manifest == nil || expectation.manifest.Check == nil {
 		result.Status = corpusDiagnosticFamilyUnsupported
@@ -457,8 +458,8 @@ func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticPr
 	if !corpusDiagnosticNativeFamily(code) {
 		result.Status = corpusDiagnosticFamilyUnsupported
 		result.Unsupported = "no native DiagnosticReport producer"
-		for _, diagnostic := range expectation.manifest.Check.Diagnostics {
-			if diagnostic.Code == code {
+		for _, row := range expectation.manifest.Check.Diagnostics {
+			if row.Code == code {
 				result.Expected++
 			}
 		}
@@ -466,9 +467,9 @@ func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticPr
 	}
 
 	expected := make([]corpusStructuredDiagnosticExpectation, 0)
-	for _, diagnostic := range expectation.manifest.Check.Diagnostics {
-		if diagnostic.Code == code {
-			expected = append(expected, diagnostic)
+	for _, row := range expectation.manifest.Check.Diagnostics {
+		if row.Code == code {
+			expected = append(expected, row)
 		}
 	}
 	result.Status = corpusDiagnosticFamilySupported
@@ -478,7 +479,7 @@ func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticPr
 		result.Mismatches = append(result.Mismatches, "DiagnosticReport unavailable")
 		return result
 	}
-	if failure := report.CollectionFailure(); failure != analysis.DiagnosticCollectionOK {
+	if failure := report.CollectionFailure(); failure != anadiag.DiagnosticCollectionOK {
 		result.Status = corpusDiagnosticFamilyFailed
 		result.Mismatches = append(result.Mismatches, fmt.Sprintf("collection failure %d", failure))
 		return result
@@ -492,17 +493,17 @@ func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticPr
 // judgment, reduced to the identity the matcher selects on.
 type corpusDiagnosticActualRow struct {
 	index         int
-	finding       analysis.Finding
+	finding       anadiag.Finding
 	file          string
 	line, column  uint32
-	severity      analysis.FindingSeverity
+	severity      anadiag.FindingSeverity
 	message, help string
 }
 
 // corpusDiagnosticActualRows reduces a report to the family's published rows.
 // A row that cannot name its own location is recorded as a mismatch rather than
 // dropped, so an unlocatable finding cannot make a family look clean.
-func corpusDiagnosticActualRows(result *corpusDiagnosticFamilyResult, report *analysis.DiagnosticReport, code string) []corpusDiagnosticActualRow {
+func corpusDiagnosticActualRows(result *corpusDiagnosticFamilyResult, report *anadiag.DiagnosticReport, code string) []corpusDiagnosticActualRow {
 	actual := make([]corpusDiagnosticActualRow, 0)
 	for index := 0; index < report.FindingCount(); index++ {
 		finding, findingOK := report.FindingAt(index)
@@ -589,7 +590,7 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 		t.Fatalf("native fixture registration %s/%s expects %d rows, catalog has %d", projectName, code, fixtureCase.expect, expected)
 	}
 	plan := corpusHarnessFixtureRun(t, projectName, corpusHarnessDiagnosticMode()).plan
-	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), analysis.DiagnosticPolicy{Enabled: family.enabled})
+	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), anadiag.DiagnosticPolicy{Enabled: family.enabled})
 	if status != analysis.AnalyzeComplete {
 		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)
 	}
@@ -604,19 +605,19 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 }
 
 func TestCorpusDiagnosticManifestRunnerAlwaysTrueFamilyLaw(t *testing.T) {
-	runCorpusDiagnosticNativeFamilyLaw(t, analysis.DiagnosticCodeAlwaysTrueGuard.String())
+	runCorpusDiagnosticNativeFamilyLaw(t, anadiag.DiagnosticCodeAlwaysTrueGuard.String())
 }
 
 func TestCorpusDiagnosticManifestRunnerAlwaysFalseFamilyLaw(t *testing.T) {
-	runCorpusDiagnosticNativeFamilyLaw(t, analysis.DiagnosticCodeAlwaysFalseGuard.String())
+	runCorpusDiagnosticNativeFamilyLaw(t, anadiag.DiagnosticCodeAlwaysFalseGuard.String())
 }
 
 func TestCorpusDiagnosticManifestRunnerUnresolvedTypeReferenceFamilyLaw(t *testing.T) {
-	runCorpusDiagnosticNativeFamilyLaw(t, analysis.DiagnosticCodeUnresolvedTypeReference.String())
+	runCorpusDiagnosticNativeFamilyLaw(t, anadiag.DiagnosticCodeUnresolvedTypeReference.String())
 }
 
 func TestCorpusDiagnosticManifestRunnerUnresolvedValueReferenceFamilyLaw(t *testing.T) {
-	runCorpusDiagnosticNativeFamilyLaw(t, analysis.DiagnosticCodeUnresolvedValueReference.String())
+	runCorpusDiagnosticNativeFamilyLaw(t, anadiag.DiagnosticCodeUnresolvedValueReference.String())
 }
 
 // TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw makes every installed
@@ -627,7 +628,7 @@ func TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw(t *testing.T) {
 	seenCodes := make(map[string]struct{}, len(corpusDiagnosticNativeFamilies))
 	for _, family := range corpusDiagnosticNativeFamilies {
 		code := family.code.String()
-		if family.code == analysis.DiagnosticCodeInvalid || code == "" || len(family.enabled) == 0 || len(family.cases) == 0 {
+		if family.code == anadiag.DiagnosticCodeInvalid || code == "" || len(family.enabled) == 0 || len(family.cases) == 0 {
 			t.Fatalf("native family registration is incomplete: %+v", family)
 		}
 		if _, duplicate := seenCodes[code]; duplicate {
@@ -682,7 +683,7 @@ func TestCorpusDiagnosticManifestRunnerUnregisteredFamilyLaw(t *testing.T) {
 
 func TestCorpusDiagnosticManifestRunnerInstalledCodePendingProjectLaw(t *testing.T) {
 	const project = "advice/redundant-guard"
-	code := analysis.DiagnosticCodeAlwaysTrueGuard.String()
+	code := anadiag.DiagnosticCodeAlwaysTrueGuard.String()
 	if !corpusDiagnosticNativeFamily(code) {
 		t.Fatalf("test requires installed code-level producer %q", code)
 	}
@@ -700,8 +701,8 @@ func TestCorpusDiagnosticManifestRunnerInstalledCodePendingProjectLaw(t *testing
 // by nothing, so it is reported as an unexpected row rather than absorbed by
 // the expectation the first row already satisfied.
 func TestCorpusDiagnosticManifestRunnerUnexpectedFindingLaw(t *testing.T) {
-	code := analysis.DiagnosticCodeAlwaysTrueGuard.String()
-	row := corpusDiagnosticActualRow{file: "main.lua", line: 2, column: 1, severity: analysis.FindingSeverityHint}
+	code := anadiag.DiagnosticCodeAlwaysTrueGuard.String()
+	row := corpusDiagnosticActualRow{file: "main.lua", line: 2, column: 1, severity: anadiag.FindingSeverityHint}
 	project := &corpusDiagnosticProjectExpectations{manifest: &corpusDiagnosticManifest{Check: &corpusDiagnosticManifestCheck{
 		Diagnostics: []corpusStructuredDiagnosticExpectation{{File: "main.lua", Line: 2, Column: 1, Severity: "hint", Code: code}},
 	}}}

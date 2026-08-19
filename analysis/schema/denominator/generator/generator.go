@@ -836,7 +836,21 @@ func emitRelations(entries []entry) ([]byte, error) {
 			}
 		}
 		out.WriteString("\t}\n}\n")
+		fmt.Fprintf(&out, "\nvar generated%sOwnerIDs = []schema.EntryID{\n", owner)
+		for index, item := range entries {
+			if item.owner == owner {
+				fmt.Fprintf(&out, "\tgeneratedRelationEntries[%d].ID(),\n", index)
+			}
+		}
+		out.WriteString("}\n\n")
+		fmt.Fprintf(&out, "// Generated%sOwnerIDs is the immutable catalog-order totality of %s relation identities.\n", owner, owner)
+		fmt.Fprintf(&out, "func Generated%sOwnerIDs() []schema.EntryID {\n\treturn append([]schema.EntryID(nil), generated%sOwnerIDs...)\n}\n", owner, owner)
 	}
+	out.WriteString("\nfunc generatedOwnerIDs(owner RelationOwner) []schema.EntryID {\n\tswitch owner {\n")
+	for _, owner := range owners {
+		fmt.Fprintf(&out, "\tcase RelationOwner%s:\n\t\treturn generated%sOwnerIDs\n", owner, owner)
+	}
+	out.WriteString("\tdefault:\n\t\treturn nil\n\t}\n}\n")
 	return format.Source(out.Bytes())
 }
 

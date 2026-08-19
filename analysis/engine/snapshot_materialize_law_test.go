@@ -31,7 +31,7 @@ var (
 
 // materializedQueryFixture publishes one completed solve that answers a query
 // row, together with the reader that solve offers for it.
-func materializedQueryFixture(t testing.TB) (*Solver, ReceiptQuery, *State, SolvedSnapshot) {
+func materializedQueryFixture(t testing.TB) (*Solver, ProgramQuery, *State, SolvedSnapshot) {
 	t.Helper()
 	solver, query, state := newBorrowedQueryFixture(t)
 	if !state.solved.Available() {
@@ -41,7 +41,7 @@ func materializedQueryFixture(t testing.TB) (*Solver, ReceiptQuery, *State, Solv
 }
 
 // materializedObservationFixture is the observation-lane counterpart.
-func materializedObservationFixture(t testing.TB) (*Solver, ReceiptObservation[[]uint64], *State, SolvedSnapshot) {
+func materializedObservationFixture(t testing.TB) (*Solver, receiptObservation[[]uint64], *State, SolvedSnapshot) {
 	t.Helper()
 	solver, observation, state := newBorrowedObservationFixture(t)
 	if !state.solved.Available() {
@@ -740,6 +740,7 @@ func syntheticAnswerValue(value uint64) solvedValue {
 		Clone:       same,
 		Equal:       func(left, right uint64) bool { return left == right },
 		Fingerprint: func(held uint64) uint64 { return held*0x9e3779b97f4a7c15 + 1 },
+		Present:     func(value uint64) bool { return true },
 	}}
 }
 

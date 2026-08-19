@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
 // AliasDeclare/Params/Target implement the three-phase alias construction
@@ -110,11 +110,11 @@ func (rows *staticRows) InterfaceMembersRaw(term keyspace.Term, members []static
 			return errors.New("program/lower/collector: invalid interface member coordinate")
 		}
 		switch member.kind {
-		case programstatic.InterfaceField:
+		case staticdecl.InterfaceField:
 			if member.field == 0 || member.name.present || member.signature != 0 || member.coordinate != (source.Coordinate{}) {
 				return errors.New("program/lower/collector: invalid interface field member")
 			}
-		case programstatic.InterfaceMethod:
+		case staticdecl.InterfaceMethod:
 			if member.field != 0 || !member.name.present || member.signature == 0 || member.coordinate == (source.Coordinate{}) {
 				return errors.New("program/lower/collector: invalid interface method member")
 			}
@@ -166,6 +166,6 @@ func (rows *staticRows) DeclaredType(term, cell, target keyspace.Term) error {
 	if cell == 0 || target == 0 {
 		return errors.New("program/lower/collector: incomplete declared type")
 	}
-	rows.declared = append(rows.declared, programstatic.DeclaredType{Cell: cell, Target: target})
+	rows.declared = append(rows.declared, staticdecl.DeclaredType{Cell: cell, Target: target})
 	return nil
 }

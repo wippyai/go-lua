@@ -78,7 +78,6 @@ type regionEpoch struct {
 	// a new version snapshot.  Keeping the old snapshot during that interval
 	// prevents a second head visit from re-dirtying the same Groups.
 	interfaceRefreshPending bool
-	interfaces              []uint64
 	ingress                 []uint64
 	backIngress             []uint64
 	environmentIngress      []uint64
@@ -392,7 +391,6 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		}
 		epoch.regions[index].phase = phaseAscent
 		epoch.regions[index].episode = 1
-		epoch.regions[index].interfaces = make([]uint64, len(region.faces))
 		epoch.regions[index].ingress = make([]uint64, len(region.external))
 		epoch.regions[index].backIngress = make([]uint64, len(region.back))
 		epoch.regions[index].environmentIngress = make([]uint64, len(region.environmentExternal))

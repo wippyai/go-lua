@@ -135,34 +135,128 @@ func (reason GrammarReason) String() string {
 	}
 }
 
-// grammarRoles is a set of declaration keys encoded as a bit per table slot.
+// grammarRoles is the authored set of rule families a grammar row reaches.
+//
+// These bits are deliberately stable tags, not rule-table positions.  The
+// sealed rule table is free to insert a declaration (as it did for the
+// runtime-kind call rule) without silently retargeting every later grammar
+// disposition. The key/group tables below translate tags through canonical
+// rule keys or issuance vocabulary; the sealed registry remains the authority
+// for whether those identities are actually declared.
 type grammarRoles uint32
 
 const (
-	roleNone            grammarRoles = 0
-	roleValueSource                  = grammarRoles(1) << 1
-	rolePackSource                   = grammarRoles(1) << 2
-	roleHeapIngress                  = grammarRoles(1) << 3
-	roleValueAllocation              = grammarRoles(1) << 4
-	roleHeapEmpty                    = grammarRoles(1) << 5
-	roleHeapClosed                   = grammarRoles(1) << 6
-	roleRawGet                       = grammarRoles(1) << 7
-	roleRawSet                       = grammarRoles(1) << 8
-	roleCallDispatch                 = grammarRoles(1) << 9
-	roleEffectSelected               = grammarRoles(1) << 10
-	roleEffectOpaque                 = grammarRoles(1) << 11
-	roleEffectBody                   = grammarRoles(1) << 12
-	roleCallActivation               = grammarRoles(1) << 13
-	roleStorageTransfer              = grammarRoles(1) << 16
-	roleArithmetic                   = grammarRoles(1) << 17
-	roleEquality                     = grammarRoles(1) << 18
-	roleOrder                        = grammarRoles(1) << 19
-	rolePresence                     = grammarRoles(1) << 20
+	roleNone        grammarRoles = 0
+	roleValueSource grammarRoles = 1 << iota
+	rolePackSource
+	roleHeapIngress
+	roleValueAllocation
+	roleHeapEmpty
+	roleHeapClosed
+	roleRawGet
+	roleRawSet
+	roleCallDispatch
+	roleEffectSelected
+	roleEffectOpaque
+	roleEffectBody
+	roleCallActivation
+	roleCallOccurrence
+	roleStorageTransfer
+	roleArithmetic
+	roleEquality
+	roleOrder
+	rolePresence
 )
 
+// Call-result projections consume the same parser/call issuance surface as
+// dispatch. Keeping this family expression here makes that provenance
+// explicit instead of adding a rule-specific grammar exception.
+const roleCallSurface = roleCallDispatch | roleCallOccurrence
+
+// grammarRoleKeys is the stable vocabulary for grammar roles.  It is keyed by
+// the same schema identities the rule declarations publish; it does not
+// repeat their mutable dense slot ordinals.
+var grammarRoleKeys = [...]struct {
+	mask grammarRoles
+	key  schema.Key
+}{
+	{roleValueSource, "value-source"},
+	{rolePackSource, "pack-source"},
+	{roleHeapIngress, "heap-ingress"},
+	{roleValueAllocation, "value-allocation"},
+	{roleHeapEmpty, "heap-empty"},
+	{roleHeapClosed, "heap-closed"},
+	{roleRawGet, "raw-get"},
+	{roleRawSet, "raw-set"},
+	{roleCallDispatch, "call-dispatch"},
+	{roleEffectSelected, "effect-selected"},
+	{roleEffectOpaque, "effect-opaque"},
+	{roleEffectBody, "effect-body"},
+	{roleCallActivation, "call-activation"},
+	{roleStorageTransfer, "value-transfer"},
+	{roleArithmetic, "value-binary-arithmetic"},
+	{roleEquality, "value-binary-equality"},
+	{roleOrder, "value-binary-order"},
+	{rolePresence, "value-presence-refinement"},
+}
+
+// grammarRoleGroups are not rule declarations. They are the vocabulary of a
+// grammar row's source surface, expanded against the sealed rule issuance
+// table. This call family is deliberately expressed by its canonical
+// occurrence identity so a new mounted consumer of occurrence/call is reached
+// without another Program-side rule-name restatement.
+var grammarRoleGroups = [...]struct {
+	mask       grammarRoles
+	occurrence schema.Key
+}{
+	{roleCallOccurrence, "occurrence/call"},
+}
+
+func grammarRoleMask(key schema.Key) (grammarRoles, bool) {
+	for _, role := range grammarRoleKeys {
+		if role.key == key {
+			return role.mask, true
+		}
+	}
+	return roleNone, false
+}
+
+func grammarRoleGroupMatches(mask grammarRoles, key schema.Key) bool {
+	entry, ok := templateForKey(key)
+	if !ok {
+		return false
+	}
+	for _, group := range grammarRoleGroups {
+		if mask&group.mask == 0 {
+			continue
+		}
+		for index := 0; index < entry.IssuanceCount(); index++ {
+			issuance, issuanceOK := entry.IssuanceAt(index)
+			if issuanceOK && issuance.Occurrence == group.occurrence {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (roles grammarRoles) known() grammarRoles {
+	known := roleNone
+	for _, role := range grammarRoleKeys {
+		known |= role.mask
+	}
+	for _, group := range grammarRoleGroups {
+		known |= group.mask
+	}
+	return known
+}
+
 func (roles grammarRoles) has(key schema.Key) bool {
-	slot, ok := ruleSlotForKey(key)
-	return ok && roles&(grammarRoles(1)<<slot) != 0
+	mask, ok := grammarRoleMask(key)
+	if ok && roles&mask != 0 {
+		return true
+	}
+	return grammarRoleGroupMatches(roles, key)
 }
 
 // grammarEntry is one authored disposition. Roles is populated only for a
@@ -272,10 +366,10 @@ var grammarDispositions = []grammarEntry{
 	{"production:funcparamlist#3", grammarStructural, grammarReasonParserPlumbing, roleNone},
 	{"production:funcparamlist#4", grammarStructural, grammarReasonListAccumulation, roleNone},
 	{"production:function#1", grammarStructural, grammarReasonUnownedComputation, roleNone},
-	{"production:functioncall#1", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallDispatch | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
-	{"production:functioncall#2", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallDispatch | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
-	{"production:functioncall#3", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallDispatch | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
-	{"production:functioncall#4", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallDispatch | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
+	{"production:functioncall#1", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
+	{"production:functioncall#2", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
+	{"production:functioncall#3", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
+	{"production:functioncall#4", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
 	{"production:interfacebody#1", grammarStructural, grammarReasonEmptyAlternative, roleNone},
 	{"production:interfacebody#2", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"production:interfacebody#3", grammarStructural, grammarReasonListAccumulation, roleNone},
@@ -368,7 +462,7 @@ var grammarDispositions = []grammarEntry{
 	{"production:stat#17", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#18", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#19", grammarStructural, grammarReasonControlFlow, roleNone},
-	{"production:stat#2", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallDispatch | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
+	{"production:stat#2", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
 	{"production:stat#3", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#4", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#5", grammarStructural, grammarReasonControlFlow, roleNone},
@@ -438,8 +532,8 @@ var grammarDispositions = []grammarEntry{
 	{"form:DoBlockStmt", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"form:FalseExpr", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
 	{"form:Field", grammarStructural, grammarReasonParserComponent, roleNone},
-	{"form:FuncCallExpr", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"form:FuncCallStmt", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"form:FuncCallExpr", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"form:FuncCallStmt", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"form:FuncDefStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
 	{"form:FuncName", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"form:FunctionExpr", grammarStructural, grammarReasonFunctionBody, roleNone},
@@ -518,14 +612,14 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:Field.Key", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:Field.KeySyntax", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:Field.Value", grammarStructural, grammarReasonParserComponent, roleNone},
-	{"carrier:FuncCallExpr.Func", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncCallExpr.Receiver", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncCallExpr.Method", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.Func", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.Receiver", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.Method", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"carrier:FuncCallExpr.MethodPosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
-	{"carrier:FuncCallExpr.Args", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncCallExpr.TypeArgs", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncCallExpr.AdjustRet", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncCallStmt.Expr", grammarRuleOwned, grammarReasonInvalid, roleCallDispatch | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.Args", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.TypeArgs", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallExpr.AdjustRet", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
+	{"carrier:FuncCallStmt.Expr", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"carrier:FuncDefStmt.Name", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
 	{"carrier:FuncDefStmt.Func", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
 	{"carrier:FuncName.Func", grammarStructural, grammarReasonParserComponent, roleNone},
@@ -770,15 +864,34 @@ func checkGrammarEntry(entry grammarEntry) GrammarJoinFailure {
 	default:
 		return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinMalformedEntry}
 	}
-	for slot := 1; slot < 32; slot++ {
-		if entry.Roles&(grammarRoles(1)<<slot) == 0 {
+	if entry.Roles&^entry.Roles.known() != 0 {
+		return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
+	}
+	for _, role := range grammarRoleKeys {
+		if entry.Roles&role.mask == 0 {
 			continue
 		}
-		template, declared := templateAtSlot(slot)
+		template, declared := templateForKey(role.key)
 		if !declared {
 			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
 		}
 		if !template.Key().Available() {
+			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
+		}
+	}
+	for _, group := range grammarRoleGroups {
+		if entry.Roles&group.mask == 0 {
+			continue
+		}
+		declared := false
+		for position := 0; position < RuleCount() && !declared; position++ {
+			key, keyOK := RuleKeyAt(position)
+			if !keyOK {
+				continue
+			}
+			declared = grammarRoleGroupMatches(entry.Roles, key)
+		}
+		if !declared {
 			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
 		}
 	}

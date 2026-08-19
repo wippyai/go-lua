@@ -165,36 +165,3 @@ func (body Body) Normal() (Outcome, bool) {
 	target, targetOK := outcome.Target()
 	return outcome, outcomeOK && outcome.BelongsTo(body) && kindOK && outcomeKind == kind.OutcomeNormal && targetOK && target == 0
 }
-
-// ReturnValuesCount exposes the owner-issued ordered executable Values range
-// only for an Outcome returned by Body.Return.
-func (outcome Outcome) ReturnValuesCount() int {
-	if !outcome.Available() || !outcome.returned.Available() {
-		return 0
-	}
-	return outcome.returned.ValuesCount()
-}
-
-// ReturnValueAt returns an existing Span for one ordered executable Values
-// alternative. The raw Values coordinate remains internal to this query.
-func (outcome Outcome) ReturnValueAt(index int) (Span, bool) {
-	if !outcome.Available() || !outcome.returned.Available() {
-		return Span{}, false
-	}
-	site, siteOK := outcome.returned.ValueAt(index)
-	term, termOK := site.Term()
-	if !siteOK || !termOK {
-		return Span{}, false
-	}
-	span, spanOK := outcome.body.program.Span(term)
-	return span, spanOK
-}
-
-// OutcomeSiteAt is the compact Site-only OutcomeAt form.
-func (body Body) OutcomeSiteAt(index int) (flow.Site, bool) {
-	outcome, ok := body.OutcomeAt(index)
-	if !ok {
-		return flow.Site{}, false
-	}
-	return outcome.Site()
-}

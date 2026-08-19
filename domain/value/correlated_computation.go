@@ -96,7 +96,7 @@ func (schema *Schema) BinaryOrder(module, occurrence identity.ContentID) (Binary
 
 func (row BinaryOrder) valid() bool {
 	return row.schema != nil && row.key.module.Available() && row.key.occurrence.Available() &&
-		row.content.Available() && binaryOrderOperator(row.op)
+		row.content.Available() && flowkind.IsBinaryOrder(row.op)
 }
 
 func (schema *Schema) OwnsBinaryOrder(row BinaryOrder) bool {
@@ -115,10 +115,6 @@ func (row BinaryOrder) Endpoints() (result, left, right Coordinate, op flowkind.
 		return Coordinate{}, Coordinate{}, Coordinate{}, 0, false
 	}
 	return row.result, row.left, row.right, row.op, true
-}
-
-func binaryOrderOperator(op flowkind.BinaryOp) bool {
-	return op >= flowkind.BinaryLess && op <= flowkind.BinaryGreaterEqual
 }
 
 // PresenceRefinement is Value's owner-fenced interpretation of one exact
@@ -307,9 +303,24 @@ func (schema *valueBuilder) sealComputationRows() bool {
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		if artifact == nil {
 			return false
+		}
+		sourceSpans := make(map[identity.ContentID]struct{})
+		for sourceIndex := 0; sourceIndex < artifact.OccurrenceCount(); sourceIndex++ {
+			sourceRow, sourceOK := artifact.OccurrenceAt(sourceIndex)
+			if !sourceOK {
+				return false
+			}
+			if programartifact.OccurrenceKind(sourceRow.Kind()) != programartifact.OccurrenceValueSource {
+				continue
+			}
+			span, spanOK := sourceRow.ValueSourceSpanID()
+			if !spanOK {
+				return false
+			}
+			sourceSpans[span] = struct{}{}
 		}
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, ok := artifact.OccurrenceAt(index)
@@ -317,7 +328,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				return false
 			}
 			key := computationKey{module, row.ID()}
-			switch row.Kind() {
+			switch programartifact.OccurrenceKind(row.Kind()) {
 			case programartifact.OccurrenceBinaryArithmetic:
 				leftID, rightID, op, rowOK := row.BinaryArithmetic()
 				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, row.ID())
@@ -371,7 +382,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				rc, rcOK := schema.coordinateForCold(result)
 				lc, lcOK := schema.coordinateForCold(left)
 				rr, rrOK := schema.coordinateForCold(right)
-				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !binaryOrderOperator(op) {
+				if !rowOK || !resultOK || !leftOK || !rightOK || !rcOK || !lcOK || !rrOK || !flowkind.IsBinaryOrder(op) {
 					return false
 				}
 				content := computationContent(schema.linkID, "val-order!", module, row.ID(), row.Code())
@@ -384,6 +395,94 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				} else {
 					return false
 				}
+			case programartifact.OccurrenceCall:
+				// The runtime-kind rule consumes only the sealed geometry of a
+				// strict unary plain call. Join the occurrence to the existing
+				// ingress Call directory by its parent-issued ID; do not infer
+				// call shape from occurrence inputs or reconstruct Program data.
+				call, callOK := artifact.CallForID(row.ID())
+				if !callOK {
+					return false
+				}
+				// Calls outside the strict unary plain shape are valid calls,
+				// but are not RuntimeKindCall operands. Their own Call domain
+				// rules continue to interpret them.
+				if call.Form() == uint8(programartifact.CallFormMethod) || call.ArgumentCount() != 1 {
+					continue
+				}
+				if call.Form() != uint8(programartifact.CallFormPlain) {
+					return false
+				}
+				if _, hasReceiver := call.ReceiverID(); hasReceiver {
+					continue
+				}
+				if _, hasTail := call.TailID(); hasTail {
+					continue
+				}
+				argument, argumentOK := call.ArgumentAt(0)
+				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || !argument.MemberID().Available() {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, call.SpanID())
+				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, argument.MemberID())
+				rc, rcOK := schema.coordinateForCold(result)
+				ic, icOK := schema.coordinateForCold(input)
+				if !resultOK || !inputOK || !rcOK || !icOK {
+					return false
+				}
+				content := computationContent(schema.linkID, "val-runtime-kind-call!", module, row.ID())
+				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: ic, write: rc}
+				if !runtimeCall.valid() {
+					return false
+				}
+				if _, duplicate := schema.runtimeKindCalls[key]; duplicate {
+					return false
+				}
+				schema.runtimeKindCalls[key] = runtimeCall
+			case programartifact.OccurrenceOperationPredicateRefinement:
+				sourceCallID, targetID, operandID, routeID, opCode, truth, rowOK := row.OperationPredicateRefinement()
+				op := flowkind.BinaryOp(opCode)
+				call, callOK := artifact.CallForID(sourceCallID)
+				if !rowOK || !routeID.Available() || !callOK || call.ID() != sourceCallID ||
+					call.Form() != uint8(programartifact.CallFormPlain) || call.ArgumentCount() != 1 {
+					return false
+				}
+				if _, hasReceiver := call.ReceiverID(); hasReceiver {
+					return false
+				}
+				if _, hasTail := call.TailID(); hasTail {
+					return false
+				}
+				argument, argumentOK := call.ArgumentAt(0)
+				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || argument.MemberID() != targetID {
+					return false
+				}
+				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, call.SpanID())
+				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
+				comparison, comparisonOK := schema.sealBoundary().Values().ForMountedSemantic(module, operandID)
+				if _, isSourceSpan := sourceSpans[operandID]; isSourceSpan {
+					comparison, comparisonOK = schema.sealBoundary().Values().ForMountedSpan(module, operandID)
+				}
+				rc, rcOK := schema.coordinateForCold(result)
+				ic, icOK := schema.coordinateForCold(input)
+				pc, pcOK := schema.coordinateForCold(comparison)
+				if !resultOK || !inputOK || !comparisonOK || !rcOK || !icOK || !pcOK ||
+					(op != flowkind.BinaryEqual && op != flowkind.BinaryNotEqual) {
+					return false
+				}
+				truthCode := uint64(0)
+				if truth {
+					truthCode = 1
+				}
+				content := computationContent(schema.linkID, "val-runtime-kind-predicate!", module, row.ID(), uint64(op), truthCode)
+				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: pc, write: ic, call: sourceCallID, op: op, truth: truth, refinement: true}
+				if !runtimeCall.valid() {
+					return false
+				}
+				if _, duplicate := schema.runtimeKindCalls[key]; duplicate {
+					return false
+				}
+				schema.runtimeKindCalls[key] = runtimeCall
 			case programartifact.OccurrenceBinaryPresenceRefinement:
 				_, targetID, _, _, present, rowOK := row.BinaryPresenceRefinement()
 				target, targetOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)

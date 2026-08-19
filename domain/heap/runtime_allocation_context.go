@@ -395,7 +395,7 @@ func (schema Schema) AllocationRequirementForKey(key Key) (AllocationRequirement
 	}
 	keyID, keyOK := schema.KeyID(key)
 	localID, localOK := schema.AllocationRootValueID(key)
-	artifactID := receipt.artifact.ID()
+	artifactID := receipt.snapshot.ArtifactID()
 	if !keyOK || !localOK || !artifactID.Available() {
 		return AllocationRequirement{}, false
 	}

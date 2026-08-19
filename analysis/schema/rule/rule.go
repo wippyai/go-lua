@@ -17,7 +17,6 @@
 package rule
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -66,6 +65,16 @@ const (
 	// bound cell; the table only names who must supply it and refuses a rule
 	// whose owner is not a writer principal.
 	LawOwnerResolves
+	// LawIssuanceRequirementDeclared states that a subscription names the
+	// operand shape it consumes. A subscription that names none would be placed
+	// on every row of its occurrence family while its owner seals an operand for
+	// a subset, so the two denominators would part company at construction. The
+	// unrestricted shape is a declared member like any other, which is why
+	// silence is a verdict rather than a default.
+	LawIssuanceRequirementDeclared
+	// LawIssuanceRequirementResolves states that the named operand shape is a
+	// declared member of the requirement vocabulary.
+	LawIssuanceRequirementResolves
 )
 
 // Lane is the closed admission lane of one rule. Mounted rules enter through a
@@ -94,31 +103,26 @@ func (lane Lane) Mounted() bool { return lane == LaneMounted || lane == LaneActi
 // never declared resolves nothing, so an identity a rule consumes is an
 // identity it is on record as consuming.
 type Declaration[P any] struct {
-	Builder    *engine.SchemaBuilder
 	Roles      vocabulary.Roles
 	Principals P
 }
 
-// Registration is the pre-seal slot handoff context.
+// Registration is the pre-seal slot handoff context. The schema binding is
+// composition wiring.
 type Registration[F any] struct {
-	Binding  *engine.SchemaBinding
 	Fragment F
 }
 
-// Pairing is the cross-rule admission context. It runs in its own pass after
-// every rule has registered, so a rule that joins another rule's plane resolves
-// it by stable role identity and never by declaration order.
+// Pairing is the cross-rule admission context. The schema binding and
+// capability resolver are composition wiring.
 type Pairing[F any] struct {
-	Binding    *engine.SchemaBinding
-	Fragment   F
-	Capability func(schema.Key) (engine.RuleSlotCapability, bool)
+	Fragment F
 }
 
 // Binding is the hot binding context. Fragment is the cold fragment this
 // rule's Declare hook produced; Authorities is the composition's own Link
-// authority record.
+// authority record. The schema binding is composition wiring.
 type Binding[A, F any] struct {
-	Binding     *engine.SchemaBinding
 	Fragment    F
 	Authorities A
 }
@@ -130,22 +134,6 @@ type Finalization[A, H any] struct {
 	Authorities A
 }
 
-// Member binds one already-admitted occurrence to a committed topology.
-type Member[H any] struct {
-	Rule        H
-	Compilation *engine.ProgramConstruction
-	Mount       identity.ContentID
-	Point       identity.ContentID
-	Occurrence  identity.ContentID
-}
-
-// LinkMember binds one admitted Link occurrence to a committed topology.
-type LinkMember[H any] struct {
-	Rule        H
-	Compilation *engine.ProgramConstruction
-	Occurrence  identity.ContentID
-}
-
 // LinkCatalog is the Link-owned occurrence inventory a Link-lane rule
 // publishes. It is the neutral shape a plan needs to enumerate the occurrences
 // it must admit.
@@ -155,10 +143,11 @@ type LinkCatalog interface {
 }
 
 // Issuance is one program-occurrence subscription: the occurrence family whose
-// compiled rows issue an occurrence of this rule, the placement form that
-// issuance takes, the operand polarity it reads, and the execution cut it is
-// placed at. Every term names a member of the structural vocabulary, so a
-// subscription is declared data and resolves against the sealed table.
+// compiled rows issue an occurrence of this rule, the operand shape it requires
+// those rows to carry, the placement form that issuance takes, the operand
+// polarity it reads, and the execution cut it is placed at. Every term names a
+// member of the structural vocabulary, so a subscription is declared data and
+// resolves against the sealed table.
 //
 // What a form does with the program's geometry stays with the compiler that
 // places it; what this record states is which rows issue this rule and in what
@@ -169,6 +158,13 @@ type Issuance struct {
 	Form       schema.Key
 	Input      schema.Key
 	Stage      schema.Key
+	// Requirement is the operand shape this rule consumes at this issuance: the
+	// structural admissibility a compiled row must carry for the placement to be
+	// one the owner can seal an operand for. It is the shared denominator of
+	// cold placement and owner issuance, so a rule that consumes every row of
+	// its occurrence family names the unrestricted member rather than leaving
+	// the term absent.
+	Requirement schema.Key
 	// Code, when declared, narrows the subscription to occurrence rows carrying
 	// this payload code. It is the one payload predicate the placement needs and
 	// it is exact: a row whose code differs issues nothing.
@@ -178,14 +174,14 @@ type Issuance struct {
 
 func (issuance Issuance) Available() bool {
 	return issuance.Occurrence.Available() && issuance.Form.Available() &&
-		issuance.Input.Available() && issuance.Stage.Available()
+		issuance.Input.Available() && issuance.Stage.Available() &&
+		issuance.Requirement.Available()
 }
 
-// Spec is the authored declaration of one rule. P and A are the composition's
-// principal and authority records; F and H are this rule's own cold fragment
-// and hot rule. The owning domain keeps its transfer algebra and hot rule;
-// what it hands over here is the wiring.
-type Spec[P, A, F, H any] struct {
+// Spec is the authored declaration of one rule. The owning domain keeps its
+// transfer algebra, hot rule, and contributor; what it hands over here is the
+// sealed declaration.
+type Spec struct {
 	// Key is the rule's authored identity and its diagnostic name, so a rule
 	// has exactly one spelling in the analyzer. It derives the entry identity
 	// a verdict carries.
@@ -221,23 +217,6 @@ type Spec[P, A, F, H any] struct {
 	// so the identity set a rule is declared against is part of the table
 	// digest, and the hook reaches no identity this list omits.
 	Roles []schema.Key
-	// Declare records the rule's cold Schema shape and returns its fragment.
-	Declare func(Declaration[P]) (F, bool)
-	// Register performs the pre-seal owner handoff for the declared slot.
-	Register func(Registration[F]) (engine.RuleSlotCapability, bool)
-	// Pair is the optional cross-rule admission a transported plane needs.
-	Pair func(Pairing[F]) bool
-	// Bind produces the Link-local hot rule from the cold fragment.
-	Bind func(Binding[A, F]) (H, bool)
-	// Finalize is the optional post-seal owner step.
-	Finalize func(Finalization[A, H]) bool
-	// Member is the activation construction bridge. Mounted operand rules and
-	// Link rules declare none.
-	Member func(Member[H]) bool
-	// LinkCatalog is the Link lane inventory. Mounted rules declare none.
-	// Construction binds Link members through the cell-owned program attach.
-	LinkMember  func(LinkMember[H]) bool
-	LinkCatalog func(H) (LinkCatalog, bool)
 }
 
 // Cell is the opaque per-rule payload the table carries between passes. It is
@@ -247,10 +226,17 @@ type Cell struct{ payload any }
 
 func (holder Cell) Available() bool { return holder.payload != nil }
 
-// Template is one admitted rule declaration, erased in its own fragment and
-// hot rule but still typed in the composition's principal and authority
-// records. It is immutable once built.
-type Template[P, A any] struct {
+// NewCell holds one typed contributor payload in an opaque cell.
+func NewCell(value any) Cell {
+	if value == nil {
+		return Cell{}
+	}
+	return Cell{payload: value}
+}
+
+// Template is one admitted rule declaration. It is immutable once built.
+// Contributor wiring is composition-owned.
+type Template struct {
 	key      schema.Key
 	id       schema.EntryID
 	lane     Lane
@@ -259,24 +245,15 @@ type Template[P, A any] struct {
 	issues   []Issuance
 	semantic schema.Key
 	roles    []schema.Key
-
-	declare     func(Declaration[P]) (Cell, bool)
-	register    func(*engine.SchemaBinding, Cell) (engine.RuleSlotCapability, bool)
-	pair        func(*engine.SchemaBinding, Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
-	bind        func(*engine.SchemaBinding, A, Cell) (Cell, bool)
-	finalize    func(A, Cell) bool
-	member     func(Cell, *engine.ProgramConstruction, identity.ContentID, identity.ContentID, identity.ContentID) bool
-	linkMember func(Cell, *engine.ProgramConstruction, identity.ContentID) bool
-	linkCatalog func(Cell) (LinkCatalog, bool)
 }
 
-// New admits one authored declaration and instantiates its typed hooks. A
-// rejected spec returns false rather than a partially usable template.
-func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
+// New admits one authored declaration. A rejected spec returns false rather
+// than a partially usable template.
+func New(spec Spec) (*Template, bool) {
 	if !specAdmissible(spec) {
 		return nil, false
 	}
-	template := &Template[P, A]{
+	template := &Template{
 		key:      spec.Key,
 		id:       schema.NewEntryID(schema.SurfaceKindRule, spec.Key),
 		lane:     spec.Lane,
@@ -286,78 +263,10 @@ func New[P, A, F, H any](spec Spec[P, A, F, H]) (*Template[P, A], bool) {
 		semantic: spec.Semantic,
 		roles:    append([]schema.Key(nil), spec.Roles...),
 	}
-	// The hook receives exactly the roles this rule declared. Narrowing here is
-	// what makes the declared role list the whole of what a hook can consume,
-	// so an identity reaching a Declare body is one the table has on record.
-	declared := template.declaredRoles()
-	template.declare = func(context Declaration[P]) (Cell, bool) {
-		roles, rolesOK := context.Roles.Restrict(declared...)
-		if !rolesOK {
-			return Cell{}, false
-		}
-		context.Roles = roles
-		fragment, ok := spec.Declare(context)
-		if !ok {
-			return Cell{}, false
-		}
-		return Cell{payload: fragment}, true
-	}
-	template.register = func(binding *engine.SchemaBinding, holder Cell) (engine.RuleSlotCapability, bool) {
-		fragment, ok := holder.payload.(F)
-		if !ok {
-			return engine.RuleSlotCapability{}, false
-		}
-		return spec.Register(Registration[F]{Binding: binding, Fragment: fragment})
-	}
-	if spec.Pair != nil {
-		template.pair = func(binding *engine.SchemaBinding, holder Cell, resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
-			fragment, ok := holder.payload.(F)
-			return ok && spec.Pair(Pairing[F]{Binding: binding, Fragment: fragment, Capability: resolve})
-		}
-	}
-	template.bind = func(binding *engine.SchemaBinding, authorities A, holder Cell) (Cell, bool) {
-		fragment, fragmentOK := holder.payload.(F)
-		if !fragmentOK {
-			return Cell{}, false
-		}
-		hot, ok := spec.Bind(Binding[A, F]{Binding: binding, Fragment: fragment, Authorities: authorities})
-		if !ok {
-			return Cell{}, false
-		}
-		return Cell{payload: hot}, true
-	}
-	if spec.Finalize != nil {
-		template.finalize = func(authorities A, holder Cell) bool {
-			hot, ok := holder.payload.(H)
-			return ok && spec.Finalize(Finalization[A, H]{Rule: hot, Authorities: authorities})
-		}
-	}
-	if spec.Member != nil {
-		template.member = func(holder Cell, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
-			hot, ok := holder.payload.(H)
-			return ok && compilation != nil && spec.Member(Member[H]{Rule: hot, Compilation: compilation, Mount: mount, Point: point, Occurrence: occurrence})
-		}
-	}
-	if spec.LinkMember != nil {
-		template.linkMember = func(holder Cell, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
-			hot, ok := holder.payload.(H)
-			return ok && compilation != nil && spec.LinkMember(LinkMember[H]{Rule: hot, Compilation: compilation, Occurrence: occurrence})
-		}
-	}
-	if spec.LinkCatalog != nil {
-		template.linkCatalog = func(holder Cell) (LinkCatalog, bool) {
-			hot, hotOK := holder.payload.(H)
-			if !hotOK {
-				return nil, false
-			}
-			catalog, ok := spec.LinkCatalog(hot)
-			return catalog, ok && catalog != nil
-		}
-	}
 	return template, template.EntryAvailable()
 }
 
-func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
+func specAdmissible(spec Spec) bool {
 	if !spec.Key.Available() || !spec.Lane.Available() {
 		return false
 	}
@@ -366,22 +275,7 @@ func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
 			return false
 		}
 	}
-	if !spec.Semantic.Available() || spec.Declare == nil || spec.Register == nil || spec.Bind == nil {
-		return false
-	}
-	activation, link := spec.Lane == LaneActivation, spec.Lane == LaneLink
-	if activation {
-		if spec.Member == nil {
-			return false
-		}
-	} else if spec.Member != nil {
-		return false
-	}
-	if link {
-		if spec.LinkCatalog == nil || spec.LinkMember != nil {
-			return false
-		}
-	} else if spec.LinkMember != nil || spec.LinkCatalog != nil {
+	if !spec.Semantic.Available() {
 		return false
 	}
 	if !spec.Writes.Available() || !spec.Owner.Available() {
@@ -395,21 +289,21 @@ func specAdmissible[P, A, F, H any](spec Spec[P, A, F, H]) bool {
 	return true
 }
 
-func (template *Template[P, A]) Key() schema.Key { return template.key }
+func (template *Template) Key() schema.Key { return template.key }
 
-func (template *Template[P, A]) ID() schema.EntryID { return template.id }
+func (template *Template) ID() schema.EntryID { return template.id }
 
-func (template *Template[P, A]) Lane() Lane { return template.lane }
+func (template *Template) Lane() Lane { return template.lane }
 
 // Writes is the axis this rule's occurrences write, by the key that axis is
 // declared under.
-func (template *Template[P, A]) Writes() schema.Key { return template.writes }
+func (template *Template) Writes() schema.Key { return template.writes }
 
 // Owner is the axis that must supply this rule's operand resolver.
-func (template *Template[P, A]) Owner() schema.Key { return template.owner }
+func (template *Template) Owner() schema.Key { return template.owner }
 
 // IssuanceCount is the number of occurrence subscriptions this rule declares.
-func (template *Template[P, A]) IssuanceCount() int {
+func (template *Template) IssuanceCount() int {
 	if template == nil {
 		return 0
 	}
@@ -418,7 +312,7 @@ func (template *Template[P, A]) IssuanceCount() int {
 
 // IssuanceAt returns one declared subscription at its declaration position. The
 // position is the order the compiler places the issuances in.
-func (template *Template[P, A]) IssuanceAt(index int) (Issuance, bool) {
+func (template *Template) IssuanceAt(index int) (Issuance, bool) {
 	if template == nil || index < 0 || index >= len(template.issues) {
 		return Issuance{}, false
 	}
@@ -428,7 +322,7 @@ func (template *Template[P, A]) IssuanceAt(index int) (Issuance, bool) {
 // Semantic is the semantic role row this rule is declared under. A consumer
 // resolves the identity through the sealed vocabulary rather than deriving it
 // from this key, so the declaration and the derivation stay one step apart.
-func (template *Template[P, A]) Semantic() schema.Key {
+func (template *Template) Semantic() schema.Key {
 	if template == nil {
 		return ""
 	}
@@ -436,7 +330,7 @@ func (template *Template[P, A]) Semantic() schema.Key {
 }
 
 // RoleCount is the number of further semantic roles this rule declared.
-func (template *Template[P, A]) RoleCount() int {
+func (template *Template) RoleCount() int {
 	if template == nil {
 		return 0
 	}
@@ -445,7 +339,7 @@ func (template *Template[P, A]) RoleCount() int {
 
 // RoleAt returns one further declared semantic role at its declaration
 // position.
-func (template *Template[P, A]) RoleAt(index int) (schema.Key, bool) {
+func (template *Template) RoleAt(index int) (schema.Key, bool) {
 	if template == nil || index < 0 || index >= len(template.roles) {
 		return "", false
 	}
@@ -454,42 +348,33 @@ func (template *Template[P, A]) RoleAt(index int) (schema.Key, bool) {
 
 // declaredRoles is the whole role set this rule is declared against: its own
 // identity first, then the roles its hook resolves.
-func (template *Template[P, A]) declaredRoles() []schema.Key {
+func (template *Template) declaredRoles() []schema.Key {
 	if template == nil {
 		return nil
 	}
 	return append([]schema.Key{template.semantic}, template.roles...)
 }
 
-func (template *Template[P, A]) EntryAvailable() bool {
+func (template *Template) EntryAvailable() bool {
 	if template == nil || !template.key.Available() || !template.id.Available() || !template.lane.Available() {
 		return false
 	}
-	if !template.semantic.Available() || template.declare == nil || template.register == nil || template.bind == nil {
-		return false
-	}
-	activation, link := template.lane == LaneActivation, template.lane == LaneLink
-	if activation {
-		if template.member == nil {
-			return false
-		}
-	} else if template.member != nil {
-		return false
-	}
-	if link {
-		if template.linkCatalog == nil || template.linkMember != nil {
-			return false
-		}
-	} else if template.linkMember != nil || template.linkCatalog != nil {
+	if !template.semantic.Available() {
 		return false
 	}
 	return template.writes.Available() && template.owner.Available()
 }
 
+// DeclaredRoles is the whole role set this rule is declared against.
+func (template *Template) DeclaredRoles() []schema.Key {
+	return template.declaredRoles()
+}
+
 // EntryContent writes this rule's declarative half: the semantic roles it is
 // declared against, the admission lane it enters on, the axis it writes, the
 // owner that must supply its operand resolver, and the occurrence
-// subscriptions it declares, each in declaration order. The lane decides
+// subscriptions it declares - operand shape included - each in declaration
+// order. The lane decides
 // which admission path an occurrence takes, the write axis names the
 // coordinate space this rule's facts land in, the owner names the principal
 // that must install the resolver construction later selects by this rule's
@@ -514,7 +399,7 @@ func (template *Template[P, A]) EntryAvailable() bool {
 // What the hooks are declared against is covered: the axis names the coordinate
 // space they write, and the surface's own admission laws bind the hook set to
 // the lane.
-func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
+func (template *Template) EntryContent(content *framing.Writer) error {
 	if err := content.String(string(template.semantic)); err != nil {
 		return err
 	}
@@ -551,6 +436,9 @@ func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
 		if err := content.String(string(issuance.Stage)); err != nil {
 			return err
 		}
+		if err := content.String(string(issuance.Requirement)); err != nil {
+			return err
+		}
 		if err := content.Bool(issuance.HasCode); err != nil {
 			return err
 		}
@@ -561,67 +449,17 @@ func (template *Template[P, A]) EntryContent(content *framing.Writer) error {
 	return nil
 }
 
-func (template *Template[P, A]) HasPair() bool { return template.pair != nil }
-
-func (template *Template[P, A]) HasFinalize() bool { return template.finalize != nil }
-
-func (template *Template[P, A]) Declare(context Declaration[P]) (Cell, bool) {
-	if context.Builder == nil {
-		return Cell{}, false
-	}
-	holder, ok := template.declare(context)
-	return holder, ok && holder.Available()
-}
-
-func (template *Template[P, A]) Register(binding *engine.SchemaBinding, fragment Cell) (engine.RuleSlotCapability, bool) {
-	if binding == nil || !fragment.Available() {
-		return engine.RuleSlotCapability{}, false
-	}
-	return template.register(binding, fragment)
-}
-
-func (template *Template[P, A]) Pair(binding *engine.SchemaBinding, fragment Cell, resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
-	return template.pair != nil && binding != nil && fragment.Available() && resolve != nil && template.pair(binding, fragment, resolve)
-}
-
-func (template *Template[P, A]) Bind(binding *engine.SchemaBinding, authorities A, fragment Cell) (Cell, bool) {
-	if binding == nil || !fragment.Available() {
-		return Cell{}, false
-	}
-	holder, ok := template.bind(binding, authorities, fragment)
-	return holder, ok && holder.Available()
-}
-
-func (template *Template[P, A]) Finalize(authorities A, hot Cell) bool {
-	return template.finalize != nil && hot.Available() && template.finalize(authorities, hot)
-}
-
-func (template *Template[P, A]) Member(hot Cell, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
-	return template.member != nil && hot.Available() && template.member(hot, compilation, mount, point, occurrence)
-}
-
-func (template *Template[P, A]) LinkMember(hot Cell, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
-	return template.linkMember != nil && hot.Available() && template.linkMember(hot, compilation, occurrence)
-}
-
-func (template *Template[P, A]) LinkCatalog(hot Cell) (LinkCatalog, bool) {
-	if template.linkCatalog == nil || !hot.Available() {
-		return nil, false
-	}
-	return template.linkCatalog(hot)
-}
-
 // surface is the rule contribution to the analyzer declaration root.
-type surface[P, A any] struct{ templates []*Template[P, A] }
+type surface struct{ templates []*Template }
 
 // NewSurface hands one ordered set of rule declarations to the table.
-func NewSurface[P, A any](templates []*Template[P, A]) schema.Surface {
-	return surface[P, A]{templates: templates}
+func NewSurface(templates []*Template) schema.Surface {
+	return surface{templates: templates}
 }
 
-func (contribution surface[P, A]) Kind() schema.SurfaceKind { return schema.SurfaceKindRule }
+func (contribution surface) Kind() schema.SurfaceKind { return schema.SurfaceKindRule }
 
-func (contribution surface[P, A]) Entries() []schema.Entry {
+func (contribution surface) Entries() []schema.Entry {
 	entries := make([]schema.Entry, len(contribution.templates))
 	for index, template := range contribution.templates {
 		entries[index] = template
@@ -637,11 +475,11 @@ func (contribution surface[P, A]) Entries() []schema.Entry {
 // The axis surface and the structural vocabulary seal below this one, so both
 // references resolve downward against the table this surface is being sealed
 // into rather than against a catalog restated here.
-func (contribution surface[P, A]) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
+func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
 	semantics := make(map[schema.Key]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
-		template, templateOK := entry.(*Template[P, A])
+		template, templateOK := entry.(*Template)
 		if !entryOK || !templateOK {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, schema.EntryID{}, LawEntryShape, schema.DispositionMalformed)
 		}
@@ -712,6 +550,16 @@ func sealIssuance(entry schema.EntryID, issuance Issuance, sealed schema.Sealed)
 		if _, disposition := structure.Resolve(sealed, reference.key, reference.category); disposition != schema.DispositionAccepted {
 			return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceResolves, disposition)
 		}
+	}
+	// The operand shape is stated apart from the four placement terms. Those
+	// four say where an occurrence lands; this one says which rows are the
+	// rule's to begin with, and an absent one is the silence that lets a
+	// placement set outgrow the operands its owner seals.
+	if !issuance.Requirement.Available() {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementDeclared, schema.DispositionIncomplete)
+	}
+	if _, disposition := structure.Resolve(sealed, issuance.Requirement, structure.CategoryIssuanceRequirement); disposition != schema.DispositionAccepted {
+		return schema.SurfaceLawFailure(schema.SurfaceKindRule, entry, LawIssuanceRequirementResolves, disposition)
 	}
 	return schema.SealFailure{}
 }

@@ -19,6 +19,8 @@ func (m *Manager) Equivalent(left, right Guard) bool {
 
 type comparePair struct{ left, right Guard }
 
+type compareKey struct{ left, right nodeKey }
+
 func (m *Manager) compareNode(left, right Guard) int {
 	if result, done := m.compareImmediate(left, right); done {
 		return result
@@ -99,6 +101,8 @@ func (m *Manager) Entails(premise, conclusion Guard) bool {
 }
 
 type satisfiablePair struct{ left, right Guard }
+
+type satisfiableKey struct{ left, right nodeKey }
 
 func (m *Manager) satisfiable(left, right Guard, negateRight bool) bool {
 	stack := []satisfiablePair{{left: left, right: right}}

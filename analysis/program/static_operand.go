@@ -105,7 +105,7 @@ func (program *Program) staticOperandAt(term keyspace.Term, seen map[keyspace.Te
 	reads := program.Flow().Authored().Storage().Reads()
 	if owner, source, _, ok := reads.Get(term); ok && owner != 0 && source != 0 && program.Flow().Executable().Contains(term) {
 		readID, _, readTerm, readOK := program.StorageReadIDAt(int(keyspace.TermOrdinal(term) - 1))
-		cellID, cellOK := program.StorageCellIDAt(int(keyspace.TermOrdinal(source) - 1))
+		cellID, cellOK := program.StorageCellID(source)
 		cellTerm, cellTermOK := program.Flow().Authored().Storage().Cells().At(int(keyspace.TermOrdinal(source) - 1))
 		bodyPath, bodyOK := program.Flow().BodyPath(owner)
 		if readOK && readTerm == term && cellOK && cellTermOK && cellTerm == source && bodyOK && bodyPath.Available() {

@@ -30,6 +30,7 @@ func pinnedSemanticRoles() []struct {
 		spelling string
 		digest   string
 	}{
+		{"runtime-kind/result", "3c46caa8f3974fbd6816593532bcdd0759cdceea36fb503fa2efdbb1794cd56c"},
 		{"factor/value", "a4a0871ca0632b6ccf9c9be70fe5ab105f15ad4cfa514868201b4764563d9ade"},
 		{"factor/value/summary-identity", "d5933a460b0cbf7226f6ce977744df7e1484a9cce7780ceababc384a83a84064"},
 		{"factor/value/summary-coordinatewise", "326db6e5e34d18eb3afee9ab020b02ebe58c4a38d217e6621396bfd9e50f1ea1"},
@@ -115,6 +116,11 @@ func pinnedSemanticRoles() []struct {
 		{"query/population/selected-point", "4892261e374acc37ddebb86182f5244f581db1b050cb4e89af8ab61a3e80f7eb"},
 		{"query/projection/summary", "75ae2d0ed941049230cf6975a58529eba88cb0779c4a18556147452a8c3b00f2"},
 		{"query/projection/exact", "48a68958bf20dc222d49ce6a7fa54282d4781675545bfec8521fb033af421109"},
+		{"fact/channel-select-case", "472811b2d71eb3c197eb5de89e5f29e38dacccc185ae769776243822b57e5372"},
+		{"axis/channel-select-case", "c8eb80826a2e5c51af116e53c6cbecce82c2335914d81de3498fc83bbbb3209a"},
+		{"rule/value/runtime-kind-call", "7029954eb4588b43a3a45d525fb14a8c3fab1b103db075cf695e1ab42eca5207"},
+		{"operand/value/runtime-kind-call", "6a2a01bf5de5fca20f244473090efa8976b3ae70f0470e467a4fa14c61c93df4"},
+		{"evidence/value/runtime-kind-call", "40c875be6d3567064444e844c578b5fc85af831875cf0eb9c9e99bd2d623dab7"},
 	}
 }
 

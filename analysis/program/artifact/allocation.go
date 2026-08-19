@@ -249,12 +249,13 @@ func allocationSharesFirstValueCell(view flow.View, field keyspace.Term, kind fl
 	if !view.AccessGeometry().Available() || kind != flowkind.FieldKey || field == 0 || selector == 0 || values == 0 || width <= 0 {
 		return false
 	}
-	table, source, _, _, fieldOK := view.Authored().Fields().Get(field)
+	_, source, _, _, fieldOK := view.Authored().Fields().Get(field)
 	member, memberOK := view.Authored().Values().Member(values, 0)
 	reads := view.Authored().Storage().Reads()
-	leftOwner, leftCell, _, leftOK := reads.Get(selector)
-	rightOwner, rightCell, _, rightOK := reads.Get(member)
-	return fieldOK && source == selector && memberOK && leftOK && rightOK && leftOwner == table && rightOwner == table &&
-		keyspace.TermFamily(leftCell) == keyspace.FamilyCell && keyspace.TermOrdinal(leftCell) != 0 &&
-		keyspace.TermFamily(rightCell) == keyspace.FamilyCell && keyspace.TermOrdinal(rightCell) != 0 && leftCell == rightCell
+	_, leftSource, _, leftOK := reads.Get(selector)
+	_, rightSource, _, rightOK := reads.Get(member)
+	return fieldOK && source == selector && memberOK && leftOK && rightOK &&
+		keyspace.TermFamily(leftSource) == keyspace.FamilyCell && keyspace.TermOrdinal(leftSource) != 0 &&
+		keyspace.TermFamily(rightSource) == keyspace.FamilyCell && keyspace.TermOrdinal(rightSource) != 0 &&
+		leftSource == rightSource
 }

@@ -89,7 +89,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	if !rolesOK {
 		t.Fatal("semantic role vocabulary did not resolve with the probe's roles declared")
 	}
-	axes, axesOK := axisTemplates()
+	axes, _, axesOK := axisTemplates()
 	if !axesOK {
 		t.Fatal("analyzer axis inventory rejected at construction")
 	}
@@ -97,7 +97,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	if !probeAxisOK {
 		t.Fatal("W3: the probe's axis was not admitted")
 	}
-	rules, rulesOK := ruleTemplates()
+	rules, _, rulesOK := ruleTemplates()
 	if !rulesOK {
 		t.Fatal("analyzer rule inventory rejected at construction")
 	}
@@ -124,7 +124,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 
 	composites, compositesOK := compositeEntries()
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
-	queries, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles)
 	observations, observationsOK := observationEntries(queries)
 	if !compositesOK || !denominatorsOK || !queriesOK || !observationsOK {
 		t.Fatal("a derived analyzer inventory rejected the extended axis and role sets")

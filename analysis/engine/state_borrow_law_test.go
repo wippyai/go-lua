@@ -18,7 +18,7 @@ var (
 // newBorrowedQueryFixture publishes one completed State whose query result
 // carries a mutable backing store, which is what makes the difference between a
 // borrowed read and a detached one observable.
-func newBorrowedQueryFixture(t testing.TB) (*Solver, ReceiptQuery, *State) {
+func newBorrowedQueryFixture(t testing.TB) (*Solver, ProgramQuery, *State) {
 	t.Helper()
 	scratch := []uint64{7, 11}
 	solver, query := newDiagnosticsReceiptSolverOf(t, false, hotMutableExactQuerySpec(func(_ OrderedCells[uint64]) []uint64 { return scratch }))
@@ -31,7 +31,7 @@ func newBorrowedQueryFixture(t testing.TB) (*Solver, ReceiptQuery, *State) {
 
 // newBorrowedObservationFixture is the observation-column counterpart of
 // newBorrowedQueryFixture.
-func newBorrowedObservationFixture(t testing.TB) (*Solver, ReceiptObservation[[]uint64], *State) {
+func newBorrowedObservationFixture(t testing.TB) (*Solver, receiptObservation[[]uint64], *State) {
 	t.Helper()
 	scratch := []uint64{7, 11}
 	fixture := newExactRuleObservationFixture(t, hotMutableExactQuerySpec(func(_ OrderedCells[uint64]) []uint64 { return scratch }))

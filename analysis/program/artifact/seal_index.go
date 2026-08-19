@@ -2,7 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func (artifact *Artifact) validateSealIndexes(state *sealValidationState) CompileFailure {
@@ -189,7 +189,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		// proof as a DiagnosticObservation. All other references must retain
 		// their resolved/canonical target edge.
 		zeroChildAllowed := row.Kind() == StaticNodePrimitive || row.Kind() == StaticNodeLiteral || row.Kind() == StaticNodeUnknown || row.Kind() == StaticNodeTypeParam || row.Kind() == StaticNodeInterface || row.Kind() == StaticNodeTypeFunction ||
-			row.Kind() == StaticNodeReference && row.Resolution() == uint8(programstatic.TypeRefUnresolved)
+			row.Kind() == StaticNodeReference && row.Resolution() == uint8(staticrefs.Unresolved)
 		if !row.Available() || row.ChildCount() == 0 && !zeroChildAllowed || row.Kind() == StaticNodeTypeOf && !row.operand.Available() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}

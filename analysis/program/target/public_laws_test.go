@@ -215,8 +215,8 @@ func publicContractSnapshot(t *testing.T, contract *Contract) string {
 		writeOperationSnapshot(t, &out, contract, op)
 		out.WriteString("}")
 	}
-	for index := 0; index < contract.protocolCount(); index++ {
-		protocol, ok := contract.protocolAt(index)
+	for index := 0; index < contract.protocols.ProtocolCount(); index++ {
+		protocol, ok := contract.protocols.ProtocolAt(index)
 		fmt.Fprintf(&out, "protocol[%d]=%d/%v{", index, protocol, ok)
 		writeProtocolSnapshot(&out, contract, protocol)
 		out.WriteString("}")
@@ -226,32 +226,32 @@ func publicContractSnapshot(t *testing.T, contract *Contract) string {
 
 func writeProtocolSnapshot(out *strings.Builder, contract *Contract, protocol vocabulary.Protocol) {
 	fmt.Fprintf(out, "acquisitions=%d,states=%d,transitions=%d,escapes=%d,callback-holders=%d;",
-		contract.protocolAcquisitionCount(protocol), contract.stateCount(protocol),
-		contract.transitionCount(protocol), contract.escapeCount(protocol), contract.protocolCallbackHolderCount(protocol))
-	for index := 0; index < contract.protocolAcquisitionCount(protocol); index++ {
-		op, outcome, result, state, ok := contract.protocolAcquisitionAt(protocol, index)
+		contract.protocols.ProtocolAcquisitionCount(protocol), contract.protocols.StateCount(protocol),
+		contract.protocols.TransitionCount(protocol), contract.protocols.EscapeCount(protocol), contract.protocols.ProtocolCallbackHolderCount(protocol))
+	for index := 0; index < contract.protocols.ProtocolAcquisitionCount(protocol); index++ {
+		op, outcome, result, state, ok := contract.protocols.ProtocolAcquisitionAt(protocol, index)
 		fmt.Fprintf(out, "acquisition[%d]=%d/%d/%d/%d/%v;", index, op, outcome, result, state, ok)
 	}
-	for index := 0; index < contract.stateCount(protocol); index++ {
-		state, ok := contract.stateAt(protocol, index)
-		name, nameOK := contract.stateName(protocol, state)
-		final, finalOK := contract.stateFinal(protocol, state)
+	for index := 0; index < contract.protocols.StateCount(protocol); index++ {
+		state, ok := contract.protocols.StateAt(protocol, index)
+		name, nameOK := contract.protocols.StateName(protocol, state)
+		final, finalOK := contract.protocols.StateFinal(protocol, state)
 		fmt.Fprintf(out, "state[%d]=%d/%q/%v/%v/%v;", index, state, name, final, ok, nameOK && finalOK)
 	}
-	for index := 0; index < contract.transitionCount(protocol); index++ {
-		op, kind, source, from, ok := contract.transitionAt(protocol, index)
+	for index := 0; index < contract.protocols.TransitionCount(protocol); index++ {
+		op, kind, source, from, ok := contract.protocols.TransitionAt(protocol, index)
 		fmt.Fprintf(out, "transition[%d]=%d/%d/%d/%d/%v;", index, op, kind, source, from, ok)
-		for outcomeIndex := 0; outcomeIndex < contract.transitionOutcomeCount(protocol, index); outcomeIndex++ {
-			outcome, to, outcomeOK := contract.transitionOutcomeAt(protocol, index, outcomeIndex)
+		for outcomeIndex := 0; outcomeIndex < contract.protocols.TransitionOutcomeCount(protocol, index); outcomeIndex++ {
+			outcome, to, outcomeOK := contract.protocols.TransitionOutcomeAt(protocol, index, outcomeIndex)
 			fmt.Fprintf(out, "transition-outcome[%d]=%d/%d/%v;", outcomeIndex, outcome, to, outcomeOK)
 		}
 	}
-	for index := 0; index < contract.escapeCount(protocol); index++ {
-		op, kind, source, ok := contract.escapeAt(protocol, index)
+	for index := 0; index < contract.protocols.EscapeCount(protocol); index++ {
+		op, kind, source, ok := contract.protocols.EscapeAt(protocol, index)
 		fmt.Fprintf(out, "escape[%d]=%d/%d/%d/%v;", index, op, kind, source, ok)
 	}
-	for index := 0; index < contract.protocolCallbackHolderCount(protocol); index++ {
-		op, input, callback, ok := contract.protocolCallbackHolderAt(protocol, index)
+	for index := 0; index < contract.protocols.ProtocolCallbackHolderCount(protocol); index++ {
+		op, input, callback, ok := contract.protocols.ProtocolCallbackHolderAt(protocol, index)
 		fmt.Fprintf(out, "callback-holder[%d]=%d/%d/%d/%d/%v;", index, op, input.Kind, input.Ordinal, callback, ok)
 	}
 }

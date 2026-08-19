@@ -37,6 +37,7 @@ func TestSchemaExactQueryReceiptFoldPreservesCanonicalMultiplicity(t *testing.T)
 			Clone:       func(value uint64) uint64 { return value },
 			Equal:       func(left, right uint64) bool { return left == right },
 			Fingerprint: func(value uint64) uint64 { return value },
+			Present:     func(value uint64) bool { return true },
 		},
 	}
 	binding := NewSchemaBinding(factor.Schema())
@@ -47,7 +48,7 @@ func TestSchemaExactQueryReceiptFoldPreservesCanonicalMultiplicity(t *testing.T)
 	if !ok || implementation == nil {
 		t.Fatal("receipt exact fold implementation")
 	}
-	begin, accumulate, ok := implementation.accumulator()
+	begin, accumulate, _, _, ok := implementation.accumulator()
 	if !ok || begin == nil || accumulate == nil {
 		t.Fatal("typed exact fold receipt")
 	}
@@ -113,6 +114,7 @@ func TestSchemaExactQueryReceiptFoldMaterializesThroughRuntime(t *testing.T) {
 			Clone:       func(value uint64) uint64 { return value },
 			Equal:       func(left, right uint64) bool { return left == right },
 			Fingerprint: func(value uint64) uint64 { return value },
+			Present:     func(value uint64) bool { return true },
 		},
 	}
 	binding := NewSchemaBinding(schema)

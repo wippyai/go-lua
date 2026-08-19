@@ -3,7 +3,6 @@ package analysis
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 
 	"github.com/wippyai/go-lua/domain/composite"
@@ -17,26 +16,26 @@ func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
 	if plan.state == nil || plan.state.binding == nil || plan.state.artifacts == nil {
 		t.Fatalf("callsite native-stage compile diagnostics=%+v", compileDiagnostics)
 	}
-	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.graph == nil {
+	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.committed.program == nil {
 		t.Fatalf("callsite native-stage runtime topology=%+v", runtimeDiagnostic)
 	}
 
 	var mount, occurrence, point identity.ContentID
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.artifact == nil || mounted.artifact.RulePlacementCountForKey("effect-selected") == 0 {
+		if !mounted.valid() {
 			continue
 		}
-		row, rowOK := mounted.artifact.RulePlacementForKeyAt("effect-selected", 0)
-		if !rowOK || row.PointCount() != 1 {
-			t.Fatal("selected CallEffect artifact occurrence")
+		for index := 0; index < mounted.snapshot.RulePlacementCount(); index++ {
+			row, rowOK := mounted.snapshot.RulePlacementAt(index)
+			if !rowOK || row.Key() != "effect-selected" || !row.OccurrenceID().Available() || !row.PointID().Available() {
+				continue
+			}
+			mount, occurrence, point = mounted.moduleKey, row.OccurrenceID(), row.PointID()
+			break
 		}
-		var pointOK bool
-		mount, occurrence = mounted.moduleKey, row.ID()
-		point, pointOK = row.PointAt(0)
-		if !pointOK {
-			t.Fatal("selected CallEffect artifact point")
+		if mount.Available() {
+			break
 		}
-		break
 	}
 	if !mount.Available() || !occurrence.Available() || !point.Available() {
 		t.Fatal("fixture has no selected CallEffect occurrence")
@@ -47,13 +46,12 @@ func TestCallsiteMountedSelectedCallEffectStageOwnerFenceLaw(t *testing.T) {
 	if !selectedOK || !opaqueRuleOK {
 		t.Fatal("rule table did not publish the callsite effect rules")
 	}
-	compilation, compiled := engine.BeginProgramConstruction(plan.state.binding.SchemaBinding(), plan.state.graph)
+	compilation, compiled := plan.state.beginRuntimeConstruction()
 	if !compiled || compilation == nil {
 		t.Fatal("callsite native-stage construction")
 	}
 	receipt, receiptOK := selected.MountedSelectedCallEffectStage(compilation, mount, occurrence)
-	_, memberOK := receipt.RuleMember()
-	if !receiptOK || !receipt.Available() || receipt.Stage() != rows.ArtifactRuleStageCallEffect || receipt.MountID() != mount || receipt.OccurrenceID() != occurrence || receipt.ReusablePointID() != point || !memberOK {
+	if !receiptOK || !receipt.Available() || receipt.Kind() != rows.ArtifactRuleStageIssued5 || receipt.MountID() != mount || receipt.OccurrenceID() != occurrence || receipt.PointID() != point || !receipt.HasMember() {
 		t.Fatal("selected callsite did not issue its exact cold CallEffect-stage receipt")
 	}
 	if opaque, ok := opaqueRule.MountedSelectedCallEffectStage(compilation, mount, occurrence); ok || opaque.Available() {

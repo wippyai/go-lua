@@ -15,8 +15,10 @@ const (
 )
 
 // ExactScalar is a detached scalar projection. Literal is available only for
-// authored Boolean/Integer/Float/String atoms; nil retains its distinct Lua
-// identity and therefore has no fabricated keyspace literal.
+// sealed Boolean/Integer/Float/String atoms; nil retains its distinct Lua
+// identity and therefore has no fabricated keyspace literal. Computed
+// literals remain absent from Atom.ExactKey, which is the authored key
+// authority.
 type ExactScalar struct {
 	kind    ExactScalarKind
 	literal keyspace.LiteralValue

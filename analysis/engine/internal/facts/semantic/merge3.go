@@ -18,7 +18,6 @@ type ContributionChange[K scalar.Key] struct {
 // JoinUnder applies typed Join over the one already-computed carrier split
 // using caller-owned typed traversal storage.
 func (domain *Domain[F, K, V]) JoinUnder(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K]) (Plane[F, K, V], bool) {
-	DbgJoinUnder.Add(1)
 	return domain.mergeUnder(left, right, split.Left(), split.Right(), split.Left(), split, scratch, regions, domain.ops.Join, binaryJoin, report)
 }
 
@@ -27,7 +26,6 @@ func (domain *Domain[F, K, V]) JoinUnder(left, right Plane[F, K, V], split suppo
 // accumulated left value outside the right coverage, making an uncovered
 // sparse zero fold identity while a covered sparse zero denotes Default.
 func (domain *Domain[F, K, V]) JoinContributions(left, right Plane[F, K, V], scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], covers diagram.SoleRegions[K]) (Plane[F, K, V], bool) {
-	DbgJoinContributions.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || scratch == nil || regions == nil || !regions.Open() || report == nil || covers == nil {
 		return Plane[F, K, V]{}, false
 	}
@@ -60,22 +58,30 @@ func (domain *Domain[F, K, V]) JoinContributions(left, right Plane[F, K, V], scr
 // passed only for sparse-root reconstruction plus a post-fold representative
 // preference; it never contributes a value or presence lane to the join.
 func (domain *Domain[F, K, V]) JoinContributionsMany(previous Plane[F, K, V], inputs []Plane[F, K, V], scratch *diagram.SoleScratch[K, V], regions *support.Work, covers diagram.SoleManyRegions[K]) (Plane[F, K, V], bool) {
-	DbgJoinContributionsMany.Add(1)
-	DbgJoinContributionsManyIn.Add(int64(len(inputs)))
 	if domain == nil || !domain.validPlane(previous) || len(inputs) == 0 || scratch == nil || regions == nil || !regions.Open() || covers == nil {
 		return Plane[F, K, V]{}, false
 	}
-	roots := make([]diagram.Root[F, K, V], len(inputs))
-	for index, input := range inputs {
+	for _, input := range inputs {
 		if !domain.validPlane(input) {
 			return Plane[F, K, V]{}, false
 		}
-		roots[index] = input.root
 	}
 	values := domain.terminals.Begin()
 	builder := domain.diagram.BeginWithTerminals(values)
 	if values == nil || builder == nil {
 		return Plane[F, K, V]{}, false
+	}
+	// Root values are operation-local inputs, not semantic state. Borrow the
+	// caller's scratch vector so a repeated point fold does not allocate a
+	// fresh wrapper slice for every operand set.
+	scratch.Clear()
+	roots := diagram.BorrowRootVector[F, K, V](scratch, len(inputs))
+	if len(roots) != len(inputs) {
+		builder.Discard()
+		return Plane[F, K, V]{}, false
+	}
+	for index, input := range inputs {
+		roots[index] = input.root
 	}
 	combine := domain.terminalsMany(values)
 	root, ok := builder.MergeSoleFactorMany(previous.root, roots, scratch, regions, combine, covers)
@@ -218,8 +224,6 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 // closed contribution join. Supplying only an ascending publication delta is
 // lawful when the caller proves left already contains the prior right version.
 func (domain *Domain[F, K, V]) JoinContributionChanges(left, right Plane[F, K, V], changes []ContributionChange[K], scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], covers diagram.SoleRegions[K]) (Plane[F, K, V], bool) {
-	DbgJoinContributionChanges.Add(1)
-	DbgJoinContributionChangeIn.Add(int64(len(changes)))
 	if !domain.validPlane(left) || !domain.validPlane(right) || len(changes) == 0 || scratch == nil || regions == nil || !regions.Open() || report == nil || covers == nil {
 		return Plane[F, K, V]{}, false
 	}
@@ -277,7 +281,6 @@ func (domain *Domain[F, K, V]) JoinContributionChanges(left, right Plane[F, K, V
 // survive outside the recurrence scope, and the operation remains one fused
 // FDD traversal with the normal exact change report.
 func (domain *Domain[F, K, V]) WidenUnderKeys(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], selected func(K) bool) (Plane[F, K, V], bool) {
-	DbgWidenUnderKeys.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSplit(split) || !domain.validSupport(split.Left()) || !domain.validSupport(split.Right()) || scratch == nil || selected == nil || report != nil && (regions == nil || !regions.Open()) {
 		return Plane[F, K, V]{}, false
 	}
@@ -310,7 +313,6 @@ func (domain *Domain[F, K, V]) WidenUnderKeys(left, right Plane[F, K, V], split 
 // key scope. Every other key installs the exact right terminal, so a selected
 // Factor cannot silently narrow keys outside its declared recurrence surface.
 func (domain *Domain[F, K, V]) NarrowUnderKeys(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], selected func(K) bool) (Plane[F, K, V], bool) {
-	DbgNarrowUnderKeys.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSplit(split) || !split.Right().Entails(split.Left()) || scratch == nil || selected == nil || report != nil && (regions == nil || !regions.Open()) {
 		return Plane[F, K, V]{}, false
 	}
@@ -344,7 +346,6 @@ func (domain *Domain[F, K, V]) NarrowUnderKeys(left, right Plane[F, K, V], split
 // support must be contained by the second, so exact right-only regions remain
 // exact without materializing a separate support partition.
 func (domain *Domain[F, K, V]) SelectUnderKeys(selected, exact Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K], choose func(K) bool) (Plane[F, K, V], bool) {
-	DbgSelectUnderKeys.Add(1)
 	if !domain.validPlane(selected) || !domain.validPlane(exact) || !domain.validSplit(split) || !split.Left().Entails(split.Right()) || scratch == nil || choose == nil || report != nil && (regions == nil || !regions.Open()) {
 		return Plane[F, K, V]{}, false
 	}
@@ -377,7 +378,6 @@ func (domain *Domain[F, K, V]) SelectUnderKeys(selected, exact Plane[F, K, V], s
 // zipper. Its overlap callback rejects a mismatch instead of quietly applying
 // a recurrence operator to a Factor that was not selected for recurrence.
 func (domain *Domain[F, K, V]) PreserveUnder(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K]) (Plane[F, K, V], bool) {
-	DbgPreserveUnder.Add(1)
 	return domain.mergeUnder(left, right, split.Left(), split.Right(), split.Left(), split, scratch, regions, func(first, second V) (V, bool) {
 		if !domain.ops.Equal(first, second) {
 			var zero V
@@ -391,7 +391,6 @@ func (domain *Domain[F, K, V]) PreserveUnder(left, right Plane[F, K, V], split s
 // output, so it is supplied as both input supports to the fused zipper; no
 // left-only carrier can survive merely because it existed before narrowing.
 func (domain *Domain[F, K, V]) NarrowUnder(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K]) (Plane[F, K, V], bool) {
-	DbgNarrowUnder.Add(1)
 	if !domain.validSplit(split) || !split.Right().Entails(split.Left()) {
 		return Plane[F, K, V]{}, false
 	}
@@ -408,7 +407,6 @@ func (domain *Domain[F, K, V]) NarrowUnder(left, right Plane[F, K, V], split sup
 // terminal on every overlap cell and emits the corresponding key deltas.
 // Support-only additions and removals are not plane deltas.
 func (domain *Domain[F, K, V]) ReplaceUnder(left, right Plane[F, K, V], split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, report diagram.SoleChange[K]) bool {
-	DbgReplaceUnder.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSplit(split) || scratch == nil || regions == nil || !regions.Open() || report == nil {
 		return false
 	}
@@ -441,7 +439,6 @@ func (domain *Domain[F, K, V]) ReplaceUnder(left, right Plane[F, K, V], split su
 }
 
 func (domain *Domain[F, K, V]) mergeUnder(left, right Plane[F, K, V], leftSupport, rightSupport, referenceSupport support.Mask, split support.Split, scratch *diagram.SoleScratch[K, V], regions *support.Work, operation Binary[V], kind binaryKind, report diagram.SoleChange[K]) (Plane[F, K, V], bool) {
-	DbgMergeUnder.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || !domain.validSplit(split) || !domain.validSupport(leftSupport) || !domain.validSupport(rightSupport) || !domain.validSupport(referenceSupport) || scratch == nil || operation == nil || report != nil && (regions == nil || !regions.Open()) {
 		return Plane[F, K, V]{}, false
 	}

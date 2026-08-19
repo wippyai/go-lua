@@ -428,7 +428,6 @@ func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelected
 		episode.phase = phaseAscent
 		episode.episode = 1
 		episode.invalid = true
-		episode.interfaces = make([]uint64, len(region.faces))
 		episode.ingress = make([]uint64, len(region.external))
 		episode.backIngress = make([]uint64, len(region.back))
 		episode.environmentIngress = make([]uint64, len(region.environmentExternal))

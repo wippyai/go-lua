@@ -2,13 +2,14 @@ package oracle
 
 import (
 	"fmt"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -37,7 +38,7 @@ func corpusSemanticAcceptanceMode() corpusHarnessMode {
 		preflight: func(project *corpusHarnessProject) []string {
 			return corpusSemanticFixtureInputUnsupported(project.expectation)
 		},
-		policy: func(project *corpusHarnessProject) (analysis.DiagnosticPolicy, []string) {
+		policy: func(project *corpusHarnessProject) (anadiag.DiagnosticPolicy, []string) {
 			return corpusSemanticAcceptancePolicy(project.expectation)
 		},
 		judge: corpusSemanticAcceptanceJudgment,
@@ -53,7 +54,7 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 		if run.report == nil || !run.report.Available() {
 			return []string{"DiagnosticReport unavailable"}
 		}
-		if failure := run.report.CollectionFailure(); failure != analysis.DiagnosticCollectionOK {
+		if failure := run.report.CollectionFailure(); failure != anadiag.DiagnosticCollectionOK {
 			return []string{fmt.Sprintf("DiagnosticReport collection failure=%d", failure)}
 		}
 	} else if run.report != nil {
@@ -112,15 +113,15 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 }
 
 type corpusSemanticNativeRow struct {
-	row                                      analysis.NativePublication
+	row                                      result.NativePublication
 	lane, module, family, key, subject, term string
 	occurrence, value, trust                 string
 	valueOK                                  bool
-	validity                                 analysis.NativePublicationValidity
+	validity                                 result.NativePublicationValidity
 	validityOK                               bool
 }
 
-func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectations, result *analysis.Result) []string {
+func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectations, result *result.Result) []string {
 	if expectation == nil || result == nil {
 		return []string{"native fixture expectation or Result unavailable"}
 	}
@@ -245,7 +246,7 @@ func corpusSemanticNativeInvalidationMatches(invalidation corpusNativeInvalidati
 	return row.validityOK && corpusSemanticNativeValidityMatches(invalidation.Event, invalidation.Established, invalidation.Revoked, row.validity)
 }
 
-func corpusSemanticNativeValidityMatches(event, established, revoked string, validity analysis.NativePublicationValidity) bool {
+func corpusSemanticNativeValidityMatches(event, established, revoked string, validity result.NativePublicationValidity) bool {
 	if event != "" && event != validity.EventID().String() || established != "" && established != validity.EstablishedID().String() || revoked != "" && revoked != validity.RevokedID().String() {
 		return false
 	}
@@ -257,18 +258,18 @@ func corpusSemanticNativeValidityMatches(event, established, revoked string, val
 // enabled by default so a clean fixture cannot hide a new false positive;
 // manifest diagnostic_rules can disable or refine that default. A requested
 // code without a current collector is an explicit unsupported contract.
-func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectations) (analysis.DiagnosticPolicy, []string) {
+func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectations) (anadiag.DiagnosticPolicy, []string) {
 	table, tableOK := composite.Diagnostics()
 	if !tableOK {
-		return analysis.DiagnosticPolicy{}, []string{"sealed diagnostic declaration table unavailable"}
+		return anadiag.DiagnosticPolicy{}, []string{"sealed diagnostic declaration table unavailable"}
 	}
-	selected := make(map[analysis.DiagnosticCode]bool, table.Count())
-	severity := make(map[analysis.DiagnosticCode]analysis.FindingSeverity)
+	selected := make(map[anadiag.DiagnosticCode]bool, table.Count())
+	severity := make(map[anadiag.DiagnosticCode]anadiag.FindingSeverity)
 	unsupported := make([]string, 0)
 	for position := 0; position < table.Count(); position++ {
 		entry, entryOK := table.At(position)
 		if !entryOK {
-			return analysis.DiagnosticPolicy{}, []string{"sealed diagnostic declaration row unavailable"}
+			return anadiag.DiagnosticPolicy{}, []string{"sealed diagnostic declaration row unavailable"}
 		}
 		if entry.Collectable() {
 			selected[entry.Code()] = true
@@ -302,7 +303,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 				continue
 			}
 			level := corpusDiagnosticSeverity(configured.Severity)
-			if level == analysis.FindingSeverityInvalid {
+			if level == anadiag.FindingSeverityInvalid {
 				unsupported = append(unsupported, fmt.Sprintf("diagnostic rule %q has invalid severity %q", configured.Code, configured.Severity))
 				continue
 			}
@@ -324,7 +325,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 		}
 	}
 
-	rules := make([]analysis.DiagnosticCode, 0, len(selected))
+	rules := make([]anadiag.DiagnosticCode, 0, len(selected))
 	for rule := range selected {
 		rules = append(rules, rule)
 	}
@@ -332,7 +333,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 	if len(severity) == 0 {
 		severity = nil
 	}
-	return analysis.DiagnosticPolicy{Enabled: rules, Severity: severity}, unsupported
+	return anadiag.DiagnosticPolicy{Enabled: rules, Severity: severity}, unsupported
 }
 
 // corpusSemanticAcceptanceCode is intentionally table-driven. It makes no
@@ -340,28 +341,28 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 // declaration row it names installs a producer. The sealed table is read
 // directly, so the kit's notion of an accepted family is the one the analyzer
 // composed rather than a list restated here.
-func corpusSemanticAcceptanceCode(code string) (analysis.DiagnosticCode, bool) {
+func corpusSemanticAcceptanceCode(code string) (anadiag.DiagnosticCode, bool) {
 	table, tableOK := composite.Diagnostics()
 	if !tableOK {
-		return analysis.DiagnosticCodeInvalid, false
+		return anadiag.DiagnosticCodeInvalid, false
 	}
-	candidate := analysis.DiagnosticCode(code)
+	candidate := anadiag.DiagnosticCode(code)
 	entry, entryOK := table.ForCode(candidate)
 	if !entryOK || !entry.Collectable() {
-		return analysis.DiagnosticCodeInvalid, false
+		return anadiag.DiagnosticCodeInvalid, false
 	}
 	return candidate, true
 }
 
 type corpusSemanticAcceptanceFinding struct {
-	finding       analysis.Finding
+	finding       anadiag.Finding
 	file, message string
 	line, column  uint32
-	severity      analysis.FindingSeverity
+	severity      anadiag.FindingSeverity
 	code          string
 }
 
-func corpusSemanticAcceptanceFindings(report *analysis.DiagnosticReport) ([]corpusSemanticAcceptanceFinding, []string) {
+func corpusSemanticAcceptanceFindings(report *anadiag.DiagnosticReport) ([]corpusSemanticAcceptanceFinding, []string) {
 	if report == nil {
 		return nil, nil
 	}
@@ -392,7 +393,7 @@ func corpusSemanticAcceptanceFindings(report *analysis.DiagnosticReport) ([]corp
 // individually one-to-one and every actual row must be covered by at least
 // one of them. Thus duplicate or extra findings cannot escape through a
 // source-marker overlap.
-func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpectations, report *analysis.DiagnosticReport) []string {
+func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport) []string {
 	if expectation == nil {
 		return []string{"fixture expectation unavailable"}
 	}
@@ -551,7 +552,7 @@ func TestCorpusSemanticFixtureFileAliases(t *testing.T) {
 		entryFile:   "main.lua",
 		entryModule: "main",
 	}
-	got := corpusSemanticAcceptanceFinding{code: "x", file: "module", line: 4, severity: analysis.FindingSeverityError}
+	got := corpusSemanticAcceptanceFinding{code: "x", file: "module", line: 4, severity: anadiag.FindingSeverityError}
 	want := corpusStructuredDiagnosticExpectation{Code: "x", File: "module.lua", Line: 4, Severity: "error"}
 	if !corpusSemanticStructuredMatch(project, want, got) {
 		t.Fatal("module-name finding did not match its .lua contract")
@@ -584,7 +585,7 @@ func corpusSemanticInlineMatch(project *corpusDiagnosticProjectExpectations, wan
 func corpusSemanticErrorCount(actual []corpusSemanticAcceptanceFinding) int {
 	count := 0
 	for _, finding := range actual {
-		if finding.severity == analysis.FindingSeverityError {
+		if finding.severity == anadiag.FindingSeverityError {
 			count++
 		}
 	}

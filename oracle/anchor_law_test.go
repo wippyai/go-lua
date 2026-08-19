@@ -2,10 +2,9 @@ package oracle
 
 import (
 	"fmt"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"strings"
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis"
 )
 
 // TestAnchorTypesNarrowingDiagnosticsPlacement is the standing anchor of the
@@ -46,7 +45,7 @@ func anchorRun(t *testing.T, name string) *corpusHarnessRun {
 	if run.report == nil || !run.report.Available() {
 		t.Fatalf("anchor clause 1: acceptance policy produced no available DiagnosticReport")
 	}
-	if failure := run.report.CollectionFailure(); failure != analysis.DiagnosticCollectionOK {
+	if failure := run.report.CollectionFailure(); failure != anadiag.DiagnosticCollectionOK {
 		t.Fatalf("anchor clause 1: DiagnosticReport collection failure=%d", failure)
 	}
 	return run
@@ -54,10 +53,10 @@ func anchorRun(t *testing.T, name string) *corpusHarnessRun {
 
 // anchorFinding is one public report row reduced to its judged identity.
 type anchorFinding struct {
-	finding      analysis.Finding
+	finding      anadiag.Finding
 	file         string
 	line, column uint32
-	severity     analysis.FindingSeverity
+	severity     anadiag.FindingSeverity
 	code, help   string
 	message      string
 }

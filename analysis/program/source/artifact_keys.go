@@ -145,7 +145,7 @@ func readDirectTerms(reader *framing.Reader, counts [keyspace.FamilyCount]uint32
 		if err != nil {
 			return nil, err
 		}
-		if !sourceDirectFamily(keyspace.TermFamily(term)) {
+		if !AdmitsDirectBodyFamily(keyspace.TermFamily(term)) {
 			return nil, framing.ErrMalformed
 		}
 		family := keyspace.TermFamily(term)

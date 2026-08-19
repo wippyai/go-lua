@@ -77,10 +77,9 @@
 //     result codec. The domain reads no coordinate space; its readers hold its
 //     graph and its handles directly.
 //   - Structure. The structural vocabulary hosts the closed catalogs the analyzer
-//     would otherwise spell once per consumer, and both of this domain's
-//     vocabularies are such catalogs. Neither is declared yet, for two different
-//     reasons, and both are stated as proposals below rather than left as an
-//     absence.
+//     would otherwise spell once per consumer. This domain declares one role:
+//     the channel-select case fact family, spelled by channelselect and sealed
+//     here. The kind and projection-step vocabularies remain proposals below.
 //   - Library. A library contract kind addresses exported values under a member
 //     form algebra. The schema's type-contract package is not this surface and is
 //     not a surface at all: it is the neutral portable envelope one authored type
@@ -179,6 +178,9 @@ package typedomain
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
 )
 
 // The identities this domain's row is declared against. The code is the
@@ -204,6 +206,19 @@ const (
 	// value may carry are the value axis's own judgment, and the row reads them
 	// rather than producing them.
 	FactKey schema.Key = "value"
+	// ChannelSelectExhaustivenessCode is the if-chain coverage judgment over
+	// published channel-select case facts.
+	ChannelSelectExhaustivenessCode diagnostic.Code = "channel.select.exhaustiveness"
+	// ChannelSelectFamilyKey is the publication family that code is gated by.
+	ChannelSelectFamilyKey schema.Key = "family/channel"
+	// ChannelSelectObservationKey is the branch-condition population the
+	// exhaustiveness row shares with the polarity pair.
+	ChannelSelectObservationKey schema.Key = "observation/branch-condition"
+	// ChannelSelectCollectionKey is the observation family that supplies those
+	// branch subjects.
+	ChannelSelectCollectionKey schema.Key = "value-summary/branch-condition"
+	// ChannelSelectFactKey is the coordinate space of accepted select arms.
+	ChannelSelectFactKey schema.Key = "channel-select-case"
 )
 
 // diagnosticRender is the section order the row publishes. The summary names
@@ -215,6 +230,13 @@ var diagnosticRender = []diagnostic.Section{
 	diagnostic.SectionSource,
 	diagnostic.SectionEvidence,
 	diagnostic.SectionHelp,
+}
+
+// ChannelSelectStructureSpecs is this domain's structure row: the
+// channel-select case fact family. Composition hosts the catalog; the
+// spelling lives in channelselect.
+func ChannelSelectStructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs(channelselect.Role)
 }
 
 // DiagnosticSpec is this domain's declared row. It is pure data: the code it
@@ -281,6 +303,56 @@ func DiagnosticCallArgumentSpec() diagnostic.Spec {
 			Detail: "the argument {subject} may carry a runtime type outside {target}",
 		}},
 		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+		Render: diagnosticRender,
+	}
+}
+
+// DiagnosticChannelSelectExhaustivenessSpec is the if-chain coverage row.
+// Facts are the published channel-select case column; the Program if-chain
+// names the handled ordinals. A lookalike table member is never a fact.
+func DiagnosticChannelSelectExhaustivenessSpec() diagnostic.Spec {
+	return diagnostic.Spec{
+		Code:            ChannelSelectExhaustivenessCode,
+		Family:          diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ChannelSelectFamilyKey},
+		DefaultSeverity: diagnostic.SeverityWarning,
+		Lane:            diagnostic.LaneBranch,
+		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ChannelSelectObservationKey},
+		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ChannelSelectCollectionKey},
+		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: ChannelSelectFactKey},
+		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresHandled | diagnostic.RequiresMissing,
+		Message:         "channel select is not exhaustive; missing case: {missing}",
+		Help:            "Add an elseif branch for each missing case",
+		Evidence: []diagnostic.Evidence{
+			{
+				Anchor: diagnostic.AnchorPrimary,
+				Kind:   "abstract fact",
+				Trust:  "proven",
+				Reason: "unspecified",
+				Detail: "branch chain checks channel `{subject}.channel`",
+			},
+			{
+				Anchor: diagnostic.AnchorPrimary,
+				Kind:   "abstract fact",
+				Trust:  "proven",
+				Reason: "unspecified",
+				Detail: "handled cases: {handled}",
+			},
+			{
+				Anchor: diagnostic.AnchorPrimary,
+				Kind:   "missing proof",
+				Trust:  "unknown",
+				Reason: "unspecified",
+				Detail: "missing cases: {missing}",
+			},
+			{
+				Anchor: diagnostic.AnchorPrimary,
+				Kind:   "missing proof",
+				Trust:  "unknown",
+				Reason: "unspecified",
+				Detail: "no default case handles the remaining channel cases",
+			},
+		},
+		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "channel case check"}},
 		Render: diagnosticRender,
 	}
 }

@@ -66,7 +66,7 @@ func TestPublishedFrameIsContent(t *testing.T) {
 	rewritten.Frame = Frame{Outputs: []Output{{Key: "value/summary", Writer: "value"}}}
 
 	digests := make(map[identity.ContentID]schema.Key, 3)
-	for _, spec := range []Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{published, unpublished, rewritten} {
+	for _, spec := range []Spec[scratchInputs]{published, unpublished, rewritten} {
 		sealed, failure := sealTable(t, []*Template[scratchInputs]{mustTemplate(t, spec)})
 		if failure.Available() {
 			t.Fatalf("catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)

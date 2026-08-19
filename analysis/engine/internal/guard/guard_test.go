@@ -262,6 +262,57 @@ func TestCrossGenerationSemanticCanonicality(t *testing.T) {
 	}
 }
 
+func TestExactOperandReuseAcrossTransactions(t *testing.T) {
+	manager := newTestManager(t)
+	producer := manager.NewWork()
+	a := literal(t, producer, testA)
+	b := literal(t, producer, testB)
+	superset := producer.Or(a, b)
+	subset := producer.And(a, b)
+	producer.Seal()
+
+	consumer := manager.NewWork()
+	if got := consumer.And(a, superset); got != a {
+		t.Fatal("And did not retain its exact left operand")
+	}
+	if got := consumer.Or(a, subset); got != a {
+		t.Fatal("Or did not retain its exact left operand")
+	}
+	if got := consumer.Restrict(a, testB, false); got != a {
+		t.Fatal("Restrict rebuilt an unchanged source node")
+	}
+	if got := consumer.Exists(a, testB); got != a {
+		t.Fatal("Exists rebuilt an unchanged source node")
+	}
+	if len(consumer.pages) != 0 {
+		t.Fatalf("exact operand reuse allocated %d candidate pages", len(consumer.pages))
+	}
+
+	source, ok := manager.SealScope([]Atom{testA, testB})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	target, ok := manager.SealScope([]Atom{testA})
+	if !ok {
+		t.Fatal("target scope")
+	}
+	builder, ok := manager.NewReindex(source, target)
+	if !ok || !builder.Identity(testA) || !builder.Forget(testB) {
+		t.Fatal("projection plan")
+	}
+	plan, ok := builder.Seal()
+	if !ok {
+		t.Fatal("projection plan seal")
+	}
+	reindexWork := manager.NewWork()
+	if got, ok := reindexWork.Reindex(a, plan); !ok || got != a {
+		t.Fatal("Reindex rebuilt an unchanged retained node")
+	}
+	if len(reindexWork.pages) != 0 {
+		t.Fatalf("exact Reindex reuse allocated %d candidate pages", len(reindexWork.pages))
+	}
+}
+
 func TestEntailsIdentityAndTerminalsHaveNoTraversalAllocation(t *testing.T) {
 	manager := newTestManager(t)
 	work := manager.NewWork()

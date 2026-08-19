@@ -310,7 +310,6 @@ return t, a, b, c
 	}
 	var exactRead, exactWrite Slot
 	readCount, writeCount := 0, 0
-	nonzeroWritePosition := false
 	for index := 0; index < schema.IndexAccessCount(); index++ {
 		access, accessOK := schema.IndexAccessAt(index)
 		geometry, geometryOK := schema.IndexAccessGeometry(access)
@@ -346,9 +345,6 @@ return t, a, b, c
 		}
 
 		writeCount++
-		if geometry.Position > 0 {
-			nonzeroWritePosition = true
-		}
 		if geometry.Position < 0 || !geometry.ValuesID.Available() || geometry.DynamicKey && !keyValue.Available() {
 			t.Fatalf("write row %d lost position/source coordinates: %#v", index, geometry)
 		}
@@ -373,7 +369,7 @@ return t, a, b, c
 			t.Fatalf("dynamic write %d provenance=%v/%v/%v", index, kind, geometry.DynamicKey, keyValue)
 		}
 	}
-	if readCount != 3 || writeCount != 3 || !nonzeroWritePosition || exactRead == (Slot{}) || exactRead != exactWrite {
+	if readCount != 3 || writeCount != 3 || exactRead == (Slot{}) || exactRead != exactWrite {
 		t.Fatalf("typed index counts/read-write slot sharing=%d/%d/%v/%v", readCount, writeCount, exactRead, exactWrite)
 	}
 

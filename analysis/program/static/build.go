@@ -2,14 +2,32 @@ package static
 
 import (
 	"errors"
-	"math"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
-// Build validates and compacts authored static syntax, including the
-// parser/binder-produced TypeRef disposition. It accepts no inferred or domain
+// Build seals authored static syntax into an immutable Component. It is a
+// pure constructor: nothing is mutated across the pipeline. Each vertical
+// validates its own authored rows and returns a sealed table by value, and
+// the laws that span two verticals then run over those sealed values through
+// the columns their owners publish. It accepts no inferred or domain
 // resolution; those have no place in this owner.
+//
+// The stages are ordered by what they read, not by convenience:
+//
+//	census      the one cardinality column, sealed from the authored input
+//	independent every vertical that needs nothing but the census
+//	dependent   the verticals that consume an already-sealed sibling table
+//	joint       the laws no single vertical can close alone
+//	identity    the content digest over the sealed sections
 func Build(input Input) (*Draft, error) {
 	if !validCounts(input.Counts) {
 		return nil, errors.New("program/static: inconsistent authored cardinality")
@@ -18,45 +36,66 @@ func Build(input Input) (*Draft, error) {
 	if !ok {
 		return nil, errors.New("program/static: inconsistent authored cardinality")
 	}
-	component := &Component{census: census, types: typeStore{
-		primitive: append([]Primitive(nil), input.Types.Primitive...),
-		literal:   append([]Literal(nil), input.Types.Literal...),
-		optional:  append([]Optional(nil), input.Types.Optional...),
-		array:     append([]Array(nil), input.Types.Array...),
-		mapType:   append([]Map(nil), input.Types.Map...),
-		field:     append([]Field(nil), input.Types.Field...),
-	}}
-	if err := compactReferences(component, census, input.References); err != nil {
+
+	typeTable, err := statictypes.Build(input.Types, census)
+	if err != nil {
 		return nil, err
 	}
-	if err := compactTypes(component, census, input.Types); err != nil {
+	referenceTable, err := staticrefs.Build(input.References, census)
+	if err != nil {
 		return nil, err
 	}
-	if err := compactDeclarations(component, census, input.Declarations); err != nil {
+	declarationTable, err := staticdecl.Build(input.Declarations, census)
+	if err != nil {
 		return nil, err
 	}
-	if err := compactSignatures(component, census, input.Signatures); err != nil {
+	signatureTable, err := staticsig.Build(input.Signatures, census)
+	if err != nil {
 		return nil, err
 	}
-	if err := compactContracts(component, census, input.Contracts); err != nil {
+	contractTable, err := staticcontracts.Build(input.Contracts, census)
+	if err != nil {
 		return nil, err
+	}
+	operatorTable, err := staticoperators.Build(input.Operators, census)
+	if err != nil {
+		return nil, err
+	}
+
+	// Publications admits only a reference disposition References published;
+	// Operands admits a runtime type target only on what Types and References
+	// published. Both take those tables as sealed values.
+	publicationTable, err := staticpubs.Build(input.Publications, census, referenceTable)
+	if err != nil {
+		return nil, err
+	}
+	operandTable, err := staticoperands.Build(input.Operands, census, typeTable, referenceTable)
+	if err != nil {
+		return nil, err
+	}
+
+	component := &Component{
+		census:       census,
+		types:        typeTable,
+		references:   referenceTable,
+		declarations: declarationTable,
+		signatures:   signatureTable,
+		contracts:    contractTable,
+		operators:    operatorTable,
+		operands:     operandTable,
+		publications: publicationTable,
+	}
+	if !interfaceMethodScopes(component) {
+		return nil, errors.New("program/static: interface method signature scope mismatch")
 	}
 	if !completeTypeParamOwnership(component, census) {
 		return nil, errors.New("program/static: incomplete or multiply-owned type parameter")
-	}
-	if err := compactOperators(component, census, input.Operators); err != nil {
-		return nil, err
-	}
-	if err := compactOperands(component, census, input.Operands); err != nil {
-		return nil, err
-	}
-	if err := compactPublications(component, census, input.Publications); err != nil {
-		return nil, err
 	}
 	localProof, ok := localForest(component)
 	if !ok {
 		return nil, errors.New("program/static: cyclic, shared, or incomplete static declaration child")
 	}
+
 	component.contentID = contentID(component)
 	if !component.contentID.Available() {
 		return nil, errors.New("program/static: unavailable content identity")
@@ -129,13 +168,13 @@ func validateCommitInput(component *Component, input CommitInput) error {
 	if component == nil {
 		return errors.New("program/static: missing authored component")
 	}
-	if !validCommitTerms(input.TypeOf, keyspace.FamilyTypeOf, len(component.operators.typeOf)) {
+	if !validCommitTerms(input.TypeOf, keyspace.FamilyTypeOf, component.operators.Count(keyspace.FamilyTypeOf)) {
 		return errors.New("program/static: invalid TypeOf input")
 	}
-	if !validCommitTerms(input.Annotations, keyspace.FamilyAnnotation, len(component.operands.annotations)) {
+	if !validCommitTerms(input.Annotations, keyspace.FamilyAnnotation, component.operands.Count(keyspace.FamilyAnnotation)) {
 		return errors.New("program/static: invalid Annotation input")
 	}
-	if !validCommitTerms(input.Publications, keyspace.FamilyTypePublication, len(component.publications)) {
+	if !validCommitTerms(input.Publications, keyspace.FamilyTypePublication, component.publications.Count()) {
 		return errors.New("program/static: invalid Publication input")
 	}
 	return nil
@@ -182,22 +221,4 @@ func validCounts(counts [keyspace.FamilyCount]uint32) bool {
 		}
 	}
 	return true
-}
-
-func appendTerms(pool *[]keyspace.Term, values []keyspace.Term) (poolRange, bool) {
-	start := len(*pool)
-	if uint64(start)+uint64(len(values)) > uint64(math.MaxUint32) {
-		return poolRange{}, false
-	}
-	*pool = append(*pool, values...)
-	return poolRange{Start: uint32(start), End: uint32(len(*pool))}, true
-}
-
-func validTerm(counts [keyspace.FamilyCount]uint32, term keyspace.Term) bool {
-	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	return family > keyspace.FamilyInvalid && family < keyspace.FamilyCount && ordinal != 0 && ordinal <= counts[family]
-}
-
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 && keyspace.TermOrdinal(term) <= counts[family]
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
 )
 
 // surfacePackages is the closed set of declaration-surface packages. A row on
@@ -39,8 +40,8 @@ var surfacePackages = []string{
 const registrationSource = "registration.go"
 
 // TestTypeDomainDeclaresItsRowFromOneSource is the executable form of this
-// domain's registration statement. The domain declares one row, on the
-// diagnostic surface, and it declares it here: a row reached from anywhere else
+// domain's registration statement. The domain declares its diagnostic rows and
+// the channel-select case fact role here: a row reached from anywhere else
 // beneath this directory would be a second registration for a domain that has
 // one, and a row on any other surface would be a claim the domain's position
 // does not support.
@@ -52,7 +53,8 @@ func TestTypeDomainDeclaresItsRowFromOneSource(t *testing.T) {
 				if imported != surface && !strings.HasPrefix(imported, surface+"/") {
 					continue
 				}
-				if registration && surface == "github.com/wippyai/go-lua/analysis/schema/diagnostic" {
+				if registration && (surface == "github.com/wippyai/go-lua/analysis/schema/diagnostic" ||
+					surface == "github.com/wippyai/go-lua/analysis/schema/structure") {
 					continue
 				}
 				t.Errorf("type domain source %s imports declaration surface %s outside the domain's one registration", relative(t, path), imported)
@@ -64,6 +66,13 @@ func TestTypeDomainDeclaresItsRowFromOneSource(t *testing.T) {
 // TestTypeDomainDiagnosticRowIsAdmissible states that the declared row is a row:
 // the diagnostic surface admits it, and the identity it publishes under is the
 // domain's own published code.
+func TestTypeDomainChannelSelectStructureRowMatchesOwnerSpelling(t *testing.T) {
+	specs := ChannelSelectStructureSpecs()
+	if len(specs) != 1 || specs[0].Key != channelselect.FamilyKey || specs[0].Spelling != channelselect.Role {
+		t.Fatalf("ChannelSelectStructureSpecs = %+v, want family %q", specs, channelselect.FamilyKey)
+	}
+}
+
 func TestTypeDomainDiagnosticRowIsAdmissible(t *testing.T) {
 	entry, ok := diagnostic.New(DiagnosticSpec())
 	if !ok {
@@ -74,6 +83,32 @@ func TestTypeDomainDiagnosticRowIsAdmissible(t *testing.T) {
 	}
 	if entry.ID() != schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(Code)) {
 		t.Fatal("declared row derives a foreign entry identity")
+	}
+}
+
+func TestTypeDomainChannelSelectExhaustivenessRowIsAdmissible(t *testing.T) {
+	entry, ok := diagnostic.New(DiagnosticChannelSelectExhaustivenessSpec())
+	if !ok {
+		t.Fatal("the domain's exhaustiveness diagnostic row was refused by the surface")
+	}
+	if entry.Code() != ChannelSelectExhaustivenessCode {
+		t.Fatalf("declared row publishes %q, not %q", entry.Code(), ChannelSelectExhaustivenessCode)
+	}
+	if entry.ID() != schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(ChannelSelectExhaustivenessCode)) {
+		t.Fatal("declared row derives a foreign entry identity")
+	}
+	family, familyOK := entry.Code().Family()
+	if !familyOK || schema.Key("family/"+family) != ChannelSelectFamilyKey {
+		t.Fatalf("published code %q reads as a family other than %q", entry.Code(), ChannelSelectFamilyKey)
+	}
+	if entry.Lane() != diagnostic.LaneBranch || !entry.Collectable() {
+		t.Fatalf("exhaustiveness row is installed on lane %d", entry.Lane())
+	}
+	if entry.DefaultSeverity() != diagnostic.SeverityWarning {
+		t.Fatalf("exhaustiveness row defaults to severity %d", entry.DefaultSeverity())
+	}
+	if entry.Fact().Key != ChannelSelectFactKey || entry.Observation().Key != ChannelSelectObservationKey {
+		t.Fatalf("exhaustiveness row names fact %q observation %q", entry.Fact().Key, entry.Observation().Key)
 	}
 }
 

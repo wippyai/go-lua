@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 func TestProveRejectsTypeOfScopeFromDifferentBody(t *testing.T) {
@@ -42,8 +44,8 @@ func TestProveRejectsTypeOfScopeFromDifferentBody(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: read}}},
 		},
 		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
 		module: emptyModule(t),

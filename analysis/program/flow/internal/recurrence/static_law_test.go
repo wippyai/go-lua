@@ -8,6 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // TestSealExcludesDecisionsInsideStaticTypeOfAndAnnotationClosure proves the
@@ -97,12 +101,12 @@ func TestSealExcludesDecisionsInsideStaticTypeOfAndAnnotationClosure(t *testing.
 			},
 		},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{
 				Cell: cell, Target: primitive,
 			}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: function}}},
-			Operands: static.OperandsInput{Annotation: []static.Annotation{{
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: function}}},
+			Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{{
 				Scope: cell, Target: primitive, Name: 1, Values: annotationValues,
 			}}},
 		},

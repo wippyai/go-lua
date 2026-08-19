@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/dispatch"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
+	typetable "github.com/wippyai/go-lua/domain/type/table"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
 	manifestwire "github.com/wippyai/go-lua/manifest/wire"
@@ -34,6 +36,10 @@ func sealStandardLibraryTarget() (*target.Contract, error) {
 		Identity:    "testfixture.wippy.host",
 		Mount:       manifest.MountGlobals,
 		Declaration: wippyHostManifest,
+	}, manifest.Provider{
+		Identity:    "testfixture.wippy.channel",
+		Mount:       manifest.MountModule,
+		Declaration: channelHostManifest,
 	})
 	catalogue, err := manifest.Seal(providers...)
 	if err != nil {
@@ -50,5 +56,13 @@ func wippyHostManifest() *manifestwire.Manifest {
 		Effect: effect.Empty.With(dispatch.ModuleLoad{}),
 	})
 	declaration.DefineGlobalType("require", functionType)
+	return declaration
+}
+
+func channelHostManifest() *manifestwire.Manifest {
+	selectType := channelselect.SelectFunction()
+	declaration := manifestwire.New(channelselect.ModuleName)
+	declaration.DefineFunctionSignature("select", signature.Function{Type: selectType})
+	declaration.SetExport(typetable.NewRecord().Field("select", selectType).Build())
 	return declaration
 }

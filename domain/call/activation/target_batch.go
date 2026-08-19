@@ -2,8 +2,8 @@ package activation
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 )
 
@@ -21,7 +21,7 @@ type TargetBatchRow struct {
 // as the immutable substitution fence; this package never resolves them back
 // through Link or Project state.
 type MountedTargetBatch struct {
-	Artifact  *programartifact.Artifact
+	Snapshot  *ingress.Snapshot
 	ModuleKey identity.ContentID
 	Rows      []TargetBatchRow
 }
@@ -72,16 +72,16 @@ func NewTargetBatchCatalog(mounts []MountedTargetBatch) (*TargetBatchCatalog, bo
 	}
 	count := 0
 	for _, mount := range mounts {
-		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleKey.Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.ModuleKey.Available() {
 			return nil, false
 		}
 		count += len(mount.Rows)
 	}
 	result := &TargetBatchCatalog{rows: make([]targetBatchRow, 0, count), bodyRoutes: make(map[bodyRouteKey]uint32, count)}
 	for _, mount := range mounts {
-		artifact := mount.Artifact
-		artifactID := artifact.ID()
-		programID := artifact.CompileKey().ProgramID()
+		artifact := mount.Snapshot
+		artifactID := artifact.ArtifactID()
+		programID := artifact.ProgramID()
 		if !artifactID.Available() || !programID.Available() {
 			return nil, false
 		}
@@ -121,7 +121,7 @@ func NewTargetBatchCatalog(mounts []MountedTargetBatch) (*TargetBatchCatalog, bo
 	if len(result.rows) != 0 {
 		result.sealed = result.rows[0].artifactID
 	} else {
-		result.sealed = mounts[0].Artifact.ID()
+		result.sealed = mounts[0].Snapshot.ArtifactID()
 	}
 	result.self = result
 	return result, result.valid()
@@ -151,7 +151,7 @@ func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifa
 			return nil, false
 		}
 		rowCount += len(rows)
-		batches = append(batches, MountedTargetBatch{Artifact: mount.Artifact, ModuleKey: mount.ModuleKey, Rows: rows})
+		batches = append(batches, MountedTargetBatch{Snapshot: mount.Snapshot, ModuleKey: mount.ModuleKey, Rows: rows})
 	}
 	if rowCount != algebra.Bodies().Count() {
 		return nil, false
@@ -164,7 +164,7 @@ func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifa
 // the algebra supplies every selector; a row whose body path or program does
 // not match the artifact it was read from is rejected.
 func mountedTargetBatchRows(mount axis.MountedArtifact, algebra *calldomain.Algebra) ([]TargetBatchRow, bool) {
-	artifact := mount.Artifact
+	artifact := mount.Snapshot
 	if artifact == nil || algebra == nil {
 		return nil, false
 	}

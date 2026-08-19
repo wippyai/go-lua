@@ -215,14 +215,14 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 	}{
 		{"stage/base", "base", rows.ArtifactRuleStageBase, "rows.ArtifactRuleStageBase"},
 		{"stage/local", "local", rows.ArtifactRuleStageLocal, "rows.ArtifactRuleStageLocal"},
-		{"stage/call-dispatch", "call-dispatch", rows.ArtifactRuleStageCallDispatch, "rows.ArtifactRuleStageCallDispatch"},
-		{"stage/call-summary", "call-summary", rows.ArtifactRuleStageCallSummary, "rows.ArtifactRuleStageCallSummary"},
-		{"stage/call-effect", "call-effect", rows.ArtifactRuleStageCallEffect, "rows.ArtifactRuleStageCallEffect"},
+		{"stage/call-dispatch", "call-dispatch", rows.ArtifactRuleStageIssued3, "rows.ArtifactRuleStageIssued3"},
+		{"stage/call-summary", "call-summary", rows.ArtifactRuleStageIssued4, "rows.ArtifactRuleStageIssued4"},
+		{"stage/call-effect", "call-effect", rows.ArtifactRuleStageIssued5, "rows.ArtifactRuleStageIssued5"},
 	} {
 		pinned(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.key, member.foreign)
 		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
 	}
-	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageCallEffect), "rows.ArtifactRuleStageCallEffect")
+	counted(t, table, structure.CategoryIssuanceStage, uint16(rows.ArtifactRuleStageIssued5), "rows.ArtifactRuleStageIssued5")
 }
 
 // TestIssuanceStagePredecessorIsTheSealedTable pins the native-call
@@ -239,7 +239,7 @@ func TestIssuanceStagePredecessorIsTheSealedTable(t *testing.T) {
 		return entry
 	}
 	base, local := stage(rows.ArtifactRuleStageBase), stage(rows.ArtifactRuleStageLocal)
-	dispatch, summary, effect := stage(rows.ArtifactRuleStageCallDispatch), stage(rows.ArtifactRuleStageCallSummary), stage(rows.ArtifactRuleStageCallEffect)
+	dispatch, summary, effect := stage(rows.ArtifactRuleStageIssued3), stage(rows.ArtifactRuleStageIssued4), stage(rows.ArtifactRuleStageIssued5)
 	if base.Native() || base.Predecessor().Available() {
 		t.Fatalf("stage/base native=%v predecessor=%q", base.Native(), base.Predecessor())
 	}

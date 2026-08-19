@@ -124,6 +124,91 @@ func TestWorkFoldReadsSealedAndCandidateGuardsWithoutPublication(t *testing.T) {
 	if completed || !valid || stopped != 1 {
 		t.Fatalf("short Fold = %t/%t with %d visits", completed, valid, stopped)
 	}
+	assertFoldScratchClear(t, current)
+}
+
+func TestWorkFoldReusesScratchWithoutWarmAllocations(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	a, b, c := literal(t, work, testA), literal(t, work, testB), literal(t, work, testC)
+	root := work.Or(work.And(a, b), c)
+	visits := 0
+	visit := func(_ Guard, _ Decomposition) bool {
+		visits++
+		return true
+	}
+
+	completed, valid := work.Fold(root, visit)
+	if !completed || !valid || visits == 0 {
+		t.Fatalf("initial Work Fold = %t/%t with %d visits", completed, valid, visits)
+	}
+	assertFoldScratchClear(t, work)
+	if completed, valid = work.Fold(root, visit); !completed || !valid {
+		t.Fatalf("warm Work Fold = %t/%t", completed, valid)
+	}
+	assertFoldScratchClear(t, work)
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		if completed, valid := work.Fold(root, visit); !completed || !valid {
+			t.Fatalf("reused Work Fold = %t/%t", completed, valid)
+		}
+	}); allocations != 0 {
+		t.Fatalf("warmed Work Fold allocated %f times", allocations)
+	}
+	assertFoldScratchClear(t, work)
+
+	work.Seal()
+	assertFoldScratchClear(t, work)
+	if !work.Begin() {
+		t.Fatal("published Work did not reopen after fold")
+	}
+	_ = literal(t, work, testA)
+	work.Discard()
+	assertFoldScratchClear(t, work)
+}
+
+func TestWorkFoldReentrantCallbackFallsBackToLocalTraversal(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	a, b := literal(t, work, testA), literal(t, work, testB)
+	root := work.And(a, b)
+	outerVisits, nestedVisits := 0, 0
+	var nestedCompleted, nestedValid bool
+	completed, valid := work.Fold(root, func(_ Guard, _ Decomposition) bool {
+		outerVisits++
+		if outerVisits == 1 {
+			nestedCompleted, nestedValid = work.Fold(root, func(_ Guard, _ Decomposition) bool {
+				nestedVisits++
+				return true
+			})
+		}
+		return true
+	})
+	if !completed || !valid || !nestedCompleted || !nestedValid {
+		t.Fatalf("reentrant Work Fold = %t/%t, nested = %t/%t", completed, valid, nestedCompleted, nestedValid)
+	}
+	if outerVisits == 0 || outerVisits != nestedVisits {
+		t.Fatalf("reentrant visit counts = %d/%d", outerVisits, nestedVisits)
+	}
+	assertFoldScratchClear(t, work)
+}
+
+func TestWorkFoldValidatesBeforeCallbackAndClearsEarlyState(t *testing.T) {
+	manager := newTestManager(t)
+	work := manager.NewWork()
+	root := literal(t, work, testA)
+	// Keep the root owned and readable, but make one reachable successor
+	// foreign to the Work. Fold must reject the graph before exposing root.
+	invalid := Guard{manager: manager, page: &page{lease: &pageLease{}}, slot: 0}
+	root.page.nodes[root.slot].low = invalid
+	visits := 0
+	completed, valid := work.Fold(root, func(_ Guard, _ Decomposition) bool {
+		visits++
+		return true
+	})
+	if completed || valid || visits != 0 {
+		t.Fatalf("invalid Work Fold = %t/%t with %d callbacks", completed, valid, visits)
+	}
+	assertFoldScratchClear(t, work)
 }
 
 func TestFoldIsIterativeAndConcurrentForSealedGuards(t *testing.T) {
@@ -199,4 +284,21 @@ func sameAtoms(left, right []Atom) bool {
 		}
 	}
 	return true
+}
+
+func assertFoldScratchClear(t testing.TB, work *Work) {
+	t.Helper()
+	if work.foldBusy || len(work.foldStack) != 0 || len(work.foldItems) != 0 || len(work.foldSeen) != 0 {
+		t.Fatalf("fold scratch not reset: busy=%t stack=%d items=%d seen=%d", work.foldBusy, len(work.foldStack), len(work.foldItems), len(work.foldSeen))
+	}
+	for index, frame := range work.foldStack[:cap(work.foldStack)] {
+		if frame != (foldFrame{}) {
+			t.Fatalf("fold stack retained frame at %d: %#v", index, frame)
+		}
+	}
+	for index, item := range work.foldItems[:cap(work.foldItems)] {
+		if item != (foldItem{}) {
+			t.Fatalf("fold items retained item at %d: %#v", index, item)
+		}
+	}
 }

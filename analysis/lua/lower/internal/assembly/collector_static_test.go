@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestAssemblyStaticAdmissionValidatesPathsAndFloatPayloads(t *testing.T) {
@@ -21,7 +21,7 @@ func TestAssemblyStaticAdmissionValidatesPathsAndFloatPayloads(t *testing.T) {
 
 func TestAssemblyStaticAPIAdmitsPrimitiveRows(t *testing.T) {
 	c := newAssemblyCollector()
-	primitive := c.Primitive(assemblyTestSpan(), programstatic.PrimitiveString)
+	primitive := c.Primitive(assemblyTestSpan(), statictypes.PrimitiveString)
 	if primitive == 0 {
 		t.Fatal("Primitive did not create a static type row")
 	}

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -22,6 +21,14 @@ const (
 	lawFormKey       schema.Key = "issuance/law-form"
 	lawInputKey      schema.Key = "input/law-input"
 	lawStageKey      schema.Key = "stage/law-stage"
+	// lawRequirementKey is the operand shape the law table's subscriptions
+	// consume: a member of the requirement vocabulary like any other, so a
+	// declaration that omits it is refused rather than defaulted.
+	lawRequirementKey schema.Key = "requirement/law-requirement"
+	// lawNarrowRequirementKey is a second declared operand shape. Two members
+	// is what it takes to state that the shape a subscription names is content
+	// rather than a constant.
+	lawNarrowRequirementKey schema.Key = "requirement/law-narrow-requirement"
 )
 
 // lawRuleCount is the size of the law table: the eighteen rules materialized
@@ -31,7 +38,7 @@ const lawRuleCount = 20
 // lawIssuance is one admissible subscription. Every term names a member the
 // stand-in structural surface declares.
 func lawIssuance() Issuance {
-	return Issuance{Occurrence: lawOccurrenceKey, Form: lawFormKey, Input: lawInputKey, Stage: lawStageKey}
+	return Issuance{Occurrence: lawOccurrenceKey, Form: lawFormKey, Input: lawInputKey, Stage: lawStageKey, Requirement: lawRequirementKey}
 }
 
 type lawPrincipals struct{ present bool }
@@ -44,33 +51,18 @@ type lawHot struct{ id int }
 
 // lawSpec is one admissible declaration. Every law below starts from it and
 // breaks exactly one field, so a rejection names the law it violated.
-func lawSpec(key schema.Key, slot int, lane Lane, semantic schema.Key) Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot] {
-	spec := Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]{
+func lawSpec(key schema.Key, slot int, lane Lane, semantic schema.Key) Spec {
+	spec := Spec{
 		Key:      key,
 		Lane:     lane,
 		Writes:   lawAxisKey,
 		Owner:    lawAxisKey,
 		Semantic: semantic,
-		Declare: func(Declaration[lawPrincipals]) (*lawFragment, bool) {
-			return &lawFragment{id: slot}, true
-		},
-		Register: func(Registration[*lawFragment]) (engine.RuleSlotCapability, bool) {
-			return engine.RuleSlotCapability{}, true
-		},
-		Bind: func(Binding[lawAuthorities, *lawFragment]) (*lawHot, bool) {
-			return &lawHot{id: slot}, true
-		},
-	}
-	if lane == LaneActivation {
-		spec.Member = func(Member[*lawHot]) bool { return true }
-		spec.Issues = []Issuance{lawIssuance()}
-		return spec
 	}
 	if lane.Mounted() {
 		spec.Issues = []Issuance{lawIssuance()}
 		return spec
 	}
-	spec.LinkCatalog = func(*lawHot) (LinkCatalog, bool) { return lawCatalog{}, true }
 	return spec
 }
 
@@ -117,7 +109,7 @@ func lawRoles(t *testing.T) vocabulary.Roles {
 
 // lawTable declares the whole artifact role catalog in its canonical order, so
 // a law can break exactly one row and keep every other law satisfied.
-func lawTable(t *testing.T, mutate func(int, *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot])) []*Template[lawPrincipals, lawAuthorities] {
+func lawTable(t *testing.T, mutate func(int, *Spec)) []*Template {
 	t.Helper()
 	semantics := lawSemanticKeys()
 	keys := []schema.Key{
@@ -127,7 +119,7 @@ func lawTable(t *testing.T, mutate func(int, *Spec[lawPrincipals, lawAuthorities
 		"law-value-transfer", "law-value-binary-arithmetic", "law-value-binary-equality", "law-value-binary-order",
 		"law-value-presence-refinement",
 	}
-	var templates []*Template[lawPrincipals, lawAuthorities]
+	var templates []*Template
 	for position := range keys {
 		slot := position + 1
 		lane := LaneMounted
@@ -175,6 +167,8 @@ func (lawStructureSurface) Entries() []schema.Entry {
 		{Key: lawFormKey, Category: structure.CategoryIssuanceForm, Ordinal: 1, Spelling: "law-form", Accepted: true},
 		{Key: lawInputKey, Category: structure.CategoryIssuanceInput, Ordinal: 1, Spelling: "law-input", Accepted: true},
 		{Key: lawStageKey, Category: structure.CategoryIssuanceStage, Ordinal: 1, Spelling: "law-stage", Accepted: true},
+		{Key: lawRequirementKey, Category: structure.CategoryIssuanceRequirement, Ordinal: 1, Spelling: "law-requirement", Accepted: true},
+		{Key: lawNarrowRequirementKey, Category: structure.CategoryIssuanceRequirement, Ordinal: 2, Spelling: "law-narrow-requirement", Accepted: true},
 	}
 	// The law table's rules are identified by declared roles, so the stand-in
 	// carries one row per rule plus the operand form one law shifts a rule onto.
@@ -240,14 +234,14 @@ func (lawSiblingSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
 // sealLawTable seals one rule inventory into a complete declaration table. The
 // catalog is walked rather than listed, so the surfaces the declaration root
 // settles on do not change what these laws assert.
-func sealLawTable(templates []*Template[lawPrincipals, lawAuthorities]) schema.SealFailure {
+func sealLawTable(templates []*Template) schema.SealFailure {
 	_, failure := sealLawTableFor(templates)
 	return failure
 }
 
 // sealLawTableFor is the same seal, read for the table it produces rather than
 // for the verdict alone.
-func sealLawTableFor(templates []*Template[lawPrincipals, lawAuthorities]) (*schema.Schema, schema.SealFailure) {
+func sealLawTableFor(templates []*Template) (*schema.Schema, schema.SealFailure) {
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
 		if kind == schema.SurfaceKindRule {
@@ -272,76 +266,46 @@ func TestRuleSurfaceAdmitsTheCompleteRoleCatalog(t *testing.T) {
 func TestRuleSurfaceRejectsAnIncompleteDeclaration(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(int, *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot])
+		mutate func(int, *Spec)
 	}{
-		{"missing-key", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"missing-key", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Key = ""
 			}
 		}},
-		{"missing-declare", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if position == 0 {
-				spec.Declare = nil
-			}
-		}},
-		{"missing-bind", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if position == 3 {
-				spec.Bind = nil
-			}
-		}},
-		{"missing-register", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if position == 5 {
-				spec.Register = nil
-			}
-		}},
-		{"missing-semantic", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"missing-semantic", func(position int, spec *Spec) {
 			if position == 6 {
 				spec.Semantic = ""
 			}
 		}},
-		{"mounted-with-member", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if position == 0 {
-				spec.Member = func(Member[*lawHot]) bool { return true }
-			}
-		}},
-		{"activation-without-member", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if spec.Lane == LaneActivation {
-				spec.Member = nil
-			}
-		}},
-		{"link-with-member", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if spec.Key == "law-value-bootstrap" {
-				spec.LinkMember = func(LinkMember[*lawHot]) bool { return true }
-			}
-		}},
-		{"mounted-with-link-lane-hooks", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if position == 0 {
-				spec.LinkCatalog = func(*lawHot) (LinkCatalog, bool) { return lawCatalog{}, true }
-			}
-		}},
-		{"link-without-catalog", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
-			if spec.Key == "law-value-bootstrap" {
-				spec.LinkCatalog = nil
-			}
-		}},
-		{"invalid-lane", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"invalid-lane", func(position int, spec *Spec) {
 			if position == 2 {
 				spec.Lane = LaneInvalid
 			}
 		}},
-		{"unwritten-axis", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"unwritten-axis", func(position int, spec *Spec) {
 			if position == 4 {
 				spec.Writes = ""
 			}
 		}},
-		{"missing-owner", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"missing-owner", func(position int, spec *Spec) {
 			if position == 4 {
 				spec.Owner = ""
 			}
 		}},
-		{"incomplete-issuance", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"incomplete-issuance", func(position int, spec *Spec) {
 			if position == 7 {
 				spec.Issues = []Issuance{{Occurrence: lawOccurrenceKey, Form: lawFormKey}}
+			}
+		}},
+		// A subscription that states no operand shape is the silence the
+		// declared-admissibility column exists to remove: it would place the
+		// rule on every row of its family while its owner seals a subset.
+		{"issuance-without-a-requirement", func(position int, spec *Spec) {
+			if position == 7 {
+				issuance := lawIssuance()
+				issuance.Requirement = ""
+				spec.Issues = []Issuance{issuance}
 			}
 		}},
 	}
@@ -362,53 +326,65 @@ func TestRuleSurfaceRejectsAnIncompleteDeclaration(t *testing.T) {
 func TestRuleSurfaceRejectsADriftedTable(t *testing.T) {
 	cases := []struct {
 		name   string
-		mutate func(int, *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot])
+		mutate func(int, *Spec)
 		law    schema.LawID
 	}{
-		{"writes-an-undeclared-axis", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"writes-an-undeclared-axis", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Writes = "law-no-such-axis"
 			}
 		}, LawWritesResolves},
-		{"owner-an-undeclared-axis", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"owner-an-undeclared-axis", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Owner = "law-no-such-owner"
 			}
 		}, LawOwnerResolves},
-		{"subscribes-to-an-undeclared-occurrence", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"subscribes-to-an-undeclared-occurrence", func(position int, spec *Spec) {
 			if position == 0 {
 				issuance := lawIssuance()
 				issuance.Occurrence = "occurrence/law-no-such-family"
 				spec.Issues = []Issuance{issuance}
 			}
 		}, LawIssuanceResolves},
-		{"subscribes-through-the-wrong-vocabulary", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"subscribes-through-the-wrong-vocabulary", func(position int, spec *Spec) {
 			if position == 0 {
 				issuance := lawIssuance()
 				issuance.Form = lawStageKey
 				spec.Issues = []Issuance{issuance}
 			}
 		}, LawIssuanceResolves},
-		{"mounted-rule-subscribing-to-nothing", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"requires-an-undeclared-operand-shape", func(position int, spec *Spec) {
+			if position == 0 {
+				issuance := lawIssuance()
+				issuance.Requirement = "requirement/law-no-such-shape"
+				spec.Issues = []Issuance{issuance}
+			}
+		}, LawIssuanceRequirementResolves},
+		{"requires-a-shape-from-the-wrong-vocabulary", func(position int, spec *Spec) {
+			if position == 0 {
+				issuance := lawIssuance()
+				issuance.Requirement = lawStageKey
+				spec.Issues = []Issuance{issuance}
+			}
+		}, LawIssuanceRequirementResolves},
+		{"mounted-rule-subscribing-to-nothing", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Issues = nil
 			}
 		}, LawIssuanceDeclared},
-		{"absent-semantic", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"absent-semantic", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Semantic = "semantic/rule/law/absent"
 			}
 		}, LawSemanticIdentity},
-		{"duplicate-semantic", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"duplicate-semantic", func(position int, spec *Spec) {
 			if position == 1 {
 				spec.Semantic = "semantic/rule/law/value-source"
 			}
 		}, LawSemanticUnique},
-		{"mounted-role-declared-on-the-link-lane", func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+		{"mounted-role-declared-on-the-link-lane", func(position int, spec *Spec) {
 			if position == 0 {
 				spec.Lane = LaneLink
-				spec.Member = nil
-				spec.LinkCatalog = func(*lawHot) (LinkCatalog, bool) { return lawCatalog{}, true }
 			}
 		}, LawIssuanceLane},
 	}
@@ -441,7 +417,7 @@ func (lawForeignSurface) Entries() []schema.Entry {
 }
 
 func (lawForeignSurface) Seal(view schema.View, sealed schema.Sealed) schema.SealFailure {
-	return surface[lawPrincipals, lawAuthorities]{}.Seal(view, sealed)
+	return surface{}.Seal(view, sealed)
 }
 
 // TestRuleSurfaceRejectsAForeignRow states that the rule surface reads rule
@@ -474,7 +450,7 @@ func TestRuleSurfaceRejectsAForeignRow(t *testing.T) {
 // artifact is reached by the occurrence families it subscribes to, so one that
 // subscribes to none would sit on that lane unreachable.
 func TestRuleSurfaceRejectsAMountedRuleThatSubscribesToNothing(t *testing.T) {
-	failure := sealLawTable(lawTable(t, func(position int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+	failure := sealLawTable(lawTable(t, func(position int, spec *Spec) {
 		if position == 12 {
 			spec.Issues = nil
 		}
@@ -487,7 +463,7 @@ func TestRuleSurfaceRejectsAMountedRuleThatSubscribesToNothing(t *testing.T) {
 	}
 }
 
-func ruleEntryContent(t *testing.T, template *Template[lawPrincipals, lawAuthorities]) string {
+func ruleEntryContent(t *testing.T, template *Template) string {
 	t.Helper()
 	var sink bytes.Buffer
 	var writer framing.Writer
@@ -523,10 +499,7 @@ func TestRuleTemplateHandsBackOnlyItsOwnCell(t *testing.T) {
 		t.Fatal("law table")
 	}
 	first, second := templates[0], templates[1]
-	fragment, fragmentOK := first.Declare(Declaration[lawPrincipals]{Builder: engine.NewSchema(), Roles: lawRoles(t), Principals: lawPrincipals{present: true}})
-	if !fragmentOK {
-		t.Fatal("declare")
-	}
+	fragment := NewCell(&lawFragment{id: 1})
 	recovered, recoveredOK := Payload[*lawFragment](fragment)
 	if !recoveredOK || recovered.id != 1 {
 		t.Fatal("a rule did not recover its own declared fragment")
@@ -551,7 +524,7 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	if failure.Available() {
 		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	templates := lawTable(t, func(_ int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+	templates := lawTable(t, func(_ int, spec *Spec) {
 		if spec.Key == "law-call-activation" {
 			spec.Lane = LaneMounted
 		}
@@ -562,6 +535,33 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 	}
 	if declared.Digest() == shifted.Digest() {
 		t.Fatal("a rule's declared admission lane left the table digest unchanged")
+	}
+}
+
+// TestTableDigestCoversDeclaredOperandShape states that the operand shape a
+// subscription requires is declaration content. The shape decides which
+// compiled rows issue the rule at all, so two catalogs that subscribe the same
+// rules to the same families under different shapes place different programs
+// and are two tables.
+func TestTableDigestCoversDeclaredOperandShape(t *testing.T) {
+	declared, failure := sealLawTableFor(lawTable(t, nil))
+	if failure.Available() {
+		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	templates := lawTable(t, func(_ int, spec *Spec) {
+		if spec.Key != "law-value-source" {
+			return
+		}
+		issuance := lawIssuance()
+		issuance.Requirement = lawNarrowRequirementKey
+		spec.Issues = []Issuance{issuance}
+	})
+	shifted, failure := sealLawTableFor(templates)
+	if failure.Available() {
+		t.Fatalf("catalog with a narrowed operand shape rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if declared.Digest() == shifted.Digest() {
+		t.Fatal("a subscription's declared operand shape left the table digest unchanged")
 	}
 }
 
@@ -576,7 +576,7 @@ func TestTableDigestCoversSemanticIdentity(t *testing.T) {
 	if failure.Available() {
 		t.Fatalf("complete role catalog rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	templates := lawTable(t, func(_ int, spec *Spec[lawPrincipals, lawAuthorities, *lawFragment, *lawHot]) {
+	templates := lawTable(t, func(_ int, spec *Spec) {
 		if spec.Key == "law-value-source" {
 			spec.Semantic = "semantic/operand/law/value-source"
 		}

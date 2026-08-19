@@ -66,6 +66,48 @@ func (compiler *compiler) copyValueSources() CompileFailure {
 	return CompileFailure{}
 }
 
+// copyFormalEntrySources publishes each callable formal at the exact entry
+// points and storage coordinate already issued by Program. The row contains
+// no abstract Value policy; its subscribing domain owns that interpretation.
+func (compiler *compiler) copyFormalEntrySources() CompileFailure {
+	for boundaryIndex, boundary := range compiler.functionBoundaries {
+		if !boundary.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourceAppend)
+		}
+		var points []identity.ContentID
+		for _, body := range compiler.bodies {
+			if body.ID() != boundary.BodyID() {
+				continue
+			}
+			for pointIndex := 0; pointIndex < body.EntryPointCount(); pointIndex++ {
+				point, pointOK := body.EntryPointAt(pointIndex)
+				if !pointOK {
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, pointIndex, CompileReasonOccurrenceValueSourcePoints)
+				}
+				points = append(points, point)
+			}
+			break
+		}
+		if len(points) == 0 {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourcePoints)
+		}
+		for formalIndex := 0; formalIndex < boundary.FormalCount(); formalIndex++ {
+			formal, ok := boundary.FormalAt(formalIndex)
+			if !ok || !compiler.appendOccurrence(
+				OccurrenceFormalEntry,
+				formal.StorageCellID(),
+				boundary.BodyID(),
+				points,
+				[]identity.ContentID{formal.ID()},
+				0,
+			) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, formalIndex, CompileReasonOccurrenceValueSourceAppend)
+			}
+		}
+	}
+	return CompileFailure{}
+}
+
 func (compiler *compiler) copyComputations() CompileFailure {
 	flowView := compiler.input.Flow()
 	executable := flowView.Executable()
@@ -155,7 +197,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		rightID, rightOK := compiler.input.ValueSubjectID(operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
-		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !binaryOrderOperator(operation.Op) ||
+		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryOrder(operation.Op) ||
 			!spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
 			!leftOK || !rightOK ||
 			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {

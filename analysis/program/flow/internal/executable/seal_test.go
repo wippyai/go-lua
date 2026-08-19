@@ -17,6 +17,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // sealFixture is intentionally assembled through the final Source commit and
@@ -89,25 +92,25 @@ func openSealFixtureWithSource(
 	staticInput := static.Input{}
 	staticInput.Counts[keyspace.FamilyBody] = counts[keyspace.FamilyBody]
 	if counts[keyspace.FamilyTypePrimitive] != 0 {
-		staticInput.Types.Primitive = make([]static.Primitive, counts[keyspace.FamilyTypePrimitive])
+		staticInput.Types.Primitive = make([]statictypes.Primitive, counts[keyspace.FamilyTypePrimitive])
 		for index := range staticInput.Types.Primitive {
-			staticInput.Types.Primitive[index] = static.Primitive{Kind: static.PrimitiveNumber}
+			staticInput.Types.Primitive[index] = statictypes.Primitive{Kind: statictypes.PrimitiveNumber}
 		}
 	}
 	if counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, counts[keyspace.FamilyFunction])
 	}
 	if counts[keyspace.FamilyCall] != 0 {
-		staticInput.Contracts.Call = make([]static.CallContract, counts[keyspace.FamilyCall])
+		staticInput.Contracts.Call = make([]staticcontracts.CallContract, counts[keyspace.FamilyCall])
 	}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
 	staticInput.Counts[keyspace.FamilyCall] = uint32(len(staticInput.Contracts.Call))
 	staticInput.Counts[keyspace.FamilyTypePrimitive] = uint32(len(staticInput.Types.Primitive))
 	if counts[keyspace.FamilyTypeValue] != 0 {
 		staticInput.Counts[keyspace.FamilyTypeValue] = counts[keyspace.FamilyTypeValue]
-		staticInput.Operands.TypeValue = make([]static.TypeValueTarget, counts[keyspace.FamilyTypeValue])
+		staticInput.Operands.TypeValue = make([]staticoperands.TypeValueTarget, counts[keyspace.FamilyTypeValue])
 		for index := range staticInput.Operands.TypeValue {
-			staticInput.Operands.TypeValue[index] = static.TypeValueTarget{Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)}
+			staticInput.Operands.TypeValue[index] = staticoperands.TypeValueTarget{Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)}
 		}
 	}
 	staticDraft, err := static.Build(staticInput)

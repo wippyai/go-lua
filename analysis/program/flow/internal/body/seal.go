@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
 // Seal proves Body structural authority over the live Source and authored
@@ -287,8 +288,8 @@ func validateOrdinals(
 	loops authored.Loops,
 	labels authored.Labels,
 	faults source.Faults,
-	aliases static.Aliases,
-	interfaces static.Interfaces,
+	aliases staticdecl.Aliases,
+	interfaces staticdecl.Interfaces,
 	counts [keyspace.FamilyCount]int,
 ) error {
 	for index := 0; index < functions.Count(); index++ {
@@ -436,8 +437,8 @@ func directOwner(
 	loops authored.Loops,
 	labels authored.Labels,
 	faults source.Faults,
-	aliases static.Aliases,
-	interfaces static.Interfaces,
+	aliases staticdecl.Aliases,
+	interfaces staticdecl.Interfaces,
 ) (keyspace.Term, bool) {
 	switch keyspace.TermFamily(term) {
 	case keyspace.FamilyBind:

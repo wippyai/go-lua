@@ -22,7 +22,8 @@ func foldPointEnvironment(t testing.TB, work *carrier.Work, rhs carrier.PointRHS
 	if !work.BeginPointRHSFold(reference, rhs) || !work.AddPointFoldEnvironment(environment) {
 		return carrier.PointRHS{}, false
 	}
-	return work.FinishPointRHSFold()
+	finished, _, ok := work.FinishPointRHSFold()
+	return finished, ok
 }
 
 // TestPointStateTransportSharesLatentRootButLiftClosesIt exercises the exact
@@ -689,7 +690,7 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 	if !work.BeginPointRHSFold(canonicalPoint, base) || !work.AddPointFoldRule(lower) || !work.AddPointFoldRule(explicitDefault) {
 		t.Fatal("direct ordered fold inputs")
 	}
-	direct, ok := work.FinishPointRHSFold()
+	direct, _, ok := work.FinishPointRHSFold()
 	if !ok || !work.EqualPointRHS(canonical, direct) {
 		t.Fatal("direct ordered fold differs from canonical left comb")
 	}
@@ -733,7 +734,7 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 		if !work.BeginPointRHSFold(predecessorPoint, base) || !work.AddPointFoldRule(seedRule) || !work.AddPointFoldRule(equalRule) {
 			t.Fatal("equal sibling fold inputs")
 		}
-		finished, ok := work.FinishPointRHSFold()
+		finished, _, ok := work.FinishPointRHSFold()
 		if !ok {
 			t.Fatal("equal sibling fold")
 		}
@@ -770,7 +771,7 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 		if !work.BeginPointRHSFold(unequalPoint, base) || !work.AddPointFoldRule(seedRule) || !work.AddPointFoldRule(equalRule) {
 			t.Fatal("unequal sibling fold inputs")
 		}
-		finished, ok := work.FinishPointRHSFold()
+		finished, _, ok := work.FinishPointRHSFold()
 		if !ok {
 			t.Fatal("unequal sibling fold")
 		}
@@ -807,7 +808,7 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 	if !work.BeginPointRHSFold(filtered, filteredRHS) || !work.AddPointFoldEnvironment(cEmptyOn) {
 		t.Fatal("contained direct environment")
 	}
-	contained, ok := work.FinishPointRHSFold()
+	contained, _, ok := work.FinishPointRHSFold()
 	if !ok {
 		t.Fatal("finish contained environment")
 	}
@@ -824,7 +825,7 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 	if !work.BeginPointRHSFold(filtered, filteredRHS) || !work.AddPointFoldEnvironment(emptyPoint) {
 		t.Fatal("growing direct environment")
 	}
-	grown, ok := work.FinishPointRHSFold()
+	grown, _, ok := work.FinishPointRHSFold()
 	if !ok || !grown.Support().Equal(whole) {
 		t.Fatal("finish growing environment")
 	}

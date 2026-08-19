@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
 func staticNodeID(owner identity.ContentID, ref programstatic.StaticTypeRef) (id identity.ContentID, ok bool) {
@@ -320,7 +321,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					memberKey := member.Name
 					memberType := member.Signature
 					memberOptional := false
-					if member.Kind == programstatic.InterfaceField && member.Field != 0 {
+					if member.Kind == staticdecl.InterfaceField && member.Field != 0 {
 						fieldKey, fieldType, optional, fieldOK := view.Types().Fields().Get(member.Field)
 						if !fieldOK {
 							ok = false

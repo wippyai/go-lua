@@ -2,12 +2,11 @@ package axis
 
 import (
 	"bytes"
+	"reflect"
+	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/structure"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -103,15 +102,11 @@ func TestAxisSemanticIsDeclared(t *testing.T) {
 // entry is present. An axis whose bind thunk is missing cannot be bound, and
 // the table says so at seal rather than at bind.
 func TestAxisRequiredFieldsAreComplete(t *testing.T) {
-	for _, missing := range []string{"semantic", "declare", "bind"} {
+	for _, missing := range []string{"semantic"} {
 		template := mustTemplate(t, scratchSpec("value", valueRole))
 		switch missing {
 		case "semantic":
 			template.semantic = ""
-		case "declare":
-			template.declare = nil
-		case "bind":
-			template.bind = nil
 		}
 		failure := sealTemplates(t, []*Template[scratchInputs]{template})
 		if failure.Law != LawFieldComplete || failure.Disposition != schema.DispositionIncomplete {
@@ -193,26 +188,23 @@ func TestAxesBindBeforeRules(t *testing.T) {
 // TestNewRejectsIncompleteSpec states the constructor half of completeness: a
 // spec missing any required field yields no template at all.
 func TestNewRejectsIncompleteSpec(t *testing.T) {
-	cases := map[string]func(*Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]){
-		"key":     func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Key = "" },
-		"storage": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Storage = StorageInvalid },
-		"cardinality": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+	cases := map[string]func(*Spec[scratchInputs]){
+		"key":     func(spec *Spec[scratchInputs]) { spec.Key = "" },
+		"storage": func(spec *Spec[scratchInputs]) { spec.Storage = StorageInvalid },
+		"cardinality": func(spec *Spec[scratchInputs]) {
 			spec.Cardinality = CardinalityInvalid
 		},
-		"lifetime": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+		"lifetime": func(spec *Spec[scratchInputs]) {
 			spec.Lifetime = LifetimeInvalid
 		},
-		"mutability": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+		"mutability": func(spec *Spec[scratchInputs]) {
 			spec.Mutability = MutabilityInvalid
 		},
-		"concurrency": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+		"concurrency": func(spec *Spec[scratchInputs]) {
 			spec.Concurrency = ConcurrencyInvalid
 		},
-		"semantic": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Semantic = "" },
-		"declare":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Declare = nil },
-		"bind":     func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Bind = nil },
-		"algebra":  func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) { spec.Algebra = nil },
-		"self-edge": func(spec *Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) {
+		"semantic": func(spec *Spec[scratchInputs]) { spec.Semantic = "" },
+		"self-edge": func(spec *Spec[scratchInputs]) {
 			spec.Dependencies = []schema.Key{"value"}
 		},
 	}
@@ -229,8 +221,8 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 // coordinate space, a writer principal and a published column, and no hot half
 // at all: no cold fragment, no factor binding, and no algebra of one, because
 // the pass that fills its column is not a factor lane.
-func enginePublishedSpec(key, semantic schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
-	return Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{
+func enginePublishedSpec(key, semantic schema.Key) Spec[scratchInputs] {
+	return Spec[scratchInputs]{
 		Key:         key,
 		Storage:     StorageEngine,
 		Cardinality: CardinalitySparse,
@@ -263,87 +255,6 @@ func TestEnginePublishedAxisSealsWithoutAHotHalf(t *testing.T) {
 	if engine.MountDeclared() {
 		t.Fatal("the engine-published axis declares a mount")
 	}
-	if _, ok := engine.Declare(Declaration{Builder: nil}); ok {
-		t.Fatal("the engine-published axis recorded a cold shape")
-	}
-}
-
-// TestEnginePublishedAxisRejectsAHotHalf states the other half of the same
-// rule. An axis that declares an engine-published column and also a factor
-// binding says two different things about who fills that column, so it is
-// rejected at construction rather than sealed as whichever the reader prefers.
-func TestEnginePublishedAxisRejectsAHotHalf(t *testing.T) {
-	spec := enginePublishedSpec("reachability", heapRole)
-	spec.Declare = func(Declaration) (*scratchFragment, bool) { return &scratchFragment{}, true }
-	if _, ok := New(spec); ok {
-		t.Fatal("an engine-published axis declaring a cold fragment was admitted")
-	}
-}
-
-// TestBoundAxisRejectsAMissingHotHalf states the same rule from the factor
-// side: a Link-bound factor axis without its binding declares a coordinate
-// space no lane can write.
-func TestBoundAxisRejectsAMissingHotHalf(t *testing.T) {
-	spec := scratchSpec("value", valueRole)
-	spec.Bind = nil
-	if _, ok := New(spec); ok {
-		t.Fatal("a factor axis without its binding was admitted")
-	}
-}
-
-// TestBoundAxisPublishesItsAlgebra states that binding an axis and publishing
-// the algebra of that binding are one step: a bound axis without a complete
-// algebra is not published.
-func TestBoundAxisPublishesItsAlgebra(t *testing.T) {
-	rows, rowsOK := structure.Collect(vocabulary.RoleSpecs("factor/value", "factor/heap", "factor/pack"))
-	roles, rolesOK := vocabulary.NewRoles(rows)
-	if !rowsOK || !rolesOK {
-		t.Fatal("scratch semantic role vocabulary")
-	}
-	valueFactor, valueFactorOK := roles.Key(valueRole)
-	if !valueFactorOK {
-		t.Fatal("scratch value role did not resolve")
-	}
-	spec := scratchSpec("value", valueRole)
-	template := mustTemplate(t, spec)
-	builder := engine.NewSchema()
-	fragment, declared := template.Declare(Declaration{Builder: builder, Roles: roles})
-	if !declared || !fragment.Available() {
-		t.Fatal("scratch axis did not declare")
-	}
-	// The bind thunk needs one open engine binding to carry; the scratch axis
-	// declares no engine slot of its own, so the schema below is the smallest
-	// sealable one.
-	if _, slotOK := engine.NewFactorSlot[uint64](builder, valueFactor); !slotOK {
-		t.Fatal("scratch factor slot")
-	}
-	sealed, sealedOK := builder.Seal()
-	if !sealedOK {
-		t.Fatal("scratch schema did not seal")
-	}
-	binding := engine.NewSchemaBinding(sealed)
-	if binding == nil {
-		t.Fatal("scratch binding")
-	}
-	bound, boundOK := template.Bind(binding, scratchInputs{ready: true}, fragment)
-	if !boundOK || !bound.AlgebraAvailable() {
-		t.Fatal("bound axis published no algebra")
-	}
-	algebra, algebraOK := AlgebraOf[uint64](bound)
-	if !algebraOK || algebra.KeyEnd != 4 || !algebra.AdmitAt(3, 1) || algebra.AdmitAt(4, 1) {
-		t.Fatal("published algebra does not answer for the axis key space")
-	}
-	if _, wrongType := AlgebraOf[uint32](bound); wrongType {
-		t.Fatal("published algebra answered at a foreign fact type")
-	}
-	if _, rejected := template.Bind(binding, scratchInputs{}, fragment); rejected {
-		t.Fatal("axis published a cell for a rejected binding")
-	}
-	incomplete := scratchSpec("heap", heapRole)
-	incomplete.Algebra = func(*scratchAxis) (Algebra[uint64], bool) { return Algebra[uint64]{}, true }
-	if _, published := mustTemplate(t, incomplete).Bind(binding, scratchInputs{ready: true}, fragment); published {
-		t.Fatal("axis published an incomplete algebra")
-	}
 }
 
 // TestAdoptProjectsOneEngineAlgebra states the single conversion law: the
@@ -353,13 +264,13 @@ func TestBoundAxisPublishesItsAlgebra(t *testing.T) {
 func TestAdoptProjectsOneEngineAlgebra(t *testing.T) {
 	type carrier uint32
 	admitted := map[carrier]bool{0: true, 1: true}
-	spec := engine.HotFactorSpec[carrier, uint64]{
+	spec := CarrierAlgebra[carrier, uint64]{
 		KeyEnd:      2,
 		Lattice:     scratchLattice(),
 		Default:     0,
 		AdmitAt:     func(key carrier, value uint64) bool { return admitted[key] },
 		Fingerprint: func(value uint64) uint64 { return value ^ 7 },
-		WidenRank:   engine.Measure[carrier, uint64]{Width: 2, At: func(key carrier, value uint64, component int) uint64 { return uint64(key) + uint64(component) }},
+		Widen:       CarrierRank[carrier, uint64]{Width: 2, At: func(key carrier, value uint64, component int) uint64 { return uint64(key) + uint64(component) }},
 	}
 	algebra, ok := Adopt(spec)
 	if !ok || !algebra.Available() {
@@ -399,7 +310,7 @@ const (
 // mountedSpec is one axis declaration that seals its own Link authority. The
 // counter records every invocation so the table's iteration law is stated over
 // observed calls rather than over the record the calls produced.
-func mountedSpec(key, semantic schema.Key, order *[]schema.Key, admit bool) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+func mountedSpec(key, semantic schema.Key, order *[]schema.Key, admit bool) Spec[scratchInputs] {
 	spec := scratchSpec(key, semantic)
 	spec.Mount = NewMount(func(context Mounting[scratchInputs]) (*scratchAuthority, scratchRejection, bool) {
 		*order = append(*order, key)
@@ -545,7 +456,7 @@ func TestNilTemplateRejectsMount(t *testing.T) {
 }
 
 // dependentSpec is one axis declaration that seals over a peer's authority.
-func dependentSpec(key, semantic schema.Key, dependencies ...schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
+func dependentSpec(key, semantic schema.Key, dependencies ...schema.Key) Spec[scratchInputs] {
 	spec := scratchSpec(key, semantic)
 	spec.Dependencies = dependencies
 	return spec
@@ -647,5 +558,20 @@ func TestTableDigestCoversSemanticIdentity(t *testing.T) {
 	}
 	if declared.Digest() == shifted.Digest() {
 		t.Fatal("an axis's selected semantic role left the table digest unchanged")
+	}
+}
+
+// TestMountedArtifactDoesNotCarryProgramArtifact states the mount-phase
+// fence: contributors receive the sealed ingress snapshot, not the owner.
+func TestMountedArtifactDoesNotCarryProgramArtifact(t *testing.T) {
+	row := reflect.TypeOf(MountedArtifact{})
+	for index := 0; index < row.NumField(); index++ {
+		field := row.Field(index)
+		if strings.Contains(field.Type.String(), "programartifact") {
+			t.Fatalf("MountedArtifact.%s is %s", field.Name, field.Type)
+		}
+	}
+	if _, ok := row.FieldByName("Snapshot"); !ok {
+		t.Fatal("MountedArtifact has no Snapshot")
 	}
 }

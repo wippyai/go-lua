@@ -1,11 +1,12 @@
 package value
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -16,6 +17,7 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -80,8 +82,9 @@ const (
 	// existing normalized Link Key; the recurrent Value image still retains
 	// only this Schema-local dense atom ID.
 	atomLiteral
-	// atomComputedLiteral is an exact Program-owned arithmetic summary.  It
-	// retains the concrete scalar payload but deliberately has no Link key;
+	// atomComputedLiteral is an exact owner-produced scalar: either a
+	// Program-owned arithmetic summary or a schema-declared runtime result.
+	// It retains the concrete scalar payload but deliberately has no Link key;
 	// Heap key identity remains available only through atomLiteral.
 	atomComputedLiteral
 	atomReference
@@ -407,6 +410,7 @@ type Schema struct {
 	binaryEqualities    map[computationKey]BinaryEquality
 	binaryArithmetics   map[computationKey]BinaryArithmetic
 	binaryOrders        map[computationKey]BinaryOrder
+	runtimeKindCalls    map[computationKey]RuntimeKindCall
 	presenceRefinements map[computationKey]PresenceRefinement
 	unaryNots           map[computationKey]UnaryNot
 	selectBranches      map[selectBranchKey]SelectBranch
@@ -441,7 +445,13 @@ type Schema struct {
 	// classes: non-reference, untracked reference, and tracked reference. The
 	// two range boundaries are private representation order, never identity.
 	forRuntimeKinds []Value
-	atomTop         []Value
+	// forRuntimeNames is the immutable schema projection of the presealed
+	// string atom issued for each CategoryRuntimeKind member. It is keyed by
+	// the same closed may-set as forRuntimeKinds, so a hot rule projects names
+	// without constructing strings, atoms, or image slices.
+	forRuntimeNames      []Value
+	runtimeKindNameAtoms [runtimekind.Count]uint32
+	atomTop              []Value
 	// atomTopImage is one schema-owned immutable arena for singleton
 	// reductions. Keeping one row per atom here avoids allocating a separate
 	// backing array for every atom while the sealed schema still owns every
@@ -464,6 +474,13 @@ type valueBuilder struct {
 	// artifacts is the exact reusable ProgramArtifact substitution directory.
 	// It is cold builder state and cannot survive into the published Schema.
 	artifacts map[identity.ContentID]ArtifactMount
+	// formalSources is the construction-only set of Program-issued formal
+	// storage coordinates that receive Value Top at callable entry.
+	formalSources map[identity.ContentID]struct{}
+	// structural is the sealed schema vocabulary supplied by composition. It
+	// is construction-only: the published Value Schema retains only the
+	// presealed atom rows and projections, never a second catalog reference.
+	structural structure.Table
 }
 
 func (builder *valueBuilder) sealProject() *linkproject.Component   { return builder.project }
@@ -474,20 +491,20 @@ func (builder *valueBuilder) sealHost() *linkhost.Component         { return bui
 // Link mount. Module is the mount qualifier: equal Program artifacts may be
 // mounted more than once without positional joins or shared occurrence IDs.
 type ArtifactMount struct {
-	artifact *programartifact.Artifact
+	snapshot *ingress.Snapshot
 	module   identity.ContentID
 	program  identity.ContentID
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, programID identity.ContentID) (ArtifactMount, bool) {
-	if artifact == nil || !artifact.Available() || !module.Available() || !programID.Available() || artifact.CompileKey().ProgramID() != programID {
+func NewArtifactMount(snapshot *ingress.Snapshot, module, programID identity.ContentID) (ArtifactMount, bool) {
+	if snapshot == nil || !snapshot.Available() || !module.Available() || !programID.Available() || snapshot.ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
-	return ArtifactMount{artifact: artifact, module: module, program: programID}, true
+	return ArtifactMount{snapshot: snapshot, module: module, program: programID}, true
 }
 
 func (mount ArtifactMount) Available() bool {
-	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.program.Available() && mount.artifact.CompileKey().ProgramID() == mount.program
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
 }
 func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
@@ -501,11 +518,11 @@ func (mount ArtifactMount) ProgramID() identity.ContentID {
 	}
 	return mount.program
 }
-func (mount ArtifactMount) Artifact() *programartifact.Artifact {
+func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	if !mount.Available() {
 		return nil
 	}
-	return mount.artifact
+	return mount.snapshot
 }
 
 // LinkID is the detached owner identity for this sealed Value schema. Hot
@@ -634,6 +651,10 @@ const (
 	SealFailureSourceValues
 	SealFailureSourceOccurrences
 	SealFailureGlobalBootstrapResults
+	// SealFailureRuntimeKindAtoms is appended to preserve every prior failure
+	// ordinal. The runtime-kind names are a schema-fed Value vocabulary, not a
+	// hot fallback, so their admission has its own closed failure boundary.
+	SealFailureRuntimeKindAtoms
 )
 
 func (failure SealFailure) String() string {
@@ -642,7 +663,7 @@ func (failure SealFailure) String() string {
 		"storage-transfer-add-input", "storage-transfer-add-from-value", "storage-transfer-add-to-value", "storage-transfer-add-from-coordinate", "storage-transfer-add-to-coordinate", "storage-transfer-add-shard", "storage-transfer-add-mount", "storage-transfer-add-occurrence", "storage-transfer-add-ref", "storage-transfer-add-identity", "storage-transfer-add-executable", "storage-transfer-add-duplicate-ref", "storage-transfer-add-duplicate-occurrence", "storage-transfer-add-capacity",
 		"storage-transfer-bind", "storage-transfer-write", "exact-keys", "capabilities", "sources", "bootstrap-callables",
 		"opaque-alternatives", "literal-source-atoms", "target-literal-atoms", "stored-unknown-atoms", "stored-exact-atoms",
-		"reference-source-atoms", "finish", "allocation-results", "source-values", "source-occurrences", "global-bootstrap-results",
+		"reference-source-atoms", "finish", "allocation-results", "source-values", "source-occurrences", "global-bootstrap-results", "runtime-kind-atoms",
 	}
 	if int(failure) < 0 || int(failure) >= len(names) {
 		return "invalid"
@@ -653,8 +674,8 @@ func (failure SealFailure) String() string {
 // Seal derives the complete finite Value alternative vocabulary from the
 // already-sealed Link.  It does not inspect AST/binder state, materialize a
 // candidate product, or create a second raw Program identity.
-func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMount) (*Schema, SealFailure) {
-	if source == nil || !source.ContentID().Available() || !heaps.LinkOwner().Matches(source.OwnerCapability()) || heaps.LinkContentID() != source.ContentID() || len(mounts) != source.Project().Mounts().Count() {
+func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMount, structural structure.Table) (*Schema, SealFailure) {
+	if source == nil || !source.ContentID().Available() || !heaps.LinkOwner().Matches(source.OwnerCapability()) || heaps.LinkContentID() != source.ContentID() || len(mounts) != source.Project().Mounts().Count() || structural.Count(structure.CategoryRuntimeKind) != int(runtimekind.Count)-1 {
 		return nil, SealFailureInput
 	}
 	artifacts := make(map[identity.ContentID]ArtifactMount, len(mounts))
@@ -692,6 +713,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		binaryEqualities:           make(map[computationKey]BinaryEquality),
 		binaryArithmetics:          make(map[computationKey]BinaryArithmetic),
 		binaryOrders:               make(map[computationKey]BinaryOrder),
+		runtimeKindCalls:           make(map[computationKey]RuntimeKindCall),
 		presenceRefinements:        make(map[computationKey]PresenceRefinement),
 		unaryNots:                  make(map[computationKey]UnaryNot),
 		selectBranches:             make(map[selectBranchKey]SelectBranch),
@@ -706,11 +728,14 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		typeRefs:                   make(map[identity.ContentID]uint32),
 		capabilityID:               make(map[identity.ContentID]uint32),
 	}
-	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), artifacts: artifacts}
+	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), artifacts: artifacts, structural: structural}
 	if !builder.sealCoordinates() {
 		return nil, SealFailureCoordinates
 	}
 	if !builder.sealMountedCoordinateDirectory() {
+		return nil, SealFailureCoordinates
+	}
+	if !builder.sealFormalSourceDirectory() {
 		return nil, SealFailureCoordinates
 	}
 	if !builder.sealComputationRows() {
@@ -733,6 +758,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		{SealFailureOpaqueAlternatives, builder.sealOpaqueAlternatives},
 		{SealFailureLiteralSourceAtoms, builder.sealLiteralSourceAtoms},
 		{SealFailureLiteralSourceAtoms, builder.sealComputedArithmeticAtoms},
+		{SealFailureRuntimeKindAtoms, builder.sealRuntimeKindAtoms},
 		{SealFailureTargetLiteralAtoms, builder.sealTargetLiteralAtoms},
 		{SealFailureStoredUnknownAtoms, builder.sealStoredUnknownAtoms},
 		{SealFailureStoredExactAtoms, builder.sealStoredExactAtoms},
@@ -750,6 +776,37 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		}
 	}
 	return schema, SealFailureNone
+}
+
+// sealFormalSourceDirectory consumes Program's explicit formal-entry rows.
+// It does not rediscover formals from syntax or FunctionBoundary geometry.
+func (schema *valueBuilder) sealFormalSourceDirectory() bool {
+	if schema == nil || schema.sealBoundary() == nil || schema.artifacts == nil || schema.formalSources != nil {
+		return false
+	}
+	schema.formalSources = make(map[identity.ContentID]struct{})
+	for module, mount := range schema.artifacts {
+		artifact := mount.Snapshot()
+		if artifact == nil {
+			return false
+		}
+		for index := 0; index < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceFormalEntry)); index++ {
+			row, rowOK := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceFormalEntry), index)
+			if !rowOK || row.InputCount() != 1 {
+				return false
+			}
+			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
+			valueID, valueIDOK := schema.sealBoundary().Values().ID(value)
+			if !valueOK || !valueIDOK || !valueID.Available() {
+				return false
+			}
+			if _, duplicate := schema.formalSources[valueID]; duplicate {
+				return false
+			}
+			schema.formalSources[valueID] = struct{}{}
+		}
+	}
+	return true
 }
 
 func (schema *valueBuilder) sealMountedCoordinateDirectory() bool {
@@ -1255,13 +1312,13 @@ func (schema *valueBuilder) sealLiteralSourceDirectory() bool {
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		if artifact == nil {
 			return false
 		}
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, ok := artifact.OccurrenceAt(index)
-			if !ok || row.Kind() != programartifact.OccurrenceValueSource {
+			if !ok || row.Kind() != uint8(programartifact.OccurrenceValueSource) {
 				continue
 			}
 			family, literal, literalOK := row.Literal()
@@ -1418,10 +1475,10 @@ func (schema *valueBuilder) forEachExecutableTypeValue(visit func(identity.Conte
 		return false
 	}
 	for module, mount := range schema.artifacts {
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, rowOK := artifact.OccurrenceAt(index)
-			if !rowOK || row.Kind() != programartifact.OccurrenceValueSource || row.Code() != 6 {
+			if !rowOK || row.Kind() != uint8(programartifact.OccurrenceValueSource) || row.Code() != 6 {
 				continue
 			}
 			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
@@ -1542,10 +1599,26 @@ func (schema *Schema) storedProjectionOrderValid() bool {
 // Dynamic coordinates retain the zero Value and are still produced only by
 // their eventual Rule.
 func (schema *valueBuilder) sealSourceValues() bool {
-	if schema == nil || schema.sealProject() == nil || schema.potential == 0 || schema.sourceValuesSealed {
+	if schema == nil || schema.sealProject() == nil || schema.potential == 0 || schema.sourceValuesSealed || schema.formalSources == nil {
 		return false
 	}
 	for subject, row := range schema.coordinates {
+		if _, formal := schema.formalSources[subject]; formal {
+			if row.atom != 0 || row.source.schema != nil || row.sourceResult != nil {
+				return false
+			}
+			fact := schema.Top()
+			if !schema.owns(fact) || schema.Equal(fact, schema.Bottom()) {
+				return false
+			}
+			row.source = fact
+			row.sourceResult = &SourceResult{
+				schema: schema.Schema, valueID: subject, id: subject,
+				coordinate: Coordinate{schema: schema.Schema, index: row.coordinate}, fact: fact,
+			}
+			schema.coordinates[subject] = row
+			continue
+		}
 		if row.atom == 0 {
 			continue
 		}
@@ -1803,6 +1876,22 @@ func (schema *Schema) finishReductions() bool {
 		})
 		schema.forRuntimeKinds[mask] = schema.canonical(image)
 	}
+	// Runtime-kind result names are a distinct presealed atom family. Their
+	// atom kind is also String, so selecting by atomKinds alone would conflate
+	// them with authored string literals; the schema-issued dense atom IDs keep
+	// this projection exact without a second string vocabulary.
+	schema.forRuntimeNames = make([]Value, limit)
+	for mask := 0; mask < limit; mask++ {
+		image := schema.fullRows(func(id uint32) bool {
+			for kind := runtimekind.Invalid + 1; kind < runtimekind.Count; kind++ {
+				if runtimekind.Set(mask)&runtimekind.Bit(kind) != 0 && schema.runtimeKindNameAtoms[kind] == id {
+					return true
+				}
+			}
+			return false
+		})
+		schema.forRuntimeNames[mask] = schema.canonical(image)
+	}
 	// atomTop is a singleton projection for every atom. Build one compact,
 	// schema-owned arena rather than allocating one backing array per atom.
 	// The exact row bounds preserve the old owner/capacity fence, while the
@@ -1882,8 +1971,10 @@ func (schema *Schema) addAtom(row atomRow) uint32 {
 				return 0
 			}
 		} else if row.kind == atomComputedLiteral {
-			if row.runtime != runtimekind.Number || row.hasKey || row.literalFalsy ||
-				(row.key.Kind != keyspace.LiteralInteger && row.key.Kind != keyspace.LiteralFloat) {
+			if row.hasKey || row.literalFalsy ||
+				(row.runtime == runtimekind.Number && row.key.Kind != keyspace.LiteralInteger && row.key.Kind != keyspace.LiteralFloat) ||
+				(row.runtime == runtimekind.String && row.key.Kind != keyspace.LiteralString) ||
+				(row.runtime != runtimekind.Number && row.runtime != runtimekind.String) {
 				return 0
 			}
 		} else if row.hasKey || row.literalFalsy || row.key.Kind != 0 {

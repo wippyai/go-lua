@@ -2,21 +2,19 @@
 
 package parserproducts
 
-func init() {
-	Generated = Evidence{
-		GrammarDigest:      "c3083c81ba3f275a125f8489df2bf3e73eecab8cb05274dda3a27b5e5bd19d63",
-		ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
-		SchemaDigest:       "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea",
-		IngressDigest:      "0e8aad264b35e631bc5d2f7d416b327a3a4fb2b9d0bd1d30ec3f846ca70dbbec",
-		Digest:             "8d6f42c91dfc32495549bd6bc19df929ee6ba666f91fced802c3b5ee7e66b9ec",
-		Fields:             generatedFields(),
-		Products:           generatedProducts(),
-		ProductLaws:        generatedProductLaws(),
-		HelperLaws:         generatedHelperLaws(),
-		Sequences:          generatedSequences(),
-		Mutations:          generatedMutations(),
-		ActionTerms:        generatedActionTerms(),
-		Carriers:           generatedCarriers(),
-		Recursion:          generatedRecursion(),
-	}
+var Generated = Evidence{
+	GrammarDigest:      "c3083c81ba3f275a125f8489df2bf3e73eecab8cb05274dda3a27b5e5bd19d63",
+	ParserSourceDigest: "2040e60e0c4b729743658b0ca0dd70aeee17eafa1a4187a012e247f418163367",
+	SchemaDigest:       "7b7e4cf3bd735684904b527f81d5dd6e4decd6e21e1416d17ac5b4b63c59d9ea",
+	IngressDigest:      "0e8aad264b35e631bc5d2f7d416b327a3a4fb2b9d0bd1d30ec3f846ca70dbbec",
+	Digest:             "8d6f42c91dfc32495549bd6bc19df929ee6ba666f91fced802c3b5ee7e66b9ec",
+	Fields:             generatedFields(),
+	Products:           generatedProducts(),
+	ProductLaws:        generatedProductLaws(),
+	HelperLaws:         generatedHelperLaws(),
+	Sequences:          generatedSequences(),
+	Mutations:          generatedMutations(),
+	ActionTerms:        generatedActionTerms(),
+	Carriers:           generatedCarriers(),
+	Recursion:          generatedRecursion(),
 }

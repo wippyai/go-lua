@@ -294,7 +294,7 @@ func TestArtifactSectionRejectsNonDirectBodyFamilies(t *testing.T) {
 	input, index := exactDirectBodyFixture()
 	for at := range input.Families {
 		family := input.Families[at].Family
-		if family == keyspace.FamilyOutcome || sourceDirectFamily(family) || len(input.Families[at].Spans) != 0 {
+		if family == keyspace.FamilyOutcome || AdmitsDirectBodyFamily(family) || len(input.Families[at].Spans) != 0 {
 			continue
 		}
 		input.Families[at].Spans = []Span{{File: input.Name, StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}}
@@ -303,7 +303,7 @@ func TestArtifactSectionRejectsNonDirectBodyFamilies(t *testing.T) {
 	raw := encodeSourceArtifactLaw(t, component, "source/non-direct-body-law")
 	offsets := sourceArtifactMutationOffsets(t, raw)
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if family == keyspace.FamilyOutcome || sourceDirectFamily(family) {
+		if family == keyspace.FamilyOutcome || AdmitsDirectBodyFamily(family) {
 			continue
 		}
 		t.Run("family-"+strconv.Itoa(int(family)), func(t *testing.T) {

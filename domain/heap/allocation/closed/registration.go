@@ -32,32 +32,34 @@ type ruleAuthorities interface {
 // RuleEntry is this package's heap-closed rule declaration. P and A are the
 // composition's own principal and authority records, admitted by the need
 // interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
-	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
+func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "heap-closed",
 		Writes: "heap",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/allocation", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(heapdomain.AllocationFormClosed), HasCode: true},
+			{Occurrence: "occurrence/allocation", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(heapdomain.AllocationFormClosed), HasCode: true},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-closed",
 		Roles:    []schema.Key{"semantic/operand/heap/allocation-closed", "semantic/evidence/heap/allocation-closed", "semantic/transform/heap/allocation-closed"},
-		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics, ok := context.Roles.Transformed("heap/allocation-closed")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.HeapPrincipal(), context.Principals.ValuePrincipal())
-		},
-		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterMountedSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-			return BindHot(context.Binding, context.Fragment, context.Authorities.HeapAuthority(), context.Authorities.ValueAuthority(), context.Authorities.Allocations())
-		},
-
 	}
+}
+
+func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
+	semantics, ok := context.Roles.Transformed("heap/allocation-closed")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.HeapPrincipal(), context.Principals.ValuePrincipal())
+}
+
+func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
+}
+
+func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
+	return BindHot(binding, context.Fragment, context.Authorities.HeapAuthority(), context.Authorities.ValueAuthority(), context.Authorities.Allocations())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

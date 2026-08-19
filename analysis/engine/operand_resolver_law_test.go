@@ -43,45 +43,46 @@ func TestOperandResolverIsRequiredToAttach(t *testing.T) {
 		t.Fatal("resolver attach binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
-	if !implementationOK || !queryImplementationOK || !assemblyOK || implementation.receipt.proof == nil {
+	_, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
+	if !implementationOK || !queryImplementationOK || !assemblyOK || implementation.binding.proof == nil {
 		t.Fatal("resolver attach implementation")
 	}
 	memberID := receiptAssemblySemanticID(91)
-	proof := implementation.receipt.proof
-	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(980_011)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.builder.admitAt(site)
+	proof := implementation.binding.proof
+	site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(980_011)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	occurrence, occurrenceOK := assembly.admitAt(site)
 	entity, entityOK := operandEntityForContent(operand.content)
-	operandRow, operandOK := assembly.builder.admitOperand(occurrence, entity)
+	operandRow, operandOK := assembly.admitOperand(occurrence, entity)
 	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
 		t.Fatal("resolver attach sources")
 	}
-	point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: site})
-	pointRef, pointSemanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(90), point)
-	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
+	declaration.points = append(declaration.points, declaredPointRow{ID: receiptAssemblySemanticID(90), Site: site})
+	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 		Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operandRow,
 		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 	})
-	draft, draftOK := implementation.BeginBindingRuleRow(source)
+	draft, draftOK := implementation.beginBindingRuleRow(source)
 	part, partOK := implementation.WritePart(source, 0)
-	if !pointOK || !pointSemanticOK || !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
+	if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
 		t.Fatal("resolver attach row")
 	}
-	ruleRow, ruleRowOK := assembly.builder.issueRuleRow(draft)
-	_, ruleSemanticOK := assembly.builder.addSemanticRule(memberID, ruleRow)
-	queryRow, queryRowOK := assembly.builder.issueQueryRow(queryImplementation, equation.QueryInstance{
-		Family: schema.querySemanticAt(0), Point: pointRef.ref,
-		Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}},
-	})
-	_, querySemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(190), queryRow)
-	if !ruleRowOK || !ruleSemanticOK || !queryRowOK || !querySemanticOK {
+	ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
+	if !ruleRowOK {
 		t.Fatal("resolver attach topology")
 	}
-	_, graph, committed := assembly.Commit()
+	declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: memberID, Row: ruleRow.row})
+	declaration.queries = append(declaration.queries, declaredQueryRow{ID: receiptAssemblySemanticID(190), Row: equation.QueryInstance{
+		Family: schema.querySemanticAt(0), Point: equation.PointAt(0),
+		Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}},
+	}})
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	graph := CommittedProgramFrom(topology, issued)
 	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !committed || graph == nil || !compilationOK {
-		t.Fatalf("resolver attach compilation committed=%t graph=%t compilation=%t", committed, graph != nil, compilationOK)
+		t.Fatalf("resolver attach compilation committed=%t graph=%t compilation=%t stage=%v step=%v", committed, graph != nil, compilationOK, refusal.Stage(), refusal.Step())
 	}
 	if AttachRuleMember(compilation, implementation, memberID) {
 		t.Fatal("a rule without a resolver attached")
@@ -114,5 +115,3 @@ func receiptRuleImplementation(t *testing.T) (*RuleImplementation[uint64, uint64
 	}
 	return implementation, binding, rule
 }
-
-

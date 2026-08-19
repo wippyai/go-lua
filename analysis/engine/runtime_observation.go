@@ -7,8 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// Solver-side observation runtime; the compile-side attach surface lives in
-// receipt_observation.go.
+// Solver-side observation runtime; the construction attach surface lives in
+// runtime_program_observation.go.
 
 type receiptObservationOwner struct {
 	state     *schemaBindingState
@@ -20,7 +20,7 @@ type receiptObservationOwner struct {
 func (owner *receiptObservationOwner) valid(runtime *solverRuntime) bool {
 	return owner != nil && runtime != nil && runtime.graph != nil && owner.state != nil && owner.authority != nil && owner.schema != nil &&
 		owner.state.schema == owner.schema && owner.state.phase == schemaBindingSealed && owner.state.authority == owner.authority &&
-		runtime.receiptState == owner.state && runtime.receiptAuthority == owner.authority &&
+		runtime.bindingState == owner.state && runtime.bindingAuthority == owner.authority &&
 		owner.query < owner.schema.queryCount()
 }
 
@@ -38,15 +38,17 @@ type observationResult struct {
 }
 
 type receiptSummaryObservationRuntime[V, R any] struct {
-	id      identity.ContentID
-	owner   *receiptObservationOwner
-	point   equation.Point
-	factor  receiptQueryFactor[V]
-	unit    carrier.Unit
-	project func(OrderedCells[V]) R
-	begin   func() R
-	accum   func(R, OrderedCells[V]) (R, bool)
-	result  FrozenResult[R]
+	id       identity.ContentID
+	owner    *receiptObservationOwner
+	point    equation.Point
+	factor   receiptQueryFactor[V]
+	unit     carrier.Unit
+	project  func(OrderedCells[V]) R
+	begin    func() R
+	accum    func(R, OrderedCells[V]) (R, bool)
+	borrow   bool
+	transfer bool
+	result   FrozenResult[R]
 }
 
 // receiptExactObservationRuntime is the exact-surface counterpart to the
@@ -54,15 +56,17 @@ type receiptSummaryObservationRuntime[V, R any] struct {
 // factor read has no normalizer: the sealed ExactQueryImplementation is the
 // only authority for its factor, freezer, and projection callbacks.
 type receiptExactObservationRuntime[V, R any] struct {
-	id      identity.ContentID
-	owner   *receiptObservationOwner
-	point   equation.Point
-	factor  receiptQueryFactor[V]
-	unit    carrier.Unit
-	project func(OrderedCells[V]) R
-	begin   func() R
-	accum   func(R, OrderedCells[V]) (R, bool)
-	result  FrozenResult[R]
+	id       identity.ContentID
+	owner    *receiptObservationOwner
+	point    equation.Point
+	factor   receiptQueryFactor[V]
+	unit     carrier.Unit
+	project  func(OrderedCells[V]) R
+	begin    func() R
+	accum    func(R, OrderedCells[V]) (R, bool)
+	borrow   bool
+	transfer bool
+	result   FrozenResult[R]
 }
 
 // exactObservationWriteMember is the narrow structural proof required to turn
@@ -113,7 +117,7 @@ func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
 	if !ok || value == nil {
 		return nil, boundary, false
 	}
@@ -145,7 +149,7 @@ func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(wo
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
 	if !ok || value == nil {
 		return nil, boundary, false
 	}
@@ -183,7 +187,7 @@ func indexReceiptObservationPoints(graph *equation.Graph) (map[composition.Key]e
 // sealed factor plane. It is the observation counterpart of the member and
 // query binds an activation revision replays.
 func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
 		return nil, false
 	}
 	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
@@ -211,23 +215,23 @@ func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, i
 	}
 	factorRuntime, factorOK := compilation.byKey[projection.Factor]
 	factor, typed := factorRuntime.(receiptQueryFactor[V])
-	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.receipt.factorOrdinal, projection.Factor) {
+	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.binding.factorOrdinal, projection.Factor) {
 		return nil, false
 	}
 	unit, unitOK := factor.readUnit(surface)
 	project, _ := implementation.projector()
-	begin, accum, hasAccumulator := implementation.accumulator()
+	begin, accum, borrow, transfer, hasAccumulator := implementation.accumulator()
 	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
 		return nil, false
 	}
-	return &receiptSummaryObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+	return &receiptSummaryObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }
 
 // bindReceiptExactObservationRuntime rebuilds an exact rule observation for a
 // later activation revision using the same committed member locator and
 // sealed query implementation. It admits no caller-supplied point or factor.
 func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
 		return nil, false
 	}
 	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
@@ -255,14 +259,14 @@ func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, imp
 	}
 	factorRuntime, factorOK := compilation.byKey[projection.Factor]
 	factor, typed := factorRuntime.(receiptQueryFactor[V])
-	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.receipt.factorOrdinal, projection.Factor) {
+	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.binding.factorOrdinal, projection.Factor) {
 		return nil, false
 	}
 	unit, unitOK := factor.readUnit(surface)
 	project, _ := implementation.projector()
-	begin, accum, hasAccumulator := implementation.accumulator()
+	begin, accum, borrow, transfer, hasAccumulator := implementation.accumulator()
 	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
 		return nil, false
 	}
-	return &receiptExactObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+	return &receiptExactObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }

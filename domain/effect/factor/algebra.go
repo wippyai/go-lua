@@ -13,11 +13,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/pack"
 	internalhash "github.com/wippyai/go-lua/internal/hash"
@@ -113,7 +113,7 @@ type rootMountedBodyRef struct {
 // cannot self-attest Body/Context scalar correspondence.
 type MountedArtifact struct {
 	ModuleKey identity.ContentID
-	Artifact  *programartifact.Artifact
+	Snapshot  *ingress.Snapshot
 }
 
 type bodyRootReceipt struct {
@@ -762,27 +762,27 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 	artifactCalls := make(map[mountedCallRef]artifactCallRow)
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
-		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleKey.Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.ModuleKey.Available() {
 			return nil, false
 		}
-		if mount.Artifact.CompileKey().ProgramID() == (identity.ContentID{}) {
+		if mount.Snapshot.ProgramID() == (identity.ContentID{}) {
 			return nil, false
 		}
 		if _, duplicate := seenMounts[mount.ModuleKey]; duplicate {
 			return nil, false
 		}
 		seenMounts[mount.ModuleKey] = struct{}{}
-		programID := mount.Artifact.CompileKey().ProgramID()
-		for index := 0; index < mount.Artifact.BodyCount(); index++ {
-			body, ok := mount.Artifact.BodyAt(index)
-			if !ok || !body.Available() || !body.ID().Available() || !body.ContextID().Available() {
+		programID := mount.Snapshot.ProgramID()
+		for index := 0; index < mount.Snapshot.BodyTransportCount(); index++ {
+			body, ok := mount.Snapshot.BodyTransportAt(index)
+			if !ok || !body.BodyID().Available() || !body.ContextID().Available() {
 				return nil, false
 			}
-			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), contextID: body.ContextID()})
+			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.BodyID(), contextID: body.ContextID()})
 		}
-		for index := 0; index < mount.Artifact.CallCount(); index++ {
-			call, callOK := mount.Artifact.CallAt(index)
-			if !callOK || !call.Available() || !call.ID().Available() || !call.BodyID().Available() {
+		for index := 0; index < mount.Snapshot.CallCount(); index++ {
+			call, callOK := mount.Snapshot.CallAt(index)
+			if !callOK || !call.ID().Available() || !call.BodyID().Available() {
 				return nil, false
 			}
 			ref := mountedCallRef{moduleID: mount.ModuleKey, contextID: call.ID()}

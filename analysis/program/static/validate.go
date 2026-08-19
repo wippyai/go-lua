@@ -5,6 +5,14 @@ import (
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
+// hasFamily is the census-bounded family test the joint laws share. Each
+// family owner states its own admission; this is only the cross-vertical
+// bound the containment seal and the TypeParam ownership law both need.
+func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
+	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
+		keyspace.TermOrdinal(term) <= counts[family]
+}
+
 // containment is construction-only validation state. It is deliberately not a
 // Program representation: every concrete relation remains in its typed owner,
 // and this transient index merely proves that their combined containment is a
@@ -100,13 +108,13 @@ func localForest(component *Component) (*localContainmentProof, bool) {
 		return nil, false
 	}
 	check := newContainment(component.census, int(component.census[keyspace.FamilyTypeField]))
-	if !emitTypesContainment(component, &check) ||
-		!emitDeclarationsContainment(component, &check) ||
-		!emitSignaturesContainment(component, &check) ||
-		!emitContractsContainment(component, &check) ||
+	if !component.types.VisitContainment(check.attach, check.claimField) ||
+		!component.declarations.VisitContainment(check.attach, check.claimField) ||
+		!component.signatures.VisitContainment(check.attach, check.attachReturn) ||
+		!component.contracts.VisitContainment(check.attach, check.attachReturn) ||
 		!emitOperatorsContainment(component, &check) ||
-		!emitOperandsContainment(component, &check) ||
-		!emitPublicationsContainment(component, &check) ||
+		!component.operands.VisitContainment(check.attach) ||
+		!component.publications.VisitContainment(check.attach) ||
 		!validBoundAssertions(component, &check) {
 		return nil, false
 	}
@@ -114,6 +122,13 @@ func localForest(component *Component) (*localContainmentProof, bool) {
 		return nil, false
 	}
 	return check.proof(), true
+}
+
+func emitOperatorsContainment(component *Component, check *containment) bool {
+	if component == nil || check == nil {
+		return false
+	}
+	return component.operators.VisitContainment(check.attach)
 }
 
 // proof transfers only the immutable local parent and Field-owner rows. The
@@ -226,4 +241,101 @@ func (check *containment) parentOf(term keyspace.Term) keyspace.Term {
 		return 0
 	}
 	return parents[ordinal-1]
+}
+
+// attachReturn is the return-position edge: it is ordinary containment that
+// additionally leaves direct-return evidence for the bound-assertion law.
+func (check *containment) attachReturn(parent, child keyspace.Term) bool {
+	return check.attach(parent, child) && check.markIfAssertionReturn(parent, child)
+}
+
+func (check *containment) markIfAssertionReturn(parent, child keyspace.Term) bool {
+	if keyspace.TermFamily(child) != keyspace.FamilyTypeAsserts {
+		return true
+	}
+	return check.markDirectReturn(parent, child)
+}
+
+// interfaceMethodScopes closes the law Declarations deliberately deferred: an
+// interface method's TypeFunction must be scoped to the interface that
+// declares it. Declarations publishes the pairs and Signatures publishes the
+// scope; neither reaches into the other's storage.
+func interfaceMethodScopes(component *Component) bool {
+	return component.declarations.VisitInterfaceMethods(func(owner, signature keyspace.Term) bool {
+		scope, ok := component.signatures.Scope(signature)
+		return ok && scope == owner
+	})
+}
+
+// validBoundAssertions is a signature law rather than generic containment:
+// only a direct return may bind a parameter, and a TypeFunction binding uses
+// the binder-last formal-name rule its owner publishes.
+func validBoundAssertions(component *Component, check *containment) bool {
+	for index := 0; index < component.signatures.Count(keyspace.FamilyTypeAsserts); index++ {
+		assertion := keyspace.MakeTerm(keyspace.FamilyTypeAsserts, uint32(index+1))
+		row, ok := component.signatures.Assert(assertion)
+		if !ok {
+			return false
+		}
+		if !row.Bound {
+			continue
+		}
+		parent := check.parentOf(assertion)
+		directReturns := check.directReturns[keyspace.FamilyTypeAsserts]
+		ordinal := keyspace.TermOrdinal(assertion)
+		if parent == 0 || ordinal == 0 || uint64(ordinal) > uint64(len(directReturns)) || directReturns[ordinal-1] != parent {
+			return false
+		}
+		switch keyspace.TermFamily(parent) {
+		case keyspace.FamilyTypeFunction:
+			if !component.signatures.BindsFormal(parent, row.Param, row.Name) {
+				return false
+			}
+		case keyspace.FamilyFunction:
+			owner := keyspace.TermOrdinal(parent)
+			if owner == 0 || int(owner) > component.contracts.Count(keyspace.FamilyFunction) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// completeTypeParamOwnership is the single exact owner/order law for every
+// TypeParam. Each row is claimed once by the one authored owner relation;
+// aliases, static type functions, and Flow functions cannot each grow a
+// slightly different validator. Declarations owns the rows and publishes the
+// alias claims; this owner joins them with the two signature-side claimants.
+func completeTypeParamOwnership(component *Component, counts [keyspace.FamilyCount]uint32) bool {
+	seen := make([]bool, component.declarations.Count(keyspace.FamilyTypeParam))
+	claimOne := func(owner, param keyspace.Term) bool {
+		if !hasFamily(counts, param, keyspace.FamilyTypeParam) {
+			return false
+		}
+		row, ok := component.declarations.TypeParamRow(param)
+		ordinal := keyspace.TermOrdinal(param) - 1
+		if !ok || seen[ordinal] || row.Owner != owner {
+			return false
+		}
+		seen[ordinal] = true
+		return true
+	}
+	if !component.declarations.VisitAliasTypeParams(claimOne) {
+		return false
+	}
+	if !component.signatures.VisitFunctionTypeParams(claimOne) {
+		return false
+	}
+	if !component.contracts.VisitFunctionTypeParams(claimOne) {
+		return false
+	}
+	for index, claimed := range seen {
+		row, ok := component.declarations.TypeParamRow(keyspace.MakeTerm(keyspace.FamilyTypeParam, uint32(index+1)))
+		if !claimed || !ok || !staticrole.TypeParameterOwner(counts, row.Owner) {
+			return false
+		}
+	}
+	return true
 }

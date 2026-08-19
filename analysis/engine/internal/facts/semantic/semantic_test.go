@@ -835,6 +835,56 @@ func TestPartitionKeyPreservesStoredAndAbsentTerminals(t *testing.T) {
 	}
 }
 
+func TestJoinUnderKeyFoldsDirectlyAndPreservesPresence(t *testing.T) {
+	fixture := newSemanticFixture(t)
+	domain, ok := New(fixture.diagram, fixture.values, Operations[uint8]{
+		Default:     5,
+		Equal:       func(left, right uint8) bool { return left == right },
+		Fingerprint: func(value uint8) uint64 { return uint64(value) },
+		Join:        max,
+		Widen:       max,
+		LessOrEq:    func(left, right uint8) bool { return left <= right },
+	})
+	if !ok {
+		t.Fatal("domain")
+	}
+	root := fixture.root(t,
+		struct {
+			when  support.Mask
+			value uint8
+		}{fixture.all, 5},
+		struct {
+			when  support.Mask
+			value uint8
+		}{fixture.atom, 10},
+	)
+	input, ok := domain.Plane(root)
+	if !ok {
+		t.Fatal("plane")
+	}
+	scratch := diagram.NewSoleScratch[semanticKey, uint8]()
+	if value, present, valid := domain.JoinUnderKey(input, 7, fixture.all, scratch); !valid || !present || value != 10 {
+		t.Fatalf("joined key = %d/%t/%t, want 10/true/true", value, present, valid)
+	}
+	if value, present, valid := domain.JoinUnderKey(input, 7, fixture.atom, scratch); !valid || !present || value != 10 {
+		t.Fatalf("stored branch = %d/%t/%t, want 10/true/true", value, present, valid)
+	}
+	if value, present, valid := domain.JoinUnderKey(input, 7, fixture.notAtom, scratch); !valid || !present || value != 5 {
+		t.Fatalf("stored Default branch = %d/%t/%t, want 5/true/true", value, present, valid)
+	}
+	empty, ok := domain.Empty()
+	if !ok {
+		t.Fatal("empty plane")
+	}
+	if value, present, valid := domain.JoinUnderKey(empty, 7, fixture.all, scratch); !valid || present || value != 5 {
+		t.Fatalf("absent key = %d/%t/%t, want 5/false/true", value, present, valid)
+	}
+	scratch.SetCheckpoint(func() bool { return false })
+	if _, _, valid := domain.JoinUnderKey(input, 7, fixture.all, scratch); valid {
+		t.Fatal("cancelled direct fold was accepted")
+	}
+}
+
 func TestPartitionRetainsOneJointSymbolicTerminalTuple(t *testing.T) {
 	fixture := newSemanticFixture(t)
 	domain, ok := New(fixture.diagram, fixture.values, Operations[uint8]{

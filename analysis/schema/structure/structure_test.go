@@ -67,7 +67,7 @@ func mustEntry(t *testing.T, spec Spec) *Entry {
 // structural arms, the three bracket events, the seven body outcomes, the eight
 // Lua runtime families, and the ten symbolic expression forms that the analyzer
 // today spells once per consumer, together with the three publication
-// vocabularies the diagnostic surface names members of and the four occurrence
+// vocabularies the diagnostic surface names members of and the five occurrence
 // geometry vocabularies the rule surface declares its subscriptions against.
 func canonicalVocabulary(t *testing.T) []*Entry {
 	t.Helper()
@@ -129,6 +129,9 @@ func canonicalContributions() [][]Spec {
 	issuanceInputs := []member{
 		{"input/none", "none", true}, {"input/entry", "entry", true},
 	}
+	issuanceRequirements := []member{
+		{"requirement/unrestricted", "unrestricted", true}, {"requirement/narrowed", "narrowed", true},
+	}
 	issuanceStages := []member{
 		{"stage/base", "base", true}, {"stage/local", "local", true},
 	}
@@ -167,6 +170,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryOccurrenceKind, occurrences),
 		authored(CategoryIssuanceForm, issuanceForms),
 		authored(CategoryIssuanceInput, issuanceInputs),
+		authored(CategoryIssuanceRequirement, issuanceRequirements),
 		authored(CategoryIssuanceStage, issuanceStages),
 		authored(CategorySemanticRole, semanticRoles),
 	}

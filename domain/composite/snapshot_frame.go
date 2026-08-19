@@ -67,22 +67,36 @@ func sealPublication() {
 		}
 		slots := make(map[schema.Key]uint32)
 		var columns []publishedColumn
-		for _, entry := range registry.axes {
-			coverage := entry.Coverage()
-			for index := 0; index < entry.OutputCount(); index++ {
-				output, ok := entry.OutputAt(index)
-				if !ok || !coverage.Available() {
-					return
+		// Snapshot slots are dense from zero and independent of declaration
+		// position. Engine-published outputs occupy the leading prefix so a
+		// Link-lifetime publication can seal without filling solve-lifetime
+		// factor columns. Bound axis outputs follow; query result columns
+		// continue the same range.
+		appendOutputs := func(enginePublished bool) bool {
+			for _, entry := range registry.axes {
+				if (entry.Storage() == axis.StorageEngine) != enginePublished {
+					continue
 				}
-				slot := uint32(len(columns))
-				slots[output.Key] = slot
-				columns = append(columns, publishedColumn{
-					Output:   output.Key,
-					Writer:   output.Writer,
-					Slot:     slot,
-					Coverage: coverage,
-				})
+				coverage := entry.Coverage()
+				for index := 0; index < entry.OutputCount(); index++ {
+					output, ok := entry.OutputAt(index)
+					if !ok || !coverage.Available() {
+						return false
+					}
+					slot := uint32(len(columns))
+					slots[output.Key] = slot
+					columns = append(columns, publishedColumn{
+						Output:   output.Key,
+						Writer:   output.Writer,
+						Slot:     slot,
+						Coverage: coverage,
+					})
+				}
 			}
+			return true
+		}
+		if !appendOutputs(true) || !appendOutputs(false) {
+			return
 		}
 		// The query surface is read from the sealed table rather than from an
 		// inventory kept beside it, so the families the projection answers are

@@ -44,8 +44,8 @@ type (
 // the column is written once, and shared because readers borrow immutable
 // Snapshot state concurrently. Its key space is sparse: EntryID values are
 // content identities, not dense ordinals.
-func AxisEntry[A any]() axis.Spec[A, *SchemaFragment, *HotAxis, uint64] {
-	return axis.Spec[A, *SchemaFragment, *HotAxis, uint64]{
+func AxisEntry[A any]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:         AxisKey,
 		Storage:     axis.StorageEngine,
 		Cardinality: axis.CardinalitySparse,

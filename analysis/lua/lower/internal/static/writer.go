@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower/internal/lexical"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -100,7 +100,7 @@ func (w *Writer) AppendInterfaceField(term keyspace.Term) error {
 		return fmt.Errorf("lualower: invalid interface field child")
 	}
 	w.interfaceMembers = append(w.interfaceMembers, assembly.StaticInterfaceMember{
-		Kind: programstatic.InterfaceField, Field: term,
+		Kind: staticdecl.InterfaceField, Field: term,
 	})
 	return nil
 }
@@ -110,7 +110,7 @@ func (w *Writer) AppendInterfaceMethod(name string, namePosition ast.Position, s
 		return fmt.Errorf("lualower: invalid interface method child")
 	}
 	w.interfaceMembers = append(w.interfaceMembers, assembly.StaticInterfaceMember{
-		Kind:      programstatic.InterfaceMethod,
+		Kind:      staticdecl.InterfaceMethod,
 		Name:      name,
 		Span:      w.nameSpan(namePosition),
 		Signature: signature,

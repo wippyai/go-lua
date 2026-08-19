@@ -213,7 +213,7 @@ func (work *Work) rawCoverageAdditive(old, next contributionCoverage) bool {
 		return false
 	}
 	for position := 0; position < work.composition.Count(); position++ {
-		if !slotCoverageContains(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
+		if !work.slotCoverageContains(next.slot(shape.Slot(position)), old.slot(shape.Slot(position))) {
 			return false
 		}
 	}
@@ -339,10 +339,10 @@ func (work *Work) AddRuleContribution(rhs PointRHS, rule RuleContribution) (Poin
 	if !work.admittedPointRHS(rhs) || !work.admittedRuleContribution(rule) || !work.liveFor(rhs.point.state, rule.value.state) {
 		return PointRHS{}, false
 	}
-	if work.closedInitialPoint(rhs.point) && rhs.point.state.support.Entails(rule.value.state.support) {
+	if work.closedInitialPoint(rhs.point) && work.entailsSupport(rhs.point.state.support, rule.value.state.support) {
 		return work.PointRHSFromRuleContribution(rule)
 	}
-	if rule.value.state.support.Entails(rhs.point.state.support) {
+	if work.entailsSupport(rule.value.state.support, rhs.point.state.support) {
 		return work.OverlayRuleContribution(rhs, rule)
 	}
 	return work.JoinRuleContribution(rhs, rule)
@@ -397,7 +397,7 @@ func (work *Work) OverlayRuleContribution(rhs PointRHS, rule RuleContribution) (
 // out-of-support root branches without making them semantic after support
 // growth.
 func (work *Work) overlayPointSurface(rhs PointRHS, rightState State, rightCoverage contributionCoverage) (PointRHS, bool) {
-	if !work.admittedPointRHS(rhs) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(rhs.point.state, rightState) || !rightState.support.Entails(rhs.point.state.support) {
+	if !work.admittedPointRHS(rhs) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(rhs.point.state, rightState) || !work.entailsSupport(rightState.support, rhs.point.state.support) {
 		return PointRHS{}, false
 	}
 	// Coverage is the authoritative lifted presence plane. A contained right
@@ -536,7 +536,7 @@ func (work *Work) MergeSelectedPointState(kind MergeKind, current PointState, se
 	if !work.admittedPointState(current) || !work.admittedPointRHS(selectedRight) || !work.admittedPointRHS(exactRight) {
 		return PointState{}, ChangeSet{}, false
 	}
-	state, changes, ok := work.mergeSelectedContributionSurface(kind, current.state, current.coverage, selectedRight.point.state, selectedRight.point.coverage, exactRight.point.state, exactRight.point.coverage, selected)
+	state, changes, ok := work.mergeSelectedContributionSurface(kind, current.state, current.coverage, selectedRight.point.state, selectedRight.point.coverage, exactRight.point.state, exactRight.point.coverage, exactRight.point.closed, selected)
 	if !ok {
 		return PointState{}, ChangeSet{}, false
 	}

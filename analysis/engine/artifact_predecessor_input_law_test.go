@@ -9,11 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func TestPredecessorRuleInputForgetsDecisionsAbsentAtTarget(t *testing.T) {
+func TestPredecessorRuleInputStartsAtGuardedRouteDestination(t *testing.T) {
 	shared := predecessorLawKey(1)
 	extra := predecessorLawKey(2)
 	fromID := predecessorLawContent(3)
 	toID := predecessorLawContent(4)
+	stageID := predecessorLawContent(12)
 	sharedDecision, sharedOK := equation.NewDecision(shared)
 	extraDecision, extraOK := equation.NewDecision(extra)
 	fromScope, fromScopeOK := equation.NewScope(sharedDecision, extraDecision)
@@ -24,26 +25,28 @@ func TestPredecessorRuleInputForgetsDecisionsAbsentAtTarget(t *testing.T) {
 	batch := equation.NewBatch()
 	fromSite, fromSiteOK := batch.AdmitSite(predecessorLawKey(5), fromScope, equation.FalseExpr(), equation.InitAbsent)
 	toSite, toSiteOK := batch.AdmitSite(predecessorLawKey(6), toScope, equation.FalseExpr(), equation.InitAbsent)
-	if !fromSiteOK || !toSiteOK || !batch.Seal() {
+	stageSite, stageSiteOK := batch.AdmitSite(predecessorLawKey(12), toScope, equation.FalseExpr(), equation.InitAbsent)
+	if !fromSiteOK || !toSiteOK || !stageSiteOK || !batch.Seal() {
 		t.Fatal("source sites")
 	}
 
 	sharedID := predecessorLawContent(7)
 	extraID := predecessorLawContent(8)
-	topology := &artifactReceiptTopology{
-		sites: map[identity.ContentID]equation.Site{fromID: fromSite, toID: toSite},
+	topology := &mountedArtifactRows{
+		sites: map[identity.ContentID]equation.Site{fromID: fromSite, toID: toSite, stageID: stageSite},
 		pointMeta: map[identity.ContentID]artifactPointMetadata{
-			fromID: {decisions: []identity.ContentID{sharedID, extraID}},
-			toID:   {decisions: []identity.ContentID{sharedID}},
+			fromID:  {decisions: []identity.ContentID{sharedID, extraID}},
+			toID:    {decisions: []identity.ContentID{sharedID}},
+			stageID: {decisions: []identity.ContentID{sharedID}},
 		},
 	}
 	edge := artifactEnvironmentRow{
 		id: predecessorLawContent(9), from: fromID, to: toID, route: predecessorLawContent(10),
 		arm: rows.ArtifactStructuralArmTrue,
 	}
-	input, ok := artifactPredecessorRuleInput(topology, edge, fromSite, toSite, toID, predecessorLawKey(11))
+	input, ok := artifactPredecessorRuleInput(topology, edge, toSite, stageSite, stageID, predecessorLawKey(11))
 	if !ok || !input.Available() {
-		t.Fatal("predecessor input must forget a source decision that is not live at the target")
+		t.Fatal("predecessor input must begin at the already-guarded route destination")
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	staticowner "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -125,7 +125,7 @@ func witnessGenericFunctionType(t *testing.T) {
 		t.Fatal("Program has no interface declaration")
 	}
 	member, ok := interfaces.MemberAt(iface, 0)
-	if !ok || member.Kind != staticowner.InterfaceMethod || member.Signature == 0 {
+	if !ok || member.Kind != staticdecl.InterfaceMethod || member.Signature == 0 {
 		t.Fatalf("Program interface member = %#v/%v", member, ok)
 	}
 	if count, ok := p.Static().Signatures().TypeFunctions().TypeParamCount(member.Signature); !ok || count != 1 {
@@ -171,7 +171,7 @@ func witnessOptionalInterfaceField(t *testing.T) {
 		t.Fatal("Program has no interface declaration")
 	}
 	member, ok := interfaces.MemberAt(iface, 0)
-	if !ok || member.Kind != staticowner.InterfaceField || member.Field == 0 {
+	if !ok || member.Kind != staticdecl.InterfaceField || member.Field == 0 {
 		t.Fatalf("Program optional field member = %#v/%v", member, ok)
 	}
 	_, _, optional, ok := p.Static().Types().Fields().Get(member.Field)

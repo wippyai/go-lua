@@ -6,6 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestProveStaticMarksCallTypeSubtreeOnly(t *testing.T) {
@@ -38,12 +41,12 @@ func TestProveStaticMarksCallTypeSubtreeOnly(t *testing.T) {
 			Calls:      []authored.Call{{Owner: body, Callee: nilValue, Actuals: values}},
 		},
 		static: static.Input{
-			Types: static.TypesInput{
-				Primitive: []static.Primitive{{Kind: static.PrimitiveAny}, {Kind: static.PrimitiveString}},
-				Optional:  []static.Optional{{Inner: primitiveChild}},
+			Types: statictypes.Input{
+				Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}, {Kind: statictypes.PrimitiveString}},
+				Optional:  []statictypes.Optional{{Inner: primitiveChild}},
 			},
-			Contracts: static.ContractsInput{Call: []static.CallContract{{TypeArguments: []keyspace.Term{optional}}}},
-			Operands:  static.OperandsInput{TypeValue: []static.TypeValueTarget{{Target: primitivePeer}}},
+			Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{TypeArguments: []keyspace.Term{optional}}}},
+			Operands:  staticoperands.Input{TypeValue: []staticoperands.TypeValueTarget{{Target: primitivePeer}}},
 		},
 		module: emptyModule(t),
 	})

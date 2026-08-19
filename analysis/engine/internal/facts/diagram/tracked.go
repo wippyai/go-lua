@@ -77,12 +77,7 @@ func (builder *Builder[F, K, V]) TrackedTransform(base, current Value[V], when, 
 			if !lowOK || !highOK {
 				return Value[V]{}, support.Mask{}, false
 			}
-			output := builder.decision(frame.atom, low.value, high.value)
-			if sameDecision(frame.triple.current, frame.atom, low.value, high.value) {
-				output = frame.triple.current
-			} else if sameDecision(frame.triple.base, frame.atom, low.value, high.value) {
-				output = frame.triple.base
-			}
+			output := builder.decisionOrExisting(frame.atom, low.value, high.value, frame.triple.current, frame.triple.base)
 			changed, ok := regions.Decision(frame.atom, low.changed, high.changed)
 			if !ok {
 				return Value[V]{}, support.Mask{}, false

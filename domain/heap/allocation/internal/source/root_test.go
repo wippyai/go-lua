@@ -1,6 +1,7 @@
 package source_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
@@ -161,7 +162,11 @@ func TestClosedRevalidateForFencesExactSchemaInstances(t *testing.T) {
 		t.Fatal("exact source schemas did not revalidate")
 	}
 	otherHeap, otherHeapFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked))
-	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, sourceValueMounts(t, linked))
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, sourceValueMounts(t, linked), structural)
 	var otherAllocation heapdomain.Key
 	for index := 0; index < otherHeap.KeyCount(); index++ {
 		candidate, candidateOK := otherHeap.KeyAt(index)
@@ -403,7 +408,11 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 		t.Fatal(err)
 	}
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked))
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, sourceValueMounts(t, linked))
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, sourceValueMounts(t, linked), structural)
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("Heap schema")
 	}
@@ -447,8 +456,8 @@ func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artifac
 			t.Fatalf("source artifact: %v", failure)
 		}
 		var heapOK, valueOK bool
-		heapMounts[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		valueMounts[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
+		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !heapOK || !valueOK {
 			t.Fatal("source artifact mount receipt")
 		}

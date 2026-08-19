@@ -274,7 +274,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 			return nil, nil, false
 		}
 		switch descriptor.Kind() {
-		case flowkind.FieldKey:
+		case uint8(flowkind.FieldKey):
 			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
@@ -297,7 +297,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 			if !dynamicOK || !coordinateOK || !appendCoordinate(coordinate) {
 				return nil, nil, false
 			}
-		case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
+		case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
 			// FieldExact nil/NaN is represented by a zero normalized key. It is
 			// non-storable and must not fall through to the dynamic branch.
 			normalized, normalizedOK := descriptor.NormalizedKey()
@@ -342,12 +342,12 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		kind := KeyExact
 		var exact heap.ExactKey
 		switch descriptor.Kind() {
-		case flowkind.FieldKey:
+		case uint8(flowkind.FieldKey):
 			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
 			kind = KeyDynamic
-		case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
+		case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
 			// A zero exact key is the non-storable nil/NaN outcome, never a
 			// dynamic selector.
 			normalized, normalizedOK := descriptor.NormalizedKey()

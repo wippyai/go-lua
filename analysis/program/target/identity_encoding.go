@@ -14,6 +14,55 @@ func encodeInput(w *framing.Writer, value vocabulary.InputSource) error {
 	return w.Uint(uint64(value.Ordinal))
 }
 
+// encodeBehavior writes the complete neutral operation behavior descriptor.
+// Relation identities are already sealed schema identities; this codec merely
+// carries their bytes and never decodes or classifies them.
+func (c *Contract) encodeBehavior(w *framing.Writer, op vocabulary.Operation) error {
+	if err := w.Count(uint64(c.BehaviorResultCount(op))); err != nil {
+		return err
+	}
+	for index := 0; index < c.BehaviorResultCount(op); index++ {
+		outcome, result, source, relation, ok := c.BehaviorResultAt(op, index)
+		if !ok || !relation.Available() {
+			return errors.New("target: malformed behavior result")
+		}
+		if err := w.Uint(uint64(outcome)); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(result)); err != nil {
+			return err
+		}
+		if err := encodeInput(w, source); err != nil {
+			return err
+		}
+		if err := w.Bytes(relation[:]); err != nil {
+			return err
+		}
+	}
+	if err := w.Count(uint64(c.BehaviorPredicateCount(op))); err != nil {
+		return err
+	}
+	for index := 0; index < c.BehaviorPredicateCount(op); index++ {
+		outcome, result, subject, relation, ok := c.BehaviorPredicateAt(op, index)
+		if !ok || !relation.Available() {
+			return errors.New("target: malformed behavior predicate")
+		}
+		if err := w.Uint(uint64(outcome)); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(result)); err != nil {
+			return err
+		}
+		if err := encodeInput(w, subject); err != nil {
+			return err
+		}
+		if err := w.Bytes(relation[:]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c *Contract) encodeBindings(w *framing.Writer, op vocabulary.Operation) error {
 	count := c.BindingCount(op)
 	if err := w.Count(uint64(count)); err != nil {
@@ -96,6 +145,9 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 		if err := c.encodePortableOutcome(w, op, int(i)); err != nil {
 			return err
 		}
+	}
+	if err := c.encodeBehavior(w, op); err != nil {
+		return err
 	}
 	if err := w.Count(uint64(c.suspensionCount(op))); err != nil {
 		return err
@@ -314,10 +366,11 @@ func (c *Contract) encodePortableSubedge(w *framing.Writer, owner vocabulary.Ope
 			return err
 		}
 	case vocabulary.SubedgeCalleeCapturedInitialRead:
-		if row.readRoot == 0 || int(row.readRoot) > len(c.initialRoots) {
+		identity, ok := c.InitialRootIdentity(row.readRoot)
+		if !ok {
 			return errors.New("target: malformed subedge root")
 		}
-		if err := w.String(c.initialRoots[row.readRoot-1].identity); err != nil {
+		if err := w.String(identity); err != nil {
 			return err
 		}
 		if err := encodeExactKey(w, c, row.readKey); err != nil {

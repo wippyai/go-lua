@@ -5,6 +5,11 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCheckCanonicalEmptyInput(t *testing.T) {
@@ -39,18 +44,18 @@ func TestStaticCheckCanonicalDenseInputStreams(t *testing.T) {
 	)
 	input := static.Input{
 		Counts: counts,
-		Types:  static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-		References: static.ReferencesInput{TypeRef: []static.TypeRef{{
-			Resolution: static.TypeRefCanonicalPath, Source: []keyspace.Key{1}, Canonical: []keyspace.Key{1},
+		Types:  statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+		References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
+			Resolution: staticrefs.CanonicalPath, Source: []keyspace.Key{1}, Canonical: []keyspace.Key{1},
 		}}},
-		Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{
+		Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{
 			Scope: keyspace.MakeTerm(keyspace.FamilyCell, 1), Operand: keyspace.MakeTerm(keyspace.FamilyRead, 1),
 		}}},
-		Operands: static.OperandsInput{Annotation: []static.Annotation{{
+		Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{{
 			Scope: keyspace.MakeTerm(keyspace.FamilyCell, 1), Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1),
 			Name: 1, Values: keyspace.MakeTerm(keyspace.FamilyValues, 1),
 		}}},
-		Publications: static.PublicationsInput{Type: []static.Publication{{
+		Publications: staticpubs.Input{Type: []staticpubs.Publication{{
 			Assign: keyspace.MakeTerm(keyspace.FamilyAssign, 1), Pair: 0, Target: keyspace.MakeTerm(keyspace.FamilyTypeRef, 1),
 		}}},
 	}

@@ -85,7 +85,7 @@ func TestDirectAllocationMembershipAttachmentObservationLaw(t *testing.T) {
 	if _, ok := attachment.ContentID(); ok {
 		t.Fatal("attachment published an identity without an authenticated observation handle")
 	}
-	if attachment.observation.MatchesID(attachment.id) {
+	if attachment.observation.SealedAs(attachment.id) {
 		t.Fatal("absent observation handle authenticated an attachment identity")
 	}
 	if _, ok := AttachSelectedDirectAllocationMembership(nil, nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, attachment.call, attachment.width); ok {

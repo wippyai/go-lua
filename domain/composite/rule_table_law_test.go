@@ -22,6 +22,7 @@ import (
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
 )
@@ -46,6 +47,7 @@ func probeRuleEntries() []probeRuleEntry {
 	_, effectOpaqueOK := rule.New(callsite.OpaqueEntry[principals, authorities]())
 	_, effectBodyOK := rule.New(callsite.BodyEntry[principals, authorities]())
 	_, callActivationOK := rule.New(callactivation.RuleEntry[principals, authorities]())
+	_, valueRuntimeKindOK := rule.New(valueruntimekind.RuleEntry[principals, authorities]())
 	_, valueBootstrapOK := rule.New(valuebootstrap.RuleEntry[principals, authorities]())
 	_, heapBootstrapOK := rule.New(heapbootstrap.RuleEntry[principals, authorities]())
 	_, valueTransferOK := rule.New(valuetransfer.RuleEntry[principals, authorities]())
@@ -67,6 +69,7 @@ func probeRuleEntries() []probeRuleEntry {
 		row("effect-opaque", effectOpaqueOK),
 		row("effect-body", effectBodyOK),
 		row("call-activation", callActivationOK),
+		row("value-runtime-kind-call", valueRuntimeKindOK),
 		row("value-bootstrap", valueBootstrapOK),
 		row("heap-bootstrap", heapBootstrapOK),
 		row("value-transfer", valueTransferOK),

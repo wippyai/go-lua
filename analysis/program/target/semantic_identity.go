@@ -17,16 +17,14 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Version 7 adds explicit publication-effect descriptor bytes to semantic
-// effect identities. Earlier endpoint identities are deliberately distinct.
+// Version 8 adds opaque operation behavior rows to semantic operation
+// identities; version 7 added publication-effect descriptor bytes. Earlier
+// endpoint identities are deliberately distinct.
 
-const endpointIdentityCodecVersion uint64 = 7
+const endpointIdentityCodecVersion uint64 = 8
 
 const (
-	semanticOperationAnchor uint64 = iota + 80
-	semanticProducedAnchor
-	semanticOpaqueAnchor
-	semanticCallbackSelector
+	semanticCallbackSelector uint64 = iota + 83
 	semanticOutcomeSelector
 	semanticOperation
 	semanticOutcome
@@ -70,10 +68,10 @@ func (c *Contract) semanticID(kind uint64, encode func(*framing.Writer) error) (
 }
 
 func (c *Contract) anchor(op vocabulary.Operation) (identity.ContentID, bool) {
-	if c == nil || op == 0 || int(op) > len(c.operationAnchors) {
+	if c == nil || op == 0 {
 		return identity.ContentID{}, false
 	}
-	return c.operationAnchors[op-1], true
+	return c.operationCore.Anchor(op)
 }
 
 func (c *Contract) callbackSelector(id vocabulary.CallbackID) (identity.ContentID, bool) {
@@ -175,7 +173,6 @@ func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) 
 // dense immutable result columns; all sorting/graph validation belongs to the
 // normal Target Seal phase above.
 func (c *Contract) sealSemanticIdentities() error {
-	c.operationAnchors = make([]identity.ContentID, len(c.operations))
 	c.callbackSelectors = make([]identity.ContentID, len(c.callbacks))
 	c.outcomeSelectors = make([]identity.ContentID, len(c.outcomes))
 	outcomeOwners := make([]vocabulary.Operation, len(c.outcomes))
@@ -235,81 +232,6 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.outcomeSelectors[i] = id
-	}
-
-	// The normal produced-anchor validation has already given this Contract a
-	// topological canonical table order: every parent precedes its produced
-	// child.  Build one temporary reverse edge table, then consume it once in
-	// that order.  There is no retry cap, graph search, or repeated full scan.
-	type producedParent struct {
-		parent  int
-		outcome int
-		result  uint32
-		found   bool
-	}
-	parents := make([]producedParent, len(c.operations))
-	for parentIndex, parent := range c.operations {
-		for outcome := parent.outcomes.start; outcome < parent.outcomes.end; outcome++ {
-			for produced := c.outcomes[outcome].produced.start; produced < c.outcomes[outcome].produced.end; produced++ {
-				child := int(c.produced[produced].target) - 1
-				if child < 0 || child >= len(c.operations) {
-					return errors.New("target: malformed produced anchor")
-				}
-				if c.operations[child].bindings.len() != 0 {
-					continue
-				}
-				if parents[child].found {
-					return errors.New("target: duplicate semantic produced parent")
-				}
-				parents[child] = producedParent{parent: parentIndex, outcome: int(outcome), result: c.produced[produced].result, found: true}
-			}
-		}
-	}
-	for i, row := range c.operations {
-		op := vocabulary.Operation(i + 1)
-		if op == c.opaque {
-			id, err := c.semanticID(semanticOpaqueAnchor, func(w *framing.Writer) error { return w.Uint(1) })
-			if err != nil {
-				return err
-			}
-			c.operationAnchors[i] = id
-			continue
-		}
-		if row.bindings.len() != 0 {
-			id, err := c.semanticID(semanticOperationAnchor, func(w *framing.Writer) error { return c.encodeBindings(w, op) })
-			if err != nil {
-				return err
-			}
-			c.operationAnchors[i] = id
-			continue
-		}
-		parent := parents[i]
-		if !parent.found || parent.parent >= i || parent.outcome < 0 || parent.outcome >= len(c.outcomeSelectors) {
-			return errors.New("target: malformed produced anchor order")
-		}
-		parentAnchor := c.operationAnchors[parent.parent]
-		if parentAnchor == (identity.ContentID{}) {
-			return errors.New("target: unresolved semantic produced parent")
-		}
-		selector := c.outcomeSelectors[parent.outcome]
-		id, err := c.semanticID(semanticProducedAnchor, func(w *framing.Writer) error {
-			if err := w.Bytes(parentAnchor[:]); err != nil {
-				return err
-			}
-			if err := w.Bytes(selector[:]); err != nil {
-				return err
-			}
-			return w.Uint(uint64(parent.result))
-		})
-		if err != nil {
-			return err
-		}
-		c.operationAnchors[i] = id
-	}
-	for i := range c.operationAnchors {
-		if c.operationAnchors[i] == (identity.ContentID{}) {
-			return errors.New("target: unresolved semantic operation anchor")
-		}
 	}
 
 	for i, row := range c.callbacks {
@@ -421,9 +343,12 @@ func (c *Contract) sealSemanticIdentities() error {
 
 	for i := range c.operations {
 		op := vocabulary.Operation(i + 1)
+		anchor, anchorOK := c.anchor(op)
+		if !anchorOK {
+			return errors.New("target: missing operation anchor")
+		}
 		id, err := c.semanticID(semanticOperation, func(w *framing.Writer) error {
-			a := c.operationAnchors[i]
-			if err := w.Bytes(a[:]); err != nil {
+			if err := w.Bytes(anchor[:]); err != nil {
 				return err
 			}
 			return c.encodePortableOperation(w, op)

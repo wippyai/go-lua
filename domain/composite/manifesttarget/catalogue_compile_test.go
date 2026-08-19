@@ -20,7 +20,7 @@ func TestCompileCatalogueStandardLibraryContentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "5d4ccc000e92f7f47e1c66ffceac58ec82f2c2ef551173f81a5f939b730e476b"
+	const want = "880a480bb89838a325e5a96b601f60a46c59efb64f9878f99075fead0f866d9e"
 	if got := contract.ContentID().String(); got != want {
 		t.Fatalf("standard-library Target identity = %s, want %s", got, want)
 	}

@@ -13,10 +13,11 @@ import (
 // are members of the structural vocabulary, so a row names them by reference
 // and the sealed table resolves them.
 const (
-	diagnosticFamilyAdvice = schema.Key("family/advice")
-	diagnosticFamilyType   = schema.Key("family/type")
-	diagnosticFamilyValue  = schema.Key("family/value")
-	diagnosticFamilyLint   = schema.Key("family/lint")
+	diagnosticFamilyAdvice  = schema.Key("family/advice")
+	diagnosticFamilyType    = schema.Key("family/type")
+	diagnosticFamilyValue   = schema.Key("family/value")
+	diagnosticFamilyLint    = schema.Key("family/lint")
+	diagnosticFamilyChannel = schema.Key("family/channel")
 )
 
 // diagnosticVocabulary is the diagnostic surface's contribution to the
@@ -36,6 +37,7 @@ func diagnosticVocabulary() []structure.Spec {
 		structure.Spec{Key: diagnosticFamilyType, Category: structure.CategoryDiagnosticFamily, Spelling: "type", Accepted: true},
 		structure.Spec{Key: diagnosticFamilyValue, Category: structure.CategoryDiagnosticFamily, Spelling: "value", Accepted: true},
 		structure.Spec{Key: diagnosticFamilyLint, Category: structure.CategoryDiagnosticFamily, Spelling: "lint", Accepted: true},
+		structure.Spec{Key: diagnosticFamilyChannel, Category: structure.CategoryDiagnosticFamily, Spelling: "channel", Accepted: true},
 
 		structure.Spec{Key: "severity/error", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityError.Ordinal(), Spelling: "error", Accepted: true},
 		structure.Spec{Key: "severity/warning", Category: structure.CategoryDiagnosticSeverity, Ordinal: diagnostic.SeverityWarning.Ordinal(), Spelling: "warning", Accepted: true},
@@ -110,7 +112,7 @@ func diagnosticEvidence(anchor diagnostic.Anchor, detail diagnostic.Text) diagno
 // same sealed table as every other row's, so a contributed row is admitted on
 // exactly the terms the authored ones are.
 func diagnosticSpecs() []diagnostic.Spec {
-	return append(analyzerDiagnosticSpecs(), typedomain.DiagnosticSpec(), typedomain.DiagnosticCallArgumentSpec())
+	return append(analyzerDiagnosticSpecs(), typedomain.DiagnosticSpec(), typedomain.DiagnosticCallArgumentSpec(), typedomain.DiagnosticChannelSelectExhaustivenessSpec())
 }
 
 func analyzerDiagnosticSpecs() []diagnostic.Spec {

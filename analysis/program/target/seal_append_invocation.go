@@ -2,28 +2,30 @@ package target
 
 import (
 	"errors"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 )
 
-func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values) ([]vocabulary.CallbackID, indexRange, error) {
+func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, indexRange, error) {
 	rangeOut, err := checkedStoredRange("callback table", len(c.callbacks), len(input))
 	if err != nil {
 		return nil, indexRange{}, err
 	}
-	ids := make([]vocabulary.CallbackID, len(input))
+	if len(issued) != len(input) {
+		return nil, indexRange{}, errors.New("target: operation callback geometry mismatch")
+	}
+	ids := append([]vocabulary.CallbackID(nil), issued...)
 	for index := range input {
 		callback := &input[index]
-		handle, handleErr := checkedStoredHandle("callback table", len(c.callbacks))
-		if handleErr != nil {
-			return nil, indexRange{}, handleErr
-		}
 		effects, effectErr := c.appendEffects(effectOwnerCallback, callback.effects.effects)
 		if effectErr != nil {
 			return nil, indexRange{}, effectErr
 		}
-		id := vocabulary.CallbackID(handle)
+		id := issued[index]
+		if id == 0 {
+			return nil, indexRange{}, errors.New("target: operation callback geometry has zero handle")
+		}
 		ids[callback.source] = id
 		callback.sealed = id
 		arguments, valuesErr := lookupDraftValues(values, callback.arguments)
@@ -159,7 +161,7 @@ func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {
 	return nil
 }
 
-func (c *Contract) appendSubedges(owner vocabulary.Operation, input []subedgeDraft, callbacks []vocabulary.CallbackID, values map[string]vocabulary.Values, keys map[keyspace.LiteralValue]vocabulary.ExactKey) (indexRange, error) {
+func (c *Contract) appendSubedges(owner vocabulary.Operation, input []subedgeDraft, callbacks []vocabulary.CallbackID, values map[string]vocabulary.Values, keys exactkey.Table) (indexRange, error) {
 	rangeOut, err := checkedStoredRange("subedge table", len(c.subedges), len(input))
 	if err != nil {
 		return indexRange{}, err

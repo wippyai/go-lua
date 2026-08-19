@@ -568,14 +568,14 @@ func RuleImplementationAt[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding,
 		return nil, false
 	}
 	proof, ok := newSchemaRuleRuntimeProof(state, state.authority, ordinal)
-	if !ok || proof == nil || !output.receipt.valid() {
+	if !ok || proof == nil || !output.binding.valid() {
 		return nil, false
 	}
-	receipt := ruleRuntimeReceipt[K, V, O]{state: state, authority: state.authority, cell: cell, proof: proof, output: output.receipt, issued: true}
+	receipt := ruleRuntimeBinding[K, V, O]{state: state, authority: state.authority, cell: cell, proof: proof, output: output.binding, issued: true}
 	if !receipt.valid() {
 		return nil, false
 	}
-	return &RuleImplementation[K, V, O]{receipt: receipt}, true
+	return &RuleImplementation[K, V, O]{binding: receipt}, true
 }
 
 func FactorImplementationAt[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot *FactorSlot[V]) (*FactorImplementation[K, V], bool) {

@@ -7,9 +7,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	"github.com/wippyai/go-lua/domain/composite"
-	"github.com/wippyai/go-lua/domain/type/authority"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
@@ -28,7 +28,7 @@ return p
 	found := 0
 	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
 		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(programstatic.TypeRefUnresolved) {
+		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
 			continue
 		}
 		found++
@@ -62,7 +62,7 @@ return p
 	found := 0
 	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
 		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(programstatic.TypeRefDeclaration) {
+		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Declaration) {
 			continue
 		}
 		found++
@@ -272,7 +272,7 @@ return c
 	interior := 0
 	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
 		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(programstatic.TypeRefUnresolved) {
+		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
 			continue
 		}
 		interior++

@@ -47,5 +47,4 @@ type Output struct {
 	Form     denominator.RelationForm
 }
 
-// Generated is assigned by the checked-in generated evidence source.
-var Generated Evidence
+// Generated is the checked-in immutable Program-supply evidence value.

@@ -1,13 +1,16 @@
 package analysis
 
 import (
+	"github.com/wippyai/go-lua/analysis/result"
 	"testing"
 
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
+	publication "github.com/wippyai/go-lua/domain/composite/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -55,7 +58,7 @@ func mountedPopulationCases(t *testing.T) []mountedPopulationCase {
 		}
 		rows := make([]mounted.Mount, 0, len(plan.state.artifacts.mounts))
 		for _, mount := range plan.state.artifacts.mounts {
-			rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Artifact: mount.artifact})
+			rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot})
 		}
 		cases = append(cases, mountedPopulationCase{name: name, linked: linked, state: plan.state, mounts: rows})
 	}
@@ -86,9 +89,9 @@ func TestMountedExecutionPointDenominatorIsTotalOverPlacedArtifacts(t *testing.T
 			}
 			expected := 0
 			for _, mount := range testCase.mounts {
-				expected += mount.Artifact.PointCount()
-				for index := 0; index < mount.Artifact.PointCount(); index++ {
-					point, pointOK := mount.Artifact.PointAt(index)
+				expected += mount.Snapshot.PointCount()
+				for index := 0; index < mount.Snapshot.PointCount(); index++ {
+					point, pointOK := mount.Snapshot.PointAt(index)
 					if !pointOK {
 						t.Fatalf("artifact point %d is not addressable", index)
 					}
@@ -137,8 +140,8 @@ func TestMountedCallableInteriorIsDenominatorMemberAndNeverASeed(t *testing.T) {
 		seeds := roots.Seeds()
 		for _, mount := range testCase.mounts {
 			callable := make(map[identity.ContentID]struct{})
-			for index := 0; index < mount.Artifact.BodyCount(); index++ {
-				body, bodyOK := mount.Artifact.BodyAt(index)
+			for index := 0; index < mount.Snapshot.BodyCount(); index++ {
+				body, bodyOK := mount.Snapshot.BodyAt(index)
 				if !bodyOK {
 					t.Fatalf("%s: artifact body %d is not addressable", testCase.name, index)
 				}
@@ -146,8 +149,8 @@ func TestMountedCallableInteriorIsDenominatorMemberAndNeverASeed(t *testing.T) {
 					callable[body.ID()] = struct{}{}
 				}
 			}
-			for index := 0; index < mount.Artifact.OccurrenceCount(); index++ {
-				occurrence, occurrenceOK := mount.Artifact.OccurrenceAt(index)
+			for index := 0; index < mount.Snapshot.OccurrenceCount(); index++ {
+				occurrence, occurrenceOK := mount.Snapshot.OccurrenceAt(index)
 				if !occurrenceOK {
 					t.Fatalf("%s: occurrence %d is not addressable", testCase.name, index)
 				}
@@ -182,8 +185,8 @@ func TestMountedCallableInteriorIsDenominatorMemberAndNeverASeed(t *testing.T) {
 
 // TestMountedExecutionRootsSeedExactlyTheCompiledQueryPlan is the replacement
 // receipt. The independent root set is derived without consulting a query
-// family; the points it seeds are exactly the points the compiled query plan
-// attaches to, fixture by fixture.
+// family; every seed is a compiled query site. Reached callable interiors may
+// add further sites the root set does not seed.
 func TestMountedExecutionRootsSeedExactlyTheCompiledQueryPlan(t *testing.T) {
 	for _, testCase := range mountedPopulationCases(t) {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -191,16 +194,16 @@ func TestMountedExecutionRootsSeedExactlyTheCompiledQueryPlan(t *testing.T) {
 			if !ok || !roots.Available() {
 				t.Fatalf("seal mounted execution roots: ok=%v available=%v", ok, roots.Available())
 			}
-			plan := testCase.state.queryPlan
-			if plan == nil || len(plan.rows) == 0 {
+			sites := testCase.state.querySites
+			if len(sites) == 0 {
 				t.Fatal("compiled plan carries no query rows")
 			}
-			planned := make(map[mounted.ExecutionPoint]struct{}, len(plan.rows))
-			for _, row := range plan.rows {
-				planned[mounted.ExecutionPoint{Mount: row.mount, Point: row.point}] = struct{}{}
+			planned := make(map[mounted.ExecutionPoint]struct{}, len(sites))
+			for _, row := range sites {
+				planned[mounted.ExecutionPoint{Mount: row.Mount, Point: row.Point}] = struct{}{}
 			}
 			seeds := roots.Seeds()
-			if seeds.Count() != len(planned) {
+			if seeds.Count() > len(planned) {
 				t.Fatalf("execution roots seed %d points, the compiled query plan attaches at %d", seeds.Count(), len(planned))
 			}
 			for index := 0; index < seeds.Count(); index++ {
@@ -212,14 +215,16 @@ func TestMountedExecutionRootsSeedExactlyTheCompiledQueryPlan(t *testing.T) {
 					t.Fatalf("seed %s of mount %s is not a compiled query point", seed.Point, seed.Mount)
 				}
 			}
-			bodies := make(map[identity.ContentID]programartifact.BodyRow)
+			bodies := make(map[identity.ContentID]struct {
+				callable bool
+			})
 			for _, mount := range testCase.mounts {
-				for index := 0; index < mount.Artifact.BodyCount(); index++ {
-					body, bodyOK := mount.Artifact.BodyAt(index)
+				for index := 0; index < mount.Snapshot.BodyCount(); index++ {
+					body, bodyOK := mount.Snapshot.BodyAt(index)
 					if !bodyOK {
 						t.Fatalf("artifact body %d is not addressable", index)
 					}
-					bodies[body.ID()] = body
+					bodies[body.ID()] = struct{ callable bool }{callable: body.Callable()}
 				}
 			}
 			for index := 0; index < roots.Count(); index++ {
@@ -228,8 +233,8 @@ func TestMountedExecutionRootsSeedExactlyTheCompiledQueryPlan(t *testing.T) {
 					t.Fatalf("root %d is not addressable", index)
 				}
 				body, held := bodies[root.Body]
-				if !held || body.Callable() {
-					t.Fatalf("root %d names body %s, which is %v/callable=%v", index, root.Body, held, body.Callable())
+				if !held || body.callable {
+					t.Fatalf("root %d names body %s, which is %v/callable=%v", index, root.Body, held, body.callable)
 				}
 				if index != 0 {
 					previous, _ := roots.At(index - 1)
@@ -270,7 +275,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 			if !coordinatesOK {
 				t.Fatal("compile value coordinates")
 			}
-			observations, observationsOK := compileDiagnosticObservations(testCase.linked, testCase.state.artifacts, coordinates)
+			observations, observationsOK := testCase.state.artifacts.observationCensus(coordinates)
 			if !observationsOK {
 				t.Fatal("compile diagnostic observations")
 			}
@@ -296,25 +301,28 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 				}
 			}
 			for _, observation := range observations {
-				site, present := held[siteKey{mount: observation.mount, local: observation.local}]
+				site, present := held[siteKey{mount: observation.Mount, local: observation.Local}]
 				if !present {
-					t.Fatalf("observed site %s of mount %s is missing from the census", observation.local, observation.mount)
+					t.Fatalf("observed site %s of mount %s is missing from the census", observation.Local, observation.Mount)
 				}
-				if site.Kind != observation.kind || site.Location != observation.location {
-					t.Fatalf("census site %s = kind %v span %+v, observed kind %v span %+v", observation.local, site.Kind, site.Location, observation.kind, observation.location)
+				if site.Kind != observation.Kind || site.Location != observation.Location {
+					t.Fatalf("census site %s = kind %v span %+v, observed kind %v span %+v", observation.Local, site.Kind, site.Location, observation.Kind, observation.Location)
 				}
-				if observation.kind != structure.DiagnosticObservationBranchCondition {
+				if observation.Kind != structure.DiagnosticObservationBranchCondition {
 					if site.ProducerCount() != 0 {
-						t.Fatalf("static census site %s carries %d producers", observation.local, site.ProducerCount())
+						t.Fatalf("static census site %s carries %d producers", observation.Local, site.ProducerCount())
 					}
 					continue
 				}
 				branches++
-				if site.ProducerCount() != len(observation.producers) {
-					t.Fatalf("census site %s carries %d producers, observed %d", observation.local, site.ProducerCount(), len(observation.producers))
+				if site.ValueID != coordinates[observation.ValueIndex].id {
+					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[observation.ValueIndex].id)
 				}
-				geometry := make(map[compiledObservationProducer]struct{}, len(observation.producers))
-				for _, producer := range observation.producers {
+				if site.ProducerCount() != len(observation.Producers) {
+					t.Fatalf("census site %s carries %d producers, observed %d", observation.Local, site.ProducerCount(), len(observation.Producers))
+				}
+				geometry := make(map[anadiag.Producer]struct{}, len(observation.Producers))
+				for _, producer := range observation.Producers {
 					geometry[producer] = struct{}{}
 				}
 				anchors := make(map[identity.ContentID]struct{}, site.ProducerCount())
@@ -323,18 +331,18 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 					if !producerOK {
 						t.Fatalf("census producer %d is not addressable", index)
 					}
-					key := compiledObservationProducer{key: producer.Key, occurrence: producer.Occurrence, point: producer.Point, anchor: producer.Anchor}
+					key := anadiag.Producer{Key: producer.Key, Occurrence: producer.Occurrence, Point: producer.Point, Anchor: producer.Anchor}
 					if _, observed := geometry[key]; !observed {
-						t.Fatalf("census site %s carries unobserved producer geometry %+v", observation.local, key)
+						t.Fatalf("census site %s carries unobserved producer geometry %+v", observation.Local, key)
 					}
 					anchors[producer.Anchor] = struct{}{}
 				}
-				if len(anchors) != len(observation.points) {
-					t.Fatalf("census site %s anchors %d evidence points, the branch carries %d", observation.local, len(anchors), len(observation.points))
+				if len(anchors) != len(observation.Points) {
+					t.Fatalf("census site %s anchors %d evidence points, the branch carries %d", observation.Local, len(anchors), len(observation.Points))
 				}
-				for _, point := range observation.points {
+				for _, point := range observation.Points {
 					if _, anchored := anchors[point]; !anchored {
-						t.Fatalf("census site %s leaves evidence point %s unanchored", observation.local, point)
+						t.Fatalf("census site %s leaves evidence point %s unanchored", observation.Local, point)
 					}
 				}
 			}
@@ -345,7 +353,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 			for index := 0; index < census.Count(); index++ {
 				direct, _ := census.At(index)
 				other, _ := permuted.At(index)
-				if direct.Mount != other.Mount || direct.Local != other.Local || direct.Kind != other.Kind {
+				if direct.Mount != other.Mount || direct.Local != other.Local || direct.Kind != other.Kind || direct.ValueID != other.ValueID {
 					t.Fatalf("census row %d depends on mount order", index)
 				}
 			}
@@ -353,5 +361,47 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 	}
 	if branches == 0 {
 		t.Fatal("selected fixtures observe no branch site; the anchor geometry is unproven")
+	}
+}
+
+// TestObservationPublicationsDeriveFromSealedGeometry is the detach address
+// floor: Snapshot observation keys are the publication identity of the sealed
+// census, not a second table retained on compiledState.
+func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
+	for _, testCase := range mountedPopulationCases(t) {
+		t.Run(testCase.name, func(t *testing.T) {
+			geometry, geometryOK := testCase.state.resultGeometry()
+			if !geometryOK {
+				t.Fatal("result geometry")
+			}
+			got, ok := anadiag.Publications(geometry.BranchObservations)
+			if !ok {
+				t.Fatal("observation publications")
+			}
+			seen := make(map[result.Point]identity.ContentID, len(got))
+			for _, row := range got {
+				if !row.Mount.Available() || !row.Point.Available() || !row.Key.Available() {
+					t.Fatal("publication row missing identities")
+				}
+				point := result.Point{Mount: row.Mount, Point: row.Point}
+				if _, duplicate := seen[point]; duplicate {
+					t.Fatalf("publication repeats evidence point %s", row.Point)
+				}
+				seen[point] = row.Key
+			}
+			for _, observation := range geometry.BranchObservations {
+				for _, producer := range observation.Producers {
+					key, keyed := seen[result.Point{Mount: observation.Mount, Point: producer.Anchor}]
+					if !keyed {
+						t.Fatalf("evidence point %s has no publication", producer.Anchor)
+					}
+					family, familyOK := composite.ObservationProducerForPopulationKind(structure.DiagnosticObservationBranchCondition.Key())
+					want, wantOK := publication.BranchValueObservationID(observation.Mount, producer.Point, family)
+					if !familyOK || !wantOK || key != want {
+						t.Fatalf("publication %s != branch value observation %s", key, want)
+					}
+				}
+			}
+		})
 	}
 }

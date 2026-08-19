@@ -70,24 +70,24 @@ func TestContinuationQueriesReturnCanonicalSuspensionCoordinates(t *testing.T) {
 
 func TestProtocolQueriesResolveCanonicalStatesAndTransitions(t *testing.T) {
 	contract := mustSeal(t, deltaProtocolTransition(false))
-	protocol, ok := contract.protocolAt(0)
-	if !ok || contract.protocolCount() != 1 {
-		t.Fatalf("protocol handle = %d/%v count=%d", protocol, ok, contract.protocolCount())
+	protocol, ok := contract.protocols.ProtocolAt(0)
+	if !ok || contract.protocols.ProtocolCount() != 1 {
+		t.Fatalf("protocol handle = %d/%v count=%d", protocol, ok, contract.protocols.ProtocolCount())
 	}
-	if got := contract.stateCount(protocol); got != 3 {
+	if got := contract.protocols.StateCount(protocol); got != 3 {
 		t.Fatalf("StateCount = %d, want 3", got)
 	}
-	state, ok := contract.stateAt(protocol, 1)
+	state, ok := contract.protocols.StateAt(protocol, 1)
 	if !ok {
 		t.Fatal("normal protocol state missing")
 	}
-	if final, ok := contract.stateFinal(protocol, state); !ok || !final {
+	if final, ok := contract.protocols.StateFinal(protocol, state); !ok || !final {
 		t.Fatalf("normal state finality = %v/%v, want true/true", final, ok)
 	}
-	if got := contract.transitionCount(protocol); got != 1 {
+	if got := contract.protocols.TransitionCount(protocol); got != 1 {
 		t.Fatalf("TransitionCount = %d, want 1", got)
 	}
-	if _, _, _, _, ok := contract.transitionAt(protocol, 0); !ok {
+	if _, _, _, _, ok := contract.protocols.TransitionAt(protocol, 0); !ok {
 		t.Fatal("protocol transition missing")
 	}
 }

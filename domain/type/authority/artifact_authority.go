@@ -7,7 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
@@ -282,7 +283,7 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 		// exactly one authenticated target child; extra children are not an
 		// ignorable extension of that proof.
 		unresolved, shapeOK := staticReferenceResolutionShape(
-			programstatic.TypeRefResolution(row.Resolution()),
+			staticrefs.Resolution(row.Resolution()),
 			row.ChildCount(),
 		)
 		if !shapeOK {
@@ -475,14 +476,14 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 // used by ArtifactAuthority. Keeping resolution and arity in one predicate
 // prevents an unknown enum or an extra target edge from being accepted merely
 // because ChildAt(0) happens to resolve.
-func staticReferenceResolutionShape(resolution programstatic.TypeRefResolution, childCount int) (unresolved bool, ok bool) {
+func staticReferenceResolutionShape(resolution staticrefs.Resolution, childCount int) (unresolved bool, ok bool) {
 	switch resolution {
-	case programstatic.TypeRefUnresolved:
+	case staticrefs.Unresolved:
 		if childCount != 0 {
 			return false, false
 		}
 		return true, true
-	case programstatic.TypeRefDeclaration, programstatic.TypeRefCanonicalPath:
+	case staticrefs.Declaration, staticrefs.CanonicalPath:
 		return false, childCount == 1
 	default:
 		return false, false
@@ -544,26 +545,26 @@ func childInterfaceMember(a *artifactResolver, row programartifact.StaticTypeNod
 
 func primitiveKind(raw uint8) (typ.Type, bool) {
 	var name string
-	switch programstatic.PrimitiveKind(raw) {
-	case programstatic.PrimitiveNil:
+	switch statictypes.PrimitiveKind(raw) {
+	case statictypes.PrimitiveNil:
 		name = "nil"
-	case programstatic.PrimitiveBoolean:
+	case statictypes.PrimitiveBoolean:
 		name = "boolean"
-	case programstatic.PrimitiveNumber:
+	case statictypes.PrimitiveNumber:
 		name = "number"
-	case programstatic.PrimitiveInteger:
+	case statictypes.PrimitiveInteger:
 		name = "integer"
-	case programstatic.PrimitiveString:
+	case statictypes.PrimitiveString:
 		name = "string"
-	case programstatic.PrimitiveFunction:
+	case statictypes.PrimitiveFunction:
 		name = "function"
-	case programstatic.PrimitiveAny:
+	case statictypes.PrimitiveAny:
 		name = "any"
-	case programstatic.PrimitiveUnknown:
+	case statictypes.PrimitiveUnknown:
 		name = "unknown"
-	case programstatic.PrimitiveNever:
+	case statictypes.PrimitiveNever:
 		name = "never"
-	case programstatic.PrimitiveSelf:
+	case statictypes.PrimitiveSelf:
 		name = "self"
 	default:
 		return nil, false

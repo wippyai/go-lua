@@ -3,8 +3,10 @@ package typecall
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/type/ambient"
 	"github.com/wippyai/go-lua/domain/type/annotation"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
 	"github.com/wippyai/go-lua/domain/type/normalize"
 	"github.com/wippyai/go-lua/domain/type/subst"
 	typetable "github.com/wippyai/go-lua/domain/type/table"
@@ -473,6 +475,156 @@ func TestMemberCallAmbientChannelCaseReceive(t *testing.T) {
 	}
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Instantiate(ambient.ChannelGeneric(), typ.Number)) {
 		t.Fatalf("case_receive params = %#v, want self Channel<number>", fn.Params)
+	}
+	want := channelselect.ReceiveCaseType(typ.Instantiate(ambient.ChannelGeneric(), typ.Number), typ.Number)
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], want) {
+		t.Fatalf("case_receive returns = %#v, want %v", fn.Returns, want)
+	}
+	if _, ok := channelselect.CaseFromType(fn.Returns[0]); !ok {
+		t.Fatal("case_receive return was not a select case")
+	}
+}
+
+func TestMemberCallChannelModuleSelect(t *testing.T) {
+	member, status := MemberCall(channelselect.ModuleType(), "select")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(channel module, select) status = %v, want ok", status)
+	}
+	fn, ok := member.(*typ.Function)
+	if !ok {
+		t.Fatalf("select member = %T %[1]v, want function", member)
+	}
+	want := channelselect.SelectFunction()
+	if !typ.TypeEquals(fn, want) {
+		t.Fatalf("select = %v, want %v", fn, want)
+	}
+}
+
+func TestMemberCallDoesNotTreatUserRecordAsChannelModule(t *testing.T) {
+	record := typetable.NewRecord().Field("select", typ.Any).Build()
+	member, status := MemberCall(record, "select")
+	if status == MemberCallOK && typ.TypeEquals(member, channelselect.SelectFunction()) {
+		t.Fatal("user record with a select field was treated as the channel module")
+	}
+	if _, status := MemberCall(typ.Instantiate(ambient.ChannelGeneric(), typ.String), "select"); status != MemberCallMissing {
+		t.Fatal("Channel instance resolved module select")
+	}
+}
+
+func TestApplyCallSpecializesChannelSelectAndIgnoresLookalike(t *testing.T) {
+	site, siteOK := identity.DeriveContentID("test/channel-select-site/v1", []byte("select"))
+	if !siteOK {
+		t.Fatal("site identity unavailable")
+	}
+	events := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	timeout := typ.Instantiate(ambient.ChannelGeneric(), typ.Number)
+	lookalike := typetable.NewRecord().
+		Field(channelselect.ResultChannelField, events).
+		Field(channelselect.ResultValueField, typ.String).
+		Field(channelselect.ResultOKField, typ.Boolean).
+		Field(channelselect.ResultDefaultField, typ.Nil).
+		Build()
+	table := typetable.NewRecord().
+		StaticIntIndex(1, channelselect.ReceiveCaseType(events, typ.String)).
+		StaticIntIndex(2, lookalike).
+		StaticIntIndex(3, channelselect.ReceiveCaseType(timeout, typ.Number)).
+		Build()
+	callee, status := MemberCall(channelselect.ModuleType(), "select")
+	if status != MemberCallOK {
+		t.Fatalf("module select status = %v", status)
+	}
+	result, facts, ok := ApplyCall(callee, site, []typ.Type{table})
+	if !ok {
+		t.Fatal("ApplyCall refused channel.select")
+	}
+	if _, ok := facts.Lookup(site, 0); !ok {
+		t.Fatal("accepted ordinal 0 was not readable")
+	}
+	if _, ok := facts.Lookup(site, 1); ok {
+		t.Fatal("lookalike table member was admitted as a case")
+	}
+	if _, ok := facts.Lookup(site, 2); !ok {
+		t.Fatal("accepted ordinal 2 was not readable")
+	}
+	if _, ok := channelselect.ResultCaseTypeFromValue(result, channelselect.ResultCaseType(events, typ.String)); !ok {
+		t.Fatalf("specialized result lost the events arm: %v", result)
+	}
+}
+
+func TestApplyCallSpecializesConstructorTuple(t *testing.T) {
+	site, siteOK := identity.DeriveContentID("test/channel-select-site/v1", []byte("select"))
+	if !siteOK {
+		t.Fatal("site identity unavailable")
+	}
+	events := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	timeout := typ.Instantiate(ambient.ChannelGeneric(), typ.Number)
+	table, ok := typetable.ConstructorType([]typetable.ConstructorEntry{
+		{Path: []typetable.ConstructorKey{{Kind: typetable.ConstructorIntIndex, Index: 1}}, Type: channelselect.ReceiveCaseType(events, typ.String)},
+		{Path: []typetable.ConstructorKey{{Kind: typetable.ConstructorIntIndex, Index: 2}}, Type: channelselect.ReceiveCaseType(timeout, typ.Number)},
+	})
+	if !ok {
+		t.Fatal("constructor table unavailable")
+	}
+	callee, status := MemberCall(channelselect.ModuleType(), "select")
+	if status != MemberCallOK {
+		t.Fatalf("module select status = %v", status)
+	}
+	_, facts, ok := ApplyCall(callee, site, []typ.Type{table})
+	if !ok {
+		t.Fatal("ApplyCall refused a constructor-tuple select argument")
+	}
+	if _, ok := facts.Lookup(site, 0); !ok {
+		t.Fatal("accepted ordinal 0 was not readable")
+	}
+	if _, ok := facts.Lookup(site, 1); !ok {
+		t.Fatal("accepted ordinal 1 was not readable")
+	}
+}
+
+func TestApplyCallOrdinaryFunctionDoesNotAdmitSelectFacts(t *testing.T) {
+	site, siteOK := identity.DeriveContentID("test/channel-select-site/v1", []byte("select"))
+	if !siteOK {
+		t.Fatal("site identity unavailable")
+	}
+	fn := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()
+	result, facts, ok := ApplyCall(fn, site, []typ.Type{typ.String})
+	if !ok || !typ.TypeEquals(result, typ.Number) {
+		t.Fatalf("ApplyCall(ordinary) = %v, %v", result, ok)
+	}
+	if _, ok := facts.Lookup(site, 0); ok {
+		t.Fatal("ordinary call admitted a select case fact")
+	}
+}
+
+func TestApplyCallSelectRequiresSite(t *testing.T) {
+	callee, status := MemberCall(channelselect.ModuleType(), "select")
+	if status != MemberCallOK {
+		t.Fatalf("module select status = %v", status)
+	}
+	table := typetable.NewRecord().
+		StaticIntIndex(1, channelselect.ReceiveCaseType(typ.String, typ.String)).
+		Build()
+	if _, _, ok := ApplyCall(callee, identity.ContentID{}, []typ.Type{table}); ok {
+		t.Fatal("ApplyCall(select) admitted an unavailable site")
+	}
+}
+
+func TestMemberCallAmbientChannelCaseSend(t *testing.T) {
+	channel := typ.Instantiate(ambient.ChannelGeneric(), typ.String)
+	member, status := MemberCall(channel, "case_send")
+	if status != MemberCallOK {
+		t.Fatalf("MemberCall(Channel<string>, case_send) status = %v, want ok", status)
+	}
+	fn, ok := member.(*typ.Function)
+	if !ok {
+		t.Fatalf("case_send member = %T %[1]v, want function", member)
+	}
+	want := channelselect.SendCaseType(channel, typ.String)
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], want) {
+		t.Fatalf("case_send returns = %#v, want %v", fn.Returns, want)
+	}
+	if _, ok := channelselect.CaseFromType(fn.Returns[0]); !ok {
+		t.Fatal("case_send return was not a select case")
 	}
 }
 

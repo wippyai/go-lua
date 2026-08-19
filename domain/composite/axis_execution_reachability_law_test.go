@@ -3,7 +3,6 @@ package composite
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -65,7 +64,7 @@ func TestExecutionReachabilityIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
 	}
 	// A cold half it does not declare is a cold half it cannot be asked for: a
 	// pass walks the bound axes, which is what the declared storage tells it.
-	if _, recorded := entry.Declare(axis.Declaration{Builder: engine.NewSchema()}); recorded {
+	if entry.Storage().Bound() {
 		t.Fatal("the engine-published axis recorded a cold shape")
 	}
 	roles, rolesOK := SemanticRoles()

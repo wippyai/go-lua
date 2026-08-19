@@ -11,23 +11,40 @@ import (
 type nativeCallStageLawFixture struct {
 	binding        *SchemaBinding
 	implementation *RuleImplementation[uint64, uint64, struct{}]
-	capability     RuleSlotCapability
-	foreignRole    RuleSlotCapability
-	mount          identity.ContentID
-	base           identity.ContentID
-	dispatch       identity.ContentID
-	summary        identity.ContentID
-	effect         identity.ContentID
-	dispatchID     identity.ContentID
-	summaryID      identity.ContentID
-	effectID       identity.ContentID
+	// query is bound only by the query variant of this owner. A declared
+	// query family with no query row does not seal, so the variant exists for
+	// laws that admit one.
+	query       *ExactQueryImplementation[uint64, uint64]
+	capability  RuleSlotCapability
+	foreignRole RuleSlotCapability
+	mount       identity.ContentID
+	base        identity.ContentID
+	dispatch    identity.ContentID
+	summary     identity.ContentID
+	effect      identity.ContentID
+	dispatchID  identity.ContentID
+	summaryID   identity.ContentID
+	effectID    identity.ContentID
 }
 
 func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	t.Helper()
+	return buildNativeCallStageLawOwner(t, false)
+}
+
+// newNativeCallStageQueryLawOwner is the same owner with one exact query
+// family declared, for laws that admit a query row against a mounted point.
+func newNativeCallStageQueryLawOwner(t testing.TB) nativeCallStageLawFixture {
+	t.Helper()
+	return buildNativeCallStageLawOwner(t, true)
+}
+
+func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLawFixture {
+	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(947_101))
 	form, formOK := factor.ExactWrite()
+	read, readOK := factor.ExactRead()
 	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(947_102), OperandFamily: coldKey(947_103),
 		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(947_104)}, Output: factor.Ref(),
@@ -38,8 +55,14 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	})
 	write, writeOK := SchemaWrite(rule, form)
 	foreignWrite, foreignWriteOK := SchemaWrite(foreignRule, form)
+	var query *QuerySlot[uint64]
+	queryOK := true
+	if queried {
+		query, queryOK = DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(947_108), Freezer: coldKey(947_109)})
+		queryOK = queryOK && SchemaQueryRead(query, read)
+	}
 	schema, schemaOK := builder.Seal()
-	if !factorOK || !formOK || !ruleOK || !foreignRuleOK || !writeOK || !foreignWriteOK || !schemaOK {
+	if !factorOK || !formOK || !readOK || !ruleOK || !foreignRuleOK || !writeOK || !foreignWriteOK || !queryOK || !schemaOK {
 		t.Fatal("native Call stage schema")
 	}
 	binding := NewSchemaBinding(schema)
@@ -50,8 +73,13 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	}
 	foreignSpec := spec
 	foreignSpec.Admission = AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_107))
+	querySpec := hotExactQuerySpec()
+	querySpec.Result.Semantic = coldKey(947_109)
 	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !BindRule[uint64, uint64, struct{}](binding, foreignRule, foreignWrite, factor, foreignSpec, testRuleProjector[struct{}]) {
 		t.Fatal("native Call stage binding")
+	}
+	if queried && !BindExactQuery(binding, query, factor, querySpec) {
+		t.Fatal("native Call stage query binding")
 	}
 	capability, capabilityOK := IssueMountedRuleCapability(binding, rule)
 	foreignRole, foreignCapabilityOK := IssueMountedRuleCapability(binding, foreignRule)
@@ -62,8 +90,16 @@ func newNativeCallStageLawOwner(t testing.TB) nativeCallStageLawFixture {
 	if !implementationOK || implementation == nil {
 		t.Fatal("native Call stage implementation")
 	}
+	var queryImplementation *ExactQueryImplementation[uint64, uint64]
+	if queried {
+		queryImplementationOK := false
+		queryImplementation, queryImplementationOK = ExactQueryImplementationAt[uint64, uint64](binding, query)
+		if !queryImplementationOK || queryImplementation == nil {
+			t.Fatal("native Call stage query implementation")
+		}
+	}
 	return nativeCallStageLawFixture{
-		binding: binding, implementation: implementation, capability: capability, foreignRole: foreignRole,
+		binding: binding, implementation: implementation, query: queryImplementation, capability: capability, foreignRole: foreignRole,
 		mount: artifactScalarLawID(0x70), base: artifactScalarLawID(0x71), dispatch: artifactScalarLawID(0x72),
 		summary: artifactScalarLawID(0x73), effect: artifactScalarLawID(0x74), dispatchID: artifactScalarLawID(0x75),
 		summaryID: artifactScalarLawID(0x76), effectID: artifactScalarLawID(0x77),
@@ -77,9 +113,9 @@ func (fixture nativeCallStageLawFixture) scalarSpec(t testing.TB, rules []rows.A
 	points := []rows.ArtifactScalarPoint{{ID: fixture.base, Initial: true}, {ID: fixture.dispatch}, {ID: fixture.summary}, {ID: fixture.effect}}
 	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schema, rows.ArtifactScalarCapacity{Roles: 1, Points: len(points), Regions: 1, Events: len(order) + 2, Rules: len(rules), Bodies: 1})
 	if !ok || !spec.InstallStageLaws([]rows.ArtifactStageLaw{
-		{Stage: rows.ArtifactRuleStageCallDispatch, Native: true},
-		{Stage: rows.ArtifactRuleStageCallSummary, Native: true, Predecessor: rows.ArtifactRuleStageCallDispatch},
-		{Stage: rows.ArtifactRuleStageCallEffect, Native: true, Predecessor: rows.ArtifactRuleStageCallSummary},
+		{Stage: rows.ArtifactRuleStageIssued3, Native: true},
+		{Stage: rows.ArtifactRuleStageIssued4, Native: true, Predecessor: rows.ArtifactRuleStageIssued3},
+		{Stage: rows.ArtifactRuleStageIssued5, Native: true, Predecessor: rows.ArtifactRuleStageIssued4},
 	}) {
 		t.Fatal("native Call stage scalar spec")
 	}
@@ -129,9 +165,9 @@ func (fixture nativeCallStageLawFixture) rules() []rows.ArtifactScalarRule {
 	// Deliberately not stage order: admission must follow committed stage
 	// geometry, never input slice order.
 	return []rows.ArtifactScalarRule{
-		{Stage: rows.ArtifactRuleStageCallEffect, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID},
-		{Stage: rows.ArtifactRuleStageCallDispatch, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID},
-		{Stage: rows.ArtifactRuleStageCallSummary, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID},
+		{Stage: rows.ArtifactRuleStageIssued5, Point: fixture.effect, Input: fixture.summary, ID: fixture.effectID},
+		{Stage: rows.ArtifactRuleStageIssued3, Point: fixture.dispatch, Input: fixture.base, ID: fixture.dispatchID},
+		{Stage: rows.ArtifactRuleStageIssued4, Point: fixture.summary, Input: fixture.dispatch, ID: fixture.summaryID},
 	}
 }
 
@@ -140,24 +176,27 @@ func (fixture nativeCallStageLawFixture) scalarTemplate(t testing.TB, rules []ro
 	return rows.NewArtifactScalarTemplate(fixture.scalarSpec(t, rules, order))
 }
 
-func bindNativeCallStageLawTemplate(template *rows.ArtifactScalarTemplate, capability RuleSlotCapability) (*ArtifactScalarReceipt, bool) {
-	if template == nil || !template.Available() || template.RoleCount() != 1 {
-		return nil, false
+func bindNativeCallStageLawTemplate(template *rows.ArtifactScalarTemplate, capability RuleSlotCapability, module identity.ContentID) (MountedProgramArtifact, bool) {
+	if template == nil || !template.Available() || template.RoleCount() != 1 || !module.Available() {
+		return MountedProgramArtifact{}, false
 	}
 	role, roleOK := template.RoleAt(0)
-	binding, bindingOK := NewArtifactScalarBinding(template)
-	if !roleOK || !bindingOK || !binding.BindRole(role, capability) {
-		return nil, false
+	if !roleOK {
+		return MountedProgramArtifact{}, false
 	}
-	return NewArtifactScalarReceipt(binding)
+	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: role, Capability: capability}}, Module: module}
+	if _, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{mount}); !ok {
+		return MountedProgramArtifact{}, false
+	}
+	return mount, true
 }
 
-func (fixture nativeCallStageLawFixture) scalarReceipt(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) (*ArtifactScalarReceipt, bool) {
+func (fixture nativeCallStageLawFixture) scalarMount(t testing.TB, rules []rows.ArtifactScalarRule, order []identity.ContentID) (MountedProgramArtifact, bool) {
 	template, templateOK := fixture.scalarTemplate(t, rules, order)
 	if !templateOK {
-		return nil, false
+		return MountedProgramArtifact{}, false
 	}
-	return bindNativeCallStageLawTemplate(template, fixture.capability)
+	return bindNativeCallStageLawTemplate(template, fixture.capability, fixture.mount)
 }
 
 func (fixture nativeCallStageLawFixture) order() []identity.ContentID {
@@ -166,25 +205,41 @@ func (fixture nativeCallStageLawFixture) order() []identity.ContentID {
 
 func TestArtifactNativeCallStageRejectsTamperAliasAndOrder(t *testing.T) {
 	fixture := newNativeCallStageLawOwner(t)
-	if receipt, ok := fixture.scalarReceipt(t, fixture.rules(), fixture.order()); !ok || receipt == nil {
+	if mount, ok := fixture.scalarMount(t, fixture.rules(), fixture.order()); !ok || mount.Template == nil {
 		t.Fatal("valid native Call stage lattice rejected")
 	}
 
 	tampered := fixture.rules()
-	tampered[0].Stage = rows.ArtifactRuleStageCallSummary
-	if receipt, ok := fixture.scalarReceipt(t, tampered, fixture.order()); ok || receipt != nil {
+	tampered[0].Stage = rows.ArtifactRuleStageIssued4
+	if mount, ok := fixture.scalarMount(t, tampered, fixture.order()); ok || mount.Template != nil {
 		t.Fatal("retagged Effect stage admitted")
 	}
 
 	aliased := fixture.rules()
 	aliased = append(aliased, aliased[0])
-	if receipt, ok := fixture.scalarReceipt(t, aliased, fixture.order()); ok || receipt != nil {
+	if mount, ok := fixture.scalarMount(t, aliased, fixture.order()); ok || mount.Template != nil {
 		t.Fatal("same owner occurrence aliased across native stage rows")
 	}
 
 	wrongOrder := []identity.ContentID{fixture.base, fixture.dispatch, fixture.effect, fixture.summary}
-	if receipt, ok := fixture.scalarReceipt(t, fixture.rules(), wrongOrder); ok || receipt != nil {
+	if mount, ok := fixture.scalarMount(t, fixture.rules(), wrongOrder); ok || mount.Template != nil {
 		t.Fatal("native Call stage order tamper admitted")
+	}
+
+	// The sealed template plane is the only issuer of native Call placements, so
+	// a placement that no schedule can order - one staged from its own Point, or
+	// from a Point the parent WTO order puts after it - is refused here and can
+	// never reach a declaration.
+	coincident := fixture.rules()
+	coincident[1].Input = coincident[1].Point
+	if mount, ok := fixture.scalarMount(t, coincident, fixture.order()); ok || mount.Template != nil {
+		t.Fatal("native Call stage staged from its own Point admitted")
+	}
+
+	inverted := fixture.rules()
+	inverted[1].Input = fixture.effect
+	if mount, ok := fixture.scalarMount(t, inverted, fixture.order()); ok || mount.Template != nil {
+		t.Fatal("native Call stage staged from a later Point admitted")
 	}
 }
 
@@ -192,68 +247,60 @@ func TestArtifactScalarTemplateReusesStructureButFencesLinkCapabilities(t *testi
 	owner := newNativeCallStageLawOwner(t)
 	foreign := newNativeCallStageLawOwner(t)
 	template, templateOK := owner.scalarTemplate(t, owner.rules(), owner.order())
-	localReceipt, localOK := bindNativeCallStageLawTemplate(template, owner.capability)
-	foreignReceipt, foreignOK := bindNativeCallStageLawTemplate(template, foreign.capability)
+	localMount, localOK := bindNativeCallStageLawTemplate(template, owner.capability, owner.mount)
+	foreignMount, foreignOK := bindNativeCallStageLawTemplate(template, foreign.capability, owner.mount)
 	sharedRole, sharedRoleOK := template.RoleAt(0)
-	if !templateOK || !localOK || !foreignOK || !sharedRoleOK || localReceipt.template != template || foreignReceipt.template != template || localReceipt.capabilities[sharedRole] == foreignReceipt.capabilities[sharedRole] {
+	if !templateOK || !localOK || !foreignOK || !sharedRoleOK || localMount.Template != template || foreignMount.Template != template || localMount.Roles[0].Capability == foreignMount.Roles[0].Capability {
 		t.Fatal("shared neutral template with distinct Link substitutions")
 	}
-	missing, missingOK := NewArtifactScalarBinding(template)
-	if !missingOK || missing == nil {
-		t.Fatal("open missing-role binding")
+	if _, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{{Template: template, Module: owner.mount}}); ok {
+		t.Fatal("template seal accepted a missing Link role")
 	}
-	if receipt, ok := NewArtifactScalarReceipt(missing); ok || receipt != nil {
-		t.Fatal("template receipt accepted a missing Link role")
-	}
-	duplicate, duplicateOK := NewArtifactScalarBinding(template)
-	if !duplicateOK || !duplicate.BindRole(sharedRole, owner.capability) || duplicate.BindRole(sharedRole, owner.capability) {
+	if _, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{{Template: template, Roles: []MountedProgramRole{{Scalar: sharedRole, Capability: owner.capability}, {Scalar: sharedRole, Capability: owner.capability}}, Module: owner.mount}}); ok {
 		t.Fatal("duplicate Link role substitution was not fenced")
 	}
 	foreignSpec := owner.scalarSpec(t, owner.rules(), owner.order())
 	foreignRole, foreignRoleOK := foreignSpec.DeclareRole(artifactScalarLawID(0x6A))
-	foreignRoleBinding, foreignRoleBindingOK := NewArtifactScalarBinding(template)
-	if !foreignRoleOK || !foreignRoleBindingOK || foreignRoleBinding.BindRole(foreignRole, owner.capability) {
+	if !foreignRoleOK || func() bool {
+		_, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{{Template: template, Roles: []MountedProgramRole{{Scalar: foreignRole, Capability: owner.capability}}, Module: owner.mount}})
+		return ok
+	}() {
 		t.Fatal("role from another template entered the local substitution")
 	}
 	twoRoleSpec := owner.scalarSpec(t, owner.rules(), owner.order())
 	secondRole, secondRoleOK := twoRoleSpec.DeclareRole(artifactScalarLawID(0x6B))
 	twoRoleTemplate, twoRoleTemplateOK := rows.NewArtifactScalarTemplate(twoRoleSpec)
-	aliasedCapabilities, aliasedCapabilitiesOK := NewArtifactScalarBinding(twoRoleTemplate)
 	twoRoleFirst, twoRoleFirstOK := twoRoleTemplate.RoleAt(0)
-	if !secondRoleOK || !twoRoleTemplateOK || !aliasedCapabilitiesOK || !twoRoleFirstOK ||
-		!aliasedCapabilities.BindRole(twoRoleFirst, owner.capability) ||
-		!aliasedCapabilities.BindRole(secondRole, owner.capability) {
+	if !secondRoleOK || !twoRoleTemplateOK || !twoRoleFirstOK {
 		t.Fatal("two-role alias fixture")
 	}
-	if receipt, ok := NewArtifactScalarReceipt(aliasedCapabilities); ok || receipt != nil {
+	if _, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{{Template: twoRoleTemplate, Roles: []MountedProgramRole{{Scalar: twoRoleFirst, Capability: owner.capability}, {Scalar: secondRole, Capability: owner.capability}}, Module: owner.mount}}); ok {
 		t.Fatal("two Program roles aliased one Link capability")
 	}
 
-	localMounted, localMountedOK := NewMountedArtifactReceipt(localReceipt, owner.mount)
-	foreignMounted, foreignMountedOK := NewMountedArtifactReceipt(foreignReceipt, owner.mount)
 	bootstrap, bootstrapOK := NewLinkBootstrapWitness(artifactScalarLawID(0x68), LinkBootstrapPoint{PointID: artifactScalarLawID(0x69), Known: true, Initial: true}, nil)
-	localAssembly, localFailure, localAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{localMounted}, bootstrap)
-	foreignAssembly, foreignFailure, foreignAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{foreignMounted}, bootstrap)
-	if !localMountedOK || !foreignMountedOK || !bootstrapOK || !localAssembled || localAssembly == nil || localFailure != ReceiptAssemblyFailureNone {
+	localAssembly, localFailure, localAssembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{localMount}, bootstrap)
+	foreignAssembly, foreignFailure, foreignAssembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{foreignMount}, bootstrap)
+	if !bootstrapOK || !localAssembled || localAssembly == nil || localFailure != receiptAssemblyFailureNone {
 		t.Fatal("local template substitution did not assemble")
 	}
 	localAssembly.Abort()
-	if foreignAssembled || foreignAssembly != nil || foreignFailure != ReceiptAssemblyFailureSnapshotNamespace {
+	if foreignAssembled || foreignAssembly != nil || foreignFailure != receiptAssemblyFailureSnapshotNamespace {
 		t.Fatal("foreign Link capability crossed the shared template boundary")
 	}
 }
 
 func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOccurrence(t *testing.T) {
 	fixture := newNativeCallStageLawOwner(t)
-	scalar, scalarOK := fixture.scalarReceipt(t, fixture.rules(), fixture.order())
-	mounted, mountedOK := NewMountedArtifactReceipt(scalar, fixture.mount)
+	mounted, mountedOK := fixture.scalarMount(t, fixture.rules(), fixture.order())
 	bootstrap, bootstrapOK := NewLinkBootstrapWitness(artifactScalarLawID(0x7C), LinkBootstrapPoint{PointID: artifactScalarLawID(0x7D), Known: true, Initial: true}, nil)
-	assembly, assemblyOK := BeginMountedArtifactReceiptAssembly(fixture.binding, []MountedArtifactReceipt{mounted}, bootstrap)
-	if !scalarOK || !mountedOK || !bootstrapOK || !assemblyOK {
+	sealedMounts, sealedOK := sealMountedProgramArtifacts([]MountedProgramArtifact{mounted})
+	assembly, _, assemblyOK := beginMountedProgramMounts(fixture.binding, []MountedProgramArtifact{mounted}, bootstrap)
+	if !mountedOK || !bootstrapOK || !sealedOK || !assemblyOK {
 		t.Fatal("native Call stage mounted assembly")
 	}
 
-	proof := fixture.implementation.receipt.proof
+	proof := fixture.implementation.binding.proof
 	for index, placement := range fixture.rules() {
 		occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(fixture.capability, fixture.mount, placement.Point, placement.ID)
 		operand, operandOK := assembly.AdmitMountedRuleOperand(occurrence, [32]byte{0x7E, byte(index)})
@@ -262,16 +309,16 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 		}
 		occurrenceCopy, operandCopy := occurrence, operand
 		if !assembly.QueueMountedRuleFinalizer(fixture.capability, func() bool {
-			source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+			source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 				Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrenceCopy.value, Operand: operandCopy.value,
 				Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 			})
-			draft, draftOK := fixture.implementation.BeginBindingRuleRow(source)
+			draft, draftOK := fixture.implementation.beginBindingRuleRow(source)
 			write, writeOK := fixture.implementation.WritePart(source, 0)
 			if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
 				return false
 			}
-			row, rowOK := assembly.builder.issueRuleRow(draft)
+			row, rowOK := assembly.issueRuleRow(draft)
 			_, added := assembly.AddRule(occurrenceCopy, row)
 			return rowOK && added
 		}) {
@@ -281,15 +328,22 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 	if !assembly.SealSources() {
 		t.Fatalf("native Call stage source seal: %+v", assembly.sealFailure)
 	}
-	_, graph, committed := assembly.Commit()
-	if !committed || graph == nil {
-		t.Fatalf("native Call stage commit: %+v", assembly.commitFailure)
+	declaration, declared := declareSealedTopology(assembly, sealedMounts, bootstrap)
+	constructed, refusal := constructTopology(declaration)
+	topology, issued := constructed.topology, constructed.graph
+	committed := declared && !refusal.Available() && constructed.Available()
+	if !committed || issued == nil {
+		t.Fatalf("native Call stage construction declared=%t stage=%v step=%v ordinal=%d", declared, refusal.Stage(), refusal.Step(), refusal.Ordinal())
 	}
-	receipt, receiptOK := graph.MountedNativeCallStage(fixture.capability, fixture.mount, fixture.effectID)
-	member, memberOK := receipt.RuleMember()
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
+		t.Fatal("native Call stage committed program")
+	}
+	stage, stageOK := graph.MountedNativeCallStage(fixture.capability, fixture.mount, fixture.effectID)
+	member, memberOK := stage.receipt.RuleMember()
 	expectedMember, expectedMemberOK := graph.MountedRuleMember(fixture.capability, fixture.mount, fixture.effect, fixture.effectID)
-	if !receiptOK || !receipt.Available() || receipt.Stage() != rows.ArtifactRuleStageCallEffect || receipt.MountID() != fixture.mount || receipt.OccurrenceID() != fixture.effectID || receipt.ReusablePointID() != fixture.effect || receipt.ReusableInputPointID() != fixture.summary || !memberOK || !expectedMemberOK || member.graph != graph || member.member.Key() != expectedMember.member.Key() || member.locator != expectedMember.locator {
-		t.Fatal("exact mounted native Call stage receipt")
+	if !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != fixture.mount || stage.OccurrenceID() != fixture.effectID || stage.PointID() != fixture.effect || stage.receipt.ReusableInputPointID() != fixture.summary || !memberOK || !expectedMemberOK || member.graph != graph.graph || member.topology != graph.topology || member.member.Key() != expectedMember.member.Key() || member.locator != expectedMember.locator {
+		t.Fatal("exact mounted native Call stage")
 	}
 	if _, ok := graph.MountedNativeCallStage(fixture.capability, fixture.mount, artifactScalarLawID(0x7F)); ok {
 		t.Fatal("foreign occurrence entered mounted native Call stage inverse")
@@ -300,17 +354,17 @@ func TestMountedNativeCallStageReceiptSurvivesArtifactReleaseAndRejectsForeignOc
 	if _, ok := graph.MountedNativeCallStage(fixture.foreignRole, fixture.mount, fixture.effectID); ok {
 		t.Fatal("foreign role capability entered mounted native Call stage inverse")
 	}
-	alias := receipt
-	alias.stage.stage = rows.ArtifactRuleStageCallSummary
+	alias := stage
+	alias.receipt.stage.stage = rows.ArtifactRuleStageIssued4
 	if alias.Available() {
-		t.Fatal("caller-mutated stage receipt remained valid")
+		t.Fatal("caller-mutated stage remained valid")
 	}
-	if !graph.ReleaseArtifactReceipt() || !receipt.Available() {
-		t.Fatal("cold native Call stage receipt did not survive expanded artifact release")
+	if !graph.ReleaseArtifact() || !stage.Available() {
+		t.Fatal("cold native Call stage did not survive expanded artifact release")
 	}
-	releasedMember, releasedMemberOK := receipt.RuleMember()
+	releasedMember, releasedMemberOK := stage.receipt.RuleMember()
 	expectedReleased, expectedReleasedOK := graph.MountedRuleMember(fixture.capability, fixture.mount, fixture.effect, fixture.effectID)
-	if !releasedMemberOK || !expectedReleasedOK || releasedMember.graph != graph || releasedMember.member.Key() != expectedReleased.member.Key() || releasedMember.locator != expectedReleased.locator || releasedMember.member.Key() != member.member.Key() || releasedMember.locator != member.locator {
+	if !releasedMemberOK || !expectedReleasedOK || releasedMember.graph != graph.graph || releasedMember.topology != graph.topology || releasedMember.member.Key() != expectedReleased.member.Key() || releasedMember.locator != expectedReleased.locator || releasedMember.member.Key() != member.member.Key() || releasedMember.locator != member.locator {
 		t.Fatal("released native Call stage receipt changed exact RuleMember identity")
 	}
 }

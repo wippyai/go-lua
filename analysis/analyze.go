@@ -2,21 +2,20 @@ package analysis
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"runtime"
 	"sync"
 
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
+	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
-
-const resultFormat uint64 = 9
 
 type AnalyzeStatus uint8
 
@@ -28,9 +27,9 @@ const (
 )
 
 // CompileStatus reports whether one Link was admitted to an immutable
-// reusable analyzer plan. Compilation owns Program artifacts and Link-local
-// substitutions only. Instantiated Points and their equation topology are
-// constructed once by the first Plan.Solve and shared by later solves.
+// reusable analyzer plan. Compilation owns sealed ingress snapshots and
+// Link-local substitutions. Instantiated Points and their equation topology
+// are constructed once by the first Plan.Solve and shared by later solves.
 type CompileStatus uint8
 
 const (
@@ -39,81 +38,39 @@ const (
 	CompileComplete
 )
 
-// Plan is an opaque immutable analyzer plan. It retains reusable sealed
-// Program artifacts, their Link mount substitutions, and one lazily-built
-// ordinary runtime solver. Repeated ordinary solves read that solver's
-// completed immutable State instead of rebuilding or re-solving unchanged
-// Program interiors.
+// Plan is an opaque immutable analyzer plan. It retains sealed compile-time
+// snapshots, Link mount substitutions, the owner-handoff ProgramArtifact bag,
+// and one lazily-built ordinary runtime solver. Repeated ordinary solves read
+// that solver's completed immutable State.
 type Plan struct {
 	state *compiledState
 }
 
 type compiledState struct {
-	artifacts            *compiledArtifactSet
-	coordinates          []compiledValueCoordinate
-	observations         []compiledObservation
-	receipt              composite.Compilation
-	binding              *composite.ProgramBinding
-	graph                *engine.ReceiptGraph
-	queryPlan            *artifactQueryPlan
-	sourceID             identity.ContentID
-	admitted             bool
-	runtimeOnce          sync.Once
-	runtimeOK            bool
-	runtimeDetail        receiptAssemblyDiagnostic
-	ordinaryOnce         sync.Once
-	ordinary             *engine.Solver
-	ordinaryObservations []artifactDiagnosticObservationPublication
-	ordinaryOK           bool
-	lifecycleMu          sync.Mutex
-	lifecycleCond        *sync.Cond
-	leases               uint64
-	closing              bool
-	closed               bool
-	releaseOnce          sync.Once
-}
-
-// Result is a detached projection of canonical body-root and query rows. It
-// retains neither Link/domain/engine handles nor template classifications.
-type Result struct {
-	source  identity.ContentID
-	content identity.ContentID
-	values  []identity.ContentID
-	bodies  []resultBody
-	// native is the one sealed post-convergence publication receipt. An
-	// available empty receipt is distinct from a missing producer.
-	native *nativePublicationReceipt
-	// Result carries no placement plane. The placement domain declares no axis,
-	// rule role, or factor, so there is no owner able to issue a placement
-	// receipt; the plane lands with that factor (journal seq 2134), and the
-	// identity format below already reserves its frames.
-	sealed bool
-}
-
-type resultBody struct {
-	id            identity.ContentID
-	roots         []resultRoot
-	valuePresence []uint64
-	effectPresent bool
-	effectTop     bool
-	effects       []identity.ContentID
-}
-
-type resultRoot struct {
-	id     identity.ContentID
-	family keyspace.Family
-}
-
-type Body struct {
-	owner   *Result
-	ordinal uint32
-}
-
-// Root is a detached exact executable root row of one Body.
-type Root struct {
-	owner *Result
-	body  uint32
-	index uint32
+	artifacts         *compiledArtifactSet
+	coordinates       []compiledValueCoordinate
+	receipt           composite.Compilation
+	binding           *composite.ProgramBinding
+	committed         committedProgramGraph
+	querySites        []composite.QuerySite
+	queryPublications []composite.QueryPublication
+	sourceID          identity.ContentID
+	composition       snapshot.Snapshot
+	selectSites       []anadiag.SelectSite
+	selectHandlers    []selectapply.Handler
+	admitted          bool
+	runtimeOnce       sync.Once
+	runtimeOK         bool
+	runtimeDetail     assembleDiagnostic
+	ordinaryOnce      sync.Once
+	ordinary          *engine.Solver
+	ordinaryOK        bool
+	lifecycleMu       sync.Mutex
+	lifecycleCond     *sync.Cond
+	leases            uint64
+	closing           bool
+	closed            bool
+	releaseOnce       sync.Once
 }
 
 func Compile(source *link.Link) (*Plan, CompileStatus) {
@@ -124,52 +81,46 @@ func Compile(source *link.Link) (*Plan, CompileStatus) {
 // CompileWithDiagnostics compiles one Link and reports the exact closed
 // construction boundary on failure. It shares Compile's production path;
 // diagnostics are scalar-only and cannot alter admission or topology.
-func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDiagnostics) {
-	var diagnostics AnalyzeDiagnostics
-	diagnostics.enter(AnalyzeDiagnosticPhaseSetup)
+func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.AnalyzeDiagnostics) {
+	var diagnostics anadiag.AnalyzeDiagnostics
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSetup)
 	if source == nil || !source.ContentID().Available() {
-		diagnostics.fail(AnalyzeDiagnosticReasonInvalidPlan)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonInvalidPlan)
 		return nil, CompileInvalid, diagnostics
 	}
-	diagnostics.enter(AnalyzeDiagnosticPhaseItemIssuance)
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseItemIssuance)
 	receipt, receiptOK := composite.Global()
 	if !receiptOK || !receipt.Available() {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureProgramSchema
-		diagnostics.failCurrentPhase()
+		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureProgramSchema
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
 	artifacts, artifactsOK := compileProgramArtifacts(source, receipt)
 	if !artifactsOK {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureArtifacts
-		diagnostics.failCurrentPhase()
+		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureArtifacts
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
 	values, valuesOK := compileValueCoordinates(source)
 	if !valuesOK {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureValueCoordinates
-		diagnostics.failCurrentPhase()
+		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureValueCoordinates
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	diagnosticObservations, diagnosticObservationsOK := compileDiagnosticObservations(source, artifacts, values)
-	if !diagnosticObservationsOK {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureDiagnosticObservations
-		diagnostics.failCurrentPhase()
+	state := &compiledState{artifacts: artifacts, coordinates: values, receipt: receipt, sourceID: source.ContentID()}
+	if _, resultOK := state.resultGeometry(); !resultOK {
+		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureResultGeometry
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	if _, resultOK := projectArtifactResult(source.ContentID(), artifacts.mounts, values, diagnosticObservations); !resultOK {
-		diagnostics.ItemIssuance = AnalyzeDiagnosticItemIssuanceFailureResultGeometry
-		diagnostics.failCurrentPhase()
-		return nil, CompileUnsupported, diagnostics
-	}
-	state := &compiledState{artifacts: artifacts, coordinates: values, observations: diagnosticObservations, receipt: receipt, sourceID: source.ContentID()}
 	state.lifecycleCond = sync.NewCond(&state.lifecycleMu)
-	diagnostics.enter(AnalyzeDiagnosticPhaseTopology)
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseTopology)
 	if !state.admit() {
 		state.release()
-		diagnostics.failCurrentPhase()
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	diagnostics.enter(AnalyzeDiagnosticPhaseAssemble)
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseAssemble)
 	_, binding, bindingFailure, mountFailure, allocationFailure := state.newProgramBinding(source)
 	diagnostics.Binding = bindingFailure
 	// The mount phase's verdict carries the rejecting domain's own evidence
@@ -181,21 +132,26 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 	// the sealed table's identity and travels here beside it.
 	diagnostics.Axis = mountFailure.Axis
 	diagnostics.AllocationCatalog = allocationFailure
-	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
-	if bindingFailure != ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {
+	diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageBinding
+	if bindingFailure != anadiag.ProgramBindingFailureNone || binding == nil || binding.SchemaBinding() == nil || !binding.SchemaBinding().Sealed() {
 		state.release()
-		diagnostics.failCurrentPhase()
+		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
 	state.binding = binding
+	if !state.publishComposition(source) {
+		state.release()
+		diagnostics.FailCurrentPhase()
+		return nil, CompileUnsupported, diagnostics
+	}
 	state.admitted = true
 	plan := &Plan{state: state}
 	runtime.SetFinalizer(plan, func(value *Plan) { _ = value.Close() })
 	// No runtime Point, candidate, demand, or WTO authority exists yet. The
 	// first Solve owns the sole transition from this cold Plan to an immutable
 	// shared runtime topology.
-	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
-	diagnostics.enter(AnalyzeDiagnosticPhaseComplete)
+	diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageBinding
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseComplete)
 	return plan, CompileComplete, diagnostics
 }
 
@@ -203,71 +159,79 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, AnalyzeDia
 // returns only its detached public projection. A Plan may be solved repeatedly
 // and concurrently; Engine serializes the first execution and publishes one
 // immutable completed State to every later caller.
-func (plan *Plan) Solve(ctx context.Context) (*Result, AnalyzeStatus) {
+func (plan *Plan) Solve(ctx context.Context) (*result.Result, AnalyzeStatus) {
 	result, _, status, _ := plan.solveWithPolicy(ctx, engine.SolveDiagnosticOptions{}, nil, true)
 	return result, status
 }
 
+// SolveWithReport leaves inference untouched. Enabled rules collect only from
+// reusable artifact subjects and observations already produced by the shared
+// solve; policy selection never adds an Engine query or changes Result identity.
+func (plan *Plan) SolveWithReport(ctx context.Context, options engine.SolveDiagnosticOptions, policy anadiag.DiagnosticPolicy) (*result.Result, *anadiag.DiagnosticReport, AnalyzeStatus, anadiag.AnalyzeDiagnostics) {
+	if !policy.Valid() {
+		return nil, nil, AnalyzeInvalid, anadiag.AnalyzeDiagnostics{Phase: anadiag.AnalyzeDiagnosticPhaseSetup, Reason: anadiag.AnalyzeDiagnosticReasonInvalidOptions}
+	}
+	return plan.solveWithPolicy(ctx, options, &policy, false)
+}
+
 // SolveWithDiagnostics executes one fresh source transaction and returns its
 // detached analysis phase/reason envelope plus optional engine evidence. A
-// zero option selection follows the ordinary solver semantics.
-func (plan *Plan) SolveWithDiagnostics(ctx context.Context, options engine.SolveDiagnosticOptions) (*Result, AnalyzeStatus, AnalyzeDiagnostics) {
+// zero presentation selection follows the ordinary solver semantics.
+func (plan *Plan) SolveWithDiagnostics(ctx context.Context, options engine.SolveDiagnosticOptions) (*result.Result, AnalyzeStatus, anadiag.AnalyzeDiagnostics) {
 	result, _, status, diagnostics := plan.solveWithPolicy(ctx, options, nil, false)
 	return result, status, diagnostics
 }
 
-func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagnosticOptions, policy *DiagnosticPolicy, reuseOrdinary bool) (*Result, *DiagnosticReport, AnalyzeStatus, AnalyzeDiagnostics) {
+func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagnosticOptions, policy *anadiag.DiagnosticPolicy, reuseOrdinary bool) (*result.Result, *anadiag.DiagnosticReport, AnalyzeStatus, anadiag.AnalyzeDiagnostics) {
 	if ctx == nil {
-		return nil, nil, AnalyzeInvalid, AnalyzeDiagnostics{Phase: AnalyzeDiagnosticPhaseSetup, Reason: AnalyzeDiagnosticReasonInvalidPlan}
+		return nil, nil, AnalyzeInvalid, anadiag.AnalyzeDiagnostics{Phase: anadiag.AnalyzeDiagnosticPhaseSetup, Reason: anadiag.AnalyzeDiagnosticReasonInvalidPlan}
 	}
 	state, leased := plan.acquire()
 	if !leased {
-		return nil, nil, AnalyzeInvalid, AnalyzeDiagnostics{Phase: AnalyzeDiagnosticPhaseSetup, Reason: AnalyzeDiagnosticReasonInvalidPlan}
+		return nil, nil, AnalyzeInvalid, anadiag.AnalyzeDiagnostics{Phase: anadiag.AnalyzeDiagnosticPhaseSetup, Reason: anadiag.AnalyzeDiagnosticReasonInvalidPlan}
 	}
 	defer state.releaseLease()
 	if !options.Valid() {
-		return nil, nil, AnalyzeInvalid, AnalyzeDiagnostics{Phase: AnalyzeDiagnosticPhaseSetup, Reason: AnalyzeDiagnosticReasonInvalidOptions}
+		return nil, nil, AnalyzeInvalid, anadiag.AnalyzeDiagnostics{Phase: anadiag.AnalyzeDiagnosticPhaseSetup, Reason: anadiag.AnalyzeDiagnosticReasonInvalidOptions}
 	}
-	var diagnostics AnalyzeDiagnostics
-	diagnostics.enter(AnalyzeDiagnosticPhaseAssemble)
+	var diagnostics anadiag.AnalyzeDiagnostics
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseAssemble)
 	binding := state.binding
 	if binding == nil {
-		diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageBinding
-		diagnostics.enter(AnalyzeDiagnosticPhaseSolve)
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+		diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageBinding
+		diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSolve)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
 	receiptDiagnostic, topologyOK := state.instantiateRuntimeTopology()
 	if !topologyOK {
-		applyReceiptAssemblyDiagnostic(&diagnostics, receiptDiagnostic)
-		diagnostics.failCurrentPhase()
+		applyAssembleDiagnostic(&diagnostics, receiptDiagnostic)
+		diagnostics.FailCurrentPhase()
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	graph := state.graph
-	if graph == nil || state.queryPlan == nil {
-		diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageRuntime
-		diagnostics.enter(AnalyzeDiagnosticPhaseSolve)
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+	if state.committed.program == nil || len(state.querySites) == 0 {
+		diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageRuntime
+		diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSolve)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	diagnostics.enter(AnalyzeDiagnosticPhaseSolve)
-	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageRuntime
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSolve)
+	diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageRuntime
 	var solver *engine.Solver
-	var queryPlan *artifactQueryPlan
-	var diagnosticObservations []artifactDiagnosticObservationPublication
+	var queryPublications []composite.QueryPublication
 	var compiled bool
 	if reuseOrdinary && policy == nil && options == (engine.SolveDiagnosticOptions{}) {
-		solver, diagnosticObservations, compiled = state.ordinaryRuntimeSolver()
-		queryPlan = state.queryPlan
+		solver, compiled = state.ordinaryRuntimeSolver()
+		queryPublications = state.queryPublications
 	} else {
-		solver, queryPlan, diagnosticObservations, diagnostics.ObservationAttach, compiled = state.buildRuntimeSolver(policy)
+		solver, queryPublications, diagnostics.ObservationAttach, compiled = state.buildRuntimeSolver(policy)
 	}
-	if !compiled || solver == nil || queryPlan == nil {
+	if !compiled || solver == nil || len(queryPublications) == 0 {
 		// Runtime binding ends at either the observation attach path or the
 		// program constructor. The constructor names its own boundary, so a
 		// construction refusal localizes past the generic runtime stage.
-		diagnostics.enterConstruction(diagnostics.ObservationAttach)
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+		diagnostics.EnterConstruction(diagnostics.ObservationAttach)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
 	stateResult, solveStatus, engineDiagnostics := solver.SolveWithDiagnostics(ctx, options)
@@ -275,54 +239,58 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 	if failure := engineDiagnostics.Failure; failure.Available() {
 		// Rule-slot capabilities are intentionally opaque at this boundary;
 		// domain diagnostics are classified while artifact rows are attached.
-		diagnostics.Rule = AnalyzeDiagnosticRuleUnknown
+		diagnostics.Rule = anadiag.AnalyzeDiagnosticRuleUnknown
 	}
-	diagnostics.ReceiptStage = AnalyzeDiagnosticReceiptStageSolve
+	diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageSolve
 	switch solveStatus {
 	case engine.SolveCanceled:
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineCanceled)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineCanceled)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolvePanicked:
-		diagnostics.fail(AnalyzeDiagnosticReasonEnginePanicked)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEnginePanicked)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolveIncomplete:
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolveInvalid:
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	case engine.SolveComplete:
 		if stateResult == nil {
-			diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+			diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 			return nil, nil, AnalyzeIncomplete, diagnostics
 		}
 	default:
-		diagnostics.fail(AnalyzeDiagnosticReasonEngineIncomplete)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonEngineIncomplete)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	diagnostics.enter(AnalyzeDiagnosticPhaseObservation)
-	diagnostics.enter(AnalyzeDiagnosticPhaseDetach)
-	queryPublications, queriesPublished := queryPlan.Publications(graph)
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseObservation)
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseDetach)
+	queriesPublished := len(queryPublications) == len(state.querySites) && len(queryPublications) > 0
 	sealed, snapshotPublished := solver.PublishedSnapshot(stateResult)
 	published := sealed.Snapshot()
 	queryRead, queryOpened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.QueryFamily())
 	observationRead, observationOpened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
 	if !queriesPublished || !snapshotPublished || !queryOpened || !observationOpened {
-		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
 	geometry, geometryOK := state.resultGeometry()
 	if !geometryOK {
-		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	projection, detached := detachArtifactResult(geometry, state.artifacts.mounts, binding.ValueSchema(), policy, queryPublications, diagnosticObservations, &published, queryRead, observationRead)
-	if !detached || projection == nil || projection.result == nil {
-		diagnostics.fail(AnalyzeDiagnosticReasonDetach)
+	projection, detached := result.Detach(geometry, resultMounts(state.artifacts.mounts), binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
+		Published: &state.composition,
+		Sites:     state.selectSites,
+		Handlers:  state.selectHandlers,
+	})
+	if !detached || projection == nil || projection.Result == nil {
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	diagnostics.enter(AnalyzeDiagnosticPhaseComplete)
-	return projection.result, projection.report, AnalyzeComplete, diagnostics
+	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseComplete)
+	return projection.Result, projection.Report, AnalyzeComplete, diagnostics
 }
 
 // ordinaryRuntimeSolver owns the single program construction used by ordinary
@@ -330,21 +298,24 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 // canceled first call cannot poison the immutable compiler or prevent a later
 // caller from completing it. Solver itself serializes execution and publishes
 // exactly one completed State per accepted runtime revision.
-func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, []artifactDiagnosticObservationPublication, bool) {
+func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, bool) {
 	if state == nil {
-		return nil, nil, false
+		return nil, false
 	}
 	state.ordinaryOnce.Do(func() {
-		var queryPlan *artifactQueryPlan
+		var publications []composite.QueryPublication
 		var failure engine.SolveFailure
-		state.ordinary, queryPlan, state.ordinaryObservations, failure, state.ordinaryOK = state.buildRuntimeSolver(nil)
-		state.ordinaryOK = state.ordinaryOK && queryPlan == state.queryPlan && !failure.Available()
+		state.ordinary, publications, failure, state.ordinaryOK = state.buildRuntimeSolver(nil)
+		state.ordinaryOK = state.ordinaryOK && len(publications) == len(state.querySites) && !failure.Available()
+		if state.ordinaryOK {
+			state.queryPublications = publications
+		}
 		if !state.ordinaryOK {
 			state.ordinary = nil
-			state.ordinaryObservations = nil
+			state.queryPublications = nil
 		}
 	})
-	return state.ordinary, state.ordinaryObservations, state.ordinaryOK
+	return state.ordinary, state.ordinaryOK
 }
 
 // Runtime attach phases run in this order against one program construction.
@@ -360,46 +331,52 @@ const (
 // buildRuntimeSolver is the sole runtime binding path. Ordinary solves retain
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
 // afresh because their observation inventory is explicitly flag-controlled.
-func (state *compiledState) buildRuntimeSolver(policy *DiagnosticPolicy) (*engine.Solver, *artifactQueryPlan, []artifactDiagnosticObservationPublication, engine.SolveFailure, bool) {
-	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.graph == nil || state.queryPlan == nil || state.artifacts == nil {
-		return nil, nil, nil, engine.SolveFailure{}, false
+func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy) (*engine.Solver, []composite.QueryPublication, engine.SolveFailure, bool) {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed.program == nil || len(state.querySites) == 0 || state.artifacts == nil {
+		return nil, nil, engine.SolveFailure{}, false
 	}
 	geometry, geometryOK := state.resultGeometry()
 	if !geometryOK {
-		return nil, nil, nil, engine.SolveFailure{}, false
+		return nil, nil, engine.SolveFailure{}, false
 	}
-	binding, graph, queryPlan := state.binding, state.graph, state.queryPlan
-	compilation, compiled := engine.BeginProgramConstruction(binding.SchemaBinding(), graph)
-	if !compiled || compilation == nil {
-		return nil, nil, nil, engine.SolveFailure{}, false
-	}
-	_, _, _, witnessOK := linkBootstrapWitness(state, binding)
+	binding := state.binding
+	_, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
-		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseWitness), false
+		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseWitness), false
 	}
-	if !attachLinkBootstrapMembers(binding, compilation) {
-		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseBootstrapMembers), false
+	compilation, compiled := state.beginRuntimeConstruction()
+	if !compiled || compilation == nil {
+		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
 	}
-	if !attachArtifactRuleMembers(binding, compilation, state.artifacts.mounts) {
-		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
+	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
+	rules := binding.Rules()
+	if !sealedOK || rules == nil || !rules.AttachLinkMembers(compilation) {
+		compilation.Close()
+		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseBootstrapMembers), false
 	}
-	if !queryPlan.Attach(compilation, graph, binding) {
-		return nil, nil, nil, engine.ReceiptCompilationAttachFailure(runtimeAttachPhaseQueryMembers), false
+	if !rules.AttachMountedMembers(compilation, sealed) {
+		compilation.Close()
+		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
 	}
-	observations, observationFailure, observed := attachBranchValueObservations(compilation, graph, binding, geometry)
+	publications, queriesAttached := binding.AttachQueries(compilation, state.querySites)
+	if !queriesAttached {
+		compilation.Close()
+		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseQueryMembers), false
+	}
+	observationFailure, observed := anadiag.AttachBranchValues(compilation, binding, geometry.BranchObservations)
 	if !observed {
-		return nil, nil, nil, observationFailure.Failure(), false
+		return nil, nil, observationFailure, false
 	}
 	solver, constructionFailure, constructed := compilation.Seal()
 	if !constructed || solver == nil {
 		// The construction reports which stage refused. Only fall back to the
 		// observation boundary when it named none.
 		if constructionFailure.Available() {
-			return nil, nil, nil, constructionFailure, false
+			return nil, nil, constructionFailure, false
 		}
-		return nil, nil, nil, observationFailure.Failure(), false
+		return nil, nil, observationFailure, false
 	}
-	return solver, queryPlan, observations, observationFailure.Failure(), true
+	return solver, publications, observationFailure, true
 }
 
 // SourceID is the content fence of the Link compiled into this plan.
@@ -421,10 +398,11 @@ func (plan *Plan) valid() bool {
 	return true
 }
 
-// Close releases this Plan's assembled topology and domain receipts. Successful
-// immutable Program artifacts remain in the content-addressed cache: closing a
-// Plan must not force a later equivalent Link to recompile or lower them.
-// It is terminal; the finalizer is only a leak safety net.
+// Close releases this Plan's assembled topology and domain receipts. The
+// compile-time snapshot, template, and owner-handoff bag remain in the
+// content-addressed cache: closing a Plan must not force a later equivalent
+// Link to recompile or Lower them. It is terminal; the finalizer is only a
+// leak safety net.
 func (plan *Plan) Close() bool {
 	if plan == nil || plan.state == nil {
 		return false
@@ -487,22 +465,49 @@ func (state *compiledState) release() {
 		// The global content-addressed cache owns successful immutable artifacts.
 		// A closed Plan must not keep a second strong mount set alive.
 		state.artifacts = nil
-		state.graph = nil
-		state.queryPlan = nil
+		state.committed = committedProgramGraph{}
+		state.querySites = nil
+		state.queryPublications = nil
 		state.ordinary = nil
-		state.ordinaryObservations = nil
 		state.coordinates = nil
-		state.observations = nil
 		state.binding = nil
 		state.admitted = false
 	})
 }
 
-func (state *compiledState) resultGeometry() (resultGeometry, bool) {
-	if state == nil || state.artifacts == nil {
-		return resultGeometry{}, false
+func resultMounts(mounts []mountedProgramArtifact) []result.Mount {
+	out := make([]result.Mount, len(mounts))
+	for index, mount := range mounts {
+		out[index] = result.Mount{Snapshot: mount.snapshot, ModuleKey: mount.moduleKey}
 	}
-	return projectArtifactResult(state.sourceID, state.artifacts.mounts, state.coordinates, state.observations)
+	return out
+}
+
+func resultCoordinates(coordinates []compiledValueCoordinate) ([]result.ValueCoordinate, bool) {
+	out := make([]result.ValueCoordinate, len(coordinates))
+	for index, coordinate := range coordinates {
+		row, ok := result.NewValueCoordinate(coordinate.id, coordinate.mount)
+		if !ok {
+			return nil, false
+		}
+		out[index] = row
+	}
+	return out, true
+}
+
+func (state *compiledState) resultGeometry() (result.Geometry, bool) {
+	if state == nil || state.artifacts == nil {
+		return result.Geometry{}, false
+	}
+	observations, observationsOK := state.artifacts.observationCensus(state.coordinates)
+	if !observationsOK {
+		return result.Geometry{}, false
+	}
+	coordinates, coordinatesOK := resultCoordinates(state.coordinates)
+	if !coordinatesOK {
+		return result.Geometry{}, false
+	}
+	return result.Project(state.sourceID, resultMounts(state.artifacts.mounts), coordinates, observations)
 }
 
 func (state *compiledState) admit() bool {
@@ -513,15 +518,15 @@ func (state *compiledState) admit() bool {
 		return false
 	}
 	for _, mount := range state.artifacts.mounts {
-		if !mount.valid() || mount.artifact == nil || !mount.artifact.Available() {
+		if !mount.valid() {
 			return false
 		}
 	}
 	geometry, geometryOK := state.resultGeometry()
-	return geometryOK && geometry.valid()
+	return geometryOK && geometry.Valid()
 }
 
-func Analyze(ctx context.Context, source *link.Link) (*Result, AnalyzeStatus) {
+func Analyze(ctx context.Context, source *link.Link) (*result.Result, AnalyzeStatus) {
 	if ctx == nil || source == nil || !source.ContentID().Available() {
 		return nil, AnalyzeInvalid
 	}
@@ -539,280 +544,157 @@ func Analyze(ctx context.Context, source *link.Link) (*Result, AnalyzeStatus) {
 	}
 }
 
-func (result *Result) ContentID() identity.ContentID {
-	if !result.valid() {
-		return identity.ContentID{}
-	}
-	return result.content
-}
-func (result *Result) SourceID() identity.ContentID {
-	if !result.valid() {
-		return identity.ContentID{}
-	}
-	return result.source
-}
-func (result *Result) BodyCount() int {
-	if !result.valid() {
-		return 0
-	}
-	return len(result.bodies)
+// committedProgramGraph is the assemble-owned committed handle. analyze
+// opens the existing construction only after assemble commits the graph.
+type committedProgramGraph struct {
+	program *engine.CommittedProgram
 }
 
-func (result *Result) BodyAt(index int) (Body, bool) {
-	if !result.valid() || index < 0 || index >= len(result.bodies) {
-		return Body{}, false
+func (state *compiledState) beginRuntimeConstruction() (*engine.ProgramConstruction, bool) {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed.program == nil {
+		return nil, false
 	}
-	return Body{owner: result, ordinal: uint32(index + 1)}, true
+	return engine.BeginProgramConstruction(state.binding.SchemaBinding(), state.committed.program)
 }
 
-func (body Body) row() (resultBody, bool) {
-	if body.owner == nil || !body.owner.valid() || body.ordinal == 0 || uint64(body.ordinal) > uint64(len(body.owner.bodies)) {
-		return resultBody{}, false
-	}
-	return body.owner.bodies[body.ordinal-1], true
-}
-func (body Body) ID() (identity.ContentID, bool) { row, ok := body.row(); return row.id, ok }
-func (body Body) RootCount() int {
-	// Root rows are the exact mount-qualified ProgramArtifact receipt plane; no
-	// Solve-time Program, Source, or Flow reconstruction participates here.
-	row, ok := body.row()
-	if !ok {
-		return 0
-	}
-	return len(row.roots)
-}
-func (body Body) RootAt(index int) (Root, bool) {
-	row, ok := body.row()
-	if !ok || index < 0 || index >= len(row.roots) {
-		return Root{}, false
-	}
-	return Root{owner: body.owner, body: body.ordinal, index: uint32(index + 1)}, true
-}
-func (root Root) row() (resultRoot, bool) {
-	if root.owner == nil || !root.owner.valid() || root.body == 0 || root.index == 0 || uint64(root.body) > uint64(len(root.owner.bodies)) {
-		return resultRoot{}, false
-	}
-	rows := root.owner.bodies[root.body-1].roots
-	if uint64(root.index) > uint64(len(rows)) {
-		return resultRoot{}, false
-	}
-	return rows[root.index-1], true
-}
-func (root Root) ID() (identity.ContentID, bool) { row, ok := root.row(); return row.id, ok }
-func (root Root) Family() keyspace.Family {
-	row, ok := root.row()
-	if !ok {
-		return keyspace.FamilyInvalid
-	}
-	return row.family
+type assembleDiagnostic struct {
+	stage      anadiag.AnalyzeDiagnosticAssembleStage
+	rule       anadiag.AnalyzeDiagnosticRule
+	seal       engine.SolveFailure
+	ordinal    uint32
+	lowering   engine.SolveFailure
+	binding    anadiag.ProgramBindingFailure
+	allocation allocationcatalog.SealFailure
+	commit     engine.SolveFailure
+	schedule   uint32
 }
 
-func (body Body) EffectDisposition() (present, top, ok bool) {
-	row, ok := body.row()
-	return row.effectPresent, row.effectTop, ok
-}
-func (body Body) EffectCount() int {
-	row, ok := body.row()
-	if !ok {
-		return 0
+func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram, []composite.QuerySite, assembleDiagnostic, bool) {
+	if state == nil || state.artifacts == nil || !state.receipt.Available() || state.binding == nil || state.binding.SchemaBinding() == nil || !state.binding.SchemaBinding().Sealed() {
+		return nil, nil, assembleDiagnostic{}, false
 	}
-	return len(row.effects)
-}
-func (body Body) EffectAt(index int) (identity.ContentID, bool) {
-	row, ok := body.row()
-	if !ok || index < 0 || index >= len(row.effects) {
-		return identity.ContentID{}, false
+	binding := state.binding
+	witness, witnessOK := linkBootstrapWitness(state, binding)
+	if !witnessOK {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageBinding}, false
 	}
-	return row.effects[index], true
-}
-
-// ValueCount and ValueAt expose the per-body projection of the declared Value
-// query. A body with no canonical coordinates has a valid empty projection.
-func (body Body) ValueCount() int {
-	if _, ok := body.row(); !ok || body.owner == nil {
-		return 0
-	}
-	return len(body.owner.values)
-}
-func (body Body) ValueAt(index int) (id identity.ContentID, present, ok bool) {
-	row, rowOK := body.row()
-	if !rowOK || body.owner == nil || index < 0 || index >= len(body.owner.values) {
-		return identity.ContentID{}, false, false
-	}
-	return body.owner.values[index], resultValuePresent(row.valuePresence, index), true
-}
-
-func (result *Result) valid() bool {
-	// The detached projection is validated and content-addressed exactly once
-	// before publication. All fields and nested slices are private and every
-	// public accessor is read-only, so replaying the complete body/value/effect
-	// census here would be a second authority and makes iteration quadratic.
-	return result != nil && result.sealed && result.source.Available() && result.content.Available() && len(result.bodies) != 0
-}
-
-func (result *Result) validPayload() bool {
-	if result == nil || result.sealed || !result.source.Available() || !result.content.Available() || len(result.bodies) == 0 {
-		return false
-	}
-	for _, value := range result.values {
-		if !value.Available() {
-			return false
+	inputs := make([]engine.MountedProgramArtifact, 0, len(state.artifacts.mounts))
+	rolesByArtifact := make(map[identity.ContentID][]engine.MountedProgramRole, len(state.artifacts.mounts))
+	for _, mount := range state.artifacts.mounts {
+		if !mount.valid() {
+			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageMount}, false
 		}
-	}
-	for _, body := range result.bodies {
-		if !body.id.Available() || body.effectTop && len(body.effects) != 0 {
-			return false
-		}
-		for _, root := range body.roots {
-			if !root.id.Available() || root.family == keyspace.FamilyInvalid {
-				return false
+		artifactID := mount.snapshot.ArtifactID()
+		roles, have := rolesByArtifact[artifactID]
+		if !have {
+			bound, boundOK := mountedProgramRoles(mount.roles, binding)
+			if !boundOK {
+				return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageMount}, false
 			}
+			roles = bound
+			rolesByArtifact[artifactID] = roles
 		}
-		if !resultValuePresenceValid(body.valuePresence, len(result.values)) {
-			return false
+		inputs = append(inputs, engine.MountedProgramArtifact{Template: mount.template, Roles: roles, Module: mount.moduleKey})
+	}
+	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
+	rules := binding.Rules()
+	if !sealedOK || rules == nil {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageBinding}, false
+	}
+	sites, queryOK := composite.SelectedQuerySites(sealed)
+	if !queryOK {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageQueryPlan}, false
+	}
+	linkAdmissions, linkOK := rules.LinkAdmissions()
+	if !linkOK {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules}, false
+	}
+	mounted, activations, artifactRule, mountedOK := rules.MountedAdmissions(sealed)
+	if !mountedOK {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageArtifactRules, rule: artifactRule}, false
+	}
+	queries, queriesOK := binding.QueryAdmissions(sites)
+	if !queriesOK {
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageQueryRows}, false
+	}
+	admission := engine.MountedProgramAdmission{
+		Link:       linkAdmissions,
+		Mounted:    mounted,
+		Activation: activations,
+		Queries:    queries,
+	}
+	program, refusal, committed := engine.AssembleMountedProgram(binding.SchemaBinding(), inputs, admission, witness)
+	if !committed {
+		if refusal.Lowered() {
+			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageLowering, lowering: refusal.LoweringFailure()}, false
 		}
-		for _, effect := range body.effects {
-			if !effect.Available() {
-				return false
+		switch refusal.Stage() {
+		case engine.ProgramAdmissionLink:
+			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageBootstrapRules}, false
+		case engine.ProgramAdmissionMounted:
+			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageArtifactRules}, false
+		case engine.ProgramAdmissionQuery:
+			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageQueryRows}, false
+		case engine.ProgramAdmissionSeal:
+			failedRule := anadiag.AnalyzeDiagnosticRuleUnknown
+			failedStage := anadiag.AnalyzeDiagnosticAssembleStageSourceSeal
+			var failedOrdinal uint32
+			if ordinal, artifactRows := refusal.ArtifactRowOrdinal(); artifactRows {
+				failedStage = anadiag.AnalyzeDiagnosticAssembleStageArtifactRows
+				failedOrdinal = ordinal
+			} else if role, roleOK := refusal.MountedRole(); roleOK {
+				failedRule = diagnosticRuleForMountedRole(binding, role)
+			} else if role, roleOK := refusal.LinkRole(); roleOK {
+				failedRule = diagnosticRuleForLinkRole(binding, role)
 			}
+			return nil, nil, assembleDiagnostic{stage: failedStage, rule: failedRule, seal: refusal.Seal(), ordinal: failedOrdinal}, false
 		}
+		return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit, commit: refusal.Commit(), schedule: refusal.ScheduleRow()}, false
 	}
-	if result.native == nil || !result.native.valid() {
-		return false
-	}
-	return true
+	return program, sites, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, true
 }
 
-func analysisResultID(source identity.ContentID, values []identity.ContentID, bodies []resultBody) (identity.ContentID, bool) {
-	return analysisResultIDWithPublication(source, values, bodies, nil)
+func (state *compiledState) instantiateRuntimeTopology() (assembleDiagnostic, bool) {
+	if state == nil {
+		return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, false
+	}
+	state.runtimeOnce.Do(func() {
+		state.runtimeDetail, state.runtimeOK = state.buildRuntimeTopologyWithDiagnostic()
+	})
+	return state.runtimeDetail, state.runtimeOK
 }
 
-func writeResultFrame(hash interface{ Write([]byte) (int, error) }, value []byte) bool {
-	var size [8]byte
-	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
-	first, firstErr := hash.Write(size[:])
-	second, secondErr := hash.Write(value)
-	return firstErr == nil && secondErr == nil && first == len(size) && second == len(value)
+func (state *compiledState) buildRuntimeTopologyWithDiagnostic() (assembleDiagnostic, bool) {
+	if state == nil || state.committed.program != nil {
+		return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, state != nil && state.committed.program != nil
+	}
+	program, sites, diagnostic, ok := state.assembleCommittedProgram()
+	if !ok || program == nil {
+		return diagnostic, false
+	}
+	state.committed.program = program
+	state.querySites = sites
+	if !program.ReleaseArtifact() {
+		state.committed = committedProgramGraph{}
+		state.querySites = nil
+		return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, false
+	}
+	return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, true
 }
 
-func analysisResultIDWithPublication(source identity.ContentID, values []identity.ContentID, bodies []resultBody, native *nativePublicationReceipt) (identity.ContentID, bool) {
-	if !source.Available() || len(bodies) == 0 {
-		return identity.ContentID{}, false
+func applyAssembleDiagnostic(diagnostics *anadiag.AnalyzeDiagnostics, detail assembleDiagnostic) {
+	if diagnostics == nil {
+		return
 	}
-	hash := sha256.New()
-	write := func(value []byte) bool { return writeResultFrame(hash, value) }
-	var version, count [8]byte
-	binary.BigEndian.PutUint64(version[:], resultFormat)
-	binary.BigEndian.PutUint64(count[:], uint64(len(values)))
-	if !write([]byte("analysis/result")) || !write(version[:]) || !write(source[:]) || !write(count[:]) {
-		return identity.ContentID{}, false
+	diagnostics.AssembleStage = detail.stage
+	diagnostics.Rule = detail.rule
+	diagnostics.AssembleSeal = detail.seal
+	diagnostics.AssembleOrdinal = detail.ordinal
+	diagnostics.AssembleLowering = detail.lowering
+	diagnostics.Binding = detail.binding
+	if detail.allocation != 0 {
+		diagnostics.AllocationCatalog = detail.allocation
 	}
-	for _, value := range values {
-		if !value.Available() || !write(value[:]) {
-			return identity.ContentID{}, false
-		}
-	}
-	binary.BigEndian.PutUint64(count[:], uint64(len(bodies)))
-	if !write(count[:]) {
-		return identity.ContentID{}, false
-	}
-	for _, body := range bodies {
-		binary.BigEndian.PutUint64(count[:], uint64(len(body.roots)))
-		if !write(body.id[:]) || !write(count[:]) {
-			return identity.ContentID{}, false
-		}
-		for _, root := range body.roots {
-			if !write(root.id[:]) || !write([]byte{byte(root.family)}) {
-				return identity.ContentID{}, false
-			}
-		}
-		binary.BigEndian.PutUint64(count[:], uint64(len(body.valuePresence)))
-		if !write(count[:]) {
-			return identity.ContentID{}, false
-		}
-		for _, word := range body.valuePresence {
-			binary.BigEndian.PutUint64(count[:], word)
-			if !write(count[:]) {
-				return identity.ContentID{}, false
-			}
-		}
-		binary.BigEndian.PutUint64(count[:], uint64(len(body.effects)))
-		if !write([]byte{boolByte(body.effectPresent), boolByte(body.effectTop)}) || !write(count[:]) {
-			return identity.ContentID{}, false
-		}
-		for _, effect := range body.effects {
-			if !write(effect[:]) {
-				return identity.ContentID{}, false
-			}
-		}
-	}
-	nativeAvailable := native != nil && native.valid()
-	if native != nil && !nativeAvailable {
-		return identity.ContentID{}, false
-	}
-	if !write([]byte{boolByte(nativeAvailable)}) {
-		return identity.ContentID{}, false
-	}
-	nativeCount := 0
-	if nativeAvailable {
-		nativeCount = len(native.rows)
-	}
-	binary.BigEndian.PutUint64(count[:], uint64(nativeCount))
-	if !write(count[:]) || nativeAvailable && !write(native.content[:]) {
-		return identity.ContentID{}, false
-	}
-	// The placement plane has no owner able to issue a receipt, so its
-	// availability flag and row count are written as absent. The frames stay in
-	// the Result format so a future solved typed placement receipt extends this
-	// identity without a parallel Result family.
-	if !write([]byte{boolByte(false)}) {
-		return identity.ContentID{}, false
-	}
-	binary.BigEndian.PutUint64(count[:], 0)
-	if !write(count[:]) {
-		return identity.ContentID{}, false
-	}
-	var id identity.ContentID
-	copy(id[:], hash.Sum(nil))
-	return id, id.Available()
-}
-
-func resultValueWordCount(values int) int {
-	if values <= 0 {
-		return 0
-	}
-	return (values + 63) / 64
-}
-
-func resultValuePresent(words []uint64, index int) bool {
-	if index < 0 || index/64 >= len(words) {
-		return false
-	}
-	return words[index/64]&(uint64(1)<<uint(index%64)) != 0
-}
-
-func setResultValuePresent(words []uint64, index int) bool {
-	if index < 0 || index/64 >= len(words) {
-		return false
-	}
-	words[index/64] |= uint64(1) << uint(index%64)
-	return true
-}
-
-func resultValuePresenceValid(words []uint64, values int) bool {
-	if len(words) != resultValueWordCount(values) {
-		return false
-	}
-	if values == 0 || values%64 == 0 {
-		return true
-	}
-	validBits := uint(values % 64)
-	return words[len(words)-1]&^((uint64(1)<<validBits)-1) == 0
-}
-
-func boolByte(value bool) byte {
-	if value {
-		return 1
-	}
-	return 0
+	diagnostics.AssembleCommit = detail.commit
+	diagnostics.AssembleScheduleOrdinal = detail.schedule
 }

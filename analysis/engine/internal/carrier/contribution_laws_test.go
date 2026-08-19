@@ -143,6 +143,96 @@ func contributionSevered(t testing.TB, base RuleContributionBase) {
 	}
 }
 
+func TestFinishRuleContributionBorrowsClosedCarryAndEnvironmentRoots(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions := support.New(manager)
+	whole := regions.True()
+	on, ok := regions.Literal(1, true)
+	if !ok || !regions.Seal() {
+		t.Fatal("support regions")
+	}
+	operations := []*sparseContributionTripwireOperation{
+		{carryOnlyOperation: &carryOnlyOperation{guards: manager}},
+		{carryOnlyOperation: &carryOnlyOperation{guards: manager}},
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{operations[0], operations[1]})
+	if !ok {
+		t.Fatal("composition")
+	}
+	sourcePlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
+	if !ok {
+		t.Fatal("source plan")
+	}
+	plan, ok := composition.SealContribution(1, nil, []ContributionSource{{Slot: 0, Input: 0}}, false, true)
+	if !ok {
+		t.Fatal("carry/environment plan")
+	}
+	identity, ok := composition.IdentityReindex(composition.Scope())
+	if !ok {
+		t.Fatal("identity reindex")
+	}
+	work, ok := composition.NewWork()
+	if !ok {
+		t.Fatal("work")
+	}
+	defer work.Close()
+	source := contributionWrittenPoint(t, work, sourcePlan, composition.Scope(), whole,
+		contributionSlotWrite{operation: operations[0].carryOnlyOperation, slot: 0, root: 2},
+		contributionSlotWrite{operation: operations[1].carryOnlyOperation, slot: 1, root: 2})
+	if !source.closed {
+		t.Fatal("closed source proof was not retained")
+	}
+	sourceZero, ok := source.HandleAt(0)
+	if !ok {
+		t.Fatal("source slot 0")
+	}
+	sourceOne, ok := source.HandleAt(1)
+	if !ok {
+		t.Fatal("source slot 1")
+	}
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{source}, whole, source)
+	if !ok {
+		t.Fatal("begin")
+	}
+	result, ok := work.FinishRuleContribution(base, nil)
+	if !ok || !result.Valid() || !result.Support().Equal(whole) {
+		t.Fatal("finish")
+	}
+	if operations[0].closeCalls != 0 || operations[1].closeCalls != 0 {
+		t.Fatalf("closed carry/environment roots were reclosed: (%d,%d)", operations[0].closeCalls, operations[1].closeCalls)
+	}
+	gotZero, ok := result.HandleAt(0)
+	if !ok || gotZero != sourceZero {
+		t.Fatal("carry root changed")
+	}
+	gotOne, ok := result.HandleAt(1)
+	if !ok || gotOne != sourceOne {
+		t.Fatal("environment root changed")
+	}
+	lifted, ok := work.LiftRuleContribution(source)
+	if !ok || !work.EqualRuleContribution(result, lifted) {
+		t.Fatal("borrowed finish changed the closed semantic surface")
+	}
+
+	latent, ok := work.TransportPointState(source, whole, identity, on)
+	if !ok || latent.closed {
+		t.Fatal("hostile source did not clear the closed proof")
+	}
+	base, ok = work.BeginRuleContribution(plan, composition.Scope(), []PointState{latent}, on, latent)
+	if !ok {
+		t.Fatal("latent begin")
+	}
+	if _, ok = work.FinishRuleContribution(base, nil); !ok {
+		t.Fatal("latent finish")
+	}
+	if operations[0].closeCalls != 1 || operations[1].closeCalls != 1 {
+		t.Fatalf("unclosed carry/environment roots skipped close: (%d,%d)", operations[0].closeCalls, operations[1].closeCalls)
+	}
+}
+
 type contributionPublisher struct {
 	reserve   bool
 	reserved  int

@@ -67,21 +67,20 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !implementationOK || !queryImplementationOK || !assemblyOK {
 		t.Fatal("demanded producer implementations")
 	}
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	scope := equation.EmptyScope()
 	sites := make([]equation.Site, len(operands))
 	occurrences := make([]equation.Occurrence, len(operands))
 	operandRows := make([]equation.Operand, len(operands))
-	pointRefs := make([]bindingPointRowRef, len(operands))
 	for index, operandValue := range operands {
-		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(957_010+index)), scope, equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(957_010+index)), scope, equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.admitAt(site)
 		entity, entityOK := operandEntityForContent(operandValue.content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
 			t.Fatal("demanded producer sources")
 		}
@@ -91,36 +90,36 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 	if !assembly.SealSources() {
 		t.Fatal("demanded producer source seal")
 	}
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
 	for index, operandValue := range operands {
-		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
-		pointRef, pointSemanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(byte(170+index)), point)
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		declaration.points = append(declaration.points, declaredPointRow{ID: receiptAssemblySemanticID(byte(170 + index)), Site: sites[index]})
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operandRows[index],
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		part, partOK := implementation.WritePart(source, 0)
-		if !pointOK || !pointSemanticOK || !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
+		if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
 			t.Fatal("demanded producer row")
 		}
-		ruleRow, ruleRowOK := assembly.builder.issueRuleRow(draft)
-		_, ruleSemanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(byte(180+index)), ruleRow)
-		if !ruleRowOK || !ruleSemanticOK || operandValue != operands[index] {
+		ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
+		if !ruleRowOK || operandValue != operands[index] {
 			t.Fatal("demanded producer topology")
 		}
-		pointRefs[index] = pointRef
+		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(byte(180 + index)), Row: ruleRow.row})
 	}
-	queryRow, queryRowOK := assembly.builder.issueQueryRow(queryImplementation, equation.QueryInstance{
-		Family: schema.querySemanticAt(0), Point: pointRefs[0].ref,
+	declaration.queries = append(declaration.queries, declaredQueryRow{ID: receiptAssemblySemanticID(190), Row: equation.QueryInstance{
+		Family: schema.querySemanticAt(0), Point: equation.PointAt(0),
 		Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}},
-	})
-	_, querySemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(190), queryRow)
-	if !queryRowOK || !querySemanticOK {
-		t.Fatal("demanded producer query")
+	}})
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !committed || issued == nil {
+		t.Fatalf("demanded producer commit stage=%v step=%v", refusal.Stage(), refusal.Step())
 	}
-	_, graph, committed := assembly.Commit()
-	if !committed || graph == nil {
-		t.Fatal("demanded producer commit")
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
+		t.Fatal("demanded producer committed program")
 	}
 	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	_, queryReceiptOK := graph.Query(receiptAssemblySemanticID(190))
@@ -143,7 +142,7 @@ func TestReceiptRuntimeInstantiatesOnlyDemandedProducerGroups(t *testing.T) {
 			t.Fatal("demanded producer attachment")
 		}
 		point, pointOK := graph.lookupPoint(receiptAssemblySemanticID(byte(170 + index)))
-		group, groupOK := graph.graph.ProducerAt(point.point, 0)
+		group, groupOK := graph.graph.ProducerAt(point, 0)
 		groupIndex, groupIndexed := graph.graph.GroupIndex(group)
 		if !pointOK || !groupOK || !groupIndexed {
 			t.Fatal("demanded producer group")

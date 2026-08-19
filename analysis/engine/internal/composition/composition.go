@@ -186,6 +186,8 @@ type RuleShape struct {
 	ReadCount        uint64
 	CarryCount       uint64
 	WriteCount       uint64
+	SupportCount     uint64
+	PruneCount       uint64
 	ActivationCount  uint64
 	ActivationFamily Key
 }
@@ -209,6 +211,18 @@ type RuleWriteShape struct {
 	Kind   WriteKind
 	Factor Key
 	Route  uint64
+}
+
+// RuleSupportShape is the scalar structural-support projection of one
+// sealed Rule.  It deliberately exposes no borrowed slice or row storage.
+type RuleSupportShape struct {
+	Semantic Key
+}
+
+// RulePruneShape is the scalar structural-prune projection of one sealed
+// Rule.  It deliberately exposes no borrowed slice or row storage.
+type RulePruneShape struct {
+	Semantic Key
 }
 
 // QueryShape is the scalar, immutable header of one sealed Query family.
@@ -419,7 +433,7 @@ func (c *Composition) RuleShapeAt(index uint64) (RuleShape, bool) {
 	if len(row.Activations) == 1 {
 		activationFamily = row.Activations[0].Family
 	}
-	return RuleShape{OperandFamily: row.OperandFamily, Admission: row.Admission, OutputKind: row.OutputKind, Output: row.Output, Inputs: row.Inputs, ReadCount: uint64(len(row.Reads)), CarryCount: uint64(len(row.Carries)), WriteCount: uint64(len(row.Writes)), ActivationCount: uint64(len(row.Activations)), ActivationFamily: activationFamily}, true
+	return RuleShape{OperandFamily: row.OperandFamily, Admission: row.Admission, OutputKind: row.OutputKind, Output: row.Output, Inputs: row.Inputs, ReadCount: uint64(len(row.Reads)), CarryCount: uint64(len(row.Carries)), WriteCount: uint64(len(row.Writes)), SupportCount: uint64(len(row.Supports)), PruneCount: uint64(len(row.Prunes)), ActivationCount: uint64(len(row.Activations)), ActivationFamily: activationFamily}, true
 }
 
 func (c *Composition) RuleReadShapeAt(rule, read uint64) (RuleReadShape, bool) {
@@ -451,6 +465,20 @@ func (c *Composition) RuleWriteShapeAt(rule, write uint64) (RuleWriteShape, bool
 	}
 	row := c.rules[rule].Writes[write]
 	return RuleWriteShape{Kind: row.Kind, Factor: row.Factor, Route: row.Route}, true
+}
+
+func (c *Composition) RuleSupportShapeAt(rule, support uint64) (RuleSupportShape, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || support >= uint64(len(c.rules[rule].Supports)) {
+		return RuleSupportShape{}, false
+	}
+	return RuleSupportShape{Semantic: c.rules[rule].Supports[support].Semantic}, true
+}
+
+func (c *Composition) RulePruneShapeAt(rule, prune uint64) (RulePruneShape, bool) {
+	if c == nil || rule >= uint64(len(c.rules)) || prune >= uint64(len(c.rules[rule].Prunes)) {
+		return RulePruneShape{}, false
+	}
+	return RulePruneShape{Semantic: c.rules[rule].Prunes[prune].Semantic}, true
 }
 
 func (c *Composition) QueryShapeAt(index uint64) (QueryShape, bool) {

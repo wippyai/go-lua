@@ -3,28 +3,28 @@ package typeauthority
 import (
 	"testing"
 
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func TestStaticReferenceResolutionShapeLaw(t *testing.T) {
 	tests := []struct {
 		name       string
-		resolution programstatic.TypeRefResolution
+		resolution staticrefs.Resolution
 		children   int
 		unresolved bool
 		ok         bool
 	}{
-		{name: "unresolved leaf", resolution: programstatic.TypeRefUnresolved, children: 0, unresolved: true, ok: true},
-		{name: "unresolved target", resolution: programstatic.TypeRefUnresolved, children: 1},
-		{name: "declaration target", resolution: programstatic.TypeRefDeclaration, children: 1, ok: true},
-		{name: "declaration missing", resolution: programstatic.TypeRefDeclaration, children: 0},
-		{name: "declaration extra", resolution: programstatic.TypeRefDeclaration, children: 2},
-		{name: "canonical target", resolution: programstatic.TypeRefCanonicalPath, children: 1, ok: true},
-		{name: "canonical missing", resolution: programstatic.TypeRefCanonicalPath, children: 0},
-		{name: "canonical extra", resolution: programstatic.TypeRefCanonicalPath, children: 2},
-		{name: "unknown resolution", resolution: programstatic.TypeRefResolution(0), children: 1},
-		{name: "future resolution", resolution: programstatic.TypeRefResolution(255), children: 1},
-		{name: "negative cardinality", resolution: programstatic.TypeRefDeclaration, children: -1},
+		{name: "unresolved leaf", resolution: staticrefs.Unresolved, children: 0, unresolved: true, ok: true},
+		{name: "unresolved target", resolution: staticrefs.Unresolved, children: 1},
+		{name: "declaration target", resolution: staticrefs.Declaration, children: 1, ok: true},
+		{name: "declaration missing", resolution: staticrefs.Declaration, children: 0},
+		{name: "declaration extra", resolution: staticrefs.Declaration, children: 2},
+		{name: "canonical target", resolution: staticrefs.CanonicalPath, children: 1, ok: true},
+		{name: "canonical missing", resolution: staticrefs.CanonicalPath, children: 0},
+		{name: "canonical extra", resolution: staticrefs.CanonicalPath, children: 2},
+		{name: "unknown resolution", resolution: staticrefs.Resolution(0), children: 1},
+		{name: "future resolution", resolution: staticrefs.Resolution(255), children: 1},
+		{name: "negative cardinality", resolution: staticrefs.Declaration, children: -1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

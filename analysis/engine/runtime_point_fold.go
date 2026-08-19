@@ -269,28 +269,39 @@ func (epoch *executorEpoch) pointBase(point equation.Point, pointIndex int) (car
 	return epoch.work.PointRHSFromPointState(pointState)
 }
 
-func (epoch *executorEpoch) addPointFoldEnvironmentEdge(edgeIndex int) bool {
+// pointFoldEnvironmentEdge returns the exact owner-issued PointState that the
+// fold admits.  Keeping transport separate from admission lets a Region's
+// ingress order state inspect this same header without transporting the edge twice.
+func (epoch *executorEpoch) pointFoldEnvironmentEdge(edgeIndex int) (carrier.PointState, bool) {
 	if epoch == nil || epoch.runtime == nil || epoch.work == nil || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.environments) {
-		return false
+		return carrier.PointState{}, false
 	}
 	edge := epoch.runtime.environments[edgeIndex]
 	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
-		return false
+		return carrier.PointState{}, false
 	}
 	transported, ok := epoch.work.TransportPointState(epoch.points[edge.source], edge.input.pre, edge.input.plan, edge.input.post)
+	if !ok || !epoch.work.OwnsPointState(transported) {
+		return carrier.PointState{}, false
+	}
+	return transported, true
+}
+
+func (epoch *executorEpoch) addPointFoldEnvironmentEdge(edgeIndex int) bool {
+	transported, ok := epoch.pointFoldEnvironmentEdge(edgeIndex)
 	return ok && epoch.work.AddPointFoldEnvironment(transported) && !epoch.canceled()
 }
 
 // addPointFoldFactorEdgeWithBoundary preserves the existing projection,
 // transport, and one transaction admission while returning only the failed
 // boundary for the owning refresh diagnostic.
-func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (solveBoundary, bool) {
+func (epoch *executorEpoch) pointFoldFactorEdgeWithBoundary(edgeIndex int) (carrier.PointState, solveBoundary, bool) {
 	if epoch == nil || epoch.runtime == nil || epoch.work == nil || edgeIndex < 0 || edgeIndex >= len(epoch.runtime.factorEdges) {
-		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	edge := epoch.runtime.factorEdges[edgeIndex]
 	if edge.source < 0 || edge.source >= len(epoch.points) || edge.target < 0 || edge.target >= len(epoch.points) || !edge.input.valid() {
-		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-validation"), false
 	}
 	// Factor projection commutes with the point boundary: support and guard
 	// transport are shared by every plane, while typed reindex is factor-local.
@@ -298,16 +309,34 @@ func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (s
 	// Factor roots merely to discard them afterward.
 	projected, ok := epoch.work.ProjectPointState(epoch.points[edge.source], edge.slot)
 	if !ok || !epoch.work.OwnsPointState(projected) {
-		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-projection"), false
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-projection"), false
 	}
 	transported, transportBoundary, ok := epoch.work.TransportPointStateWithBoundary(projected, edge.input.pre, edge.input.plan, edge.input.post)
 	if !ok || !epoch.work.OwnsPointState(transported) {
-		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-transport").withTransport(transportBoundary), false
+		return carrier.PointState{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-transport").withTransport(transportBoundary), false
+	}
+	return transported, boundaryNone, true
+}
+
+func (epoch *executorEpoch) addPointFoldFactorEdgeWithBoundary(edgeIndex int) (solveBoundary, bool) {
+	transported, boundary, ok := epoch.pointFoldFactorEdgeWithBoundary(edgeIndex)
+	if !ok {
+		return boundary, false
 	}
 	if !epoch.work.AddPointFoldEnvironment(transported) {
 		return refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-admission"), false
 	}
 	return boundaryNone, !epoch.canceled()
+}
+
+// pointFoldGroupState closes one owner-issued RuleContribution at the single
+// RuleContribution -> PointState boundary used by point folding.  Region
+// ingress validation and fold admission both consume this exact PointState.
+func (epoch *executorEpoch) pointFoldGroupState(group int) (carrier.PointState, bool) {
+	if epoch == nil || epoch.work == nil || group < 0 || group >= len(epoch.producers) || !epoch.producers[group].hasValue {
+		return carrier.PointState{}, false
+	}
+	return epoch.work.PointStateFromRuleContribution(epoch.producers[group].candidate)
 }
 
 func (epoch *executorEpoch) addPointFoldGroup(group int) bool {
@@ -347,26 +376,62 @@ func (epoch *executorEpoch) foldPointTerms(reference carrier.PointState, base ca
 	return result, ok
 }
 
+// pointFoldTermSet is one canonical input-order segment.  A Region uses two
+// segments so external environment/factor/group terms are followed by the
+// corresponding back terms without materializing or reordering a term list.
+type pointFoldTermSet struct {
+	environments []int
+	factors      []int
+	groups       []int
+}
+
+type pointFoldTermSets struct {
+	first  pointFoldTermSet
+	second pointFoldTermSet
+	count  uint8
+}
+
 // foldPointTermsWithBoundary executes the same one-shot canonical fold as
 // foldPointTerms while returning only its first failed transaction boundary.
 // The marker is consumed immediately by refresh diagnostics and retains no
 // Point, carrier state, or fold rows.
 func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointState, base carrier.PointRHS, environments, factors, groups []int, producerPoint equation.Point) (result carrier.PointRHS, boundary solveBoundary, ok bool) {
+	sets := pointFoldTermSets{
+		first: pointFoldTermSet{environments: environments, factors: factors, groups: groups},
+		count: 1,
+	}
+	result, _, boundary, ok = epoch.foldPointTermSetsWithBoundary(reference, base, sets, producerPoint)
+	return result, boundary, ok
+}
+
+// foldPointTermSetsWithBoundary executes one canonical Point RHS transaction.
+// Terms are transported/closed once and admitted in their sealed order.
+func (epoch *executorEpoch) foldPointTermSetsWithBoundary(reference carrier.PointState, base carrier.PointRHS, sets pointFoldTermSets, producerPoint equation.Point) (result carrier.PointRHS, changes carrier.ChangeSet, boundary solveBoundary, ok bool) {
 	if epoch != nil && epoch.diagnostics != nil {
 		epoch.diagnostics.recordFold()
 	}
 	if epoch == nil || epoch.runtime == nil || epoch.work == nil || !epoch.work.OwnsPointState(reference) || !epoch.work.OwnsPointRHS(base) {
-		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
 	}
-	producerCount := len(groups)
+	if sets.count < 1 || sets.count > 2 {
+		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-inputs"), false
+	}
+	producerCount := len(sets.first.groups)
+	if sets.count > 1 {
+		producerCount += len(sets.second.groups)
+	}
 	if producerPoint.Available() {
 		producerCount = epoch.runtime.graph.ProducerCount(producerPoint)
 	}
-	if len(environments) == 0 && len(factors) == 0 && producerCount == 0 {
-		return base, boundaryNone, true
+	termCount := len(sets.first.environments) + len(sets.first.factors)
+	if sets.count > 1 {
+		termCount += len(sets.second.environments) + len(sets.second.factors)
+	}
+	if termCount == 0 && producerCount == 0 {
+		return base, carrier.ChangeSet{}, boundaryNone, true
 	}
 	if !epoch.work.BeginPointRHSFold(reference, base) {
-		return carrier.PointRHS{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, refused(SolveFailureFamilyRefresh, "acyclic-fold-begin"), false
 	}
 	active := true
 	defer func() {
@@ -374,37 +439,55 @@ func (epoch *executorEpoch) foldPointTermsWithBoundary(reference carrier.PointSt
 			_ = epoch.work.AbortPointRHSFold()
 		}
 	}()
-	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-environment")
-	for _, edge := range environments {
-		if !epoch.addPointFoldEnvironmentEdge(edge) {
-			return carrier.PointRHS{}, boundary, false
+	for setIndex := 0; setIndex < int(sets.count); setIndex++ {
+		set := sets.first
+		if setIndex == 1 {
+			set = sets.second
+		}
+		boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-environment")
+		for _, edge := range set.environments {
+			term, termOK := epoch.pointFoldEnvironmentEdge(edge)
+			if !termOK {
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+		}
+		for _, edge := range set.factors {
+			term, factorBoundary, termOK := epoch.pointFoldFactorEdgeWithBoundary(edge)
+			if !termOK {
+				boundary = factorBoundary
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
+				boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-factor-admission")
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+		}
+		boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-producer")
+		for _, group := range set.groups {
+			term, termOK := epoch.pointFoldGroupState(group)
+			if !termOK {
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
+			if !epoch.work.AddPointFoldEnvironment(term) || epoch.canceled() {
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
+			}
 		}
 	}
-	for _, edge := range factors {
-		factorBoundary, factorOK := epoch.addPointFoldFactorEdgeWithBoundary(edge)
-		if !factorOK {
-			boundary = factorBoundary
-			return carrier.PointRHS{}, boundary, false
-		}
-	}
-	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-producer")
 	if producerPoint.Available() {
+		boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-producer")
 		for index := 0; index < epoch.runtime.graph.ProducerCount(producerPoint); index++ {
 			group, present := epoch.runtime.graph.ProducerAt(producerPoint, index)
 			groupIndex, indexed := epoch.runtime.graph.GroupIndex(group)
 			if !present || !indexed || !epoch.addPointFoldGroup(groupIndex) {
-				return carrier.PointRHS{}, boundary, false
-			}
-		}
-	} else {
-		for _, group := range groups {
-			if !epoch.addPointFoldGroup(group) {
-				return carrier.PointRHS{}, boundary, false
+				return carrier.PointRHS{}, carrier.ChangeSet{}, boundary, false
 			}
 		}
 	}
 	boundary = refused(SolveFailureFamilyRefresh, "acyclic-fold-finish")
-	result, ok = epoch.work.FinishPointRHSFold()
+	result, changes, ok = epoch.work.FinishPointRHSFold()
 	active = false
-	return result, boundary, ok && !epoch.canceled()
+	return result, changes, boundary, ok && !epoch.canceled()
 }

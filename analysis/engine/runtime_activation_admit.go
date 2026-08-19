@@ -12,7 +12,7 @@ type MountedActivationCandidate struct {
 }
 
 // MountedActivationAdmit is the construction-plane admission request for
-// one mounted activation occurrence. The assembly stays in the engine.
+// one mounted activation occurrence. The topology builder stays in the engine.
 type MountedActivationAdmit struct {
 	Implementation *ActivationRuleImplementation
 	Transport      *MountedActivationCandidateIssuer
@@ -34,9 +34,9 @@ func ExactReadPlacer[K ~uint32 | ~uint64](ref Ref[K]) func(*RuleSourceTransactio
 }
 
 // AdmitMountedActivationOccurrence admits one activation occurrence while
-// assembly sources remain open. Empty candidate sets are a successful no-op.
-func AdmitMountedActivationOccurrence(assembly *ReceiptAssembly, admit MountedActivationAdmit) bool {
-	if assembly == nil || admit.Implementation == nil || !admit.Capability.Mounted() ||
+// topology sources remain open. Empty candidate sets are a successful no-op.
+func AdmitMountedActivationOccurrence(builder *BindingTopologyBuilder, admit MountedActivationAdmit) bool {
+	if builder == nil || admit.Implementation == nil || !admit.Capability.Mounted() ||
 		!admit.Mount.Available() || !admit.Point.Available() || !admit.Occurrence.Available() {
 		return false
 	}
@@ -46,32 +46,32 @@ func AdmitMountedActivationOccurrence(assembly *ReceiptAssembly, admit MountedAc
 	if admit.Transport == nil || admit.PlaceRead == nil || !admit.Application.Available() {
 		return false
 	}
-	occurrence, ok := assembly.AdmitMountedRuleOccurrence(admit.Capability, admit.Mount, admit.Point, admit.Occurrence)
+	occurrence, ok := builder.AdmitMountedRuleOccurrence(admit.Capability, admit.Mount, admit.Point, admit.Occurrence)
 	if !ok {
 		return false
 	}
-	transaction, ok := BeginMountedActivationRuleAdmission(assembly, admit.Implementation, occurrence, [32]byte(admit.Occurrence))
+	transaction, ok := BeginMountedActivationRuleAdmission(builder, admit.Implementation, occurrence, [32]byte(admit.Occurrence))
 	if !ok || !admit.PlaceRead(transaction) {
 		return false
 	}
-	return assembly.QueueMountedRuleFinalizer(admit.Capability, func() bool {
+	return builder.QueueMountedRuleFinalizer(admit.Capability, func() bool {
 		source, sourceOK := transaction.Seal()
 		if !sourceOK {
 			return false
 		}
-		draft, draftOK := admit.Implementation.BeginReceiptRuleRow(source)
-		readPart, readPartOK := admit.Implementation.ReceiptReadPart(source, 0)
+		draft, draftOK := admit.Implementation.beginReceiptRuleRow(source)
+		readPart, readPartOK := admit.Implementation.receiptReadPart(source, 0)
 		if !draftOK || !readPartOK || !draft.AddRead(readPart) {
 			return false
 		}
-		if !assembly.AddActivationRuleFromDraft(occurrence, draft) {
+		if !builder.AddActivationRuleFromDraft(occurrence, draft) {
 			return false
 		}
 		for _, candidate := range admit.Candidates {
-			if !admit.Transport.AddMountedActivationCandidate(assembly, occurrence, admit.Application, candidate.Target, candidate.Endpoint, candidate.Mount, candidate.Body) {
+			if !admit.Transport.AddMountedActivationCandidate(builder, occurrence, admit.Application, candidate.Target, candidate.Endpoint, candidate.Mount, candidate.Body) {
 				return false
 			}
 		}
-		return admit.Transport.CompleteMountedActivationCandidates(assembly, occurrence, admit.Application, uint64(len(admit.Candidates)))
+		return admit.Transport.CompleteMountedActivationCandidates(builder, occurrence, admit.Application, uint64(len(admit.Candidates)))
 	})
 }

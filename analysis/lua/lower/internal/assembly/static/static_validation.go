@@ -6,7 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -165,18 +166,18 @@ func validateStaticRowsTerms(rows *staticRows, counts [keyspace.FamilyCount]uint
 			return err
 		}
 		switch row.resolution {
-		case programstatic.TypeRefUnresolved:
+		case staticrefs.Unresolved:
 			if row.target != 0 || len(row.canonical) != 0 {
 				return fmt.Errorf("program/lower/collector: invalid unresolved TypeRef %d", index)
 			}
-		case programstatic.TypeRefDeclaration:
+		case staticrefs.Declaration:
 			if len(row.canonical) != 0 || !validCountedTerm(counts, row.target) {
 				return fmt.Errorf("program/lower/collector: invalid declaration TypeRef %d", index)
 			}
 			if !staticrole.TypeReferenceTarget(counts, row.target) {
 				return fmt.Errorf("program/lower/collector: invalid declaration TypeRef target %d", index)
 			}
-		case programstatic.TypeRefCanonicalPath:
+		case staticrefs.CanonicalPath:
 			if row.target != 0 || len(row.canonical) == 0 {
 				return fmt.Errorf("program/lower/collector: invalid canonical TypeRef %d", index)
 			}
@@ -219,14 +220,14 @@ func validateStaticRowsTerms(rows *staticRows, counts [keyspace.FamilyCount]uint
 		}
 		for child, member := range row.membersRaw {
 			switch member.kind {
-			case programstatic.InterfaceField:
+			case staticdecl.InterfaceField:
 				if err := family(member.field, keyspace.FamilyTypeField, fmt.Sprintf("interface %d field %d", index, child)); err != nil || member.name.present || member.signature != 0 || member.coordinate != (source.Coordinate{}) {
 					if err != nil {
 						return err
 					}
 					return fmt.Errorf("program/lower/collector: malformed interface field %d", child)
 				}
-			case programstatic.InterfaceMethod:
+			case staticdecl.InterfaceMethod:
 				if !validRawName(member.name) || !validRequiredCoordinate(member.coordinate) {
 					return fmt.Errorf("program/lower/collector: malformed interface method %d", child)
 				}
@@ -374,7 +375,7 @@ func validateStaticRowsTerms(rows *staticRows, counts [keyspace.FamilyCount]uint
 			return err
 		}
 		ref := rows.references[keyspace.TermOrdinal(row.Target)-1]
-		if ref.resolution != programstatic.TypeRefDeclaration && ref.resolution != programstatic.TypeRefCanonicalPath {
+		if ref.resolution != staticrefs.Declaration && ref.resolution != staticrefs.CanonicalPath {
 			return fmt.Errorf("program/lower/collector: publication %d target is unresolved", index)
 		}
 	}
@@ -398,7 +399,7 @@ func validStaticTypeValueTarget(rows *staticRows, counts [keyspace.FamilyCount]u
 			return false
 		}
 		ref := rows.references[ordinal-1]
-		return ref.resolution == programstatic.TypeRefDeclaration &&
+		return ref.resolution == staticrefs.Declaration &&
 			(ref.target != 0 && (keyspace.TermFamily(ref.target) == keyspace.FamilyTypeAlias || keyspace.TermFamily(ref.target) == keyspace.FamilyTypeInterface)) &&
 			validCountedTerm(counts, ref.target)
 	default:

@@ -11,7 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -140,7 +141,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				first := c.Interface(span, span, owner, "I")
 				second := c.Interface(span, span, owner, "J")
 				signature := c.TypeFunction(span, first)
-				member := StaticInterfaceMember{Kind: programstatic.InterfaceMethod, Name: "m", Span: span, Signature: signature}
+				member := StaticInterfaceMember{Kind: staticdecl.InterfaceMethod, Name: "m", Span: span, Signature: signature}
 				return c, func(c *Collector) {
 					c.InterfaceMembers(second, []StaticInterfaceMember{member})
 				}
@@ -164,7 +165,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 				owner := body(c)
 				cell := c.Cell(span, owner, "")
 				publicationAssign := assign(c, owner, cell)
-				primitive := c.Primitive(span, programstatic.PrimitiveString)
+				primitive := c.Primitive(span, statictypes.PrimitiveString)
 				alias := c.Alias(span, span, owner, "A")
 				c.AliasTarget(alias, primitive)
 				ref := c.Declaration(span, []string{"A"}, 0, alias)
@@ -180,7 +181,7 @@ func TestCollectorAdmissionGapMatrixTerminalizes(t *testing.T) {
 			build: func() (*Collector, func(*Collector)) {
 				c := New(name, 0, bind.GlobalCensus{})
 				owner := body(c)
-				staticOnly := c.Primitive(span, programstatic.PrimitiveFunction)
+				staticOnly := c.Primitive(span, statictypes.PrimitiveFunction)
 				return c, func(c *Collector) { c.TypeValue(span, owner, staticOnly) }
 			},
 		},

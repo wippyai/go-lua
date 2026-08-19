@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticTypeRowsKeepDensePrimitiveAndLiteralFamilies(t *testing.T) {
 	rows := &staticRows{}
 	primitive := staticTestTerm(keyspace.FamilyTypePrimitive, 1)
 	literal := staticTestTerm(keyspace.FamilyTypeLiteral, 1)
-	if err := rows.Primitive(primitive, programstatic.PrimitiveString); err != nil {
+	if err := rows.Primitive(primitive, statictypes.PrimitiveString); err != nil {
 		t.Fatal(err)
 	}
 	if err := rows.LiteralString(literal, "literal"); err != nil {

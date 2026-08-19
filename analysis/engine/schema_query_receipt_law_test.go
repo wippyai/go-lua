@@ -32,6 +32,7 @@ func hotExactQuerySpec() HotExactQuerySpec[uint64, uint64] {
 			Clone:       func(value uint64) uint64 { return value },
 			Equal:       func(left, right uint64) bool { return left == right },
 			Fingerprint: func(value uint64) uint64 { return value },
+			Present:     func(value uint64) bool { return true },
 		},
 	}
 }
@@ -184,7 +185,7 @@ func TestReceiptCompilerBindsExactQueryEvidenceOnly(t *testing.T) {
 		t.Fatal("exact query receipt setup")
 	}
 	implementation, implementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	if !implementationOK || implementation == nil || !implementation.receipt.valid() {
+	if !implementationOK || implementation == nil || !implementation.binding.valid() {
 		t.Fatal("exact query receipt")
 	}
 	project, projectOK := implementation.projector()

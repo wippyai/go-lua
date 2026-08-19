@@ -3,8 +3,6 @@ package target
 import (
 	"errors"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func (c *Contract) appendSubedgeRoute(route subedgeRouteDraft, ids []vocabulary.SubedgeID, values map[string]vocabulary.Values) (subedgeRouteRow, error) {
@@ -31,12 +29,4 @@ func (c *Contract) appendSubedgeRoute(route subedgeRouteDraft, ids []vocabulary.
 		item.destination = destination
 	}
 	return item, nil
-}
-
-func exactKeyHandle(keys map[keyspace.LiteralValue]vocabulary.ExactKey, value keyspace.LiteralValue) (vocabulary.ExactKey, error) {
-	key, ok := keys[value]
-	if !ok || key == 0 {
-		return 0, errors.New("target: unresolved exact key")
-	}
-	return key, nil
 }

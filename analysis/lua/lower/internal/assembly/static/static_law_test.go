@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func staticViews(t *testing.T, c *assembly.Collector) (programsource.View, programstatic.View) {
@@ -38,7 +39,7 @@ func completeStatic(t *testing.T, c *assembly.Collector, body keyspace.Term, roo
 func TestStaticFreezeResolvesOnlyThroughSourcePreimage(t *testing.T) {
 	c, body := staticFixture("static-law.lua")
 	span := programsource.Span{File: "static-law.lua"}
-	primitive := c.Primitive(span, programstatic.PrimitiveString)
+	primitive := c.Primitive(span, statictypes.PrimitiveString)
 	literal := c.LiteralString(span, "literal")
 	field := c.Field(span, "field", primitive, false)
 	record := c.Record(span, []keyspace.Term{field}, false)
@@ -83,7 +84,7 @@ func TestStaticRowsFillsAreOneShotAndClaimsCanonical(t *testing.T) {
 		c, body := staticFixture(name)
 		alias := c.Alias(span, span, body, "Alias")
 		param := c.TypeParam(span, alias, "T")
-		primitive := c.Primitive(span, programstatic.PrimitiveString)
+		primitive := c.Primitive(span, statictypes.PrimitiveString)
 		if alias == 0 || param == 0 || primitive == 0 || !c.TypeParamConstraint(param, 0) ||
 			!c.AliasParams(alias, []keyspace.Term{param}) || !c.AliasTarget(alias, primitive) {
 			t.Fatal("Alias construction failed")
@@ -115,7 +116,7 @@ func TestStaticClaimStateMachineSeparatesOneShotAndFill(t *testing.T) {
 	t.Run("publishes filled claim", func(t *testing.T) {
 		c, body := staticFixture(name)
 		operand := c.Bool(span, body, true)
-		target := c.Primitive(span, programstatic.PrimitiveString)
+		target := c.Primitive(span, statictypes.PrimitiveString)
 		claim := c.DeclareValueClaim(span, body, kind.ValueClaimTypeColonColon, operand)
 		values := c.Values(span, body, []keyspace.Term{claim}, 0)
 		ret := c.Return(span, body, values)
@@ -130,7 +131,7 @@ func TestStaticClaimStateMachineSeparatesOneShotAndFill(t *testing.T) {
 	t.Run("duplicate fill terminalizes", func(t *testing.T) {
 		c, body := staticFixture(name)
 		operand := c.Bool(span, body, true)
-		target := c.Primitive(span, programstatic.PrimitiveString)
+		target := c.Primitive(span, statictypes.PrimitiveString)
 		claim := c.DeclareValueClaim(span, body, kind.ValueClaimTypeColonColon, operand)
 		if claim == 0 || !c.FillValueClaimTarget(claim, target) {
 			t.Fatal("ValueClaim setup failed")
@@ -148,7 +149,7 @@ func TestStaticDeclarationAndAssertionKeepSeparateCoordinates(t *testing.T) {
 	c, body := staticFixture("static-coordinates.lua")
 	span := programsource.Span{File: "static-coordinates.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
 	alias := c.Alias(span, span, body, "Alias")
-	primitive := c.Primitive(span, programstatic.PrimitiveString)
+	primitive := c.Primitive(span, statictypes.PrimitiveString)
 	assertion := c.TypeAsserts(span, span, "T", false, 0, primitive)
 	if alias == 0 || primitive == 0 || assertion == 0 || !c.AliasParams(alias, nil) || !c.AliasTarget(alias, assertion) {
 		t.Fatal("Alias/assertion setup failed")
@@ -166,7 +167,7 @@ func TestStaticPublicationDuplicateIsDelegatedToStaticBuild(t *testing.T) {
 	value := c.Bool(span, body, true)
 	values := c.Values(span, body, []keyspace.Term{value}, 0)
 	assign := c.Assign(span, body, []keyspace.Term{cell}, []programsource.Span{span}, values)
-	primitive := c.Primitive(span, programstatic.PrimitiveString)
+	primitive := c.Primitive(span, statictypes.PrimitiveString)
 	alias := c.Alias(span, span, body, "Alias")
 	ref := c.Declaration(span, []string{"Alias"}, body, alias)
 	if cell == 0 || value == 0 || values == 0 || assign == 0 || primitive == 0 || alias == 0 ||
@@ -202,9 +203,9 @@ func TestCollectorStaticRolesRejectWrongFamiliesAndKeepTypeOfOperandOpen(t *test
 	setup := func() (*assembly.Collector, keyspace.Term, keyspace.Term, keyspace.Term, keyspace.Term) {
 		c := assembly.New(name, 0, bind.GlobalCensus{})
 		body := c.Body(span)
-		primitive := c.Primitive(span, programstatic.PrimitiveString)
+		primitive := c.Primitive(span, statictypes.PrimitiveString)
 		stringTerm := c.String(span, body, "operand")
-	cell := c.Cell(span, body, "")
+		cell := c.Cell(span, body, "")
 		return c, body, primitive, stringTerm, cell
 	}
 	c, _, _, stringTerm, _ := setup()
@@ -246,7 +247,7 @@ func TestStaticConstructionSurfacePublishesStaticRows(t *testing.T) {
 	if body == 0 {
 		t.Fatal("Source Body construction failed")
 	}
-	primitive := c.Primitive(span, programstatic.PrimitiveString)
+	primitive := c.Primitive(span, statictypes.PrimitiveString)
 	if primitive == 0 || keyspace.TermFamily(primitive) != keyspace.FamilyTypePrimitive {
 		t.Fatalf("Static Primitive = %v, want TypePrimitive", primitive)
 	}
@@ -304,7 +305,7 @@ func TestStaticConstructionRejectsFutureChildOrdinal(t *testing.T) {
 	if got := c.Optional(span, future); got != 0 {
 		t.Fatalf("Optional accepted future child term %v", got)
 	}
-	if got := c.Primitive(span, programstatic.PrimitiveString); got != 0 {
+	if got := c.Primitive(span, statictypes.PrimitiveString); got != 0 {
 		t.Fatalf("collector mutated after future-child rejection with %v", got)
 	}
 	if _, err := c.Publish(); err == nil {

@@ -483,7 +483,7 @@ func (w *Work) reindexProjection(root Guard, plan Reindex) (Guard, bool) {
 			high, _ := resolvedGuard(n.high, resolved)
 			var result Guard
 			if action.RetainsCoordinate() {
-				result = w.makeNode(n.rank, low, high)
+				result = w.nodeOrExisting(n.rank, low, high, frame.guard, Guard{})
 			} else if action.ForgetsCoordinate() {
 				result = w.applyNode(orOperation, low, high)
 			} else {

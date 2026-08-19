@@ -16,11 +16,11 @@ func TestSealedSchemaEnumeratesItsOwnArtifactMounts(t *testing.T) {
 	}
 	for index, mount := range mounts {
 		row := published[index]
-		if !row.Available() || row.Module() != mount.Module() || row.ProgramID() != mount.ProgramID() || row.Artifact() != mount.Artifact() {
+		if !row.Available() || row.Module() != mount.Module() || row.ProgramID() != mount.ProgramID() || row.Snapshot() != mount.Snapshot() {
 			t.Fatalf("mount %d is not the mount sealed at that position", index)
 		}
 		canonical, canonicalOK := schema.ArtifactMountForModule(row.Module())
-		if !canonicalOK || canonical.Artifact() != row.Artifact() || canonical.ProgramID() != row.ProgramID() {
+		if !canonicalOK || canonical.Snapshot() != row.Snapshot() || canonical.ProgramID() != row.ProgramID() {
 			t.Fatalf("mount %d does not agree with the schema's own module lookup", index)
 		}
 	}

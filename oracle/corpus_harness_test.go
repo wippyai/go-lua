@@ -3,6 +3,7 @@ package oracle
 import (
 	"context"
 	"fmt"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -18,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -75,7 +77,7 @@ type corpusHarnessMode struct {
 	// policy derives the per-fixture diagnostic policy of a report execution.
 	// Contracts it cannot express are carried into the run and judged after the
 	// fixture has passed through the current analyzer, never before.
-	policy func(*corpusHarnessProject) (analysis.DiagnosticPolicy, []string)
+	policy func(*corpusHarnessProject) (anadiag.DiagnosticPolicy, []string)
 	// judge is the mode's verdict on one completed run.
 	judge func(*corpusHarnessRun) []string
 }
@@ -107,12 +109,12 @@ type corpusHarnessRun struct {
 	project            corpusHarnessProject
 	linked             *link.Link
 	plan               *analysis.Plan
-	result             *analysis.Result
-	report             *analysis.DiagnosticReport
+	result             *result.Result
+	report             *anadiag.DiagnosticReport
 	status             analysis.AnalyzeStatus
-	compileDiagnostics analysis.AnalyzeDiagnostics
-	solveDiagnostics   analysis.AnalyzeDiagnostics
-	policy             analysis.DiagnosticPolicy
+	compileDiagnostics anadiag.AnalyzeDiagnostics
+	solveDiagnostics   anadiag.AnalyzeDiagnostics
+	policy             anadiag.DiagnosticPolicy
 	policyUnsupported  []string
 	cost               corpusHarnessCost
 }
@@ -225,7 +227,10 @@ func corpusHarnessContract(t testing.TB) *target.Contract {
 // non-terminating fixture is caught by the bounded runner rather than passing
 // as a cut-off sample.
 func corpusHarnessSolveOptions() engine.SolveDiagnosticOptions {
-	return engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}
+	return engine.SolveDiagnosticOptions{
+		Presentation: engine.SolveDiagnosticPresentation{Flags: engine.SolveDiagnosticAll},
+		Resources:    engine.SolveDiagnosticResources{MaxRows: 256},
+	}
 }
 
 // TestCorpusFixtureDeclaredModulesAreSealed is the multi-module fixture input
@@ -396,8 +401,8 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		run.compileDiagnostics = compileDiagnostics
 		if compileStatus != analysis.CompileComplete || plan == nil {
 			return run, "compile", fmt.Errorf("compile=%v plan=%t stage=%v binding=%v axis=%v seal=%v schedule=%d diagnostics=%+v",
-				compileStatus, plan != nil, compileDiagnostics.ReceiptStage, compileDiagnostics.Binding, compileDiagnostics.Axis,
-				compileDiagnostics.ReceiptSeal, compileDiagnostics.ReceiptScheduleOrdinal, compileDiagnostics)
+				compileStatus, plan != nil, compileDiagnostics.AssembleStage, compileDiagnostics.Binding, compileDiagnostics.Axis,
+				compileDiagnostics.AssembleSeal, compileDiagnostics.AssembleScheduleOrdinal, compileDiagnostics)
 		}
 		run.plan = plan
 		// A fixture is a sequential acceptance unit. Close the assembled Link
@@ -446,7 +451,7 @@ func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, 
 	run.cost.solve = time.Since(started)
 	if run.status != analysis.AnalyzeComplete || run.result == nil {
 		return corpusHarnessStatusName(run.status), fmt.Errorf("AnalyzeComplete required: status=%v result=%t binding=%v stage=%v axis=%v engine=%s diagnostics=%+v",
-			run.status, run.result != nil, run.solveDiagnostics.Binding, run.solveDiagnostics.ReceiptStage, run.solveDiagnostics.Axis,
+			run.status, run.result != nil, run.solveDiagnostics.Binding, run.solveDiagnostics.AssembleStage, run.solveDiagnostics.Axis,
 			corpusHarnessEngineFailure(run.solveDiagnostics), run.solveDiagnostics)
 	}
 	return "", nil
@@ -455,7 +460,7 @@ func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, 
 // corpusHarnessResultDefect is the detached public Result contract every mode
 // applies. A Result that cannot name its own source, bodies, roots, values, or
 // effects is not a clean analysis regardless of the mode's own verdict.
-func corpusHarnessResultDefect(result *analysis.Result, sourceID identity.ContentID) error {
+func corpusHarnessResultDefect(result *result.Result, sourceID identity.ContentID) error {
 	if result == nil {
 		return fmt.Errorf("nil result")
 	}
@@ -688,7 +693,7 @@ func corpusHarnessStatusName(status analysis.AnalyzeStatus) string {
 // corpusHarnessEngineFailure is the compact engine evidence every failing
 // solve reports. It replaces the per-test diagnostic dumps that used to make
 // one fixture lane readable and the rest opaque.
-func corpusHarnessEngineFailure(diagnostics analysis.AnalyzeDiagnostics) string {
+func corpusHarnessEngineFailure(diagnostics anadiag.AnalyzeDiagnostics) string {
 	failure := diagnostics.Engine.Failure
 	return fmt.Sprintf("phase=%s reason=%s rule=%s epochs=%d passes=%d evaluates=%d fails=%d folds=%d restarts=%d activations=%d failure={available:%t reason:%d boundary:%s point:%v group:%v member:%v rule:%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule,

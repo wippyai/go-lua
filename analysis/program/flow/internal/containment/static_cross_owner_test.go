@@ -7,6 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
@@ -43,20 +46,20 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 
 	staticInput := static.Input{
 		Counts: counts,
-		Types: static.TypesInput{Primitive: []static.Primitive{
-			{Kind: static.PrimitiveNumber}, {Kind: static.PrimitiveString},
-			{Kind: static.PrimitiveBoolean}, {Kind: static.PrimitiveNil},
+		Types: statictypes.Input{Primitive: []statictypes.Primitive{
+			{Kind: statictypes.PrimitiveNumber}, {Kind: statictypes.PrimitiveString},
+			{Kind: statictypes.PrimitiveBoolean}, {Kind: statictypes.PrimitiveNil},
 		}},
-		Contracts: static.ContractsInput{
-			Function: []static.FunctionContract{{}},
-			Call:     []static.CallContract{{}},
+		Contracts: staticcontracts.Input{
+			Function: []staticcontracts.FunctionContract{{}},
+			Call:     []staticcontracts.CallContract{{}},
 		},
-		Operands: static.OperandsInput{
-			Claim: []static.ClaimTarget{
+		Operands: staticoperands.Input{
+			Claim: []staticoperands.ClaimTarget{
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 1), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 1)},
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 2), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 2)},
 			},
-			TypeValue: []static.TypeValueTarget{{Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 3)}},
+			TypeValue: []staticoperands.TypeValueTarget{{Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 3)}},
 		},
 	}
 	staticDraft, err := static.Build(staticInput)
@@ -91,23 +94,23 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 
 	for _, test := range []struct {
 		name   string
-		claims []static.ClaimTarget
+		claims []staticoperands.ClaimTarget
 	}{
 		{
 			name: "TypeAs requires target",
-			claims: []static.ClaimTarget{
+			claims: []staticoperands.ClaimTarget{
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 2), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 2)},
 			},
 		},
 		{
 			name: "ColonColon requires target",
-			claims: []static.ClaimTarget{
+			claims: []staticoperands.ClaimTarget{
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 1), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 1)},
 			},
 		},
 		{
 			name: "NonNil forbids target",
-			claims: []static.ClaimTarget{
+			claims: []staticoperands.ClaimTarget{
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 1), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 1)},
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 2), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 2)},
 				{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 3), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 4)},
@@ -176,7 +179,7 @@ func TestStaticCrossOwnerCardinalityLaws(t *testing.T) {
 	}
 
 	outOfRangeInput := staticInput
-	outOfRangeInput.Operands.Claim = []static.ClaimTarget{
+	outOfRangeInput.Operands.Claim = []staticoperands.ClaimTarget{
 		{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 1), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 4)},
 		{Claim: crossOwnerTerm(keyspace.FamilyValueClaim, 2), Target: crossOwnerTerm(keyspace.FamilyTypePrimitive, 2)},
 	}

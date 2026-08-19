@@ -1,6 +1,7 @@
 package bootstrap_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
@@ -202,7 +203,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 			t.Fatalf("bootstrap artifact compile: %v", failure)
 		}
 		var mountOK bool
-		mounts.heap[index], mountOK = heapdomain.NewArtifactMount(artifact, module, programID)
+		mounts.heap[index], mountOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !mountOK {
 			t.Fatal("bootstrap artifact mount receipt")
 		}

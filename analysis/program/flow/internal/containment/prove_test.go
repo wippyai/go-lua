@@ -12,6 +12,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // proofFixture is deliberately assembled through the live owner capabilities.
@@ -319,7 +324,7 @@ func TestProveRepeatedTypeOfUsesSameBodyFallback(t *testing.T) {
 			Binds: []authored.Bind{{Owner: body, Values: values}},
 		},
 	}
-	staticInput := static.Input{Operators: static.OperatorsInput{TypeOf: []static.TypeOf{
+	staticInput := static.Input{Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{
 		{Scope: cell, Operand: read},
 		{Scope: cell, Operand: read},
 	}}}
@@ -380,8 +385,8 @@ func TestProveTypeOfLocalParentSuppressesScopeFallback(t *testing.T) {
 			Claims: []authored.ValueClaim{{Owner: body, Operand: keyspace.MakeTerm(keyspace.FamilyNil, 1), Kind: kind.ValueClaimTypeAs}},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}},
-			Operands:  static.OperandsInput{Claim: []static.ClaimTarget{{Claim: claim, Target: typeOf}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: read}}},
+			Operands:  staticoperands.Input{Claim: []staticoperands.ClaimTarget{{Claim: claim, Target: typeOf}}},
 		},
 		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
 		module: emptyModule(t),
@@ -434,11 +439,11 @@ func TestProveSharedAnnotationValuesFallbackToOneBody(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{
 				Cell: cell, Target: primitive,
 			}}},
-			Operands: static.OperandsInput{Annotation: []static.Annotation{
+			Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{
 				{Scope: cell, Target: primitive, Name: 1, Values: values},
 				{Scope: cell, Target: primitive, Name: 1, Values: values},
 			}},
@@ -480,7 +485,7 @@ func TestProveRejectsStandaloneUnconsumedTerm(t *testing.T) {
 	counts := countsFor(c(keyspace.FamilyBody, 1), c(keyspace.FamilyTypePrimitive, 1))
 	fixture := newProofFixture(t, proofSpec{
 		counts: counts,
-		static: static.Input{Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}}},
+		static: static.Input{Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}}},
 		module: emptyModule(t),
 	})
 	if _, err := fixture.prove(); err == nil {
@@ -576,7 +581,7 @@ func TestProveRejectsCallWithoutDirectOrExpressionParent(t *testing.T) {
 			},
 			Calls: []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
 		module: emptyModule(t),
 	})
 	if _, err := fixture.prove(); err == nil || !strings.Contains(err.Error(), "is missing a parent") {
@@ -609,7 +614,7 @@ func TestProveRejectsCallClaimedBySourceAndValues(t *testing.T) {
 			},
 			Calls: []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
 		module: emptyModule(t),
 	})
 	if _, err := fixture.prove(); err == nil || !strings.Contains(err.Error(), "conflicting containment parents") {

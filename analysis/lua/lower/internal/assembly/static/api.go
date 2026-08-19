@@ -6,13 +6,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 // InterfaceMember is the already-coordinated raw interface member accepted by
 // the Static owner. Name payloads are still raw Source candidates; key
 // resolution remains in Static.Freeze.
 type InterfaceMember struct {
-	Kind       programstatic.InterfaceMemberKind
+	Kind       staticdecl.InterfaceMemberKind
 	Field      keyspace.Term
 	Name       string
 	Coordinate programsource.Coordinate
@@ -75,13 +77,13 @@ func (rows *Rows) TypeFunctionScope(term keyspace.Term) (keyspace.Term, bool) {
 	return rows.typeFunctions[ordinal-1].scope, true
 }
 
-func (rows *Rows) ReferenceResolution(term keyspace.Term) (programstatic.TypeRefResolution, bool) {
+func (rows *Rows) ReferenceResolution(term keyspace.Term) (staticrefs.Resolution, bool) {
 	if rows == nil {
-		return programstatic.TypeRefUnresolved, false
+		return staticrefs.Unresolved, false
 	}
 	ordinal := keyspace.TermOrdinal(term)
 	if keyspace.TermFamily(term) != keyspace.FamilyTypeRef || ordinal == 0 || int(ordinal) > len(rows.references) {
-		return programstatic.TypeRefUnresolved, false
+		return staticrefs.Unresolved, false
 	}
 	return rows.references[ordinal-1].resolution, true
 }

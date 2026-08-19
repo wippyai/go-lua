@@ -3,6 +3,7 @@ package manifesttarget
 import (
 	"fmt"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -57,6 +58,11 @@ func operationFromManifest(declaration manifest.Function) (vocabulary.OperationS
 		base = converted
 	}
 	applyOperationAmendments(&base, law)
+	// Behavior is a generic amendment to the operation envelope. Apply it
+	// after the ordinary outcome amendments so its authored outcome ordinals
+	// continue to refer to the final operation shape under both replacement
+	// and amendment semantics.
+	base.Behavior = convertBehavior(law.Behavior)
 	if value := law.SubedgeRelation; value != nil {
 		base.SubedgeRelation = &vocabulary.SubedgeRelationSpec{
 			Operand: vocabulary.ValueFormal(value.Operand), Selector: value.Selector, Subedge: vocabulary.SubedgeRef(value.Subedge),
@@ -107,6 +113,7 @@ func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
 		}
 		out.Resumes = append(out.Resumes, resume)
 	}
+	out.Behavior = convertBehavior(in.Behavior)
 	if value := in.SubedgeRelation; value != nil {
 		out.SubedgeRelation = &vocabulary.SubedgeRelationSpec{
 			Operand: vocabulary.ValueFormal(value.Operand), Selector: value.Selector, Subedge: vocabulary.SubedgeRef(value.Subedge),
@@ -115,6 +122,41 @@ func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
 		}
 	}
 	return out, nil
+}
+
+// convertBehavior crosses the portable manifest boundary. Providers carry a
+// neutral relation key string because the wire package cannot depend on the
+// analyzer schema package. The Lua-domain adapter is the sole place that
+// derives the existing opaque structure EntryID from that key; Target stores
+// and authenticates the resulting identity without interpreting it.
+func convertBehavior(in *moduleio.OperationBehavior) *vocabulary.OperationBehaviorSpec {
+	if in == nil || (len(in.Results) == 0 && len(in.Predicates) == 0) {
+		return nil
+	}
+	out := &vocabulary.OperationBehaviorSpec{}
+	for _, value := range in.Results {
+		out.Results = append(out.Results, vocabulary.OperationResultSpec{
+			Outcome: value.Outcome,
+			Result:  value.Result,
+			Source:  convertInputSource(value.Source),
+			Relation: schema.NewEntryID(
+				schema.SurfaceKindStructure,
+				schema.Key(value.Relation),
+			),
+		})
+	}
+	for _, value := range in.Predicates {
+		out.Predicates = append(out.Predicates, vocabulary.OperationPredicateSpec{
+			Outcome: value.Outcome,
+			Result:  value.Result,
+			Subject: convertInputSource(value.Subject),
+			Relation: schema.NewEntryID(
+				schema.SurfaceKindStructure,
+				schema.Key(value.Relation),
+			),
+		})
+	}
+	return out
 }
 
 func convertValues(in moduleio.Values) vocabulary.ValuesSpec {

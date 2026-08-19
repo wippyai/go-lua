@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 type positionFixture struct {
@@ -493,7 +494,7 @@ func TestSealPositionsContainModuleImportThroughItsCall(t *testing.T) {
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}}, Terms: []keyspace.Term{actual}},
 			Calls:  []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
 		module: imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}},
 	})
 	index, err := sealPositionFixture(fixture)
@@ -532,7 +533,7 @@ func TestSealMixedPostOutcomeFamiliesRemainCanonical(t *testing.T) {
 			Calls:   []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
 			Control: authored.ControlInput{},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Call: []static.CallContract{{}}}},
+		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
 		module: imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}},
 	})
 	index, err := sealPositionFixture(fixture)

@@ -5,6 +5,14 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -26,37 +34,9 @@ const (
 	staticArtifactUintWireMin = uint64(3)
 	staticArtifactBoolWireMin = uint64(3)
 
-	staticArtifactPrimitiveWireMin = staticArtifactUintWireMin
-	staticArtifactLiteralWireMin   = staticArtifactUintWireMin * 3
-	staticArtifactOptionalWireMin  = staticArtifactUintWireMin
-	staticArtifactUnionWireMin     = staticArtifactUintWireMin * 3 // count + two terms
-	staticArtifactGenericWireMin   = staticArtifactUintWireMin * 3 // base + count + one arg
-	staticArtifactArrayWireMin     = staticArtifactUintWireMin + staticArtifactBoolWireMin
-	staticArtifactMapWireMin       = staticArtifactUintWireMin*2 + staticArtifactBoolWireMin
-	staticArtifactRecordWireMin    = staticArtifactBoolWireMin + staticArtifactUintWireMin
-	staticArtifactFieldWireMin     = staticArtifactUintWireMin*2 + staticArtifactBoolWireMin
-
-	staticArtifactReferenceWireMin       = staticArtifactUintWireMin * 6 // row + source count/key + canonical count
-	staticArtifactAliasWireMin           = staticArtifactUintWireMin * 8
-	staticArtifactTypeParamWireMin       = staticArtifactUintWireMin * 3
-	staticArtifactInterfaceWireMin       = staticArtifactUintWireMin*2 + staticArtifactUintWireMin*4 + staticArtifactUintWireMin*2
-	staticArtifactInterfaceMemberWireMin = staticArtifactUintWireMin * 8
-	staticArtifactDeclaredTypeWireMin    = staticArtifactUintWireMin * 2
-
-	staticArtifactTypeFunctionWireMin = staticArtifactUintWireMin * 10 // scope, three counts, variadic, coordinate, bool, returns count
-	staticArtifactParameterWireMin    = staticArtifactUintWireMin * 6
-	staticArtifactAssertionWireMin    = staticArtifactUintWireMin * 8
-
-	staticArtifactContractFunctionWireMin = staticArtifactUintWireMin * 3
-	staticArtifactContractCallWireMin     = staticArtifactUintWireMin
-	staticArtifactTypeOfWireMin           = staticArtifactUintWireMin * 2
-	staticArtifactKeyOfWireMin            = staticArtifactUintWireMin
-	staticArtifactIndexAccessWireMin      = staticArtifactUintWireMin * 2
-	staticArtifactConditionalWireMin      = staticArtifactUintWireMin * 4
-	staticArtifactClaimWireMin            = staticArtifactUintWireMin * 2
-	staticArtifactTypeValueWireMin        = staticArtifactUintWireMin
-	staticArtifactAnnotationWireMin       = staticArtifactUintWireMin * 4
-	staticArtifactPublicationWireMin      = staticArtifactUintWireMin * 3
+	staticArtifactClaimWireMin      = staticArtifactUintWireMin * 2
+	staticArtifactTypeValueWireMin  = staticArtifactUintWireMin
+	staticArtifactAnnotationWireMin = staticArtifactUintWireMin * 4
 )
 
 var (
@@ -111,61 +91,61 @@ func writeArtifactViewContent(writer *framing.Writer, view View) error {
 // rather than the publication-time availability guard above.
 func writeArtifactContent(
 	writer *framing.Writer,
-	types typeStore,
-	references referenceStore,
-	declarations declarationStore,
-	signatures signatureStore,
-	contracts contractsStore,
-	operators operatorsStore,
-	operands operandsStore,
-	publications []publicationRow,
+	types statictypes.Table,
+	references staticrefs.Table,
+	declarations staticdecl.Table,
+	signatures staticsig.Table,
+	contracts staticcontracts.Table,
+	operators staticoperators.Table,
+	operands staticoperands.Table,
+	publications staticpubs.Table,
 ) error {
 	if err := writer.Record(staticArtifactRecordTypes); err != nil {
 		return err
 	}
-	if err := writeTypesContent(writer, types); err != nil {
+	if err := statictypes.WriteContent(writer, types); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordReferences); err != nil {
 		return err
 	}
-	if err := writeReferencesContent(writer, references); err != nil {
+	if err := staticrefs.WriteContent(writer, references); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordDeclarations); err != nil {
 		return err
 	}
-	if err := writeDeclarationsContent(writer, declarations); err != nil {
+	if err := staticdecl.WriteContent(writer, declarations); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordSignatures); err != nil {
 		return err
 	}
-	if err := writeSignaturesContent(writer, signatures); err != nil {
+	if err := staticsig.WriteContent(writer, signatures); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordContracts); err != nil {
 		return err
 	}
-	if err := writeContractsContent(writer, contracts); err != nil {
+	if err := staticcontracts.WriteContent(writer, contracts); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordOperators); err != nil {
 		return err
 	}
-	if err := writeOperatorsContent(writer, operators); err != nil {
+	if err := staticoperators.WriteContent(writer, operators); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordOperands); err != nil {
 		return err
 	}
-	if err := writeOperandsContent(writer, operands); err != nil {
+	if err := staticoperands.WriteContent(writer, operands); err != nil {
 		return err
 	}
 	if err := writer.Record(staticArtifactRecordPublications); err != nil {
 		return err
 	}
-	if err := writePublicationsContent(writer, publications); err != nil {
+	if err := staticpubs.WriteContent(writer, publications); err != nil {
 		return err
 	}
 	return nil
@@ -190,51 +170,67 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 	if err := decoder.record(staticArtifactRecordTypes); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.types(&input.Types); err != nil {
+	typesInput, err := statictypes.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Types = typesInput
 	if err := decoder.record(staticArtifactRecordReferences); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.references(&input.References); err != nil {
+	referencesInput, err := staticrefs.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.References = referencesInput
 	if err := decoder.record(staticArtifactRecordDeclarations); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.declarations(&input.Declarations); err != nil {
+	declarationsInput, err := staticdecl.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Declarations = declarationsInput
 	if err := decoder.record(staticArtifactRecordSignatures); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.signatures(&input.Signatures); err != nil {
+	signaturesInput, err := staticsig.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Signatures = signaturesInput
 	if err := decoder.record(staticArtifactRecordContracts); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.contracts(&input.Contracts); err != nil {
+	contractsInput, err := staticcontracts.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Contracts = contractsInput
 	if err := decoder.record(staticArtifactRecordOperators); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.operators(&input.Operators); err != nil {
+	operatorsInput, err := staticoperators.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Operators = operatorsInput
 	if err := decoder.record(staticArtifactRecordOperands); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.operands(&input.Operands); err != nil {
+	operandsInput, err := staticoperands.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Operands = operandsInput
 	if err := decoder.record(staticArtifactRecordPublications); err != nil {
 		return Input{}, err
 	}
-	if err := decoder.publications(&input.Publications); err != nil {
+	publicationsInput, err := staticpubs.Decode(decoder.reader)
+	if err != nil {
 		return Input{}, err
 	}
+	input.Publications = publicationsInput
 	return input, nil
 }
 

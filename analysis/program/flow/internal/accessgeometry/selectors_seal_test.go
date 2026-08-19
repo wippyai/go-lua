@@ -14,6 +14,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 // TestSealDeepExactChain keeps the fixture deliberately mechanical: every
@@ -487,12 +490,12 @@ func TestSealRejectsBracketStringPublication(t *testing.T) {
 
 	staticDraft, err := static.Build(static.Input{
 		Counts: counts,
-		References: static.ReferencesInput{TypeRef: []static.TypeRef{{
-			Resolution: static.TypeRefCanonicalPath,
+		References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
+			Resolution: staticrefs.CanonicalPath,
 			Source:     []keyspace.Key{1},
 			Canonical:  []keyspace.Key{1},
 		}}},
-		Publications: static.PublicationsInput{Type: []static.Publication{{
+		Publications: staticpubs.Input{Type: []staticpubs.Publication{{
 			Assign: assign, Pair: 0, Target: ref,
 		}}},
 	})
@@ -613,12 +616,12 @@ func TestSealSmoke(t *testing.T) {
 	staticInput.Counts[keyspace.FamilyAssign] = 1
 	staticInput.Counts[keyspace.FamilyTypeRef] = 1
 	staticInput.Counts[keyspace.FamilyTypePublication] = 1
-	staticInput.Contracts.Call = []static.CallContract{{}, {}}
-	staticInput.References.TypeRef = []static.TypeRef{{
-		Resolution: static.TypeRefCanonicalPath,
+	staticInput.Contracts.Call = []staticcontracts.CallContract{{}, {}}
+	staticInput.References.TypeRef = []staticrefs.TypeRef{{
+		Resolution: staticrefs.CanonicalPath,
 		Source:     []keyspace.Key{1}, Canonical: []keyspace.Key{1},
 	}}
-	staticInput.Publications.Type = []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}
+	staticInput.Publications.Type = []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}
 	staticDraft, err := static.Build(staticInput)
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)

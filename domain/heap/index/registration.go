@@ -36,31 +36,34 @@ type rawGetAuthorities interface {
 // RawGetEntry is this package's raw-get rule declaration. P and A are the
 // composition's own principal and authority records, admitted by the need
 // interfaces above.
-func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec[P, A, *RawGetSchemaFragment, *RawGetHotRule] {
-	return rule.Spec[P, A, *RawGetSchemaFragment, *RawGetHotRule]{
+func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "raw-get",
 		Writes: "value",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/index-read", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
+			{Occurrence: "occurrence/index-read", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-get-raw",
 		Roles:    []schema.Key{"semantic/operand/heap/index-get-raw", "semantic/evidence/heap/index-get-raw"},
-		Declare: func(context rule.Declaration[P]) (*RawGetSchemaFragment, bool) {
-			semantics, ok := context.Roles.Rule("heap/index-get-raw")
-			if !ok {
-				return nil, false
-			}
-			return DeclareRawGetSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
-		},
-		Register: func(context rule.Registration[*RawGetSchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterMountedSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		Bind: func(context rule.Binding[A, *RawGetSchemaFragment]) (*RawGetHotRule, bool) {
-			return BindRawGetHot(context.Binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.CallAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
-		},
 	}
+}
+
+func DeclareRawGet[P rawGetPrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*RawGetSchemaFragment, bool) {
+	semantics, ok := context.Roles.Rule("heap/index-get-raw")
+	if !ok {
+		return nil, false
+	}
+	return DeclareRawGetSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
+}
+
+func RegisterRawGet(binding *engine.SchemaBinding, context rule.Registration[*RawGetSchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
+}
+
+func BindRawGet[A rawGetAuthorities](binding *engine.SchemaBinding, context rule.Binding[A, *RawGetSchemaFragment]) (*RawGetHotRule, bool) {
+	return BindRawGetHot(binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.CallAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
 }
 
 // rawSetPrincipals is the cold owner set the raw-set rule declares against. It
@@ -82,31 +85,34 @@ type rawSetAuthorities interface {
 }
 
 // RawSetEntry is this package's raw-set rule declaration.
-func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec[P, A, *RawSetSchemaFragment, *RawSetHotRule] {
-	return rule.Spec[P, A, *RawSetSchemaFragment, *RawSetHotRule]{
+func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "raw-set",
 		Writes: "heap",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/index-write", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
+			{Occurrence: "occurrence/index-write", Requirement: "requirement/unrestricted", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-set-raw",
 		Roles:    []schema.Key{"semantic/operand/heap/index-set-raw", "semantic/evidence/heap/index-set-raw"},
-		Declare: func(context rule.Declaration[P]) (*RawSetSchemaFragment, bool) {
-			semantics, ok := context.Roles.Rule("heap/index-set-raw")
-			if !ok {
-				return nil, false
-			}
-			return DeclareRawSetSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
-		},
-		Register: func(context rule.Registration[*RawSetSchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterMountedSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		Bind: func(context rule.Binding[A, *RawSetSchemaFragment]) (*RawSetHotRule, bool) {
-			return BindRawSetHot(context.Binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
-		},
 	}
+}
+
+func DeclareRawSet[P rawSetPrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*RawSetSchemaFragment, bool) {
+	semantics, ok := context.Roles.Rule("heap/index-set-raw")
+	if !ok {
+		return nil, false
+	}
+	return DeclareRawSetSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
+}
+
+func RegisterRawSet(binding *engine.SchemaBinding, context rule.Registration[*RawSetSchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
+}
+
+func BindRawSet[A rawSetAuthorities](binding *engine.SchemaBinding, context rule.Binding[A, *RawSetSchemaFragment]) (*RawSetHotRule, bool) {
+	return BindRawSetHot(binding, context.Fragment, context.Authorities.Topology(), context.Authorities.ValueAuthority(), context.Authorities.HeapAuthority(), context.Authorities.PackAuthority())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

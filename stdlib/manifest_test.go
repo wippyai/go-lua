@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/control"
 	"github.com/wippyai/go-lua/domain/effect/mutation"
 	"github.com/wippyai/go-lua/domain/effect/ownership"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	declarations "github.com/wippyai/go-lua/manifest"
 	modulemanifest "github.com/wippyai/go-lua/manifest/wire"
@@ -193,6 +194,25 @@ func TestManifestsRoundTripAndDoNotDeclareRuntimeScope(t *testing.T) {
 		if library.Mount() == MountModule && len(m.Globals) != 0 {
 			t.Fatalf("named library %q tried to establish analysis scope: %v", library.ID(), m.Globals)
 		}
+	}
+}
+
+func TestBaseTypeProviderDeclaresNeutralRuntimeKindBehavior(t *testing.T) {
+	m := manifestForTest(t, Base)
+	law, ok := m.FunctionOperations["type"]
+	if !ok || law.Behavior == nil {
+		t.Fatalf("base.type operation = %#v, want a behavior declaration", law)
+	}
+	if len(law.Behavior.Results) != 1 || len(law.Behavior.Predicates) != 1 {
+		t.Fatalf("base.type behavior = %#v, want one result and one predicate", law.Behavior)
+	}
+	row := law.Behavior.Results[0]
+	if row.Outcome != 0 || row.Result != 0 || row.Source != (modulemanifest.InputSource{Kind: modulemanifest.InputSourceValue, Ordinal: 0}) || row.Relation != string(runtimekind.RuntimeKindResultRelationKey) {
+		t.Fatalf("base.type behavior row = %#v, want normal result 0 over input 0 and the runtime-kind relation key", row)
+	}
+	predicate := law.Behavior.Predicates[0]
+	if predicate.Outcome != 0 || predicate.Result != 0 || predicate.Subject != (modulemanifest.InputSource{Kind: modulemanifest.InputSourceValue, Ordinal: 0}) || predicate.Relation != string(runtimekind.RuntimeKindPredicateRelationKey) {
+		t.Fatalf("base.type predicate row = %#v, want normal result 0 over input 0 and the runtime-kind predicate relation key", predicate)
 	}
 }
 

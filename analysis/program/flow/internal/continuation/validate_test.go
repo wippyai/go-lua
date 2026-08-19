@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 func TestContinuationSealCandidateFamiliesAndEndpointAdmission(t *testing.T) {
@@ -156,7 +157,7 @@ func continuationCandidateSpec() continuationSpec {
 		keys:       []source.KeyInput{source.NameKey(body, "field"), source.NameKey(body, "write")},
 		exactAtoms: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "field"}, {Kind: keyspace.LiteralString, String: "write"}},
 		intOwners:  []keyspace.Term{body}, nilOwners: nilOwners,
-		static: static.Input{Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: localCell, Operand: reads[1]}}}},
+		static: static.Input{Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: localCell, Operand: reads[1]}}}},
 		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{localCell}}},
 		flow: authored.Input{
 			Values: authored.ValuesInput{

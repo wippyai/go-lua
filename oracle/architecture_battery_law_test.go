@@ -366,8 +366,8 @@ var architectureBatteryEnumerationPattern = regexp.MustCompile(`(Rows?|Tuple|Pro
 var architectureBatteryEngineEnumeration = map[string]struct{}{
 	// PublishRow/WithdrawRow are the W1 write-capability verbs ratified at the
 	// Snapshot.Query design (one gated write door per column); recorded, not grown.
-	"analysis/engine:PublishRow":  {},
-	"analysis/engine:WithdrawRow": {},
+	"analysis/engine:PublishRow":                                       {},
+	"analysis/engine:WithdrawRow":                                      {},
 	"analysis/engine/internal/carrier/product:NewRows":                 {},
 	"analysis/engine/internal/carrier/product:Rows":                    {},
 	"analysis/engine/internal/carrier/product:SourceRows":              {},
@@ -389,19 +389,8 @@ var architectureBatteryEngineEnumeration = map[string]struct{}{
 	"analysis/engine/internal/equation:Topology.QueryRowCount":         {},
 	"analysis/engine/internal/equation:Topology.RuleMemberRow":         {},
 	"analysis/engine/internal/equation:Topology.RuleMemberRowCount":    {},
-	"analysis/engine:ActivationRuleImplementation.BeginBindingRuleRow": {},
-	"analysis/engine:ActivationRuleImplementation.BeginReceiptRuleRow": {},
-	"analysis/engine:BindingRuleRowDraft":                              {},
-	"analysis/engine:BindingRuleRowReceipt":                            {},
-	"analysis/engine:BindingRuleRowRef":                                {},
 	"analysis/engine:Product":                                          {},
-	"analysis/engine:ReceiptArtifactRowFailure":                        {},
-	"analysis/engine:ReceiptCommitFailure.SemanticRows":                {},
-	"analysis/engine:ReceiptCommitSemanticRowsFailure":                 {},
-	"analysis/engine:ReceiptSealFailure.ArtifactRow":                   {},
 	"analysis/engine:Row":                                              {},
-	"analysis/engine:RuleImplementation.BeginBindingRuleRow":           {},
-	"analysis/engine:RuleImplementation.BeginReceiptRuleRow":           {},
 	"analysis/engine:SolveDiagnosticRow":                               {},
 }
 
@@ -417,55 +406,7 @@ func TestArchitectureEngineEnumerationVocabularyOnlyShrinks(t *testing.T) {
 // construction proof; the count of distinct receipt types is the count of
 // construction boundaries the analyzer still proves separately, so it is the
 // direct measure of how far the boundary consolidation has come.
-var architectureBatteryReceiptVocabulary = map[string]struct{}{
-	"analysis:AnalyzeDiagnosticReceiptStage":                                  {},
-	"analysis/engine:ActivationReceiptGraph":                                  {},
-	"analysis/engine:ActivationReceiptMember":                                 {},
-	"analysis/engine:ArtifactEnvironmentReceipt":                              {},
-	"analysis/engine:ArtifactPointReceipt":                                    {},
-	"analysis/engine:ArtifactScalarReceipt":                                   {},
-	"analysis/engine:ArtifactWTOEventReceipt":                                 {},
-	"analysis/engine:ArtifactWTORegionReceipt":                                {},
-	"analysis/engine:BindingDirectActivationReceipt":                          {},
-	"analysis/engine:BindingEnvironmentEdgeReceipt":                           {},
-	"analysis/engine:BindingFactorEdgeReceipt":                                {},
-	"analysis/engine:BindingMaterializationReceipt":                           {},
-	"analysis/engine:BindingRuleCarryPartReceipt":                             {},
-	"analysis/engine:BindingRulePrunePartReceipt":                             {},
-	"analysis/engine:BindingRuleReadPartReceipt":                              {},
-	"analysis/engine:BindingRuleRowReceipt":                                   {},
-	"analysis/engine:BindingRuleSupportPartReceipt":                           {},
-	"analysis/engine:BindingRuleWritePartReceipt":                             {},
-	"analysis/engine:MountedArtifactReceipt":                                  {},
-	"analysis/engine:MountedNativeCallStageReceipt":                           {},
-	"analysis/engine:ReceiptArtifactRowFailure":                               {},
-	"analysis/engine:ReceiptAssembly":                                         {},
-	"analysis/engine:ReceiptAssemblyFailure":                                  {},
-	"analysis/engine:ReceiptCommitFailure":                                    {},
-	"analysis/engine:ReceiptCommitFailurePhase":                               {},
-	"analysis/engine:ReceiptCommitPrecondition":                               {},
-	"analysis/engine:ReceiptCommitPublishFailure":                             {},
-	"analysis/engine:ReceiptCommitSemanticRowsFailure":                        {},
-	"analysis/engine:ReceiptGraph":                                            {},
-	"analysis/engine:ReceiptMember":                                           {},
-	"analysis/engine:ReceiptObservation":                                      {},
-	"analysis/engine:ReceiptObservationAttachFailure":                         {},
-	"analysis/engine:ReceiptQuery":                                            {},
-	"analysis/engine:ReceiptRuleMember":                                       {},
-	"analysis/engine:ReceiptScheduleFailure":                                  {},
-	"analysis/engine:ReceiptSealFailure":                                      {},
-	"analysis/engine:ReceiptSealFailurePhase":                                 {},
-	"analysis/engine:ReceiptSourceSealFailure":                                {},
-	"analysis/engine:ReceiptTopologyFailure":                                  {},
-	"analysis/engine:RuleOccurrenceReceipt":                                   {},
-	"analysis/engine:RuleOperandReceipt":                                      {},
-	"analysis/engine:RuleSurfaceSourceReceipt":                                {},
-	"analysis/engine:SchemaRouteWriteReceipt":                                 {},
-	"analysis/engine:SchemaSelectedReadReceipt":                               {},
-	"analysis/engine:SchemaSummaryReadReceipt":                                {},
-	"analysis/engine:SummarySurfaceReceipt":                                   {},
-	"analysis/engine/internal/equation:RuleSurfaceSourceReceipt":              {},
-}
+var architectureBatteryReceiptVocabulary = map[string]struct{}{}
 
 // TestArchitectureReceiptVocabularyOnlyShrinks is the receipt tripwire. It
 // covers exported types only: a receipt is a type, and constructors and methods

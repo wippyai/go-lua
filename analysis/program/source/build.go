@@ -293,27 +293,11 @@ func (a *authority) validTerm(term keyspace.Term) bool {
 	return a != nil && keyspace.ValidTerm(term, keyspace.TermFamily(term), a.count(keyspace.TermFamily(term)))
 }
 
-// validDirectBodyTerm is the exact Source Body-order denominator.  It mirrors
-// Flow's body sourceDirectFamily law without importing Flow: only the
-// statement/owner families below may occur directly in authored Body order.
+// validDirectBodyTerm is the exact Source Body-order denominator, gated by
+// the canonical AdmitsDirectBodyFamily admission primitive that Lua lowering
+// also consumes.
 func (a *authority) validDirectBodyTerm(term keyspace.Term) bool {
-	return a != nil && sourceDirectFamily(keyspace.TermFamily(term)) && a.validTerm(term)
-}
-
-// sourceDirectFamily is Source's copy of the canonical direct-Body family
-// boundary.  It is shared by Build and the artifact decoder; neither side may
-// admit a family merely because its ordinal exists in Source's census.
-func sourceDirectFamily(family keyspace.Family) bool {
-	switch family {
-	case keyspace.FamilyBody, keyspace.FamilyBind, keyspace.FamilyAssign,
-		keyspace.FamilyCall, keyspace.FamilyBranch, keyspace.FamilyLoop,
-		keyspace.FamilyReturn, keyspace.FamilyBreak, keyspace.FamilyGoto,
-		keyspace.FamilyLabel, keyspace.FamilyControlFault,
-		keyspace.FamilyTypeAlias, keyspace.FamilyTypeInterface:
-		return true
-	default:
-		return false
-	}
+	return a != nil && AdmitsDirectBodyFamily(keyspace.TermFamily(term)) && a.validTerm(term)
 }
 
 func (a *authority) validFamilyTerm(term keyspace.Term, family keyspace.Family) bool {
@@ -356,12 +340,7 @@ func compactSpan(name string, span Span) (storedSpan, bool) {
 	if name == "" || span.File != name && (span.File != "" || !allZero) {
 		return storedSpan{}, false
 	}
-	if allZero {
-		return storedSpan{}, true
-	}
-	if span.StartLine == 0 || span.StartCol == 0 ||
-		(span.EndLine == 0) != (span.EndCol == 0) ||
-		span.EndLine != 0 && (span.EndLine < span.StartLine || span.EndLine == span.StartLine && span.EndCol < span.StartCol) {
+	if _, ok := CoordinateFromParts(span.StartLine, span.StartCol, span.EndLine, span.EndCol); !ok {
 		return storedSpan{}, false
 	}
 	return storedSpan{startLine: span.StartLine, startCol: span.StartCol, endLine: span.EndLine, endCol: span.EndCol}, true

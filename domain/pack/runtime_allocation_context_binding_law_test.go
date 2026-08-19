@@ -1,6 +1,7 @@
 package pack_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"crypto/sha256"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
@@ -64,8 +65,8 @@ func runtimeContextBindingSchema(t testing.TB, contract *target.Contract, operat
 	if err != nil || statics == nil {
 		t.Fatalf("seal binding static: %v", err)
 	}
-	packMount, packMountOK := packdomain.NewArtifactMount(artifact, module, programID)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
+	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !packMountOK || !heapMountOK {
 		t.Fatal("binding artifact mounts")
 	}

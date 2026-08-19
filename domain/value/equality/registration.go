@@ -26,32 +26,34 @@ type ruleAuthorities interface {
 // RuleEntry is this package's value-binary-equality rule declaration. P and A
 // are the composition's own principal and authority records, admitted by the
 // need interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
-	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
+func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "value-binary-equality",
 		Writes: "value",
 		Owner:  "value",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/binary-equality", Form: "issuance/computation", Input: "input/finish", Stage: "stage/local"},
+			{Occurrence: "occurrence/binary-equality", Requirement: "requirement/unrestricted", Form: "issuance/computation", Input: "input/finish", Stage: "stage/local"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/binary-equality",
 		Roles:    []schema.Key{"semantic/operand/value/binary-equality", "semantic/evidence/value/binary-equality"},
-		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics, ok := context.Roles.Rule("value/binary-equality")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
-		},
-		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterMountedSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-			return BindHot(context.Fragment, context.Authorities.ValueAuthority())
-		},
-
 	}
+}
+
+func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
+	semantics, ok := context.Roles.Rule("value/binary-equality")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
+}
+
+func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterMountedSlot(binding, context.Fragment.RuleSlot())
+}
+
+func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
+	return BindHot(context.Fragment, context.Authorities.ValueAuthority())
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

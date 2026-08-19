@@ -73,7 +73,7 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 	if _, ok := attachment.ContentID(); ok {
 		t.Fatal("attachment published an identity without an authenticated observation handle")
 	}
-	if attachment.observation.MatchesID(attachment.id) {
+	if attachment.observation.SealedAs(attachment.id) {
 		t.Fatal("absent observation handle authenticated an attachment identity")
 	}
 	if _, readable := attachment.Observe(nil, nil); readable {
@@ -93,7 +93,7 @@ func TestBranchValueObservationAttachmentIssuanceLaw(t *testing.T) {
 	if ok {
 		t.Fatal("attachment issued without a compilation and query")
 	}
-	if failure != engine.ReceiptObservationAttachFailureArguments {
+	if failure != engine.ObservationAttachArguments() {
 		t.Fatalf("incomplete binding reported failure=%v", failure)
 	}
 	if attachment.Valid() {

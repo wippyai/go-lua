@@ -6,7 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func directCallTypeValue(t *testing.T, p *program.Program) (keyspace.Term, keyspace.Term) {
@@ -37,7 +38,7 @@ local value = 1
 return string(value)
 `)
 		call, target := directCallTypeValue(t, p)
-		if primitive, ok := p.Static().Types().Primitives().Get(target); !ok || primitive != static.PrimitiveString {
+		if primitive, ok := p.Static().Types().Primitives().Get(target); !ok || primitive != statictypes.PrimitiveString {
 			t.Fatalf("TypeValue primitive = %v/%v, want string", primitive, ok)
 		}
 		if got := p.Flow().Authored().Claims().Count(); got != 0 {
@@ -60,7 +61,7 @@ return Validator(value)
 `)
 		_, target := directCallTypeValue(t, p)
 		state, declaration, _, ok := p.Static().References().Get(target)
-		if !ok || state != static.TypeRefDeclaration || declaration == 0 {
+		if !ok || state != staticrefs.Declaration || declaration == 0 {
 			t.Fatalf("TypeValue declaration target = %v/%v/%v, want exact declaration TypeRef", state, declaration, ok)
 		}
 	})

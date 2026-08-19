@@ -241,5 +241,4 @@ type Evidence struct {
 	LValuePaths      []LValuePath
 }
 
-// Generated is assigned by checked-in generated evidence.
-var Generated Evidence
+// Generated is the checked-in immutable parser-use evidence value.

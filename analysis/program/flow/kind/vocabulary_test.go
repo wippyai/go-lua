@@ -131,3 +131,29 @@ func TestBinaryArithmeticMembershipRejectsOtherBinaryFamilies(t *testing.T) {
 		}
 	}
 }
+
+func TestBinaryOrderMembershipRejectsOtherBinaryFamilies(t *testing.T) {
+	for op := BinaryLess; op <= BinaryGreaterEqual; op++ {
+		if !IsBinaryOrder(op) {
+			t.Fatalf("order operator %d was rejected", op)
+		}
+	}
+	for _, op := range []BinaryOp{
+		0,
+		BinaryAdd,
+		BinaryPow,
+		BinaryConcat,
+		BinaryBitAnd,
+		BinaryBitOr,
+		BinaryBitXor,
+		BinaryShiftLeft,
+		BinaryShiftRight,
+		BinaryEqual,
+		BinaryNotEqual,
+		BinaryOp(255),
+	} {
+		if IsBinaryOrder(op) {
+			t.Fatalf("non-order operator %d was admitted", op)
+		}
+	}
+}

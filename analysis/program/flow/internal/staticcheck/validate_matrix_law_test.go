@@ -8,6 +8,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCheckValidateRejectsImplicitStaticRead(t *testing.T) {
@@ -46,9 +53,9 @@ func TestStaticCheckValidateRejectsImplicitStaticRead(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{Cell: cell, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)}}},
-			Operators:    static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: cell, Operand: read}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{Cell: cell, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)}}},
+			Operators:    staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: cell, Operand: read}}},
 		},
 	})
 	result, err := Validate(
@@ -109,12 +116,12 @@ func TestStaticCheckValidateCombinedCanonicalResult(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{Cell: scopeCell, Target: primitive}}},
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: rootCell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
-			Operators:    static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: nil3}}},
-			Operands:     static.OperandsInput{Annotation: []static.Annotation{{Scope: scopeCell, Target: primitive, Name: 1, Values: values3}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{Cell: scopeCell, Target: primitive}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: rootCell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			Operators:    staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: nil3}}},
+			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: scopeCell, Target: primitive, Name: 1, Values: values3}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -167,8 +174,8 @@ func TestStaticCheckValidateFunctionVarargHeader(t *testing.T) {
 			}},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: function, Operand: vararg}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: function, Operand: vararg}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	if result, err := Validate(

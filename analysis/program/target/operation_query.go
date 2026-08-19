@@ -3,6 +3,7 @@ package target
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 func (c *Contract) OperationCount() int {
@@ -198,6 +199,51 @@ func (c *Contract) OutcomeAt(op vocabulary.Operation, index int) (flowkind.Outco
 	}
 	outcome := c.outcomes[row.outcomes.start+uint32(index)]
 	return outcome.kind, outcome.values, true
+}
+
+// BehaviorResultCount returns the number of provider-declared result
+// correspondences owned by op. It is zero when the operation has no behavior
+// descriptor.
+func (c *Contract) BehaviorResultCount(op vocabulary.Operation) int {
+	row, ok := c.operation(op)
+	if !ok {
+		return 0
+	}
+	return row.behavior.len()
+}
+
+// BehaviorResultAt returns one sealed, opaque behavior result relation. The
+// returned schema EntryID is an identity only; Target does not interpret the
+// provider's vocabulary.
+func (c *Contract) BehaviorResultAt(op vocabulary.Operation, index int) (outcome, result uint32, source vocabulary.InputSource, relation schema.EntryID, ok bool) {
+	row, ok := c.operation(op)
+	if !ok || index < 0 || index >= row.behavior.len() {
+		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
+	}
+	item := c.behaviorResults[row.behavior.start+uint32(index)]
+	return item.outcome, item.result, item.source, item.relation, true
+}
+
+// BehaviorPredicateCount returns the number of provider-declared predicate
+// correspondences owned by op.
+func (c *Contract) BehaviorPredicateCount(op vocabulary.Operation) int {
+	row, ok := c.operation(op)
+	if !ok {
+		return 0
+	}
+	return row.behaviorPredicates.len()
+}
+
+// BehaviorPredicateAt returns one sealed, opaque behavior predicate relation.
+// Branch polarity is intentionally outside this declaration: the same
+// correspondence supports either a positive or a negative branch operation.
+func (c *Contract) BehaviorPredicateAt(op vocabulary.Operation, index int) (outcome, result uint32, subject vocabulary.InputSource, relation schema.EntryID, ok bool) {
+	row, ok := c.operation(op)
+	if !ok || index < 0 || index >= row.behaviorPredicates.len() {
+		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
+	}
+	item := c.behaviorPredicates[row.behaviorPredicates.start+uint32(index)]
+	return item.outcome, item.result, item.subject, item.relation, true
 }
 
 // transferCount reports the finite endpoint/payload/alias relations owned by op.

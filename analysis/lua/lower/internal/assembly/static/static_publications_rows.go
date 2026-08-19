@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
 )
 
 func (rows *staticRows) TypePublication(term, assign keyspace.Term, pair uint32, target keyspace.Term) error {
@@ -14,6 +14,6 @@ func (rows *staticRows) TypePublication(term, assign keyspace.Term, pair uint32,
 	if assign == 0 || target == 0 {
 		return errors.New("program/lower/collector: incomplete TypePublication")
 	}
-	rows.publications = append(rows.publications, programstatic.Publication{Assign: assign, Pair: pair, Target: target})
+	rows.publications = append(rows.publications, staticpubs.Publication{Assign: assign, Pair: pair, Target: target})
 	return nil
 }

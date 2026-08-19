@@ -88,6 +88,52 @@ func TestTopologyGraphAcceptedRevisionIsACompactSharedView(t *testing.T) {
 	}
 }
 
+func TestGraphSummaryKeyRangeRetainsSealedOwnerAndOrder(t *testing.T) {
+	fixture := newTemplateMaterializationFixtureWithGrammar(t, true, false)
+	surface := Surface{Factor: boundaryKey(201), Form: SurfaceReadSummary, Local: 1,
+		Semantic: boundaryKey(218), Normalizer: boundaryKey(218)}
+	keys := []uint64{1, 3}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:     fixture.actuals,
+		Points:    []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
+		Queries:   []QueryInstance{{Family: fixture.query, Point: PointAt(0), Surfaces: []Surface{surface}}},
+		Summaries: []SummaryMapping{{Surface: surface, Keys: keys}},
+	})
+	if !sealed || topology == nil {
+		t.Fatal("summary topology seal")
+	}
+	keys[0] = 99
+	graph, graphOK := initialGraph(topology)
+	keyRange, ranged := graph.SummaryKeyRange(surface)
+	if !graphOK || !ranged || keyRange.Count() != 2 {
+		t.Fatal("sealed summary key range")
+	}
+	for index, expected := range []uint64{1, 3} {
+		actual, present := keyRange.At(index)
+		if !present || actual != expected {
+			t.Fatalf("summary key %d = %d, want %d", index, actual, expected)
+		}
+	}
+	if _, present := keyRange.At(-1); present {
+		t.Fatal("negative summary key index was accepted")
+	}
+	if _, present := keyRange.At(keyRange.Count()); present {
+		t.Fatal("summary key range overrun was accepted")
+	}
+	unknown := surface
+	unknown.Local = 2
+	if _, present := graph.SummaryKeyRange(unknown); present {
+		t.Fatal("unknown summary surface was accepted")
+	}
+	var empty SummaryKeyRange
+	if empty.Count() != 0 {
+		t.Fatal("empty summary key range had a count")
+	}
+	if _, present := empty.At(0); present {
+		t.Fatal("empty summary key range exposed a key")
+	}
+}
+
 func TestActivationGraphOverlayBuildsFeedbackCertificate(t *testing.T) {
 	fixture := newTemplateMaterializationFixtureWithGrammar(t, true, true)
 	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,

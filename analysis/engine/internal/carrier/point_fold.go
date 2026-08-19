@@ -83,19 +83,22 @@ func (work *Work) AbortPointRHSFold() bool {
 // FinishPointRHSFold computes one final support/coverage surface, invokes one
 // synchronized typed fold per physical slot, and performs one carrier commit.
 // It exactly models the old left comb, including its sole raw-header adoption
-// case, but publishes no intermediate RHS root vector or terminal prefix.
-func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
+// case, but publishes no intermediate RHS root vector or terminal prefix. The
+// returned ChangeSet is the exact result of that same reference-to-folded
+// commit. It is operation-local evidence: callers must consume it immediately
+// for that returned RHS and must not retain or replay it against another state.
+func (work *Work) FinishPointRHSFold() (PointRHS, ChangeSet, bool) {
 	transaction := work.activePointFold()
 	if transaction == nil {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	defer transaction.clear()
 	if len(transaction.terms) == 0 {
-		return transaction.base, true
+		return transaction.base, ChangeSet{}, true
 	}
 	for _, slot := range work.slots {
 		if _, ok := slot.(PointFoldSlotWork); !ok {
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 	}
 
@@ -105,23 +108,23 @@ func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
 	pristine := work.closedInitialPoint(physical)
 	for index, point := range transaction.terms {
 		if !work.admittedPointState(point) || !point.Scope().Same(transaction.base.Scope()) {
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 		// This is the exact old zero-copy adoption law. Any earlier term while
 		// pristine was a contained C-empty identity, so changing the physical
 		// base discards no semantic operand.
-		if pristine && currentSupport.Entails(point.state.support) {
+		if pristine && work.entailsSupport(currentSupport, point.state.support) {
 			physical = point
 			start = index + 1
 			currentSupport = point.state.support
 			pristine = work.closedInitialPoint(point)
 			continue
 		}
-		if !point.state.support.Entails(currentSupport) {
+		if !work.entailsSupport(point.state.support, currentSupport) {
 			var ok bool
 			currentSupport, ok = work.unionSupport(currentSupport, point.state.support)
 			if !ok {
-				return PointRHS{}, false
+				return PointRHS{}, ChangeSet{}, false
 			}
 		}
 		if !emptyContributionCoverage(point.coverage) {
@@ -132,15 +135,15 @@ func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
 	carryBaseOutside := finalSupport.Equal(physical.state.support)
 	nextCoverage, ok := work.foldCoverageUnion(transaction, physical.coverage, transaction.terms[start:])
 	if !ok {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	split, ok := work.threeSupport(transaction.reference.state.support, finalSupport)
 	if !ok {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	delta := work.newSupportWork()
 	if delta == nil {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	clear(transaction.patches)
 	transaction.patches = transaction.patches[:0]
@@ -149,7 +152,7 @@ func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
 		if !typed || !work.live() {
 			delta.Discard()
 			dropPatches(transaction.patches)
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 		physicalSlot := shape.Slot(position)
 		clear(transaction.slotTerms)
@@ -175,16 +178,16 @@ func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
 		if !valid {
 			delta.Discard()
 			dropPatches(transaction.patches)
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 		if !work.acceptInto(&transaction.patches, transaction.reference.state, change, delta) {
 			delta.Discard()
-			return PointRHS{}, false
+			return PointRHS{}, ChangeSet{}, false
 		}
 	}
-	next, _, ok := work.commit(transaction.reference.state, transaction.patches, finalSupport, split.RightOnly(), split.LeftOnly(), delta)
+	next, changes, ok := work.commit(transaction.reference.state, transaction.patches, finalSupport, split.RightOnly(), split.LeftOnly(), delta)
 	if !ok {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	point := PointState{
 		state:     next,
@@ -194,10 +197,10 @@ func (work *Work) FinishPointRHSFold() (PointRHS, bool) {
 		closed:    !carryBaseOutside || physical.closed,
 	}
 	if !work.admittedPointState(point) {
-		return PointRHS{}, false
+		return PointRHS{}, ChangeSet{}, false
 	}
 	result := PointRHS{point: point, roleSeal: work.contributionSeal}
-	return result, work.admittedPointRHS(result)
+	return result, changes, work.admittedPointRHS(result) && work.composition.OwnsChangeSet(changes)
 }
 
 func emptyContributionCoverage(coverage contributionCoverage) bool {
@@ -272,10 +275,10 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 				dominant = coverage
 				return
 			}
-			if slotCoverageContains(dominant, coverage) {
+			if work.slotCoverageContains(dominant, coverage) {
 				return
 			}
-			if slotCoverageContains(coverage, dominant) {
+			if work.slotCoverageContains(coverage, dominant) {
 				dominantSource = source
 				dominant = coverage
 				return
@@ -314,7 +317,7 @@ func (work *Work) foldCoverageUnion(transaction *pointFoldTransaction, base cont
 			// candidate against every source before sharing its header.
 			candidateValid := true
 			for source := 0; source < len(terms)+1; source++ {
-				if !slotCoverageContains(dominant, pointFoldSlotCoverageAt(base, terms, slot, source)) {
+				if !work.slotCoverageContains(dominant, pointFoldSlotCoverageAt(base, terms, slot, source)) {
 					candidateValid = false
 					break
 				}

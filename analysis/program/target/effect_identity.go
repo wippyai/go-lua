@@ -9,14 +9,11 @@ import (
 
 // descriptor while retaining distinct occurrence evidence.
 func (c *Contract) sealEffectIdentities() error {
-	if c == nil || len(c.operationAnchors) != len(c.operations) {
-		return errors.New("target: missing effect operation anchors")
-	}
 	c.effectOperationIDs = make([]identity.ContentID, len(c.operations))
 	for index := range c.operations {
 		op := vocabulary.Operation(index + 1)
-		anchor := c.operationAnchors[index]
-		if !anchor.Available() {
+		anchor, anchorOK := c.anchor(op)
+		if !anchorOK {
 			return errors.New("target: missing effect operation anchor")
 		}
 		id, err := c.semanticID(semanticEffectOperation, func(w *framing.Writer) error {

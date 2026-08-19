@@ -3,31 +3,37 @@ package target
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	bootvalue "github.com/wippyai/go-lua/analysis/program/target/boot"
+	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
+	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 type operationRow struct {
-	bindings        indexRange
-	input           vocabulary.Values
-	outcomes        indexRange
-	valuesTypes     indexRange
-	callbacks       indexRange
-	subedges        indexRange
-	suspensions     indexRange
-	spawns          indexRange
-	resumes         indexRange
-	transfers       indexRange
-	subedgeRelation uint32
-	releases        indexRange
-	effects         indexRange
-	typeFormals     indexRange
-	valuesVars      uint32
-	rowFormals      uint32
-	effectTail      vocabulary.RowTail
-	effectVar       vocabulary.RowVar
+	bindings           indexRange
+	input              vocabulary.Values
+	outcomes           indexRange
+	behavior           indexRange
+	behaviorPredicates indexRange
+	valuesTypes        indexRange
+	callbacks          indexRange
+	subedges           indexRange
+	suspensions        indexRange
+	spawns             indexRange
+	resumes            indexRange
+	transfers          indexRange
+	subedgeRelation    uint32
+	releases           indexRange
+	effects            indexRange
+	typeFormals        indexRange
+	valuesVars         uint32
+	rowFormals         uint32
+	effectTail         vocabulary.RowTail
+	effectVar          vocabulary.RowVar
 }
 
 type bindingRange struct {
@@ -36,47 +42,6 @@ type bindingRange struct {
 	member     indexRange
 	ownerKeys  indexRange
 	memberKeys indexRange
-}
-
-type initialRootRow struct {
-	identity string
-	shape    vocabulary.BootShape
-}
-
-type bootShapeRow struct {
-	root      vocabulary.InitialRoot
-	aggregate vocabulary.BootAggregate
-	immutable bool
-	value     vocabulary.InitialValue
-}
-
-type initialValueRow struct {
-	kind      vocabulary.InitialValueKind
-	boolean   bool
-	integer   int64
-	floatBits uint64
-	string    string
-	root      vocabulary.InitialRoot
-	operation vocabulary.Operation
-	binding   uint32
-}
-
-type initialEntryRow struct {
-	root       vocabulary.InitialRoot
-	key        vocabulary.ExactKey
-	value      vocabulary.InitialValue
-	mutability vocabulary.InitialMutability
-}
-
-type initialBindingRow struct {
-	name string
-	root vocabulary.InitialRoot
-	key  vocabulary.ExactKey
-}
-
-type initialMetatableAttachmentRow struct {
-	base      vocabulary.InitialValueKind
-	metatable vocabulary.InitialRoot
 }
 
 type valuesRow struct {
@@ -100,6 +65,20 @@ type outcomeRow struct {
 	fresh           indexRange
 	callbackResults indexRange
 	resultAliases   indexRange
+}
+
+type behaviorResultRow struct {
+	outcome  uint32
+	result   uint32
+	source   vocabulary.InputSource
+	relation schema.EntryID
+}
+
+type behaviorPredicateRow struct {
+	outcome  uint32
+	result   uint32
+	subject  vocabulary.InputSource
+	relation schema.EntryID
 }
 
 type freshResultRow struct {
@@ -161,49 +140,6 @@ type subedgeRelationRow struct {
 	resultOutcome uint32
 	result        uint32
 	effects       indexRange
-}
-
-type protocolRow struct {
-	acquisitions    indexRange
-	states          indexRange
-	transitions     indexRange
-	escapes         indexRange
-	callbackHolders indexRange
-}
-
-type stateRow struct {
-	name  string
-	final bool
-}
-
-type acquisitionRow struct {
-	operation vocabulary.Operation
-	outcome   uint32
-	result    uint32
-	state     vocabulary.State
-}
-
-type transitionRow struct {
-	operation vocabulary.Operation
-	input     vocabulary.InputSource
-	from      vocabulary.State
-	outcomes  indexRange
-}
-
-type transitionOutcomeRow struct {
-	outcome uint32
-	to      vocabulary.State
-}
-
-type escapeRow struct {
-	operation vocabulary.Operation
-	input     vocabulary.InputSource
-}
-
-type protocolCallbackHolderRow struct {
-	operation vocabulary.Operation
-	input     vocabulary.InputSource
-	callback  vocabulary.CallbackID
 }
 
 type callbackRow struct {
@@ -312,11 +248,15 @@ type bindingIndexRow struct {
 // Contract is immutable after Seal. Every slice is private and every public
 // hot query returns only scalar handles or values.
 type Contract struct {
+	bootvalue.Table
+	operationCore          operationvalue.Core
 	operations             []operationRow
 	types                  []typeRow
 	values                 []valuesRow
 	valueTypes             []vocabulary.Type
 	outcomes               []outcomeRow
+	behaviorResults        []behaviorResultRow
+	behaviorPredicates     []behaviorPredicateRow
 	effects                []effectRow
 	effectVals             []vocabulary.ValueFormal
 	effectType             []vocabulary.TypeFormal
@@ -338,29 +278,14 @@ type Contract struct {
 	subedgeRelationEffects []uint32
 	transferOutcomes       []vocabulary.TransferPossibility
 	callbackReleases       []callbackReleaseRow
-	protocols              []protocolRow
-	states                 []stateRow
-	acquisitions           []acquisitionRow
-	transitions            []transitionRow
-	transitionOutcomes     []transitionOutcomeRow
-	escapes                []escapeRow
-	callbackHolders        []protocolCallbackHolderRow
+	protocols              protocolvalue.Table
 	produced               []producedRow
 	fresh                  []freshResultRow
 	captures               []captureRow
 	segments               []string
 	bindingKeys            []vocabulary.ExactKey
 	lookup                 []bindingIndexRow
-	initialRoots           []initialRootRow
-	exactKeys              []keyspace.LiteralValue
-	bootShapes             []bootShapeRow
-	initialValues          []initialValueRow
-	initialValueBinds      []bindingRange
-	initialEntries         []initialEntryRow
-	initialBindings        []initialBindingRow
-	initialMetatables      []initialMetatableAttachmentRow
-	globalEnvRoot          vocabulary.InitialRoot
-	initialAbsent          vocabulary.InitialValue
+	exactKeys              exactkey.Table
 	counts                 denominator.CountRows
 	// identityColumns carries the identity plane's own columns. The layout is
 	// declared with the rest of the model; the values are written and read only
@@ -376,7 +301,6 @@ type Contract struct {
 // second graph authority: each row is a cached canonical descriptor indexed
 // only by the existing dense Target tables.
 type identityColumns struct {
-	operationAnchors []identity.ContentID
 	// Effect identity columns are projections of the existing
 	// operation/callback/effect tables. Effect descriptors intentionally have
 	// no inverse index: duplicate authored occurrences are distinct evidence,
@@ -402,8 +326,6 @@ type identityColumns struct {
 	outcomeResultRanges     []indexRange
 	outcomeResultIDs        []identity.ContentID
 	outcomeResultIndex      []outcomeResultIDRow
-	initialValueContentIDs  []identity.ContentID
-	bootRelationID          identity.ContentID
 }
 
 type inputFormalIDRow struct {

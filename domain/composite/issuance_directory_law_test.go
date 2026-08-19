@@ -61,16 +61,16 @@ func TestIssuanceStageLawsProjectTheSealedPredecessorChain(t *testing.T) {
 		}
 		byStage[law.Stage] = law
 	}
-	dispatch, dispatchOK := byStage[rows.ArtifactRuleStageCallDispatch]
-	summary, summaryOK := byStage[rows.ArtifactRuleStageCallSummary]
-	effect, effectOK := byStage[rows.ArtifactRuleStageCallEffect]
+	dispatch, dispatchOK := byStage[rows.ArtifactRuleStageIssued3]
+	summary, summaryOK := byStage[rows.ArtifactRuleStageIssued4]
+	effect, effectOK := byStage[rows.ArtifactRuleStageIssued5]
 	if !dispatchOK || dispatch.Predecessor.Valid() {
 		t.Fatalf("call-dispatch law %+v", dispatch)
 	}
-	if !summaryOK || summary.Predecessor != rows.ArtifactRuleStageCallDispatch {
+	if !summaryOK || summary.Predecessor != rows.ArtifactRuleStageIssued3 {
 		t.Fatalf("call-summary predecessor %d", summary.Predecessor)
 	}
-	if !effectOK || effect.Predecessor != rows.ArtifactRuleStageCallSummary {
+	if !effectOK || effect.Predecessor != rows.ArtifactRuleStageIssued4 {
 		t.Fatalf("call-effect predecessor %d", effect.Predecessor)
 	}
 }

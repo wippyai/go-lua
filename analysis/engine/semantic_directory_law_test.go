@@ -36,7 +36,7 @@ func semanticDirectoryScaleID(role byte, index int) identity.ContentID {
 
 type semanticDirectoryScaleFixture struct {
 	topology *BindingTopology
-	graph    *ReceiptGraph
+	graph    *CommittedProgram
 	roots    int
 }
 
@@ -51,8 +51,8 @@ func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectory
 		t.Fatal("directory scale binding")
 	}
 	ruleImplementation, ruleOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	queryImplementation, queryOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	_, queryOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !ruleOK || !queryOK || !assemblyOK {
 		t.Fatal("directory scale implementations")
 	}
@@ -60,10 +60,10 @@ func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectory
 	occurrences := make([]equation.Occurrence, count)
 	operands := make([]equation.Operand, count)
 	for index := 0; index < count; index++ {
-		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(960_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(960_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.admitAt(site)
 		entity, entityOK := operandEntityForContent(ruleUnitForSemantic(coldKey(970_000 + index)).content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
 			t.Fatal("directory scale source rows")
 		}
@@ -72,35 +72,37 @@ func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectory
 	if !assembly.SealSources() {
 		t.Fatal("directory scale source seal")
 	}
-	proof := ruleImplementation.receipt.proof
+	proof := ruleImplementation.binding.proof
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
 	for index := 0; index < count; index++ {
-		pointReceipt, pointReceiptOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
-		point, pointOK := assembly.builder.addSemanticPoint(semanticDirectoryScaleID(semanticDirectoryPointRole, index), pointReceipt)
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		declaration.points = append(declaration.points, declaredPointRow{ID: semanticDirectoryScaleID(semanticDirectoryPointRole, index), Site: sites[index]})
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index],
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := ruleImplementation.BeginBindingRuleRow(source)
+		draft, draftOK := ruleImplementation.beginBindingRuleRow(source)
 		writePart, writePartOK := ruleImplementation.WritePart(source, 0)
-		if !pointReceiptOK || !pointOK || !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
+		if !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
 			t.Fatal("directory scale Rule source")
 		}
-		ruleReceipt, ruleReceiptOK := assembly.builder.issueRuleRow(draft)
-		_, memberOK := assembly.builder.addSemanticRule(semanticDirectoryScaleID(semanticDirectoryMemberRole, index), ruleReceipt)
-		queryReceipt, queryReceiptOK := assembly.builder.issueQueryRow(queryImplementation, equation.QueryInstance{
-			Family: schema.querySemanticAt(0), Point: point.ref,
-			Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}},
-		})
-		if !ruleReceiptOK || !memberOK || !queryReceiptOK {
+		ruleReceipt, ruleReceiptOK := assembly.issueRuleRow(draft)
+		if !ruleReceiptOK {
 			t.Fatal("directory scale topology rows")
 		}
-		if _, ok := assembly.builder.addSemanticQuery(semanticDirectoryScaleID(semanticDirectoryQueryRole, index), queryReceipt); !ok {
-			t.Fatal("directory scale semantic Query")
-		}
+		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: semanticDirectoryScaleID(semanticDirectoryMemberRole, index), Row: ruleReceipt.row})
+		declaration.queries = append(declaration.queries, declaredQueryRow{ID: semanticDirectoryScaleID(semanticDirectoryQueryRole, index), Row: equation.QueryInstance{
+			Family: schema.querySemanticAt(0), Point: equation.PointAt(index),
+			Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}},
+		}})
 	}
-	topology, graph, committed := assembly.Commit()
-	if !committed || topology == nil || graph == nil {
-		t.Fatalf("directory scale commit: %+v", assembly.commitFailure)
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !committed || topology == nil || issued == nil {
+		t.Fatalf("directory scale commit: stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
+	}
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
+		t.Fatal("directory scale committed program")
 	}
 	return semanticDirectoryScaleFixture{topology: topology, graph: graph, roots: admittedRootBindings(topology.topology)}
 }
@@ -261,17 +263,18 @@ func TestSemanticDirectoryGenerationUpdateReplacesRootBindings(t *testing.T) {
 	if !relationOK {
 		t.Fatal("initial relation")
 	}
-	retained := make([]*ReceiptGraph, 0, generations)
+	retained := make([]*CommittedProgram, 0, generations)
 	for generation := 0; generation < generations; generation++ {
 		next, published := fixture.topology.topology.Publish(relation, nil)
-		graph, graphOK := fixture.topology.Graph(next)
+		issued, graphOK := fixture.topology.Graph(next)
+		graph := CommittedProgramFrom(fixture.topology, issued)
 		if !published || !graphOK || graph == nil {
 			t.Fatalf("generation %d publication", generation)
 		}
 		for index := 0; index < 16; index++ {
 			point, pointOK := graph.lookupPoint(semanticDirectoryScaleID(semanticDirectoryPointRole, index))
 			member, memberOK := graph.lookupRuleMember(semanticDirectoryScaleID(semanticDirectoryMemberRole, index))
-			if !pointOK || !memberOK || point.graph != graph || member.graph != graph {
+			if !pointOK || !memberOK || !graph.graph.OwnsPoint(point) || member.graph != graph.graph || member.topology != graph.topology {
 				t.Fatalf("generation %d lost root binding %d", generation, index)
 			}
 		}
@@ -298,14 +301,15 @@ func TestSemanticDirectoryPublicationAllocationIsIndependentOfRetainedGeneration
 		if !relationOK {
 			t.Fatal("initial relation")
 		}
-		retained := make([]*ReceiptGraph, 0, generations)
+		retained := make([]*CommittedProgram, 0, generations)
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.ReadMemStats(&before)
 		for generation := 0; generation < generations; generation++ {
 			next, published := fixture.topology.topology.Publish(relation, nil)
-			graph, graphOK := fixture.topology.Graph(next)
-			if !published || !graphOK {
+			issued, graphOK := fixture.topology.Graph(next)
+			graph := CommittedProgramFrom(fixture.topology, issued)
+			if !published || !graphOK || graph == nil {
 				t.Fatalf("generation %d publication", generation)
 			}
 			retained = append(retained, graph)

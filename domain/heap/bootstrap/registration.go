@@ -29,44 +29,47 @@ type ruleAuthorities interface {
 // RuleEntry is this package's heap-bootstrap rule declaration. P and A are the
 // composition's own principal and authority records, admitted by the need
 // interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
-	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
+func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:      "heap-bootstrap",
 		Writes:   "heap",
 		Owner:    "heap",
 		Lane:     rule.LaneLink,
 		Semantic: "semantic/rule/heap/host-bootstrap",
 		Roles:    []schema.Key{"semantic/operand/heap/host-bootstrap", "semantic/evidence/heap/host-bootstrap"},
-		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			semantics, ok := context.Roles.Rule("heap/host-bootstrap")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.HeapPrincipal())
-		},
-		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-			return rule.RegisterLinkSlot(context.Binding, context.Fragment.RuleSlot())
-		},
-		// The bootstrap plane is one transported pair. The join runs in the
-		// pairing pass and resolves its partner by the key that rule is declared
-		// under, so neither side depends on the other's position in the table.
-		Pair: func(context rule.Pairing[*SchemaFragment]) bool {
-			value, valueOK := context.Capability("value-bootstrap")
-			heap, heapOK := context.Capability("heap-bootstrap")
-			return valueOK && heapOK && engine.RegisterLinkBootstrapTransportPair(context.Binding, value, heap)
-		},
-		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-			return BindHot(context.Fragment, context.Authorities.HeapAuthority())
-		},
-		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
-			catalog := context.Rule.Catalog()
-			return catalog != nil && catalog.FencedTo(context.Authorities.HeapSchema())
-		},
-		LinkCatalog: func(hot *HotRule) (rule.LinkCatalog, bool) {
-			catalog := hot.Catalog()
-			return catalog, catalog != nil
-		},
 	}
+}
+
+func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
+	semantics, ok := context.Roles.Rule("heap/host-bootstrap")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.HeapPrincipal())
+}
+
+func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
+	return engine.RegisterLinkSlot(binding, context.Fragment.RuleSlot())
+}
+
+func PairRule(binding *engine.SchemaBinding, _ rule.Pairing[*SchemaFragment], resolve func(schema.Key) (engine.RuleSlotCapability, bool)) bool {
+	value, valueOK := resolve("value-bootstrap")
+	heap, heapOK := resolve("heap-bootstrap")
+	return valueOK && heapOK && engine.RegisterLinkBootstrapTransportPair(binding, value, heap)
+}
+
+func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
+	return BindHot(context.Fragment, context.Authorities.HeapAuthority())
+}
+
+func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
+	catalog := context.Rule.Catalog()
+	return catalog != nil && catalog.FencedTo(context.Authorities.HeapSchema())
+}
+
+func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
+	catalog := hot.Catalog()
+	return catalog, catalog != nil
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

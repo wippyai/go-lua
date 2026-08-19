@@ -2,6 +2,7 @@ package closed_test
 
 import (
 	"crypto/sha256"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -65,7 +66,11 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 func TestClosedMountedReceiptRejectsForeignSchemaInstance(t *testing.T) {
 	heapSchema, valueSchema, mounts := closedReceiptFixture(t, `return { answer = 1 }`)
 	foreignHeap, heapFailure := heapdomain.SealWithArtifacts(mounts.linked, mounts.heap)
-	foreignValues, valueFailure := valuedomain.SealWithFailure(mounts.linked, foreignHeap, mounts.value)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	foreignValues, valueFailure := valuedomain.SealWithFailure(mounts.linked, foreignHeap, mounts.value, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("foreign closed schemas")
 	}
@@ -100,7 +105,11 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	}
 	mounts := closedArtifactMounts(t, linked)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, mounts.value, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("closed schemas heap=%v value=%v", heapFailure, valueFailure)
 	}
@@ -128,8 +137,8 @@ func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 			t.Fatalf("closed artifact compile: %v", failure)
 		}
 		var heapOK, valueOK bool
-		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		mounts.value[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
+		mounts.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		mounts.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !heapOK || !valueOK {
 			t.Fatal("closed artifact mount receipt")
 		}

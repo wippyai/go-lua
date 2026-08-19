@@ -71,7 +71,17 @@ func (w *Work) Fold(root Guard, visit func(Guard, Decomposition) bool) (complete
 	if visit == nil {
 		return false, false
 	}
-	return fold(root, w.Valid, w.decompose, visit)
+	// Work is single-writer, but a callback may re-enter Fold on this same
+	// Work. Keep the outer traversal's reusable scratch intact and use the
+	// local implementation for the nested call, preserving the old callback
+	// reentrancy behavior.
+	if w == nil || w.foldBusy {
+		return fold(root, w.Valid, w.decompose, visit)
+	}
+	w.clearFoldScratch()
+	w.foldBusy = true
+	defer w.clearFoldScratch()
+	return w.fold(root, visit)
 }
 
 type foldFrame struct {
@@ -85,6 +95,74 @@ type foldItem struct {
 	view  Decomposition
 }
 
+// clearFoldScratch removes every Guard reference from Work-owned fold
+// storage while retaining capacities for the next warmed traversal. The
+// backing arrays are reused, so truncating without zeroing would retain every
+// published page reached by the previous fold.
+func (w *Work) clearFoldScratch() {
+	if w == nil {
+		return
+	}
+	for index := range w.foldStack {
+		w.foldStack[index] = foldFrame{}
+	}
+	w.foldStack = w.foldStack[:0]
+	for index := range w.foldItems {
+		w.foldItems[index] = foldItem{}
+	}
+	w.foldItems = w.foldItems[:0]
+	clear(w.foldSeen)
+	w.foldBusy = false
+}
+
+// fold is Work's reusable-scratch traversal. It validates the complete DAG
+// before invoking any callback, matching the local Manager.Fold traversal's
+// no-partial-callback contract.
+func (w *Work) fold(root Guard, visit func(Guard, Decomposition) bool) (completed, ok bool) {
+	if !w.Valid(root) {
+		return false, false
+	}
+	// A terminal has no reachable children. Keep the common one-node fold on
+	// the direct path; the reusable traversal state is only needed for a DAG.
+	if isTerminal(root) {
+		return visit(root, w.decompose(root)), true
+	}
+	if w.foldSeen == nil {
+		w.foldSeen = make(map[nodeKey]struct{})
+	}
+	w.foldStack = append(w.foldStack, foldFrame{guard: root})
+	for len(w.foldStack) != 0 {
+		last := len(w.foldStack) - 1
+		frame := w.foldStack[last]
+		w.foldStack[last] = foldFrame{}
+		w.foldStack = w.foldStack[:last]
+		if frame.ready {
+			w.foldItems = append(w.foldItems, foldItem{guard: frame.guard, view: frame.view})
+			continue
+		}
+		if _, found := w.foldSeen[keyOf(frame.guard)]; found {
+			continue
+		}
+		if !w.Valid(frame.guard) {
+			return false, false
+		}
+		w.foldSeen[keyOf(frame.guard)] = struct{}{}
+		view := w.decompose(frame.guard)
+		w.foldStack = append(w.foldStack, foldFrame{guard: frame.guard, view: view, ready: true})
+		if view.Terminal {
+			continue
+		}
+		// LIFO makes the canonical low branch complete before high.
+		w.foldStack = append(w.foldStack, foldFrame{guard: view.High}, foldFrame{guard: view.Low})
+	}
+	for _, item := range w.foldItems {
+		if !visit(item.guard, item.view) {
+			return false, true
+		}
+	}
+	return true, true
+}
+
 // fold validates and records the whole reachable DAG before invoking visit,
 // so an invalid Guard never exposes a partial traversal. The explicit stack
 // keeps Guard depth off the Go call stack.
@@ -92,7 +170,14 @@ func fold(root Guard, valid func(Guard) bool, decompose func(Guard) Decompositio
 	if !valid(root) {
 		return false, false
 	}
-	seen := make(map[Guard]struct{})
+	// A terminal has no reachable children. Keep the common one-node fold on
+	// the direct path: the full DAG walk below needs its seen set, explicit
+	// stack, and postorder item list, none of which can contribute for a
+	// terminal. The callback result keeps the public completion contract exact.
+	if isTerminal(root) {
+		return visit(root, decompose(root)), true
+	}
+	seen := make(map[nodeKey]struct{})
 	stack := []foldFrame{{guard: root}}
 	items := make([]foldItem, 0)
 	for len(stack) != 0 {
@@ -103,13 +188,13 @@ func fold(root Guard, valid func(Guard) bool, decompose func(Guard) Decompositio
 			items = append(items, foldItem{guard: frame.guard, view: frame.view})
 			continue
 		}
-		if _, found := seen[frame.guard]; found {
+		if _, found := seen[keyOf(frame.guard)]; found {
 			continue
 		}
 		if !valid(frame.guard) {
 			return false, false
 		}
-		seen[frame.guard] = struct{}{}
+		seen[keyOf(frame.guard)] = struct{}{}
 		view := decompose(frame.guard)
 		stack = append(stack, foldFrame{guard: frame.guard, view: view, ready: true})
 		if view.Terminal {

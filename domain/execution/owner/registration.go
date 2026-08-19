@@ -62,8 +62,8 @@ type (
 // AxisEntry is this package's axis declaration. A is the composition's own Link
 // input record: this axis names nothing in it, because it mounts no authority of
 // its own and binds no factor against one.
-func AxisEntry[A any]() axis.Spec[A, *SchemaFragment, *HotAxis, Reachable] {
-	return axis.Spec[A, *SchemaFragment, *HotAxis, Reachable]{
+func AxisEntry[A any]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:     AxisKey,
 		Storage: axis.StorageEngine,
 		// The mounted execution points of a Link are the key universe this

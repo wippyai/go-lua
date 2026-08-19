@@ -8,6 +8,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCheckPublicationUsesExactWritePairAndCanonicalPath(t *testing.T) {
@@ -44,8 +48,8 @@ func TestStaticCheckPublicationUsesExactWritePairAndCanonicalPath(t *testing.T) 
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -102,14 +106,14 @@ func TestStaticCheckPublicationAcceptsDeclarationTarget(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			References: static.ReferencesInput{TypeRef: []static.TypeRef{{
-				Resolution: static.TypeRefDeclaration, Source: []keyspace.Key{1}, Target: alias,
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
+				Resolution: staticrefs.Declaration, Source: []keyspace.Key{1}, Target: alias,
 			}}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{
 				Owner: body, Target: primitive, Name: 1, NameCoordinate: coordinate,
 			}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -180,15 +184,15 @@ func TestStaticCheckPublicationAcceptsQualifiedDeclarationTarget(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			References: static.ReferencesInput{TypeRef: []static.TypeRef{
-				{Resolution: static.TypeRefDeclaration, Source: []keyspace.Key{2}, Target: alias},
-				{Resolution: static.TypeRefDeclaration, Source: []keyspace.Key{1, 2}, Root: cellA, Target: alias},
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{
+				{Resolution: staticrefs.Declaration, Source: []keyspace.Key{2}, Target: alias},
+				{Resolution: staticrefs.Declaration, Source: []keyspace.Key{1, 2}, Root: cellA, Target: alias},
 			}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{
 				Owner: body, Target: primitive, Name: 2, NameCoordinate: coordinate,
 			}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{
 				{Assign: assignOne, Pair: 0, Target: refOne},
 				{Assign: assignTwo, Pair: 0, Target: refTwo},
 			}},
@@ -243,8 +247,8 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathIdentity(t *testing
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{2}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{2}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -299,8 +303,8 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathRoot(t *testing.T) 
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: foreignRoot, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: foreignRoot, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	if result, err := Validate(
@@ -346,8 +350,8 @@ func TestStaticCheckPublicationAcceptsVisibleLocalRoot(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -403,8 +407,8 @@ func TestStaticCheckPublicationAcceptsDeepDottedPath(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1, 2}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1, 2}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(
@@ -451,8 +455,8 @@ func TestStaticCheckPublicationAcceptsAdjustedTailPair(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			References:   static.ReferencesInput{TypeRef: []static.TypeRef{{Resolution: static.TypeRefCanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
-			Publications: static.PublicationsInput{Type: []static.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
+			References:   staticrefs.Input{TypeRef: []staticrefs.TypeRef{{Resolution: staticrefs.CanonicalPath, Root: cell, Source: []keyspace.Key{1, 2}, Canonical: []keyspace.Key{1}}}},
+			Publications: staticpubs.Input{Type: []staticpubs.Publication{{Assign: assign, Pair: 0, Target: typeRef}}},
 		},
 	})
 	result, err := Validate(

@@ -12,7 +12,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // staticRawKey is a payload reference, not a provisional keyspace.Key.  The
@@ -57,7 +62,7 @@ type staticRawInterface struct {
 }
 
 type staticRawInterfaceMember struct {
-	kind       programstatic.InterfaceMemberKind
+	kind       staticdecl.InterfaceMemberKind
 	field      keyspace.Term
 	name       staticRawKey
 	coordinate source.Coordinate
@@ -65,7 +70,7 @@ type staticRawInterfaceMember struct {
 }
 
 type staticRawTypeRef struct {
-	resolution programstatic.TypeRefResolution
+	resolution staticrefs.Resolution
 	target     keyspace.Term
 	root       keyspace.Term
 	source     []staticRawKey
@@ -129,15 +134,15 @@ type staticRawCallContract struct {
 
 // staticTypeRows owns the concrete authored type-expression relations.
 type staticTypeRows struct {
-	primitive    []programstatic.Primitive
+	primitive    []statictypes.Primitive
 	literal      []staticRawLiteral
-	optional     []programstatic.Optional
-	union        []programstatic.Union
-	intersection []programstatic.Intersection
+	optional     []statictypes.Optional
+	union        []statictypes.Union
+	intersection []statictypes.Intersection
 	generic      []staticRawGeneric
-	array        []programstatic.Array
-	mapType      []programstatic.Map
-	record       []programstatic.Record
+	array        []statictypes.Array
+	mapType      []statictypes.Map
+	record       []statictypes.Record
 	field        []staticRawField
 }
 
@@ -152,7 +157,7 @@ type staticDeclarationRows struct {
 	aliases    []staticRawAlias
 	params     []staticRawParam
 	interfaces []staticRawInterface
-	declared   []programstatic.DeclaredType
+	declared   []staticdecl.DeclaredType
 }
 
 // staticSignatureRows owns source-only TypeFunction and assertion relations.
@@ -169,22 +174,22 @@ type staticContractRows struct {
 
 // staticOperatorRows owns the four concrete authored static operators.
 type staticOperatorRows struct {
-	typeOf      []programstatic.TypeOf
-	keyOf       []programstatic.KeyOf
-	indexAccess []programstatic.IndexAccess
-	conditional []programstatic.Conditional
+	typeOf      []staticoperators.TypeOf
+	keyOf       []staticoperators.KeyOf
+	indexAccess []staticoperators.IndexAccess
+	conditional []staticoperators.Conditional
 }
 
 // staticOperandRows owns the sparse/dense authored operand sidecars.
 type staticOperandRows struct {
-	claims      []programstatic.ClaimTarget
-	typeValues  []programstatic.TypeValueTarget
+	claims      []staticoperands.ClaimTarget
+	typeValues  []staticoperands.TypeValueTarget
 	annotations []staticRawAnnotation
 }
 
 // staticPublicationRows owns the dense Assign-pair publication relation.
 type staticPublicationRows struct {
-	publications []programstatic.Publication
+	publications []staticpubs.Publication
 }
 
 // staticRows is the complete Static lowering denominator. It is a pure row

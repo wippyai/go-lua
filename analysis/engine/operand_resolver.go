@@ -16,13 +16,13 @@ type OperandCoords struct {
 // on this rule's sealed cell. A second install is rejected: one rule has
 // exactly one resolver.
 func (implementation *RuleImplementation[K, V, O]) InstallOperandResolver(resolve func(OperandCoords) (O, bool)) bool {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.state == nil || resolve == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.state == nil || resolve == nil {
 		return false
 	}
-	state := implementation.receipt.state
+	state := implementation.binding.state
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	hot := implementation.receipt.cell.impl
+	hot := implementation.binding.cell.impl
 	if hot == nil || hot.operandResolver != nil {
 		return false
 	}
@@ -33,18 +33,21 @@ func (implementation *RuleImplementation[K, V, O]) InstallOperandResolver(resolv
 // HasOperandResolver reports whether this rule's sealed cell already holds
 // its owner-supplied resolver.
 func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.cell == nil || implementation.receipt.cell.impl == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		return false
 	}
-	return implementation.receipt.cell.impl.operandResolver != nil
+	return implementation.binding.cell.impl.operandResolver != nil
 }
 
 // RuleProgramAttach is the erased construction join for one sealed rule cell.
 // The engine enumerates neutral member coordinates and this handle binds the
 // executable row; the typed operand never leaves the cell.
 type RuleProgramAttach interface {
-	AdmitMounted(assembly *ReceiptAssembly, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
-	AdmitLink(assembly *ReceiptAssembly, role RuleSlotCapability, occurrence identity.ContentID) bool
+	AdmitMounted(builder *BindingTopologyBuilder, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
+	AdmitLink(builder *BindingTopologyBuilder, role RuleSlotCapability, occurrence identity.ContentID) bool
+	// AdmitsMounted is the sealed owner predicate over one placement. It
+	// reads only the owner's operand directory and does not mutate topology.
+	AdmitsMounted(mount, point, occurrence identity.ContentID) bool
 	AttachMountedMember(construction *ProgramConstruction, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
 	AttachLinkMember(construction *ProgramConstruction, role RuleSlotCapability, occurrence identity.ContentID) bool
 }
@@ -66,8 +69,8 @@ func (implementation *RuleImplementation[K, V, O]) AttachLinkMember(construction
 
 func (implementation *RuleImplementation[K, V, O]) resolveOperand(coords OperandCoords) (O, bool) {
 	var absent O
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.cell == nil || implementation.receipt.cell.impl == nil || implementation.receipt.cell.impl.operandResolver == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil || implementation.binding.cell.impl.operandResolver == nil {
 		return absent, false
 	}
-	return implementation.receipt.cell.impl.operandResolver(coords)
+	return implementation.binding.cell.impl.operandResolver(coords)
 }

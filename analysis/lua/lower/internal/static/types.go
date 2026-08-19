@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -62,7 +62,7 @@ func (w *Writer) PrimitiveOrRef(expr *ast.PrimitiveTypeExpr) (keyspace.Term, err
 	if decl, ok := w.binding.PrimitiveTypeRef(expr); ok {
 		return w.declarationRef(span, []string{expr.Name}, decl)
 	}
-	if kind, ok := programstatic.PrimitiveKindForName(expr.Name); ok {
+	if kind, ok := statictypes.PrimitiveKindForName(expr.Name); ok {
 		return w.term(w.static.Primitive(span, kind), "primitive type")
 	}
 	return w.term(w.static.Unresolved(span, []string{expr.Name}, 0), "unresolved primitive reference")
@@ -332,7 +332,7 @@ func (w *Writer) RuntimeTypeTarget(span source.Span, value bind.RuntimeTypeValue
 		if value.Decl.ID != 0 {
 			return 0, fmt.Errorf("lualower: primitive runtime type value %q has a declaration", value.Name)
 		}
-		kind, ok := programstatic.PrimitiveKindForName(value.Name)
+		kind, ok := statictypes.PrimitiveKindForName(value.Name)
 		if !ok || !kind.RuntimeLoadable() {
 			return 0, fmt.Errorf("lualower: unsupported runtime primitive type %q", value.Name)
 		}

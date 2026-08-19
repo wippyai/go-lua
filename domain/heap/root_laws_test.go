@@ -1,6 +1,7 @@
 package heap_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
@@ -102,7 +103,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *target.Spec) (*
 			t.Fatalf("artifact compile: %v", failure)
 		}
 		var mountOK bool
-		mounts[index], mountOK = NewArtifactMount(artifact, module, programID)
+		mounts[index], mountOK = NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		if !mountOK {
 			t.Fatal("artifact mount")
 		}

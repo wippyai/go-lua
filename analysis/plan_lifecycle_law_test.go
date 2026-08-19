@@ -16,6 +16,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -228,13 +230,20 @@ return shared_template_probe(43)`
 		t.Fatal("independent template mount cardinality")
 	}
 	leftMount, rightMount := left.state.artifacts.mounts[0], right.state.artifacts.mounts[0]
-	if leftMount.artifact == nil || leftMount.artifact != rightMount.artifact || leftMount.template == nil || leftMount.template != rightMount.template || leftMount.roles == nil || leftMount.roles != rightMount.roles {
+	leftArtifact := left.state.artifacts.byProgram[leftMount.programID]
+	rightArtifact := right.state.artifacts.byProgram[rightMount.programID]
+	if leftArtifact == nil || leftArtifact != rightArtifact || leftMount.template == nil || leftMount.template != rightMount.template || leftMount.roles == nil || leftMount.roles != rightMount.roles {
 		t.Fatal("equal Programs in independent Links did not share one content-addressed template")
 	}
-	if leftMount.artifact.FunctionBoundaryCount() == 0 {
-		t.Fatalf("shared artifact function interfaces = %d", leftMount.artifact.FunctionBoundaryCount())
+	if leftMount.snapshot == nil || leftMount.snapshot.FunctionBoundaryCount() == 0 {
+		t.Fatalf("shared snapshot function interfaces = %d", func() int {
+			if leftMount.snapshot == nil {
+				return 0
+			}
+			return leftMount.snapshot.FunctionBoundaryCount()
+		}())
 	}
-	if left.state.graph != nil || right.state.graph != nil || left.state.queryPlan != nil || right.state.queryPlan != nil {
+	if left.state.committed.program != nil || right.state.committed.program != nil || len(left.state.querySites) != 0 || len(right.state.querySites) != 0 {
 		t.Fatal("Compile instantiated runtime topology before Solve ownership")
 	}
 	leftDiagnostic, leftInstantiated := left.state.instantiateRuntimeTopology()
@@ -242,25 +251,26 @@ return shared_template_probe(43)`
 	if !leftInstantiated || !rightInstantiated {
 		t.Fatalf("runtime topology instantiation = %v/%+v %v/%+v", leftInstantiated, leftDiagnostic, rightInstantiated, rightDiagnostic)
 	}
-	leftGraph, rightGraph := left.state.graph, right.state.graph
-	if _, replayed := left.state.instantiateRuntimeTopology(); !replayed || left.state.graph != leftGraph {
+	leftGraph, rightGraph := left.state.committed.program, right.state.committed.program
+	if _, replayed := left.state.instantiateRuntimeTopology(); !replayed || left.state.committed.program != leftGraph {
 		t.Fatal("repeated Solve boundary rematerialized the left runtime topology")
 	}
-	if _, replayed := right.state.instantiateRuntimeTopology(); !replayed || right.state.graph != rightGraph {
+	if _, replayed := right.state.instantiateRuntimeTopology(); !replayed || right.state.committed.program != rightGraph {
 		t.Fatal("repeated Solve boundary rematerialized the right runtime topology")
 	}
-	if left.state.graph == nil || right.state.graph == nil {
+	if left.state.committed.program == nil || right.state.committed.program == nil {
 		t.Fatal("Solve boundary did not retain the runtime topology")
 	}
 	// The function declaration interface is owned by program/artifact. Both
 	// Links resolve it through the one shared content-addressed Artifact, so
 	// the interface outlives every Link-local release/replay.
-	if leftMount.artifact != rightMount.artifact || leftMount.artifact.FunctionBoundaryCount() != rightMount.artifact.FunctionBoundaryCount() {
+	if leftMount.snapshot == nil || rightMount.snapshot == nil ||
+		leftMount.snapshot.FunctionBoundaryCount() != rightMount.snapshot.FunctionBoundaryCount() {
 		t.Fatal("independent Links did not share one function declaration authority")
 	}
 	programCaptures, programVarargs := 0, 0
-	for index := 0; index < leftMount.artifact.FunctionBoundaryCount(); index++ {
-		reusable, reusableOK := leftMount.artifact.FunctionBoundaryAt(index)
+	for index := 0; index < leftMount.snapshot.FunctionBoundaryCount(); index++ {
+		reusable, reusableOK := leftMount.snapshot.FunctionBoundaryAt(index)
 		if !reusableOK || !reusable.Available() || !reusable.ID().Available() || !reusable.BodyID().Available() || !reusable.EntryID().Available() || reusable.OutcomeCount() == 0 {
 			t.Fatalf("function interface[%d] is incomplete", index)
 		}
@@ -290,6 +300,79 @@ return shared_template_probe(43)`
 	}
 	if left.state.binding == nil || right.state.binding == nil || left.state.binding == right.state.binding {
 		t.Fatal("independent Links aliased the Link-local binding")
+	}
+}
+
+func compileArtifactSet(t *testing.T, linked *link.Link) *compiledArtifactSet {
+	t.Helper()
+	plan, status := Compile(linked)
+	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
+		t.Fatalf("compile = %v/%v", status, plan)
+	}
+	t.Cleanup(func() { _ = plan.Close() })
+	return plan.state.artifacts
+}
+
+func TestArtifactCacheReusesAcrossMountPermutation(t *testing.T) {
+	leftProg := planLawProgram(t, `return 11`)
+	rightProg := planLawProgram(t, `return 22`)
+	first := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+		{Name: "left", Program: leftProg}, {Name: "right", Program: rightProg},
+	}))
+	second := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+		{Name: "right", Program: rightProg}, {Name: "left", Program: leftProg},
+	}))
+	if first.byProgram[leftProg.ContentID()] == nil || first.byProgram[leftProg.ContentID()] != second.byProgram[leftProg.ContentID()] ||
+		first.byProgram[rightProg.ContentID()] == nil || first.byProgram[rightProg.ContentID()] != second.byProgram[rightProg.ContentID()] {
+		t.Fatal("mount permutation did not reuse cached artifacts")
+	}
+}
+
+func TestArtifactCacheInvalidatesOnlyReplacedSibling(t *testing.T) {
+	leftProg := planLawProgram(t, `return 11`)
+	rightProg := planLawProgram(t, `return 22`)
+	replacement := planLawProgram(t, `return 33`)
+	base := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+		{Name: "left", Program: leftProg}, {Name: "right", Program: rightProg},
+	}))
+	changed := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+		{Name: "left", Program: replacement}, {Name: "right", Program: rightProg},
+	}))
+	if base.byProgram[leftProg.ContentID()] == nil || changed.byProgram[replacement.ContentID()] == nil ||
+		base.byProgram[leftProg.ContentID()] == changed.byProgram[replacement.ContentID()] {
+		t.Fatal("replaced sibling reused the previous artifact")
+	}
+	if base.byProgram[rightProg.ContentID()] == nil || base.byProgram[rightProg.ContentID()] != changed.byProgram[rightProg.ContentID()] {
+		t.Fatal("unrelated sibling lost its cached artifact")
+	}
+}
+
+func TestArtifactCacheReusesAcrossActorRename(t *testing.T) {
+	contract, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := planLawProgram(t, `return 7`)
+	seal := func(actor string) *link.Link {
+		t.Helper()
+		linked, err := link.Seal(&link.Spec{
+			Target:  contract,
+			Modules: []linkproject.Module{{Name: "main", Program: prog}},
+			Module: linkmodule.Spec{
+				Actors:             []linkmodule.ActorSpec{{Name: actor}},
+				ModuleCacheAliases: []linkmodule.ModuleCacheAliasClassSpec{{Actor: actor, Instances: []string{"cache-main"}, Representative: "cache-main"}},
+				AnalysisRoots:      []linkmodule.AnalysisRootSpec{{Name: "main", Module: "main", Actor: actor, Instance: "cache-main"}},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return linked
+	}
+	first := compileArtifactSet(t, seal("actor"))
+	second := compileArtifactSet(t, seal("other-actor"))
+	if first.byProgram[prog.ContentID()] == nil || first.byProgram[prog.ContentID()] != second.byProgram[prog.ContentID()] {
+		t.Fatal("actor rename did not reuse the cached artifact")
 	}
 }
 
@@ -354,7 +437,7 @@ func TestPublishedArtifactMountTypesExcludeProjectCoordinates(t *testing.T) {
 	if !ok {
 		t.Fatal("analysis source location unavailable")
 	}
-	path := filepath.Join(filepath.Dir(current), "artifact_plan.go")
+	path := filepath.Join(filepath.Dir(current), "compile.go")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

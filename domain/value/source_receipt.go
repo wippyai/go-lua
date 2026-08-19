@@ -202,10 +202,10 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 		}
 		rows := &schema.sourceSeedMounts[mountIndex]
 		rows.occurrenceIndex = make(map[identity.ContentID]uint32)
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, rowOK := artifact.OccurrenceAt(index)
-			if !rowOK || row.Kind() != programartifact.OccurrenceValueSource {
+			if !rowOK || row.Kind() != uint8(programartifact.OccurrenceValueSource) && row.Kind() != uint8(programartifact.OccurrenceFormalEntry) {
 				continue
 			}
 			id := row.ID()

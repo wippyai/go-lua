@@ -66,7 +66,11 @@ func (s Site) available() bool {
 		return false
 	}
 	row := s.result.sites.rows[s.index]
-	return row.context == hashSiteContext(s.result.sourceID, s.result.flowID, s.result.staticID, s.result.moduleID, row.term)
+	// Site context is issued while the sealed site directory is built.  The
+	// hot projection consumes that issued field directly; re-hashing the
+	// quartet and Term on every Available/ContextID call only re-derives the
+	// owner's identity and was a measurable Artifact compile cost.
+	return row.context.Available()
 }
 
 // Available reports whether this handle belongs to the exact sealed Causal

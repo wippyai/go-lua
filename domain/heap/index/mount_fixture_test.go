@@ -1,6 +1,7 @@
 package index_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -49,10 +50,10 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 			t.Fatalf("index fixture artifact: %v", failure)
 		}
 		var heapOK, valueOK, packOK bool
-		result.heap[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		result.value[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
-		result.pack[index], packOK = packdomain.NewArtifactMount(artifact, module, programID)
-		result.call[index] = calldomain.MountedArtifact{ModuleKey: module, Artifact: artifact}
+		result.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		result.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		result.pack[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		result.call[index] = calldomain.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatal("index fixture mount receipt")
 		}
@@ -64,7 +65,11 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	t.Helper()
 	mounts := indexMounts(t, linked)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
 	receipt, receiptOK := composite.Global()
 	if !receiptOK {

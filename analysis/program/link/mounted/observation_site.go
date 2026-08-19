@@ -5,11 +5,11 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -24,11 +24,12 @@ type BranchProducer struct {
 	Occurrence identity.ContentID
 	Point      identity.ContentID
 	Anchor     identity.ContentID
+	ValueID    identity.ContentID
 }
 
 func (producer BranchProducer) Available() bool {
 	return producer.Key.Available() && producer.Occurrence.Available() &&
-		producer.Point.Available() && producer.Anchor.Available()
+		producer.Point.Available() && producer.Anchor.Available() && producer.ValueID.Available()
 }
 
 func compareBranchProducer(left, right BranchProducer) int {
@@ -60,6 +61,7 @@ type ObservationSite struct {
 	Local     identity.ContentID
 	Kind      structure.DiagnosticObservationKind
 	Location  programsource.Span
+	ValueID   identity.ContentID
 	producers []BranchProducer
 }
 
@@ -69,9 +71,11 @@ func (site ObservationSite) Available() bool {
 	}
 	switch site.Kind {
 	case structure.DiagnosticObservationBranchCondition:
-		return site.branchGeometryAvailable()
-	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved, structure.DiagnosticObservationTypeConformance:
-		return len(site.producers) == 0
+		return site.ValueID.Available() && site.branchGeometryAvailable()
+	case structure.DiagnosticObservationTypeConformance:
+		return site.ValueID.Available() && len(site.producers) == 0
+	case structure.DiagnosticObservationTypeReferenceUnresolved, structure.DiagnosticObservationValueReferenceUnresolved:
+		return !site.ValueID.Available() && len(site.producers) == 0
 	default:
 		return false
 	}
@@ -146,11 +150,9 @@ func (census ObservationSites) At(index int) (ObservationSite, bool) {
 	return census.rows[index], true
 }
 
-// SealObservationSites derives the census from the placed artifacts and the
-// Boundary that owns the two Link relations a branch site needs: the mounted
-// span-to-Value and semantic-occurrence-to-Value substitutions. Everything
-// else -- the observation rows, the producing rule occurrences, the transfer
-// chain an anchor is recovered through -- is read from the artifact.
+// SealObservationSites derives the census from the sealed ingress snapshots
+// and the Boundary that owns the two Link relations a branch site needs: the
+// mounted span-to-Value and semantic-occurrence-to-Value substitutions.
 func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (ObservationSites, bool) {
 	if boundary == nil || !mountsAvailable(mounts) {
 		return ObservationSites{}, false
@@ -181,10 +183,10 @@ func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (Obs
 
 func mountObservationSites(values linkboundary.Values, contract *target.Contract, mount Mount) ([]ObservationSite, bool) {
 	var producersByValue map[identity.ContentID][]BranchProducer
-	var transfers map[identity.ContentID]programartifact.LocalTransfer
+	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)
-	for index := 0; index < mount.Artifact.DiagnosticObservationCount(); index++ {
-		observation, observationOK := mount.Artifact.DiagnosticObservationAt(index)
+	for index := 0; index < mount.Snapshot.DiagnosticObservationCount(); index++ {
+		observation, observationOK := mount.Snapshot.DiagnosticObservationAt(index)
 		if !observationOK || !observation.Available() {
 			return nil, false
 		}
@@ -202,7 +204,7 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 					return nil, false
 				}
 			}
-			producers, evidence, resolvedOK := branchProducers(values, producersByValue, mount, observation)
+			producers, evidence, valueID, resolvedOK := branchProducers(values, producersByValue, mount, observation)
 			if !resolvedOK {
 				return nil, false
 			}
@@ -213,16 +215,17 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 			if len(producers) == 0 {
 				continue
 			}
-			if transfers == nil {
-				var transfersOK bool
-				transfers, transfersOK = fullEnvironmentTransfers(mount.Artifact)
-				if !transfersOK {
+			if anchors == nil {
+				var anchorsOK bool
+				anchors, anchorsOK = localStageAnchors(mount.Snapshot)
+				if !anchorsOK {
 					return nil, false
 				}
 			}
-			if !anchorBranchProducers(producers, evidence, transfers) {
+			if !anchorBranchProducers(producers, evidence, anchors) {
 				return nil, false
 			}
+			site.ValueID = valueID
 			site.producers = producers
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
 			unresolved, unresolvedOK := observation.UnresolvedTypeReference()
@@ -248,6 +251,11 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
 				return nil, false
 			}
+			valueID, valueOK := conformanceValueID(values, mount, conformance.ArgumentID(), conformance.SpanID())
+			if !valueOK {
+				return nil, false
+			}
+			site.ValueID = valueID
 		default:
 			return nil, false
 		}
@@ -266,19 +274,56 @@ func branchProducers(
 	values linkboundary.Values,
 	producersByValue map[identity.ContentID][]BranchProducer,
 	mount Mount,
-	observation programartifact.DiagnosticObservationRow,
-) ([]BranchProducer, []identity.ContentID, bool) {
+	observation ingress.DiagnosticObservation,
+) ([]BranchProducer, []identity.ContentID, identity.ContentID, bool) {
 	branch, branchOK := observation.BranchCondition()
 	if !branchOK {
-		return nil, nil, false
+		return nil, nil, identity.ContentID{}, false
 	}
 	value, valueOK := values.ForMountedSpan(mount.ModuleKey, branch.ValueSpanID())
 	valueID, valueIDOK := values.ID(value)
 	evidence, evidenceOK := branch.EvidencePoints()
 	if !valueOK || !valueIDOK || !evidenceOK || len(evidence) == 0 {
-		return nil, nil, false
+		return nil, nil, identity.ContentID{}, false
 	}
-	return append([]BranchProducer(nil), producersByValue[valueID]...), evidence, true
+	producers := append([]BranchProducer(nil), producersByValue[valueID]...)
+	coordinate := valueID
+	for _, producer := range producers {
+		if producer.ValueID.Available() {
+			coordinate = producer.ValueID
+			break
+		}
+	}
+	return producers, evidence, coordinate, true
+}
+
+func conformanceValueID(values linkboundary.Values, mount Mount, argumentID, spanID identity.ContentID) (identity.ContentID, bool) {
+	if mount.Snapshot == nil || !argumentID.Available() || !spanID.Available() {
+		return identity.ContentID{}, false
+	}
+	memberID, argumentSpan, argumentOK := callArgumentIdentities(mount.Snapshot, argumentID)
+	if !argumentOK || argumentSpan != spanID {
+		return identity.ContentID{}, false
+	}
+	value, valueOK := values.ForMountedSemantic(mount.ModuleKey, memberID)
+	if !valueOK {
+		value, valueOK = values.ForMountedSpan(mount.ModuleKey, spanID)
+	}
+	if !valueOK {
+		return identity.ContentID{}, false
+	}
+	return values.ID(value)
+}
+
+func callArgumentIdentities(snapshot *ingress.Snapshot, argumentID identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
+	if snapshot == nil || !argumentID.Available() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	row, rowOK := snapshot.CallArgumentForID(argumentID)
+	if !rowOK || !row.Available() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	return row.MemberID(), row.SpanID(), true
 }
 
 // anchorBranchProducers binds each producer to the base evidence point it
@@ -286,10 +331,10 @@ func branchProducers(
 // points and the anchors form a bijection: every base witness of the branch is
 // claimed exactly once, so a producer that shares another's witness is broken
 // geometry rather than a row to choose between.
-func anchorBranchProducers(producers []BranchProducer, evidence []identity.ContentID, transfers map[identity.ContentID]programartifact.LocalTransfer) bool {
+func anchorBranchProducers(producers []BranchProducer, evidence []identity.ContentID, stages map[identity.ContentID]identity.ContentID) bool {
 	anchors := make(map[identity.ContentID]struct{}, len(producers))
 	for index := range producers {
-		anchor, anchorOK := evidenceAnchor(evidence, producers[index].Point, transfers)
+		anchor, anchorOK := evidenceAnchor(evidence, producers[index].Point, stages)
 		if !anchorOK {
 			return false
 		}
@@ -307,32 +352,32 @@ func anchorBranchProducers(producers []BranchProducer, evidence []identity.Conte
 // an operator span is rebound through the span relation, and every other value
 // rule through the semantic-occurrence relation.
 func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identity.ContentID][]BranchProducer, bool) {
+	if mount.Snapshot == nil {
+		return nil, false
+	}
 	producers := make(map[identity.ContentID][]BranchProducer)
-	for ruleIndex := 0; ruleIndex < mount.Artifact.RulePlacementCount(); ruleIndex++ {
-		rule, ruleOK := mount.Artifact.RulePlacementAt(ruleIndex)
-		if !ruleOK || !rule.Available() {
+	for ruleIndex := 0; ruleIndex < mount.Snapshot.RulePlacementCount(); ruleIndex++ {
+		rule, ruleOK := mount.Snapshot.RulePlacementAt(ruleIndex)
+		if !ruleOK || !rule.Key().Available() || !rule.OccurrenceID().Available() {
 			return nil, false
-		}
-		if _, value := rule.OutputSemanticID(); !value {
-			continue
 		}
 		outputID, outputOK := rule.OutputSemanticID()
 		if !outputOK {
 			continue
 		}
 		value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)
-		if programartifact.SpanResultOccurrence(rule.OccurrenceKind()) {
+		if rule.SpanResult() {
 			value, valueOK = values.ForMountedSpan(mount.ModuleKey, outputID)
 		}
-		point, pointOK := rule.PointAt(0)
+		point := rule.PointID()
 		if !valueOK {
 			continue
 		}
 		valueID, valueIDOK := values.ID(value)
-		if !valueIDOK || !pointOK || !point.Available() || rule.PointCount() != 1 || !rule.Key().Available() {
+		if !valueIDOK || !point.Available() || !rule.Key().Available() {
 			return nil, false
 		}
-		candidate := BranchProducer{Key: rule.Key(), Occurrence: rule.ID(), Point: point}
+		candidate := BranchProducer{Key: rule.Key(), Occurrence: rule.OccurrenceID(), Point: point, ValueID: valueID}
 		duplicate := false
 		for _, prior := range producers[valueID] {
 			if prior.Key == candidate.Key && prior.Occurrence == candidate.Occurrence && prior.Point == candidate.Point {
@@ -347,34 +392,54 @@ func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identit
 	return producers, true
 }
 
-// fullEnvironmentTransfers indexes the sealed full-environment transfers of one
-// artifact by destination. Two full rows reaching one execution point make the
-// anchor ambiguous even when their sources agree, so admission rejects the pair
-// instead of choosing. Factor transports carry only named factors and are
-// outside this bridge by design.
-func fullEnvironmentTransfers(artifact *programartifact.Artifact) (map[identity.ContentID]programartifact.LocalTransfer, bool) {
-	transfers := make(map[identity.ContentID]programartifact.LocalTransfer, artifact.LocalTransferCount())
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		edge, edgeOK := artifact.LocalTransferAt(index)
-		if !edgeOK || !edge.Available() {
+// localStageAnchors folds the Program-issued local-transfer rows into their
+// structural stage sources. A full transfer is the unique source when present.
+// Without one, factor transfers establish a source only when they unanimously
+// name it; conflicting partial sources remain unanchored and therefore fail
+// closed if an observation tries to cross that stage.
+func localStageAnchors(snapshot *ingress.Snapshot) (map[identity.ContentID]identity.ContentID, bool) {
+	if snapshot == nil {
+		return nil, false
+	}
+	full := make(map[identity.ContentID]identity.ContentID)
+	partial := make(map[identity.ContentID]identity.ContentID)
+	conflicted := make(map[identity.ContentID]struct{})
+	for index := 0; index < snapshot.LocalTransferCount(); index++ {
+		edge, edgeOK := snapshot.LocalTransferAt(index)
+		if !edgeOK || !edge.ID().Available() {
 			return nil, false
 		}
-		if !edge.FullEnvironment() {
+		to, from := edge.To(), edge.From()
+		if edge.Full() {
+			if _, duplicate := full[to]; duplicate {
+				return nil, false
+			}
+			full[to] = from
 			continue
 		}
-		if _, duplicate := transfers[edge.To()]; duplicate {
-			return nil, false
+		if prior, present := partial[to]; present && prior != from {
+			conflicted[to] = struct{}{}
+			continue
 		}
-		transfers[edge.To()] = edge
+		partial[to] = from
 	}
-	return transfers, true
+	anchors := make(map[identity.ContentID]identity.ContentID, len(full)+len(partial))
+	for to, from := range partial {
+		if _, conflict := conflicted[to]; !conflict {
+			anchors[to] = from
+		}
+	}
+	for to, from := range full {
+		anchors[to] = from
+	}
+	return anchors, true
 }
 
 // evidenceAnchor walks one producer's execution point back to the base
 // evidence point it reports against. The producer either executes at a base
 // point directly, or reaches it through an acyclic chain of full-environment
 // transfers.
-func evidenceAnchor(evidence []identity.ContentID, execution identity.ContentID, transfers map[identity.ContentID]programartifact.LocalTransfer) (identity.ContentID, bool) {
+func evidenceAnchor(evidence []identity.ContentID, execution identity.ContentID, stages map[identity.ContentID]identity.ContentID) (identity.ContentID, bool) {
 	if !execution.Available() || len(evidence) == 0 {
 		return identity.ContentID{}, false
 	}
@@ -383,18 +448,18 @@ func evidenceAnchor(evidence []identity.ContentID, execution identity.ContentID,
 			return point, true
 		}
 	}
-	seen := make(map[identity.ContentID]struct{}, len(transfers))
+	seen := make(map[identity.ContentID]struct{}, len(stages))
 	current := execution
-	for steps := 0; steps <= len(transfers); steps++ {
+	for steps := 0; steps <= len(stages); steps++ {
 		if _, duplicate := seen[current]; duplicate {
 			return identity.ContentID{}, false
 		}
 		seen[current] = struct{}{}
-		edge, found := transfers[current]
-		if !found || !edge.Available() || !edge.FullEnvironment() || edge.To() != current {
+		from, found := stages[current]
+		if !found || !from.Available() || from == current {
 			return identity.ContentID{}, false
 		}
-		current = edge.From()
+		current = from
 		for _, point := range evidence {
 			if current == point {
 				return point, true

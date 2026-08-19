@@ -70,7 +70,6 @@ type runtimeRegion struct {
 	head                int
 	parent              int
 	points              []int
-	faces               []int
 	external            []int
 	back                []int
 	environmentExternal []int
@@ -86,10 +85,10 @@ type runtimeRegion struct {
 }
 
 type solverRuntime struct {
-	// receiptState/receiptAuthority are the SchemaBinding-native runtime
-	// authority. Receipt compilation never fabricates a cold declaration owner.
-	receiptState     *schemaBindingState
-	receiptAuthority *schemaBindingAuthority
+	// bindingState/bindingAuthority are the SchemaBinding-native runtime
+	// authority. Assembly never fabricates a cold declaration owner.
+	bindingState     *schemaBindingState
+	bindingAuthority *schemaBindingAuthority
 	topology         *equation.Topology
 	carrier          *carrier.Composition
 	graph            *equation.Graph
@@ -461,7 +460,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		}
 		observations[index] = row
 	}
-	assembled := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	assembled := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
 	plan, sealed := sealSolvedPublicationPlan(assembled)
 	if !sealed {
 		return nil, false
@@ -478,7 +477,7 @@ func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *
 	if schema == nil || graph.CompositionID() != schema.coldID() {
 		return false
 	}
-	ownerRuntime := &solverRuntime{receiptState: receiptState, receiptAuthority: receiptAuthority, graph: graph}
+	ownerRuntime := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, graph: graph}
 	for index := 0; index < program.queryCount(); index++ {
 		row, present := program.queryAt(index)
 		identity, identityOK := graph.QueryAt(index)

@@ -7,7 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -270,7 +270,7 @@ func staticPublicationAdmission(w *Collector, assign keyspace.Term, pair uint32,
 		w.fail(fmt.Errorf("program/lower/collector: publication TypeRef %d row is absent", target))
 		return false
 	}
-	if resolution != programstatic.TypeRefDeclaration && resolution != programstatic.TypeRefCanonicalPath {
+	if resolution != staticrefs.Declaration && resolution != staticrefs.CanonicalPath {
 		w.fail(fmt.Errorf("program/lower/collector: publication target %d is unresolved", target))
 		return false
 	}

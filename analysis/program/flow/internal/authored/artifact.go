@@ -3,9 +3,9 @@ package authored
 import (
 	"math"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Every canonical event has a two-byte minimum frame. These exact minima are

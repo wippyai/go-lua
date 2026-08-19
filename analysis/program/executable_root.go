@@ -71,25 +71,6 @@ func (root ExecutableRoot) Family() keyspace.Family {
 	return root.family
 }
 
-// ExecutableRootCount is the dense denominator after filtering Source roots
-// through Flow's sealed executable and semantic-path proofs.
-func (body Body) ExecutableRootCount() int {
-	roots, ok := body.ExecutableRoots()
-	if !ok {
-		return 0
-	}
-	return roots.Count()
-}
-
-// ExecutableRootAt issues one dense artifact-safe root proof.
-func (body Body) ExecutableRootAt(index int) (ExecutableRoot, bool) {
-	roots, ok := body.ExecutableRoots()
-	if !ok {
-		return ExecutableRoot{}, false
-	}
-	return roots.At(index)
-}
-
 func (body Body) ExecutableRoots() (ExecutableRoots, bool) {
 	if !body.Available() {
 		return ExecutableRoots{}, false

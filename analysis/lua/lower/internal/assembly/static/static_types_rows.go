@@ -5,21 +5,21 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // Scalar and structural type rows. Terms are supplied by the canonical
 // collector, so these methods only validate dense identity and append data.
-func (rows *staticRows) Primitive(term keyspace.Term, kind programstatic.PrimitiveKind) error {
+func (rows *staticRows) Primitive(term keyspace.Term, kind statictypes.PrimitiveKind) error {
 	if term == 0 || keyspace.TermFamily(term) != keyspace.FamilyTypePrimitive || keyspace.TermOrdinal(term) != uint32(len(rows.primitive)+1) || !kindValid(kind) {
 		return errors.New("program/lower/collector: invalid primitive row")
 	}
-	rows.primitive = append(rows.primitive, programstatic.Primitive{Kind: kind})
+	rows.primitive = append(rows.primitive, statictypes.Primitive{Kind: kind})
 	return nil
 }
 
-func kindValid(kind programstatic.PrimitiveKind) bool {
-	return kind >= programstatic.PrimitiveNil && kind <= programstatic.PrimitiveSelf
+func kindValid(kind statictypes.PrimitiveKind) bool {
+	return kind >= statictypes.PrimitiveNil && kind <= statictypes.PrimitiveSelf
 }
 
 func (rows *staticRows) LiteralBool(term keyspace.Term, value bool) error {
@@ -64,7 +64,7 @@ func (rows *staticRows) Optional(term, inner keyspace.Term) error {
 	if err := staticDenseAppendTerm(term, keyspace.FamilyTypeOptional, len(rows.optional)); err != nil {
 		return err
 	}
-	rows.optional = append(rows.optional, programstatic.Optional{Inner: inner})
+	rows.optional = append(rows.optional, statictypes.Optional{Inner: inner})
 	return nil
 }
 
@@ -75,7 +75,7 @@ func (rows *staticRows) Union(term keyspace.Term, members []keyspace.Term) error
 	if len(members) < 2 {
 		return errors.New("program/lower/collector: union requires two members")
 	}
-	rows.union = append(rows.union, programstatic.Union{Members: append([]keyspace.Term(nil), members...)})
+	rows.union = append(rows.union, statictypes.Union{Members: append([]keyspace.Term(nil), members...)})
 	return nil
 }
 
@@ -86,7 +86,7 @@ func (rows *staticRows) Intersection(term keyspace.Term, members []keyspace.Term
 	if len(members) < 2 {
 		return errors.New("program/lower/collector: intersection requires two members")
 	}
-	rows.intersection = append(rows.intersection, programstatic.Intersection{Members: append([]keyspace.Term(nil), members...)})
+	rows.intersection = append(rows.intersection, statictypes.Intersection{Members: append([]keyspace.Term(nil), members...)})
 	return nil
 }
 
@@ -105,7 +105,7 @@ func (rows *staticRows) Array(term, element keyspace.Term, readonly bool) error 
 	if err := staticDenseAppendTerm(term, keyspace.FamilyTypeArray, len(rows.array)); err != nil {
 		return err
 	}
-	rows.array = append(rows.array, programstatic.Array{Element: element, ReadOnly: readonly})
+	rows.array = append(rows.array, statictypes.Array{Element: element, ReadOnly: readonly})
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (rows *staticRows) Map(term, key, value keyspace.Term, readonly bool) error
 	if err := staticDenseAppendTerm(term, keyspace.FamilyTypeMap, len(rows.mapType)); err != nil {
 		return err
 	}
-	rows.mapType = append(rows.mapType, programstatic.Map{Key: key, Value: value, ReadOnly: readonly})
+	rows.mapType = append(rows.mapType, statictypes.Map{Key: key, Value: value, ReadOnly: readonly})
 	return nil
 }
 
@@ -144,6 +144,6 @@ func (rows *staticRows) Record(term keyspace.Term, fields []keyspace.Term, reado
 	if err := staticDenseAppendTerm(term, keyspace.FamilyTypeRecord, len(rows.record)); err != nil {
 		return err
 	}
-	rows.record = append(rows.record, programstatic.Record{Fields: append([]keyspace.Term(nil), fields...), ReadOnly: readonly})
+	rows.record = append(rows.record, statictypes.Record{Fields: append([]keyspace.Term(nil), fields...), ReadOnly: readonly})
 	return nil
 }

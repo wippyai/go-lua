@@ -32,6 +32,8 @@ type receiptQueryRuntime[V, R any] struct {
 	project  func(OrderedCells[V]) R
 	begin    func() R
 	accum    func(R, OrderedCells[V]) (R, bool)
+	borrow   bool
+	transfer bool
 	result   FrozenResult[R]
 }
 
@@ -61,7 +63,7 @@ func (runtime *receiptQueryRuntime[V, R]) materialize(work *carrier.Work, state 
 	if runtime == nil || runtime.owner == nil || runtime.factor == nil || (runtime.project == nil && (runtime.begin == nil || runtime.accum == nil)) || !validFrozenResult(runtime.result) || work == nil || !work.Checkpoint() || runtime.owner.state == nil || runtime.owner.authority == nil || runtime.owner.state.phase != schemaBindingSealed || runtime.owner.state.authority != runtime.owner.authority {
 		return nil, false
 	}
-	frozen, ok := materializeReceiptProjection(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.result)
+	frozen, ok := materializeReceiptProjection(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
 	if !ok {
 		return nil, false
 	}
@@ -72,12 +74,12 @@ func (runtime *receiptQueryRuntime[V, R]) materialize(work *carrier.Work, state 
 // committed graph Queries and optional solve-local observations. The latter
 // changes only when the projection is requested; Factor reads, correlation,
 // freezing, and checkpoint discipline remain identical.
-func materializeReceiptProjection[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), result FrozenResult[R]) (frozenValue, bool) {
-	value, _, ok := materializeReceiptProjectionWithFailure(work, state, binding, authority, factor, unit, project, begin, accum, result)
+func materializeReceiptProjection[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), borrow, transfer bool, result FrozenResult[R]) (frozenValue, bool) {
+	value, _, ok := materializeReceiptProjectionWithFailure(work, state, binding, authority, factor, unit, project, begin, accum, borrow, transfer, result)
 	return value, ok
 }
 
-func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), result FrozenResult[R]) (frozenValue, solveBoundary, bool) {
+func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state carrier.State, binding *schemaBindingState, authority *schemaBindingAuthority, factor receiptQueryFactor[V], unit carrier.Unit, project func(OrderedCells[V]) R, begin func() R, accum func(R, OrderedCells[V]) (R, bool), borrow, transfer bool, result FrozenResult[R]) (frozenValue, solveBoundary, bool) {
 	if factor == nil || (project == nil && (begin == nil || accum == nil)) || !validFrozenResult(result) || work == nil || !work.Checkpoint() || binding == nil || authority == nil || binding.phase != schemaBindingSealed || binding.authority != authority {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
@@ -88,7 +90,7 @@ func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state
 	observations := 0
 	projectionFailure := boundaryNone
 	visit := func(observation factbinding.Observation[V], _ support.Mask) bool {
-		cells, ok := orderedCellsFromObservation(observation)
+		cells, ok := orderedCellsFromObservation(observation, borrow && accum != nil)
 		if !ok {
 			projectionFailure = refused(SolveFailureFamilyObservation, "shape")
 			return false
@@ -147,16 +149,39 @@ func materializeReceiptProjectionWithFailure[V, R any](work *carrier.Work, state
 		// observations must be represented by a typed Begin fold state.
 		return nil, refused(SolveFailureFamilyObservation, "shape"), false
 	}
-	frozen := result.Freeze(value)
+	frozen := value
+	if !transfer || accum == nil {
+		frozen = result.Freeze(value)
+	}
 	if !work.Checkpoint() {
 		return nil, refused(SolveFailureFamilyObservation, "freeze"), false
 	}
 	return &typedFrozenValue[R]{value: frozen, freeze: result}, boundaryNone, true
 }
 
-func orderedCellsFromObservation[V any](observation factbinding.Observation[V]) (OrderedCells[V], bool) {
+// observationCellsView borrows the Binding-issued sequence for the duration
+// of its synchronous callback. Observation itself owns the generation fence;
+// this adapter neither copies nor extends it.
+type observationCellsView[V any] struct{ observation factbinding.Observation[V] }
+
+func (view observationCellsView[V]) Count() int { return view.observation.Count() }
+
+func (view observationCellsView[V]) At(index int) (V, bool, bool) {
+	entry, ok := view.observation.At(index)
+	if !ok {
+		var zero V
+		return zero, false, false
+	}
+	value, present := entry.Read()
+	return value, present, true
+}
+
+func orderedCellsFromObservation[V any](observation factbinding.Observation[V], borrow bool) (OrderedCells[V], bool) {
 	if !observation.Valid() {
 		return OrderedCells[V]{}, false
+	}
+	if borrow {
+		return OrderedCells[V]{view: observationCellsView[V]{observation: observation}}, true
 	}
 	cells := make([]summaryCell[V], observation.Count())
 	for index := range cells {
@@ -181,15 +206,15 @@ func orderedCellsFromObservation[V any](observation factbinding.Observation[V]) 
 // the join here prevents a caller from supplying a parallel declaration schema or a
 // second projection plan.
 func bindReceiptExactQuery[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], identity equation.Query) (*receiptExactQueryRuntime[V, R], bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || compilation.runtime.graph == nil || implementation == nil || !implementation.receipt.valid() || implementation.receipt.state != compilation.runtime.state || implementation.receipt.authority != compilation.runtime.authority || !compilation.runtime.graph.OwnsQuery(identity) || !identity.Key().Available() || !identity.Family().Available() || identity.Family() != implementation.receipt.state.schema.querySemanticAt(implementation.receipt.queryOrdinal) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.graph == nil || implementation == nil || !implementation.binding.valid() || implementation.binding.state != compilation.runtime.state || implementation.binding.authority != compilation.runtime.authority || !compilation.runtime.graph.OwnsQuery(identity) || !identity.Key().Available() || !identity.Family().Available() || identity.Family() != implementation.binding.state.schema.querySemanticAt(implementation.binding.queryOrdinal) {
 		return nil, false
 	}
-	shape, ok := implementation.receipt.state.schema.queryShapeAt(implementation.receipt.queryOrdinal)
+	shape, ok := implementation.binding.state.schema.queryShapeAt(implementation.binding.queryOrdinal)
 	if !ok || shape.ProjectionCount != 1 {
 		return nil, false
 	}
-	projection, ok := implementation.receipt.state.schema.queryProjectionShapeAt(implementation.receipt.queryOrdinal, 0)
-	if !ok || projection.Kind != composition.QueryFactorExact || projection.Factor != implementation.receipt.factor {
+	projection, ok := implementation.binding.state.schema.queryProjectionShapeAt(implementation.binding.queryOrdinal, 0)
+	if !ok || projection.Kind != composition.QueryFactorExact || projection.Factor != implementation.binding.factor {
 		return nil, false
 	}
 	surfaces := identity.Surfaces()
@@ -197,37 +222,37 @@ func bindReceiptExactQuery[V, R any](compilation *programPlane, implementation *
 		return nil, false
 	}
 	surface := surfaces[0]
-	if !surface.Available() || surface.Factor != implementation.receipt.factor || surface.Form != equation.SurfaceReadExact || surface.Local == 0 || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone {
+	if !surface.Available() || surface.Factor != implementation.binding.factor || surface.Form != equation.SurfaceReadExact || surface.Local == 0 || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone {
 		return nil, false
 	}
-	runtime, ok := compilation.byKey[implementation.receipt.factor]
+	runtime, ok := compilation.byKey[implementation.binding.factor]
 	if !ok || runtime == nil {
 		return nil, false
 	}
 	factor, ok := runtime.(receiptQueryFactor[V])
-	if !ok || !factor.receiptMatches(implementation.receipt.state, implementation.receipt.authority, implementation.receipt.factorOrdinal, implementation.receipt.factor) {
+	if !ok || !factor.receiptMatches(implementation.binding.state, implementation.binding.authority, implementation.binding.factorOrdinal, implementation.binding.factor) {
 		return nil, false
 	}
 	unit, ok := factor.readUnit(surface)
 	if !ok {
 		return nil, false
 	}
-	return &receiptExactQueryRuntime[V, R]{identity: identity, receipt: implementation.receipt, factor: factor, surface: surface, unit: unit}, true
+	return &receiptExactQueryRuntime[V, R]{identity: identity, receipt: implementation.binding, factor: factor, surface: surface, unit: unit}, true
 }
 
 // bindReceiptSummaryQuery is the summary counterpart of bindReceiptExactQuery.
 // It joins only the graph-owned summary surface and the exact sealed form
 // normalizer; no read-form reconstruction is admitted.
 func bindReceiptSummaryQuery[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], identity equation.Query) (*receiptSummaryQueryRuntime[V, R], bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.mode != runtimeBindingReceipt || compilation.runtime.graph == nil || implementation == nil || !implementation.receipt.valid() || implementation.receipt.state != compilation.runtime.state || implementation.receipt.authority != compilation.runtime.authority || !compilation.runtime.graph.OwnsQuery(identity) || !identity.Key().Available() || !identity.Family().Available() || identity.Family() != implementation.receipt.state.schema.querySemanticAt(implementation.receipt.queryOrdinal) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || compilation.runtime.graph == nil || implementation == nil || !implementation.binding.valid() || implementation.binding.state != compilation.runtime.state || implementation.binding.authority != compilation.runtime.authority || !compilation.runtime.graph.OwnsQuery(identity) || !identity.Key().Available() || !identity.Family().Available() || identity.Family() != implementation.binding.state.schema.querySemanticAt(implementation.binding.queryOrdinal) {
 		return nil, false
 	}
-	shape, ok := implementation.receipt.state.schema.queryShapeAt(implementation.receipt.queryOrdinal)
+	shape, ok := implementation.binding.state.schema.queryShapeAt(implementation.binding.queryOrdinal)
 	if !ok || shape.ProjectionCount != 1 {
 		return nil, false
 	}
-	projection, ok := implementation.receipt.state.schema.queryProjectionShapeAt(implementation.receipt.queryOrdinal, 0)
-	if !ok || projection.Kind != composition.QueryFactorSummary || projection.Factor != implementation.receipt.factor || projection.Normalizer != implementation.receipt.normalizer {
+	projection, ok := implementation.binding.state.schema.queryProjectionShapeAt(implementation.binding.queryOrdinal, 0)
+	if !ok || projection.Kind != composition.QueryFactorSummary || projection.Factor != implementation.binding.factor || projection.Normalizer != implementation.binding.normalizer {
 		return nil, false
 	}
 	surfaces := identity.Surfaces()
@@ -235,22 +260,22 @@ func bindReceiptSummaryQuery[V, R any](compilation *programPlane, implementation
 		return nil, false
 	}
 	surface := surfaces[0]
-	if !surface.Available() || surface.Factor != implementation.receipt.factor || surface.Form != equation.SurfaceReadSummary || !surface.Semantic.Available() || surface.Semantic != implementation.receipt.normalizer || surface.Normalizer != implementation.receipt.normalizer || surface.Mode != equation.TargetModeNone {
+	if !surface.Available() || surface.Factor != implementation.binding.factor || surface.Form != equation.SurfaceReadSummary || !surface.Semantic.Available() || surface.Semantic != implementation.binding.normalizer || surface.Normalizer != implementation.binding.normalizer || surface.Mode != equation.TargetModeNone {
 		return nil, false
 	}
-	runtime, ok := compilation.byKey[implementation.receipt.factor]
+	runtime, ok := compilation.byKey[implementation.binding.factor]
 	if !ok || runtime == nil {
 		return nil, false
 	}
 	factor, ok := runtime.(receiptQueryFactor[V])
-	if !ok || !factor.receiptMatches(implementation.receipt.state, implementation.receipt.authority, implementation.receipt.factorOrdinal, implementation.receipt.factor) {
+	if !ok || !factor.receiptMatches(implementation.binding.state, implementation.binding.authority, implementation.binding.factorOrdinal, implementation.binding.factor) {
 		return nil, false
 	}
 	unit, ok := factor.readUnit(surface)
 	if !ok {
 		return nil, false
 	}
-	return &receiptSummaryQueryRuntime[V, R]{identity: identity, receipt: implementation.receipt, factor: factor, surface: surface, unit: unit}, true
+	return &receiptSummaryQueryRuntime[V, R]{identity: identity, receipt: implementation.binding, factor: factor, surface: surface, unit: unit}, true
 }
 
 func bindReceiptExactQueryRuntime[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], identity equation.Query) (runtimeQuery, bool) {
@@ -259,11 +284,11 @@ func bindReceiptExactQueryRuntime[V, R any](compilation *programPlane, implement
 		return nil, false
 	}
 	project, ok := implementation.projector()
-	begin, accum, hasAccumulator := implementation.accumulator()
+	begin, accum, borrow, transfer, hasAccumulator := implementation.accumulator()
 	if !ok && !hasAccumulator || ok && hasAccumulator {
 		return nil, false
 	}
-	return &receiptQueryRuntime[V, R]{identity: identity, owner: &receiptQueryOwner{state: implementation.receipt.state, authority: implementation.receipt.authority, schema: implementation.receipt.state.schema, ordinal: implementation.receipt.queryOrdinal}, factor: evidence.factor, surface: evidence.surface, unit: evidence.unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+	return &receiptQueryRuntime[V, R]{identity: identity, owner: &receiptQueryOwner{state: implementation.binding.state, authority: implementation.binding.authority, schema: implementation.binding.state.schema, ordinal: implementation.binding.queryOrdinal}, factor: evidence.factor, surface: evidence.surface, unit: evidence.unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }
 
 func bindReceiptSummaryQueryRuntime[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], identity equation.Query) (runtimeQuery, bool) {
@@ -272,9 +297,9 @@ func bindReceiptSummaryQueryRuntime[V, R any](compilation *programPlane, impleme
 		return nil, false
 	}
 	project, _ := implementation.projector()
-	begin, accum, hasAccumulator := implementation.accumulator()
+	begin, accum, borrow, transfer, hasAccumulator := implementation.accumulator()
 	if project == nil && !hasAccumulator {
 		return nil, false
 	}
-	return &receiptQueryRuntime[V, R]{identity: identity, owner: &receiptQueryOwner{state: implementation.receipt.state, authority: implementation.receipt.authority, schema: implementation.receipt.state.schema, ordinal: implementation.receipt.queryOrdinal}, factor: evidence.factor, surface: evidence.surface, unit: evidence.unit, project: project, begin: begin, accum: accum, result: implementation.receipt.cell.result}, true
+	return &receiptQueryRuntime[V, R]{identity: identity, owner: &receiptQueryOwner{state: implementation.binding.state, authority: implementation.binding.authority, schema: implementation.binding.state.schema, ordinal: implementation.binding.queryOrdinal}, factor: evidence.factor, surface: evidence.surface, unit: evidence.unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }

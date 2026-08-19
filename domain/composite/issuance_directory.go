@@ -11,6 +11,10 @@ import (
 // ArtifactIssuanceDirectory projects the sealed rule.Issues catalog into the
 // cold directory the Program artifact compiler places from. Link-lane rules
 // are omitted: they are admitted through the Link table.
+//
+// Each row carries the operand shape its rule declared, so the compiler places
+// the rows an owner can seal an operand for and no others: the placement set
+// and the owner-issued operand set are one denominator declared once.
 func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 	sealRegistry()
 	if registry.sealed == nil {
@@ -29,7 +33,7 @@ func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 			if !ok {
 				return nil, false
 			}
-			placement, ok := issuancePlacement(issued, entry.Key())
+			placement, ok := issuancePlacement(issued, entry.Key(), entry.Writes(), entry.Lane() == rule.LaneMounted)
 			if !ok {
 				return nil, false
 			}
@@ -39,22 +43,26 @@ func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 	return directory, true
 }
 
-func issuancePlacement(issued rule.Issuance, key schema.Key) (programartifact.IssuancePlacement, bool) {
+func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport bool) (programartifact.IssuancePlacement, bool) {
 	occurrence, occurrenceOK := structureOrdinal(issued.Occurrence, structure.CategoryOccurrenceKind)
 	form, formOK := structureOrdinal(issued.Form, structure.CategoryIssuanceForm)
 	input, inputOK := structureOrdinal(issued.Input, structure.CategoryIssuanceInput)
 	stage, stageOK := structureOrdinal(issued.Stage, structure.CategoryIssuanceStage)
-	if !occurrenceOK || !formOK || !inputOK || !stageOK {
+	requirement, requirementOK := structureOrdinal(issued.Requirement, structure.CategoryIssuanceRequirement)
+	if !occurrenceOK || !formOK || !inputOK || !stageOK || !requirementOK {
 		return programartifact.IssuancePlacement{}, false
 	}
 	placement := programartifact.IssuancePlacement{
-		Occurrence: programartifact.OccurrenceKind(occurrence),
-		Form:       programartifact.IssuanceForm(form),
-		Input:      programartifact.RuleInputKind(input),
-		Stage:      programartifact.RuleStage(stage),
-		Code:       issued.Code,
-		HasCode:    issued.HasCode,
-		Key:        key,
+		Occurrence:  programartifact.OccurrenceKind(occurrence),
+		Form:        programartifact.IssuanceForm(form),
+		Input:       programartifact.RuleInputKind(input),
+		Stage:       programartifact.RuleStage(stage),
+		Requirement: programartifact.IssuanceRequirement(requirement),
+		Code:        issued.Code,
+		HasCode:     issued.HasCode,
+		Key:         key,
+		Writes:      writes,
+		Transport:   transport,
 	}
 	return placement, placement.Available()
 }

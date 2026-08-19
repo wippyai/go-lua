@@ -79,7 +79,7 @@ func (artifact *Artifact) validateSealFreeze(state *sealValidationState) Compile
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
 			edge, found := state.environmentByRoute[occurrence.route]
-			if !found || edge.from != occurrence.input {
+			if !found || edge.to != occurrence.input {
 				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 			}
 		}

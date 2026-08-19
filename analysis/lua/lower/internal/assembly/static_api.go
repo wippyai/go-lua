@@ -6,10 +6,11 @@ import (
 	staticrows "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/static"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
-func (c *Collector) Primitive(span source.Span, kind programstatic.PrimitiveKind) keyspace.Term {
+func (c *Collector) Primitive(span source.Span, kind statictypes.PrimitiveKind) keyspace.Term {
 	return staticEmit(c, keyspace.FamilyTypePrimitive, span, func(term keyspace.Term) error { return c.static.Primitive(term, kind) })
 }
 func (c *Collector) LiteralBool(span source.Span, value bool) keyspace.Term {
@@ -126,7 +127,7 @@ func (c *Collector) Canonical(span source.Span, path, canonical []string, root k
 // member. Field members use Field and leave Name empty; method members use
 // Name and Signature and leave Field zero.
 type StaticInterfaceMember struct {
-	Kind      programstatic.InterfaceMemberKind
+	Kind      staticdecl.InterfaceMemberKind
 	Field     keyspace.Term
 	Name      string
 	Span      source.Span
@@ -216,11 +217,11 @@ func (c *Collector) InterfaceMembers(iface keyspace.Term, members []StaticInterf
 			return false
 		}
 		switch member.Kind {
-		case programstatic.InterfaceField:
+		case staticdecl.InterfaceField:
 			if member.Name != "" || member.Signature != 0 || !staticExistingFamily(c, member.Field, keyspace.FamilyTypeField) {
 				return rejectMutationf(c, "program/lower/collector: invalid interface field member")
 			}
-		case programstatic.InterfaceMethod:
+		case staticdecl.InterfaceMethod:
 			if member.Name == "" || member.Field != 0 || !staticTypeFunctionForScope(c, member.Signature, iface) {
 				return rejectMutationf(c, "program/lower/collector: invalid interface method member")
 			}

@@ -27,10 +27,12 @@ func TestStructureTableSeals(t *testing.T) {
 	// The sizes are the vocabularies the analyzer consolidates here: the eight
 	// structural arms, the three bracket events, the seven body outcomes, the
 	// eight Lua runtime families, the ten symbolic expression forms, the four
-	// diagnostic observation populations, the four publication families, the
-	// three severities, the thirty-one compiled occurrence families, the five
-	// placement forms, the four operand polarities, the five execution cuts, and
-	// the eighty-five global semantic roles (including observation geometry,
+	// diagnostic observation populations, the five publication families, the
+	// three severities, the thirty-three compiled occurrence families, the five
+	// placement forms, the four operand polarities, the two declared operand
+	// shapes, the five execution cuts, and
+	// the ninety-one global semantic roles (including the runtime-kind result
+	// behavior relation, observation geometry,
 	// evidence-anchor, query population, and query projection roles).
 	// They are stated independently of the authored inventory,
 	// so a member added or dropped on either side is a verdict rather than a
@@ -42,13 +44,14 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryRuntimeKind:           8,
 		structure.CategoryConstraintForm:        10,
 		structure.CategoryDiagnosticObservation: 4,
-		structure.CategoryDiagnosticFamily:      4,
+		structure.CategoryDiagnosticFamily:      5,
 		structure.CategoryDiagnosticSeverity:    3,
-		structure.CategoryOccurrenceKind:        31,
+		structure.CategoryOccurrenceKind:        33,
 		structure.CategoryIssuanceForm:          5,
 		structure.CategoryIssuanceInput:         4,
+		structure.CategoryIssuanceRequirement:   2,
 		structure.CategoryIssuanceStage:         5,
-		structure.CategorySemanticRole:          85,
+		structure.CategorySemanticRole:          91,
 	}
 	declared := 0
 	for category, size := range sizes {

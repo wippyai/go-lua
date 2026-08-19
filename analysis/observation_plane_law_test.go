@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -12,8 +13,14 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
+func observationPlaneLawID(seed byte) identity.ContentID {
+	var id identity.ContentID
+	id[0] = seed
+	return id
+}
+
 // This file is the observation plane of a real solve. The result projection
-// consumes the observation column through publishedObservation, and nothing else
+// consumes the observation column through the diagnostic Snapshot reader, and nothing else
 // in this package states what that read must answer.
 //
 // The law reads the plane exactly as production reads it and holds it against
@@ -62,22 +69,22 @@ type declaredEvidencePoint struct {
 // test.
 func declaredEvidencePoints(t *testing.T, solve *receiptSolve) []declaredEvidencePoint {
 	t.Helper()
-	if solve == nil || !solve.geometry.valid() {
+	if solve == nil || !solve.geometry.Valid() {
 		t.Fatal("the solve carries no result geometry")
 	}
 	declared := make([]declaredEvidencePoint, 0)
-	for _, subject := range solve.geometry.branchObservations {
-		if subject.kind != structure.DiagnosticObservationBranchCondition || !subject.available() {
+	for _, subject := range solve.geometry.BranchObservations {
+		if subject.Kind != structure.DiagnosticObservationBranchCondition || !subject.Available() {
 			t.Fatal("the geometry declares an unavailable branch observation")
 		}
-		for _, producer := range subject.producers {
-			key, derived := identity.DeriveContentID("analysis/branch-value-observation/v1", subject.mount[:], producer.point[:], []byte("value-summary"))
+		for _, producer := range subject.Producers {
+			key, derived := identity.DeriveContentID("analysis/branch-value-observation/v1", subject.Mount[:], producer.Point[:], []byte("value-summary"))
 			if !derived {
 				t.Fatal("the declared evidence point derives no observation key")
 			}
 			declared = append(declared, declaredEvidencePoint{
-				mount: subject.mount, execution: producer.point, anchor: producer.anchor,
-				valueIndex: subject.valueIndex, line: subject.location.StartLine, key: key,
+				mount: subject.Mount, execution: producer.Point, anchor: producer.Anchor,
+				valueIndex: subject.ValueIndex, line: subject.Location.StartLine, key: key,
 			})
 		}
 	}
@@ -99,11 +106,11 @@ func consumedObservationMismatches(solve *receiptSolve, declared []declaredEvide
 	for _, point := range declared {
 		filed := 0
 		for _, row := range solve.observations {
-			if row.key != point.key {
+			if row.Key != point.key {
 				continue
 			}
 			filed++
-			if row.point.mount != point.mount || row.point.point != point.anchor {
+			if row.Mount != point.mount || row.Point != point.anchor {
 				findings = append(findings, fmt.Sprintf("evidence point %x is filed at a subject the geometry does not declare it at", point.key[:4]))
 			}
 		}
@@ -116,7 +123,7 @@ func consumedObservationMismatches(solve *receiptSolve, declared []declaredEvide
 			findings = append(findings, fmt.Sprintf("evidence point %x is authored on line %d, which this law states no condition for", point.key[:4], point.line))
 			continue
 		}
-		observation, readable := publishedObservation[valuedomain.ValueSummaryObservation](published, plan, point.key)
+		observation, readable := anadiag.PublishedObservation[valuedomain.ValueSummaryObservation](published, plan, point.key)
 		if !readable || !observation.Valid {
 			findings = append(findings, fmt.Sprintf("evidence point %x is unreadable through the production accessor", point.key[:4]))
 			continue
@@ -148,13 +155,13 @@ func consumedObservationMismatches(solve *receiptSolve, declared []declaredEvide
 	for _, row := range solve.observations {
 		declaredRow := false
 		for _, point := range declared {
-			if row.key == point.key {
+			if row.Key == point.key {
 				declaredRow = true
 				break
 			}
 		}
 		if !declaredRow {
-			findings = append(findings, fmt.Sprintf("the observation plan publishes row %x, which the geometry declares no evidence point for", row.key[:4]))
+			findings = append(findings, fmt.Sprintf("the observation plan publishes row %x, which the geometry declares no evidence point for", row.Key[:4]))
 		}
 	}
 	return findings, compared
@@ -208,22 +215,23 @@ func TestConsumedObservationsCollectThroughTheProductionReader(t *testing.T) {
 	if !opens {
 		t.Fatal("the solve publishes no observation column")
 	}
-	report := &DiagnosticReport{findings: make([]diagnosticFinding, 0)}
-	if !collectGuardPolarityFindings(report, solve.geometry, solve.observations, solve.schema, &solve.published, plan, FindingSeverityWarning, FindingSeverityWarning) {
+	report := anadiag.NewReport(observationPlaneLawID(1), observationPlaneLawID(2))
+	subjects, subjectsOK := anadiag.GuardSubjects(solve.geometry.BranchObservations)
+	if !subjectsOK || !anadiag.CollectGuardPolarity(report, subjects, solve.observations, solve.geometry.ValueCount(), solve.schema, &solve.published, plan, anadiag.FindingSeverityWarning, anadiag.FindingSeverityWarning) {
 		t.Fatal("the guard-polarity reader refused the sealed observation column")
 	}
-	if report.collectionFailure != DiagnosticCollectionOK {
-		t.Fatalf("the guard-polarity reader reported %v on the publication the solve sealed", report.collectionFailure)
+	if report.CollectionFailure() != anadiag.DiagnosticCollectionOK {
+		t.Fatalf("the guard-polarity reader reported %v on the publication the solve sealed", report.CollectionFailure())
 	}
 
 	declared := declaredEvidencePoints(t, solve)
 	withdrawn := withdrawObservationRow(t, solve, plan, declared[0].key)
-	withdrawnReport := &DiagnosticReport{findings: make([]diagnosticFinding, 0)}
-	if !collectGuardPolarityFindings(withdrawnReport, solve.geometry, solve.observations, solve.schema, &withdrawn, plan, FindingSeverityWarning, FindingSeverityWarning) {
+	withdrawnReport := anadiag.NewReport(observationPlaneLawID(3), observationPlaneLawID(4))
+	if !anadiag.CollectGuardPolarity(withdrawnReport, subjects, solve.observations, solve.geometry.ValueCount(), solve.schema, &withdrawn, plan, anadiag.FindingSeverityWarning, anadiag.FindingSeverityWarning) {
 		t.Fatal("the guard-polarity reader refused a withdrawn observation column outright")
 	}
-	if withdrawnReport.collectionFailure != DiagnosticCollectionQueryUnreadable {
-		t.Fatalf("a withdrawn evidence point collected as %v, want an unreadable query", withdrawnReport.collectionFailure)
+	if withdrawnReport.CollectionFailure() != anadiag.DiagnosticCollectionQueryUnreadable {
+		t.Fatalf("a withdrawn evidence point collected as %v, want an unreadable query", withdrawnReport.CollectionFailure())
 	}
 	findings, _ := consumedObservationMismatches(solve, declared, &withdrawn)
 	expected := fmt.Sprintf("evidence point %x is unreadable through the production accessor", declared[0].key[:4])

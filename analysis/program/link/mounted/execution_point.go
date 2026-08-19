@@ -104,9 +104,9 @@ func SealExecutionPoints(mounts []Mount) (ExecutionPoints, bool) {
 	}
 	rows := make([]ExecutionPoint, 0)
 	for _, mount := range mounts {
-		for index := 0; index < mount.Artifact.PointCount(); index++ {
-			point, ok := mount.Artifact.PointAt(index)
-			if !ok || !point.Available() || !point.ID().Available() {
+		for index := 0; index < mount.Snapshot.PointCount(); index++ {
+			point, ok := mount.Snapshot.PointAt(index)
+			if !ok || !point.ID().Available() {
 				return ExecutionPoints{}, false
 			}
 			rows = append(rows, ExecutionPoint{Mount: mount.ModuleKey, Point: point.ID()})

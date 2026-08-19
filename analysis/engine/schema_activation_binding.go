@@ -208,10 +208,10 @@ func bindActivationFamilyLocked(state *schemaBindingState, key composition.Key) 
 // ActivationRuleImplementation is an opaque sealed receipt. Its callback,
 // reads, schema cell, and authority remain private to the engine runtime.
 type ActivationRuleImplementation struct {
-	receipt activationRuleRuntimeReceipt
+	binding activationRuleRuntimeBinding
 }
 
-type activationRuleRuntimeReceipt struct {
+type activationRuleRuntimeBinding struct {
 	state     *schemaBindingState
 	authority *schemaBindingAuthority
 	cell      *schemaActivationRuleBindingCell
@@ -219,7 +219,7 @@ type activationRuleRuntimeReceipt struct {
 	issued    bool
 }
 
-func (receipt activationRuleRuntimeReceipt) valid() bool {
+func (receipt activationRuleRuntimeBinding) valid() bool {
 	return receipt.issued && receipt.state != nil && receipt.authority != nil && receipt.cell != nil && receipt.proof != nil && receipt.state.phase == schemaBindingSealed && receipt.state.authority == receipt.authority && receipt.cell.state == receipt.state && receipt.cell.schema == receipt.state.schema && receipt.proof.state == receipt.state && receipt.proof.bindingAuthority == receipt.authority && receipt.proof.ordinal == receipt.cell.ordinal && receipt.proof.valid() && receipt.cell.schemaRuleComplete() && receipt.cell.schemaRuleProofMatches(receipt.proof)
 }
 
@@ -248,9 +248,9 @@ func ActivationRuleImplementationAt(binding *SchemaBinding, slot *SchemaActivati
 	if !ok {
 		return nil, false
 	}
-	receipt := activationRuleRuntimeReceipt{state: state, authority: state.authority, cell: cell, proof: proof, issued: true}
+	receipt := activationRuleRuntimeBinding{state: state, authority: state.authority, cell: cell, proof: proof, issued: true}
 	if !receipt.valid() {
 		return nil, false
 	}
-	return &ActivationRuleImplementation{receipt: receipt}, true
+	return &ActivationRuleImplementation{binding: receipt}, true
 }

@@ -6,6 +6,9 @@ package ingress
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -47,18 +50,35 @@ const (
 // once from a ProgramArtifact. Accessors read these columns; they never hold
 // or reopen the owner.
 type Snapshot struct {
-	artifactID identity.ContentID
-	programID  identity.ContentID
-	schemaID   identity.ContentID
-	vocabulary structure.Table
-	points     []Point
-	edges      []StructuralEdge
-	transfers  []LocalTransfer
-	regions    []Region
-	events     []Event
-	placements []RulePlacement
-	bodies     []BodyTransport
-	boundaries []FunctionBoundary
+	artifactID          identity.ContentID
+	programID           identity.ContentID
+	schemaID            identity.ContentID
+	vocabulary          structure.Table
+	points              []Point
+	edges               []StructuralEdge
+	transfers           []LocalTransfer
+	regions             []Region
+	events              []Event
+	placements          []RulePlacement
+	bodies              []BodyTransport
+	boundaries          []FunctionBoundary
+	calls               []Call
+	arguments           []CallArgument
+	targets             []CallTarget
+	allocations         []HeapAllocation
+	values              []Values
+	occurrences         []Occurrence
+	indexes             []HeapIndex
+	summaries           []ExactScalarSummary
+	arithmetic          []ArithmeticSummary
+	unaries             []UnarySummary
+	observations        []DiagnosticObservation
+	outcomes            []Outcome
+	staticTypeValues    []StaticTypeValue
+	staticTypeNodes     []StaticTypeNode
+	staticTypeArguments []StaticTypeArgument
+	staticExpressions   []StaticExpression
+	staticInputs        []StaticInput
 }
 
 func (snapshot *Snapshot) Available() bool {
@@ -189,6 +209,325 @@ func (snapshot *Snapshot) FunctionBoundaryAt(index int) (FunctionBoundary, bool)
 	}
 	return snapshot.boundaries[index], true
 }
+func (snapshot *Snapshot) CallArgumentCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.arguments)
+}
+func (snapshot *Snapshot) CallArgumentAt(index int) (CallArgument, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.arguments) {
+		return CallArgument{}, false
+	}
+	return snapshot.arguments[index], true
+}
+func (snapshot *Snapshot) CallArgumentForID(id identity.ContentID) (CallArgument, bool) {
+	if !snapshot.Available() || !id.Available() {
+		return CallArgument{}, false
+	}
+	for _, row := range snapshot.arguments {
+		if row.ID() == id {
+			return row, row.Available()
+		}
+	}
+	return CallArgument{}, false
+}
+func (snapshot *Snapshot) CallCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.calls)
+}
+func (snapshot *Snapshot) CallAt(index int) (Call, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.calls) {
+		return Call{}, false
+	}
+	return snapshot.calls[index], true
+}
+
+// CallForID resolves one parent-issued Call identity through the sealed
+// ingress directory. Consumers must use this owner query instead of
+// rebuilding a private Call index from the snapshot rows.
+func (snapshot *Snapshot) CallForID(id identity.ContentID) (Call, bool) {
+	if !snapshot.Available() || !id.Available() {
+		return Call{}, false
+	}
+	var found Call
+	foundOne := false
+	for _, row := range snapshot.calls {
+		if row.ID() != id {
+			continue
+		}
+		if foundOne {
+			return Call{}, false
+		}
+		found, foundOne = row, true
+	}
+	return found, foundOne
+}
+func (snapshot *Snapshot) CallTargetCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.targets)
+}
+func (snapshot *Snapshot) CallTargetAt(index int) (CallTarget, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.targets) {
+		return CallTarget{}, false
+	}
+	return snapshot.targets[index], true
+}
+func (snapshot *Snapshot) HeapAllocationCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.allocations)
+}
+func (snapshot *Snapshot) HeapAllocationAt(index int) (HeapAllocation, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.allocations) {
+		return HeapAllocation{}, false
+	}
+	return snapshot.allocations[index], true
+}
+func (snapshot *Snapshot) ValuesCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.values)
+}
+func (snapshot *Snapshot) StaticTypeValueCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.staticTypeValues)
+}
+func (snapshot *Snapshot) StaticTypeValueAt(index int) (StaticTypeValue, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeValues) {
+		return StaticTypeValue{}, false
+	}
+	return snapshot.staticTypeValues[index], true
+}
+func (snapshot *Snapshot) StaticTypeNodeCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.staticTypeNodes)
+}
+func (snapshot *Snapshot) StaticTypeNodeAt(index int) (StaticTypeNode, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeNodes) {
+		return StaticTypeNode{}, false
+	}
+	return snapshot.staticTypeNodes[index], true
+}
+func (snapshot *Snapshot) StaticTypeNodeForID(id identity.ContentID) (StaticTypeNode, bool) {
+	if !snapshot.Available() || !id.Available() {
+		return StaticTypeNode{}, false
+	}
+	for _, row := range snapshot.staticTypeNodes {
+		if row.ID() == id {
+			return row, row.Available()
+		}
+	}
+	return StaticTypeNode{}, false
+}
+func (snapshot *Snapshot) StaticTypeArgumentCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.staticTypeArguments)
+}
+func (snapshot *Snapshot) StaticTypeArgumentAt(index int) (StaticTypeArgument, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeArguments) {
+		return StaticTypeArgument{}, false
+	}
+	return snapshot.staticTypeArguments[index], true
+}
+func (snapshot *Snapshot) StaticExpressionCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.staticExpressions)
+}
+func (snapshot *Snapshot) StaticExpressionAt(index int) (StaticExpression, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticExpressions) {
+		return StaticExpression{}, false
+	}
+	return snapshot.staticExpressions[index], true
+}
+func (snapshot *Snapshot) StaticInputCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.staticInputs)
+}
+func (snapshot *Snapshot) StaticInputAt(index int) (StaticInput, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticInputs) {
+		return StaticInput{}, false
+	}
+	return snapshot.staticInputs[index], true
+}
+func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.values) {
+		return Values{}, false
+	}
+	return snapshot.values[index], true
+}
+func (snapshot *Snapshot) OutcomeCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.outcomes)
+}
+func (snapshot *Snapshot) OutcomeAt(index int) (Outcome, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.outcomes) {
+		return Outcome{}, false
+	}
+	return snapshot.outcomes[index], true
+}
+func (snapshot *Snapshot) OutcomeReturnValueAt(outcomeIndex, valueIndex int) (ValuesMember, bool) {
+	row, ok := snapshot.OutcomeAt(outcomeIndex)
+	if !ok || valueIndex < 0 || valueIndex >= len(row.returns) {
+		return ValuesMember{}, false
+	}
+	return ValuesMember{id: row.returns[valueIndex]}, true
+}
+func (snapshot *Snapshot) ExactScalarSummaryCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.summaries)
+}
+func (snapshot *Snapshot) ExactScalarSummaryAt(index int) (ExactScalarSummary, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.summaries) {
+		return ExactScalarSummary{}, false
+	}
+	return snapshot.summaries[index], true
+}
+func (snapshot *Snapshot) ArithmeticSummaryCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.arithmetic)
+}
+func (snapshot *Snapshot) ArithmeticSummaryAt(index int) (ArithmeticSummary, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.arithmetic) {
+		return ArithmeticSummary{}, false
+	}
+	return snapshot.arithmetic[index], true
+}
+func (snapshot *Snapshot) UnarySummaryCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.unaries)
+}
+func (snapshot *Snapshot) UnarySummaryAt(index int) (UnarySummary, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.unaries) {
+		return UnarySummary{}, false
+	}
+	return snapshot.unaries[index], true
+}
+func (snapshot *Snapshot) DiagnosticObservationCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.observations)
+}
+func (snapshot *Snapshot) DiagnosticObservationAt(index int) (DiagnosticObservation, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.observations) {
+		return DiagnosticObservation{}, false
+	}
+	return snapshot.observations[index], true
+}
+func (snapshot *Snapshot) DiagnosticObservationForID(id identity.ContentID) (DiagnosticObservation, bool) {
+	if !snapshot.Available() || !id.Available() {
+		return DiagnosticObservation{}, false
+	}
+	for _, row := range snapshot.observations {
+		if row.ID() == id {
+			return row, row.Available()
+		}
+	}
+	return DiagnosticObservation{}, false
+}
+func (snapshot *Snapshot) HeapIndexCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.indexes)
+}
+func (snapshot *Snapshot) HeapIndexAt(index int) (HeapIndex, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.indexes) {
+		return HeapIndex{}, false
+	}
+	return snapshot.indexes[index], true
+}
+func (snapshot *Snapshot) OccurrenceCount() int {
+	if !snapshot.Available() {
+		return 0
+	}
+	return len(snapshot.occurrences)
+}
+func (snapshot *Snapshot) OccurrenceAt(index int) (Occurrence, bool) {
+	if !snapshot.Available() || index < 0 || index >= len(snapshot.occurrences) {
+		return Occurrence{}, false
+	}
+	return snapshot.occurrences[index], true
+}
+func (snapshot *Snapshot) OccurrenceKindCount(kind uint8) int {
+	if !snapshot.Available() {
+		return 0
+	}
+	count := 0
+	for _, row := range snapshot.occurrences {
+		if row.kind == kind {
+			count++
+		}
+	}
+	return count
+}
+func (snapshot *Snapshot) OccurrenceKindAt(kind uint8, index int) (Occurrence, bool) {
+	if !snapshot.Available() || index < 0 {
+		return Occurrence{}, false
+	}
+	seen := 0
+	for _, row := range snapshot.occurrences {
+		if row.kind != kind {
+			continue
+		}
+		if seen == index {
+			return row, true
+		}
+		seen++
+	}
+	return Occurrence{}, false
+}
+func (snapshot *Snapshot) BodyCount() int { return snapshot.BodyTransportCount() }
+func (snapshot *Snapshot) BodyAt(index int) (BodyTransport, bool) {
+	return snapshot.BodyTransportAt(index)
+}
+func (snapshot *Snapshot) FunctionBoundaryForBody(bodyID identity.ContentID) (FunctionBoundary, bool) {
+	if !snapshot.Available() || !bodyID.Available() {
+		return FunctionBoundary{}, false
+	}
+	for _, row := range snapshot.boundaries {
+		if row.body == bodyID {
+			return row, true
+		}
+	}
+	return FunctionBoundary{}, false
+}
+func (snapshot *Snapshot) OccurrenceForID(kind uint8, id identity.ContentID) (Occurrence, bool) {
+	if !snapshot.Available() || !id.Available() {
+		return Occurrence{}, false
+	}
+	for _, row := range snapshot.occurrences {
+		if row.kind == kind && row.id == id {
+			return row, true
+		}
+	}
+	return Occurrence{}, false
+}
 
 type Point struct {
 	id        identity.ContentID
@@ -255,7 +594,10 @@ func (row LocalTransfer) ID() identity.ContentID   { return row.id }
 func (row LocalTransfer) From() identity.ContentID { return row.from }
 func (row LocalTransfer) To() identity.ContentID   { return row.to }
 func (row LocalTransfer) Full() bool               { return row.full }
-func (row LocalTransfer) WritesCount() int         { return len(row.writes) }
+func (row LocalTransfer) Available() bool {
+	return row.id.Available() && row.from.Available() && row.to.Available()
+}
+func (row LocalTransfer) WritesCount() int { return len(row.writes) }
 func (row LocalTransfer) WritesAt(index int) (schema.Key, bool) {
 	if index < 0 || index >= len(row.writes) {
 		return "", false
@@ -298,6 +640,10 @@ type RulePlacement struct {
 	input       identity.ContentID
 	occurrence  identity.ContentID
 	predecessor identity.ContentID
+	output      identity.ContentID
+	hasOutput   bool
+	spanResult  bool
+	inputKind   uint8
 }
 
 func (row RulePlacement) Key() schema.Key                  { return row.key }
@@ -308,6 +654,32 @@ func (row RulePlacement) OccurrenceID() identity.ContentID { return row.occurren
 func (row RulePlacement) PredecessorRouteID() identity.ContentID {
 	return row.predecessor
 }
+func (row RulePlacement) OutputSemanticID() (identity.ContentID, bool) {
+	return row.output, row.hasOutput && row.output.Available()
+}
+func (row RulePlacement) SpanResult() bool { return row.spanResult }
+func (row RulePlacement) InputKind() uint8 { return row.inputKind }
+
+type BodyRoot struct {
+	id     identity.ContentID
+	family keyspace.Family
+}
+
+func (row BodyRoot) Available() bool {
+	return row.id.Available() && row.family != keyspace.FamilyInvalid
+}
+func (row BodyRoot) ID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.id
+}
+func (row BodyRoot) Family() keyspace.Family {
+	if !row.Available() {
+		return keyspace.FamilyInvalid
+	}
+	return row.family
+}
 
 type BodyTransport struct {
 	id, context, entry identity.ContentID
@@ -315,8 +687,10 @@ type BodyTransport struct {
 	callable           bool
 	entries            []identity.ContentID
 	exits              []identity.ContentID
+	roots              []BodyRoot
 }
 
+func (row BodyTransport) ID() identity.ContentID              { return row.id }
 func (row BodyTransport) BodyID() identity.ContentID          { return row.id }
 func (row BodyTransport) ContextID() identity.ContentID       { return row.context }
 func (row BodyTransport) SemanticEntryID() identity.ContentID { return row.entry }
@@ -337,16 +711,672 @@ func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
 	}
 	return row.exits[index], true
 }
+func (row BodyTransport) RootCount() int { return len(row.roots) }
+func (row BodyTransport) RootAt(index int) (BodyRoot, bool) {
+	if index < 0 || index >= len(row.roots) {
+		return BodyRoot{}, false
+	}
+	return row.roots[index], row.roots[index].Available()
+}
+
+type FunctionFormal struct {
+	id, cell, storage identity.ContentID
+}
+
+func (row FunctionFormal) Available() bool {
+	return row.id.Available() && row.cell.Available() && row.storage.Available()
+}
+func (row FunctionFormal) ID() identity.ContentID            { return row.id }
+func (row FunctionFormal) CellID() identity.ContentID        { return row.cell }
+func (row FunctionFormal) StorageCellID() identity.ContentID { return row.storage }
+
+type FunctionVararg struct {
+	id, cell identity.ContentID
+}
+
+func (row FunctionVararg) Available() bool {
+	return row.id.Available() && row.cell.Available()
+}
+func (row FunctionVararg) ID() identity.ContentID     { return row.id }
+func (row FunctionVararg) CellID() identity.ContentID { return row.cell }
+
+type FunctionCapture struct {
+	id, inner, outer, innerBody, outerBody identity.ContentID
+}
+
+func (row FunctionCapture) Available() bool {
+	return row.id.Available() && row.inner.Available() && row.outer.Available() &&
+		row.innerBody.Available() && row.outerBody.Available() &&
+		row.inner != row.outer && row.innerBody != row.outerBody
+}
+func (row FunctionCapture) ID() identity.ContentID          { return row.id }
+func (row FunctionCapture) InnerCellID() identity.ContentID { return row.inner }
+func (row FunctionCapture) OuterCellID() identity.ContentID { return row.outer }
+func (row FunctionCapture) InnerBodyID() identity.ContentID { return row.innerBody }
+func (row FunctionCapture) OuterBodyID() identity.ContentID { return row.outerBody }
 
 type FunctionBoundary struct {
 	id, body, bodyContext, entry, formal identity.ContentID
+	formals                              []FunctionFormal
+	vararg                               FunctionVararg
+	hasVararg                            bool
+	captures                             []FunctionCapture
+	outcomes                             []identity.ContentID
 }
+
+func (row FunctionBoundary) Available() bool {
+	if !row.id.Available() || !row.body.Available() || !row.bodyContext.Available() ||
+		!row.entry.Available() || !row.formal.Available() || row.hasVararg != row.vararg.Available() || len(row.outcomes) == 0 {
+		return false
+	}
+	for _, port := range row.formals {
+		if !port.Available() {
+			return false
+		}
+	}
+	for _, capture := range row.captures {
+		if !capture.Available() || capture.innerBody != row.body {
+			return false
+		}
+	}
+	for _, outcome := range row.outcomes {
+		if !outcome.Available() {
+			return false
+		}
+	}
+	return true
+}
+
+type CallOperand struct {
+	id, call, value, span identity.ContentID
+	callee                bool
+}
+
+func (row CallOperand) ID() identity.ContentID      { return row.id }
+func (row CallOperand) CallID() identity.ContentID  { return row.call }
+func (row CallOperand) ValueID() identity.ContentID { return row.value }
+func (row CallOperand) SpanID() identity.ContentID  { return row.span }
+func (row CallOperand) Callee() bool                { return row.callee }
+
+type CallArgument struct {
+	id, call, values, member, span identity.ContentID
+	position                       uint32
+}
+
+func (row CallArgument) Available() bool {
+	return row.id.Available() && row.call.Available() && row.values.Available() && row.member.Available() && row.span.Available()
+}
+func (row CallArgument) ID() identity.ContentID       { return row.id }
+func (row CallArgument) CallID() identity.ContentID   { return row.call }
+func (row CallArgument) ValuesID() identity.ContentID { return row.values }
+func (row CallArgument) MemberID() identity.ContentID { return row.member }
+func (row CallArgument) ValueID() identity.ContentID  { return row.member }
+func (row CallArgument) SpanID() identity.ContentID   { return row.span }
+func (row CallArgument) Index() uint32                { return row.position }
+
+type Call struct {
+	id, body, span, callee, formal, values, types identity.ContentID
+	target                                        identity.ContentID
+	form                                          uint8
+	receiver                                      identity.ContentID
+	hasReceiver                                   bool
+	tail                                          identity.ContentID
+	hasTail                                       bool
+	operands                                      []CallOperand
+	arguments                                     []CallArgument
+}
+
+func (row Call) ID() identity.ContentID              { return row.id }
+func (row Call) BodyID() identity.ContentID          { return row.body }
+func (row Call) SpanID() identity.ContentID          { return row.span }
+func (row Call) CalleeID() identity.ContentID        { return row.callee }
+func (row Call) FormalID() identity.ContentID        { return row.formal }
+func (row Call) ValuesID() identity.ContentID        { return row.values }
+func (row Call) TypeArgumentsID() identity.ContentID { return row.types }
+func (row Call) Form() uint8                         { return row.form }
+func (row Call) DirectTargetBody() (identity.ContentID, bool) {
+	return row.target, row.target.Available()
+}
+func (row Call) ReceiverID() (identity.ContentID, bool) {
+	return row.receiver, row.hasReceiver && row.receiver.Available()
+}
+func (row Call) TailID() (identity.ContentID, bool) {
+	return row.tail, row.hasTail && row.tail.Available()
+}
+func (row Call) OperandCount() int  { return len(row.operands) }
+func (row Call) ArgumentCount() int { return len(row.arguments) }
+func (row Call) OperandAt(index int) (CallOperand, bool) {
+	if index < 0 || index >= len(row.operands) {
+		return CallOperand{}, false
+	}
+	return row.operands[index], true
+}
+func (row Call) ArgumentAt(index int) (CallArgument, bool) {
+	if index < 0 || index >= len(row.arguments) {
+		return CallArgument{}, false
+	}
+	return row.arguments[index], true
+}
+func (snapshot *Snapshot) CallArgumentFor(callIndex, childIndex int) (CallArgument, bool) {
+	call, ok := snapshot.CallAt(callIndex)
+	if !ok {
+		return CallArgument{}, false
+	}
+	return call.ArgumentAt(childIndex)
+}
+
+type CallTarget struct {
+	allocation, body, context, function, formal identity.ContentID
+}
+
+func (row CallTarget) Available() bool {
+	return row.allocation.Available() && row.body.Available() && row.context.Available() && row.function.Available() && row.formal.Available()
+}
+func (row CallTarget) AllocationID() identity.ContentID      { return row.allocation }
+func (row CallTarget) BodyID() identity.ContentID            { return row.body }
+func (row CallTarget) ContextID() identity.ContentID         { return row.context }
+func (row CallTarget) FunctionContextID() identity.ContentID { return row.function }
+func (row CallTarget) CallFormalID() identity.ContentID      { return row.formal }
+
+type HeapField struct {
+	id, selector, valuesID, valuesSpan identity.ContentID
+	kind                               uint8
+	width                              int
+	finalOpen                          bool
+	sharesFirst                        bool
+	normalized                         uint64
+	normalizedOK                       bool
+}
+
+func (row HeapField) Available() bool              { return row.id.Available() && row.valuesID.Available() }
+func (row HeapField) ID() identity.ContentID       { return row.id }
+func (row HeapField) ValuesID() identity.ContentID { return row.valuesID }
+func (row HeapField) Kind() uint8                  { return row.kind }
+func (row HeapField) SharesFirstValueCell() bool   { return row.Available() && row.sharesFirst }
+func (row HeapField) SelectorSpan() identity.ContentID {
+	return row.selector
+}
+func (row HeapField) Values() (identity.ContentID, int, bool, bool) {
+	if !row.Available() {
+		return identity.ContentID{}, 0, false, false
+	}
+	return row.valuesSpan, row.width, row.finalOpen, true
+}
+func (row HeapField) NormalizedKey() (uint64, bool) {
+	return row.normalized, row.normalizedOK
+}
+
+type HeapAllocation struct {
+	id, root   identity.ContentID
+	role, form uint8
+	fields     []HeapField
+}
+
+func (row HeapAllocation) Available() bool        { return row.id.Available() && row.root.Available() }
+func (row HeapAllocation) ID() identity.ContentID { return row.id }
+func (row HeapAllocation) Role() uint8            { return row.role }
+func (row HeapAllocation) Form() uint8            { return row.form }
+func (row HeapAllocation) RootSpan() identity.ContentID {
+	return row.root
+}
+func (row HeapAllocation) FieldCount() int { return len(row.fields) }
+func (row HeapAllocation) FieldAt(index int) (HeapField, bool) {
+	if index < 0 || index >= len(row.fields) {
+		return HeapField{}, false
+	}
+	return row.fields[index], true
+}
+
+type ValuesMember struct{ id identity.ContentID }
+
+func (row ValuesMember) ID() identity.ContentID { return row.id }
+
+type ValuesTail struct {
+	id      identity.ContentID
+	kind    uint8
+	present bool
+}
+
+func (row ValuesTail) Present() bool          { return row.present && row.id.Available() }
+func (row ValuesTail) ID() identity.ContentID { return row.id }
+func (row ValuesTail) Kind() uint8            { return row.kind }
+
+type Values struct {
+	id      identity.ContentID
+	members []ValuesMember
+	tail    ValuesTail
+}
+
+func (row Values) ID() identity.ContentID { return row.id }
+func (row Values) MemberCount() int       { return len(row.members) }
+func (row Values) MemberAt(index int) (ValuesMember, bool) {
+	if index < 0 || index >= len(row.members) {
+		return ValuesMember{}, false
+	}
+	return row.members[index], true
+}
+func (row Values) Tail() (ValuesTail, bool) {
+	return row.tail, row.tail.Present()
+}
+
+type StaticTypeValue struct {
+	id, body, reference, root identity.ContentID
+	name                      string
+}
+
+func (row StaticTypeValue) ID() identity.ContentID          { return row.id }
+func (row StaticTypeValue) BodyPathID() identity.ContentID  { return row.body }
+func (row StaticTypeValue) ReferenceID() identity.ContentID { return row.reference }
+func (row StaticTypeValue) RootID() identity.ContentID      { return row.root }
+func (row StaticTypeValue) Name() string                    { return row.name }
+func (row StaticTypeValue) Available() bool {
+	return row.id.Available() && row.body.Available() && row.reference.Available() && row.root.Available() && row.name != ""
+}
+
+type StaticTypeNode struct {
+	id      identity.ContentID
+	owner   identity.ContentID
+	kind    uint8
+	literal uint8
+}
+
+func (row StaticTypeNode) ID() identity.ContentID    { return row.id }
+func (row StaticTypeNode) Owner() identity.ContentID { return row.owner }
+func (row StaticTypeNode) Kind() uint8               { return row.kind }
+func (row StaticTypeNode) LiteralKind() uint8        { return row.literal }
+func (row StaticTypeNode) Available() bool {
+	return row.id.Available() && row.owner.Available()
+}
+
+type StaticTypeArgument struct {
+	id, call, types, reference identity.ContentID
+	index                      uint32
+}
+
+func (row StaticTypeArgument) ID() identity.ContentID          { return row.id }
+func (row StaticTypeArgument) CallID() identity.ContentID      { return row.call }
+func (row StaticTypeArgument) TypesID() identity.ContentID     { return row.types }
+func (row StaticTypeArgument) ReferenceID() identity.ContentID { return row.reference }
+func (row StaticTypeArgument) Index() uint32                   { return row.index }
+func (row StaticTypeArgument) Available() bool {
+	return row.id.Available() && row.call.Available() && row.types.Available() && row.reference.Available()
+}
+
+type StaticExpression struct {
+	id, reference, owner identity.ContentID
+}
+
+func (row StaticExpression) ID() identity.ContentID          { return row.id }
+func (row StaticExpression) ReferenceID() identity.ContentID { return row.reference }
+func (row StaticExpression) Owner() identity.ContentID       { return row.owner }
+func (row StaticExpression) Available() bool {
+	return row.id.Available() && row.reference.Available() && row.owner.Available()
+}
+
+type StaticInput struct {
+	id, owner, expression, source, target, operand, frontier identity.ContentID
+	operandReference, operandSubject, operandBody            identity.ContentID
+	literal                                                  keyspace.LiteralValue
+	kind, operandKind                                        uint8
+	cursor                                                   uint32
+}
+
+func (row StaticInput) ID() identity.ContentID                 { return row.id }
+func (row StaticInput) Owner() identity.ContentID              { return row.owner }
+func (row StaticInput) Kind() uint8                            { return row.kind }
+func (row StaticInput) ExpressionID() identity.ContentID       { return row.expression }
+func (row StaticInput) SourceID() identity.ContentID           { return row.source }
+func (row StaticInput) TargetID() identity.ContentID           { return row.target }
+func (row StaticInput) OperandID() identity.ContentID          { return row.operand }
+func (row StaticInput) FrontierID() identity.ContentID         { return row.frontier }
+func (row StaticInput) Cursor() uint32                         { return row.cursor }
+func (row StaticInput) OperandKind() uint8                     { return row.operandKind }
+func (row StaticInput) OperandLiteral() keyspace.LiteralValue  { return row.literal }
+func (row StaticInput) OperandReferenceID() identity.ContentID { return row.operandReference }
+func (row StaticInput) OperandSubjectID() identity.ContentID   { return row.operandSubject }
+func (row StaticInput) OperandBodyPathID() identity.ContentID  { return row.operandBody }
+func (row StaticInput) Available() bool {
+	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(programartifact.StaticInputOperandInvalid) {
+		return false
+	}
+	switch programartifact.StaticInputOperandKind(row.operandKind) {
+	case programartifact.StaticInputOperandKnown:
+		return row.operandSubject == (identity.ContentID{}) && row.operandReference == (identity.ContentID{})
+	case programartifact.StaticInputOperandRuntimeSubject:
+		return row.operandSubject.Available() && row.operandBody.Available() && row.operandReference == (identity.ContentID{})
+	case programartifact.StaticInputOperandTypeValue:
+		return row.operandReference.Available() && row.operandBody.Available() && row.operandSubject == (identity.ContentID{})
+	default:
+		return false
+	}
+}
+
+type Occurrence struct {
+	kind    uint8
+	id      identity.ContentID
+	body    identity.ContentID
+	code    uint64
+	points  []identity.ContentID
+	inputs  []identity.ContentID
+	family  keyspace.Family
+	literal keyspace.LiteralValue
+	hasLit  bool
+}
+
+func (row Occurrence) ID() identity.ContentID { return row.id }
+func (row Occurrence) Code() uint64           { return row.code }
+func (row Occurrence) Kind() uint8            { return row.kind }
+func (row Occurrence) BodyID() (identity.ContentID, bool) {
+	return row.body, row.body.Available()
+}
+func (row Occurrence) PointCount() int { return len(row.points) }
+func (row Occurrence) PointAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.points) {
+		return identity.ContentID{}, false
+	}
+	return row.points[index], true
+}
+func (row Occurrence) InputCount() int { return len(row.inputs) }
+func (row Occurrence) InputAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.inputs) {
+		return identity.ContentID{}, false
+	}
+	return row.inputs[index], true
+}
+func (row Occurrence) Literal() (keyspace.Family, keyspace.LiteralValue, bool) {
+	return row.family, row.literal, row.hasLit
+}
+func (row Occurrence) ValueSourceSpanID() (identity.ContentID, bool) {
+	if row.kind != uint8(programartifact.OccurrenceValueSource) || len(row.inputs) != 1 {
+		return identity.ContentID{}, false
+	}
+	return row.inputs[0], row.inputs[0].Available()
+}
+func (row Occurrence) BinaryArithmetic() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
+	if row.kind != uint8(programartifact.OccurrenceBinaryArithmetic) || len(row.inputs) != 2 {
+		return identity.ContentID{}, identity.ContentID{}, 0, false
+	}
+	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
+}
+func (row Occurrence) BinaryEquality() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
+	if row.kind != uint8(programartifact.OccurrenceBinaryEquality) || len(row.inputs) < 2 {
+		return identity.ContentID{}, identity.ContentID{}, 0, false
+	}
+	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
+}
+func (row Occurrence) BinaryOrder() (identity.ContentID, identity.ContentID, flowkind.BinaryOp, bool) {
+	if row.kind != uint8(programartifact.OccurrenceBinaryOrder) || len(row.inputs) != 2 {
+		return identity.ContentID{}, identity.ContentID{}, 0, false
+	}
+	return row.inputs[0], row.inputs[1], flowkind.BinaryOp(row.code), true
+}
+func (row Occurrence) BinaryPresenceRefinement() (identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool, bool) {
+	if row.kind != uint8(programartifact.OccurrenceBinaryPresenceRefinement) || len(row.inputs) != 4 {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false, false
+	}
+	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], row.code == 1, true
+}
+
+func (row Occurrence) OperationPredicateRefinement() (identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, uint8, bool, bool) {
+	if row.kind != uint8(programartifact.OccurrenceOperationPredicateRefinement) || len(row.inputs) != 4 {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, false, false
+	}
+	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], uint8(row.code & 0xff), row.code&(1<<8) != 0, true
+}
+
+type HeapIndex struct {
+	id, base, result, key, valuesSpan, valuesID identity.ContentID
+	read                                        bool
+	lens                                        uint8
+	exact                                       uint64
+	position                                    int
+}
+
+func (row HeapIndex) Available() bool {
+	return row.id.Available() && row.base.Available()
+}
+func (row HeapIndex) ID() identity.ContentID       { return row.id }
+func (row HeapIndex) BaseSpan() identity.ContentID { return row.base }
+func (row HeapIndex) ResultSpan() identity.ContentID {
+	return row.result
+}
+func (row HeapIndex) DynamicKeySpan() identity.ContentID {
+	return row.key
+}
+func (row HeapIndex) ExactKey() (uint64, bool) {
+	return row.exact, row.lens == 1 && row.exact != 0
+}
+func (row HeapIndex) Read() bool { return row.read }
+func (row HeapIndex) ValuesID() identity.ContentID {
+	return row.valuesID
+}
+func (row HeapIndex) Values() (identity.ContentID, int, bool) {
+	if row.read {
+		return identity.ContentID{}, 0, false
+	}
+	return row.valuesSpan, row.position, true
+}
+
+type ExactScalarSummary struct {
+	id, occurrence, subject, body identity.ContentID
+	role                          uint8
+	literal                       keyspace.LiteralValue
+}
+
+func (row ExactScalarSummary) ID() identity.ContentID           { return row.id }
+func (row ExactScalarSummary) OccurrenceID() identity.ContentID { return row.occurrence }
+func (row ExactScalarSummary) SubjectID() identity.ContentID    { return row.subject }
+func (row ExactScalarSummary) BodyPathID() identity.ContentID   { return row.body }
+func (row ExactScalarSummary) Role() uint8                      { return row.role }
+func (row ExactScalarSummary) Literal() (keyspace.LiteralValue, bool) {
+	return row.literal, row.id.Available()
+}
+
+type ArithmeticSummary struct {
+	id, occurrence, body identity.ContentID
+	op                   uint8
+	left, right, result  uint8
+	divisor              uint8
+}
+
+func (row ArithmeticSummary) ID() identity.ContentID           { return row.id }
+func (row ArithmeticSummary) OccurrenceID() identity.ContentID { return row.occurrence }
+func (row ArithmeticSummary) BodyPathID() identity.ContentID   { return row.body }
+func (row ArithmeticSummary) Operator() uint8                  { return row.op }
+func (row ArithmeticSummary) Left() uint8                      { return row.left }
+func (row ArithmeticSummary) Right() uint8                     { return row.right }
+func (row ArithmeticSummary) Result() uint8                    { return row.result }
+func (row ArithmeticSummary) Divisor() uint8                   { return row.divisor }
+
+type UnarySummary struct {
+	id, occurrence, body, point identity.ContentID
+	op                          uint8
+	operand, result             uint8
+}
+
+func (row UnarySummary) ID() identity.ContentID           { return row.id }
+func (row UnarySummary) OccurrenceID() identity.ContentID { return row.occurrence }
+func (row UnarySummary) BodyPathID() identity.ContentID   { return row.body }
+func (row UnarySummary) OutputPointID() identity.ContentID {
+	return row.point
+}
+func (row UnarySummary) Operator() uint8 { return row.op }
+func (row UnarySummary) Operand() uint8  { return row.operand }
+func (row UnarySummary) Result() uint8   { return row.result }
+
+type diagnosticBranch struct {
+	decision, value identity.ContentID
+	points          []identity.ContentID
+}
+
+func (payload diagnosticBranch) DecisionPathID() identity.ContentID { return payload.decision }
+func (payload diagnosticBranch) ValueSpanID() identity.ContentID    { return payload.value }
+func (payload diagnosticBranch) EvidencePoints() ([]identity.ContentID, bool) {
+	if len(payload.points) == 0 {
+		return nil, false
+	}
+	return append([]identity.ContentID(nil), payload.points...), true
+}
+
+type diagnosticUnresolvedType struct {
+	reference, root identity.ContentID
+	path            []string
+}
+
+func (payload diagnosticUnresolvedType) StaticReferenceID() identity.ContentID {
+	return payload.reference
+}
+func (payload diagnosticUnresolvedType) RootID() identity.ContentID { return payload.root }
+func (payload diagnosticUnresolvedType) Path() ([]string, bool) {
+	if len(payload.path) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), payload.path...), true
+}
+
+type diagnosticUnresolvedValue struct {
+	read, cell identity.ContentID
+	name       string
+}
+
+func (payload diagnosticUnresolvedValue) ReadID() identity.ContentID { return payload.read }
+func (payload diagnosticUnresolvedValue) CellID() identity.ContentID { return payload.cell }
+func (payload diagnosticUnresolvedValue) Name() (string, bool) {
+	return payload.name, payload.name != ""
+}
+
+type diagnosticConformance struct {
+	call, argument, declared, span identity.ContentID
+	site                           uint8
+	position                       uint32
+	points                         []identity.ContentID
+}
+
+func (payload diagnosticConformance) CallID() identity.ContentID { return payload.call }
+func (payload diagnosticConformance) ArgumentID() identity.ContentID {
+	return payload.argument
+}
+func (payload diagnosticConformance) DeclaredStaticTypeID() identity.ContentID {
+	return payload.declared
+}
+func (payload diagnosticConformance) SpanID() identity.ContentID { return payload.span }
+func (payload diagnosticConformance) Site() uint8                { return payload.site }
+func (payload diagnosticConformance) Position() (uint32, bool) {
+	return payload.position, payload.call.Available()
+}
+func (payload diagnosticConformance) EvidencePoints() ([]identity.ContentID, bool) {
+	if len(payload.points) == 0 {
+		return nil, false
+	}
+	return append([]identity.ContentID(nil), payload.points...), true
+}
+
+type DiagnosticObservation struct {
+	id         identity.ContentID
+	kind       structure.DiagnosticObservationKind
+	location   programsource.Span
+	branch     diagnosticBranch
+	unresolved diagnosticUnresolvedType
+	value      diagnosticUnresolvedValue
+	conform    diagnosticConformance
+}
+
+func (row DiagnosticObservation) ID() identity.ContentID { return row.id }
+func (row DiagnosticObservation) Kind() structure.DiagnosticObservationKind {
+	return row.kind
+}
+func (row DiagnosticObservation) Location() (programsource.Span, bool) {
+	if row.location.File == "" || row.location.StartLine == 0 || row.location.StartCol == 0 {
+		return programsource.Span{}, false
+	}
+	return row.location, true
+}
+func (row DiagnosticObservation) Available() bool {
+	if !row.id.Available() || !row.kind.Available() {
+		return false
+	}
+	if _, ok := row.Location(); !ok {
+		return false
+	}
+	switch row.kind {
+	case structure.DiagnosticObservationBranchCondition:
+		return row.branch.decision.Available() && row.branch.value.Available() && len(row.branch.points) != 0
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
+		return row.unresolved.reference.Available() && len(row.unresolved.path) != 0
+	case structure.DiagnosticObservationValueReferenceUnresolved:
+		return row.value.read.Available() && row.value.cell.Available() && row.value.name != ""
+	case structure.DiagnosticObservationTypeConformance:
+		return row.conform.call.Available() && row.conform.argument.Available() &&
+			row.conform.declared.Available() && row.conform.span.Available() && len(row.conform.points) != 0
+	default:
+		return false
+	}
+}
+func (row DiagnosticObservation) BranchCondition() (diagnosticBranch, bool) {
+	if !row.Available() || row.kind != structure.DiagnosticObservationBranchCondition {
+		return diagnosticBranch{}, false
+	}
+	return row.branch, true
+}
+func (row DiagnosticObservation) UnresolvedTypeReference() (diagnosticUnresolvedType, bool) {
+	if !row.Available() || row.kind != structure.DiagnosticObservationTypeReferenceUnresolved {
+		return diagnosticUnresolvedType{}, false
+	}
+	return row.unresolved, true
+}
+func (row DiagnosticObservation) UnresolvedValueReference() (diagnosticUnresolvedValue, bool) {
+	if !row.Available() || row.kind != structure.DiagnosticObservationValueReferenceUnresolved {
+		return diagnosticUnresolvedValue{}, false
+	}
+	return row.value, true
+}
+func (row DiagnosticObservation) TypeConformance() (diagnosticConformance, bool) {
+	if !row.Available() || row.kind != structure.DiagnosticObservationTypeConformance {
+		return diagnosticConformance{}, false
+	}
+	return row.conform, true
+}
+
+type Outcome struct {
+	id, body identity.ContentID
+	kind     uint8
+	returns  []identity.ContentID
+}
+
+func (row Outcome) ID() identity.ContentID     { return row.id }
+func (row Outcome) BodyID() identity.ContentID { return row.body }
+func (row Outcome) Kind() uint8                { return row.kind }
+func (row Outcome) ReturnValueCount() int      { return len(row.returns) }
 
 func (row FunctionBoundary) ID() identity.ContentID            { return row.id }
 func (row FunctionBoundary) BodyID() identity.ContentID        { return row.body }
 func (row FunctionBoundary) BodyContextID() identity.ContentID { return row.bodyContext }
 func (row FunctionBoundary) EntryID() identity.ContentID       { return row.entry }
 func (row FunctionBoundary) CallFormalID() identity.ContentID  { return row.formal }
+func (row FunctionBoundary) FormalCount() int                  { return len(row.formals) }
+func (row FunctionBoundary) FormalAt(index int) (FunctionFormal, bool) {
+	if index < 0 || index >= len(row.formals) {
+		return FunctionFormal{}, false
+	}
+	return row.formals[index], true
+}
+func (row FunctionBoundary) Vararg() (FunctionVararg, bool) {
+	return row.vararg, row.hasVararg && row.vararg.Available()
+}
+func (row FunctionBoundary) CaptureCount() int { return len(row.captures) }
+func (row FunctionBoundary) CaptureAt(index int) (FunctionCapture, bool) {
+	if index < 0 || index >= len(row.captures) {
+		return FunctionCapture{}, false
+	}
+	return row.captures[index], true
+}
+func (row FunctionBoundary) OutcomeCount() int { return len(row.outcomes) }
+func (row FunctionBoundary) OutcomeAt(index int) (identity.ContentID, bool) {
+	if index < 0 || index >= len(row.outcomes) {
+		return identity.ContentID{}, false
+	}
+	return row.outcomes[index], true
+}
 
 func copyIDs(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
 	if count < 0 {
@@ -521,9 +1551,12 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		point, _ := row.PointAt(0)
 		input, _ := row.InputPoint()
 		route, _ := row.PredecessorRouteID()
+		output, hasOutput := row.OutputSemanticID()
 		snapshot.placements = append(snapshot.placements, RulePlacement{
 			key: row.Key(), stage: uint8(row.Stage()), point: point, input: input,
-			occurrence: row.ID(), predecessor: route,
+			occurrence: row.ID(), predecessor: route, output: output, hasOutput: hasOutput,
+			spanResult: programartifact.SpanResultOccurrence(row.OccurrenceKind()),
+			inputKind:  uint8(row.InputKind()),
 		})
 	}
 	snapshot.bodies = make([]BodyTransport, 0, artifact.BodyCount())
@@ -537,24 +1570,387 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		if !entriesOK || !exitsOK {
 			return nil, false
 		}
+		roots := make([]BodyRoot, 0, row.RootCount())
+		for rootIndex := 0; rootIndex < row.RootCount(); rootIndex++ {
+			root, rootOK := row.RootAt(rootIndex)
+			if !rootOK || !root.Available() {
+				return nil, false
+			}
+			roots = append(roots, BodyRoot{id: root.ID(), family: root.Family()})
+		}
 		function, _ := row.FunctionContextID()
 		formal, _ := row.CallFormalID()
 		snapshot.bodies = append(snapshot.bodies, BodyTransport{
 			id: row.ID(), context: row.ContextID(), entry: row.EntryID(),
 			function: function, formal: formal, callable: row.Callable(),
-			entries: entries, exits: exits,
+			entries: entries, exits: exits, roots: roots,
 		})
 	}
 	snapshot.boundaries = make([]FunctionBoundary, 0, artifact.FunctionBoundaryCount())
 	for index := 0; index < artifact.FunctionBoundaryCount(); index++ {
 		row, ok := artifact.FunctionBoundaryAt(index)
-		if !ok {
+		if !ok || !row.Available() {
 			return nil, false
+		}
+		ports := make([]FunctionFormal, 0, row.FormalCount())
+		for formalIndex := 0; formalIndex < row.FormalCount(); formalIndex++ {
+			port, portOK := row.FormalAt(formalIndex)
+			if !portOK || !port.Available() {
+				return nil, false
+			}
+			ports = append(ports, FunctionFormal{id: port.ID(), cell: port.CellID(), storage: port.StorageCellID()})
+		}
+		captures := make([]FunctionCapture, 0, row.CaptureCount())
+		for captureIndex := 0; captureIndex < row.CaptureCount(); captureIndex++ {
+			capture, captureOK := row.CaptureAt(captureIndex)
+			if !captureOK || !capture.Available() {
+				return nil, false
+			}
+			captures = append(captures, FunctionCapture{
+				id: capture.ID(), inner: capture.InnerCellID(), outer: capture.OuterCellID(),
+				innerBody: capture.InnerBodyID(), outerBody: capture.OuterBodyID(),
+			})
+		}
+		outcomes := make([]identity.ContentID, 0, row.OutcomeCount())
+		for outcomeIndex := 0; outcomeIndex < row.OutcomeCount(); outcomeIndex++ {
+			outcome, outcomeOK := row.OutcomeAt(outcomeIndex)
+			if !outcomeOK || !outcome.Available() {
+				return nil, false
+			}
+			outcomes = append(outcomes, outcome)
+		}
+		vararg, hasVararg := row.Vararg()
+		copiedVararg := FunctionVararg{}
+		if hasVararg {
+			copiedVararg = FunctionVararg{id: vararg.ID(), cell: vararg.CellID()}
 		}
 		snapshot.boundaries = append(snapshot.boundaries, FunctionBoundary{
 			id: row.ID(), body: row.BodyID(), bodyContext: row.BodyContextID(),
-			entry: row.EntryID(), formal: row.CallFormalID(),
+			entry: row.EntryID(), formal: row.CallFormalID(), formals: ports,
+			vararg: copiedVararg, hasVararg: hasVararg, captures: captures, outcomes: outcomes,
+		})
+	}
+	snapshot.calls = make([]Call, 0, artifact.CallCount())
+	for index := 0; index < artifact.CallCount(); index++ {
+		row, ok := artifact.CallAt(index)
+		if !ok || !row.ID().Available() {
+			return nil, false
+		}
+		operands := make([]CallOperand, 0, row.OperandCount())
+		for child := 0; child < row.OperandCount(); child++ {
+			operand, operandOK := artifact.CallOperandFor(index, child)
+			if !operandOK || !operand.ID().Available() {
+				return nil, false
+			}
+			operands = append(operands, CallOperand{
+				id: operand.ID(), call: operand.CallID(), value: operand.ValueID(),
+				span: operand.SpanID(), callee: operand.Kind() == programartifact.CallOperandCallee,
+			})
+		}
+		arguments := make([]CallArgument, 0, row.ArgumentCount())
+		for child := 0; child < row.ArgumentCount(); child++ {
+			argument, argumentOK := artifact.CallArgumentFor(index, child)
+			if !argumentOK || !argument.Available() {
+				return nil, false
+			}
+			arguments = append(arguments, CallArgument{
+				id: argument.ID(), call: argument.CallID(), values: argument.ValuesID(),
+				member: argument.MemberID(), span: argument.SpanID(), position: argument.Index(),
+			})
+		}
+		receiver, hasReceiver := row.ReceiverID()
+		tail, hasTail := row.TailID()
+		target, _ := row.DirectTargetBody()
+		snapshot.calls = append(snapshot.calls, Call{
+			id: row.ID(), body: row.BodyID(), span: row.SpanID(), callee: row.CalleeID(), formal: row.FormalID(),
+			values: row.ValuesID(), types: row.TypeArgumentsID(), target: target, form: uint8(row.Form()),
+			receiver: receiver, hasReceiver: hasReceiver, tail: tail, hasTail: hasTail,
+			operands: operands, arguments: arguments,
+		})
+	}
+	snapshot.arguments = make([]CallArgument, 0, artifact.CallArgumentCount())
+	for index := 0; index < artifact.CallArgumentCount(); index++ {
+		row, ok := artifact.CallArgumentAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.arguments = append(snapshot.arguments, CallArgument{
+			id: row.ID(), call: row.CallID(), values: row.ValuesID(),
+			member: row.MemberID(), span: row.SpanID(), position: row.Index(),
+		})
+	}
+	snapshot.targets = make([]CallTarget, 0, artifact.CallTargetCount())
+	for index := 0; index < artifact.CallTargetCount(); index++ {
+		row, ok := artifact.CallTargetAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.targets = append(snapshot.targets, CallTarget{
+			allocation: row.AllocationID(), body: row.BodyID(), context: row.ContextID(),
+			function: row.FunctionContextID(), formal: row.CallFormalID(),
+		})
+	}
+	snapshot.allocations = make([]HeapAllocation, 0, artifact.HeapAllocationCount())
+	for index := 0; index < artifact.HeapAllocationCount(); index++ {
+		row, ok := artifact.HeapAllocationAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		fields := make([]HeapField, 0, row.FieldCount())
+		for fieldIndex := 0; fieldIndex < row.FieldCount(); fieldIndex++ {
+			field, fieldOK := row.FieldAt(fieldIndex)
+			if !fieldOK || !field.Available() {
+				return nil, false
+			}
+			valuesSpan, width, finalOpen, valuesOK := field.Values()
+			if !valuesOK {
+				return nil, false
+			}
+			normalized, normalizedOK := field.NormalizedKey()
+			fields = append(fields, HeapField{
+				id: field.ID(), selector: field.SelectorSpan(), valuesID: field.ValuesID(),
+				valuesSpan: valuesSpan, kind: uint8(field.Kind()), width: width, finalOpen: finalOpen,
+				sharesFirst: field.SharesFirstValueCell(),
+				normalized:  uint64(normalized), normalizedOK: normalizedOK,
+			})
+		}
+		snapshot.allocations = append(snapshot.allocations, HeapAllocation{
+			id: row.ID(), root: row.RootSpan(), role: uint8(row.Role()), form: uint8(row.Form()), fields: fields,
+		})
+	}
+	snapshot.values = make([]Values, 0, artifact.ValuesCount())
+	for index := 0; index < artifact.ValuesCount(); index++ {
+		row, ok := artifact.ValuesAt(index)
+		if !ok || !row.ID().Available() {
+			return nil, false
+		}
+		members := make([]ValuesMember, 0, row.MemberCount())
+		for memberIndex := 0; memberIndex < row.MemberCount(); memberIndex++ {
+			member, memberOK := row.MemberAt(memberIndex)
+			if !memberOK {
+				return nil, false
+			}
+			members = append(members, ValuesMember{id: member.ID()})
+		}
+		tail, hasTail := row.Tail()
+		copiedTail := ValuesTail{}
+		if hasTail {
+			copiedTail = ValuesTail{id: tail.ID(), kind: uint8(tail.Kind()), present: true}
+		}
+		snapshot.values = append(snapshot.values, Values{id: row.ID(), members: members, tail: copiedTail})
+	}
+	snapshot.occurrences = make([]Occurrence, 0, artifact.OccurrenceCount())
+	for index := 0; index < artifact.OccurrenceCount(); index++ {
+		row, ok := artifact.OccurrenceAt(index)
+		if !ok || !row.ID().Available() {
+			return nil, false
+		}
+		inputs, inputsOK := copyIDs(row.InputCount(), row.InputAt)
+		points, pointsOK := copyIDs(row.PointCount(), row.PointAt)
+		if !inputsOK || !pointsOK {
+			return nil, false
+		}
+		body, _ := row.BodyID()
+		family, literal, hasLit := row.Literal()
+		snapshot.occurrences = append(snapshot.occurrences, Occurrence{
+			kind: uint8(row.Kind()), id: row.ID(), body: body, code: row.Code(), points: points, inputs: inputs,
+			family: family, literal: literal, hasLit: hasLit,
+		})
+	}
+	snapshot.staticTypeValues = make([]StaticTypeValue, 0, artifact.StaticTypeValueCount())
+	for index := 0; index < artifact.StaticTypeValueCount(); index++ {
+		row, ok := artifact.StaticTypeValueAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.staticTypeValues = append(snapshot.staticTypeValues, StaticTypeValue{
+			id: row.ID(), body: row.BodyPathID(), reference: row.ReferenceID(), root: row.RootID(), name: row.Name(),
+		})
+	}
+	snapshot.staticTypeNodes = make([]StaticTypeNode, 0, artifact.StaticTypeNodeCount())
+	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
+		row, ok := artifact.StaticTypeNodeAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.staticTypeNodes = append(snapshot.staticTypeNodes, StaticTypeNode{
+			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
+		})
+	}
+	snapshot.staticTypeArguments = make([]StaticTypeArgument, 0, artifact.StaticTypeArgumentCount())
+	for index := 0; index < artifact.StaticTypeArgumentCount(); index++ {
+		row, ok := artifact.StaticTypeArgumentAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.staticTypeArguments = append(snapshot.staticTypeArguments, StaticTypeArgument{
+			id: row.ID(), call: row.CallID(), types: row.TypesID(), reference: row.ReferenceID(), index: row.Index(),
+		})
+	}
+	snapshot.staticExpressions = make([]StaticExpression, 0, artifact.StaticExpressionCount())
+	for index := 0; index < artifact.StaticExpressionCount(); index++ {
+		row, ok := artifact.StaticExpressionAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.staticExpressions = append(snapshot.staticExpressions, StaticExpression{
+			id: row.ID(), reference: row.ReferenceID(), owner: row.Owner(),
+		})
+	}
+	snapshot.staticInputs = make([]StaticInput, 0, artifact.StaticInputCount())
+	for index := 0; index < artifact.StaticInputCount(); index++ {
+		row, ok := artifact.StaticInputAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		snapshot.staticInputs = append(snapshot.staticInputs, StaticInput{
+			id: row.ID(), owner: row.Owner(), expression: row.ExpressionID(), source: row.SourceID(),
+			target: row.TargetID(), operand: row.OperandID(), frontier: row.FrontierID(),
+			operandReference: row.OperandReferenceID(), operandSubject: row.OperandSubjectID(),
+			operandBody: row.OperandBodyPathID(), literal: row.OperandLiteral(),
+			kind: uint8(row.Kind()), operandKind: uint8(row.OperandKind()), cursor: row.Cursor(),
+		})
+	}
+	snapshot.outcomes = make([]Outcome, 0, artifact.OutcomeCount())
+	for index := 0; index < artifact.OutcomeCount(); index++ {
+		row, ok := artifact.OutcomeAt(index)
+		if !ok {
+			return nil, false
+		}
+		returns := make([]identity.ContentID, 0, row.ReturnValueCount())
+		for valueIndex := 0; valueIndex < row.ReturnValueCount(); valueIndex++ {
+			value, valueOK := artifact.OutcomeReturnValueAt(index, valueIndex)
+			if !valueOK {
+				return nil, false
+			}
+			returns = append(returns, value.ID())
+		}
+		snapshot.outcomes = append(snapshot.outcomes, Outcome{id: row.ID(), body: row.BodyID(), kind: uint8(row.Kind()), returns: returns})
+	}
+	snapshot.summaries = make([]ExactScalarSummary, 0, artifact.ExactScalarSummaryCount())
+	for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
+		row, ok := artifact.ExactScalarSummaryAt(index)
+		if !ok {
+			return nil, false
+		}
+		literal, literalOK := row.Literal()
+		if !literalOK {
+			return nil, false
+		}
+		snapshot.summaries = append(snapshot.summaries, ExactScalarSummary{
+			id: row.ID(), occurrence: row.OccurrenceID(), subject: row.SubjectID(), body: row.BodyPathID(),
+			role: uint8(row.Role()), literal: literal,
+		})
+	}
+	snapshot.arithmetic = make([]ArithmeticSummary, 0, artifact.ArithmeticSummaryCount())
+	for index := 0; index < artifact.ArithmeticSummaryCount(); index++ {
+		row, ok := artifact.ArithmeticSummaryAt(index)
+		if !ok {
+			return nil, false
+		}
+		left, right, result, representationsOK := row.Representations()
+		if !representationsOK {
+			return nil, false
+		}
+		snapshot.arithmetic = append(snapshot.arithmetic, ArithmeticSummary{
+			id: row.ID(), occurrence: row.OccurrenceID(), body: row.BodyPathID(),
+			op: uint8(row.Operator()), left: uint8(left), right: uint8(right), result: uint8(result),
+			divisor: uint8(row.DivisorProperty()),
+		})
+	}
+	snapshot.unaries = make([]UnarySummary, 0, artifact.UnarySummaryCount())
+	for index := 0; index < artifact.UnarySummaryCount(); index++ {
+		row, ok := artifact.UnarySummaryAt(index)
+		if !ok {
+			return nil, false
+		}
+		operand, result, representationsOK := row.Representations()
+		if !representationsOK {
+			return nil, false
+		}
+		snapshot.unaries = append(snapshot.unaries, UnarySummary{
+			id: row.ID(), occurrence: row.OccurrenceID(), body: row.BodyPathID(), point: row.OutputPointID(),
+			op: uint8(row.Operator()), operand: uint8(operand), result: uint8(result),
+		})
+	}
+	snapshot.observations = make([]DiagnosticObservation, 0, artifact.DiagnosticObservationCount())
+	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
+		row, ok := artifact.DiagnosticObservationAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		lowered, loweredOK := lowerDiagnosticObservation(row)
+		if !loweredOK {
+			return nil, false
+		}
+		snapshot.observations = append(snapshot.observations, lowered)
+	}
+	snapshot.indexes = make([]HeapIndex, 0, artifact.HeapIndexCount())
+	for index := 0; index < artifact.HeapIndexCount(); index++ {
+		row, ok := artifact.HeapIndexAt(index)
+		if !ok || !row.Available() {
+			return nil, false
+		}
+		exact, _ := row.ExactKey()
+		valuesSpan, position, _ := row.Values()
+		snapshot.indexes = append(snapshot.indexes, HeapIndex{
+			id: row.ID(), base: row.BaseSpan(), result: row.ResultSpan(), key: row.DynamicKeySpan(),
+			valuesSpan: valuesSpan, valuesID: row.ValuesID(), read: row.Read(),
+			lens:  map[bool]uint8{true: 2, false: 1}[row.DynamicKeySpan().Available()],
+			exact: uint64(exact), position: position,
 		})
 	}
 	return snapshot, snapshot.Available()
+}
+
+func lowerDiagnosticObservation(row programartifact.DiagnosticObservationRow) (DiagnosticObservation, bool) {
+	if !row.Available() {
+		return DiagnosticObservation{}, false
+	}
+	location, locationOK := row.Location()
+	if !locationOK {
+		return DiagnosticObservation{}, false
+	}
+	observation := DiagnosticObservation{id: row.ID(), kind: row.Kind(), location: location}
+	switch row.Kind() {
+	case structure.DiagnosticObservationBranchCondition:
+		branch, branchOK := row.BranchCondition()
+		points, pointsOK := branch.EvidencePoints()
+		if !branchOK || !pointsOK {
+			return DiagnosticObservation{}, false
+		}
+		observation.branch = diagnosticBranch{decision: branch.DecisionPathID(), value: branch.ValueSpanID(), points: append([]identity.ContentID(nil), points...)}
+	case structure.DiagnosticObservationTypeReferenceUnresolved:
+		unresolved, unresolvedOK := row.UnresolvedTypeReference()
+		path, pathOK := unresolved.Path()
+		if !unresolvedOK || !pathOK {
+			return DiagnosticObservation{}, false
+		}
+		observation.unresolved = diagnosticUnresolvedType{reference: unresolved.StaticReferenceID(), root: unresolved.RootID(), path: append([]string(nil), path...)}
+	case structure.DiagnosticObservationValueReferenceUnresolved:
+		unresolved, unresolvedOK := row.UnresolvedValueReference()
+		name, nameOK := unresolved.Name()
+		if !unresolvedOK || !nameOK {
+			return DiagnosticObservation{}, false
+		}
+		observation.value = diagnosticUnresolvedValue{read: unresolved.ReadID(), cell: unresolved.CellID(), name: name}
+	case structure.DiagnosticObservationTypeConformance:
+		conformance, conformanceOK := row.TypeConformance()
+		if !conformanceOK {
+			return DiagnosticObservation{}, false
+		}
+		points, pointsOK := conformance.EvidencePoints()
+		position, positionOK := conformance.Position()
+		if !pointsOK || !positionOK {
+			return DiagnosticObservation{}, false
+		}
+		observation.conform = diagnosticConformance{
+			call: conformance.CallID(), argument: conformance.ArgumentID(),
+			declared: conformance.DeclaredStaticTypeID(), span: conformance.SpanID(),
+			site: conformance.Site(), position: position, points: append([]identity.ContentID(nil), points...),
+		}
+	default:
+		return DiagnosticObservation{}, false
+	}
+	return observation, observation.Available()
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func TestStaticNamespaceScaleIsDeterministic(t *testing.T) {
@@ -52,7 +52,7 @@ return M
 		)
 	}
 	if state, declaration, _, ok := p.Static().References().Get(target); !ok ||
-		state != static.TypeRefDeclaration || declaration == 0 {
+		state != staticrefs.Declaration || declaration == 0 {
 		t.Fatalf("publication TypeRef = state %v declaration %v ok %v", state, declaration, ok)
 	}
 	assigns := p.Flow().Authored().Storage().Assigns()

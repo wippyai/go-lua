@@ -12,6 +12,61 @@ import (
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 )
 
+func TestUnrelatedMountedProgramSurvivesSiblingReplacement(t *testing.T) {
+	left := projectProgram(t, `local value = {left = 1}`)
+	right := projectProgram(t, `local value = {right = 2}`)
+	replacement := projectProgram(t, `local value = {replacement = 3}`)
+	base := projectDraft(t, []Module{{Name: "left", Program: left}, {Name: "right", Program: right}})
+	changed := projectDraft(t, []Module{{Name: "left", Program: replacement}, {Name: "right", Program: right}})
+	programAt := func(draft *Draft, name string) *program.Program {
+		t.Helper()
+		for index := 0; index < draft.Mounts().Count(); index++ {
+			shard, shardOK := draft.Mounts().At(index)
+			gotName, nameOK := draft.Mounts().Name(shard)
+			mounted, mountedOK := draft.Mounts().Program(shard)
+			if shardOK && nameOK && mountedOK && gotName == name {
+				return mounted
+			}
+		}
+		t.Fatalf("mount %q unavailable", name)
+		return nil
+	}
+	if programAt(base, "left") == programAt(changed, "left") || programAt(base, "left").ContentID() == programAt(changed, "left").ContentID() {
+		t.Fatal("replaced sibling kept the previous Program")
+	}
+	if programAt(changed, "right") != right || programAt(changed, "right").ContentID() != right.ContentID() || programAt(changed, "right").ContentID() == programAt(changed, "left").ContentID() {
+		t.Fatal("unrelated mounted Program changed with its sibling")
+	}
+}
+
+func TestMountedProgramContentIsIndependentOfAuthoringOrder(t *testing.T) {
+	left := projectProgram(t, `local value = {left = 1}`)
+	right := projectProgram(t, `local value = {right = 2}`)
+	first := projectDraft(t, []Module{{Name: "right", Program: right}, {Name: "left", Program: left}})
+	second := projectDraft(t, []Module{{Name: "left", Program: left}, {Name: "right", Program: right}})
+	programAt := func(draft *Draft, name string) *program.Program {
+		t.Helper()
+		for index := 0; index < draft.Mounts().Count(); index++ {
+			shard, shardOK := draft.Mounts().At(index)
+			gotName, nameOK := draft.Mounts().Name(shard)
+			mounted, mountedOK := draft.Mounts().Program(shard)
+			if shardOK && nameOK && mountedOK && gotName == name {
+				return mounted
+			}
+		}
+		t.Fatalf("mount %q unavailable", name)
+		return nil
+	}
+	if programAt(first, "left") != left || programAt(second, "left") != left ||
+		programAt(first, "right") != right || programAt(second, "right") != right {
+		t.Fatal("authoring order replaced a mounted Program")
+	}
+	if left.ContentID() != programAt(first, "left").ContentID() || left.ContentID() != programAt(second, "left").ContentID() ||
+		right.ContentID() != programAt(first, "right").ContentID() || right.ContentID() != programAt(second, "right").ContentID() {
+		t.Fatal("authoring order changed mounted Program content")
+	}
+}
+
 func TestMountsCanonicalAndAmbiguousContentFailsClosed(t *testing.T) {
 	left := projectProgram(t, `local value = {left = 1}`)
 	right := projectProgram(t, `local value = {right = 2}`)

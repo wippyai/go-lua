@@ -7,6 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 func TestStaticCheckValidateGenericScopeScaling(t *testing.T) {
@@ -21,14 +24,14 @@ func TestStaticCheckValidateGenericScopeScaling(t *testing.T) {
 		checkCount(keyspace.FamilyTypeOf, n),
 	)
 
-	typeParams := make([]static.TypeParam, n)
+	typeParams := make([]staticdecl.TypeParam, n)
 	contractParams := make([]keyspace.Term, n)
-	typeOfs := make([]static.TypeOf, n)
+	typeOfs := make([]staticoperators.TypeOf, n)
 	for index := 0; index < n; index++ {
 		param := keyspace.MakeTerm(keyspace.FamilyTypeParam, uint32(index+1))
-		typeParams[index] = static.TypeParam{Owner: function, Name: 1}
+		typeParams[index] = staticdecl.TypeParam{Owner: function, Name: 1}
 		contractParams[index] = param
-		typeOfs[index] = static.TypeOf{Scope: param, Operand: keyspace.MakeTerm(keyspace.FamilyNil, uint32(index+1))}
+		typeOfs[index] = staticoperators.TypeOf{Scope: param, Operand: keyspace.MakeTerm(keyspace.FamilyNil, uint32(index+1))}
 	}
 
 	fixture := newCheckFixture(t, checkSpec{
@@ -40,9 +43,9 @@ func TestStaticCheckValidateGenericScopeScaling(t *testing.T) {
 			Control:   authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: keyspace.MakeTerm(keyspace.FamilyValues, 1)}}},
 		},
 		static: static.Input{
-			Declarations: static.DeclarationsInput{TypeParam: typeParams},
-			Operators:    static.OperatorsInput{TypeOf: typeOfs},
-			Contracts:    static.ContractsInput{Function: []static.FunctionContract{{TypeParams: contractParams}}},
+			Declarations: staticdecl.Input{TypeParam: typeParams},
+			Operators:    staticoperators.Input{TypeOf: typeOfs},
+			Contracts:    staticcontracts.Input{Function: []staticcontracts.FunctionContract{{TypeParams: contractParams}}},
 		},
 	})
 	result, err := Validate(
@@ -65,13 +68,13 @@ func TestStaticCheckValidatePositionlessFunctionBodyScaling(t *testing.T) {
 	bind := keyspace.MakeTerm(keyspace.FamilyBind, 1)
 	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
 	functions := make([]authored.Function, n)
-	typeOfs := make([]static.TypeOf, n)
-	contracts := make([]static.FunctionContract, n)
+	typeOfs := make([]staticoperators.TypeOf, n)
+	contracts := make([]staticcontracts.FunctionContract, n)
 	for index := 0; index < n; index++ {
 		function := keyspace.MakeTerm(keyspace.FamilyFunction, uint32(index+1))
 		functionBody := keyspace.MakeTerm(keyspace.FamilyBody, uint32(index+2))
 		functions[index] = authored.Function{Owner: body, Body: functionBody}
-		typeOfs[index] = static.TypeOf{Scope: cell, Operand: function}
+		typeOfs[index] = staticoperators.TypeOf{Scope: cell, Operand: function}
 	}
 	rows := make([][]keyspace.Term, n+1)
 	rows[0] = []keyspace.Term{bind}
@@ -87,7 +90,7 @@ func TestStaticCheckValidatePositionlessFunctionBodyScaling(t *testing.T) {
 			Storage:   authored.StorageInput{Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}}, Binds: []authored.Bind{{Owner: body, Values: values}}},
 			Functions: authored.FunctionsInput{Rows: functions},
 		},
-		static: static.Input{Contracts: static.ContractsInput{Function: contracts}, Operators: static.OperatorsInput{TypeOf: typeOfs}},
+		static: static.Input{Contracts: staticcontracts.Input{Function: contracts}, Operators: staticoperators.Input{TypeOf: typeOfs}},
 	})
 	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
 	if err != nil {

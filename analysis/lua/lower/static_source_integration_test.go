@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestSourceStaticLawTokenProvenanceAndSignatureShape(t *testing.T) {
@@ -77,7 +79,7 @@ end`)
 	}) {
 		t.Fatalf("signature variadic/returns = %#v/%#v/%v/%v", variadic, variadicSpan, returnsKnown, ok)
 	}
-	if kind, ok := primitives.Get(variadic); !ok || kind != static.PrimitiveBoolean {
+	if kind, ok := primitives.Get(variadic); !ok || kind != statictypes.PrimitiveBoolean {
 		t.Fatalf("signature variadic type = %v/%v", kind, ok)
 	}
 	if count, ok := signatures.ReturnCount(signature); !ok || count != 1 {
@@ -148,7 +150,7 @@ type Bare = Outer`)
 		{name: "inner", ref: inner, root: innerCell},
 	} {
 		resolution, target, root, ok := references.Get(want.ref)
-		if !ok || resolution != static.TypeRefUnresolved || target != 0 || root != want.root {
+		if !ok || resolution != staticrefs.Unresolved || target != 0 || root != want.root {
 			t.Fatalf("%s TypeRef = resolution %v target %v root %v ok %v; want unresolved/0/%v", want.name, resolution, target, root, ok, want.root)
 		}
 	}
@@ -157,7 +159,7 @@ type Bare = Outer`)
 		t.Fatal("bare TypeRef lost its authored source component")
 	}
 	resolution, target, root, ok := references.Get(bare)
-	if !ok || resolution != static.TypeRefDeclaration || target != outerAlias || root != 0 {
+	if !ok || resolution != staticrefs.Declaration || target != outerAlias || root != 0 {
 		t.Fatalf("bare TypeRef = resolution %v target %v root %v ok %v", resolution, target, root, ok)
 	}
 }
@@ -176,11 +178,11 @@ return identity::<string>(1), receiver:identity::<integer>(2)`)
 		t.Fatalf("Flow Call count = %d, want 2", calls.Count())
 	}
 	for index, want := range []struct {
-		kind       static.PrimitiveKind
+		kind       statictypes.PrimitiveKind
 		methodCall bool
 	}{
-		{kind: static.PrimitiveString},
-		{kind: static.PrimitiveInteger, methodCall: true},
+		{kind: statictypes.PrimitiveString},
+		{kind: statictypes.PrimitiveInteger, methodCall: true},
 	} {
 		call, ok := calls.At(index)
 		if !ok {
@@ -249,7 +251,7 @@ type Callable = fun(candidate: any): asserts candidate is number`)
 	if !keyOK || value.Kind != keyspace.LiteralString || value.String != "candidate" {
 		t.Fatalf("general Assertion name = %#v/%v", value, keyOK)
 	}
-	if kind, ok := primitives.Get(narrow); !ok || kind != static.PrimitiveString {
+	if kind, ok := primitives.Get(narrow); !ok || kind != statictypes.PrimitiveString {
 		t.Fatalf("general Assertion narrow = %v/%v", kind, ok)
 	}
 
@@ -269,7 +271,7 @@ type Callable = fun(candidate: any): asserts candidate is number`)
 	if !keyOK || value.Kind != keyspace.LiteralString || value.String != "candidate" {
 		t.Fatalf("return Assertion name = %#v/%v", value, keyOK)
 	}
-	if kind, ok := primitives.Get(narrow); !ok || kind != static.PrimitiveNumber {
+	if kind, ok := primitives.Get(narrow); !ok || kind != statictypes.PrimitiveNumber {
 		t.Fatalf("return Assertion narrow = %v/%v", kind, ok)
 	}
 }
@@ -289,18 +291,18 @@ end`)
 	if count, ok := interfaces.MemberCount(iface); !ok || count != 4 {
 		t.Fatalf("Static Interface member count = %d/%v, want 4", count, ok)
 	}
-	for index, want := range []static.InterfaceMemberKind{
-		static.InterfaceField,
-		static.InterfaceMethod,
-		static.InterfaceField,
-		static.InterfaceMethod,
+	for index, want := range []staticdecl.InterfaceMemberKind{
+		staticdecl.InterfaceField,
+		staticdecl.InterfaceMethod,
+		staticdecl.InterfaceField,
+		staticdecl.InterfaceMethod,
 	} {
 		member, ok := interfaces.MemberAt(iface, index)
 		if !ok || member.Kind != want {
 			t.Fatalf("member[%d] = %#v/%v, want kind %v", index, member, ok, want)
 		}
 		switch want {
-		case static.InterfaceField:
+		case staticdecl.InterfaceField:
 			if member.Field == 0 || member.Name != 0 || member.Signature != 0 {
 				t.Fatalf("field member[%d] = %#v", index, member)
 			}
@@ -308,7 +310,7 @@ end`)
 			if !ok || span.StartLine != uint32([]int{2, 0, 4, 0}[index]) || span.StartCol != 3 {
 				t.Fatalf("field member[%d] span = %#v/%v", index, span, ok)
 			}
-		case static.InterfaceMethod:
+		case staticdecl.InterfaceMethod:
 			if member.Field != 0 || member.Name == 0 || member.Signature == 0 {
 				t.Fatalf("method member[%d] = %#v", index, member)
 			}

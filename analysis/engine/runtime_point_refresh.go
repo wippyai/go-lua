@@ -253,8 +253,52 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 					epoch.recordCandidateOrderFailure(refreshBoundary, point, producer.group)
 					return false, false
 				}
-				if epoch.regionInterfacesChanged(region) {
-					if !epoch.restartRegion(region, SolveDiagnosticRestartCandidateInterface, SolveDiagnosticRestartCandidateNotOrdered, groupIndex, next) {
+				// Candidate tokens are the complete producer input proof. Only a
+				// changed source outside this immutable Region is an interface
+				// restart; internal changes remain subject to the phase order law.
+				candidateExternal := false
+				regionView, regionViewOK := epoch.runtime.graph.RegionAt(region)
+				candidateExternalOK := regionViewOK
+				if candidateExternalOK && state.hasCandidateTokens {
+					candidateExternalOK = len(state.candidateTokens) == producer.group.InputCount() && len(state.scratchTokens) == producer.group.InputCount()
+					if candidateExternalOK {
+						for inputIndex, previous := range state.candidateTokens {
+							current := state.scratchTokens[inputIndex]
+							if previous == current {
+								continue
+							}
+							input, inputOK := producer.group.InputAt(inputIndex)
+							if !inputOK {
+								candidateExternalOK = false
+								break
+							}
+							inside, contained := regionView.Contains(input.Point())
+							if !contained {
+								candidateExternalOK = false
+								break
+							}
+							if !inside {
+								candidateExternal = true
+								break
+							}
+						}
+					}
+				}
+				if candidateExternalOK && !candidateExternal && environmentChanged {
+					environment, inputOK := producer.group.EnvironmentInput()
+					if !inputOK || producer.environment == nil {
+						candidateExternalOK = false
+					} else {
+						inside, contained := regionView.Contains(environment.Point())
+						candidateExternalOK = contained
+						candidateExternal = !inside && contained
+					}
+				}
+				if !candidateExternalOK {
+					return false, false
+				}
+				if candidateExternal || epoch.regionExternalIngressChanged(region) {
+					if !epoch.restartRegion(region, solveDiagnosticRestartCandidateInterface, solveDiagnosticRestartCandidateNotOrdered, groupIndex, next) {
 						return false, false
 					}
 					return false, true
@@ -378,8 +422,8 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if phase != phaseAscent && phase != phaseNarrow {
 		return false, false
 	}
-	interfacesChanged := epoch.regionInterfacesChanged(regionIndex)
-	if interfacesChanged {
+	externalIngressChanged := epoch.regionExternalIngressChanged(regionIndex)
+	if externalIngressChanged {
 		if phase == phaseAscent && episode.hasExact {
 			// A stale ascent boundary is a localized refresh, not automatically a
 			// new exact episode. Publication routing has already dirtied ordinary
@@ -388,7 +432,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 				return false, false
 			}
 		} else {
-			if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartHeadInterface, SolveDiagnosticRestartInterfaceChanged, -1, carrier.RuleContribution{}) {
+			if !epoch.restartRegion(regionIndex, solveDiagnosticRestartHeadInterface, solveDiagnosticRestartInterfaceChanged, -1, carrier.RuleContribution{}) {
 				return false, false
 			}
 			return false, true
@@ -411,7 +455,8 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	}
 	refreshPending := phase == phaseAscent && episode.hasExact && episode.interfaceRefreshPending
 	refreshOldExact := episode.exact
-	var ingress, exact, selected carrier.PointRHS
+	var exact, selected carrier.PointRHS
+	var exactChanges carrier.ChangeSet
 	var exactOK bool
 	structuralFolded := false
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-rhs")
@@ -421,7 +466,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// loses the exact compact Target-row surface when another contributor
 		// expands it, so the acyclic ticket proof intentionally does not cross
 		// this recurrence boundary.
-		ingress, exact, exactOK = epoch.regionRHS(point, pointIndex, region, current)
+		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, region, current)
 		structuralFolded = exactOK
 		if exactOK {
 			if refreshPending {
@@ -439,7 +484,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// every narrow step.
 		exact, selected, exactOK = episode.exact, episode.exact, true
 	} else {
-		ingress, exact, exactOK = epoch.regionRHS(point, pointIndex, region, current)
+		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, region, current)
 		structuralFolded = exactOK
 	}
 	if !exactOK || epoch.canceled() {
@@ -467,15 +512,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 		}
 	}
-	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-order")
-	if phase == phaseAscent && episode.hasExact && !episode.interfaceRefreshPending && !epoch.work.LessOrEqPointRHSPoint(ingress, current) {
-		// New Init/external meaning begins a fresh episode before an inherited
-		// widening step can observe a stale current head.
-		if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartAscentIngress, SolveDiagnosticRestartIngressNotBelowCurrent, -1, carrier.RuleContribution{}) {
-			return false, false
-		}
-		return false, true
-	}
 	if phase == phaseAscent && episode.hasExact && !epoch.work.LessOrEqPointRHS(episode.exact, exact) {
 		// An interface refresh may continue only when its complete exact RHS
 		// grows from the cached episode RHS. A decrease or incomparable result
@@ -488,7 +524,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		if epoch.diagnostics != nil {
 			epoch.diagnostics.recordInterfaceRefreshOutcome(epoch, regionIndex, refreshOldExact, exact, false, true)
 		}
-		if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartAscentIngress, SolveDiagnosticRestartExactIncomparable, -1, carrier.RuleContribution{}) {
+		if !epoch.restartRegion(regionIndex, solveDiagnosticRestartAscentIngress, solveDiagnosticRestartExactIncomparable, -1, carrier.RuleContribution{}) {
 			return false, false
 		}
 		return false, true
@@ -502,13 +538,13 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// below the current widened head.  Restart clears the complete region and
 		// its descendants from Init before any new ascent publication.
 		if !epoch.work.EqualPointRHS(episode.exact, exact) && !epoch.work.LessOrEqPointRHS(exact, episode.exact) {
-			if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartNarrowExact, SolveDiagnosticRestartExactIncomparable, -1, carrier.RuleContribution{}) {
+			if !epoch.restartRegion(regionIndex, solveDiagnosticRestartNarrowExact, solveDiagnosticRestartExactIncomparable, -1, carrier.RuleContribution{}) {
 				return false, false
 			}
 			return false, true
 		}
 		if !epoch.work.LessOrEqPointRHSPoint(exact, current) {
-			if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartNarrowCurrent, SolveDiagnosticRestartExactNotBelowCurrent, -1, carrier.RuleContribution{}) {
+			if !epoch.restartRegion(regionIndex, solveDiagnosticRestartNarrowCurrent, solveDiagnosticRestartExactNotBelowCurrent, -1, carrier.RuleContribution{}) {
 				return false, false
 			}
 			return false, true
@@ -519,7 +555,17 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	var changes carrier.ChangeSet
 	var publishedOK bool
 	if phase == phaseAscent && !episode.hasExact {
-		published, changes, publishedOK = epoch.work.ReplacePointWithRHS(current, exact)
+		// The canonical fold already committed reference==current to exact and
+		// issued this ChangeSet. Consume it directly only while no support-axis
+		// discharge has transformed exact; otherwise the folded evidence no longer
+		// matches the published RHS and the existing replacement cut remains the
+		// correct owner operation.
+		if !region.discharge.available() && epoch.runtime.carrier.OwnsChangeSet(exactChanges) {
+			published, publishedOK = epoch.work.PublishPointRHS(exact)
+			changes = exactChanges
+		} else {
+			published, changes, publishedOK = epoch.work.ReplacePointWithRHS(current, exact)
+		}
 	} else if phase == phaseAscent {
 		published, changes, publishedOK = epoch.work.MergeSelectedPointState(carrier.Widen, current, selected, exact, region.widen)
 	} else {

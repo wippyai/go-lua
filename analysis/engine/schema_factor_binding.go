@@ -37,7 +37,7 @@ func anyFactorRefOrdinal(ref AnyFactorRef, schema *Schema) (uint64, bool) {
 // supported receipt lane. It intentionally contains only an opaque receipt;
 // callbacks and structural draft handles remain cell-owned.
 type RuleImplementation[K ~uint32 | ~uint64, V, O any] struct {
-	receipt ruleRuntimeReceipt[K, V, O]
+	binding ruleRuntimeBinding[K, V, O]
 }
 
 type schemaRuleBindingCell interface {
@@ -75,7 +75,7 @@ type FactorImplementation[K ~uint32 | ~uint64, V any] struct {
 	state      *schemaBindingState
 	algebra    *factbinding.Algebra[K, V]
 	descriptor factorRuntimeDescriptor
-	receipt    factorRuntimeReceipt
+	binding    factorRuntimeBinding
 }
 
 func schemaFormKind(kind composition.FactorFormKind) SchemaFormKind {
@@ -99,12 +99,13 @@ type schemaFactorFormBinding interface {
 }
 
 type schemaFactorBindingCell[K ~uint32 | ~uint64, V any] struct {
-	ordinal    uint64
-	schema     *Schema
-	impl       *FactorImplementation[K, V]
-	exactRead  schemaFactorFormBinding
-	exactWrite schemaFactorFormBinding
-	forms      []schemaFactorFormBinding
+	ordinal     uint64
+	schema      *Schema
+	impl        *FactorImplementation[K, V]
+	exactRead   schemaFactorFormBinding
+	exactWrite  schemaFactorFormBinding
+	forms       []schemaFactorFormBinding
+	summaryKeys []uint64
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorOrdinal() uint64 {
@@ -126,6 +127,26 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorAlgebra() anyFactorAlgebr
 		return nil
 	}
 	return cell.impl.algebra
+}
+
+// schemaFactorSummaryKeys issues the closed raw-key plane from its Factor
+// owner. Query bindings borrow this immutable plane; they must not reconstruct
+// the same coordinates for every observation or admission.
+func (cell *schemaFactorBindingCell[K, V]) schemaFactorSummaryKeys() ([]uint64, bool) {
+	if cell == nil || cell.impl == nil || cell.impl.algebra == nil {
+		return nil, false
+	}
+	keyEnd := cell.impl.algebra.KeyEnd()
+	if keyEnd == 0 || keyEnd > uint64(^uint(0)>>1) {
+		return nil, false
+	}
+	if len(cell.summaryKeys) == 0 {
+		cell.summaryKeys = make([]uint64, int(keyEnd))
+		for index := range cell.summaryKeys {
+			cell.summaryKeys[index] = uint64(index)
+		}
+	}
+	return cell.summaryKeys, uint64(len(cell.summaryKeys)) == keyEnd
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindingState() *schemaBindingState {
@@ -152,7 +173,7 @@ func (cell *schemaFactorBindingCell[K, V]) boundTopologyFactorReceipt() (*schema
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorRuntimeBinding(runtime *runtimeBinding) (runtimeFactor, bool) {
-	if cell == nil || cell.impl == nil || runtime == nil || runtime.mode != runtimeBindingReceipt || runtime.state == nil || runtime.authority == nil {
+	if cell == nil || cell.impl == nil || runtime == nil || runtime.state == nil || runtime.authority == nil {
 		return nil, false
 	}
 	implementation, ok := cell.sealedImplementation(runtime.state, runtime.authority)
@@ -223,13 +244,13 @@ func (cell *schemaFactorBindingCell[K, V]) sealedImplementation(state *schemaBin
 		}
 		forms[index] = factorFormReceipt{ordinal: uint64(index), kind: schemaFormKind(shape.Kind), semantic: shape.Semantic}
 	}
-	receipt := factorRuntimeReceipt{state: state, authority: authority, schema: state.schema, ordinal: cell.ordinal, semantic: state.schema.factorSemanticAt(cell.ordinal), keyEnd: cell.impl.algebra.KeyEnd(), algebra: cell.impl.algebra, forms: forms, issued: true}
+	receipt := factorRuntimeBinding{state: state, authority: authority, schema: state.schema, ordinal: cell.ordinal, semantic: state.schema.factorSemanticAt(cell.ordinal), keyEnd: cell.impl.algebra.KeyEnd(), algebra: cell.impl.algebra, forms: forms, issued: true}
 	if !receipt.validForms() {
 		return nil, false
 	}
 	result := *cell.impl
 	result.state = state
-	result.receipt = receipt
+	result.binding = receipt
 	result.descriptor = factorRuntimeDescriptor{schema: state.schema, state: state, ordinal: cell.ordinal, semantic: receipt.semantic, keyEnd: receipt.keyEnd, algebra: receipt.algebra}
 	return &result, true
 }
@@ -480,20 +501,20 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorAdmitExactWrite(state *sc
 }
 
 func (implementation *FactorImplementation[K, V]) Ref(key K) (Ref[K], bool) {
-	if implementation == nil || !implementation.receipt.valid() || uint64(key) >= implementation.receipt.keyEnd {
+	if implementation == nil || !implementation.binding.valid() || uint64(key) >= implementation.binding.keyEnd {
 		return Ref[K]{}, false
 	}
-	receipt := implementation.receipt
+	receipt := implementation.binding
 	return Ref[K]{compositionID: receipt.schema.ID(), bindingAuthority: receipt.authority, factorKey: receipt.semantic, factorIndex: receipt.ordinal, raw: key}, true
 }
 
 func (implementation *FactorImplementation[K, V]) NewClosedRefs() *ClosedRefs[K] {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return nil
 	}
-	return &ClosedRefs[K]{receipt: implementation.receipt}
+	return &ClosedRefs[K]{receipt: implementation.binding}
 }
 
 func (implementation *FactorImplementation[K, V]) OwnsClosedRefs(refs *ClosedRefs[K]) bool {
-	return implementation != nil && refs != nil && refs.validIssuer() && implementation.receipt.valid() && refs.receipt.state == implementation.receipt.state && refs.receipt.authority == implementation.receipt.authority && refs.receipt.schema == implementation.receipt.schema && refs.receipt.ordinal == implementation.receipt.ordinal
+	return implementation != nil && refs != nil && refs.validIssuer() && implementation.binding.valid() && refs.receipt.state == implementation.binding.state && refs.receipt.authority == implementation.binding.authority && refs.receipt.schema == implementation.binding.schema && refs.receipt.ordinal == implementation.binding.ordinal
 }

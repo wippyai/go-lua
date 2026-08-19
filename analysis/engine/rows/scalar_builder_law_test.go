@@ -2,6 +2,8 @@ package rows
 
 import (
 	"crypto/sha256"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -33,23 +35,45 @@ func TestArtifactScalarTemplateConsumesPrivateBuilderStorageExactlyOnce(t *testi
 
 // artifactScalarLawSpec fills one admissible builder and returns it together
 // with a copied handle that shares the same private state.
-func TestArtifactScalarTemplateAdmitsLocalPredecessorBackEdge(t *testing.T) {
-	spec := artifactScalarTwoPointRegion(t)
+func TestArtifactScalarTemplateAdmitsLocalPredecessorStage(t *testing.T) {
+	routeFrom, base, stage := artifactScalarLawID(4), artifactScalarLawID(7), artifactScalarLawID(8)
+	regionID, bodyID := artifactScalarLawID(5), artifactScalarLawID(6)
+	spec, specOK := NewArtifactScalarSpec(artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3), ArtifactScalarCapacity{
+		Roles: 1, Points: 3, Edges: 1, Regions: 1, Events: 5, Rules: 1, Bodies: 1,
+	})
+	if !specOK || spec == nil {
+		t.Fatal("local predecessor builder")
+	}
+	_, fromOK := spec.AddPoint(ArtifactScalarPoint{ID: routeFrom, Initial: true})
+	_, baseOK := spec.AddPoint(ArtifactScalarPoint{ID: base})
+	_, stageOK := spec.AddPoint(ArtifactScalarPoint{ID: stage})
+	region, regionOK := spec.AddRegion(ArtifactScalarRegion{ID: regionID, Head: routeFrom, Cyclic: true})
+	body, bodyOK := spec.AddBody(ArtifactScalarBody{ID: bodyID})
+	if !fromOK || !baseOK || !stageOK || !regionOK || !bodyOK ||
+		!spec.AddRegionMember(region, routeFrom) || !spec.AddRegionMember(region, base) || !spec.AddRegionMember(region, stage) ||
+		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventEnter, Region: regionID}) ||
+		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: routeFrom}) ||
+		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: base}) ||
+		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventPoint, Point: stage}) ||
+		!spec.AddEvent(ArtifactScalarEvent{Kind: ArtifactEventExit, Region: regionID}) ||
+		!spec.AddBodyEntry(body, routeFrom) || !spec.AddBodyExit(body, stage) {
+		t.Fatal("local predecessor geometry")
+	}
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
 		Role:  role,
 		Stage: ArtifactRuleStageLocal,
-		Point: artifactScalarLawID(4),
-		Input: artifactScalarLawID(7),
+		Point: stage,
+		Input: base,
 		ID:    artifactScalarLawID(21),
 		Route: artifactScalarLawID(22),
 	}) {
-		t.Fatal("local back-edge rule")
+		t.Fatal("local predecessor rule")
 	}
 	if _, edgeOK := spec.AddEdge(ArtifactScalarEdge{
 		ID:    artifactScalarLawID(23),
-		From:  artifactScalarLawID(7),
-		To:    artifactScalarLawID(4),
+		From:  routeFrom,
+		To:    base,
 		Route: artifactScalarLawID(22),
 		Arm:   ArtifactStructuralArmLocal,
 	}); !edgeOK {
@@ -57,7 +81,7 @@ func TestArtifactScalarTemplateAdmitsLocalPredecessorBackEdge(t *testing.T) {
 	}
 	template, ok := NewArtifactScalarTemplate(spec)
 	if !ok || template == nil || !template.Available() {
-		t.Fatal("local predecessor back-edge must seal")
+		t.Fatal("local predecessor stage must seal")
 	}
 }
 
@@ -69,7 +93,7 @@ func TestArtifactScalarTemplateRejectsCallStageBackEdge(t *testing.T) {
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
 		Role:  role,
-		Stage: ArtifactRuleStageCallDispatch,
+		Stage: ArtifactRuleStageIssued3,
 		Point: artifactScalarLawID(4),
 		Input: artifactScalarLawID(7),
 		ID:    artifactScalarLawID(21),
@@ -89,7 +113,7 @@ func TestArtifactScalarTemplateEnforcesDeclaredStagePredecessor(t *testing.T) {
 	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
 	if !roleOK || !spec.AddRule(ArtifactScalarRule{
 		Role:  role,
-		Stage: ArtifactRuleStageCallSummary,
+		Stage: ArtifactRuleStageIssued4,
 		Point: artifactScalarLawID(7),
 		Input: artifactScalarLawID(4),
 		ID:    artifactScalarLawID(21),
@@ -132,9 +156,9 @@ func artifactScalarTwoPointRegion(t testing.TB) *ArtifactScalarSpec {
 
 func artifactCallStageLaws() []ArtifactStageLaw {
 	return []ArtifactStageLaw{
-		{Stage: ArtifactRuleStageCallDispatch, Native: true},
-		{Stage: ArtifactRuleStageCallSummary, Native: true, Predecessor: ArtifactRuleStageCallDispatch},
-		{Stage: ArtifactRuleStageCallEffect, Native: true, Predecessor: ArtifactRuleStageCallSummary},
+		{Stage: ArtifactRuleStageIssued3, Native: true},
+		{Stage: ArtifactRuleStageIssued4, Native: true, Predecessor: ArtifactRuleStageIssued3},
+		{Stage: ArtifactRuleStageIssued5, Native: true, Predecessor: ArtifactRuleStageIssued4},
 	}
 }
 
@@ -164,4 +188,19 @@ func artifactScalarLawSpec(t testing.TB) (*ArtifactScalarSpec, *ArtifactScalarSp
 
 func artifactScalarLawID(value byte) identity.ContentID {
 	return identity.ContentID(sha256.Sum256([]byte{0xA5, value}))
+}
+
+// TestScalarRowsDoNotNameDomainCallStages is the rows floor: schema structure
+// owns Call spelling. This package carries opaque issued ordinals.
+func TestScalarRowsDoNotNameDomainCallStages(t *testing.T) {
+	src, err := os.ReadFile("scalar_rows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	for _, name := range []string{"CallDispatch", "CallSummary", "CallEffect"} {
+		if strings.Contains(body, name) {
+			t.Errorf("rows names domain Call stage %s", name)
+		}
+	}
 }

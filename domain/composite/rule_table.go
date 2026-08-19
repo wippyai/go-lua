@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch"
@@ -32,6 +33,7 @@ import (
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
 )
@@ -156,7 +158,7 @@ func (set authorities) ActivationCatalog() *callactivation.TargetBatchCatalog { 
 
 type (
 	declaration = rule.Declaration[principals]
-	template    = rule.Template[principals, authorities]
+	template    = rule.Template
 )
 
 // ruleTemplates is the authored analyzer rule inventory. Each row instantiates
@@ -166,39 +168,42 @@ type (
 // The declaration itself lives with the domain that owns the rule, so the
 // inventory here states membership and order alone: it never restates a
 // domain's hooks, and the surface record stays blind to every domain.
-func ruleTemplates() ([]*template, bool) {
+func ruleTemplates() ([]*template, []ruleContributor, bool) {
 	var admitted []*template
+	var contributors []ruleContributor
 	rejected := false
-	add := func(entry *template, ok bool) {
-		if !ok {
+	add := func(entry *template, contributor ruleContributor, ok bool) {
+		if !ok || !contributor.complete(entry.Lane()) {
 			rejected = true
 			return
 		}
 		admitted = append(admitted, entry)
+		contributors = append(contributors, contributor)
 	}
 
-	add(rule.New(valuesource.RuleEntry[principals, authorities]()))
-	add(rule.New(packsource.RuleEntry[principals, authorities]()))
-	add(rule.New(heapingress.RuleEntry[principals, authorities]()))
-	add(rule.New(valueallocation.RuleEntry[principals, authorities]()))
-	add(rule.New(heapempty.RuleEntry[principals, authorities]()))
-	add(rule.New(heapclosed.RuleEntry[principals, authorities]()))
-	add(rule.New(heapindex.RawGetEntry[principals, authorities]()))
-	add(rule.New(heapindex.RawSetEntry[principals, authorities]()))
-	add(rule.New(calldispatch.RuleEntry[principals, authorities]()))
-	add(rule.New(callsite.SelectedEntry[principals, authorities]()))
-	add(rule.New(callsite.OpaqueEntry[principals, authorities]()))
-	add(rule.New(callsite.BodyEntry[principals, authorities]()))
-	add(rule.New(callactivation.RuleEntry[principals, authorities]()))
-	add(rule.New(valuebootstrap.RuleEntry[principals, authorities]()))
-	add(rule.New(heapbootstrap.RuleEntry[principals, authorities]()))
-	add(rule.New(valuetransfer.RuleEntry[principals, authorities]()))
-	add(rule.New(valuearithmetic.RuleEntry[principals, authorities]()))
-	add(rule.New(valueequality.RuleEntry[principals, authorities]()))
-	add(rule.New(valueorder.RuleEntry[principals, authorities]()))
-	add(rule.New(valuerefinement.RuleEntry[principals, authorities]()))
+	add(wireRule(valuesource.RuleEntry[principals, authorities](), valuesource.DeclareRule[principals], valuesource.RegisterRule, nil, valuesource.BindRule[authorities], nil, nil))
+	add(wireRule(packsource.RuleEntry[principals, authorities](), packsource.DeclareRule[principals], packsource.RegisterRule, nil, packsource.BindRule[authorities], packsource.FinalizeRule[authorities], nil))
+	add(wireRule(heapingress.RuleEntry[principals, authorities](), heapingress.DeclareRule[principals], heapingress.RegisterRule, nil, heapingress.BindRule[authorities], heapingress.FinalizeRule[authorities], nil))
+	add(wireRule(valueallocation.RuleEntry[principals, authorities](), valueallocation.DeclareRule[principals], valueallocation.RegisterRule, nil, valueallocation.BindRule[authorities], nil, nil))
+	add(wireRule(heapempty.RuleEntry[principals, authorities](), heapempty.DeclareRule[principals], heapempty.RegisterRule, nil, heapempty.BindRule[authorities], nil, nil))
+	add(wireRule(heapclosed.RuleEntry[principals, authorities](), heapclosed.DeclareRule[principals], heapclosed.RegisterRule, nil, heapclosed.BindRule[authorities], nil, nil))
+	add(wireRule(heapindex.RawGetEntry[principals, authorities](), heapindex.DeclareRawGet[principals], heapindex.RegisterRawGet, nil, heapindex.BindRawGet[authorities], nil, nil))
+	add(wireRule(heapindex.RawSetEntry[principals, authorities](), heapindex.DeclareRawSet[principals], heapindex.RegisterRawSet, nil, heapindex.BindRawSet[authorities], nil, nil))
+	add(wireRule(calldispatch.RuleEntry[principals, authorities](), calldispatch.DeclareRule[principals], calldispatch.RegisterRule, nil, calldispatch.BindRule[authorities], calldispatch.FinalizeRule[authorities], nil))
+	add(wireRule(callsite.SelectedEntry[principals, authorities](), callsite.DeclareSelected[principals], callsite.RegisterSelected, nil, callsite.BindSelected[authorities], callsite.FinalizeSelected[authorities], nil))
+	add(wireRule(callsite.OpaqueEntry[principals, authorities](), callsite.DeclareOpaque[principals], callsite.RegisterOpaque, nil, callsite.BindOpaque[authorities], callsite.FinalizeOpaque[authorities], nil))
+	add(wireRule(callsite.BodyEntry[principals, authorities](), callsite.DeclareBody[principals], callsite.RegisterBody, nil, callsite.BindBody[authorities], callsite.FinalizeBody[authorities], nil))
+	add(wireRule(callactivation.RuleEntry[principals, authorities](), callactivation.DeclareRule[principals], callactivation.RegisterRule, nil, callactivation.BindRule[authorities], callactivation.FinalizeRule[authorities], nil))
+	add(wireRule(valueruntimekind.RuleEntry[principals, authorities](), valueruntimekind.DeclareRule[principals], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[authorities], nil, nil))
+	add(wireRule(valuebootstrap.RuleEntry[principals, authorities](), valuebootstrap.DeclareRule[principals], valuebootstrap.RegisterRule, nil, valuebootstrap.BindRule[authorities], valuebootstrap.FinalizeRule[authorities], valuebootstrap.LinkCatalog))
+	add(wireRule(heapbootstrap.RuleEntry[principals, authorities](), heapbootstrap.DeclareRule[principals], heapbootstrap.RegisterRule, heapbootstrap.PairRule, heapbootstrap.BindRule[authorities], heapbootstrap.FinalizeRule[authorities], heapbootstrap.LinkCatalog))
+	add(wireRule(valuetransfer.RuleEntry[principals, authorities](), valuetransfer.DeclareRule[principals], valuetransfer.RegisterRule, nil, valuetransfer.BindRule[authorities], nil, nil))
+	add(wireRule(valuearithmetic.RuleEntry[principals, authorities](), valuearithmetic.DeclareRule[principals], valuearithmetic.RegisterRule, nil, valuearithmetic.BindRule[authorities], nil, nil))
+	add(wireRule(valueequality.RuleEntry[principals, authorities](), valueequality.DeclareRule[principals], valueequality.RegisterRule, nil, valueequality.BindRule[authorities], nil, nil))
+	add(wireRule(valueorder.RuleEntry[principals, authorities](), valueorder.DeclareRule[principals], valueorder.RegisterRule, nil, valueorder.BindRule[authorities], nil, nil))
+	add(wireRule(valuerefinement.RuleEntry[principals, authorities](), valuerefinement.DeclareRule[principals], valuerefinement.RegisterRule, nil, valuerefinement.BindRule[authorities], nil, nil))
 
-	return admitted, !rejected && len(admitted) > 0
+	return admitted, contributors, !rejected && len(admitted) > 0
 }
 
 // LinkInputs is the neutral set of Link inputs one mount and binding
@@ -226,6 +231,11 @@ type LinkInputs struct {
 	HeapSchema    heapdomain.Schema
 	PackSchema    *packdomain.Schema
 	EffectAlgebra *effectfactor.Algebra
+
+	// vocabulary is the one sealed structural table every domain mount reads
+	// through its own need interface. It is composition input, not a published
+	// domain registry and not a second runtime-kind list.
+	vocabulary structure.Table
 
 	// topology and activation are the mount phase's own post-mount derivations.
 	// Each is a derivation over several sealed factors at once, so neither is any
@@ -256,7 +266,7 @@ func (inputs LinkInputs) mountable() bool {
 // authorities its declared dependencies sealed, so an axis that reads a peer it
 // did not declare an edge to reads nothing and rejects with its own evidence.
 func (inputs LinkInputs) neutral() LinkInputs {
-	return LinkInputs{Source: inputs.Source, Artifacts: inputs.Artifacts, StaticAuthority: inputs.StaticAuthority}
+	return LinkInputs{Source: inputs.Source, Artifacts: inputs.Artifacts, StaticAuthority: inputs.StaticAuthority, vocabulary: inputs.vocabulary}
 }
 
 func (inputs LinkInputs) available() bool {
@@ -291,6 +301,8 @@ func (inputs LinkInputs) ValueInput() *valuedomain.Schema { return inputs.ValueS
 func (inputs LinkInputs) CallInput() *calldomain.Algebra { return inputs.CallAlgebra }
 
 func (inputs LinkInputs) HeapInput() heapdomain.Schema { return inputs.HeapSchema }
+
+func (inputs LinkInputs) StructureInput() structure.Table { return inputs.vocabulary }
 
 func (inputs LinkInputs) PackInput() *packdomain.Schema { return inputs.PackSchema }
 

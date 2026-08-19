@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 func localReadFixture(t *testing.T) *checkFixture {
@@ -38,8 +40,8 @@ func localReadFixture(t *testing.T) *checkFixture {
 			Calls: []authored.Call{{Owner: body, Callee: read, Actuals: actuals}},
 		},
 		static: static.Input{
-			Contracts: static.ContractsInput{Call: []static.CallContract{{}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: call, Operand: staticRead}}},
+			Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: call, Operand: staticRead}}},
 		},
 	})
 }

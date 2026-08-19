@@ -8,8 +8,9 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Version 22 carries the complete neutral type-contract declaration for each
+// Version 23 carries the complete neutral type-contract declaration for each
 // frozen type row, including primitive identity and external formal scope.
+// It also carries the opaque operation behavior result/predicate rows.
 // Version 21 adds explicit publication-effect presence and typed descriptor
 // bytes to each effect row. A target identity from any preceding layout must
 // never be reused for a contract with publication semantics.
@@ -20,7 +21,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 22
+const contentIDCodecVersion = 23
 
 // ContentID derives the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -85,6 +86,13 @@ const (
 	recordOperationSubedgeRelation
 )
 
+func encodeCoordinate(w *framing.Writer, kind, ordinal uint64) error {
+	if err := w.Uint(kind); err != nil {
+		return err
+	}
+	return w.Uint(ordinal)
+}
+
 func encodeContractCanonical(dst interface{ Write([]byte) (int, error) }, c *Contract) error {
 	var w framing.Writer
 	if err := w.Reset(dst, "program/target-contract", contentIDCodecVersion); err != nil {
@@ -116,20 +124,13 @@ func encodeContract(w *framing.Writer, c *Contract) error {
 			return err
 		}
 	}
-	protocols := c.protocolCount()
-	if err := w.Count(uint64(protocols)); err != nil {
+	if err := w.Count(uint64(c.protocols.ProtocolCount())); err != nil {
 		return err
 	}
-	for index := 0; index < protocols; index++ {
-		protocol, ok := c.protocolAt(index)
-		if !ok {
-			return errors.New("target: malformed protocol table")
-		}
-		if err := encodeProtocol(w, c, protocol); err != nil {
-			return err
-		}
+	if err := c.protocols.Encode(w); err != nil {
+		return err
 	}
-	if err := encodeBoot(w, c); err != nil {
+	if err := c.Table.Encode(w, c.exactKeys); err != nil {
 		return err
 	}
 	return nil

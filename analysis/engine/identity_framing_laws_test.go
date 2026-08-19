@@ -67,9 +67,9 @@ func TestSummaryVectorDigestSeparatesKeyWidthAndDomain(t *testing.T) {
 // one digest carrying three version labels.
 func TestArtifactSourceDomainsDigestDistinctly(t *testing.T) {
 	id := framingLawContentID(0x31)
-	point, pointOK := artifactReceiptKey(artifactPointSource, id)
-	edge, edgeOK := artifactReceiptKey(artifactEdgeSource, id)
-	occurrence, occurrenceOK := artifactReceiptKey(artifactOccurrenceSource, id)
+	point, pointOK := artifactSourceKey(artifactPointSource, id)
+	edge, edgeOK := artifactSourceKey(artifactEdgeSource, id)
+	occurrence, occurrenceOK := artifactSourceKey(artifactOccurrenceSource, id)
 	if !pointOK || !edgeOK || !occurrenceOK {
 		t.Fatal("artifact source key derivation rejected an available identity")
 	}
@@ -79,7 +79,7 @@ func TestArtifactSourceDomainsDigestDistinctly(t *testing.T) {
 	if point.ID == composition.ID(id) {
 		t.Fatal("an artifact source key reuses the content identity as its own digest")
 	}
-	if _, ok := artifactReceiptKey(artifactPointSource, identity.ContentID{}); ok {
+	if _, ok := artifactSourceKey(artifactPointSource, identity.ContentID{}); ok {
 		t.Fatal("an unavailable content identity produced an artifact source key")
 	}
 }

@@ -16,61 +16,58 @@ type unaryFrame struct {
 }
 
 func (w *Work) notNode(root Guard) Guard {
-	if result, done := w.notResult(root, nil); done {
+	if result, done := w.notResult(root); done {
 		return result
 	}
 	if w.not == nil {
-		w.not = make(map[Guard]Guard)
+		w.not = make(map[nodeKey]Guard)
 	}
-	resolved := make(map[Guard]Guard)
-	stack := []unaryFrame{{guard: root}}
-	for len(stack) != 0 {
+	w.notStack = append(w.notStack[:0], unaryFrame{guard: root})
+	for len(w.notStack) != 0 {
 		if !w.Live() {
 			return Guard{}
 		}
-		frame := &stack[len(stack)-1]
-		if _, done := w.notResult(frame.guard, resolved); done {
-			stack = stack[:len(stack)-1]
+		frame := &w.notStack[len(w.notStack)-1]
+		if _, done := w.notResult(frame.guard); done {
+			w.notStack = w.notStack[:len(w.notStack)-1]
 			continue
 		}
 		n := w.node(frame.guard)
 		switch frame.phase {
 		case 0:
 			frame.phase = 1
-			if _, done := w.notResult(n.low, resolved); !done {
-				stack = append(stack, unaryFrame{guard: n.low})
+			if _, done := w.notResult(n.low); !done {
+				w.notStack = append(w.notStack, unaryFrame{guard: n.low})
 			}
 		case 1:
 			frame.phase = 2
-			if _, done := w.notResult(n.high, resolved); !done {
-				stack = append(stack, unaryFrame{guard: n.high})
+			if _, done := w.notResult(n.high); !done {
+				w.notStack = append(w.notStack, unaryFrame{guard: n.high})
 			}
 		default:
-			low, _ := w.notResult(n.low, resolved)
-			high, _ := w.notResult(n.high, resolved)
+			low, _ := w.notResult(n.low)
+			high, _ := w.notResult(n.high)
 			result := w.makeNode(n.rank, low, high)
-			w.not[frame.guard] = result
-			w.not[result] = frame.guard
-			resolved[frame.guard] = result
-			stack = stack[:len(stack)-1]
+			w.not[keyOf(frame.guard)] = result
+			// notResult handles terminals directly, so retaining a terminal
+			// reverse entry only adds a large key with no lookup benefit.
+			if !isTerminal(result) {
+				w.not[keyOf(result)] = frame.guard
+			}
+			w.notStack = w.notStack[:len(w.notStack)-1]
 		}
 	}
-	return resolved[root]
+	return w.not[keyOf(root)]
 }
 
-func (w *Work) notResult(g Guard, resolved map[Guard]Guard) (Guard, bool) {
+func (w *Work) notResult(g Guard) (Guard, bool) {
 	if isTerminal(g) {
 		if terminalValue(g) {
 			return w.manager.False(), true
 		}
 		return w.manager.True(), true
 	}
-	if resolved != nil {
-		if result, exists := resolved[g]; exists {
-			return result, true
-		}
-	}
-	result, exists := w.not[g]
+	result, exists := w.not[keyOf(g)]
 	return result, exists
 }
 
@@ -108,58 +105,51 @@ func (w *Work) applyNode(operation operation, left, right Guard) Guard {
 	if !w.Live() {
 		return Guard{}
 	}
-	if result, done := w.applyResult(operation, left, right, nil); done {
+	if result, done := w.applyResult(operation, left, right); done {
 		return result
 	}
 	if w.applyCache == nil {
 		w.applyCache = make(map[applyKey]Guard)
 	}
-	resolved := make(map[applyKey]Guard)
-	stack := []applyFrame{{operation: operation, left: left, right: right}}
-	for len(stack) != 0 {
+	w.applyStack = append(w.applyStack[:0], applyFrame{operation: operation, left: left, right: right})
+	for len(w.applyStack) != 0 {
 		if !w.Live() {
 			return Guard{}
 		}
-		frame := &stack[len(stack)-1]
-		if _, done := w.applyResult(frame.operation, frame.left, frame.right, resolved); done {
-			stack = stack[:len(stack)-1]
+		frame := &w.applyStack[len(w.applyStack)-1]
+		if _, done := w.applyResult(frame.operation, frame.left, frame.right); done {
+			w.applyStack = w.applyStack[:len(w.applyStack)-1]
 			continue
 		}
 		switch frame.phase {
 		case 0:
 			frame.rank, frame.lowLeft, frame.lowRight, frame.highLeft, frame.highRight = w.applyChildren(frame.left, frame.right)
 			frame.phase = 1
-			if _, done := w.applyResult(frame.operation, frame.lowLeft, frame.lowRight, resolved); !done {
-				stack = append(stack, applyFrame{operation: frame.operation, left: frame.lowLeft, right: frame.lowRight})
+			if _, done := w.applyResult(frame.operation, frame.lowLeft, frame.lowRight); !done {
+				w.applyStack = append(w.applyStack, applyFrame{operation: frame.operation, left: frame.lowLeft, right: frame.lowRight})
 			}
 		case 1:
 			frame.phase = 2
-			if _, done := w.applyResult(frame.operation, frame.highLeft, frame.highRight, resolved); !done {
-				stack = append(stack, applyFrame{operation: frame.operation, left: frame.highLeft, right: frame.highRight})
+			if _, done := w.applyResult(frame.operation, frame.highLeft, frame.highRight); !done {
+				w.applyStack = append(w.applyStack, applyFrame{operation: frame.operation, left: frame.highLeft, right: frame.highRight})
 			}
 		default:
-			low, _ := w.applyResult(frame.operation, frame.lowLeft, frame.lowRight, resolved)
-			high, _ := w.applyResult(frame.operation, frame.highLeft, frame.highRight, resolved)
-			key := applyKey{operation: frame.operation, left: frame.left, right: frame.right}
-			result := w.makeNode(frame.rank, low, high)
+			low, _ := w.applyResult(frame.operation, frame.lowLeft, frame.lowRight)
+			high, _ := w.applyResult(frame.operation, frame.highLeft, frame.highRight)
+			key := applyKey{operation: frame.operation, left: keyOf(frame.left), right: keyOf(frame.right)}
+			result := w.nodeOrExisting(frame.rank, low, high, frame.left, frame.right)
 			w.applyCache[key] = result
-			resolved[key] = result
-			stack = stack[:len(stack)-1]
+			w.applyStack = w.applyStack[:len(w.applyStack)-1]
 		}
 	}
-	return resolved[applyKey{operation: operation, left: left, right: right}]
+	return w.applyCache[applyKey{operation: operation, left: keyOf(left), right: keyOf(right)}]
 }
 
-func (w *Work) applyResult(operation operation, left, right Guard, resolved map[applyKey]Guard) (Guard, bool) {
+func (w *Work) applyResult(operation operation, left, right Guard) (Guard, bool) {
 	if result, done := terminalApply(w.manager, operation, left, right); done {
 		return result, true
 	}
-	key := applyKey{operation: operation, left: left, right: right}
-	if resolved != nil {
-		if result, exists := resolved[key]; exists {
-			return result, true
-		}
-	}
+	key := applyKey{operation: operation, left: keyOf(left), right: keyOf(right)}
 	result, exists := w.applyCache[key]
 	return result, exists
 }

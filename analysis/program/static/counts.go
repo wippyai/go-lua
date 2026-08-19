@@ -33,9 +33,9 @@ func CountRows(view View) (denominator.CountRows, error) {
 	}{
 		{ids.ProgramStatic, component.StaticTypeTermCount()},
 		{ids.ProgramStaticFunctionContract, int(component.census[keyspace.FamilyFunction])},
-		{ids.ProgramStaticCallTypeArguments, int(component.contracts.callTypeArguments)},
+		{ids.ProgramStaticCallTypeArguments, component.contracts.CallTypeArgumentWidth()},
 		{ids.ProgramStaticCellDeclaredType, int(component.census[keyspace.FamilyDeclaredType])},
-		{ids.ProgramStaticClaimTarget, len(component.operands.claims)},
+		{ids.ProgramStaticClaimTarget, component.operands.ClaimCount()},
 		{ids.ProgramStaticTypeValueTarget, int(component.census[keyspace.FamilyTypeValue])},
 		{ids.ProgramStaticTypeof, int(component.census[keyspace.FamilyTypeOf])},
 		{ids.ProgramStaticAnnotation, int(component.census[keyspace.FamilyAnnotation])},

@@ -67,6 +67,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 			subedgeRelations++
 		}
 	}
+	protocolCounts := c.protocols.Counts()
+	bootCounts := c.Table.Counts()
 
 	ok := put(ids.TargetContract, 1) &&
 		put(ids.TargetOpaque, 1) &&
@@ -94,17 +96,17 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		put(ids.TargetResumeOutcome, len(c.resumes)*crossActivationOutcomes) &&
 		put(ids.TargetTransfer, len(c.transfers)) &&
 		put(ids.TargetTransferOutcome, len(c.transferOutcomes)) &&
-		put(ids.TargetProtocol, len(c.protocols)) &&
-		put(ids.TargetProtocolState, len(c.states)) &&
-		put(ids.TargetProtocolAcquisition, len(c.acquisitions)) &&
-		put(ids.TargetProtocolTransition, len(c.transitions)) &&
-		put(ids.TargetProtocolTransitionOutcome, len(c.transitionOutcomes)) &&
-		put(ids.TargetProtocolEscape, len(c.escapes)+len(c.protocols)*derivedProtocolEscapes) &&
-		put(ids.TargetProtocolCallbackHolder, len(c.callbackHolders)) &&
-		put(ids.TargetBoot, len(c.initialRoots)) &&
-		put(ids.TargetBootEntry, len(c.initialEntries)) &&
-		put(ids.TargetBootMetatableAttachment, len(c.initialMetatables)) &&
-		put(ids.TargetBootBinding, len(c.initialBindings))
+		put(ids.TargetProtocol, protocolCounts.Protocols) &&
+		put(ids.TargetProtocolState, protocolCounts.States) &&
+		put(ids.TargetProtocolAcquisition, protocolCounts.Acquisitions) &&
+		put(ids.TargetProtocolTransition, protocolCounts.Transitions) &&
+		put(ids.TargetProtocolTransitionOutcome, protocolCounts.TransitionOutcomes) &&
+		put(ids.TargetProtocolEscape, protocolCounts.Escapes) &&
+		put(ids.TargetProtocolCallbackHolder, protocolCounts.CallbackHolders) &&
+		put(ids.TargetBoot, bootCounts.Roots) &&
+		put(ids.TargetBootEntry, bootCounts.Entries) &&
+		put(ids.TargetBootMetatableAttachment, bootCounts.MetatableAttachments) &&
+		put(ids.TargetBootBinding, bootCounts.Bindings)
 	if !ok {
 		return denominator.CountRows{}, errCountRows
 	}
@@ -118,29 +120,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		rows = append(rows, row)
 	}
 	sealed, ok := denominator.NewCountRows(rows)
-	if !ok {
+	if !ok || !denominator.GeneratedCountRowsCompleteForOwners(sealed, denominator.RelationOwnerTarget) {
 		return denominator.CountRows{}, errCountRows
-	}
-	expected := make(map[schema.EntryID]struct{})
-	for _, entry := range denominator.GeneratedRelationEntries() {
-		if entry == nil {
-			return denominator.CountRows{}, errCountRows
-		}
-		if entry.Owner() == denominator.RelationOwnerTarget {
-			expected[entry.ID()] = struct{}{}
-		}
-	}
-	if len(expected) == 0 || sealed.Count() != len(expected) {
-		return denominator.CountRows{}, errCountRows
-	}
-	for index := 0; index < sealed.Count(); index++ {
-		row, rowOK := sealed.At(index)
-		if !rowOK {
-			return denominator.CountRows{}, errCountRows
-		}
-		if _, known := expected[row.ID()]; !known {
-			return denominator.CountRows{}, errCountRows
-		}
 	}
 	return sealed, nil
 }

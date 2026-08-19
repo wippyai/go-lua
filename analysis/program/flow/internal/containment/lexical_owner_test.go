@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 func TestProveUsesLexicalBodyParentNotConstructHost(t *testing.T) {
@@ -31,7 +32,7 @@ func TestProveUsesLexicalBodyParentNotConstructHost(t *testing.T) {
 		Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
 	}
 	staticInput := static.Input{
-		Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+		Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 	}
 	fixture := newProofFixture(t, proofSpec{
 		counts: counts,

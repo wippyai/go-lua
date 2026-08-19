@@ -155,7 +155,7 @@ func TestRealActivationRevisionCompletesOverTheSupersededProgram(t *testing.T) {
 	superseded := solver.relation
 
 	body, bodyOK := fixture.graph.lookupPoint(fixture.bodyID)
-	bodyIndex, bodyIndexed := graph.PointIndex(body.point)
+	bodyIndex, bodyIndexed := graph.PointIndex(body)
 	if !bodyOK || !bodyIndexed || bodyIndex < 0 || bodyIndex >= len(runtime.activePoints) || runtime.activePoints[bodyIndex] {
 		t.Fatal("the fixture does not start with an undemanded body")
 	}

@@ -176,17 +176,20 @@ func GeneratedCountRowsCompleteForOwners(rows CountRows, owners ...RelationOwner
 		selected[owner] = struct{}{}
 	}
 	expected := make(map[schema.EntryID]struct{})
-	for _, entry := range GeneratedRelationEntries() {
-		if entry == nil || !entry.EntryAvailable() {
+	for owner := range selected {
+		ids := generatedOwnerIDs(owner)
+		if len(ids) == 0 {
 			return false
 		}
-		if _, selected := selected[entry.Owner()]; !selected {
-			continue
+		for _, id := range ids {
+			if !id.Available() {
+				return false
+			}
+			if _, duplicate := expected[id]; duplicate {
+				return false
+			}
+			expected[id] = struct{}{}
 		}
-		if _, duplicate := expected[entry.ID()]; duplicate {
-			return false
-		}
-		expected[entry.ID()] = struct{}{}
 	}
 	if len(expected) == 0 || rows.Count() != len(expected) {
 		return false

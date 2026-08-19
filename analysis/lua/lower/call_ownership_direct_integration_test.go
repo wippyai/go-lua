@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 var (
@@ -273,11 +273,11 @@ return apply::<string>(1), receiver:apply::<integer>(2)`)
 		t.Fatalf("CallCount = %d, want 2", calls.Count())
 	}
 	for index, want := range []struct {
-		primitive static.PrimitiveKind
+		primitive statictypes.PrimitiveKind
 		method    bool
 	}{
-		{primitive: static.PrimitiveString},
-		{primitive: static.PrimitiveInteger, method: true},
+		{primitive: statictypes.PrimitiveString},
+		{primitive: statictypes.PrimitiveInteger, method: true},
 	} {
 		call, ok := calls.At(index)
 		if !ok {

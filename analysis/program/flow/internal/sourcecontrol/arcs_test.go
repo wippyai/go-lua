@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestSemanticStructuralTransitionsBindAssignCallReturn(t *testing.T) {
@@ -498,8 +500,8 @@ func TestSemanticStaticRootExcludedWithoutAdvancingCursor(t *testing.T) {
 		rows:   [][]keyspace.Term{{alias, bind}},
 		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveString}}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{Owner: body, Target: primitive, Name: 1, NameCoordinate: aliasCoordinate}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveString}}},
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{Owner: body, Target: primitive, Name: 1, NameCoordinate: aliasCoordinate}}},
 		},
 		flow: authored.Input{
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body}}},

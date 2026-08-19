@@ -165,12 +165,19 @@ func receiptFailure(family SolveFailureFamily, authority string, ordinals ...uin
 	return SolveFailure{Family: family, Disposition: schema.DispositionMalformed, Site: site}
 }
 
-// ReceiptCompilationAttachFailure mints the compile-family boundary for one
+// receiptCompilationAttachFailure mints the compile-family boundary for one
 // ordered runtime attach phase of a receipt compilation. The phase ordinal is
 // the caller's own attach order and enters the site preimage, so two phases
 // never share an identity while the public vocabulary stays the family.
-func ReceiptCompilationAttachFailure(phase uint64) SolveFailure {
+func receiptCompilationAttachFailure(phase uint64) SolveFailure {
 	return receiptFailure(SolveFailureFamilyCompile, "receipt-compilation-attach", phase)
+}
+
+// ProgramAttachFailure is the construction-plane mint for one first-
+// construction attach phase. The site identity is the compile-family attach
+// boundary; callers do not name the receipt factory.
+func ProgramAttachFailure(phase uint64) SolveFailure {
+	return receiptCompilationAttachFailure(phase)
 }
 
 // ProgramConstructionStage names one refusal boundary of the program

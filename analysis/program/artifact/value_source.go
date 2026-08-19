@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 type valueSourceCompileRow struct {
@@ -136,10 +137,10 @@ func (compiler *compiler) typeValueCompileRow(index int) (valueSourceCompileRow,
 func staticTypeValueName(input *program.Program, target keyspace.Term) (string, bool) {
 	view := input.Static()
 	if primitive, ok := view.Types().Primitives().Get(target); ok {
-		name := map[programstatic.PrimitiveKind]string{
-			programstatic.PrimitiveNil: "nil", programstatic.PrimitiveBoolean: "boolean", programstatic.PrimitiveNumber: "number",
-			programstatic.PrimitiveInteger: "integer", programstatic.PrimitiveString: "string", programstatic.PrimitiveAny: "any",
-			programstatic.PrimitiveUnknown: "unknown", programstatic.PrimitiveNever: "never",
+		name := map[statictypes.PrimitiveKind]string{
+			statictypes.PrimitiveNil: "nil", statictypes.PrimitiveBoolean: "boolean", statictypes.PrimitiveNumber: "number",
+			statictypes.PrimitiveInteger: "integer", statictypes.PrimitiveString: "string", statictypes.PrimitiveAny: "any",
+			statictypes.PrimitiveUnknown: "unknown", statictypes.PrimitiveNever: "never",
 		}[primitive]
 		return name, name != ""
 	}

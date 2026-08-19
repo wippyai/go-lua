@@ -102,9 +102,9 @@ func SealExecutionRoots(mounts []Mount) (ExecutionRoots, bool) {
 		if !demandedOK {
 			return ExecutionRoots{}, false
 		}
-		for index := 0; index < mount.Artifact.PointCount(); index++ {
-			point, ok := mount.Artifact.PointAt(index)
-			if !ok || !point.Available() || !point.ID().Available() {
+		for index := 0; index < mount.Snapshot.PointCount(); index++ {
+			point, ok := mount.Snapshot.PointAt(index)
+			if !ok || !point.ID().Available() {
 				return ExecutionRoots{}, false
 			}
 			if _, seeded := demanded[point.ID()]; !seeded {
@@ -133,17 +133,17 @@ func SealExecutionRoots(mounts []Mount) (ExecutionRoots, bool) {
 // mount that carries no root at all is not an executable placement.
 func rootBodyEntries(mount Mount) (map[identity.ContentID][]identity.ContentID, bool) {
 	entriesByBody := make(map[identity.ContentID][]identity.ContentID)
-	for index := 0; index < mount.Artifact.BodyCount(); index++ {
-		body, bodyOK := mount.Artifact.BodyAt(index)
-		if !bodyOK || !body.Available() || !body.ID().Available() {
+	for index := 0; index < mount.Snapshot.BodyCount(); index++ {
+		body, bodyOK := mount.Snapshot.BodyAt(index)
+		if !bodyOK || !body.ID().Available() {
 			return nil, false
 		}
 		if body.Callable() {
 			continue
 		}
-		entries := make([]identity.ContentID, body.EntryPointCount())
+		entries := make([]identity.ContentID, body.EntryCount())
 		for entryIndex := range entries {
-			entry, entryOK := body.EntryPointAt(entryIndex)
+			entry, entryOK := body.EntryAt(entryIndex)
 			if !entryOK || !entry.Available() {
 				return nil, false
 			}
@@ -172,19 +172,19 @@ func rootBodyEntries(mount Mount) (map[identity.ContentID][]identity.ContentID, 
 // carrying such a point leaves the root with nothing to observe, so the entry
 // anchor below still owes it one seed.
 func rootDemandedPoints(mount Mount, entriesByBody map[identity.ContentID][]identity.ContentID) (map[identity.ContentID]struct{}, bool) {
-	placed := make(map[identity.ContentID]struct{}, mount.Artifact.PointCount())
-	for index := 0; index < mount.Artifact.PointCount(); index++ {
-		point, ok := mount.Artifact.PointAt(index)
-		if !ok || !point.Available() || !point.ID().Available() {
+	placed := make(map[identity.ContentID]struct{}, mount.Snapshot.PointCount())
+	for index := 0; index < mount.Snapshot.PointCount(); index++ {
+		point, ok := mount.Snapshot.PointAt(index)
+		if !ok || !point.ID().Available() {
 			return nil, false
 		}
 		placed[point.ID()] = struct{}{}
 	}
 	demanded := make(map[identity.ContentID]struct{})
 	occupied := make(map[identity.ContentID]struct{}, len(entriesByBody))
-	for index := 0; index < mount.Artifact.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := mount.Artifact.OccurrenceAt(index)
-		if !occurrenceOK || !occurrence.Available() {
+	for index := 0; index < mount.Snapshot.OccurrenceCount(); index++ {
+		occurrence, occurrenceOK := mount.Snapshot.OccurrenceAt(index)
+		if !occurrenceOK || !occurrence.ID().Available() {
 			return nil, false
 		}
 		body, bodyOK := occurrence.BodyID()

@@ -7,6 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
@@ -28,8 +31,8 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 			Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}}, Binds: []authored.Bind{{Owner: body, Values: values}},
 		}},
 		static: static.Input{
-			Types:      static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Signatures: static.SignaturesInput{TypeFunction: []static.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
+			Types:      statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Signatures: staticsig.Input{TypeFunction: []staticsig.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
 		},
 	})
 	second := newCheckFixture(t, checkSpec{
@@ -39,8 +42,8 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 			Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}}, Binds: []authored.Bind{{Owner: body, Values: values}},
 		}},
 		static: static.Input{
-			Types:      static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveString}}},
-			Signatures: static.SignaturesInput{TypeFunction: []static.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
+			Types:      statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveString}}},
+			Signatures: staticsig.Input{TypeFunction: []staticsig.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
 		},
 	})
 	if _, err := Validate(
@@ -128,9 +131,9 @@ func TestStaticCheckRejectsEveryForeignIdentitySubstitution(t *testing.T) {
 				Calls: []authored.Call{{Owner: body, Callee: read, Actuals: actuals}, {Owner: body, Callee: read2, Actuals: other}},
 			},
 			static: static.Input{
-				Types:      static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-				Signatures: static.SignaturesInput{TypeFunction: []static.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
-				Contracts:  static.ContractsInput{Call: []static.CallContract{{}, {}}},
+				Types:      statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+				Signatures: staticsig.Input{TypeFunction: []staticsig.TypeFunction{{Scope: cell, ReturnsKnown: true, Returns: []keyspace.Term{primitive}}}},
+				Contracts:  staticcontracts.Input{Call: []staticcontracts.CallContract{{}, {}}},
 			},
 		}
 	}

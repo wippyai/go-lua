@@ -15,8 +15,8 @@ func TestExecutableRootCatalogIsExplicitlyEmptyForNoExecutableRoots(t *testing.T
 	if !ok || !roots.Available() {
 		t.Fatal("ExecutableRoots did not publish an explicit empty catalog")
 	}
-	if roots.Count() != 0 || body.ExecutableRootCount() != 0 {
-		t.Fatalf("empty executable catalog counts = %d/%d", roots.Count(), body.ExecutableRootCount())
+	if roots.Count() != 0 {
+		t.Fatalf("empty executable catalog count = %d", roots.Count())
 	}
 	if published.OwnsExecutableRoots(roots) == false {
 		t.Fatal("Program rejected its own empty executable-root catalog")
@@ -24,7 +24,7 @@ func TestExecutableRootCatalogIsExplicitlyEmptyForNoExecutableRoots(t *testing.T
 	if _, ok := roots.At(0); ok {
 		t.Fatal("ExecutableRootAt accepted an out-of-range row")
 	}
-	if _, ok := body.ExecutableRootAt(-1); ok {
+	if _, ok := roots.At(-1); ok {
 		t.Fatal("ExecutableRootAt accepted a negative index")
 	}
 }

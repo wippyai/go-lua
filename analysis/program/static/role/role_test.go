@@ -1,8 +1,9 @@
 package role
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestNodeScopeAndTargetFamiliesRejectForeignOrdinals(t *testing.T) {

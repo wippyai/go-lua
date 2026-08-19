@@ -6,42 +6,44 @@ import (
 )
 
 func artifactID(artifact *Artifact) identity.ContentID {
-	fields := append([]field{bytesField(artifact.key.ID())}, artifact.key.identityFields()...)
-	fields = append(fields, uintField(uint64(artifact.counts.Count())))
+	sink := newDigestSink(artifactIDDomain, artifactFormat)
+	sink.add(bytesField(artifact.key.ID()))
+	sink.add(artifact.key.identityFields()...)
+	sink.add(uintField(uint64(artifact.counts.Count())))
 	for index := 0; index < artifact.counts.Count(); index++ {
 		row, ok := artifact.counts.At(index)
 		if !ok {
 			return identity.ContentID{}
 		}
-		fields = append(fields, bytesField(identity.ContentID(row.ID())), uintField(row.Count()))
+		sink.add(bytesField(identity.ContentID(row.ID())), uintField(row.Count()))
 	}
-	fields = append(fields, uintField(pointGeometryLawVersion))
-	fields = append(fields, uintField(pointAttachmentLawVersion))
-	fields = append(fields, uintField(uint64(len(artifact.points))))
+	sink.add(uintField(pointGeometryLawVersion))
+	sink.add(uintField(pointAttachmentLawVersion))
+	sink.add(uintField(uint64(len(artifact.points))))
 	for _, point := range artifact.points {
-		fields = append(fields, bytesField(point.id), boolField(point.initial), uintField(uint64(len(point.decisions))))
+		sink.add(bytesField(point.id), boolField(point.initial), uintField(uint64(len(point.decisions))))
 		for _, decision := range point.decisions {
-			fields = append(fields, bytesField(decision))
+			sink.add(bytesField(decision))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.pointAttachments))))
+	sink.add(uintField(uint64(len(artifact.pointAttachments))))
 	for _, row := range artifact.pointAttachments {
-		fields = append(fields, bytesField(row.site), bytesField(row.point))
+		sink.add(bytesField(row.site), bytesField(row.point))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.values))))
+	sink.add(uintField(uint64(len(artifact.values))))
 	for _, row := range artifact.values {
-		fields = append(fields, bytesField(row.id), bytesField(row.body), uintField(uint64(len(row.members))))
+		sink.add(bytesField(row.id), bytesField(row.body), uintField(uint64(len(row.members))))
 		for _, member := range row.members {
-			fields = append(fields, bytesField(member.id))
+			sink.add(bytesField(member.id))
 		}
-		fields = append(fields, boolField(row.tail.present), uintField(uint64(row.tail.kind)), bytesField(row.tail.id))
+		sink.add(boolField(row.tail.present), uintField(uint64(row.tail.kind)), bytesField(row.tail.id))
 	}
 	// Calls are an Artifact-owned source column. Keep
 	// every scalar and ordered child identity in the artifact seal so replay,
 	// mutation, and mounted joins authenticate the direct plane exactly.
-	fields = append(fields, uintField(callRowsLawVersion), uintField(uint64(len(artifact.calls))))
+	sink.add(uintField(callRowsLawVersion), uintField(uint64(len(artifact.calls))))
 	for _, row := range artifact.calls {
-		fields = append(fields,
+		sink.add(
 			bytesField(row.id), bytesField(row.body), bytesField(row.span), bytesField(row.formal),
 			bytesField(row.values), bytesField(row.valuesRoot), bytesField(row.types), bytesField(row.callee), bytesField(row.actuals),
 			bytesField(row.target),
@@ -50,139 +52,139 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		)
 		for index := int(row.operandStart); index < int(row.operandEnd); index++ {
 			operand := artifact.callOperands[index]
-			fields = append(fields, bytesField(operand.id), bytesField(operand.call), bytesField(operand.value), bytesField(operand.span), uintField(uint64(operand.kind)))
+			sink.add(bytesField(operand.id), bytesField(operand.call), bytesField(operand.value), bytesField(operand.span), uintField(uint64(operand.kind)))
 		}
 		for index := int(row.argumentStart); index < int(row.argumentEnd); index++ {
 			argument := artifact.callArguments[index]
-			fields = append(fields, bytesField(argument.id), bytesField(argument.call), bytesField(argument.values), bytesField(argument.member), bytesField(argument.span), uintField(uint64(argument.position)))
+			sink.add(bytesField(argument.id), bytesField(argument.call), bytesField(argument.values), bytesField(argument.member), bytesField(argument.span), uintField(uint64(argument.position)))
 		}
 		for index := int(row.typeArgumentStart); index < int(row.typeArgumentEnd); index++ {
 			argument := artifact.callTypeArguments[index]
-			fields = append(fields, bytesField(argument.id), bytesField(argument.call), bytesField(argument.types), bytesField(argument.reference), uintField(uint64(argument.position)))
+			sink.add(bytesField(argument.id), bytesField(argument.call), bytesField(argument.types), bytesField(argument.reference), uintField(uint64(argument.position)))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.bodies))))
+	sink.add(uintField(uint64(len(artifact.bodies))))
 	for _, body := range artifact.bodies {
-		fields = append(fields, bytesField(body.id), bytesField(body.context), bytesField(body.entry), boolField(body.callable), bytesField(body.function), bytesField(body.formal), uintField(uint64(len(body.entryPoints))))
+		sink.add(bytesField(body.id), bytesField(body.context), bytesField(body.entry), boolField(body.callable), bytesField(body.function), bytesField(body.formal), uintField(uint64(len(body.entryPoints))))
 		for _, point := range body.entryPoints {
-			fields = append(fields, bytesField(point))
+			sink.add(bytesField(point))
 		}
-		fields = append(fields, uintField(uint64(len(body.roots))))
+		sink.add(uintField(uint64(len(body.roots))))
 		for _, root := range body.roots {
-			fields = append(fields, bytesField(root.id), uintField(uint64(root.family)))
+			sink.add(bytesField(root.id), uintField(uint64(root.family)))
 		}
-		fields = append(fields, uintField(uint64(body.outcomeStart)), uintField(uint64(body.outcomeEnd)))
+		sink.add(uintField(uint64(body.outcomeStart)), uintField(uint64(body.outcomeEnd)))
 	}
-	fields = append(fields, uintField(functionBoundaryLawVersion), uintField(uint64(len(artifact.functionBoundaries))))
+	sink.add(uintField(functionBoundaryLawVersion), uintField(uint64(len(artifact.functionBoundaries))))
 	for _, boundary := range artifact.functionBoundaries {
-		fields = append(fields,
+		sink.add(
 			bytesField(boundary.id), bytesField(boundary.body), bytesField(boundary.bodyContext), bytesField(boundary.entry), bytesField(boundary.callFormal),
 			uintField(uint64(len(boundary.formals))),
 		)
 		for _, port := range boundary.formals {
-			fields = append(fields, bytesField(port.id), bytesField(port.cell), bytesField(port.storage), bytesField(port.declared), uintField(uint64(port.position)))
+			sink.add(bytesField(port.id), bytesField(port.cell), bytesField(port.storage), bytesField(port.declared), uintField(uint64(port.position)))
 		}
-		fields = append(fields, boolField(boundary.hasVararg), bytesField(boundary.vararg.id), bytesField(boundary.vararg.cell), uintField(uint64(len(boundary.captures))))
+		sink.add(boolField(boundary.hasVararg), bytesField(boundary.vararg.id), bytesField(boundary.vararg.cell), uintField(uint64(len(boundary.captures))))
 		for _, capture := range boundary.captures {
-			fields = append(fields,
+			sink.add(
 				bytesField(capture.id), bytesField(capture.inner), bytesField(capture.outer), bytesField(capture.innerBody), bytesField(capture.outerBody), uintField(uint64(capture.position)),
 			)
 		}
-		fields = append(fields, uintField(uint64(len(boundary.outcomes))))
+		sink.add(uintField(uint64(len(boundary.outcomes))))
 		for _, outcome := range boundary.outcomes {
-			fields = append(fields, bytesField(outcome))
+			sink.add(bytesField(outcome))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.callTargets))))
+	sink.add(uintField(uint64(len(artifact.callTargets))))
 	for _, target := range artifact.callTargets {
-		fields = append(fields, bytesField(target.allocation), bytesField(target.body), bytesField(target.context), bytesField(target.function), bytesField(target.formal))
+		sink.add(bytesField(target.allocation), bytesField(target.body), bytesField(target.context), bytesField(target.function), bytesField(target.formal))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.boundaries))))
+	sink.add(uintField(uint64(len(artifact.boundaries))))
 	for _, row := range artifact.boundaries {
-		fields = append(fields, uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.owner), uintField(uint64(row.position)), boolField(row.eligible))
+		sink.add(uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.owner), uintField(uint64(row.position)), boolField(row.eligible))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.outcomes))))
+	sink.add(uintField(uint64(len(artifact.outcomes))))
 	for _, outcome := range artifact.outcomes {
-		fields = append(fields,
+		sink.add(
 			bytesField(outcome.id), bytesField(outcome.body), uintField(uint64(outcome.kind)),
 			boolField(outcome.hasTarget), bytesField(outcome.target),
 			boolField(outcome.hasPropagation), bytesField(outcome.propagation),
 			uintField(uint64(outcome.returnStart)), uintField(uint64(outcome.returnEnd)), uintField(uint64(len(outcome.points))),
 		)
 		for _, point := range outcome.points {
-			fields = append(fields, bytesField(point))
+			sink.add(bytesField(point))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.returnValues))))
+	sink.add(uintField(uint64(len(artifact.returnValues))))
 	for _, value := range artifact.returnValues {
-		fields = append(fields, bytesField(value.id))
+		sink.add(bytesField(value.id))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.occurrences))))
+	sink.add(uintField(uint64(len(artifact.occurrences))))
 	for _, row := range artifact.occurrences {
-		fields = append(fields, uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.body), uintField(row.code), uintField(uint64(len(row.points))))
+		sink.add(uintField(uint64(row.kind)), bytesField(row.id), bytesField(row.body), uintField(row.code), uintField(uint64(len(row.points))))
 		for _, point := range row.points {
-			fields = append(fields, bytesField(point))
+			sink.add(bytesField(point))
 		}
-		fields = append(fields, uintField(uint64(len(row.inputs))))
+		sink.add(uintField(uint64(len(row.inputs))))
 		for _, input := range row.inputs {
-			fields = append(fields, bytesField(input))
+			sink.add(bytesField(input))
 		}
-		fields = append(fields, uintField(uint64(row.literalFamily)), boolField(row.literalOK), uintField(uint64(row.literal.Kind)), boolField(row.literal.Bool), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits), field{bytes: []byte(row.literal.String), kind: fieldBytes})
+		sink.add(uintField(uint64(row.literalFamily)), boolField(row.literalOK), uintField(uint64(row.literal.Kind)), boolField(row.literal.Bool), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits), field{bytes: []byte(row.literal.String), kind: fieldBytes})
 	}
-	fields = append(fields, uintField(uint64(len(artifact.exactScalarSummaries))))
+	sink.add(uintField(uint64(len(artifact.exactScalarSummaries))))
 	for _, row := range artifact.exactScalarSummaries {
-		fields = append(fields, bytesField(row.id), bytesField(row.occurrence), bytesField(row.subject), bytesField(row.body),
+		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.subject), bytesField(row.body),
 			uintField(uint64(row.role)), uintField(uint64(row.literal.Kind)), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.arithmeticSummaries))))
+	sink.add(uintField(uint64(len(artifact.arithmeticSummaries))))
 	for _, row := range artifact.arithmeticSummaries {
-		fields = append(fields, bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), uintField(uint64(row.op)),
+		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), uintField(uint64(row.op)),
 			uintField(uint64(row.left)), uintField(uint64(row.right)), uintField(uint64(row.result)), uintField(uint64(row.divisor)))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.unarySummaries))))
+	sink.add(uintField(uint64(len(artifact.unarySummaries))))
 	for _, row := range artifact.unarySummaries {
-		fields = append(fields, bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), bytesField(row.point), uintField(uint64(row.op)),
+		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), bytesField(row.point), uintField(uint64(row.op)),
 			uintField(uint64(row.operand)), uintField(uint64(row.result)))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.heapAllocations))))
+	sink.add(uintField(uint64(len(artifact.heapAllocations))))
 	for _, allocation := range artifact.heapAllocations {
-		fields = append(fields, bytesField(allocation.id), uintField(uint64(allocation.role)), uintField(uint64(allocation.form)), bytesField(allocation.rootSpan), uintField(uint64(len(allocation.fields))))
+		sink.add(bytesField(allocation.id), uintField(uint64(allocation.role)), uintField(uint64(allocation.form)), bytesField(allocation.rootSpan), uintField(uint64(len(allocation.fields))))
 		for _, field := range allocation.fields {
-			fields = append(fields, bytesField(field.id), uintField(uint64(field.kind)), bytesField(field.fieldSpan), bytesField(field.selectorSpan), bytesField(field.valuesSpan), bytesField(field.valuesID), uintField(uint64(field.width)), boolField(field.finalOpen), boolField(field.sharesFirstValueCell), uintField(uint64(field.normalized)), boolField(field.normalizedOK))
+			sink.add(bytesField(field.id), uintField(uint64(field.kind)), bytesField(field.fieldSpan), bytesField(field.selectorSpan), bytesField(field.valuesSpan), bytesField(field.valuesID), uintField(uint64(field.width)), boolField(field.finalOpen), boolField(field.sharesFirstValueCell), uintField(uint64(field.normalized)), boolField(field.normalizedOK))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.heapIndexes))))
+	sink.add(uintField(uint64(len(artifact.heapIndexes))))
 	for _, access := range artifact.heapIndexes {
-		fields = append(fields, bytesField(access.id), boolField(access.read), bytesField(access.baseSpan), bytesField(access.resultSpan), bytesField(access.keySpan), uintField(uint64(access.lensKind)), uintField(uint64(access.exactKey)), bytesField(access.valuesSpan), bytesField(access.valuesID), uintField(uint64(access.position+1)))
+		sink.add(bytesField(access.id), boolField(access.read), bytesField(access.baseSpan), bytesField(access.resultSpan), bytesField(access.keySpan), uintField(uint64(access.lensKind)), uintField(uint64(access.exactKey)), bytesField(access.valuesSpan), bytesField(access.valuesID), uintField(uint64(access.position+1)))
 	}
-	fields = append(fields, uintField(diagnosticLawVersion), uintField(uint64(len(artifact.diagnosticObservations))))
+	sink.add(uintField(diagnosticLawVersion), uintField(uint64(len(artifact.diagnosticObservations))))
 	for _, row := range artifact.diagnosticObservations {
-		fields = append(fields,
+		sink.add(
 			bytesField(row.id), uintField(uint64(row.kind)),
 			field{bytes: []byte(row.location.File), kind: fieldBytes}, uintField(uint64(row.location.StartLine)),
 			uintField(uint64(row.location.StartCol)), uintField(uint64(row.location.EndLine)), uintField(uint64(row.location.EndCol)),
 		)
 		switch row.kind {
 		case structure.DiagnosticObservationBranchCondition:
-			fields = append(fields, bytesField(row.branch.decision), bytesField(row.branch.value), uintField(uint64(len(row.branch.points))))
+			sink.add(bytesField(row.branch.decision), bytesField(row.branch.value), uintField(uint64(len(row.branch.points))))
 			for _, point := range row.branch.points {
-				fields = append(fields, bytesField(point))
+				sink.add(bytesField(point))
 			}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			fields = append(fields, bytesField(row.unresolved.reference), bytesField(row.unresolved.root), uintField(uint64(len(row.unresolved.path))))
+			sink.add(bytesField(row.unresolved.reference), bytesField(row.unresolved.root), uintField(uint64(len(row.unresolved.path))))
 			for _, component := range row.unresolved.path {
-				fields = append(fields, field{bytes: []byte(component), kind: fieldBytes})
+				sink.add(field{bytes: []byte(component), kind: fieldBytes})
 			}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
-			fields = append(fields, bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
+			sink.add(bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
 		case structure.DiagnosticObservationTypeConformance:
-			fields = append(fields,
+			sink.add(
 				uintField(uint64(row.conformance.site)), bytesField(row.conformance.call), bytesField(row.conformance.argument),
 				bytesField(row.conformance.declared), bytesField(row.conformance.span), uintField(uint64(row.conformance.position)),
 				uintField(uint64(len(row.conformance.points))),
 			)
 			for _, point := range row.conformance.points {
-				fields = append(fields, bytesField(point))
+				sink.add(bytesField(point))
 			}
 		default:
 			// An observation kind this walk does not carry would contribute
@@ -191,44 +193,44 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			return identity.ContentID{}
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.staticTypeArguments))))
+	sink.add(uintField(uint64(len(artifact.staticTypeArguments))))
 	for _, row := range artifact.staticTypeArguments {
-		fields = append(fields, bytesField(row.id), bytesField(row.call), bytesField(row.types), bytesField(row.reference), uintField(uint64(row.index)))
+		sink.add(bytesField(row.id), bytesField(row.call), bytesField(row.types), bytesField(row.reference), uintField(uint64(row.index)))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.staticTypeValues))))
+	sink.add(uintField(uint64(len(artifact.staticTypeValues))))
 	for _, row := range artifact.staticTypeValues {
-		fields = append(fields, bytesField(row.id), bytesField(row.body), bytesField(row.reference), bytesField(row.root), field{bytes: []byte(row.name), kind: fieldBytes})
+		sink.add(bytesField(row.id), bytesField(row.body), bytesField(row.reference), bytesField(row.root), field{bytes: []byte(row.name), kind: fieldBytes})
 	}
-	fields = append(fields, uintField(uint64(len(artifact.staticTypeNodes))))
+	sink.add(uintField(uint64(len(artifact.staticTypeNodes))))
 	for _, row := range artifact.staticTypeNodes {
 		exact := row.exact
-		fields = append(fields, bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), field{bytes: []byte(row.name), kind: fieldBytes}, uintField(uint64(row.key)), uintField(uint64(row.literal)), uintField(row.bits), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, boolField(row.flag), uintField(uint64(row.resolution)), uintField(uint64(row.assertParam)), bytesField(row.declaration), bytesField(row.operand), bytesField(row.scope), bytesField(row.assertionNarrow), uintField(uint64(row.assertionCoordinate[0])), uintField(uint64(row.assertionCoordinate[1])), uintField(uint64(row.assertionCoordinate[2])), uintField(uint64(row.assertionCoordinate[3])), bytesField(row.typeFunctionVariadic), uintField(uint64(len(row.aliasParams))))
+		sink.add(bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), field{bytes: []byte(row.name), kind: fieldBytes}, uintField(uint64(row.key)), uintField(uint64(row.literal)), uintField(row.bits), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, boolField(row.flag), uintField(uint64(row.resolution)), uintField(uint64(row.assertParam)), bytesField(row.declaration), bytesField(row.operand), bytesField(row.scope), bytesField(row.assertionNarrow), uintField(uint64(row.assertionCoordinate[0])), uintField(uint64(row.assertionCoordinate[1])), uintField(uint64(row.assertionCoordinate[2])), uintField(uint64(row.assertionCoordinate[3])), bytesField(row.typeFunctionVariadic), uintField(uint64(len(row.aliasParams))))
 		for _, child := range row.aliasParams {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.interfaceExtends))))
+		sink.add(uintField(uint64(len(row.interfaceExtends))))
 		for _, child := range row.interfaceExtends {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.interfaceMemberTypes))))
+		sink.add(uintField(uint64(len(row.interfaceMemberTypes))))
 		for _, child := range row.interfaceMemberTypes {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.typeFunctionTypeParams))))
+		sink.add(uintField(uint64(len(row.typeFunctionTypeParams))))
 		for _, child := range row.typeFunctionTypeParams {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.typeFunctionParams))))
+		sink.add(uintField(uint64(len(row.typeFunctionParams))))
 		for _, child := range row.typeFunctionParams {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.typeFunctionReturns))))
+		sink.add(uintField(uint64(len(row.typeFunctionReturns))))
 		for _, child := range row.typeFunctionReturns {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
-		fields = append(fields, uintField(uint64(len(row.fieldKeys))))
+		sink.add(uintField(uint64(len(row.fieldKeys))))
 		for index, key := range row.fieldKeys {
-			fields = append(fields, uintField(uint64(key)))
+			sink.add(uintField(uint64(key)))
 			text := ""
 			if index < len(row.fieldTexts) {
 				text = row.fieldTexts[index]
@@ -241,18 +243,18 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			if index < len(row.fieldReadonly) {
 				readonly = row.fieldReadonly[index]
 			}
-			fields = append(fields, field{bytes: []byte(text), kind: fieldBytes}, boolField(optional), boolField(readonly))
+			sink.add(field{bytes: []byte(text), kind: fieldBytes}, boolField(optional), boolField(readonly))
 		}
-		fields = append(fields, uintField(uint64(len(row.keys))))
+		sink.add(uintField(uint64(len(row.keys))))
 		for _, key := range row.keys {
-			fields = append(fields, uintField(uint64(key)))
+			sink.add(uintField(uint64(key)))
 		}
 		for index := range row.keys {
 			text := ""
 			if index < len(row.texts) {
 				text = row.texts[index]
 			}
-			fields = append(fields, field{bytes: []byte(text), kind: fieldBytes})
+			sink.add(field{bytes: []byte(text), kind: fieldBytes})
 			optional := false
 			if index < len(row.optional) {
 				optional = row.optional[index]
@@ -261,74 +263,74 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			if index < len(row.memberKinds) {
 				memberKind = row.memberKinds[index]
 			}
-			fields = append(fields, boolField(optional), uintField(uint64(memberKind)))
+			sink.add(boolField(optional), uintField(uint64(memberKind)))
 		}
-		fields = append(fields, uintField(uint64(len(row.segments))))
+		sink.add(uintField(uint64(len(row.segments))))
 		for _, segment := range row.segments {
-			fields = append(fields, uintField(uint64(segment)))
+			sink.add(uintField(uint64(segment)))
 		}
-		fields = append(fields, boolField(row.returnsKnown))
-		fields = append(fields, uintField(uint64(len(row.sourceKeys))))
+		sink.add(boolField(row.returnsKnown))
+		sink.add(uintField(uint64(len(row.sourceKeys))))
 		for _, key := range row.sourceKeys {
-			fields = append(fields, uintField(uint64(key)))
+			sink.add(uintField(uint64(key)))
 		}
-		fields = append(fields, uintField(uint64(len(row.canonicalKeys))))
+		sink.add(uintField(uint64(len(row.canonicalKeys))))
 		for _, key := range row.canonicalKeys {
-			fields = append(fields, uintField(uint64(key)))
+			sink.add(uintField(uint64(key)))
 		}
-		fields = append(fields, uintField(uint64(len(row.children))))
+		sink.add(uintField(uint64(len(row.children))))
 		for _, child := range row.children {
-			fields = append(fields, bytesField(child))
+			sink.add(bytesField(child))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.staticExpressions))))
+	sink.add(uintField(uint64(len(artifact.staticExpressions))))
 	for _, row := range artifact.staticExpressions {
-		fields = append(fields, bytesField(row.id), bytesField(row.reference), bytesField(row.owner))
+		sink.add(bytesField(row.id), bytesField(row.reference), bytesField(row.owner))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.staticInputs))))
+	sink.add(uintField(uint64(len(artifact.staticInputs))))
 	for _, row := range artifact.staticInputs {
 		exact := row.literal
-		fields = append(fields, bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), uintField(uint64(row.operandKind)), bytesField(row.expression), bytesField(row.source), bytesField(row.target), bytesField(row.operand), bytesField(row.frontier), bytesField(row.operandReference), bytesField(row.operandSubject), bytesField(row.operandBody), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, uintField(uint64(row.cursor)))
+		sink.add(bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), uintField(uint64(row.operandKind)), bytesField(row.expression), bytesField(row.source), bytesField(row.target), bytesField(row.operand), bytesField(row.frontier), bytesField(row.operandReference), bytesField(row.operandSubject), bytesField(row.operandBody), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, uintField(uint64(row.cursor)))
 	}
-	fields = append(fields, uintField(uint64(len(artifact.environment))))
+	sink.add(uintField(uint64(len(artifact.environment))))
 	for _, edge := range artifact.environment {
-		fields = append(fields,
+		sink.add(
 			bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), bytesField(edge.route),
 			uintField(uint64(edge.arm)), bytesField(edge.guard), bytesField(edge.decision), bytesField(edge.condition), boolField(edge.guarded), boolField(edge.truth),
 			bytesField(edge.component), bytesField(edge.mu), boolField(edge.hasMu),
 			bytesField(edge.reset), boolField(edge.hasReset), uintField(uint64(len(edge.resets))),
 		)
 		for _, reset := range edge.resets {
-			fields = append(fields, bytesField(reset))
+			sink.add(bytesField(reset))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.localTransfers))))
+	sink.add(uintField(uint64(len(artifact.localTransfers))))
 	for _, edge := range artifact.localTransfers {
-		fields = append(fields, bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.writes))))
+		sink.add(bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.writes))))
 		for _, write := range edge.writes {
-			fields = append(fields, keyField(write))
+			sink.add(keyField(write))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.ruleOccurrences))))
+	sink.add(uintField(uint64(len(artifact.ruleOccurrences))))
 	for _, row := range artifact.ruleOccurrences {
-		fields = append(fields,
+		sink.add(
 			keyField(row.key), uintField(uint64(row.occurrence)), bytesField(row.point), bytesField(row.input),
 			uintField(uint64(row.stage)), uintField(uint64(row.inputKind)), bytesField(row.route),
 		)
 	}
-	fields = append(fields, uintField(uint64(len(artifact.regions))))
+	sink.add(uintField(uint64(len(artifact.regions))))
 	for _, region := range artifact.regions {
-		fields = append(fields,
+		sink.add(
 			bytesField(region.id), bytesField(region.head), bytesField(region.sourceHead), bytesField(region.parent), boolField(region.cyclic),
 			uintField(uint64(len(region.members))),
 		)
 		for _, member := range region.members {
-			fields = append(fields, bytesField(member))
+			sink.add(bytesField(member))
 		}
 	}
-	fields = append(fields, uintField(uint64(len(artifact.events))))
+	sink.add(uintField(uint64(len(artifact.events))))
 	for _, event := range artifact.events {
-		fields = append(fields, uintField(uint64(event.kind)), bytesField(event.region), bytesField(event.point))
+		sink.add(uintField(uint64(event.kind)), bytesField(event.region), bytesField(event.point))
 	}
-	return digest(artifactIDDomain, artifactFormat, fields...)
+	return sink.sum()
 }

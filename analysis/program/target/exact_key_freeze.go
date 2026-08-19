@@ -2,45 +2,66 @@ package target
 
 import (
 	"errors"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/scalar"
+	bootvalue "github.com/wippyai/go-lua/analysis/program/target/boot"
+	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"sort"
 )
 
-// freezeExactKeys builds Target's only exact-key pool from semantic rows.
-// Program scalar owns canonical key normalization; Target owns only its dense
-// contract-local handles. No string reconstruction participates in this ABI.
-func freezeExactKeys(drafts []operationDraft, boot bootDraft) ([]keyspace.LiteralValue, map[keyspace.LiteralValue]vocabulary.ExactKey, error) {
-	set := make(map[keyspace.LiteralValue]struct{})
+// freezeExactKeys issues the one contract-wide exact-key owner before either
+// operation or boot rows are compiled. Sources may repeat an atom; the owner
+// canonicalizes and deduplicates it once.
+func freezeExactKeys(drafts []operationDraft, roots []vocabulary.InitialRootSpec, entries []vocabulary.InitialEntrySpec, bindings []vocabulary.InitialBindingSpec) (exactkey.Table, error) {
+	values := make([]keyspace.LiteralValue, 0)
 	add := func(value keyspace.LiteralValue) error {
-		normalized, ok := scalar.Normalize(value)
-		if !ok || normalized != value {
-			return errors.New("target: unnormalized exact key")
-		}
-		set[value] = struct{}{}
+		values = append(values, value)
 		return nil
 	}
-	for _, entry := range boot.entries {
-		if err := add(entry.key); err != nil {
-			return nil, nil, err
+	addValue := func(value vocabulary.InitialValueSpec) error {
+		if value.Kind != vocabulary.InitialValueDeniedOperation {
+			return nil
+		}
+		for _, segment := range value.Operation.Owner {
+			if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
+				return err
+			}
+		}
+		for _, segment := range value.Operation.Member {
+			if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, root := range roots {
+		if err := addValue(root.Shape.Value); err != nil {
+			return exactkey.Table{}, err
 		}
 	}
-	for _, binding := range boot.bindings {
-		if err := add(binding.key); err != nil {
-			return nil, nil, err
+	for _, entry := range entries {
+		if err := add(entry.Key); err != nil {
+			return exactkey.Table{}, err
+		}
+		if err := addValue(entry.Value); err != nil {
+			return exactkey.Table{}, err
+		}
+	}
+	for _, binding := range bindings {
+		if err := add(binding.Key); err != nil {
+			return exactkey.Table{}, err
 		}
 	}
 	for _, draft := range drafts {
 		for _, binding := range draft.bindings {
 			for _, segment := range binding.Owner {
 				if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
-					return nil, nil, err
+					return exactkey.Table{}, err
 				}
 			}
 			for _, segment := range binding.Member {
 				if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
-					return nil, nil, err
+					return exactkey.Table{}, err
 				}
 			}
 		}
@@ -48,62 +69,23 @@ func freezeExactKeys(drafts []operationDraft, boot bootDraft) ([]keyspace.Litera
 			switch edge.callee {
 			case vocabulary.SubedgeCalleeCapturedInitialRead:
 				if err := add(edge.readKey); err != nil {
-					return nil, nil, err
+					return exactkey.Table{}, err
 				}
 			case vocabulary.SubedgeCalleeMetaKey:
 				if err := add(edge.metaKey); err != nil {
-					return nil, nil, err
+					return exactkey.Table{}, err
 				}
 			}
 		}
 	}
-	for _, value := range boot.values {
-		if value.kind != vocabulary.InitialValueDeniedOperation {
-			continue
-		}
-		for _, segment := range value.binding.Owner {
-			if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
-				return nil, nil, err
-			}
-		}
-		for _, segment := range value.binding.Member {
-			if err := add(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment}); err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-	values := make([]keyspace.LiteralValue, 0, len(set))
-	for value := range set {
-		values = append(values, value)
-	}
-	sort.Slice(values, func(left, right int) bool {
-		order, ok := scalar.Compare(values[left], values[right])
-		if !ok {
-			panic("target: unnormalized exact key")
-		}
-		return order < 0
-	})
-	if _, err := vocabulary.CheckedStoredLength("exact key table", len(values)); err != nil {
-		return nil, nil, err
-	}
-	handles := make(map[keyspace.LiteralValue]vocabulary.ExactKey, len(values))
-	for index, value := range values {
-		handle, err := checkedStoredHandle("exact key table", index)
-		if err != nil {
-			return nil, nil, err
-		}
-		handles[value] = vocabulary.ExactKey(handle)
-	}
-	return values, handles, nil
+	return exactkey.Compile(values)
 }
 
-// resolveSubedgeInitialReads proves that every capture-once callee is an
-// existing boot row and records its sealed root coordinate before Contract
-// tables are appended. It never invents a global lookup relation.
-func resolveSubedgeInitialReads(drafts []operationDraft, boot bootDraft) error {
-	roots := make(map[string]vocabulary.InitialRoot, len(boot.roots))
-	for index, root := range boot.roots {
-		roots[root.identity] = vocabulary.InitialRoot(index + 1)
+// resolveSubedgeInitialReads consumes only boot-owned lookup facts. The
+// operation owner does not reopen a boot draft or rebuild its root directory.
+func resolveSubedgeInitialReads(drafts []operationDraft, table *bootvalue.Table, keys exactkey.Table) error {
+	if table == nil {
+		return errors.New("target: unavailable boot table")
 	}
 	for operation := range drafts {
 		for edgeIndex := range drafts[operation].subedges {
@@ -111,11 +93,15 @@ func resolveSubedgeInitialReads(drafts []operationDraft, boot bootDraft) error {
 			if edge.callee != vocabulary.SubedgeCalleeCapturedInitialRead {
 				continue
 			}
-			root, ok := roots[edge.readRoot]
+			root, ok := table.InitialRootByIdentity(edge.readRoot)
 			if !ok {
 				return errors.New("target: captured initial read has unknown root")
 			}
-			if _, found := lookupInitialEntry(boot.entries, root, edge.readKey); !found {
+			key, ok := keys.Handle(edge.readKey)
+			if !ok {
+				return errors.New("target: captured initial read has unknown key")
+			}
+			if _, _, found := table.InitialEntry(root, key); !found {
 				return errors.New("target: captured initial read lacks boot entry")
 			}
 			edge.readRootID = root

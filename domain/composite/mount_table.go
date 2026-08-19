@@ -103,6 +103,11 @@ func MountLink(inputs LinkInputs) (LinkInputs, MountFailure) {
 	if registry.sealed == nil {
 		return LinkInputs{}, MountFailure{Stage: MountStageTable}
 	}
+	vocabulary, vocabularyOK := StructureVocabulary()
+	if !vocabularyOK {
+		return LinkInputs{}, MountFailure{Stage: MountStageTable}
+	}
+	inputs.vocabulary = vocabulary
 	if !inputs.mountable() {
 		return LinkInputs{}, MountFailure{Stage: MountStageInput}
 	}

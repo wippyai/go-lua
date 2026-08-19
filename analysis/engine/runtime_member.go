@@ -189,16 +189,16 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 // them; a bind is the same operation whether it happens at construction or when
 // an activation revision replays it against a later graph.
 func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O) (runtimeMember, bool) {
-	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.mode != runtimeBindingReceipt || plane.runtime.graph == nil || plane.carrier == nil || plane.byKey == nil {
+	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.graph == nil || plane.carrier == nil || plane.byKey == nil {
 		return nil, false
 	}
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.state != plane.runtime.state || implementation.receipt.authority != plane.runtime.authority {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.state != plane.runtime.state || implementation.binding.authority != plane.runtime.authority {
 		return nil, false
 	}
 	if !plane.runtime.graph.OwnsMember(member) || !member.Key().Available() {
 		return nil, false
 	}
-	output, present := plane.byKey[implementation.receipt.proof.output]
+	output, present := plane.byKey[implementation.binding.proof.output]
 	if !present || output == nil {
 		return nil, false
 	}
@@ -210,10 +210,10 @@ func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, i
 }
 
 func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
-	if implementation == nil || !implementation.receipt.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
+	if implementation == nil || !implementation.binding.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false
 	}
-	receipt := implementation.receipt
+	receipt := implementation.binding
 	proof := receipt.proof
 	hot := receipt.cell.impl
 	if proof == nil || hot == nil {
@@ -382,18 +382,18 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 // anchor and returns the same runtime member consumed by the existing epoch
 // executor.
 func bindActivationMemberReceipt(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
-	if implementation == nil || !implementation.receipt.valid() || !member.Key().Available() || topology == nil || graph == nil ||
-		!topology.OwnsComposition(implementation.receipt.proof.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
-		!trigger.Available() || trigger != member.Key() || member.Rule() != implementation.receipt.proof.semantic ||
-		member.OperandFamily() != implementation.receipt.proof.operandFamily || uint64(member.ReadCount()) != implementation.receipt.proof.reads || member.WriteCount() != 0 || factors == nil {
+	if implementation == nil || !implementation.binding.valid() || !member.Key().Available() || topology == nil || graph == nil ||
+		!topology.OwnsComposition(implementation.binding.proof.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
+		!trigger.Available() || trigger != member.Key() || member.Rule() != implementation.binding.proof.semantic ||
+		member.OperandFamily() != implementation.binding.proof.operandFamily || uint64(member.ReadCount()) != implementation.binding.proof.reads || member.WriteCount() != 0 || factors == nil {
 		return nil, false
 	}
 	compiled, ok := compileActivationRuleReceipt(implementation, topology, trigger, graph)
 	if !ok {
 		return nil, false
 	}
-	hot := implementation.receipt.cell.impl
-	if hot == nil || uint64(len(hot.reads)) != implementation.receipt.proof.reads {
+	hot := implementation.binding.cell.impl
+	if hot == nil || uint64(len(hot.reads)) != implementation.binding.proof.reads {
 		return nil, false
 	}
 	for _, read := range hot.reads {
@@ -401,7 +401,7 @@ func bindActivationMemberReceipt(member equation.RuleMember, implementation *Act
 			return nil, false
 		}
 	}
-	if uint64(len(compiled.reads)) != implementation.receipt.proof.reads {
+	if uint64(len(compiled.reads)) != implementation.binding.proof.reads {
 		return nil, false
 	}
 	anchor, anchorOK := semanticKeyFromComposition(member.Key())

@@ -8,6 +8,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticCheckTypeOfScopeAndStaticOperandIntegration(t *testing.T) {
@@ -48,8 +54,8 @@ func TestStaticCheckTypeOfScopeAndStaticOperandIntegration(t *testing.T) {
 			Functions: authored.FunctionsInput{Rows: []authored.Function{{Owner: body, Body: child}}},
 		},
 		static: static.Input{
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: formalCell, Operand: read}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: formalCell, Operand: read}}},
 		},
 	})
 	result, err := Validate(
@@ -89,9 +95,9 @@ func TestStaticCheckAnnotationScopeOwnerAndStaticValuesIntegration(t *testing.T)
 			},
 		},
 		static: static.Input{
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{Cell: cell, Target: primitive}}},
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Operands: static.OperandsInput{Annotation: []static.Annotation{{
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{Cell: cell, Target: primitive}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{{
 				Scope: cell, Target: primitive, Name: 1, Values: values2,
 			}}},
 		},
@@ -126,11 +132,11 @@ func TestStaticCheckTypeFunctionSourceOccurrenceIntegration(t *testing.T) {
 		rows:   [][]keyspace.Term{{alias}},
 		exacts: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "alias"}},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{
 				Owner: body, Target: primitive, Name: 1, NameCoordinate: coordinate,
 			}}},
-			Signatures: static.SignaturesInput{TypeFunction: []static.TypeFunction{{
+			Signatures: staticsig.Input{TypeFunction: []staticsig.TypeFunction{{
 				Scope: alias,
 			}}},
 		},
@@ -190,8 +196,8 @@ func TestStaticCheckSeededFunctionLensBaseReadIntegration(t *testing.T) {
 			Control:   authored.ControlInput{Returns: []authored.Return{{Owner: functionBody, Values: values1}}},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	result, err := Validate(
@@ -239,7 +245,7 @@ func TestStaticCheckRejectsInvisibleStaticLensBaseRead(t *testing.T) {
 			Storage:   authored.StorageInput{Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}, {Kind: authored.CellLocal, Body: functionBody}}, Reads: []authored.Read{{Owner: functionBody, Source: lens}, {Owner: functionBody, Source: baseCell}}, Binds: []authored.Bind{{Owner: body, Values: values2}, {Owner: functionBody, Values: values3}}},
 			Functions: authored.FunctionsInput{Rows: []authored.Function{{Owner: body, Body: functionBody}}}, Control: authored.ControlInput{Returns: []authored.Return{{Owner: functionBody, Values: values1}}},
 		},
-		static: static.Input{Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}}, Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}}},
+		static: static.Input{Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}}, Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}}},
 	})
 	if !fixture.forest.Static(baseRead) || !fixture.forest.Static(outerRead) {
 		t.Fatal("lens reads were not static test occurrences")
@@ -292,8 +298,8 @@ func TestStaticCheckSeededFunctionCaptureIntegration(t *testing.T) {
 			Control: authored.ControlInput{Returns: []authored.Return{{Owner: functionBody, Values: values3}}},
 		},
 		static: static.Input{
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: function}}},
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: function}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}}},
 		},
 	})
 	if !fixture.forest.Static(function) {
@@ -348,9 +354,9 @@ func TestStaticCheckSeededAnnotationReadClosureIntegration(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{Owner: body, Target: primitive, Name: 1, NameCoordinate: coordinate}}},
-			Operands:     static.OperandsInput{Annotation: []static.Annotation{{Scope: alias, Target: primitive, Name: 1, Values: values}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{Owner: body, Target: primitive, Name: 1, NameCoordinate: coordinate}}},
+			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: alias, Target: primitive, Name: 1, Values: values}}},
 		},
 	})
 	result, err := Validate(
@@ -396,9 +402,9 @@ func TestStaticCheckRejectsConflictingSharedAnnotationSeed(t *testing.T) {
 			},
 		},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{Cell: cell1, Target: primitive}}},
-			Operands: static.OperandsInput{Annotation: []static.Annotation{
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{Cell: cell1, Target: primitive}}},
+			Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{
 				{Scope: cell1, Target: primitive, Name: 1, Values: values},
 				{Scope: cell2, Target: primitive, Name: 2, Values: values},
 			}},
@@ -431,7 +437,7 @@ func TestStaticCheckObservationSeedChainIsRowOrderIndependent(t *testing.T) {
 		checkCount(keyspace.FamilyBody, 1), checkCount(keyspace.FamilyCell, 1), checkCount(keyspace.FamilyNil, 2),
 		checkCount(keyspace.FamilyCall, 2), checkCount(keyspace.FamilyBind, 1), checkCount(keyspace.FamilyValues, 3), checkCount(keyspace.FamilyTypeOf, 2),
 	)
-	build := func(t *testing.T, rows []static.TypeOf) (*checkFixture, static.CommitInput, error) {
+	build := func(t *testing.T, rows []staticoperators.TypeOf) (*checkFixture, static.CommitInput, error) {
 		fixture := newCheckFixture(t, checkSpec{
 			name: "staticcheck-seed-chain.lua", counts: counts, rows: [][]keyspace.Term{{bind}},
 			binds: []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
@@ -443,18 +449,18 @@ func TestStaticCheckObservationSeedChainIsRowOrderIndependent(t *testing.T) {
 				Calls: []authored.Call{{Owner: body, Callee: nil1, Actuals: values2}, {Owner: body, Callee: nil2, Actuals: values3}},
 			},
 			static: static.Input{
-				Contracts: static.ContractsInput{Call: []static.CallContract{{}, {}}},
-				Operators: static.OperatorsInput{TypeOf: rows},
+				Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}, {}}},
+				Operators: staticoperators.Input{TypeOf: rows},
 			},
 		})
 		result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
 		return fixture, result, err
 	}
-	first, result, err := build(t, []static.TypeOf{{Scope: cell, Operand: call1}, {Scope: call1, Operand: call2}})
+	first, result, err := build(t, []staticoperators.TypeOf{{Scope: cell, Operand: call1}, {Scope: call1, Operand: call2}})
 	if err != nil || len(result.TypeOf) != 2 || result.TypeOf[0] != typeOf1 || result.TypeOf[1] != typeOf2 {
 		t.Fatalf("forward seed chain = %#v/%v", result, err)
 	}
-	second, result, err := build(t, []static.TypeOf{{Scope: call1, Operand: call2}, {Scope: cell, Operand: call1}})
+	second, result, err := build(t, []staticoperators.TypeOf{{Scope: call1, Operand: call2}, {Scope: cell, Operand: call1}})
 	if err != nil || len(result.TypeOf) != 2 || result.TypeOf[0] != typeOf1 || result.TypeOf[1] != typeOf2 {
 		t.Fatalf("permuted seed chain = %#v/%v", result, err)
 	}
@@ -482,8 +488,8 @@ func TestStaticCheckRejectsCyclicObservationSeedDescriptors(t *testing.T) {
 			Calls:   []authored.Call{{Owner: body, Callee: nil1, Actuals: values1}, {Owner: body, Callee: nil2, Actuals: values2}},
 		},
 		static: static.Input{
-			Contracts: static.ContractsInput{Call: []static.CallContract{{}, {}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: call2, Operand: call1}, {Scope: call1, Operand: call2}}},
+			Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}, {}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: call2, Operand: call1}, {Scope: call1, Operand: call2}}},
 		},
 	})
 	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
@@ -513,9 +519,9 @@ func TestStaticCheckRejectsSamePointConflictingDescriptors(t *testing.T) {
 			Storage: authored.StorageInput{Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body}, {Kind: authored.CellLocal, Body: body}}, Binds: []authored.Bind{{Owner: body, Values: values1}}},
 		},
 		static: static.Input{
-			Types:        static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveNumber}}},
-			Declarations: static.DeclarationsInput{DeclaredType: []static.DeclaredType{{Cell: cell1, Target: primitive}}},
-			Operands:     static.OperandsInput{Annotation: []static.Annotation{{Scope: cell1, Target: primitive, Name: 1, Values: values2}, {Scope: cell2, Target: primitive, Name: 2, Values: values2}}},
+			Types:        statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveNumber}}},
+			Declarations: staticdecl.Input{DeclaredType: []staticdecl.DeclaredType{{Cell: cell1, Target: primitive}}},
+			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: cell1, Target: primitive, Name: 1, Values: values2}, {Scope: cell2, Target: primitive, Name: 2, Values: values2}}},
 		},
 	})
 	result, err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)

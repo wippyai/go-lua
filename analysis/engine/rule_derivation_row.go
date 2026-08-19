@@ -199,7 +199,7 @@ type ruleReadProof struct {
 	exact            bool
 }
 
-func newRuleReadReceiptProof(receipt factorRuntimeReceipt, surface equation.Surface) (ruleReadProof, bool) {
+func newRuleReadReceiptProof(receipt factorRuntimeBinding, surface equation.Surface) (ruleReadProof, bool) {
 	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceReadExact || surface.Mode != equation.TargetModeNone || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
 		return ruleReadProof{}, false
 	}
@@ -210,7 +210,7 @@ func newRuleReadReceiptProof(receipt factorRuntimeReceipt, surface equation.Surf
 // The canonical key vector is retained for cold shape bookkeeping; hot
 // evidence authenticates the sealed scalar digest and never replays it.
 type ruleSummaryReadProof struct {
-	receipt     factorRuntimeReceipt
+	receipt     factorRuntimeBinding
 	formReceipt factorFormReceipt
 	keys        []uint64
 	digest      [32]byte
@@ -260,7 +260,7 @@ type ruleTargetProof struct {
 	strong           bool
 }
 
-func newRuleTargetReceiptProof(receipt factorRuntimeReceipt, surface equation.Surface) (ruleTargetProof, bool) {
+func newRuleTargetReceiptProof(receipt factorRuntimeBinding, surface equation.Surface) (ruleTargetProof, bool) {
 	if !receipt.valid() || surface.Factor != receipt.semantic || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > receipt.keyEnd {
 		return ruleTargetProof{}, false
 	}
@@ -304,11 +304,11 @@ type ruleRuntimeProof struct {
 	reads            uint64
 	carries          uint64
 	writes           uint64
-	selectedReads    []*SchemaSelectedReadReceipt
-	routeWrite       *SchemaRouteWriteReceipt
+	selectedReads    []*schemaSelectedRead
+	routeWrite       *schemaRouteWrite
 }
 
-func (proof *ruleRuntimeProof) selectedReadAt(read uint64) *SchemaSelectedReadReceipt {
+func (proof *ruleRuntimeProof) selectedReadAt(read uint64) *schemaSelectedRead {
 	if proof == nil || read >= uint64(len(proof.selectedReads)) {
 		return nil
 	}
@@ -343,7 +343,7 @@ func newSchemaRuleRuntimeProof(state *schemaBindingState, authority *schemaBindi
 	if shape.ReadCount > uint64(^uint(0)>>1) {
 		return nil, false
 	}
-	proof.selectedReads = make([]*SchemaSelectedReadReceipt, int(shape.ReadCount))
+	proof.selectedReads = make([]*schemaSelectedRead, int(shape.ReadCount))
 	fence := schemaRuleReceiptFence{state: state, authority: authority, schema: state.schema, rule: ordinal}
 	if ordinal < uint64(len(state.rules)) {
 		fence.cell, _ = state.rules[ordinal].(schemaRuleBindingCell)

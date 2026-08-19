@@ -6,10 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
 // keyKind is the closed source-sum discriminator.  It is deliberately kept
@@ -79,7 +79,7 @@ type mountedCallOccurrenceRef struct {
 // this index joins their scalar CallID values once per mount and dies before
 // Algebra is published.
 type mountedArtifactCallIndex struct {
-	artifact *programartifact.Artifact
+	snapshot *ingress.Snapshot
 	byID     map[identity.ContentID]int
 }
 
@@ -127,18 +127,18 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		shard, ok := mountsView.At(index)
 		moduleID, moduleOK := project.ModuleKey(shard)
 		programID, programOK := mountsView.ProgramID(shard)
-		artifact := mounts[index].Artifact
+		snapshot := mounts[index].Snapshot
 		artifactProgramID := identity.ContentID{}
-		if artifact != nil && artifact.Available() {
-			artifactProgramID = artifact.CompileKey().ProgramID()
+		if snapshot != nil && snapshot.Available() {
+			artifactProgramID = snapshot.ProgramID()
 		}
 		if !ok || !moduleOK || !moduleID.Available() || mounts[index].ModuleKey != moduleID || algebra.mountModuleIndex[moduleID] != 0 ||
 			!programOK || !programID.Available() || artifactProgramID != programID {
 			return nil, false
 		}
-		callRows := make(map[identity.ContentID]int, artifact.CallCount())
-		for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
-			call, callOK := artifact.CallAt(callIndex)
+		callRows := make(map[identity.ContentID]int, snapshot.CallCount())
+		for callIndex := 0; callIndex < snapshot.CallCount(); callIndex++ {
+			call, callOK := snapshot.CallAt(callIndex)
 			callID := call.ID()
 			if !callOK || !callID.Available() {
 				return nil, false
@@ -148,7 +148,7 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 			}
 			callRows[callID] = callIndex
 		}
-		artifactCalls[moduleID] = mountedArtifactCallIndex{artifact: artifact, byID: callRows}
+		artifactCalls[moduleID] = mountedArtifactCallIndex{snapshot: snapshot, byID: callRows}
 		algebra.mountModules = append(algebra.mountModules, moduleID)
 		algebra.mountModuleIndex[moduleID] = uint32(len(algebra.mountModules))
 		require, requireOK := boundary.Seeds().ScopedLoader(shard)
@@ -172,13 +172,13 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		applicationID, moduleID, callID, identityOK := project.Applications().Calls().MountedIdentity(application)
 		issuedCallID := mounted.CallID()
 		shard, shardOK := mounted.Mount()
-		callArtifact, callIndex, callIndexOK := mountedArtifactCallAt(artifactCalls, moduleID, callID)
-		call := programartifact.CallRow{}
+		callSnapshot, callIndex, callIndexOK := mountedArtifactCallAt(artifactCalls, moduleID, callID)
+		call := ingress.Call{}
 		callRowOK := false
 		if callIndexOK {
-			call, callRowOK = callArtifact.CallAt(callIndex)
+			call, callRowOK = callSnapshot.CallAt(callIndex)
 		}
-		calleeOperand, calleeOperandOK := mountedCalleeOperand(callArtifact, callIndex, call)
+		calleeOperand, calleeOperandOK := mountedCalleeOperand(callSnapshot, callIndex, call)
 		callee, calleeOK := boundary.Values().ForMountedSemantic(moduleID, calleeOperand.ValueID())
 		if !calleeOK {
 			callee, calleeOK = boundary.Values().ForMountedSpan(moduleID, calleeOperand.SpanID())
@@ -204,34 +204,34 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	return algebra, true
 }
 
-func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (*programartifact.Artifact, int, bool) {
+func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (*ingress.Snapshot, int, bool) {
 	if index == nil || !moduleID.Available() || !callID.Available() {
 		return nil, 0, false
 	}
 	mount, mountOK := index[moduleID]
-	if !mountOK || mount.artifact == nil || mount.byID == nil {
+	if !mountOK || mount.snapshot == nil || mount.byID == nil {
 		return nil, 0, false
 	}
 	callIndex, callOK := mount.byID[callID]
-	return mount.artifact, callIndex, callOK
+	return mount.snapshot, callIndex, callOK
 }
 
-func mountedCalleeOperand(artifact *programartifact.Artifact, callIndex int, call programartifact.CallRow) (programartifact.CallOperandRow, bool) {
-	if artifact == nil || !call.Available() || callIndex < 0 {
-		return programartifact.CallOperandRow{}, false
+func mountedCalleeOperand(snapshot *ingress.Snapshot, callIndex int, call ingress.Call) (ingress.CallOperand, bool) {
+	if snapshot == nil || callIndex < 0 || !call.ID().Available() {
+		return ingress.CallOperand{}, false
 	}
-	var callee programartifact.CallOperandRow
+	var callee ingress.CallOperand
 	calleeOK := false
 	for operandIndex := 0; operandIndex < call.OperandCount(); operandIndex++ {
-		operand, operandOK := artifact.CallOperandFor(callIndex, operandIndex)
+		operand, operandOK := call.OperandAt(operandIndex)
 		if !operandOK || operand.CallID() != call.ID() {
-			return programartifact.CallOperandRow{}, false
+			return ingress.CallOperand{}, false
 		}
-		if operand.Kind() != programartifact.CallOperandCallee {
+		if !operand.Callee() {
 			continue
 		}
 		if calleeOK {
-			return programartifact.CallOperandRow{}, false
+			return ingress.CallOperand{}, false
 		}
 		callee, calleeOK = operand, true
 	}

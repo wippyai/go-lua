@@ -35,10 +35,56 @@ func TestSolveWithDiagnosticsDisabledParity(t *testing.T) {
 	}
 }
 
+func TestSolveDiagnosticPresentationDoesNotChangeSnapshotContent(t *testing.T) {
+	ordinary, _ := newDiagnosticsReceiptSolver(t, false)
+	ordinaryState, ordinaryStatus := ordinary.Solve(context.Background())
+	ordinarySnapshot, ordinaryOK := ordinary.PublishedSnapshot(ordinaryState)
+	if ordinaryStatus != SolveComplete || !ordinaryOK || !ordinarySnapshot.Content().Available() {
+		t.Fatalf("ordinary solve = status:%v snapshot:%t", ordinaryStatus, ordinaryOK)
+	}
+	presentations := []SolveDiagnosticPresentation{
+		{},
+		{Flags: SolveDiagnosticSchedule},
+		{Flags: SolveDiagnosticRestart},
+		{Flags: SolveDiagnosticPublication},
+		{Flags: SolveDiagnosticFold},
+		{Flags: SolveDiagnosticAll},
+	}
+	resources := []SolveDiagnosticResources{
+		{},
+		{MaxRows: 1},
+		{MaxRows: 8},
+		{MaxRows: maxSolveDiagnosticMaxRows},
+	}
+	for _, presentation := range presentations {
+		for _, resource := range resources {
+			options := SolveDiagnosticOptions{Presentation: presentation, Resources: resource}
+			if presentation.Flags == 0 && resource.MaxRows != 0 {
+				if options.Valid() {
+					t.Fatalf("resource bound without presentation admitted: %#v", options)
+				}
+				continue
+			}
+			if !options.Valid() {
+				t.Fatalf("valid diagnostic options rejected: %#v", options)
+			}
+			solver, _ := newDiagnosticsReceiptSolver(t, false)
+			state, status, _ := solver.SolveWithDiagnostics(context.Background(), options)
+			sealed, sealedOK := solver.PublishedSnapshot(state)
+			if status != SolveComplete || !sealedOK {
+				t.Fatalf("presentation solve failed: options=%#v status=%v snapshot=%t", options, status, sealedOK)
+			}
+			if sealed.Content() != ordinarySnapshot.Content() {
+				t.Fatalf("presentation or resource settings changed Snapshot content: options=%#v ordinary=%v got=%v", options, ordinarySnapshot.Content(), sealed.Content())
+			}
+		}
+	}
+}
+
 func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T) {
 	valid := []SolveDiagnosticOptions{
 		{},
-		{Flags: SolveDiagnosticAll, MaxRows: maxSolveDiagnosticMaxRows},
+		{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll}, Resources: SolveDiagnosticResources{MaxRows: maxSolveDiagnosticMaxRows}},
 	}
 	for _, options := range valid {
 		if !options.Valid() {
@@ -46,10 +92,10 @@ func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T)
 		}
 	}
 	invalid := []SolveDiagnosticOptions{
-		{Flags: SolveDiagnosticAll << 1},
-		{Flags: SolveDiagnosticAll, MaxRows: -1},
-		{Flags: SolveDiagnosticAll, MaxRows: maxSolveDiagnosticMaxRows + 1},
-		{MaxRows: 1},
+		{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll << 1}},
+		{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll}, Resources: SolveDiagnosticResources{MaxRows: -1}},
+		{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll}, Resources: SolveDiagnosticResources{MaxRows: maxSolveDiagnosticMaxRows + 1}},
+		{Resources: SolveDiagnosticResources{MaxRows: 1}},
 	}
 	for _, options := range invalid {
 		if options.Valid() {
@@ -57,7 +103,7 @@ func TestSolveDiagnosticOptionsAreClosedAndRejectedBeforeExecution(t *testing.T)
 		}
 	}
 	solver, _ := newDiagnosticsReceiptSolver(t, false)
-	state, status, diagnostics := solver.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{MaxRows: 1})
+	state, status, diagnostics := solver.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{Resources: SolveDiagnosticResources{MaxRows: 1}})
 	if state != nil || status != SolveInvalid || diagnostics.Failure.Available() || diagnostics.Flags != 0 {
 		t.Fatalf("invalid options executed solver: state:%t status:%v diagnostics:%#v", state != nil, status, diagnostics)
 	}
@@ -77,7 +123,7 @@ func TestSolveWithDiagnosticsCarriesSameIncompleteFailureCertificate(t *testing.
 	}
 
 	complete, _ := newDiagnosticsReceiptSolver(t, false)
-	completeState, completeStatus, completeDiagnostics := complete.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{Flags: SolveDiagnosticAll, MaxRows: 8})
+	completeState, completeStatus, completeDiagnostics := complete.SolveWithDiagnostics(context.Background(), SolveDiagnosticOptions{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll}, Resources: SolveDiagnosticResources{MaxRows: 8}})
 	if completeState == nil || completeStatus != SolveComplete || completeDiagnostics.Failure.Available() {
 		t.Fatalf("complete failure certificate = state:%t status:%v available:%t", completeState != nil, completeStatus, completeDiagnostics.Failure.Available())
 	}
@@ -85,7 +131,7 @@ func TestSolveWithDiagnosticsCarriesSameIncompleteFailureCertificate(t *testing.
 	canceled, _ := newDiagnosticsReceiptSolver(t, false)
 	canceledContext, cancel := context.WithCancel(context.Background())
 	cancel()
-	canceledState, canceledStatus, canceledDiagnostics := canceled.SolveWithDiagnostics(canceledContext, SolveDiagnosticOptions{Flags: SolveDiagnosticAll, MaxRows: 8})
+	canceledState, canceledStatus, canceledDiagnostics := canceled.SolveWithDiagnostics(canceledContext, SolveDiagnosticOptions{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticAll}, Resources: SolveDiagnosticResources{MaxRows: 8}})
 	if canceledState != nil || canceledStatus != SolveCanceled || canceledDiagnostics.Failure.Available() {
 		t.Fatalf("canceled failure certificate = state:%t status:%v available:%t", canceledState != nil, canceledStatus, canceledDiagnostics.Failure.Available())
 	}
@@ -104,11 +150,11 @@ func TestSolveWithDiagnosticsBoundedDetachedSortedAndIsolated(t *testing.T) {
 	if report.DroppedRows != 0 || len(report.Rows) != 2 {
 		t.Fatalf("external interface revision did not expose sortable diagnostics: rows=%d dropped=%d", len(report.Rows), report.DroppedRows)
 	}
-	if report.Rows[0].Region == report.Rows[1].Region || report.Rows[0].Head == report.Rows[1].Head {
+	if report.Rows[0].Site == report.Rows[1].Site {
 		t.Fatalf("external interface revision did not retain distinct recurrence identities: first=%#v second=%#v", report.Rows[0], report.Rows[1])
 	}
 	for _, row := range report.Rows {
-		if row.Kind != SolveDiagnosticKindRestart || row.CallSite != SolveDiagnosticRestartHeadInterface || row.Reason != SolveDiagnosticRestartInterfaceChanged {
+		if row.Kind != SolveDiagnosticKindRestart || row.callSite != solveDiagnosticRestartHeadInterface || row.reason != solveDiagnosticRestartInterfaceChanged {
 			t.Fatalf("external interface revision row has wrong cause: %#v", row)
 		}
 	}
@@ -158,23 +204,23 @@ func TestSolveWithDiagnosticsBoundedDetachedSortedAndIsolated(t *testing.T) {
 // separately proves that executor interface refreshes produce the rows.
 func assertSolveDiagnosticCollectorSortAndDetach(t testing.TB) {
 	t.Helper()
-	collector := newSolveDiagnosticState(SolveDiagnosticOptions{Flags: SolveDiagnosticRestart, MaxRows: 2})
+	collector := newSolveDiagnosticState(SolveDiagnosticOptions{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticRestart}, Resources: SolveDiagnosticResources{MaxRows: 2}})
 	if collector == nil {
 		t.Fatal("diagnostic collector")
 	}
 	first := solveDiagnosticRestartSample{
 		key: solveDiagnosticRowKey{
 			revision: 4, kind: SolveDiagnosticKindRestart,
-			callSite: SolveDiagnosticRestartHeadInterface, reason: SolveDiagnosticRestartInterfaceChanged,
-			phase: SolveDiagnosticRegionAscent, region: 2, head: 3,
+			callSite: solveDiagnosticRestartHeadInterface, reason: solveDiagnosticRestartInterfaceChanged,
+			phase: solveDiagnosticRegionAscent, region: 2, head: 3,
 		},
 		attempts: 5,
 	}
 	second := solveDiagnosticRestartSample{
 		key: solveDiagnosticRowKey{
 			revision: 4, kind: SolveDiagnosticKindRestart,
-			callSite: SolveDiagnosticRestartHeadInterface, reason: SolveDiagnosticRestartInterfaceChanged,
-			phase: SolveDiagnosticRegionAscent, region: 9, head: 11,
+			callSite: solveDiagnosticRestartHeadInterface, reason: solveDiagnosticRestartInterfaceChanged,
+			phase: solveDiagnosticRegionAscent, region: 9, head: 11,
 		},
 		attempts: 13,
 	}
@@ -184,8 +230,8 @@ func assertSolveDiagnosticCollectorSortAndDetach(t testing.TB) {
 	collector.finishRestart(first, true)
 	snapshotA := collector.snapshot()
 	if len(snapshotA.Rows) != 2 || !diagnosticRowLess(snapshotA.Rows[0], snapshotA.Rows[1]) ||
-		snapshotA.Rows[0].Region != first.key.region || snapshotA.Rows[0].Head != first.key.head ||
-		snapshotA.Rows[1].Region != second.key.region || snapshotA.Rows[1].Head != second.key.head {
+		snapshotA.Rows[0].region != first.key.region || snapshotA.Rows[0].head != first.key.head ||
+		snapshotA.Rows[1].region != second.key.region || snapshotA.Rows[1].head != second.key.head {
 		t.Fatalf("collector did not canonically sort reverse insertion: %#v", snapshotA.Rows)
 	}
 	if snapshotA.Rows[0].Attempts == 0 {
@@ -206,27 +252,27 @@ func diagnosticRowLess(left, right SolveDiagnosticRow) bool {
 	if left.Kind != right.Kind {
 		return left.Kind < right.Kind
 	}
-	if left.CallSite != right.CallSite {
-		return left.CallSite < right.CallSite
+	if left.callSite != right.callSite {
+		return left.callSite < right.callSite
 	}
-	if left.Reason != right.Reason {
-		return left.Reason < right.Reason
+	if left.reason != right.reason {
+		return left.reason < right.reason
 	}
-	if left.Phase != right.Phase {
-		return left.Phase < right.Phase
+	if left.phase != right.phase {
+		return left.phase < right.phase
 	}
-	if left.Region != right.Region {
-		return left.Region < right.Region
+	if left.region != right.region {
+		return left.region < right.region
 	}
-	return left.Head < right.Head
+	return left.head < right.head
 }
 
 // newDiagnosticsReceiptSolver keeps this law suite on the only supported
-// solver construction route: a sealed SchemaBinding, committed ReceiptGraph,
+// solver construction route: a sealed SchemaBinding, committed program,
 // and typed Rule/Query attachment transaction. A failing transfer gives the
 // incomplete-certificate laws a real execution boundary without restoring the
 // retired synthetic admission fixture.
-func newDiagnosticsReceiptSolver(t testing.TB, failTransfer bool) (*Solver, ReceiptQuery) {
+func newDiagnosticsReceiptSolver(t testing.TB, failTransfer bool) (*Solver, ProgramQuery) {
 	t.Helper()
 	querySpec := hotExactQuerySpec()
 	querySpec.Project = func(cells OrderedCells[uint64]) uint64 { return uint64(len(cells.record.cells)) }
@@ -236,7 +282,7 @@ func newDiagnosticsReceiptSolver(t testing.TB, failTransfer bool) (*Solver, Rece
 // newDiagnosticsReceiptSolverOf is the same solver over an arbitrary declared
 // query result type, so a law can read a published result whose value carries a
 // mutable backing store.
-func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, querySpec HotExactQuerySpec[uint64, R]) (*Solver, ReceiptQuery) {
+func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, querySpec HotExactQuerySpec[uint64, R]) (*Solver, ProgramQuery) {
 	t.Helper()
 	schema, factor, rule, write, query := receiptExactQuerySchemaFixtureOf[R](t, querySpec.Result.Semantic)
 	binding := NewSchemaBinding(schema)
@@ -257,23 +303,23 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, R](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !implementationOK || implementation == nil || !queryImplementationOK || queryImplementation == nil || !assemblyOK || assembly == nil {
 		t.Fatal("diagnostics receipt assembly")
 	}
 
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	scope := equation.EmptyScope()
 	sites := make([]equation.Site, 1)
 	occurrences := make([]equation.Occurrence, 1)
 	operands := make([]equation.Operand, 1)
 	operandValues := make([]ruleUnit, 1)
 	for index := range sites {
-		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_700+index)), scope, equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(949_700+index)), scope, equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.admitAt(site)
 		operandValue := ruleUnitForSemantic(coldKey(949_710 + index))
 		entity, entityOK := operandEntityForContent(operandValue.content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
 			t.Fatal("diagnostics receipt source")
 		}
@@ -282,44 +328,45 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 	if !assembly.SealSources() {
 		t.Fatal("diagnostics receipt source seal")
 	}
-	pointRefs := make([]bindingPointRowRef, 1)
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
 	ruleIDs := make([]byte, 1)
 	for index := range sites {
 		pointID := receiptAssemblySemanticID(byte(70 + index*2))
 		ruleID := receiptAssemblySemanticID(byte(71 + index*2))
-		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
-		pointRef, pointSemanticOK := assembly.builder.addSemanticPoint(pointID, point)
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		declaration.points = append(declaration.points, declaredPointRow{ID: pointID, Site: sites[index]})
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index],
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		part, partOK := implementation.WritePart(source, 0)
-		if !pointOK || !pointSemanticOK || !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
+		if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
 			t.Fatal("diagnostics receipt rule row")
 		}
-		ruleRow, ruleRowOK := assembly.builder.issueRuleRow(draft)
-		_, ruleSemanticOK := assembly.builder.addSemanticRule(ruleID, ruleRow)
-		if !ruleRowOK || !ruleSemanticOK {
+		ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
+		if !ruleRowOK {
 			t.Fatal("diagnostics receipt topology")
 		}
-		pointRefs[index] = pointRef
+		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: ruleID, Row: ruleRow.row})
 		ruleIDs[index] = byte(71 + index*2)
 	}
-	queryRow, queryRowOK := assembly.builder.issueQueryRow(queryImplementation, equation.QueryInstance{
-		Family: schema.querySemanticAt(0), Point: pointRefs[0].ref,
-		Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}},
+	declaration.queries = append(declaration.queries, declaredQueryRow{
+		ID: receiptAssemblySemanticID(80),
+		Row: equation.QueryInstance{
+			Family: schema.querySemanticAt(0), Point: equation.PointAt(0),
+			Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}},
+		},
 	})
-	_, querySemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(80), queryRow)
-	if !queryRowOK || !querySemanticOK {
-		t.Fatal("diagnostics receipt query row")
+	constructed, refusal := constructTopology(declaration)
+	if refusal.Available() || !constructed.Available() {
+		t.Fatalf("diagnostics receipt commit stage=%v step=%v", refusal.Stage(), refusal.Step())
 	}
-	_, graph, committed := assembly.Commit()
-	if !committed || graph == nil {
-		t.Fatal("diagnostics receipt commit")
+	program := CommittedProgramFrom(constructed.topology, constructed.graph)
+	if program == nil {
+		t.Fatal("diagnostics receipt committed program")
 	}
-	queryReceipt, queryReceiptOK := graph.Query(receiptAssemblySemanticID(80))
-	compilation, compilationOK := BeginProgramConstruction(binding, graph)
+	queryReceipt, queryReceiptOK := program.Query(receiptAssemblySemanticID(80))
+	compilation, compilationOK := BeginProgramConstruction(binding, program)
 	if !queryReceiptOK || !compilationOK || compilation == nil {
 		t.Fatal("diagnostics receipt commit")
 	}
@@ -331,7 +378,7 @@ func newDiagnosticsReceiptSolverOf[R any](t testing.TB, failTransfer bool, query
 		t.Fatal("diagnostics receipt resolver")
 	}
 	for _, ruleID := range ruleIDs {
-		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
+		if _, memberOK := program.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
 			t.Fatal("diagnostics receipt member")
 		}
 		if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(ruleID)); !attached {
@@ -366,7 +413,7 @@ func collectDiagnosticsExternalInterfaceRows(t testing.TB, maxRows int) SolveDia
 		t.Fatal("diagnostics external-interface epoch")
 	}
 	defer epoch.discard()
-	epoch.diagnostics = newSolveDiagnosticState(SolveDiagnosticOptions{Flags: SolveDiagnosticRestart, MaxRows: maxRows})
+	epoch.diagnostics = newSolveDiagnosticState(SolveDiagnosticOptions{Presentation: SolveDiagnosticPresentation{Flags: SolveDiagnosticRestart}, Resources: SolveDiagnosticResources{MaxRows: maxRows}})
 	if epoch.diagnostics == nil || !epoch.run() {
 		t.Fatal("diagnostics external-interface initial epoch")
 	}
@@ -444,7 +491,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	firstImplementation, firstImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, firstQuery)
 	secondImplementation, secondImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, secondQuery)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !implementationOK || implementation == nil || !firstImplementationOK || firstImplementation == nil || !secondImplementationOK || secondImplementation == nil || !assemblyOK || assembly == nil {
 		t.Fatal("diagnostics external-interface assembly")
 	}
@@ -452,7 +499,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	scope := equation.EmptyScope()
 	sites := make([]equation.Site, 4)
 	for index := range sites {
-		site, admitted := assembly.builder.admitSite(compositionKeyOf(coldKey(949_820+index)), scope, equation.TrueExpr(), equation.InitPresent)
+		site, admitted := assembly.admitSite(compositionKeyOf(coldKey(949_820+index)), scope, equation.TrueExpr(), equation.InitPresent)
 		if !admitted {
 			t.Fatal("diagnostics external-interface site")
 		}
@@ -464,7 +511,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	operands := make([]equation.Operand, len(rowSites))
 	operandValues := make([]ruleUnit, len(rowSites))
 	for index, siteIndex := range rowSites {
-		occurrence, occurrenceOK := assembly.builder.admitAt(sites[siteIndex])
+		occurrence, occurrenceOK := assembly.admitAt(sites[siteIndex])
 		value := ruleUnitForSemantic(coldKey(949_830 + index))
 		if index == 0 {
 			value = sourceOperands[0]
@@ -472,7 +519,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 			value = sourceOperands[1]
 		}
 		entity, entityOK := operandEntityForContent(value.content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !occurrenceOK || !entityOK || !operandOK {
 			t.Fatal("diagnostics external-interface operand")
 		}
@@ -482,65 +529,54 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 		t.Fatal("diagnostics external-interface source seal")
 	}
 
-	pointRefs := make([]bindingPointRowRef, len(sites))
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
 	for index, site := range sites {
-		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: site})
-		pointRef, semanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(byte(90+index)), point)
-		if !pointOK || !semanticOK {
-			t.Fatal("diagnostics external-interface point")
-		}
-		pointRefs[index] = pointRef
+		declaration.points = append(declaration.points, declaredPointRow{ID: receiptAssemblySemanticID(byte(90 + index)), Site: site})
 	}
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	ruleIDs := make([]byte, len(rowSites))
 	for index, siteIndex := range rowSites {
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index],
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		part, partOK := implementation.WritePart(source, 0)
 		if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
 			t.Fatal("diagnostics external-interface rule")
 		}
-		row, rowOK := assembly.builder.issueRuleRow(draft)
-		ruleID := byte(100 + index)
-		_, semanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(ruleID), row)
-		groupSpec := equation.Group{Output: pointRefs[siteIndex].ref}
-		switch index {
-		case 1, 4:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[siteIndex], sites[siteIndex], compositionKeyOf(coldKey(949_840+index)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-		case 2:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[0], sites[1], compositionKeyOf(coldKey(949_842)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-		case 5:
-			groupSpec.EnvironmentInput = equation.BoundaryInput(sites[2], sites[3], compositionKeyOf(coldKey(949_845)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-		}
-		if !rowOK || !semanticOK || len(assembly.builder.inner.spec.Groups) == 0 {
+		row, rowOK := assembly.issueRuleRow(draft)
+		if !rowOK {
 			t.Fatal("diagnostics external-interface group")
 		}
-		// addSemanticRule owns the canonical one-member group.  This fixture
-		// only supplies its authored environment edge after that group exists.
-		assembly.builder.inner.spec.Groups[len(assembly.builder.inner.spec.Groups)-1].EnvironmentInput = groupSpec.EnvironmentInput
+		ruleID := byte(100 + index)
+		member := declaredMemberRow{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(ruleID), Row: row.row}
+		switch index {
+		case 1, 4:
+			member.EnvironmentInput = equation.BoundaryInput(sites[siteIndex], sites[siteIndex], compositionKeyOf(coldKey(949_840+index)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+		case 2:
+			member.EnvironmentInput = equation.BoundaryInput(sites[0], sites[1], compositionKeyOf(coldKey(949_842)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+		case 5:
+			member.EnvironmentInput = equation.BoundaryInput(sites[2], sites[3], compositionKeyOf(coldKey(949_845)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
+		}
+		declaration.members = append(declaration.members, member)
 		ruleIDs[index] = ruleID
 	}
-	// A query row receipt carries the row index the builder will assign it, so
-	// a receipt is added as the immediately-next row. Issuing both rows before
-	// adding either would give them the same ordinal and the second add is
-	// correctly refused.
-	firstRow, firstRowOK := assembly.builder.issueQueryRow(firstImplementation, equation.QueryInstance{Family: schema.querySemanticAt(0), Point: pointRefs[1].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}})
-	_, firstSemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(110), firstRow)
-	secondRow, secondRowOK := assembly.builder.issueQueryRow(secondImplementation, equation.QueryInstance{Family: schema.querySemanticAt(1), Point: pointRefs[3].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}})
-	_, secondSemanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(111), secondRow)
-	if !firstRowOK || !secondRowOK || !firstSemanticOK || !secondSemanticOK {
-		t.Fatal("diagnostics external-interface query")
+	declaration.queries = append(declaration.queries,
+		declaredQueryRow{ID: receiptAssemblySemanticID(110), Row: equation.QueryInstance{Family: schema.querySemanticAt(0), Point: equation.PointAt(1), Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}}},
+		declaredQueryRow{ID: receiptAssemblySemanticID(111), Row: equation.QueryInstance{Family: schema.querySemanticAt(1), Point: equation.PointAt(3), Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadExact, Local: 1}}}},
+	)
+	constructed, refusal := constructTopology(declaration)
+	if refusal.Available() || !constructed.Available() {
+		t.Fatalf("diagnostics external-interface commit stage=%v step=%v", refusal.Stage(), refusal.Step())
 	}
-	_, graph, committed := assembly.Commit()
-	if !committed || graph == nil {
-		t.Fatal("diagnostics external-interface commit")
+	program := CommittedProgramFrom(constructed.topology, constructed.graph)
+	if program == nil {
+		t.Fatal("diagnostics external-interface committed program")
 	}
-	_, firstReceiptOK := graph.Query(receiptAssemblySemanticID(110))
-	_, secondReceiptOK := graph.Query(receiptAssemblySemanticID(111))
-	compilation, compilationOK := BeginProgramConstruction(binding, graph)
+	_, firstReceiptOK := program.Query(receiptAssemblySemanticID(110))
+	_, secondReceiptOK := program.Query(receiptAssemblySemanticID(111))
+	compilation, compilationOK := BeginProgramConstruction(binding, program)
 	if !firstReceiptOK || !secondReceiptOK || !compilationOK || compilation == nil {
 		t.Fatal("diagnostics external-interface compilation")
 	}
@@ -552,7 +588,7 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 		t.Fatal("diagnostics external-interface resolver")
 	}
 	for _, ruleID := range ruleIDs {
-		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
+		if _, memberOK := program.RuleMember(receiptAssemblySemanticID(ruleID)); !memberOK {
 			t.Fatal("diagnostics external-interface member")
 		}
 		if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(ruleID)); !attached {
@@ -568,11 +604,11 @@ func newDiagnosticsExternalInterfaceFixture(t testing.TB) diagnosticsExternalInt
 	}
 	sourceGroups := [2]int{}
 	for index, pointID := range []byte{90, 92} {
-		point, pointOK := graph.lookupPoint(receiptAssemblySemanticID(pointID))
+		point, pointOK := program.lookupPoint(receiptAssemblySemanticID(pointID))
 		if !pointOK {
 			t.Fatal("diagnostics external-interface source point")
 		}
-		group, groupOK := solver.runtime.graph.ProducerAt(point.point, 0)
+		group, groupOK := solver.runtime.graph.ProducerAt(point, 0)
 		groupIndex, indexed := solver.runtime.graph.GroupIndex(group)
 		if !groupOK || !indexed {
 			t.Fatal("diagnostics external-interface source group")
@@ -739,7 +775,7 @@ func TestProgramConstructionStageOfRefusesForeignBoundaries(t *testing.T) {
 		{Family: SolveFailureFamilyCompile},
 		ProgramConstructionFailure(ProgramConstructionStageNone),
 		ProgramConstructionFailure(programConstructionStageCount),
-		ReceiptCompilationAttachFailure(1),
+		receiptCompilationAttachFailure(1),
 		refused(SolveFailureFamilyCompile, "validation").failure(),
 		refused(SolveFailureFamilyCompile, "runtime-assembly").failure(),
 		receiptFailure(SolveFailureFamilyCompile, "receipt-commit", 1),

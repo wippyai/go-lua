@@ -149,16 +149,40 @@ func (compiler *compiler) localStage(base identity.ContentID) (identity.ContentI
 	return stage, true
 }
 
+// predecessorStage is the Program-owned execution cut for a routed strong
+// write. It is distinct from the ordinary local cut because rules at one point
+// all read one immutable incoming state.
+func (compiler *compiler) predecessorStage(base identity.ContentID) (identity.ContentID, bool) {
+	if compiler == nil || compiler.predecessorStages == nil || !base.Available() {
+		return identity.ContentID{}, false
+	}
+	if stage := compiler.predecessorStages[base]; stage.Available() {
+		return stage, true
+	}
+	if _, known := compiler.pointGeometry[base]; !known {
+		return identity.ContentID{}, false
+	}
+	stage := digest("analysis/program-artifact/local-predecessor-stage", artifactFormat, bytesField(base))
+	if !stage.Available() || stage == base {
+		return identity.ContentID{}, false
+	}
+	compiler.predecessorStages[base] = stage
+	return stage, true
+}
+
 // installLocalStagesFailure splices every reusable synthetic execution cut
 // into the exact Program WTO stream. A route-specific entry refinement is a
 // forward overlay: its guarded ingress targets the stage and Program-issued
 // successor continuations depart that stage. It never merges back into the
 // base, because base→stage→base would fabricate a recurrence.
 func (compiler *compiler) installLocalStagesFailure() CompileFailure {
-	if len(compiler.localStages) == 0 && len(compiler.computationStages) == 0 && len(compiler.callStages) == 0 {
+	if len(compiler.predecessorStages) == 0 && len(compiler.localStages) == 0 && len(compiler.computationStages) == 0 && len(compiler.callStages) == 0 {
 		return CompileFailure{}
 	}
-	baseSet := make(map[identity.ContentID]struct{}, len(compiler.localStages)+len(compiler.computationStages)+len(compiler.callStages))
+	baseSet := make(map[identity.ContentID]struct{}, len(compiler.predecessorStages)+len(compiler.localStages)+len(compiler.computationStages)+len(compiler.callStages))
+	for base := range compiler.predecessorStages {
+		baseSet[base] = struct{}{}
+	}
 	for base := range compiler.localStages {
 		baseSet[base] = struct{}{}
 	}
@@ -177,6 +201,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 	stageExit := make(map[identity.ContentID]identity.ContentID, len(bases))
 	computationInput := make(map[identity.ContentID]identity.ContentID)
 	callInput := make(map[identity.ContentID]identity.ContentID)
+	localPredecessorInput := make(map[identity.ContentID]identity.ContentID)
 	appendTransfer := func(domain string, from, to identity.ContentID, full bool, writes ...schema.Key) bool {
 		ordered, orderedOK := orderedWrites(writes)
 		if !orderedOK {
@@ -198,12 +223,38 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		if !baseOK || !geometry.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 		}
-		sequence := make([]identity.ContentID, 0, 5)
+		sequence := make([]identity.ContentID, 0, 6)
 		predecessor := base
+		if stage := compiler.predecessorStages[base]; stage.Available() {
+			written := make(map[schema.Key]struct{})
+			for _, placement := range compiler.ruleOccurrences {
+				if placement.point != stage || placement.inputKind != RuleInputPredecessor {
+					continue
+				}
+				axis, axisOK := compiler.issuance.writesFor(placement.key)
+				if !axisOK {
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+				}
+				written[axis] = struct{}{}
+			}
+			transport, transportOK := compiler.issuance.transportKeysExcept(written)
+			if len(written) == 0 || !transportOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			sequence = append(sequence, stage)
+			if len(transport) != 0 && !appendTransfer("analysis/program-artifact/local-predecessor-transfer", base, stage, false, transport...) {
+				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			}
+			predecessor = stage
+			stageExit[base] = stage
+		}
 		if local := compiler.localStages[base]; local.Available() {
 			sequence = append(sequence, local)
-			if !appendTransfer("analysis/program-artifact/local-transfer", base, local, true) {
+			if !appendTransfer("analysis/program-artifact/local-transfer", predecessor, local, true) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			}
+			if predecessor != base {
+				localPredecessorInput[local] = predecessor
 			}
 			predecessor = local
 			stageExit[base] = local
@@ -268,8 +319,16 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			}
 		}
 	}
-	compiler.environmentByRoute = make(map[identity.ContentID]EnvironmentEdge, len(compiler.environment))
-	compiler.environmentRouteDuplicates = make(map[identity.ContentID]struct{})
+	if compiler.environmentByRoute == nil {
+		compiler.environmentByRoute = make(map[identity.ContentID]EnvironmentEdge, len(compiler.environment))
+	} else {
+		clear(compiler.environmentByRoute)
+	}
+	if compiler.environmentRouteDuplicates == nil {
+		compiler.environmentRouteDuplicates = make(map[identity.ContentID]struct{}, len(compiler.environment))
+	} else {
+		clear(compiler.environmentRouteDuplicates)
+	}
 	for _, edge := range compiler.environment {
 		if _, duplicate := compiler.environmentByRoute[edge.route]; duplicate {
 			compiler.environmentRouteDuplicates[edge.route] = struct{}{}
@@ -283,10 +342,10 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		if compiler.ruleOccurrences[index].inputKind == RuleInputPredecessor {
 			edge, found := compiler.environmentByRoute[compiler.ruleOccurrences[index].route]
-			if !found || !edge.from.Available() {
+			if !found || !edge.to.Available() || edge.to == compiler.ruleOccurrences[index].point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			compiler.ruleOccurrences[index].input = edge.from
+			compiler.ruleOccurrences[index].input = edge.to
 			continue
 		}
 		if input, computation := computationInput[compiler.ruleOccurrences[index].point]; computation {
@@ -298,6 +357,13 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		if input, dispatch := callInput[compiler.ruleOccurrences[index].point]; dispatch {
 			if compiler.ruleOccurrences[index].stage != RuleStageCallDispatch || compiler.ruleOccurrences[index].inputKind != RuleInputFinish || !input.Available() || input == compiler.ruleOccurrences[index].point {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			compiler.ruleOccurrences[index].input = input
+			continue
+		}
+		if input, separated := localPredecessorInput[compiler.ruleOccurrences[index].point]; separated {
+			if !input.Available() || input == compiler.ruleOccurrences[index].point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			compiler.ruleOccurrences[index].input = input

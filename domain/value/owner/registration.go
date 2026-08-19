@@ -1,6 +1,7 @@
 package owner
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -24,6 +25,7 @@ type axisInputs interface {
 	MountedArtifactAt(index int) (axis.MountedArtifact, bool)
 	HeapInput() heap.Schema
 	ValueInput() *value.Schema
+	StructureInput() structure.Table
 }
 
 // mountValueSchema seals this Link's value universe from the mounted artifacts.
@@ -43,7 +45,7 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 		if !rowOK {
 			return nil, value.SealFailureInput, false
 		}
-		mount, mountOK := value.NewArtifactMount(row.Artifact, row.ModuleKey, row.ProgramID)
+		mount, mountOK := value.NewArtifactMount(row.Snapshot, row.ModuleKey, row.ProgramID)
 		if !mountOK {
 			return nil, value.SealFailureInput, false
 		}
@@ -53,7 +55,7 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 		seen[mount.Module()] = struct{}{}
 		mounts = append(mounts, mount)
 	}
-	schema, failure := value.SealWithFailure(source, inputs.HeapInput(), mounts)
+	schema, failure := value.SealWithFailure(source, inputs.HeapInput(), mounts, inputs.StructureInput())
 	if failure != value.SealFailureNone {
 		return nil, failure, false
 	}
@@ -62,8 +64,8 @@ func mountValueSchema[A axisInputs](inputs A) (*value.Schema, value.SealFailure,
 
 // AxisEntry is this package's value axis declaration. A is the composition's
 // own Link input record, admitted by the need interface above.
-func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, value.Value] {
-	return axis.Spec[A, *SchemaFragment, *HotOwner, value.Value]{
+func AxisEntry[A axisInputs]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:         "value",
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
@@ -83,26 +85,44 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, value.Va
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (*value.Schema, value.SealFailure, bool) {
 			return mountValueSchema[A](context.Inputs)
 		}),
-		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			factor, factorOK := context.Roles.Key("semantic/factor/value")
-			summary, summaryOK := context.Roles.Key("semantic/factor/value/summary-identity")
-			fold, foldOK := context.Roles.Key("semantic/factor/value/summary-coordinatewise")
-			if !factorOK || !summaryOK || !foldOK {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, factor, summary, fold)
-		},
-		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-			return BindHot(context.Binding, context.Fragment, context.Inputs.ValueInput())
-		},
-		Algebra: func(owner *HotOwner) (axis.Algebra[value.Value], bool) {
-			spec, ok := owner.FactorSpec()
-			if !ok {
-				return axis.Algebra[value.Value]{}, false
-			}
-			return axis.Adopt(spec)
-		},
 	}
+}
+
+// DeclareAxis records the value factor's cold schema shape.
+func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*SchemaFragment, bool) {
+	factor, factorOK := context.Roles.Key("semantic/factor/value")
+	summary, summaryOK := context.Roles.Key("semantic/factor/value/summary-identity")
+	fold, foldOK := context.Roles.Key("semantic/factor/value/summary-coordinatewise")
+	if !factorOK || !summaryOK || !foldOK {
+		return nil, false
+	}
+	return DeclareSchema(builder, factor, summary, fold)
+}
+
+// BindAxis instantiates the value factor binding.
+func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
+	return BindHot(binding, context.Fragment, context.Inputs.ValueInput())
+}
+
+// AlgebraAxis publishes the value factor algebra on the axis ordinal key space.
+func AlgebraAxis(owner *HotOwner) (axis.Algebra[value.Value], bool) {
+	spec, ok := owner.FactorSpec()
+	if !ok {
+		return axis.Algebra[value.Value]{}, false
+	}
+	return adoptFactor(spec)
+}
+
+func adoptFactor(spec engine.HotFactorSpec[coordinate, value.Value]) (axis.Algebra[value.Value], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[coordinate, value.Value]{
+		KeyEnd:      spec.KeyEnd,
+		Lattice:     spec.Lattice,
+		Default:     spec.Default,
+		AdmitAt:     spec.AdmitAt,
+		Fingerprint: spec.Fingerprint,
+		Widen:       axis.CarrierRank[coordinate, value.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[coordinate, value.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+	})
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

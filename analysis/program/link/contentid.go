@@ -4,12 +4,12 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	linkstatic "github.com/wippyai/go-lua/analysis/program/link/static"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 const (

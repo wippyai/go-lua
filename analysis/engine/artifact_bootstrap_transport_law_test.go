@@ -18,9 +18,9 @@ type bootstrapTransportLawOwner struct {
 	rules                          [3]*RuleSlot[uint64, struct{}]
 	writes                         [3]SchemaWriteSlot[uint64]
 	admissions                     [3]identity.SemanticKey
-	queries                        [3]*QuerySlot[uint64]
+	queries                        [4]*QuerySlot[uint64]
 	implementations                [3]*RuleImplementation[uint64, uint64, struct{}]
-	queryImplementations           [3]*ExactQueryImplementation[uint64, uint64]
+	queryImplementations           [4]*ExactQueryImplementation[uint64, uint64]
 	activationFamily               SchemaActivationFamily
 	activationRule                 *SchemaActivationRuleSlot
 	activationImplementation       *ActivationRuleImplementation
@@ -30,8 +30,15 @@ type bootstrapTransportLawOwner struct {
 	activationRuns                 *atomic.Int64
 	binding                        *SchemaBinding
 	value, heap, excluded          RuleSlotCapability
+	mounted, activation            RuleSlotCapability
 	valueFactor, heapFactor, other composition.Key
 }
+
+// bootstrapTransportLawQueryFactor is the factor each declared query reads. The
+// fourth query reads the excluded lane's factor at the mounted Point that lane
+// writes, so the third query keeps proving the same factor is absent at the
+// mounted initial Point the Link bootstrap transports reach.
+var bootstrapTransportLawQueryFactor = [4]int{0, 1, 2, 2}
 
 func newBootstrapTransportLawOwner(t testing.TB) bootstrapTransportLawOwner {
 	t.Helper()
@@ -69,7 +76,7 @@ func newBootstrapTransportLawOwner(t testing.TB) bootstrapTransportLawOwner {
 	}
 	for index := range owner.queries {
 		query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(uint64(947_980 + index*2)), Freezer: coldKey(uint64(947_981 + index*2))})
-		if !queryOK || !SchemaQueryRead(query, reads[index]) {
+		if !queryOK || !SchemaQueryRead(query, reads[bootstrapTransportLawQueryFactor[index]]) {
 			t.Fatal("bootstrap transport query rows")
 		}
 		owner.queries[index] = query
@@ -85,7 +92,9 @@ func newBootstrapTransportLawOwner(t testing.TB) bootstrapTransportLawOwner {
 	}
 	owner.activationFamily, owner.activationRule = activationFamily, activationRule
 	owner.schema = schema
-	owner.binding, owner.value, owner.heap, owner.excluded = bindBootstrapTransportLawOwner(t, owner, true)
+	capabilities := bindBootstrapTransportLawOwner(t, owner)
+	owner.binding, owner.value, owner.heap = capabilities.binding, capabilities.value, capabilities.heap
+	owner.excluded, owner.mounted, owner.activation = capabilities.excluded, capabilities.mounted, capabilities.activation
 	for index := range owner.implementations {
 		implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](owner.binding, owner.rules[index])
 		if !implementationOK || implementation == nil {
@@ -115,7 +124,16 @@ func newBootstrapTransportLawOwner(t testing.TB) bootstrapTransportLawOwner {
 	return owner
 }
 
-func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwner, allLink bool) (*SchemaBinding, RuleSlotCapability, RuleSlotCapability, RuleSlotCapability) {
+// bootstrapTransportLawCapabilities is the capability set one binding of this
+// owner issues: the two authorized Link bootstrap transports, a third Link
+// capability outside that pair, the mounted capability the same third rule slot
+// also carries, and the mounted activation capability.
+type bootstrapTransportLawCapabilities struct {
+	binding                                    *SchemaBinding
+	value, heap, excluded, mounted, activation RuleSlotCapability
+}
+
+func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwner) bootstrapTransportLawCapabilities {
 	t.Helper()
 	binding := NewSchemaBinding(owner.schema)
 	for index := range owner.factors {
@@ -134,16 +152,12 @@ func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwn
 	}
 	value, valueOK := IssueLinkRuleCapability(binding, owner.rules[0])
 	heap, heapOK := IssueLinkRuleCapability(binding, owner.rules[1])
-	var excluded RuleSlotCapability
-	var excludedOK bool
-	if allLink {
-		excluded, excludedOK = IssueLinkRuleCapability(binding, owner.rules[2])
-	} else {
-		excluded, excludedOK = IssueMountedRuleCapability(binding, owner.rules[2])
-	}
+	excluded, excludedOK := IssueLinkRuleCapability(binding, owner.rules[2])
+	mounted, mountedOK := IssueMountedRuleCapability(binding, owner.rules[2])
+	activation, activationCapabilityOK := IssueActivationRuleCapability(binding, owner.activationRule)
 	queriesOK := true
 	for index, query := range owner.queries {
-		queriesOK = queriesOK && BindExactQuery(binding, query, owner.factors[index], bootstrapTransportQuerySpec(coldKey(uint64(947_981+index*2))))
+		queriesOK = queriesOK && BindExactQuery(binding, query, owner.factors[bootstrapTransportLawQueryFactor[index]], bootstrapTransportQuerySpec(coldKey(uint64(947_981+index*2))))
 	}
 	activationOK := BindActivationRule(binding, owner.activationRule, HotActivationSpec{
 		Admission: AdmitActivationByTrustedTheorem(owner.activationAdmission),
@@ -152,10 +166,14 @@ func bindBootstrapTransportLawOwner(t testing.TB, owner bootstrapTransportLawOwn
 			return Activate(activation, coldKey(947_992), coldKey(947_993), coldKey(947_994))
 		},
 	})
-	if !valueOK || !heapOK || !excludedOK || !RegisterRuleSlot(binding, owner.rules[0], value) || !RegisterRuleSlot(binding, owner.rules[1], heap) || !RegisterRuleSlot(binding, owner.rules[2], excluded) || !RegisterLinkBootstrapTransportPair(binding, value, heap) || !queriesOK || !activationOK || !binding.Seal() {
+	if !valueOK || !heapOK || !excludedOK || !mountedOK || !activationCapabilityOK ||
+		!RegisterRuleSlot(binding, owner.rules[0], value) || !RegisterRuleSlot(binding, owner.rules[1], heap) ||
+		!RegisterRuleSlot(binding, owner.rules[2], excluded) || !RegisterRuleSlot(binding, owner.rules[2], mounted) ||
+		!RegisterActivationRuleSlot(binding, owner.activationRule, activation) ||
+		!RegisterLinkBootstrapTransportPair(binding, value, heap) || !queriesOK || !activationOK || !binding.Seal() {
 		t.Fatal("bootstrap transport capabilities")
 	}
-	return binding, value, heap, excluded
+	return bootstrapTransportLawCapabilities{binding: binding, value: value, heap: heap, excluded: excluded, mounted: mounted, activation: activation}
 }
 
 func bootstrapTransportQuerySpec(freezer identity.SemanticKey) HotExactQuerySpec[uint64, uint64] {
@@ -171,14 +189,20 @@ func bootstrapTransportQuerySpec(freezer identity.SemanticKey) HotExactQuerySpec
 			Semantic: freezer,
 			Freeze:   func(value uint64) uint64 { return value }, Clone: func(value uint64) uint64 { return value },
 			Equal: func(left, right uint64) bool { return left == right }, Fingerprint: func(value uint64) uint64 { return value },
+			Present: func(value uint64) bool { return true },
 		},
 	}
 }
 
 type bootstrapTransportLawArtifact struct {
-	receipt           *ArtifactScalarReceipt
+	template          *rows.ArtifactScalarTemplate
 	artifact, initial identity.ContentID
 	noninitial        identity.ContentID
+	// producer and activation are the two parent-issued rule rows the mounted
+	// lane occupies. Both are staged at the non-initial Point, so the excluded
+	// lane's factor is written where no Link bootstrap transport lands.
+	producerRole, activationRole rows.ArtifactScalarRole
+	producer, activation         identity.ContentID
 }
 
 func newBootstrapTransportLawArtifact(t testing.TB, schema *Schema, salt byte) bootstrapTransportLawArtifact {
@@ -193,9 +217,16 @@ func newBootstrapTransportLawArtifactWithInitials(t testing.TB, schema *Schema, 
 	noninitial := bootstrapTransportLawID(salt, 4)
 	regionID := bootstrapTransportLawID(salt, 5)
 	bodyID := bootstrapTransportLawID(salt, 6)
-	spec, specOK := rows.NewArtifactScalarSpec(artifactID, program, identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Points: 2, Regions: 1, Events: 4, Bodies: 1})
+	producer := bootstrapTransportLawID(salt, 7)
+	activation := bootstrapTransportLawID(salt, 8)
+	spec, specOK := rows.NewArtifactScalarSpec(artifactID, program, identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 2, Regions: 1, Events: 4, Bodies: 1, Rules: 2})
 	if !specOK || spec == nil {
 		t.Fatal("bootstrap transport artifact spec")
+	}
+	producerRole, producerRoleOK := spec.DeclareRole(bootstrapTransportLawID(salt, 9))
+	activationRole, activationRoleOK := spec.DeclareRole(bootstrapTransportLawID(salt, 10))
+	if !producerRoleOK || !activationRoleOK {
+		t.Fatal("bootstrap transport artifact roles")
 	}
 	initialRow, initialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: initial, Initial: firstInitial})
 	_, noninitialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: noninitial, Initial: secondInitial})
@@ -207,16 +238,29 @@ func newBootstrapTransportLawArtifactWithInitials(t testing.TB, schema *Schema, 
 		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: initial}) ||
 		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: noninitial}) ||
 		!spec.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: regionID}) ||
-		!spec.AddBodyEntry(body, initial) || !spec.AddBodyExit(body, noninitial) {
+		!spec.AddBodyEntry(body, initial) || !spec.AddBodyExit(body, noninitial) ||
+		!spec.AddRule(rows.ArtifactScalarRule{Role: producerRole, Stage: rows.ArtifactRuleStageBase, Point: noninitial, ID: producer}) ||
+		!spec.AddRule(rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageBase, Point: noninitial, ID: activation}) {
 		t.Fatal("bootstrap transport artifact rows")
 	}
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
-	binding, bindingOK := NewArtifactScalarBinding(template)
-	receipt, receiptOK := NewArtifactScalarReceipt(binding)
-	if !templateOK || !bindingOK || !receiptOK || receipt == nil {
+	if !templateOK || template == nil {
 		t.Fatal("bootstrap transport artifact")
 	}
-	return bootstrapTransportLawArtifact{receipt: receipt, artifact: artifactID, initial: initial, noninitial: noninitial}
+	return bootstrapTransportLawArtifact{
+		template: template, artifact: artifactID, initial: initial, noninitial: noninitial,
+		producerRole: producerRole, activationRole: activationRole, producer: producer, activation: activation,
+	}
+}
+
+func (artifact bootstrapTransportLawArtifact) mount(owner bootstrapTransportLawOwner, module identity.ContentID) MountedProgramArtifact {
+	return MountedProgramArtifact{
+		Template: artifact.template, Module: module,
+		Roles: []MountedProgramRole{
+			{Scalar: artifact.producerRole, Capability: owner.mounted},
+			{Scalar: artifact.activationRole, Capability: owner.activation},
+		},
+	}
 }
 
 func bootstrapTransportLawID(salt, value byte) identity.ContentID {
@@ -236,73 +280,95 @@ func bootstrapTransportLawWitness(t testing.TB, owner bootstrapTransportLawOwner
 	return witness
 }
 
-func commitBootstrapTransportLaw(t testing.TB, binding *SchemaBinding, mounts []MountedArtifactReceipt, witness LinkBootstrapWitness) (*BindingTopology, *ReceiptGraph) {
+func commitBootstrapTransportLaw(t testing.TB, binding *SchemaBinding, mounts []MountedProgramArtifact, witness LinkBootstrapWitness) (*BindingTopology, *CommittedProgram, *mountedArtifactRows) {
 	t.Helper()
-	assembly, failure, assemblyOK := BeginMountedArtifactReceiptAssemblyWithFailure(binding, mounts, witness)
-	if !assemblyOK || assembly == nil || failure != ReceiptAssemblyFailureNone {
+	sealedMounts, sealedOK := sealMountedProgramArtifacts(mounts)
+	assembly, failure, assemblyOK := beginMountedProgramMounts(binding, mounts, witness)
+	if !sealedOK || !assemblyOK || assembly == nil || failure != receiptAssemblyFailureNone {
 		t.Fatalf("bootstrap transport assembly failure=%d", failure)
 	}
 	if !assembly.SealSources() {
 		t.Fatalf("bootstrap transport source seal=%+v", assembly.sealFailure)
 	}
-	topology, graph, committed := assembly.CommitObservationTopology()
+	rows := assembly.mountedRows
+	declaration, declared := declareSealedTopology(assembly, sealedMounts, witness)
+	// The owner declares three query families and admits no query row, so the
+	// program publishes its Query demand as solve-local observations.
+	declaration.observationQueries = true
+	constructed, refusal := constructTopology(declaration)
+	topology, graph := constructed.topology, constructed.graph
+	committed := declared && !refusal.Available() && constructed.Available()
 	if !committed || topology == nil || graph == nil {
-		t.Fatalf("bootstrap transport commit=%+v", assembly.commitFailure)
+		t.Fatalf("bootstrap transport construction declared=%t stage=%v step=%v ordinal=%d", declared, refusal.Stage(), refusal.Step(), refusal.Ordinal())
 	}
-	return topology, graph
+	program := CommittedProgramFrom(topology, graph)
+	if program == nil {
+		t.Fatal("bootstrap transport committed program")
+	}
+	return topology, program, rows
 }
 
 func TestLinkBootstrapTransportsOnlyValueAndHeapToMountedInitialPoints(t *testing.T) {
 	owner := newBootstrapTransportLawOwner(t)
 	artifact := newBootstrapTransportLawArtifact(t, owner.schema, 1)
 	mountID := bootstrapTransportLawID(1, 30)
-	mounted, mountedOK := NewMountedArtifactReceipt(artifact.receipt, mountID)
+	mounted := artifact.mount(owner, mountID)
+	mountedOK := mounted.Template != nil && mounted.Module.Available()
 	witness := bootstrapTransportLawWitness(t, owner, 1)
 	if !mountedOK {
 		t.Fatal("bootstrap transport mount")
 	}
 	substituted, substitutedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 32), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.value}, LinkBootstrapCatalog{Capability: owner.excluded})
-	foreignAssembly, foreignFailure, foreignAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, substituted)
-	if !substitutedOK || !substituted.Available() || foreignAssembled || foreignAssembly != nil || foreignFailure != ReceiptAssemblyFailureSnapshotBootstrap {
+	foreignAssembly, foreignFailure, foreignAssembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, substituted)
+	if !substitutedOK || !substituted.Available() || foreignAssembled || foreignAssembly != nil || foreignFailure != receiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("same-binding third Link factor substituted for authorized Heap transport")
 	}
 	reversed, reversedOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(1, 33), LinkBootstrapPoint{PointID: bootstrapTransportLawID(1, 34), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.heap}, LinkBootstrapCatalog{Capability: owner.value})
-	reversedAssembly, reversedFailure, reversedAssembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, reversed)
-	if !reversedOK || !reversed.Available() || reversedAssembled || reversedAssembly != nil || reversedFailure != ReceiptAssemblyFailureSnapshotBootstrap {
+	reversedAssembly, reversedFailure, reversedAssembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, reversed)
+	if !reversedOK || !reversed.Available() || reversedAssembled || reversedAssembly != nil || reversedFailure != receiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("authorized Link bootstrap transport order was not retained")
 	}
-	topology, graph := commitBootstrapTransportLaw(t, owner.binding, []MountedArtifactReceipt{mounted}, witness)
-	rows := topology.artifact
+	topology, graph, rows := commitBootstrapTransportLaw(t, owner.binding, []MountedProgramArtifact{mounted}, witness)
 	initialID := mountedArtifactID("analysis/engine/artifact-point/v1", mountID, artifact.artifact, artifact.initial)
 	noninitialID := mountedArtifactID("analysis/engine/artifact-point/v1", mountID, artifact.artifact, artifact.noninitial)
 	initialRef, initialRefOK := rows.pointRef[initialID]
 	noninitialRef, noninitialRefOK := rows.pointRef[noninitialID]
-	if !initialRefOK || !noninitialRefOK || initialRef == noninitialRef || len(topology.plan.spec.EnvironmentEdges) != 0 || len(topology.plan.spec.FactorEdges) != 2 || graph.graph.FactorEdgeTotal() != 2 {
+	if !initialRefOK || !noninitialRefOK || initialRef == noninitialRef || len(topology.carrier.spec.EnvironmentEdges) != 0 || len(topology.carrier.spec.FactorEdges) != 2 || graph.graph.FactorEdgeTotal() != 2 {
 		t.Fatal("bootstrap transport exact edge census")
 	}
 	wantFactors := []composition.Key{owner.valueFactor, owner.heapFactor}
-	for index, edge := range topology.plan.spec.FactorEdges {
+	for index, edge := range topology.carrier.spec.FactorEdges {
 		wantProvenance, provenanceOK := linkBootstrapTransportKey(rows.bootstrap.owner, rows.pointMeta[initialID], wantFactors[index])
 		if edge.Target != initialRef || edge.Target == noninitialRef || edge.Factor != wantFactors[index] || edge.Factor == owner.other || !edge.Input.Source().Same(rows.bootstrap.site) || !edge.Input.Target().Same(rows.sites[initialID]) || edge.Input.Target().Same(rows.sites[noninitialID]) || !provenanceOK || edge.Input.Provenance() != wantProvenance {
 			t.Fatalf("bootstrap transport row %d escaped exact initial Value/Heap plane", index)
 		}
 	}
-	tampered := rows.pointMeta[noninitialID]
-	tampered.initial = true
-	rows.pointMeta[noninitialID] = tampered
-	if rows.validPayload(topology) {
-		t.Fatal("sealed payload admitted a second mounted initial point")
+	// The initial Point of a mount is read from the sealed template on every
+	// construction, so a mount declaring a second one publishes no geometry.
+	ambiguous := newBootstrapTransportLawArtifactWithInitials(t, owner.schema, 1, true, true)
+	ambiguousMounts, ambiguousSealed := sealMountedProgramArtifacts([]MountedProgramArtifact{ambiguous.mount(owner, mountID)})
+	admission, admissionFailure, admitted := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, witness)
+	if !ambiguousSealed || !admitted || admission == nil || admissionFailure != receiptAssemblyFailureNone || !admission.SealSources() {
+		t.Fatal("second mounted initial point declaration")
+	}
+	ambiguousDeclaration, ambiguousDeclared := declareSealedTopology(admission, ambiguousMounts, witness)
+	ambiguousDeclaration.observationQueries = true
+	ambiguousConstructed, ambiguousRefusal := constructTopology(ambiguousDeclaration)
+	if !ambiguousDeclared || ambiguousConstructed.Available() || ambiguousRefusal.Stage() != ProgramConstructionStageAdmission || ambiguousRefusal.Step() != topologyConstructionStepMountRow {
+		t.Fatalf("second mounted initial point admitted declared=%t stage=%v step=%v published=%t", ambiguousDeclared, ambiguousRefusal.Stage(), ambiguousRefusal.Step(), ambiguousConstructed.Available())
 	}
 }
 
 func TestLinkBootstrapTransportRejectsForeignCapabilityAtSnapshot(t *testing.T) {
 	owner := newBootstrapTransportLawOwner(t)
-	foreignBinding, foreignValue, foreignHeap, _ := bindBootstrapTransportLawOwner(t, owner, true)
+	foreign := bindBootstrapTransportLawOwner(t, owner)
+	foreignBinding, foreignValue, foreignHeap := foreign.binding, foreign.value, foreign.heap
 	artifact := newBootstrapTransportLawArtifact(t, owner.schema, 2)
-	mounted, mountedOK := NewMountedArtifactReceipt(artifact.receipt, bootstrapTransportLawID(2, 30))
+	mounted := artifact.mount(owner, bootstrapTransportLawID(2, 30))
+	mountedOK := mounted.Template != nil && mounted.Module.Available()
 	witness, witnessOK := NewLinkBootstrapWitnessByCapability(bootstrapTransportLawID(2, 31), LinkBootstrapPoint{PointID: bootstrapTransportLawID(2, 32), Known: true, Initial: true}, LinkBootstrapCatalog{Capability: owner.value}, LinkBootstrapCatalog{Capability: foreignHeap})
-	assembly, failure, assembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, witness)
-	if foreignBinding == nil || !foreignValue.Link() || !mountedOK || !witnessOK || assembled || assembly != nil || failure != ReceiptAssemblyFailureSnapshotBootstrap {
+	assembly, failure, assembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, witness)
+	if foreignBinding == nil || !foreignValue.Link() || !mountedOK || !witnessOK || assembled || assembly != nil || failure != receiptAssemblyFailureSnapshotBootstrap {
 		t.Fatal("foreign equal-schema bootstrap capability crossed owner fence")
 	}
 }
@@ -312,9 +378,10 @@ func TestLinkBootstrapTransportRejectsMissingOrAmbiguousMountedInitialPoint(t *t
 	witness := bootstrapTransportLawWitness(t, owner, 4)
 	for index, initials := range [][2]bool{{false, false}, {true, true}} {
 		artifact := newBootstrapTransportLawArtifactWithInitials(t, owner.schema, byte(4+index), initials[0], initials[1])
-		mounted, mountedOK := NewMountedArtifactReceipt(artifact.receipt, bootstrapTransportLawID(byte(4+index), 30))
-		assembly, failure, assembled := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, witness)
-		if !mountedOK || assembled || assembly != nil || failure != ReceiptAssemblyFailureSnapshotTopologyPoint {
+		mounted := artifact.mount(owner, bootstrapTransportLawID(byte(4+index), 30))
+		mountedOK := mounted.Template != nil && mounted.Module.Available()
+		assembly, failure, assembled := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, witness)
+		if !mountedOK || assembled || assembly != nil || failure != receiptAssemblyFailureSnapshotTopologyPoint {
 			t.Fatalf("mounted initial cardinality %v did not fail closed", initials)
 		}
 	}
@@ -324,25 +391,28 @@ func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) 
 	owner := newBootstrapTransportLawOwner(t)
 	artifact := newBootstrapTransportLawArtifact(t, owner.schema, 3)
 	firstMount, secondMount := bootstrapTransportLawID(3, 30), bootstrapTransportLawID(3, 31)
-	first, firstOK := NewMountedArtifactReceipt(artifact.receipt, firstMount)
-	second, secondOK := NewMountedArtifactReceipt(artifact.receipt, secondMount)
+	first := artifact.mount(owner, firstMount)
+	firstOK := first.Template != nil && first.Module.Available()
+	second := artifact.mount(owner, secondMount)
+	secondOK := second.Template != nil && second.Module.Available()
 	if !firstOK || !secondOK {
 		t.Fatal("two-mount bootstrap transport receipts")
 	}
 	witness := bootstrapTransportLawWitness(t, owner, 3)
-	firstTopology, firstGraph := commitBootstrapTransportLaw(t, owner.binding, []MountedArtifactReceipt{first, second}, witness)
-	secondTopology, secondGraph := commitBootstrapTransportLaw(t, owner.binding, []MountedArtifactReceipt{first, second}, witness)
-	if len(firstTopology.plan.spec.FactorEdges) != 4 || len(secondTopology.plan.spec.FactorEdges) != 4 || firstGraph.graph.FactorEdgeTotal() != 4 || secondGraph.graph.FactorEdgeTotal() != 4 {
+	firstTopology, firstGraph, firstRows := commitBootstrapTransportLaw(t, owner.binding, []MountedProgramArtifact{first, second}, witness)
+	secondTopology, secondGraph, secondRows := commitBootstrapTransportLaw(t, owner.binding, []MountedProgramArtifact{first, second}, witness)
+	_ = secondRows
+	if len(firstTopology.carrier.spec.FactorEdges) != 4 || len(secondTopology.carrier.spec.FactorEdges) != 4 || firstGraph.graph.FactorEdgeTotal() != 4 || secondGraph.graph.FactorEdgeTotal() != 4 {
 		t.Fatal("two-mount bootstrap transport census")
 	}
 	wantMounts := []identity.ContentID{firstMount, secondMount, firstMount, secondMount}
 	wantFactors := []composition.Key{owner.valueFactor, owner.valueFactor, owner.heapFactor, owner.heapFactor}
 	seenProvenance := make(map[composition.Key]struct{}, 4)
-	for index, edge := range firstTopology.plan.spec.FactorEdges {
+	for index, edge := range firstTopology.carrier.spec.FactorEdges {
 		mountedInitial := mountedArtifactID("analysis/engine/artifact-point/v1", wantMounts[index], artifact.artifact, artifact.initial)
-		metadata := firstTopology.artifact.pointMeta[mountedInitial]
-		wantProvenance, provenanceOK := linkBootstrapTransportKey(firstTopology.artifact.bootstrap.owner, metadata, wantFactors[index])
-		secondEdge := secondTopology.plan.spec.FactorEdges[index]
+		metadata := firstRows.pointMeta[mountedInitial]
+		wantProvenance, provenanceOK := linkBootstrapTransportKey(firstRows.bootstrap.owner, metadata, wantFactors[index])
+		secondEdge := secondTopology.carrier.spec.FactorEdges[index]
 		if !provenanceOK || edge.Factor != wantFactors[index] || edge.Input.Provenance() != wantProvenance || secondEdge.Factor != edge.Factor || secondEdge.Input.Provenance() != edge.Input.Provenance() {
 			t.Fatalf("bootstrap transport order/reseal row %d", index)
 		}
@@ -351,7 +421,7 @@ func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) 
 		}
 		seenProvenance[wantProvenance] = struct{}{}
 	}
-	if len(firstTopology.plan.spec.PointRanks) != 5 || firstTopology.plan.spec.PointRanks[0] != 1 || firstTopology.plan.spec.PointRanks[1] != 2 || firstTopology.plan.spec.PointRanks[2] != 3 || firstTopology.plan.spec.PointRanks[3] != 4 || firstTopology.plan.spec.PointRanks[4] != 0 {
+	if len(firstTopology.carrier.spec.PointRanks) != 5 || firstTopology.carrier.spec.PointRanks[0] != 1 || firstTopology.carrier.spec.PointRanks[1] != 2 || firstTopology.carrier.spec.PointRanks[2] != 3 || firstTopology.carrier.spec.PointRanks[3] != 4 || firstTopology.carrier.spec.PointRanks[4] != 0 {
 		t.Fatal("bootstrap rank did not precede authenticated parent mount order")
 	}
 	for index := 0; index < firstGraph.graph.FactorEdgeTotal(); index++ {
@@ -361,11 +431,11 @@ func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) 
 			t.Fatal("bootstrap transport graph identity changed across reseal")
 		}
 	}
-	reversedTopology, _ := commitBootstrapTransportLaw(t, owner.binding, []MountedArtifactReceipt{second, first}, witness)
-	for index, edge := range reversedTopology.plan.spec.FactorEdges {
+	reversedTopology, _, reversedRows := commitBootstrapTransportLaw(t, owner.binding, []MountedProgramArtifact{second, first}, witness)
+	for index, edge := range reversedTopology.carrier.spec.FactorEdges {
 		wantMount := wantMounts[index^1]
 		mountedInitial := mountedArtifactID("analysis/engine/artifact-point/v1", wantMount, artifact.artifact, artifact.initial)
-		if edge.Target != reversedTopology.artifact.pointRef[mountedInitial] {
+		if edge.Target != reversedRows.pointRef[mountedInitial] {
 			t.Fatal("bootstrap transport ignored parent-authenticated mount order")
 		}
 	}
@@ -373,10 +443,11 @@ func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) 
 
 func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRevision(t *testing.T) {
 	owner := newBootstrapTransportLawOwner(t)
-	_, foreignValue, _, _ := bindBootstrapTransportLawOwner(t, owner, true)
+	foreignValue := bindBootstrapTransportLawOwner(t, owner).value
 	artifact := newBootstrapTransportLawArtifact(t, owner.schema, 8)
 	mountID := bootstrapTransportLawID(8, 30)
-	mounted, mountedOK := NewMountedArtifactReceipt(artifact.receipt, mountID)
+	mounted := artifact.mount(owner, mountID)
+	mountedOK := mounted.Template != nil && mounted.Module.Available()
 	valueOccurrence, heapOccurrence := bootstrapTransportLawID(8, 40), bootstrapTransportLawID(8, 41)
 	witness, witnessOK := NewLinkBootstrapWitnessByCapability(
 		bootstrapTransportLawID(8, 20),
@@ -384,8 +455,9 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{valueOccurrence}},
 		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{heapOccurrence}},
 	)
-	assembly, failure, assemblyOK := BeginMountedArtifactReceiptAssemblyWithFailure(owner.binding, []MountedArtifactReceipt{mounted}, witness)
-	if !mountedOK || !witnessOK || !assemblyOK || assembly == nil || failure != ReceiptAssemblyFailureNone {
+	sealedMounts, sealedOK := sealMountedProgramArtifacts([]MountedProgramArtifact{mounted})
+	assembly, failure, assemblyOK := beginMountedProgramMounts(owner.binding, []MountedProgramArtifact{mounted}, witness)
+	if !mountedOK || !witnessOK || !sealedOK || !assemblyOK || assembly == nil || failure != receiptAssemblyFailureNone {
 		t.Fatalf("bootstrap producer assembly failure=%d", failure)
 	}
 	occurrences := []identity.ContentID{valueOccurrence, heapOccurrence}
@@ -393,15 +465,19 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	for index := range occurrences {
 		queueBootstrapTransportLawProducer(t, assembly, capabilities[index], occurrences[index], owner.implementations[index])
 	}
-	unrelatedMemberID := bootstrapTransportLawID(8, 42)
-	queueBootstrapTransportLawUnrelatedProducer(t, assembly, owner.excluded, unrelatedMemberID, owner.implementations[2])
-	activationID := bootstrapTransportLawID(8, 43)
-	activationRef := queueBootstrapTransportLawActivation(t, assembly, owner.excluded, activationID, owner.activationImplementation)
-	queryIDs := []identity.ContentID{bootstrapTransportLawID(8, 50), bootstrapTransportLawID(8, 51), bootstrapTransportLawID(8, 52)}
+	unrelatedMemberID := mountedRuleMemberID(owner.mounted, mountID, artifact.noninitial, artifact.producer)
+	queueBootstrapTransportLawMountedProducer(t, assembly, owner.mounted, mountID, artifact.noninitial, artifact.producer, owner.implementations[2])
+	activationID := mountedRuleActivationID(owner.activation, mountID, artifact.noninitial, artifact.activation)
+	queueBootstrapTransportLawMountedActivation(t, assembly, owner.activation, mountID, artifact.noninitial, artifact.activation, owner.activationImplementation)
+	queryIDs := []identity.ContentID{bootstrapTransportLawID(8, 50), bootstrapTransportLawID(8, 51), bootstrapTransportLawID(8, 52), bootstrapTransportLawID(8, 53)}
+	// The first three queries read at the mounted initial Point the Link
+	// bootstrap transports land on; the fourth reads the excluded lane's factor
+	// at the non-initial Point that lane writes.
+	queryPoints := []identity.ContentID{artifact.initial, artifact.initial, artifact.initial, artifact.noninitial}
 	queried := 0
 	if !assembly.QueueMountedQueryBatch(func(batch *MountedQueryBatch) bool {
 		for index := range queryIDs {
-			if !AddMountedExactQuery(batch, owner.queryImplementations[index], queryIDs[index], mountID, artifact.initial) {
+			if !AddMountedExactQuery(batch, owner.queryImplementations[index], queryIDs[index], mountID, queryPoints[index]) {
 				return false
 			}
 			queried++
@@ -413,29 +489,45 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	if !assembly.SealSources() {
 		t.Fatalf("bootstrap producer source seal=%+v", assembly.sealFailure)
 	}
+	rows := assembly.mountedRows
 	if queried != len(queryIDs) {
 		t.Fatalf("bootstrap producer mounted query %d", queried)
 	}
 	initialID := mountedArtifactID("analysis/engine/artifact-point/v1", mountID, artifact.artifact, artifact.initial)
+	noninitialID := mountedArtifactID("analysis/engine/artifact-point/v1", mountID, artifact.artifact, artifact.noninitial)
 	application, target, endpoint := coldKey(947_992), coldKey(947_993), coldKey(947_994)
-	if !addBootstrapTransportLawActivationCandidate(t, assembly, owner, activationRef, initialID, application, target, endpoint) {
+	if !addBootstrapTransportLawActivationCandidate(t, assembly, owner, activationID, initialID, application, target, endpoint) {
 		t.Fatal("bootstrap producer activation candidate")
 	}
-	topology, graph, committed := assembly.Commit()
-	if !committed || topology == nil || graph == nil {
-		t.Fatalf("bootstrap producer commit=%+v", assembly.commitFailure)
+	declaration, declared := declareSealedTopology(assembly, sealedMounts, witness)
+	constructed, refusal := constructTopology(declaration)
+	topology, issued := constructed.topology, constructed.graph
+	committed := declared && !refusal.Available() && constructed.Available()
+	if !committed || topology == nil || issued == nil {
+		t.Fatalf("bootstrap producer construction declared=%t stage=%v step=%v ordinal=%d", declared, refusal.Stage(), refusal.Step(), refusal.Ordinal())
+	}
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
+		t.Fatal("bootstrap producer committed program")
 	}
 	baseActivation, baseActivationOK := graph.ActivationMember(activationID)
 	if !baseActivationOK || !baseActivation.member.Key().Available() {
 		t.Fatal("bootstrap producer base activation receipt")
 	}
-	bootstrapPoint, bootstrapPointOK := graph.lookupPoint(topology.artifact.bootstrap.semantic)
+	// The published activation identity is the mount coordinate, so the
+	// coordinate accessor and the identity accessor address one row.
+	coordinateActivation, coordinateActivationOK := graph.MountedActivationMember(owner.activation, mountID, artifact.noninitial, artifact.activation)
+	if !coordinateActivationOK || coordinateActivation.member.Key() != baseActivation.member.Key() || coordinateActivation.locator != baseActivation.locator {
+		t.Fatal("bootstrap producer activation coordinate")
+	}
+	bootstrapPoint, bootstrapPointOK := graph.lookupPoint(rows.bootstrap.semantic)
 	initialPoint, initialPointOK := graph.lookupPoint(initialID)
+	noninitialPoint, noninitialPointOK := graph.lookupPoint(noninitialID)
 	demand, demandOK := graph.graph.Demand()
-	if !bootstrapPointOK || !initialPointOK || !demandOK || demand == nil || demand.PointCount() != 2 || graph.graph.GroupCount() != 4 {
+	if !bootstrapPointOK || !initialPointOK || !noninitialPointOK || !demandOK || demand == nil || demand.PointCount() != 3 || graph.graph.GroupCount() != 4 {
 		t.Fatal("bootstrap producer demand census")
 	}
-	wantPoints := map[composition.Key]bool{bootstrapPoint.point.Key(): false, initialPoint.point.Key(): false}
+	wantPoints := map[composition.Key]bool{bootstrapPoint.Key(): false, initialPoint.Key(): false, noninitialPoint.Key(): false}
 	for index := 0; index < demand.PointCount(); index++ {
 		point, pointOK := demand.PointAt(index)
 		if !pointOK {
@@ -451,10 +543,24 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 			t.Fatal("bootstrap producer demand omitted source or target")
 		}
 	}
+	// The two Link producers are rooted at the Link bootstrap Point; the mounted
+	// producer and the activation trigger are rooted at the mounted Point their
+	// parent-issued rule rows are placed on.
+	wantGroupRoots := map[composition.Key]int{bootstrapPoint.Key(): 2, noninitialPoint.Key(): 2}
+	seenGroupRoots := make(map[composition.Key]int, len(wantGroupRoots))
 	for index := 0; index < graph.graph.GroupCount(); index++ {
 		group, groupOK := graph.graph.HyperedgeAt(index)
-		if !groupOK || group.MemberCount() != 1 || group.Output().Key() != bootstrapPoint.point.Key() {
-			t.Fatalf("bootstrap producer group %d not rooted at bootstrap", index)
+		if !groupOK || group.MemberCount() != 1 {
+			t.Fatalf("bootstrap producer group %d", index)
+		}
+		if _, expected := wantGroupRoots[group.Output().Key()]; !expected {
+			t.Fatalf("bootstrap producer group %d not rooted at a declared member Point", index)
+		}
+		seenGroupRoots[group.Output().Key()]++
+	}
+	for key, want := range wantGroupRoots {
+		if seenGroupRoots[key] != want {
+			t.Fatalf("bootstrap producer group root census %d/%d", seenGroupRoots[key], want)
 		}
 	}
 	initialRelation, relationOK := topology.topology.InitialRelation()
@@ -478,7 +584,7 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	if _, ok := graph.LinkRuleMember(foreignValue, valueOccurrence); ok {
 		t.Fatal("bootstrap producer admitted foreign-binding Link capability")
 	}
-	baseMembers := make([]ReceiptRuleMember, 0, len(occurrences))
+	baseMembers := make([]ProgramMember, 0, len(occurrences))
 	for index := range occurrences {
 		member, memberOK := graph.LinkRuleMember(capabilities[index], occurrences[index])
 		if !memberOK {
@@ -486,8 +592,8 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 		}
 		baseMembers = append(baseMembers, member)
 	}
-	siblingGraph, siblingGraphOK := initialReceiptGraph(topology)
-	siblingMembers := make([]ReceiptRuleMember, 0, len(occurrences))
+	siblingGraph, siblingGraphOK := initialCommittedProgram(topology)
+	siblingMembers := make([]ProgramMember, 0, len(occurrences))
 	if !siblingGraphOK || siblingGraph == nil || siblingGraph == graph || siblingGraph.graph != graph.graph {
 		t.Fatal("bootstrap producer sibling graph receipt")
 	}
@@ -499,7 +605,11 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 		siblingMembers = append(siblingMembers, member)
 	}
 	unrelatedBaseMember, unrelatedBaseMemberOK := graph.RuleMember(unrelatedMemberID)
-	baseQueries := make([]ReceiptQuery, len(queryIDs))
+	coordinateProducer, coordinateProducerOK := graph.MountedRuleMember(owner.mounted, mountID, artifact.noninitial, artifact.producer)
+	if !unrelatedBaseMemberOK || !coordinateProducerOK || coordinateProducer.member.Key() != unrelatedBaseMember.member.Key() || coordinateProducer.locator != unrelatedBaseMember.locator {
+		t.Fatal("bootstrap producer mounted member coordinate")
+	}
+	baseQueries := make([]ProgramQuery, len(queryIDs))
 	for index := range queryIDs {
 		query, queryOK := graph.Query(queryIDs[index])
 		if !queryOK {
@@ -517,11 +627,11 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	}
 	bootstrapOwner := topology.bootstrapOwner
 	topology.bootstrapOwner = unknownOccurrence
-	if graph.ReleaseArtifactReceipt() || topology.artifact == nil {
+	if graph.ReleaseArtifact() {
 		t.Fatal("bootstrap producer released mismatched retained owner")
 	}
 	topology.bootstrapOwner = bootstrapOwner
-	if !unrelatedBaseMemberOK || !graph.ReleaseArtifactReceipt() {
+	if !unrelatedBaseMemberOK || !graph.ReleaseArtifact() {
 		t.Fatal("bootstrap producer release receipts")
 	}
 	retainedOwner, retainedPoint, retainedSemantic := topology.bootstrapOwner, topology.bootstrapPoint, topology.bootstrapSemantic
@@ -541,8 +651,9 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 			t.Fatalf("bootstrap producer post-release Link member %d", index)
 		}
 	}
-	revisionGraph, revisionGraphOK := topology.Graph(acceptedRelation)
-	if !revisionGraphOK || revisionGraph == nil || revisionGraph == graph || revisionGraph.graph == graph.graph || revisionGraph.graph.FactorEdgeTotal() != len(baseFactorKeys) {
+	issued, issuedOK := topology.Graph(acceptedRelation)
+	revisionGraph := CommittedProgramFrom(topology, issued)
+	if !issuedOK || revisionGraph == nil || revisionGraph == graph || revisionGraph.graph == graph.graph || revisionGraph.graph.FactorEdgeTotal() != len(baseFactorKeys) {
 		t.Fatal("bootstrap producer accepted initial revision")
 	}
 	for index, key := range baseFactorKeys {
@@ -558,9 +669,8 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 		}
 	}
 	unrelatedRevisionMember, unrelatedRevisionMemberOK := revisionGraph.RuleMember(unrelatedMemberID)
-	revisionActivationGraph, revisionActivationGraphOK := activationReceiptGraph(revisionGraph)
-	revisionActivation, revisionActivationOK := revisionActivationGraph.lookupActivationMember(activationID)
-	if !unrelatedRevisionMemberOK || unrelatedRevisionMember.member.Key() != unrelatedBaseMember.member.Key() || unrelatedRevisionMember.locator != unrelatedBaseMember.locator || !revisionActivationGraphOK || !revisionActivationOK || revisionActivation.member.Key() != baseActivation.member.Key() || revisionActivation.locator != baseActivation.locator {
+	revisionActivation, revisionActivationOK := revisionGraph.ActivationMember(activationID)
+	if !unrelatedRevisionMemberOK || unrelatedRevisionMember.member.Key() != unrelatedBaseMember.member.Key() || unrelatedRevisionMember.locator != unrelatedBaseMember.locator || !revisionActivationOK || revisionActivation.member.Key() != baseActivation.member.Key() || revisionActivation.locator != baseActivation.locator {
 		t.Fatal("bootstrap producer revision ordinary/activation member locators")
 	}
 	baseCompilation, baseCompilationOK := BeginProgramConstruction(owner.binding, graph)
@@ -602,7 +712,7 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	if attached := AttachActivationMember(compilation, owner.activationImplementation, activationID); !attached {
 		t.Fatal("bootstrap producer activation member attachment")
 	}
-	queries := make([]ReceiptQuery, len(queryIDs))
+	queries := make([]ProgramQuery, len(queryIDs))
 	for index := range queryIDs {
 		query, queryOK := revisionGraph.Query(queryIDs[index])
 		if !queryOK || query.identity.Key() != baseQueries[index].identity.Key() || query.locator != baseQueries[index].locator || !AttachExactQuery(compilation, owner.queryImplementations[index], queryIDs[index]) {
@@ -626,7 +736,7 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 			t.Fatalf("bootstrap producer transfer %d did not execute", index)
 		}
 	}
-	wantValues := []uint64{41, 73, ^uint64(0)}
+	wantValues := []uint64{41, 73, ^uint64(0), 105}
 	for index, query := range queries {
 		key, keyed := query.PublicationKey()
 		if !keyed {
@@ -639,98 +749,88 @@ func TestLinkBootstrapValueAndHeapProducersReachMountedInitialAfterReleaseAndRev
 	}
 }
 
-func queueBootstrapTransportLawUnrelatedProducer(t testing.TB, assembly *ReceiptAssembly, capability RuleSlotCapability, memberID identity.ContentID, implementation *RuleImplementation[uint64, uint64, struct{}]) {
+// queueBootstrapTransportLawMountedProducer admits one ordinary mounted member
+// under the parent-issued rule row the template declares for it. The member and
+// activation identities it publishes are the mount coordinates, never a
+// caller-chosen identity.
+func queueBootstrapTransportLawMountedProducer(t testing.TB, assembly *BindingTopologyBuilder, capability RuleSlotCapability, mount, point, occurrenceID identity.ContentID, implementation *RuleImplementation[uint64, uint64, struct{}]) {
 	t.Helper()
-	if assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || implementation == nil {
-		t.Fatal("bootstrap unrelated producer arguments")
+	if assembly == nil || implementation == nil {
+		t.Fatal("bootstrap mounted producer arguments")
 	}
-	site := assembly.builder.inner.artifact.bootstrap.site
-	occurrence, occurrenceOK := assembly.builder.admitAt(site)
-	hot := implementation.receipt.cell.impl
-	if hot == nil {
-		t.Fatal("bootstrap unrelated producer implementation")
+	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mount, point, occurrenceID)
+	operand, operandOK := BeginMountedRuleOccurrence(assembly, implementation, occurrence, struct{}{})
+	proof := implementation.binding.proof
+	if !occurrenceOK || !operandOK || proof == nil {
+		t.Fatal("bootstrap mounted producer occurrence")
 	}
-	_, content, contentOK := hot.operandContent(struct{}{})
-	entity, entityOK := operandEntityForContent(content)
-	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
-	proof := implementation.receipt.proof
-	if !occurrenceOK || !contentOK || content == [32]byte{} || !entityOK || !operandOK || proof == nil {
-		t.Fatal("bootstrap unrelated producer source")
-	}
-	if !assembly.QueueLinkRuleFinalizer(capability, func() bool {
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand,
+	if !assembly.QueueMountedRuleFinalizer(capability, func() bool {
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence.value, Operand: operand.value,
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		write, writeOK := implementation.WritePart(source, 0)
 		if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
 			return false
 		}
-		row, rowOK := assembly.builder.issueRuleRow(draft)
-		_, added := assembly.builder.addSemanticRule(memberID, row)
+		row, rowOK := assembly.issueRuleRow(draft)
+		_, added := assembly.AddRule(occurrence, row)
 		return rowOK && added
 	}) {
-		t.Fatal("bootstrap unrelated producer finalizer")
+		t.Fatal("bootstrap mounted producer finalizer")
 	}
 }
 
-func queueBootstrapTransportLawActivation(t testing.TB, assembly *ReceiptAssembly, capability RuleSlotCapability, activationID identity.ContentID, implementation *ActivationRuleImplementation) *BindingRuleRowRef {
+// queueBootstrapTransportLawMountedActivation admits the activation trigger
+// under the parent-issued activation rule row. The trigger publishes the mount
+// activation coordinate, which is the identity the committed program answers
+// ActivationMember from.
+func queueBootstrapTransportLawMountedActivation(t testing.TB, assembly *BindingTopologyBuilder, capability RuleSlotCapability, mount, point, occurrenceID identity.ContentID, implementation *ActivationRuleImplementation) {
 	t.Helper()
-	if assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || implementation == nil {
-		t.Fatal("bootstrap activation arguments")
+	if assembly == nil || implementation == nil {
+		t.Fatal("bootstrap mounted activation arguments")
 	}
-	site := assembly.builder.inner.artifact.bootstrap.site
-	occurrence, occurrenceOK := assembly.builder.admitAt(site)
-	entity, entityOK := operandEntityForContent([32]byte{0xA4})
-	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
-	proof := implementation.receipt.proof
-	if !occurrenceOK || !entityOK || !operandOK || proof == nil {
-		t.Fatal("bootstrap activation source")
+	occurrence, occurrenceOK := assembly.AdmitMountedRuleOccurrence(capability, mount, point, occurrenceID)
+	operand, operandOK := assembly.AdmitMountedRuleOperand(occurrence, [32]byte(occurrenceID))
+	proof := implementation.binding.proof
+	if !occurrenceOK || !operandOK || proof == nil {
+		t.Fatal("bootstrap mounted activation occurrence")
 	}
-	result := &BindingRuleRowRef{}
-	if !assembly.QueueLinkRuleFinalizer(capability, func() bool {
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+	if !assembly.QueueMountedRuleFinalizer(capability, func() bool {
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence.value, Operand: operand.value})
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		if !sourceOK || !draftOK {
 			return false
 		}
-		row, rowOK := assembly.builder.issueRuleRow(draft)
-		if !rowOK {
-			return false
-		}
-		ref, added := assembly.builder.addSemanticRule(bootstrapTransportLawID(8, 44), row)
-		if !added || !assembly.builder.addSemanticActivation(activationID, ref) {
-			return false
-		}
-		*result = ref
-		return true
+		row, rowOK := assembly.issueRuleRow(draft)
+		return rowOK && assembly.AddActivationRule(occurrence, row)
 	}) {
-		t.Fatal("bootstrap activation finalizer")
+		t.Fatal("bootstrap mounted activation finalizer")
 	}
-	return result
 }
 
-func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *ReceiptAssembly, owner bootstrapTransportLawOwner, trigger *BindingRuleRowRef, initialID identity.ContentID, application, target, endpoint identity.SemanticKey) bool {
+func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *BindingTopologyBuilder, owner bootstrapTransportLawOwner, activationID, initialID identity.ContentID, application, target, endpoint identity.SemanticKey) bool {
 	t.Helper()
-	if assembly == nil || assembly.builder == nil || assembly.builder.inner == nil || owner.activationImplementation == nil || trigger == nil || trigger.builder != assembly.builder.inner || trigger.ref == 0 {
+	if assembly == nil || assembly.inner == nil || assembly.inner.semantic == nil || owner.activationImplementation == nil {
 		return false
 	}
-	triggerOrdinal := int(uint64(trigger.ref)) - 1
-	if triggerOrdinal < 0 || triggerOrdinal >= len(assembly.builder.inner.spec.Rules) {
+	trigger, registered := assembly.inner.semantic.activations[activationID]
+	triggerOrdinal := int(uint64(trigger)) - 1
+	if !registered || triggerOrdinal < 0 || triggerOrdinal >= len(assembly.inner.spec.Rules) {
 		return false
 	}
-	bootstrapSite := assembly.builder.inner.artifact.bootstrap.site
-	initialSite, initialOK := assembly.builder.inner.artifact.sites[initialID]
+	bootstrapSite := assembly.mountedRows.bootstrap.site
+	initialSite, initialOK := assembly.mountedRows.sites[initialID]
 	formals := equation.NewBatch()
 	input, inputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(947_995)), equation.PortImport, nil)
 	output, outputOK := formals.AdmitFormalPort(compositionKeyOf(coldKey(947_996)), equation.PortExport, nil)
 	if !initialOK || !inputOK || !outputOK || !formals.Seal() {
 		return false
 	}
-	binding, bindingOK := equation.SealTemplateBinding(formals, assembly.builder.inner.batch, []equation.FormalPortActual{{Role: input, Site: bootstrapSite}, {Role: output, Site: initialSite}})
+	binding, bindingOK := equation.SealTemplateBinding(formals, assembly.inner.batch, []equation.FormalPortActual{{Role: input, Site: bootstrapSite}, {Role: output, Site: initialSite}})
 	materialization, materializationOK := equation.MaterializeTemplateBoundary(owner.schema.cold, binding, []equation.Site{input.Site(), output.Site()}, nil)
-	proof := owner.activationImplementation.receipt.proof
+	proof := owner.activationImplementation.binding.proof
 	if proof == nil {
 		return false
 	}
@@ -738,32 +838,32 @@ func addBootstrapTransportLawActivationCandidate(t testing.TB, assembly *Receipt
 	materialization, originOK := materialization.WithOrigin(equation.MaterializationOrigin{
 		Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: triggerOrdinal,
 	})
-	receipt, receiptOK := assembly.builder.issueMaterialization(materialization)
-	return bindingOK && materializationOK && shapeOK && originOK && receiptOK && assembly.builder.addActivationCandidate(receipt)
+	receipt, receiptOK := assembly.issueMaterialization(materialization)
+	return bindingOK && materializationOK && shapeOK && originOK && receiptOK && assembly.addActivationCandidate(receipt)
 }
 
-func queueBootstrapTransportLawProducer(t testing.TB, assembly *ReceiptAssembly, capability RuleSlotCapability, occurrenceID identity.ContentID, implementation *RuleImplementation[uint64, uint64, struct{}]) {
+func queueBootstrapTransportLawProducer(t testing.TB, assembly *BindingTopologyBuilder, capability RuleSlotCapability, occurrenceID identity.ContentID, implementation *RuleImplementation[uint64, uint64, struct{}]) {
 	t.Helper()
 	occurrence, occurrenceOK := assembly.AdmitLinkRuleOccurrence(capability, occurrenceID)
 	operand, operandOK := BeginMountedRuleOccurrence(assembly, implementation, occurrence, struct{}{})
 	if !occurrenceOK || !operandOK {
 		t.Fatal("bootstrap producer occurrence")
 	}
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	if proof == nil {
 		t.Fatal("bootstrap producer proof")
 	}
 	if !assembly.QueueLinkRuleFinalizer(capability, func() bool {
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence.value, Operand: operand.value,
 			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 		})
-		draft, draftOK := implementation.BeginBindingRuleRow(source)
+		draft, draftOK := implementation.beginBindingRuleRow(source)
 		write, writeOK := implementation.WritePart(source, 0)
 		if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
 			return false
 		}
-		row, rowOK := assembly.builder.issueRuleRow(draft)
+		row, rowOK := assembly.issueRuleRow(draft)
 		_, added := assembly.AddRule(occurrence, row)
 		return rowOK && added
 	}) {

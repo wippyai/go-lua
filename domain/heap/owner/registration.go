@@ -1,6 +1,7 @@
 package owner
 
 import (
+	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -41,7 +42,7 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 		if !rowOK {
 			return heap.Schema{}, heap.SealFailureProgramAllocations, false
 		}
-		mount, mountOK := heap.NewArtifactMount(row.Artifact, row.ModuleKey, row.ProgramID)
+		mount, mountOK := heap.NewArtifactMount(row.Snapshot, row.ModuleKey, row.ProgramID)
 		if !mountOK {
 			return heap.Schema{}, heap.SealFailureProgramAllocations, false
 		}
@@ -63,8 +64,8 @@ func mountHeapSchema[A axisInputs](inputs A) (heap.Schema, heap.SealFailure, boo
 
 // AxisEntry is this package's heap axis declaration. A is the composition's
 // own Link input record, admitted by the need interface above.
-func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, heap.Value] {
-	return axis.Spec[A, *SchemaFragment, *HotOwner, heap.Value]{
+func AxisEntry[A axisInputs]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:         "heap",
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalityDense,
@@ -79,24 +80,39 @@ func AxisEntry[A axisInputs]() axis.Spec[A, *SchemaFragment, *HotOwner, heap.Val
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (heap.Schema, heap.SealFailure, bool) {
 			return mountHeapSchema[A](context.Inputs)
 		}),
-		Declare: func(context axis.Declaration) (*SchemaFragment, bool) {
-			semantic, ok := context.Roles.Key("semantic/factor/heap")
-			if !ok {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, semantic)
-		},
-		Bind: func(context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
-			return BindHot(context.Binding, context.Fragment, context.Inputs.HeapInput())
-		},
-		Algebra: func(owner *HotOwner) (axis.Algebra[heap.Value], bool) {
-			spec, ok := owner.FactorSpec()
-			if !ok {
-				return axis.Algebra[heap.Value]{}, false
-			}
-			return axis.Adopt(spec)
-		},
 	}
+}
+
+func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*SchemaFragment, bool) {
+	semantic, ok := context.Roles.Key("semantic/factor/heap")
+	if !ok {
+		return nil, false
+	}
+	return DeclareSchema(builder, semantic)
+}
+
+func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
+	return BindHot(binding, context.Fragment, context.Inputs.HeapInput())
+}
+
+func AlgebraAxis(owner *HotOwner) (axis.Algebra[heap.Value], bool) {
+	spec, ok := owner.FactorSpec()
+	if !ok {
+		return axis.Algebra[heap.Value]{}, false
+	}
+	return adoptFactor(spec)
+}
+
+func adoptFactor(spec engine.HotFactorSpec[coordinate, heap.Value]) (axis.Algebra[heap.Value], bool) {
+	return axis.Adopt(axis.CarrierAlgebra[coordinate, heap.Value]{
+		KeyEnd:      spec.KeyEnd,
+		Lattice:     spec.Lattice,
+		Default:     spec.Default,
+		AdmitAt:     spec.AdmitAt,
+		Fingerprint: spec.Fingerprint,
+		Widen:       axis.CarrierRank[coordinate, heap.Value]{Width: spec.WidenRank.Width, At: spec.WidenRank.At},
+		Narrow:      axis.CarrierRank[coordinate, heap.Value]{Width: spec.NarrowRank.Width, At: spec.NarrowRank.At},
+	})
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

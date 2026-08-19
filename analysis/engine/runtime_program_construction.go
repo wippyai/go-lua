@@ -31,103 +31,23 @@ type programConstruction struct {
 // cannot observe slots, callbacks, graph mutation, or carrier coordinates.
 type ProgramConstruction struct {
 	inner     *programConstruction
-	graph     *ReceiptGraph
+	committed *CommittedProgram
 	addressed []composition.Key
 }
 
 // BeginProgramConstruction opens the first-construction ledger over one sealed
-// binding and the graph that binding committed. The plane is bound here; attach
-// writes into the ledger; Seal mints the Solver.
-func BeginProgramConstruction(binding *SchemaBinding, graph *ReceiptGraph) (*ProgramConstruction, bool) {
-	if binding == nil || graph == nil || !binding.Sealed() || !graph.valid() || graph.state != binding.state {
+// binding and the program that assemble committed. The plane is bound here;
+// attach writes into the ledger; Seal mints the Solver.
+func BeginProgramConstruction(binding *SchemaBinding, committed *CommittedProgram) (*ProgramConstruction, bool) {
+	if binding == nil || committed == nil || !committed.valid() || !binding.Sealed() || committed.state != binding.state {
 		return nil, false
 	}
-	addressed, addressedOK := graph.publishedQueryKeys()
-	inner, ok := beginProgramConstruction(binding, graph.graph)
+	addressed, addressedOK := committed.publishedQueryKeys()
+	inner, ok := beginProgramConstruction(binding, committed.graph)
 	if !addressedOK || !ok || inner == nil {
 		return nil, false
 	}
-	return &ProgramConstruction{inner: inner, graph: graph, addressed: addressed}, true
-}
-
-// The direct constructor consumes this opaque graph view.  Keeping the
-// ReceiptGraph projection here leaves the direct row binder independent of the
-// compile-side graph declaration and gives the eventual geometry cut one
-// narrow implementation point to remove.
-func (receipt *ReceiptGraph) directProgramGraphValid(binding *SchemaBinding) bool {
-	return receipt != nil && binding != nil && receipt.valid() && receipt.state == binding.state
-}
-
-func (receipt *ReceiptGraph) directProgramGraphState() *schemaBindingState {
-	if receipt == nil {
-		return nil
-	}
-	return receipt.state
-}
-
-func (receipt *ReceiptGraph) directProgramGraphValue() *equation.Graph {
-	if receipt == nil {
-		return nil
-	}
-	return receipt.graph
-}
-
-func (receipt *ReceiptGraph) directProgramTopology() *equation.Topology {
-	if receipt == nil || receipt.topology == nil {
-		return nil
-	}
-	return receipt.topology.topology
-}
-
-func (receipt *ReceiptGraph) directPublishedQueryKeys() ([]composition.Key, bool) {
-	if receipt == nil {
-		return nil, false
-	}
-	return receipt.publishedQueryKeys()
-}
-
-func (receipt *ReceiptGraph) directMountedRuleMember(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (equation.RuleMember, bool) {
-	if receipt == nil {
-		return equation.RuleMember{}, false
-	}
-	row, ok := receipt.MountedRuleMember(role, mount, point, occurrence)
-	if !ok {
-		return equation.RuleMember{}, false
-	}
-	return row.member, true
-}
-
-func (receipt *ReceiptGraph) directLinkRuleMember(role RuleSlotCapability, occurrence identity.ContentID) (equation.RuleMember, bool) {
-	if receipt == nil {
-		return equation.RuleMember{}, false
-	}
-	row, ok := receipt.LinkRuleMember(role, occurrence)
-	if !ok {
-		return equation.RuleMember{}, false
-	}
-	return row.member, true
-}
-
-func (receipt *ReceiptGraph) directMountedActivationMember(role RuleSlotCapability, mount, point, occurrence identity.ContentID) (equation.RuleMember, bool) {
-	if receipt == nil {
-		return equation.RuleMember{}, false
-	}
-	row, ok := receipt.MountedActivationMember(role, mount, point, occurrence)
-	if !ok {
-		return equation.RuleMember{}, false
-	}
-	return row.member, true
-}
-
-func (receipt *ReceiptGraph) directQuery(id identity.ContentID) (equation.Query, bool) {
-	if receipt == nil {
-		return equation.Query{}, false
-	}
-	row, ok := receipt.Query(id)
-	if !ok {
-		return equation.Query{}, false
-	}
-	return row.identity, true
+	return &ProgramConstruction{inner: inner, committed: committed, addressed: addressed}, true
 }
 
 // beginProgramConstruction binds one plane and opens the attachment ledger
@@ -167,11 +87,11 @@ func (construction *ProgramConstruction) Close() bool {
 // then mints the Solver through mintProgramSolver. The construction is
 // terminal: the ledger is released before this returns.
 func (construction *ProgramConstruction) Seal() (*Solver, SolveFailure, bool) {
-	if construction == nil || construction.inner == nil || construction.graph == nil || construction.graph.graph == nil || construction.graph.topology == nil || !construction.graph.topology.valid() {
+	if construction == nil || construction.inner == nil || construction.committed == nil || !construction.committed.valid() {
 		return nil, ProgramConstructionFailure(ProgramConstructionStageAdmission), false
 	}
-	topology := construction.graph.topology
-	graph := construction.graph.graph
+	topology := construction.committed.topology
+	graph := construction.committed.graph
 	inner := construction.inner
 	inner.mu.Lock()
 	if inner.closed || inner.programPlane == nil || inner.carrier == nil || inner.members == nil || inner.queries == nil || inner.observationIDs == nil {
@@ -201,7 +121,7 @@ func (construction *ProgramConstruction) Seal() (*Solver, SolveFailure, bool) {
 	state, authority := plane.runtime.state, plane.runtime.authority
 	inner.mu.Unlock()
 
-	runtime, assembled := assembleReceiptRuntime(state, authority, graph, plane.carrier, plane.byKey, drafts, queries, observations)
+	runtime, assembled := assembleProgramRuntime(state, authority, graph, plane.carrier, plane.byKey, drafts, queries, observations)
 	if !assembled || runtime == nil {
 		return nil, ProgramConstructionFailure(ProgramConstructionStageProgramSeal), false
 	}
@@ -229,10 +149,10 @@ func (construction *ProgramConstruction) Seal() (*Solver, SolveFailure, bool) {
 // AttachRuleMember attaches the member this construction's graph publishes
 // under id. Lookup is graph-local: a foreign graph's handle is not an input.
 func AttachRuleMember[K ~uint32 | ~uint64, V, O any](construction *ProgramConstruction, implementation *RuleImplementation[K, V, O], id identity.ContentID) bool {
-	if construction == nil || construction.graph == nil || !id.Available() {
+	if construction == nil || construction.committed == nil || !id.Available() {
 		return false
 	}
-	member, ok := construction.graph.RuleMember(id)
+	member, ok := construction.committed.RuleMember(id)
 	if !ok {
 		return false
 	}
@@ -245,31 +165,30 @@ func AttachRuleMember[K ~uint32 | ~uint64, V, O any](construction *ProgramConstr
 
 // HasMountedRuleMember reports whether this construction's committed graph
 // publishes the authored mounted occurrence. Domain observation attach uses
-// this instead of taking a ReceiptGraph.
+// this instead of taking a compile-side graph handle.
 func (construction *ProgramConstruction) HasMountedRuleMember(role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
-	if construction == nil || construction.graph == nil {
+	if construction == nil || construction.committed == nil {
 		return false
 	}
-	_, ok := construction.graph.MountedRuleMember(role, mount, point, occurrence)
+	_, ok := construction.committed.MountedRuleMember(role, mount, point, occurrence)
 	return ok
 }
 
-// MountedNativeCallStage resolves the exact native Call stage published by
-// this construction's committed graph.
-func (construction *ProgramConstruction) MountedNativeCallStage(role RuleSlotCapability, mount, occurrence identity.ContentID) (MountedNativeCallStageReceipt, bool) {
-	if construction == nil || construction.graph == nil {
-		return MountedNativeCallStageReceipt{}, false
+// MountedCallStage is the construction-plane native Call stage proof.
+func (construction *ProgramConstruction) MountedCallStage(role RuleSlotCapability, mount, occurrence identity.ContentID) (ProgramCallStage, bool) {
+	if construction == nil || construction.committed == nil {
+		return ProgramCallStage{}, false
 	}
-	return construction.graph.MountedNativeCallStage(role, mount, occurrence)
+	return construction.committed.MountedNativeCallStage(role, mount, occurrence)
 }
 
 // AttachMountedRuleMember attaches the mounted occurrence this construction's
 // graph publishes under the authored mount/point/occurrence coordinates.
 func AttachMountedRuleMember[K ~uint32 | ~uint64, V, O any](construction *ProgramConstruction, implementation *RuleImplementation[K, V, O], role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
-	if construction == nil || construction.graph == nil {
+	if construction == nil || construction.committed == nil {
 		return false
 	}
-	member, ok := construction.graph.MountedRuleMember(role, mount, point, occurrence)
+	member, ok := construction.committed.MountedRuleMember(role, mount, point, occurrence)
 	if !ok {
 		return false
 	}
@@ -283,10 +202,10 @@ func AttachMountedRuleMember[K ~uint32 | ~uint64, V, O any](construction *Progra
 // AttachLinkRuleMember attaches the Link-global occurrence this construction's
 // graph publishes under role and occurrence.
 func AttachLinkRuleMember[K ~uint32 | ~uint64, V, O any](construction *ProgramConstruction, implementation *RuleImplementation[K, V, O], role RuleSlotCapability, occurrence identity.ContentID) bool {
-	if construction == nil || construction.graph == nil {
+	if construction == nil || construction.committed == nil {
 		return false
 	}
-	member, ok := construction.graph.LinkRuleMember(role, occurrence)
+	member, ok := construction.committed.LinkRuleMember(role, occurrence)
 	if !ok {
 		return false
 	}
@@ -326,7 +245,7 @@ func attachProgramQueryLocked(inner *programConstruction, key composition.Key, r
 }
 
 func attachResolvedQuery[V, R any](construction *ProgramConstruction, identity equation.Query, bind func(*programPlane, equation.Query) (runtimeQuery, bool)) bool {
-	if construction == nil || construction.inner == nil || construction.graph == nil || !identity.Key().Available() {
+	if construction == nil || construction.inner == nil || construction.committed == nil || !identity.Key().Available() {
 		return false
 	}
 	construction.inner.mu.Lock()
@@ -340,10 +259,10 @@ func attachResolvedQuery[V, R any](construction *ProgramConstruction, identity e
 }
 
 func AttachExactQuery[V, R any](construction *ProgramConstruction, implementation *ExactQueryImplementation[V, R], id identity.ContentID) bool {
-	if construction == nil || construction.graph == nil || implementation == nil || !id.Available() {
+	if construction == nil || construction.committed == nil || implementation == nil || !id.Available() {
 		return false
 	}
-	query, ok := construction.graph.Query(id)
+	query, ok := construction.committed.Query(id)
 	if !ok {
 		return false
 	}
@@ -353,10 +272,10 @@ func AttachExactQuery[V, R any](construction *ProgramConstruction, implementatio
 }
 
 func AttachSummaryQuery[V, R any](construction *ProgramConstruction, implementation *SummaryQueryImplementation[V, R], id identity.ContentID) bool {
-	if construction == nil || construction.graph == nil || implementation == nil || !id.Available() {
+	if construction == nil || construction.committed == nil || implementation == nil || !id.Available() {
 		return false
 	}
-	query, ok := construction.graph.Query(id)
+	query, ok := construction.committed.Query(id)
 	if !ok {
 		return false
 	}
@@ -365,13 +284,27 @@ func AttachSummaryQuery[V, R any](construction *ProgramConstruction, implementat
 	})
 }
 
+// QueryPublicationKey is the snapshot row identity the committed graph
+// publishes under id. Construction already holds that graph; callers do not
+// retain a query receipt.
+func (construction *ProgramConstruction) QueryPublicationKey(id identity.ContentID) (identity.ContentID, bool) {
+	if construction == nil || construction.committed == nil || !id.Available() {
+		return identity.ContentID{}, false
+	}
+	query, ok := construction.committed.Query(id)
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	return query.PublicationKey()
+}
+
 // AttachActivationMember attaches the activation this construction's graph
 // publishes under id.
 func AttachActivationMember(construction *ProgramConstruction, implementation *ActivationRuleImplementation, id identity.ContentID) bool {
-	if construction == nil || construction.graph == nil || !id.Available() {
+	if construction == nil || construction.committed == nil || !id.Available() {
 		return false
 	}
-	member, ok := construction.graph.ActivationMember(id)
+	member, ok := construction.committed.ActivationMember(id)
 	if !ok {
 		return false
 	}
@@ -381,10 +314,10 @@ func AttachActivationMember(construction *ProgramConstruction, implementation *A
 // AttachMountedActivationMember attaches the mounted activation this
 // construction's graph publishes under the authored coordinates.
 func AttachMountedActivationMember(construction *ProgramConstruction, implementation *ActivationRuleImplementation, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
-	if construction == nil || construction.graph == nil {
+	if construction == nil || construction.committed == nil {
 		return false
 	}
-	member, ok := construction.graph.MountedActivationMember(role, mount, point, occurrence)
+	member, ok := construction.committed.MountedActivationMember(role, mount, point, occurrence)
 	if !ok {
 		return false
 	}
@@ -392,19 +325,19 @@ func AttachMountedActivationMember(construction *ProgramConstruction, implementa
 }
 
 func attachResolvedActivationMember(construction *ProgramConstruction, implementation *ActivationRuleImplementation, member equation.RuleMember) bool {
-	if construction == nil || construction.inner == nil || construction.graph == nil || construction.graph.topology == nil || implementation == nil || !implementation.receipt.valid() {
+	if construction == nil || construction.inner == nil || construction.committed == nil || !construction.committed.valid() || implementation == nil || !implementation.binding.valid() {
 		return false
 	}
 	inner := construction.inner
 	inner.mu.Lock()
 	defer inner.mu.Unlock()
-	if inner.closed || !inner.frozen || inner.runtime == nil || inner.runtime.mode != runtimeBindingReceipt || implementation.receipt.state != inner.runtime.state || implementation.receipt.authority != inner.runtime.authority || !construction.graph.graph.OwnsMember(member) || !member.Key().Available() {
+	if inner.closed || !inner.frozen || inner.runtime == nil || implementation.binding.state != inner.runtime.state || implementation.binding.authority != inner.runtime.authority || !construction.committed.graph.OwnsMember(member) || !member.Key().Available() {
 		return false
 	}
 	if _, duplicate := inner.members[member.Key()]; duplicate {
 		return false
 	}
-	row, ok := bindActivationMemberReceipt(member, implementation, construction.graph.topology.topology, member.Key(), construction.graph.graph, inner.byKey)
+	row, ok := bindActivationMemberReceipt(member, implementation, construction.committed.topology.topology, member.Key(), construction.committed.graph, inner.byKey)
 	if !ok || row == nil || row.member().Key() != member.Key() {
 		return false
 	}

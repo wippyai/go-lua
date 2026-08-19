@@ -11,6 +11,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	sourceowner "github.com/wippyai/go-lua/analysis/program/source"
 	staticowner "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -95,7 +98,7 @@ func TestExactInterfaceSourceLaw(t *testing.T) {
 		t.Fatalf("Interface members = %d/%v", count, ok)
 	}
 	member, ok := interfaces.MemberAt(term, 0)
-	if !ok || member.Kind != staticowner.InterfaceField || member.Field == 0 {
+	if !ok || member.Kind != staticdecl.InterfaceField || member.Field == 0 {
 		t.Fatalf("Interface member = %#v/%v", member, ok)
 	}
 	key, typ, optional, ok := p.Static().Types().Fields().Get(member.Field)
@@ -309,7 +312,7 @@ func verifyPrimitive(p *program.Program, term keyspace.Term, source ast.TypeExpr
 		return fmt.Errorf("primitive source = %T/%q", source, node.Name)
 	}
 	kind, ok := p.Static().Types().Primitives().Get(term)
-	if !ok || kind != staticowner.PrimitiveNumber {
+	if !ok || kind != statictypes.PrimitiveNumber {
 		return fmt.Errorf("Primitive = %d/%v", kind, ok)
 	}
 	return provenance.Exact(p.Source().Identity(), term, node, staticLawFile)
@@ -391,7 +394,7 @@ func verifyTypeRef(p *program.Program, term keyspace.Term, source ast.TypeExpr) 
 		return fmt.Errorf("type-ref source = %T", source)
 	}
 	resolution, target, root, ok := p.Static().References().Get(term)
-	if !ok || resolution != staticowner.TypeRefUnresolved || target != 0 || root == 0 {
+	if !ok || resolution != staticrefs.Unresolved || target != 0 || root == 0 {
 		return fmt.Errorf("TypeRef = resolution %d target %v root %v ok %v", resolution, target, root, ok)
 	}
 	if count, ok := p.Static().References().SourceCount(term); !ok || count != len(node.Path) {

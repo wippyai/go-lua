@@ -3,6 +3,10 @@ package static
 import (
 	"testing"
 
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -112,7 +116,7 @@ func TestStaticCountRowsEnumeratesOwnGeneratedRelations(t *testing.T) {
 	for index := 0; index < contracts.Calls().Count(); index++ {
 		term, ok := contracts.Calls().At(index)
 		if !ok {
-			t.Fatalf("Calls.At(%d) failed", index)
+			t.Fatalf("staticcontracts.Calls.At(%d) failed", index)
 		}
 		count, ok := contracts.Calls().TypeArgumentCount(term)
 		if !ok {
@@ -161,7 +165,7 @@ func TestStaticCallTypeArgumentRowIsTheSealedColumnWidth(t *testing.T) {
 	for index := 0; index < contracts.Calls().Count(); index++ {
 		term, ok := contracts.Calls().At(index)
 		if !ok {
-			t.Fatalf("Calls.At(%d) failed", index)
+			t.Fatalf("staticcontracts.Calls.At(%d) failed", index)
 		}
 		count, ok := contracts.Calls().TypeArgumentCount(term)
 		if !ok {
@@ -172,12 +176,29 @@ func TestStaticCallTypeArgumentRowIsTheSealedColumnWidth(t *testing.T) {
 	if walked == 0 {
 		t.Fatal("fixture authors no call type arguments, so the sealed width proves nothing")
 	}
-	if uint64(component.contracts.callTypeArguments) != uint64(walked) {
+	if uint64(uint32(component.contracts.CallTypeArgumentWidth())) != uint64(walked) {
 		t.Fatalf("sealed call type-argument width = %d, want walked total %d",
-			component.contracts.callTypeArguments, walked)
+			uint32(component.contracts.CallTypeArgumentWidth()), walked)
 	}
-	if uint64(len(component.contracts.terms)) == uint64(walked) {
-		t.Fatal("fixture shares no term pool with function contracts, so the segment offset proves nothing")
+	// The call segment shares its column with the function contracts that
+	// precede it. Unless the fixture authors function-side terms too, an
+	// offset bug would be invisible here.
+	functionTerms := 0
+	functions := component.View().Contracts().Functions()
+	for index := 0; index < functions.Count(); index++ {
+		function, ok := functions.At(index)
+		if !ok {
+			t.Fatalf("Functions().At(%d) failed", index)
+		}
+		params, paramsOK := functions.TypeParamCount(function)
+		returns, returnsOK := functions.ReturnCount(function)
+		if !paramsOK || !returnsOK {
+			t.Fatalf("function contract %v column counts failed", function)
+		}
+		functionTerms += params + returns
+	}
+	if functionTerms == 0 {
+		t.Fatal("fixture shares no term column with function contracts, so the segment offset proves nothing")
 	}
 	rows, err := CountRows(component.View())
 	if err != nil {
@@ -224,7 +245,7 @@ func TestStaticInputRelationDenominatorIsCompleteAndUnique(t *testing.T) {
 		if census[family] != 1 {
 			t.Fatalf("sparse %v census = %d, want the owning component's external count 1", family, census[family])
 		}
-		empty.Operands.Claim = []ClaimTarget{
+		empty.Operands.Claim = []staticoperands.ClaimTarget{
 			{Claim: keyspace.MakeTerm(family, 1)},
 			{Claim: keyspace.MakeTerm(family, 2)},
 		}
@@ -435,7 +456,7 @@ func TestStaticTypesRawTermsRebindLocally(t *testing.T) {
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
 	foreign := staticContentComponent(t, Input{
 		Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyTypePrimitive: 1},
-		Types:  TypesInput{Primitive: []Primitive{{Kind: PrimitiveAny}}},
+		Types:  statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
 	})
 
 	foreignRef, ok := foreign.View().StaticTypes().At(0)

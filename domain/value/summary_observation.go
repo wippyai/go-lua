@@ -63,8 +63,16 @@ func AccumulateValueSummaryRows(schema *Schema, result ValueSummaryObservation, 
 		}
 		result.Values[index] = joined
 	}
-	// Correlated observations are folded into one detached summary row.
-	result.Rows = 1
+	// Correlated observations are folded into one detached summary row only
+	// when the vector contains at least one present coordinate. An all-absent
+	// vector is a covered zero-row observation, not a fabricated summary row.
+	result.Rows = 0
+	for _, present := range result.Present {
+		if present {
+			result.Rows = 1
+			break
+		}
+	}
 	return result, true
 }
 

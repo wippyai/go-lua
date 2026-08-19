@@ -2,6 +2,7 @@ package index_test
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"strconv"
 	"strings"
 	"testing"
@@ -103,14 +104,18 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
-	packMount, packMountOK := packdomain.NewArtifactMount(artifact, module, programID)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !shardOK || !moduleOK || !programIDOK || failure.Available() || artifact == nil || !heapMountOK || !valueMountOK || !packMountOK {
 		t.Fatalf("mounted semantic-source artifact shard=%t module=%t program=%t failure=%v artifact=%t heap=%t value=%t pack=%t", shardOK, moduleOK, programIDOK, failure, artifact != nil, heapMountOK, valueMountOK, packMountOK)
 	}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount})
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
 	types, typeErr := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
 	statics, _, staticErr := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedArtifact{{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}})
 	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{packMount})

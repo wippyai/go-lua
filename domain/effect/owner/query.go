@@ -39,11 +39,11 @@ func (fragment *ExactQueryFragment) Available() bool {
 	return fragment != nil && fragment.slot != nil && fragment.freezer.Available()
 }
 
-// QueryEntry is this package's effect-exact query declaration. The family reads
+// QuerySpec is this package's effect-exact query declaration. The family reads
 // the effect axis, admits no split of its subject, and is answered by the
 // effect observation this domain owns.
-func QueryEntry() query.Spec[*ExactQueryFragment, *ExactQueryImplementation] {
-	return query.Spec[*ExactQueryFragment, *ExactQueryImplementation]{
+func QuerySpec() query.Spec {
+	return query.Spec{
 		Family:   "effect-exact",
 		Semantic: "semantic/query/effect-exact",
 		Codec:    "semantic/query-result/effect-exact",
@@ -55,41 +55,44 @@ func QueryEntry() query.Spec[*ExactQueryFragment, *ExactQueryImplementation] {
 		Subjects:   []schema.Key{"effect"},
 		Population: query.PopulationSelectedPoint,
 		Projection: query.ProjectionExact,
-		Declare: func(context query.Declaration) (*ExactQueryFragment, bool) {
-			cell, cellOK := context.Subjects.At("effect")
-			declared, declaredOK := axis.Payload[*SchemaFragment](cell)
-			if !cellOK || !declaredOK {
-				return nil, false
-			}
-			// The read is the axis's own exact form, taken while the schema is
-			// still open: a form that already names a sealed schema belongs to
-			// another declaration.
-			read := declared.ExactRead()
-			if read.Schema() != nil {
-				return nil, false
-			}
-			slot, slotOK := engine.NewQuerySlot[factor.EffectObservation](context.Builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
-			if !slotOK || !engine.SchemaQueryRead(slot, read) {
-				return nil, false
-			}
-			fragment := &ExactQueryFragment{slot: slot, read: read, freezer: context.Freezer}
-			return fragment, fragment.Available()
-		},
-		Bind: func(context query.Binding[*ExactQueryFragment]) bool {
-			cell, cellOK := context.Subjects.At("effect")
-			owner, ownerOK := axis.Payload[*HotOwner](cell)
-			if !cellOK || !ownerOK || !context.Fragment.Available() || context.Fragment.read.Schema() == nil {
-				return false
-			}
-			return BindExactQuery(owner, context.Fragment.slot, exactQuerySpec(owner.Algebra(), context.Fragment.freezer))
-		},
-		Recover: func(context query.Sealed[*ExactQueryFragment]) (*ExactQueryImplementation, bool) {
-			if !context.Fragment.Available() {
-				return nil, false
-			}
-			return engine.ExactQueryImplementationAt[factor.Value, factor.EffectObservation](context.Binding, context.Fragment.slot)
-		},
 	}
+}
+
+// DeclareQuery opens the effect-exact query slot against the open schema.
+func DeclareQuery(builder *engine.SchemaBuilder, context query.Declaration) (*ExactQueryFragment, bool) {
+	cell, cellOK := context.Subjects.At("effect")
+	declared, declaredOK := axis.Payload[*SchemaFragment](cell)
+	if !cellOK || !declaredOK {
+		return nil, false
+	}
+	read := declared.ExactRead()
+	if read.Schema() != nil {
+		return nil, false
+	}
+	slot, slotOK := engine.NewQuerySlot[factor.EffectObservation](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
+	if !slotOK || !engine.SchemaQueryRead(slot, read) {
+		return nil, false
+	}
+	fragment := &ExactQueryFragment{slot: slot, read: read, freezer: context.Freezer}
+	return fragment, fragment.Available()
+}
+
+// BindQuery installs the effect-exact fold on the bound principal.
+func BindQuery(_ *engine.SchemaBinding, context query.Binding[*ExactQueryFragment]) bool {
+	cell, cellOK := context.Subjects.At("effect")
+	owner, ownerOK := axis.Payload[*HotOwner](cell)
+	if !cellOK || !ownerOK || !context.Fragment.Available() || context.Fragment.read.Schema() == nil {
+		return false
+	}
+	return BindExactQuery(owner, context.Fragment.slot, exactQuerySpec(owner.Algebra(), context.Fragment.freezer))
+}
+
+// RecoverQuery recovers the sealed effect-exact implementation.
+func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*ExactQueryFragment]) (*ExactQueryImplementation, bool) {
+	if !context.Fragment.Available() {
+		return nil, false
+	}
+	return engine.ExactQueryImplementationAt[factor.Value, factor.EffectObservation](binding, context.Fragment.slot)
 }
 
 // exactQuerySpec is the family's hot half against one Link's sealed effect
@@ -100,7 +103,9 @@ func QueryEntry() query.Spec[*ExactQueryFragment, *ExactQueryImplementation] {
 func exactQuerySpec(algebra *factor.Algebra, freezer identity.SemanticKey) engine.HotExactQuerySpec[factor.Value, factor.EffectObservation] {
 	return engine.HotExactQuerySpec[factor.Value, factor.EffectObservation]{
 		Fold: engine.QueryFold[engine.OrderedCells[factor.Value], factor.EffectObservation]{
-			Begin: func() factor.EffectObservation { return factor.BeginEffect(algebra) },
+			Begin:          func() factor.EffectObservation { return factor.BeginEffect(algebra) },
+			BorrowIssued:   true,
+			TransferResult: true,
 			Accumulate: func(result factor.EffectObservation, cells engine.OrderedCells[factor.Value]) (factor.EffectObservation, bool) {
 				if cells.Count() != 1 {
 					return factor.EffectObservation{}, false
@@ -113,6 +118,9 @@ func exactQuerySpec(algebra *factor.Algebra, freezer identity.SemanticKey) engin
 			Semantic: freezer,
 			Freeze:   factor.CloneEffect, Clone: factor.CloneEffect,
 			Equal: factor.EqualEffect, Fingerprint: factor.FingerprintEffect,
+			Present: func(observation factor.EffectObservation) bool {
+				return observation.Rows != 0
+			},
 		},
 	}
 }

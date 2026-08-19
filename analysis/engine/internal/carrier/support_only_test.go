@@ -412,12 +412,13 @@ func TestMergeSelectedUnderEmptyScopeIsFactorFreeExactRight(t *testing.T) {
 }
 
 func TestMergeSelectedUnderFailureDropsEarlierPreparedChanges(t *testing.T) {
-	manager, err := guard.New(nil)
+	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	whole, ok := support.True(manager)
-	if !ok {
+	regions := support.New(manager)
+	on, ok := regions.Literal(1, true)
+	if !ok || !regions.Seal() {
 		t.Fatal("support")
 	}
 	first := &carryOnlyOperation{guards: manager}
@@ -430,15 +431,27 @@ func TestMergeSelectedUnderFailureDropsEarlierPreparedChanges(t *testing.T) {
 	if !ok {
 		t.Fatal("empty widening selection")
 	}
-	current, ok := NewState(composition, composition.Scope(), whole)
+	current, ok := NewState(composition, composition.Scope(), on)
 	if !ok {
 		t.Fatal("current")
+	}
+	identity, ok := composition.IdentityReindex(composition.Scope())
+	if !ok {
+		t.Fatal("identity")
 	}
 	work, ok := composition.NewWork()
 	if !ok {
 		t.Fatal("work")
 	}
 	currentPoint, currentRHS := selectedPointOperands(t, work, current, current)
+	currentPoint, ok = work.TransportPointState(currentPoint, on, identity, on)
+	if !ok {
+		t.Fatal("open current point")
+	}
+	currentRHS, ok = work.PointRHSFromPointState(currentPoint)
+	if !ok {
+		t.Fatal("open current RHS")
+	}
 	if next, _, accepted := work.MergeSelectedPointState(Widen, currentPoint, currentRHS, currentRHS, selection); accepted || next.Valid() {
 		t.Fatal("partial selected merge published")
 	}
@@ -448,6 +461,14 @@ func TestMergeSelectedUnderFailureDropsEarlierPreparedChanges(t *testing.T) {
 		t.Fatal("retry work")
 	}
 	retryPoint, retryRHS := selectedPointOperands(t, work, current, current)
+	retryPoint, ok = work.TransportPointState(retryPoint, on, identity, on)
+	if !ok {
+		t.Fatal("open retry point")
+	}
+	retryRHS, ok = work.PointRHSFromPointState(retryPoint)
+	if !ok {
+		t.Fatal("open retry RHS")
+	}
 	if next, changes, accepted := work.MergeSelectedPointState(Widen, retryPoint, retryRHS, retryRHS, selection); !accepted || !work.EqualUnder(next.State(), current) || !changes.Empty() {
 		t.Fatalf("failed selected merge left partial state: ok=%t equal=%t empty=%t", accepted, work.EqualUnder(next.State(), current), changes.Empty())
 	}

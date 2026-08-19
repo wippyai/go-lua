@@ -31,7 +31,6 @@
 package probe
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -113,8 +112,8 @@ type (
 
 // AxisEntry is this domain's axis declaration. A is the composition's own Link
 // input record, admitted by the need interface above.
-func AxisEntry[A mountInputs]() axis.Spec[A, *SchemaFragment, *HotAxis, uint64] {
-	return axis.Spec[A, *SchemaFragment, *HotAxis, uint64]{
+func AxisEntry[A mountInputs]() axis.Spec[A] {
+	return axis.Spec[A]{
 		Key:         AxisKey,
 		Storage:     axis.StorageFactor,
 		Cardinality: axis.CardinalitySparse,
@@ -130,9 +129,6 @@ func AxisEntry[A mountInputs]() axis.Spec[A, *SchemaFragment, *HotAxis, uint64] 
 			}
 			return MountAuthority{Artifacts: count}, MountRejection{}, true
 		}),
-		Declare: func(axis.Declaration) (*SchemaFragment, bool) { return nil, false },
-		Bind:    func(axis.Binding[A, *SchemaFragment]) (*HotAxis, bool) { return nil, false },
-		Algebra: func(*HotAxis) (axis.Algebra[uint64], bool) { return axis.Algebra[uint64]{}, false },
 	}
 }
 
@@ -148,22 +144,17 @@ type (
 // is the one family every compiled program carries. P and A are the composition's
 // principal and authority records; this rule declares against neither, because
 // the only principal it writes is its own.
-func RuleEntry[P, A any]() rule.Spec[P, A, *RuleFragment, *HotRule] {
-	return rule.Spec[P, A, *RuleFragment, *HotRule]{
+func RuleEntry[P, A any]() rule.Spec {
+	return rule.Spec{
 		Key:    RuleKey,
 		Lane:   rule.LaneMounted,
 		Writes: AxisKey,
 		Owner:  AxisKey,
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/point-attachment", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
+			{Occurrence: "occurrence/point-attachment", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
 		},
 		Semantic: vocabulary.RoleKey(RuleRole),
 		Roles:    []schema.Key{vocabulary.RoleKey(OperandRole), vocabulary.RoleKey(EvidenceRole)},
-		Declare:  func(rule.Declaration[P]) (*RuleFragment, bool) { return nil, false },
-		Register: func(rule.Registration[*RuleFragment]) (engine.RuleSlotCapability, bool) {
-			return engine.RuleSlotCapability{}, false
-		},
-		Bind: func(rule.Binding[A, *RuleFragment]) (*HotRule, bool) { return nil, false },
 	}
 }
 

@@ -7,8 +7,10 @@ import (
 	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/effect/postcondition"
 	"github.com/wippyai/go-lua/domain/effect/returns"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/normalize"
 	"github.com/wippyai/go-lua/domain/type/typ"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 )
 
 var luaRuntimeTypeName = typ.MaterializeUnion([]typ.Type{
@@ -71,7 +73,22 @@ func baseDeclaration() declaration {
 			"tostring": openAuthored("stdlib.base.tostring.metamethod", typ.Func().
 				Param("v", typ.Any).Returns(typ.String).Build(), ownership.BorrowAll{}).operational(replacement(tostringProfile())),
 			"type": authored(typ.Func().
-				Param("v", typ.Any).Returns(luaRuntimeTypeName).Build(), ownership.BorrowAll{}),
+				Param("v", typ.Any).Returns(luaRuntimeTypeName).Build(), ownership.BorrowAll{}).operational(moduleio.Operation{
+				Behavior: &moduleio.OperationBehavior{
+					Results: []moduleio.OperationResult{{
+						Outcome:  0,
+						Result:   0,
+						Source:   moduleio.InputSource{Kind: moduleio.InputSourceValue, Ordinal: 0},
+						Relation: string(runtimekind.RuntimeKindResultRelationKey),
+					}},
+					Predicates: []moduleio.OperationPredicate{{
+						Outcome:  0,
+						Result:   0,
+						Subject:  moduleio.InputSource{Kind: moduleio.InputSourceValue, Ordinal: 0},
+						Relation: string(runtimekind.RuntimeKindPredicateRelationKey),
+					}},
+				},
+			}),
 			"unpack": authored(typ.Func().
 				Param("list", typ.Any).OptParam("i", typ.Integer).OptParam("j", typ.Integer).
 				Returns(typ.Any).Build(), ownership.BorrowAll{}).operational(replacement(tableUnpackProfile())),

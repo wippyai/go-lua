@@ -11,6 +11,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -71,12 +73,12 @@ func canonicalPathStaticReferenceProgram(t *testing.T) *program.Program {
 	}
 	staticDraft, err := programstatic.Build(programstatic.Input{
 		Counts: counts,
-		References: programstatic.ReferencesInput{TypeRef: []programstatic.TypeRef{{
-			Resolution: programstatic.TypeRefCanonicalPath,
+		References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
+			Resolution: staticrefs.CanonicalPath,
 			Source:     []keyspace.Key{1},
 			Canonical:  []keyspace.Key{1},
 		}}},
-		Declarations: programstatic.DeclarationsInput{Alias: []programstatic.TypeAlias{{
+		Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{
 			Owner: body, Target: reference, Name: 1, NameCoordinate: coordinate,
 		}}},
 	})
@@ -118,7 +120,7 @@ func canonicalPathStaticReferenceProgram(t *testing.T) *program.Program {
 	}
 	resolution, target, root, referenceOK := published.Static().References().Get(reference)
 	canonicalCount, canonicalOK := published.Static().References().CanonicalCount(reference)
-	if !referenceOK || resolution != programstatic.TypeRefCanonicalPath || target != 0 || root != 0 ||
+	if !referenceOK || resolution != staticrefs.CanonicalPath || target != 0 || root != 0 ||
 		!canonicalOK || canonicalCount != 1 {
 		t.Fatalf("canonical reference = resolution %v target %v root %v canonical %d/%v", resolution, target, root, canonicalCount, canonicalOK)
 	}
@@ -137,7 +139,7 @@ return value
 		if !rowOK {
 			t.Fatalf("unresolved StaticTypeNodeAt(%d)", index)
 		}
-		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(programstatic.TypeRefUnresolved) {
+		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
 			continue
 		}
 		if row.ChildCount() != 0 {
@@ -160,7 +162,7 @@ return value
 		if !rowOK {
 			t.Fatalf("resolved StaticTypeNodeAt(%d)", index)
 		}
-		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(programstatic.TypeRefUnresolved) {
+		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
 			continue
 		}
 		if row.ChildCount() == 0 {

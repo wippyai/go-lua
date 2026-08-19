@@ -3,6 +3,7 @@ package typecall
 import (
 	"github.com/wippyai/go-lua/domain/type/access"
 	"github.com/wippyai/go-lua/domain/type/ambient"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
 	graph "github.com/wippyai/go-lua/domain/type/internal/typegraph"
 	"github.com/wippyai/go-lua/domain/type/normalize"
 	"github.com/wippyai/go-lua/domain/type/stringlib"
@@ -143,6 +144,9 @@ func memberCallSeen(t typ.Type, name string, depth int, active *graph.Path) memb
 		return memberCallResult{status: MemberCallMissing}
 	}
 	defer active.Leave(t, 0)
+	if method, ok := ambientChannelModuleMethod(t, name); ok {
+		return memberCallResult{t: method, status: MemberCallOK}
+	}
 	if method, ok := ambientChannelMethod(t, name, depth+1); ok {
 		return memberCallResult{t: method, status: MemberCallOK}
 	}
@@ -289,6 +293,16 @@ func metaMethod(name string, receiver typ.Type) (typ.Type, bool) {
 		Build(), true
 }
 
+func ambientChannelModuleMethod(receiver typ.Type, name string) (typ.Type, bool) {
+	if !channelselect.IsModuleType(receiver) {
+		return nil, false
+	}
+	if name == "select" {
+		return channelselect.SelectFunction(), true
+	}
+	return nil, false
+}
+
 func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, bool) {
 	channel, payload, ok := channelPayloadType(receiver, depth+1)
 	if !ok {
@@ -303,7 +317,7 @@ func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, 
 	case "case_receive":
 		return typ.Func().
 			Param("self", channel).
-			Returns(typ.Unknown).
+			Returns(channelselect.ReceiveCaseType(channel, payload)).
 			Build(), true
 	case "send":
 		return typ.Func().
@@ -315,7 +329,7 @@ func ambientChannelMethod(receiver typ.Type, name string, depth int) (typ.Type, 
 		return typ.Func().
 			Param("self", channel).
 			Param("payload", payload).
-			Returns(typ.Unknown).
+			Returns(channelselect.SendCaseType(channel, payload)).
 			Build(), true
 	case "close":
 		return typ.Func().

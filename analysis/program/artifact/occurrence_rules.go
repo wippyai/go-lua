@@ -19,7 +19,11 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 		if len(finish) == 0 {
 			finish = row.points
 		}
-		for _, placement := range compiler.issuance.matching(row.kind, row.code) {
+		placements, decided := compiler.matching(row)
+		if !decided {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		for _, placement := range placements {
 			if !compiler.applyIssuance(row, ordinal, geometry, finish, placement) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}

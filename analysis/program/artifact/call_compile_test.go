@@ -53,7 +53,8 @@ return identity(true)
 		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: OccurrenceCallActivation, id: callID}]
 		wantEntry, wantFinish := canonicalPoints(transaction.pointIDs(entry)), canonicalPoints(transaction.pointIDs(finish))
 		if !callOK || !callTermOK || !spanOK || !entryOK || !finishOK || !geometryOK || !activationOK ||
-			!slices.Equal(geometry.entry, wantEntry) || !slices.Equal(geometry.finish, wantFinish) || len(activation.entry) != 0 || !slices.Equal(activation.finish, wantFinish) {
+			!slices.Equal(geometry.entry, wantEntry) || !slices.Equal(geometry.finish, wantFinish) ||
+			len(activation.entry) != 0 || !slices.Equal(activation.finish, wantFinish) {
 			t.Fatalf("call %d did not preserve exact Entry/Finish geometry", index)
 		}
 		if !row.Available() || row.ID() != callID || row.SpanID() != spanID {
@@ -111,12 +112,12 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			{kind: WTOEventPoint, point: finish},
 		},
 		issuance: IssuanceDirectory{
-			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch"},
-			{Occurrence: OccurrenceCall, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source"},
-			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-selected"},
-			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-opaque"},
-			{Occurrence: OccurrenceCall, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-body"},
-			{Occurrence: OccurrenceCallActivation, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallSummary, Key: "call-activation"},
+			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
+			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
+			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
+			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
+			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
+			{Occurrence: OccurrenceCallActivation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallSummary, Key: "call-activation", Writes: "call"},
 		},
 	}
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {

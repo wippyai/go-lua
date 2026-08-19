@@ -3,9 +3,10 @@ package target
 import (
 	"errors"
 	"fmt"
+	bootvalue "github.com/wippyai/go-lua/analysis/program/target/boot"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
+	protocolvalue "github.com/wippyai/go-lua/analysis/program/target/protocol"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"sort"
-
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
@@ -35,29 +36,26 @@ func Seal(spec *Spec) (*Contract, error) {
 		}
 		drafts[index] = draft
 	}
-	if err := canonicalizeBindings(drafts); err != nil {
+	geometry, err := operationvalue.CompileGeometry(operationGeometryInput(drafts))
+	if err != nil {
 		return nil, err
 	}
-	if err := deriveProducedAnchors(drafts); err != nil {
-		return nil, err
-	}
-	sort.Slice(drafts, func(left, right int) bool {
-		return compareOperationDraft(drafts[left], drafts[right]) < 0
-	})
-	for index := 1; index < len(drafts); index++ {
-		if compareOperationDraft(drafts[index-1], drafts[index]) == 0 {
-			return nil, errors.New("target: duplicate operation anchor")
-		}
-	}
-
 	sourceOperation := make([]vocabulary.Operation, len(drafts))
-	for index := range drafts {
-		handle, handleErr := checkedStoredHandle("operation handle", index)
-		if handleErr != nil {
-			return nil, handleErr
+	for source := range sourceOperation {
+		handle, handleOK := geometry.SourceOperation(source)
+		if !handleOK {
+			return nil, errors.New("target: operation source map is incomplete")
 		}
-		sourceOperation[drafts[index].source] = vocabulary.Operation(handle)
+		sourceOperation[source] = handle
 	}
+	orderedDrafts := make([]operationDraft, len(drafts))
+	for source, handle := range sourceOperation {
+		if handle == 0 || uint64(handle) > uint64(len(orderedDrafts)) {
+			return nil, errors.New("target: operation core returned invalid canonical handle")
+		}
+		orderedDrafts[uint32(handle)-1] = drafts[source]
+	}
+	drafts = orderedDrafts
 	for index := range drafts {
 		if err := drafts[index].resolveEffects(drafts, sourceOperation); err != nil {
 			return nil, err
@@ -78,54 +76,60 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err := validateSpawnAuthority(drafts); err != nil {
 		return nil, err
 	}
-	protocols, err := freezeProtocols(spec.Protocols)
+	exactKeys, err := freezeExactKeys(drafts, spec.InitialRoots, spec.InitialEntries, spec.InitialBindings)
 	if err != nil {
 		return nil, err
 	}
-	if err := resolveProtocols(protocols, drafts, sourceOperation); err != nil {
-		return nil, err
-	}
-	boot, err := freezeBoot(spec.InitialRoots, spec.InitialEntries, spec.InitialBindings, spec.InitialMetatables, drafts, sourceOperation)
+	operationCore, err := operationvalue.CompileAnchors(geometry, exactKeys)
 	if err != nil {
 		return nil, err
 	}
-	if err := resolveSubedgeInitialReads(drafts, boot); err != nil {
+	protocols, err := protocolvalue.Compile(protocolvalue.Input{
+		Protocols: spec.Protocols, Operations: operationCore,
+	})
+	if err != nil {
 		return nil, err
 	}
-	exactKeys, exactKeyHandles, err := freezeExactKeys(drafts, boot)
+	bootTable, err := bootvalue.Compile(bootvalue.Input{
+		InitialRoots: spec.InitialRoots, InitialEntries: spec.InitialEntries,
+		InitialBindings: spec.InitialBindings, InitialMetatables: spec.InitialMetatables,
+		Operations: operationCore, Keys: exactKeys,
+	})
 	if err != nil {
+		return nil, err
+	}
+	if err := resolveSubedgeInitialReads(drafts, &bootTable, exactKeys); err != nil {
 		return nil, err
 	}
 
 	// Contract is staging-only until the final return. Any failed append drops
 	// it whole, so Seal never exposes a partially converted representation.
-	contract := &Contract{operations: make([]operationRow, 0, operationCount)}
-	if err := contract.appendExactKeys(exactKeys); err != nil {
-		return nil, err
-	}
+	contract := &Contract{Table: bootTable, exactKeys: exactKeys, operationCore: operationCore, operations: make([]operationRow, 0, operationCount), protocols: protocols}
 	for index := range drafts {
-		handle, handleErr := checkedStoredHandle("operation handle", index)
-		if handleErr != nil {
-			return nil, handleErr
+		op, ok := operationCore.OperationAt(index)
+		if !ok {
+			return nil, errors.New("target: operation core missing canonical handle")
 		}
-		op := vocabulary.Operation(handle)
-		if err := contract.appendOperation(op, &drafts[index], exactKeyHandles); err != nil {
+		callbackIDs := make([]vocabulary.CallbackID, len(drafts[index].callbacks))
+		for callbackIndex := range callbackIDs {
+			callback, callbackOK := operationCore.CallbackAt(op, callbackIndex)
+			if !callbackOK {
+				return nil, errors.New("target: operation core missing callback handle")
+			}
+			callbackIDs[callbackIndex] = callback
+		}
+		if err := contract.appendOperation(op, &drafts[index], exactKeys, callbackIDs); err != nil {
 			return nil, err
 		}
-	}
-	if err := resolveProtocolCallbackHolders(protocols, drafts); err != nil {
-		return nil, err
 	}
 	if err := contract.appendCallbackReleases(drafts); err != nil {
 		return nil, err
 	}
-	if err := contract.appendOpaque(); err != nil {
-		return nil, err
+	opaque, opaqueOK := operationCore.Opaque()
+	if !opaqueOK {
+		return nil, errors.New("target: operation core missing opaque handle")
 	}
-	if err := contract.appendProtocols(protocols); err != nil {
-		return nil, err
-	}
-	if err := contract.appendBoot(boot, exactKeyHandles); err != nil {
+	if err := contract.appendOpaque(opaque); err != nil {
 		return nil, err
 	}
 	if err := contract.buildLookup(); err != nil {
@@ -143,4 +147,42 @@ func Seal(spec *Spec) (*Contract, error) {
 	}
 	contract.counts = counts
 	return contract, nil
+}
+
+func operationGeometryInput(drafts []operationDraft) operationvalue.Input {
+	input := operationvalue.Input{Operations: make([]operationvalue.OperationInput, len(drafts))}
+	for index := range drafts {
+		draft := drafts[index]
+		outcomes := make([]operationvalue.OutcomeInput, len(draft.outcomes))
+		for outcomeIndex := range draft.outcomes {
+			outcomes[outcomeIndex] = operationvalue.OutcomeInput{
+				ValueSlots: uint32(len(draft.outcomes[outcomeIndex].values.types)),
+				Anchor:     []byte(draft.outcomes[outcomeIndex].anchor),
+			}
+		}
+		callbacks := make([]operationvalue.CallbackInput, len(draft.callbacks))
+		for callbackIndex := range draft.callbacks {
+			callbacks[callbackIndex] = operationvalue.CallbackInput{
+				Source:    draft.callbacks[callbackIndex].source,
+				Lifecycle: draft.callbacks[callbackIndex].lifecycle,
+			}
+		}
+		produced := make([]operationvalue.ProducedInput, len(draft.outcomes))
+		produced = produced[:0]
+		for outcomeIndex := range draft.outcomes {
+			for _, edge := range draft.outcomes[outcomeIndex].produced {
+				produced = append(produced, operationvalue.ProducedInput{
+					TargetSource: int(edge.targetSource) - 1,
+					Outcome:      uint32(outcomeIndex),
+					Result:       edge.result,
+				})
+			}
+		}
+		input.Operations[index] = operationvalue.OperationInput{
+			Source: draft.source, Bindings: draft.bindings,
+			InputFormalCount: len(draft.input.types), ValuesVars: draft.valuesVars,
+			OutcomeValueSlots: outcomes, Callbacks: callbacks, Produced: produced,
+		}
+	}
+	return input
 }

@@ -35,51 +35,52 @@ type ruleAuthorities interface {
 // RuleEntry is this package's call-activation rule declaration. P and A are
 // the composition's own principal and authority records, admitted by the need
 // interfaces above.
-func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec[P, A, *SchemaFragment, *HotRule] {
-	return rule.Spec[P, A, *SchemaFragment, *HotRule]{
+func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
+	return rule.Spec{
 		Key:    "call-activation",
 		Writes: "call",
 		Owner:  "call",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/call-activation", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-summary"},
+			{Occurrence: "occurrence/call-activation", Requirement: "requirement/unrestricted", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-summary"},
 		},
 		Lane:     rule.LaneActivation,
 		Semantic: "semantic/activation/call-body",
 		Roles:    []schema.Key{"semantic/activation-family/call-body", "semantic/activation-admission/call-body"},
-		Declare: func(context rule.Declaration[P]) (*SchemaFragment, bool) {
-			activation, activationOK := context.Roles.Key("semantic/activation/call-body")
-			family, familyOK := context.Roles.Key("semantic/activation-family/call-body")
-			admission, admissionOK := context.Roles.Key("semantic/activation-admission/call-body")
-			if !activationOK || !familyOK || !admissionOK {
-				return nil, false
-			}
-			return DeclareSchema(context.Builder, activation, family, admission, context.Principals.CallPrincipal())
-		},
-		Register: func(context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
-			slot := context.Fragment.ActivationSlot()
-			capability, ok := engine.IssueActivationRuleCapability(context.Binding, slot)
-			if !ok || !engine.RegisterActivationRuleSlot(context.Binding, slot, capability) {
-				return engine.RuleSlotCapability{}, false
-			}
-			return capability, true
-		},
-		Bind: func(context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
-			hot, ok := BindHot(context.Fragment, context.Authorities.CallAuthority(), context.Authorities.ActivationCatalog())
-			if !ok {
-				return nil, false
-			}
-			if !BindMountedTransport(hot, context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(), context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(), context.Authorities.EffectAuthority().FactorRef()) {
-				return nil, false
-			}
-			return hot, true
-		},
-		Finalize: func(context rule.Finalization[A, *HotRule]) bool {
-			return context.Rule.SealOccurrenceReceipts()
-		},
-		Member: func(context rule.Member[*HotRule]) bool {
-			return context.Rule.AttachMountedReceiptMember(context.Compilation, context.Mount, context.Point, context.Occurrence)
-		},
 	}
+}
+
+func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
+	activation, activationOK := context.Roles.Key("semantic/activation/call-body")
+	family, familyOK := context.Roles.Key("semantic/activation-family/call-body")
+	admission, admissionOK := context.Roles.Key("semantic/activation-admission/call-body")
+	if !activationOK || !familyOK || !admissionOK {
+		return nil, false
+	}
+	return DeclareSchema(builder, activation, family, admission, context.Principals.CallPrincipal())
+}
+
+func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
+	slot := context.Fragment.ActivationSlot()
+	capability, ok := engine.IssueActivationRuleCapability(binding, slot)
+	if !ok || !engine.RegisterActivationRuleSlot(binding, slot, capability) {
+		return engine.RuleSlotCapability{}, false
+	}
+	return capability, true
+}
+
+func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A, *SchemaFragment]) (*HotRule, bool) {
+	hot, ok := BindHot(context.Fragment, context.Authorities.CallAuthority(), context.Authorities.ActivationCatalog())
+	if !ok {
+		return nil, false
+	}
+	if !BindMountedTransport(hot, context.Authorities.ValueAuthority().FactorRef(), context.Authorities.CallAuthority().FactorRef(), context.Authorities.HeapAuthority().FactorRef(), context.Authorities.PackAuthority().FactorRef(), context.Authorities.EffectAuthority().FactorRef()) {
+		return nil, false
+	}
+	return hot, true
+}
+
+func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
+	return context.Rule.SealOccurrenceReceipts()
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

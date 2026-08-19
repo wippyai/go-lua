@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestSealNestedBodyAndDirectRootOrder(t *testing.T) {
@@ -379,8 +381,8 @@ func TestSealRejectsEachExpiredOwnerIndependently(t *testing.T) {
 	}
 	staticInput := static.Input{Counts: [keyspace.FamilyCount]uint32{
 		keyspace.FamilyBody: 1, keyspace.FamilyTypeAlias: 1, keyspace.FamilyTypePrimitive: 1,
-	}, Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}}}, Declarations: static.DeclarationsInput{
-		Alias: []static.TypeAlias{{Owner: body, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
+	}, Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}}, Declarations: staticdecl.Input{
+		Alias: []staticdecl.TypeAlias{{Owner: body, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
 	}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish := prepare(t, [][]keyspace.Term{{keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)}}, authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1}}, staticInput)
 	if err := finish.Abort(); err != nil {
@@ -501,9 +503,9 @@ func TestSealAdmitsLabelFaultAliasAndInterfaceRoots(t *testing.T) {
 	}
 	staticInput := static.Input{Counts: [keyspace.FamilyCount]uint32{
 		keyspace.FamilyBody: 1, keyspace.FamilyTypeAlias: 1, keyspace.FamilyTypeInterface: 1, keyspace.FamilyTypePrimitive: 1,
-	}, Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}}}, Declarations: static.DeclarationsInput{
-		Alias:     []static.TypeAlias{{Owner: body, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
-		Interface: []static.Interface{{Owner: body, Name: 2, NameCoordinate: coordinate}},
+	}, Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}}, Declarations: staticdecl.Input{
+		Alias:     []staticdecl.TypeAlias{{Owner: body, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
+		Interface: []staticdecl.Interface{{Owner: body, Name: 2, NameCoordinate: coordinate}},
 	}}
 	input := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 1, keyspace.FamilyLabel: 1}}
 	input.Control.Labels = []authored.Label{{Owner: body}}
@@ -550,8 +552,8 @@ func TestSealRejectsMissingAndWrongOwnerDenominatorRows(t *testing.T) {
 	alias := keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)
 	staticInput := static.Input{Counts: [keyspace.FamilyCount]uint32{
 		keyspace.FamilyBody: 2, keyspace.FamilyTypeAlias: 1, keyspace.FamilyTypePrimitive: 1,
-	}, Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}}}, Declarations: static.DeclarationsInput{
-		Alias: []static.TypeAlias{{Owner: body2, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
+	}, Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}}, Declarations: staticdecl.Input{
+		Alias: []staticdecl.TypeAlias{{Owner: body2, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Name: 1, NameCoordinate: coordinate}},
 	}}
 	plainInput := authored.Input{Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyBody: 2}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{alias}, nil}, plainInput, staticInput)
@@ -574,8 +576,8 @@ func TestSealRejectsMissingAndWrongOwnerDenominatorRows(t *testing.T) {
 	iface := keyspace.MakeTerm(keyspace.FamilyTypeInterface, 1)
 	staticInterface := static.Input{Counts: [keyspace.FamilyCount]uint32{
 		keyspace.FamilyBody: 2, keyspace.FamilyTypeInterface: 1,
-	}, Declarations: static.DeclarationsInput{
-		Interface: []static.Interface{{Owner: body2, Name: 1, NameCoordinate: coordinate}},
+	}, Declarations: staticdecl.Input{
+		Interface: []staticdecl.Interface{{Owner: body2, Name: 1, NameCoordinate: coordinate}},
 	}}
 	view, staticView, finish, staticFinish, preimage, sourceFinish = prepare(t, [][]keyspace.Term{{iface}, nil}, plainInput, staticInterface)
 	if _, err := Seal(preimage, view, staticView, body1); err == nil {

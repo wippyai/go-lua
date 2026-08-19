@@ -92,8 +92,8 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	}
 	storage := p.Flow().Authored().Storage().Cells()
 	for index := 0; index < storage.Count(); index++ {
-		cellID, cellOK := p.StorageCellIDAt(index)
 		term, termOK := storage.At(index)
+		cellID, cellOK := p.StorageCellID(term)
 		ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
 		if !cellOK || !termOK {
 			return errors.New("link/boundary: malformed semantic Cell row")

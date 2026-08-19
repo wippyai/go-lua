@@ -3,6 +3,14 @@ package static
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/internal/framing"
 
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
@@ -24,49 +32,49 @@ func (decoder *staticArtifactDecoder) preflightSection() error {
 	if err := probe.record(staticArtifactRecordTypes); err != nil {
 		return err
 	}
-	if err := probe.types(nil); err != nil {
+	if err := statictypes.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordReferences); err != nil {
 		return err
 	}
-	if err := probe.references(nil); err != nil {
+	if err := staticrefs.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordDeclarations); err != nil {
 		return err
 	}
-	if err := probe.declarations(nil); err != nil {
+	if err := staticdecl.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordSignatures); err != nil {
 		return err
 	}
-	if err := probe.signatures(nil); err != nil {
+	if err := staticsig.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordContracts); err != nil {
 		return err
 	}
-	if err := probe.contracts(nil); err != nil {
+	if err := staticcontracts.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordOperators); err != nil {
 		return err
 	}
-	if err := probe.operators(nil); err != nil {
+	if err := staticoperators.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordOperands); err != nil {
 		return err
 	}
-	if err := probe.operands(nil); err != nil {
+	if err := staticoperands.Scan(probe.reader); err != nil {
 		return err
 	}
 	if err := probe.record(staticArtifactRecordPublications); err != nil {
 		return err
 	}
-	if err := probe.publications(nil); err != nil {
+	if err := staticpubs.Scan(probe.reader); err != nil {
 		return err
 	}
 	return nil
@@ -83,70 +91,6 @@ func (decoder *staticArtifactDecoder) probeReader() (staticArtifactDecoder, erro
 	reader := *decoder.reader
 	probe := staticArtifactDecoder{reader: &reader, probing: true}
 	return probe, nil
-}
-
-func (decoder *staticArtifactDecoder) preflightTypes() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.types(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightReferences() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.references(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightDeclarations() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.declarations(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightSignatures() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.signatures(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightContracts() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.contracts(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightOperators() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.operators(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightOperands() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.operands(nil)
-}
-
-func (decoder *staticArtifactDecoder) preflightPublications() error {
-	probe, err := decoder.probeReader()
-	if err != nil {
-		return err
-	}
-	return probe.publications(nil)
 }
 
 func (decoder *staticArtifactDecoder) record(want uint64) error {

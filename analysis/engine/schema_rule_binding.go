@@ -29,12 +29,12 @@ type HotCarrySpec[V, O any] struct {
 // not receive a copy of these callbacks: the cell-issued receipt below is the
 // sole path back to this exact implementation.
 type ruleHotImplementation[K ~uint32 | ~uint64, V, O any] struct {
-	state          *schemaBindingState
-	rule           *RuleSlot[V, O]
-	write          SchemaWriteSlot[V]
-	output         *schemaFactorBindingCell[K, V]
-	carry          *schemaRuleCarryBinding[K, V, O]
-	reads          []schemaRuleReadBinding
+	state           *schemaBindingState
+	rule            *RuleSlot[V, O]
+	write           SchemaWriteSlot[V]
+	output          *schemaFactorBindingCell[K, V]
+	carry           *schemaRuleCarryBinding[K, V, O]
+	reads           []schemaRuleReadBinding
 	operandContent  func(O) (O, [32]byte, bool)
 	operandResolver func(OperandCoords) (O, bool)
 	admission       RuleAdmission[V, O]

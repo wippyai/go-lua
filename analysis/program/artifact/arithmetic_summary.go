@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // NumericRepresentation is ProgramArtifact's closed domain-abstract numeric
@@ -410,10 +410,10 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		defer delete(visiting, id)
 		switch row.Kind() {
 		case StaticNodePrimitive:
-			switch programstatic.PrimitiveKind(row.LiteralKind()) {
-			case programstatic.PrimitiveInteger:
+			switch statictypes.PrimitiveKind(row.LiteralKind()) {
+			case statictypes.PrimitiveInteger:
 				return numericIntegerMask, true
-			case programstatic.PrimitiveNumber:
+			case statictypes.PrimitiveNumber:
 				return numericIntegerMask | numericFloatMask, true
 			default:
 				return 0, false

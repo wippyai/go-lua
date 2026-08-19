@@ -14,6 +14,49 @@ func (schema *Schema) ForRuntimeKinds(kinds runtimekind.Set) (Value, bool) {
 	return schema.forRuntimeKinds[int(kinds)], true
 }
 
+// RuntimeKindNames projects a Value through the sealed type() result
+// vocabulary. The result atoms are issued during Value sealing from
+// structure.CategoryRuntimeKind; this hot query only selects a precomputed
+// immutable image and therefore allocates nothing.
+func (schema *Schema) RuntimeKindNames(input Value) (Value, bool) {
+	if schema == nil || !schema.owns(input) || schema.forRuntimeNames == nil {
+		return Value{}, false
+	}
+	if input.top {
+		return schema.forRuntimeNames[int(runtimekind.All)], true
+	}
+	kinds := schema.RuntimeKinds(input)
+	if !kinds.Valid() {
+		return Value{}, false
+	}
+	return schema.forRuntimeNames[int(kinds)], true
+}
+
+// RuntimeKindNameMatch evaluates the sealed runtime-kind name relation for one
+// candidate family. It exposes only may-equal/may-differ outcomes to the
+// consumer of an authenticated predicate; scalar payload ownership and the
+// runtime-kind spelling projection remain inside Value.
+func (schema *Schema) RuntimeKindNameMatch(comparison Value, kind runtimekind.Kind) (mayEqual, mayDiffer bool, ok bool) {
+	if schema == nil || !schema.owns(comparison) || !kind.Valid() {
+		return false, false, false
+	}
+	if comparison.IsBottom() {
+		return false, false, true
+	}
+	kindValue, kindValueOK := schema.ForRuntimeKinds(runtimekind.Bit(kind))
+	names, namesOK := schema.RuntimeKindNames(kindValue)
+	nameScalar, nameOK := schema.ExactScalar(names)
+	if !kindValueOK || !namesOK || !nameOK {
+		return false, false, false
+	}
+	comparisonScalar, comparisonOK := schema.ExactScalar(comparison)
+	if !comparisonOK {
+		return true, true, true
+	}
+	equal := exactScalarEqual(nameScalar, comparisonScalar)
+	return equal, !equal, true
+}
+
 // FilterPresent removes only Lua nil alternatives. False is deliberately
 // retained: it is present in Lua tables and is only falsy for control flow.
 // atomNil is the first sealed atom and opaque nil has no duplicate atom, so a
@@ -49,6 +92,31 @@ func (schema *Schema) FilterPresence(input Value, present bool) (Value, bool) {
 		return schema.Bottom(), true
 	}
 	return Value{schema: schema, image: input.image[:schema.stride()]}, true
+}
+
+// FilterRuntimeKinds retains the exact correlated alternatives whose sealed
+// may-runtime-kind intersects kinds. It is the Value-owned interpretation of
+// an authenticated operation predicate; no caller may filter by atom IDs or
+// by runtime-kind spellings. Capability tails remain attached to every row.
+func (schema *Schema) FilterRuntimeKinds(input Value, kinds runtimekind.Set) (Value, bool) {
+	if schema == nil || !schema.owns(input) || !kinds.Valid() {
+		return Value{}, false
+	}
+	if input.top {
+		return schema.ForRuntimeKinds(kinds)
+	}
+	if len(input.image) == 0 || kinds == 0 {
+		return schema.Bottom(), true
+	}
+	stride := schema.stride()
+	image := make([]uint64, 0, len(input.image))
+	for offset := 0; offset < len(input.image); offset += stride {
+		if schema.atomKinds(uint32(input.image[offset]))&kinds == 0 {
+			continue
+		}
+		image = append(image, input.image[offset:offset+stride]...)
+	}
+	return schema.canonical(image), true
 }
 
 // FilterStoredNone retains precisely scalar/non-reference alternatives. It

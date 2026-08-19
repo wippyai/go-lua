@@ -13,7 +13,6 @@ type SoleTransform[K scalar.Key, V any] func(K, Value[V]) (Value[V], bool)
 // returned by pointer, changed balanced nodes are copied once, and deletion
 // uses the height-general join shared by batch sparse updates.
 func (builder *Builder[F, K, V]) TransformSoleFactor(input Root[F, K, V], transform SoleTransform[K, V]) (Root[F, K, V], bool) {
-	DbgTransformSole.Add(1)
 	if builder == nil || !builder.open || builder.diagram == nil || !builder.Valid(input) || transform == nil {
 		return Root[F, K, V]{}, false
 	}
@@ -44,7 +43,6 @@ func (builder *Builder[F, K, V]) TransformSoleFactor(input Root[F, K, V], transf
 // AVL height, not key cardinality, while keeping the transformed child roots
 // available for exact pointer reuse at the parent.
 func transformSoleKeys[F ~uint64, K scalar.Key, V any](builder *Builder[F, K, V], input *keyNode[K, V], transform SoleTransform[K, V]) (*keyNode[K, V], int, bool) {
-	DbgTransformRows.Add(1)
 	if input == nil {
 		return nil, 0, true
 	}

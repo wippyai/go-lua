@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // The artifact query row address is the key a Result reads a published query
@@ -13,21 +14,20 @@ import (
 // the new one. The construction cut moves who attaches these rows and when; it
 // must not move the formula.
 //
-// artifactQueryFormulaFence is the tag artifact_query_plan.go frames the address
-// under, and artifactQueryRoleFence is the closed role-name vocabulary that
+// artifactQueryFormulaFence is the tag SelectedQuerySites frames the address
+// under, and artifactQueryRoleFence is the closed family-name vocabulary that
 // completes the preimage. Both are load-bearing preimage bytes, not labels.
 const artifactQueryFormulaFence = "analysis/artifact-query/v1"
 
 var artifactQueryRoleFence = []struct {
-	role artifactQueryRole
 	name string
 	// address is the row the formula derives for the fixed mount/point pair
-	// below. It pins the tag, the argument order, the role name, and the
+	// below. It pins the tag, the argument order, the family name, and the
 	// length framing DeriveContentID applies, all in one literal.
 	address string
 }{
-	{artifactQueryValueSummary, "value-summary", "fae0e88daf32331fe59d368e57758c17991d2e6a4de2edd40483cc84e6f1c1df"},
-	{artifactQueryEffectExact, "effect-exact", "b214ec5905f50cdbfe42e3c61816f1ad248cbb3706a340b7067b552aa716804e"},
+	{"value-summary", "fae0e88daf32331fe59d368e57758c17991d2e6a4de2edd40483cc84e6f1c1df"},
+	{"effect-exact", "b214ec5905f50cdbfe42e3c61816f1ad248cbb3706a340b7067b552aa716804e"},
 }
 
 func artifactQueryFenceID(value byte) identity.ContentID {
@@ -57,8 +57,8 @@ func TestArtifactQueryRowAddressFormulaIsFenced(t *testing.T) {
 	}
 	// The role vocabulary is closed and total: a third lane would publish a
 	// column no fenced address names.
-	if int(artifactQueryEffectExact) != len(artifactQueryRoleFence) {
-		t.Errorf("the role vocabulary spans %d ordinals, the fence table holds %d rows", int(artifactQueryEffectExact), len(artifactQueryRoleFence))
+	if len(artifactQueryRoleFence) != 2 {
+		t.Errorf("the family vocabulary spans 2 names, the fence table holds %d rows", len(artifactQueryRoleFence))
 	}
 }
 
@@ -95,22 +95,23 @@ func TestArtifactQueryPlanRowsUseTheFencedFormula(t *testing.T) {
 		t.Fatalf("compile = %v plan=%t", status, plan != nil)
 	}
 	defer plan.Close()
-	queryPlan, queryOK := newArtifactQueryPlan(plan.state.artifacts.mounts)
-	if !queryOK || queryPlan == nil || len(queryPlan.rows) == 0 {
+	sealed, sealedOK := linkArtifactRows(plan.state.artifacts.mounts)
+	sites, queryOK := composite.SelectedQuerySites(sealed)
+	queryOK = sealedOK && queryOK
+	if !queryOK || len(sites) == 0 {
 		t.Fatal("the mounted fixture issued no query plan rows")
 	}
-	names := make(map[artifactQueryRole]string, len(artifactQueryRoleFence))
+	names := make(map[string]struct{}, len(artifactQueryRoleFence))
 	for _, row := range artifactQueryRoleFence {
-		names[row.role] = row.name
+		names[row.name] = struct{}{}
 	}
-	for index, row := range queryPlan.rows {
-		name, named := names[row.role]
-		if !named {
-			t.Fatalf("plan row %d carries role %d, which the fence table does not name", index, row.role)
+	for index, row := range sites {
+		if _, named := names[string(row.Family)]; !named {
+			t.Fatalf("plan row %d carries family %q, which the fence table does not name", index, row.Family)
 		}
-		want, wantOK := identity.DeriveContentID(artifactQueryFormulaFence, row.mount[:], row.point[:], []byte(name))
-		if !wantOK || row.id != want {
-			t.Fatalf("plan row %d address %v is not the fenced formula over its own (mount, point, %q)", index, row.id, name)
+		want, wantOK := identity.DeriveContentID(artifactQueryFormulaFence, row.Mount[:], row.Point[:], []byte(row.Family))
+		if !wantOK || row.ID != want {
+			t.Fatalf("plan row %d address %v is not the fenced formula over its own (mount, point, %q)", index, row.ID, row.Family)
 		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -75,12 +76,12 @@ type AllocationReceipt struct {
 	allocationID identity.ContentID
 	kind         AllocationKind
 	form         AllocationForm
-	artifact     *programartifact.Artifact
+	snapshot     *ingress.Snapshot
 }
 
 func (kind AllocationKind) Valid() bool { return kind == AllocationTable || kind == AllocationClosure }
 func (receipt AllocationReceipt) Available() bool {
-	return receipt.module.Available() && receipt.programID.Available() && receipt.allocationID.Available() && receipt.kind.Valid() && receipt.form.Valid() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
+	return receipt.module.Available() && receipt.programID.Available() && receipt.allocationID.Available() && receipt.kind.Valid() && receipt.form.Valid() && receipt.snapshot != nil && receipt.snapshot.Available() && receipt.snapshot.ProgramID() == receipt.programID
 }
 func (receipt AllocationReceipt) Module() identity.ContentID       { return receipt.module }
 func (receipt AllocationReceipt) ProgramID() identity.ContentID    { return receipt.programID }
@@ -104,11 +105,11 @@ func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind Allocat
 	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
 		return AllocationReceipt{}, false
 	}
-	row, ok := mount.artifact.OccurrenceForID(programartifact.OccurrenceAllocation, id)
+	row, ok := mount.snapshot.OccurrenceForID(uint8(programartifact.OccurrenceAllocation), id)
 	if !ok || row.ID() != id || row.Code() != uint64(form) {
 		return AllocationReceipt{}, false
 	}
-	receipt := AllocationReceipt{module: mount.module, programID: mount.programID, allocationID: id, kind: kind, form: form, artifact: mount.artifact}
+	receipt := AllocationReceipt{module: mount.module, programID: mount.programID, allocationID: id, kind: kind, form: form, snapshot: mount.snapshot}
 	return receipt, receipt.Available()
 }
 
@@ -125,7 +126,7 @@ func (key Key) AllocationReceipt() (AllocationReceipt, bool) {
 	if !mounted {
 		return AllocationReceipt{}, false
 	}
-	receipt := AllocationReceipt{module: row.allocation.module, programID: row.allocation.programID, allocationID: row.allocation.allocationID, kind: row.allocation.kind, form: row.allocation.form, artifact: mount.artifact}
+	receipt := AllocationReceipt{module: row.allocation.module, programID: row.allocation.programID, allocationID: row.allocation.allocationID, kind: row.allocation.kind, form: row.allocation.form, snapshot: mount.snapshot}
 	return receipt, receipt.Available()
 }
 

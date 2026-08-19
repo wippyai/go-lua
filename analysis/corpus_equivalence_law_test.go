@@ -2,14 +2,17 @@ package analysis
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/analysis/result"
 	"testing"
 
 	"context"
 
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -113,8 +116,8 @@ type receiptSolve struct {
 	// the same solve: the mount-qualified subjects the compiled geometry declares,
 	// the publication rows the solver attached for them, and the family a
 	// consumer opens to read them.
-	geometry          resultGeometry
-	observations      []artifactDiagnosticObservationPublication
+	geometry          result.Geometry
+	observations      []anadiag.ObservationKey
 	observationFamily identity.ContentID
 }
 
@@ -137,15 +140,15 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 	// the binding it produced before any runtime topology exists, so the record
 	// it publishes from and the authorities the solve runs on are one seal.
 	record, binding, bindingFailure, mountFailure, _ := state.newProgramBinding(linked)
-	if bindingFailure != ProgramBindingFailureNone || mountFailure.Available() || binding == nil || binding.SchemaBinding() == nil {
+	if bindingFailure != anadiag.ProgramBindingFailureNone || mountFailure.Available() || binding == nil || binding.SchemaBinding() == nil {
 		t.Fatalf("the mount phase refused the Link: binding=%v mount=%v", bindingFailure, mountFailure)
 	}
 	state.binding = binding
 	if _, topologyOK := state.instantiateRuntimeTopology(); !topologyOK {
 		t.Fatal("the plan built no runtime topology")
 	}
-	solver, queryPlan, observations, failure, compiled := state.buildRuntimeSolver(nil)
-	if !compiled || solver == nil || queryPlan == nil || failure.Available() {
+	solver, publications, failure, compiled := state.buildRuntimeSolver(nil)
+	if !compiled || solver == nil || len(publications) == 0 || failure.Available() {
 		t.Fatalf("the plan built no runtime solver: %v", failure)
 	}
 	engineState, solveStatus, _ := solver.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{})
@@ -165,6 +168,11 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 	if !coordinatesOK {
 		t.Fatal("the Link publishes no value coordinate order")
 	}
+	geometry := mustResultGeometry(t, state)
+	observations, observationsOK := anadiag.Publications(geometry.BranchObservations)
+	if !observationsOK {
+		t.Fatal("sealed geometry published no observation addresses")
+	}
 	solve := &receiptSolve{
 		record:      record,
 		binding:     binding,
@@ -174,53 +182,53 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 		published:   published,
 		queryFamily: sealed.QueryFamily(),
 
-		geometry:          mustResultGeometry(t, state),
+		geometry:          geometry,
 		observations:      observations,
 		observationFamily: sealed.ObservationFamily(),
 	}
 	if solve.schema == nil || solve.algebra == nil || solve.record.ValueSchema != solve.schema {
 		t.Fatal("the mounted record is not the record the solve bound")
 	}
-	seenPoints := make(map[equivalencePoint]struct{}, len(queryPlan.rows))
-	for _, row := range queryPlan.rows {
-		query, queryOK := state.graph.Query(row.id)
+	seenPoints := make(map[equivalencePoint]struct{}, len(state.querySites))
+	for _, row := range state.querySites {
+		queryRow, queryOK := state.committed.program.Query(row.ID)
 		if !queryOK {
-			t.Fatalf("the receipt graph holds no query for row %x", row.id[:4])
+			t.Fatalf("the receipt graph holds no query for row %x", row.ID[:4])
 		}
-		point := equivalencePoint{mount: row.mount, point: row.point}
+		point := equivalencePoint{mount: row.Mount, point: row.Point}
 		if _, seen := seenPoints[point]; !seen {
 			seenPoints[point] = struct{}{}
 			solve.points = append(solve.points, point)
 		}
-		rowKey, keyed := query.PublicationKey()
+		rowKey, keyed := queryRow.PublicationKey()
 		if !keyed {
-			t.Fatalf("query row at point %x has no publication key", row.point[:4])
+			t.Fatalf("query row at point %x has no publication key", row.Point[:4])
 		}
 		captured, capturedStatus := snapshot.Query(&published, queryRead, rowKey)
 		if capturedStatus != snapshot.ReadHit && capturedStatus != snapshot.ReadProvenAbsent {
-			t.Fatalf("the published query at point %x reads as %s", row.point[:4], capturedStatus)
+			t.Fatalf("the published query at point %x reads as %s", row.Point[:4], capturedStatus)
 		}
-		switch row.role {
-		case artifactQueryValueSummary:
+		switch row.Projection {
+		case query.ProjectionSummary:
 			answer := valuedomain.BeginValueSummary(solve.schema)
 			if captured.Available() {
 				var readable bool
 				answer, readable = engine.AnswerValue[valuedomain.ValueSummaryObservation](captured)
 				if !readable || !answer.Valid {
-					t.Fatalf("the executor answer at point %x is not a value summary", row.point[:4])
+					t.Fatalf("the executor answer at point %x is not a value summary", row.Point[:4])
 				}
 			}
 			if len(answer.Values) != len(answer.Present) || len(answer.Values) != solve.schema.CoordinateCount() {
-				t.Fatalf("the value-summary receipt at point %x is not shaped by the sealed coordinate width", row.point[:4])
+				t.Fatalf("the value-summary receipt at point %x is not shaped by the sealed coordinate width", row.Point[:4])
 			}
 			solve.summaries = append(solve.summaries, summaryAnswer{subject: rowKey, point: point, answer: answer})
-		case artifactQueryEffectExact:
+		case query.ProjectionExact:
 			answer := effectfactor.BeginEffect(solve.algebra)
 			if captured.Available() {
 				var readable bool
 				answer, readable = engine.AnswerValue[effectfactor.EffectObservation](captured)
 				if !readable || !answer.Valid {
-					t.Fatalf("the executor answer at point %x is not an effect observation", row.point[:4])
+					t.Fatalf("the executor answer at point %x is not an effect observation", row.Point[:4])
 				}
 			}
 			if answer.Rows == 0 {
@@ -229,11 +237,11 @@ func solveThroughReceipts(t *testing.T, linked *link.Link) *receiptSolve {
 			}
 			root, rootOK := solve.rootForPoint(state, point)
 			if !rootOK {
-				t.Fatalf("the effect algebra issues no root for the body of point %x", row.point[:4])
+				t.Fatalf("the effect algebra issues no root for the body of point %x", row.Point[:4])
 			}
 			solve.effects = append(solve.effects, effectAnswer{subject: rowKey, point: point, root: root, answer: answer})
 		default:
-			t.Fatalf("the artifact query plan holds a row of no known role at point %x", row.point[:4])
+			t.Fatalf("the artifact query plan holds a row of no known role at point %x", row.Point[:4])
 		}
 	}
 	if len(solve.summaries) == 0 || len(solve.effects) != len(solve.summaries) {
@@ -249,16 +257,19 @@ func (solve *receiptSolve) rootForPoint(state *compiledState, point equivalenceP
 	if !geometryOK {
 		return effectfactor.Root{}, false
 	}
-	bodies := geometry.pointBodies[artifactResultPoint{mount: point.mount, point: point.point}]
+	bodies := geometry.PointBodies[result.Point{Mount: point.mount, Point: point.point}]
 	if len(bodies) == 0 {
 		return effectfactor.Root{}, false
 	}
-	body := geometry.bodies[bodies[0]]
-	for _, mount := range state.artifacts.mounts {
-		if mount.moduleKey != body.key.mount {
+	mount, body, ok := geometry.BodySite(bodies[0])
+	if !ok {
+		return effectfactor.Root{}, false
+	}
+	for _, row := range state.artifacts.mounts {
+		if row.moduleKey != mount {
 			continue
 		}
-		return solve.algebra.RootForMountedBodyID(mount.moduleKey, mount.programID, body.key.body)
+		return solve.algebra.RootForMountedBodyID(row.moduleKey, row.programID, body)
 	}
 	return effectfactor.Root{}, false
 }

@@ -1,6 +1,7 @@
 package closed_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -168,18 +169,22 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
 	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
-	mount, mountOK := heapdomain.NewArtifactMount(artifact, module, programID)
+	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
 	if !receiptOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("closed semantic artifact admission")
 	}
 	// Value's canonical mount is issued from the same artifact receipt; keep
 	// this conversion local so the law never uses the retired Link fixture.
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !valueMountOK {
 		t.Fatal("closed semantic Value mount")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, []valuedomain.ArtifactMount{valueMount})
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, []valuedomain.ArtifactMount{valueMount}, structural)
 	if valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("closed semantic Value seal")
 	}

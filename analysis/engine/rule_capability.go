@@ -6,7 +6,7 @@ import (
 )
 
 // Declaration-time rule slot capability machinery; the admission transaction
-// that consumes these capabilities lives in receipt_rule_admission.go.
+// that consumes these capabilities lives in runtime_rule_admit.go.
 
 // RuleSlotCapability is the parent-issued identity of one rule slot.  The
 // engine deliberately has no domain-role vocabulary: a capability is tied to
@@ -98,6 +98,25 @@ func RegisterRuleSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], ca
 		return false
 	}
 	return registerRuleSlot(binding, slot.cell.schema, slot.cell.ordinal, capability)
+}
+
+// RegisterMountedSlot issues the mounted capability and registers the slot
+// against it in one pre-seal handoff.
+func RegisterMountedSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
+	capability, ok := IssueMountedRuleCapability(binding, slot)
+	if !ok || !RegisterRuleSlot(binding, slot, capability) {
+		return RuleSlotCapability{}, false
+	}
+	return capability, true
+}
+
+// RegisterLinkSlot is the Link-lane handoff.
+func RegisterLinkSlot[V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (RuleSlotCapability, bool) {
+	capability, ok := IssueLinkRuleCapability(binding, slot)
+	if !ok || !RegisterRuleSlot(binding, slot, capability) {
+		return RuleSlotCapability{}, false
+	}
+	return capability, true
 }
 
 func RegisterActivationRuleSlot(binding *SchemaBinding, slot *SchemaActivationRuleSlot, capability RuleSlotCapability) bool {
@@ -252,39 +271,39 @@ func completeCapabilityDirectory(state *schemaBindingState) bool {
 
 // Layer-B sealed-authority accessors. Each reads only the sealed schema proof
 // held by the typed implementation; none of them touch source admission.
-func (implementation *RuleImplementation[K, V, O]) SelectedReadReceipt(index uint64) (SchemaSelectedReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSelectedReadReceipt{}, false
+func (implementation *RuleImplementation[K, V, O]) selectedRead(index uint64) (schemaSelectedRead, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return schemaSelectedRead{}, false
 	}
-	selected := implementation.receipt.proof.selectedReadAt(index)
+	selected := implementation.binding.proof.selectedReadAt(index)
 	returnValue := selected != nil && selected.Valid()
 	if !returnValue {
-		return SchemaSelectedReadReceipt{}, false
+		return schemaSelectedRead{}, false
 	}
 	return *selected, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) RouteWriteReceipt() (SchemaRouteWriteReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil || implementation.receipt.proof.routeWrite == nil || !implementation.receipt.proof.routeWrite.Valid() {
-		return SchemaRouteWriteReceipt{}, false
+func (implementation *RuleImplementation[K, V, O]) routeWrite() (schemaRouteWrite, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil || implementation.binding.proof.routeWrite == nil || !implementation.binding.proof.routeWrite.Valid() {
+		return schemaRouteWrite{}, false
 	}
-	return *implementation.receipt.proof.routeWrite, true
+	return *implementation.binding.proof.routeWrite, true
 }
 
-func (implementation *ActivationRuleImplementation) SelectedReadReceipt(index uint64) (SchemaSelectedReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSelectedReadReceipt{}, false
+func (implementation *ActivationRuleImplementation) selectedRead(index uint64) (schemaSelectedRead, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return schemaSelectedRead{}, false
 	}
-	selected := implementation.receipt.proof.selectedReadAt(index)
+	selected := implementation.binding.proof.selectedReadAt(index)
 	if selected == nil || !selected.Valid() {
-		return SchemaSelectedReadReceipt{}, false
+		return schemaSelectedRead{}, false
 	}
 	return *selected, true
 }
 
-// SchemaSummaryReadReceipt is the implementation-owned summary form proof.
+// schemaSummaryRead is the implementation-owned summary form proof.
 // It retains only the exact sealed Rule/Read fence and Schema normalizer key.
-type SchemaSummaryReadReceipt struct {
+type schemaSummaryRead struct {
 	fence    schemaRuleReceiptFence
 	read     uint64
 	factor   uint64
@@ -295,7 +314,7 @@ type SchemaSummaryReadReceipt struct {
 // boundTopologySummarySurfaceReceipt exposes only the sealed Factor/form
 // fence needed by topology catalog admission. The raw ClosedRefs vector stays
 // private to the RuleReadSurface issued below.
-func (receipt SchemaSummaryReadReceipt) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
+func (receipt schemaSummaryRead) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
 	if !receipt.Valid() || receipt.fence.schema == nil {
 		return nil, nil, composition.Key{}, composition.Key{}, false
 	}
@@ -306,7 +325,7 @@ func (receipt SchemaSummaryReadReceipt) boundTopologySummarySurfaceReceipt() (*s
 	return receipt.fence.state, receipt.fence.authority, factor, receipt.semantic, true
 }
 
-func (receipt SchemaSummaryReadReceipt) Valid() bool {
+func (receipt schemaSummaryRead) Valid() bool {
 	if !receipt.issued || !receipt.fence.valid() {
 		return false
 	}
@@ -316,23 +335,23 @@ func (receipt SchemaSummaryReadReceipt) Valid() bool {
 	return ruleOK && ok && factorOK && shape.Kind == composition.ReadSummary && shape.DependencyCount == 0 && receipt.read < rule.ReadCount && factor == receipt.factor && shape.Semantic.Available() && shape.Semantic == shape.Normalizer && shape.Semantic == receipt.semantic
 }
 
-func (implementation *RuleImplementation[K, V, O]) SummaryReadReceipt(index uint64) (SchemaSummaryReadReceipt, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.proof == nil {
-		return SchemaSummaryReadReceipt{}, false
+func (implementation *RuleImplementation[K, V, O]) summaryRead(index uint64) (schemaSummaryRead, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
+		return schemaSummaryRead{}, false
 	}
-	fence := schemaRuleReceiptFence{state: implementation.receipt.proof.state, authority: implementation.receipt.proof.bindingAuthority, schema: implementation.receipt.proof.schema, rule: implementation.receipt.proof.ordinal}
+	fence := schemaRuleReceiptFence{state: implementation.binding.proof.state, authority: implementation.binding.proof.bindingAuthority, schema: implementation.binding.proof.schema, rule: implementation.binding.proof.ordinal}
 	if fence.state == nil || fence.schema == nil || fence.rule >= uint64(len(fence.state.rules)) {
-		return SchemaSummaryReadReceipt{}, false
+		return schemaSummaryRead{}, false
 	}
 	fence.cell, _ = fence.state.rules[fence.rule].(schemaRuleBindingCell)
 	shape, ok := fence.schema.ruleReadShapeAt(fence.rule, index)
 	if !ok || shape.Kind != composition.ReadSummary || !fence.valid() {
-		return SchemaSummaryReadReceipt{}, false
+		return schemaSummaryRead{}, false
 	}
 	factor, factorOK := fence.schema.factorOrdinalOf(shape.Factor)
 	if !factorOK {
-		return SchemaSummaryReadReceipt{}, false
+		return schemaSummaryRead{}, false
 	}
-	result := SchemaSummaryReadReceipt{fence: fence, read: index, factor: factor, semantic: shape.Semantic, issued: true}
+	result := schemaSummaryRead{fence: fence, read: index, factor: factor, semantic: shape.Semantic, issued: true}
 	return result, result.Valid()
 }

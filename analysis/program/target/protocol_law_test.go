@@ -38,42 +38,42 @@ func TestProtocolMultipleAcquisitionsAndEntryRows(t *testing.T) {
 			Escapes: []vocabulary.EscapeSpec{{Operation: 2, Input: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}}},
 		}},
 	})
-	if contract.protocolCount() != 1 {
-		t.Fatalf("ProtocolCount = %d", contract.protocolCount())
+	if contract.protocols.ProtocolCount() != 1 {
+		t.Fatalf("ProtocolCount = %d", contract.protocols.ProtocolCount())
 	}
-	p, _ := contract.protocolAt(0)
-	if contract.protocolAcquisitionCount(p) != 2 {
-		t.Fatalf("acquisition count = %d", contract.protocolAcquisitionCount(p))
+	p, _ := contract.protocols.ProtocolAt(0)
+	if contract.protocols.ProtocolAcquisitionCount(p) != 2 {
+		t.Fatalf("acquisition count = %d", contract.protocols.ProtocolAcquisitionCount(p))
 	}
 	for index, wantName := range []string{"open", "closed"} {
-		state, ok := contract.stateAt(p, index)
-		name, nameOK := contract.stateName(p, state)
+		state, ok := contract.protocols.StateAt(p, index)
+		name, nameOK := contract.protocols.StateName(p, state)
 		if !ok || !nameOK || name != wantName {
 			t.Fatalf("state %d = %d/%q", index, state, name)
 		}
-		final, finalOK := contract.stateFinal(p, state)
+		final, finalOK := contract.protocols.StateFinal(p, state)
 		if !finalOK || final != (index == 1) {
 			t.Fatalf("final %d = %v/%v", index, final, finalOK)
 		}
 	}
-	if op, source, ordinal, from, ok := contract.transitionAt(p, 0); !ok || source != vocabulary.InputSourceValueFormal || ordinal != 0 || from != 1 || op == 0 {
+	if op, source, ordinal, from, ok := contract.protocols.TransitionAt(p, 0); !ok || source != vocabulary.InputSourceValueFormal || ordinal != 0 || from != 1 || op == 0 {
 		t.Fatalf("transition = %d/%d/%d/%d/%v", op, source, ordinal, from, ok)
 	}
-	if outcome, to, ok := contract.transitionOutcomeAt(p, 0, 0); !ok || outcome != 0 || to != 2 {
+	if outcome, to, ok := contract.protocols.TransitionOutcomeAt(p, 0, 0); !ok || outcome != 0 || to != 2 {
 		t.Fatalf("transition outcome = %d/%d/%v", outcome, to, ok)
 	}
-	if contract.escapeCount(p) != 2 {
-		t.Fatalf("escape count = %d", contract.escapeCount(p))
+	if contract.protocols.EscapeCount(p) != 2 {
+		t.Fatalf("escape count = %d", contract.protocols.EscapeCount(p))
 	}
 	opaque, _ := contract.Opaque()
-	op, source, ordinal, ok := contract.escapeAt(p, 1)
+	op, source, ordinal, ok := contract.protocols.EscapeAt(p, 1)
 	if !ok || op != opaque || source != vocabulary.InputSourceAllInputs || ordinal != 0 {
 		t.Fatalf("derived opaque escape = %d/%d/%d/%v", op, source, ordinal, ok)
 	}
-	if contract.transitionCount(p) != 1 {
+	if contract.protocols.TransitionCount(p) != 1 {
 		t.Fatal("opaque fabricated a protocol transition")
 	}
-	if allocs := testing.AllocsPerRun(1000, func() { _, _, _, _ = contract.escapeAt(p, 1) }); allocs != 0 {
+	if allocs := testing.AllocsPerRun(1000, func() { _, _, _, _ = contract.protocols.EscapeAt(p, 1) }); allocs != 0 {
 		t.Fatalf("derived escape allocated %f times", allocs)
 	}
 }
@@ -174,12 +174,12 @@ func TestProtocolStateCoordinatesAreAlphaInvariantAcrossCyclesAndRoots(t *testin
 		t.Fatal("state alpha rename/author permutation changed ContentID")
 	}
 	for _, contract := range []*Contract{left, right} {
-		protocol, _ := contract.protocolAt(0)
-		if states := contract.stateCount(protocol); states != 3 {
+		protocol, _ := contract.protocols.ProtocolAt(0)
+		if states := contract.protocols.StateCount(protocol); states != 3 {
 			t.Fatalf("state count = %d, want 3", states)
 		}
-		state, _ := contract.stateAt(protocol, 1)
-		if final, ok := contract.stateFinal(protocol, state); !ok || !final {
+		state, _ := contract.protocols.StateAt(protocol, 1)
+		if final, ok := contract.protocols.StateFinal(protocol, state); !ok || !final {
 			t.Fatalf("second canonical root final = %v/%v", final, ok)
 		}
 	}
@@ -214,12 +214,12 @@ func TestProtocolWideStatesSealIteratively(t *testing.T) {
 			Acquisitions: []vocabulary.AcquisitionSpec{{Operation: 1, Outcome: 0, Result: 0, State: 1}}, States: states, Transitions: transitions,
 		}},
 	})
-	p, _ := contract.protocolAt(0)
-	if contract.stateCount(p) != width {
-		t.Fatalf("state count = %d", contract.stateCount(p))
+	p, _ := contract.protocols.ProtocolAt(0)
+	if contract.protocols.StateCount(p) != width {
+		t.Fatalf("state count = %d", contract.protocols.StateCount(p))
 	}
-	state, _ := contract.stateAt(p, 0)
-	if name, ok := contract.stateName(p, state); !ok || name != "state-04096" {
+	state, _ := contract.protocols.StateAt(p, 0)
+	if name, ok := contract.protocols.StateName(p, state); !ok || name != "state-04096" {
 		t.Fatalf("canonical first state = %q/%v", name, ok)
 	}
 	if !contract.ContentID().Available() {
@@ -245,19 +245,19 @@ func TestProtocolWideOutcomeRemapAvoidsQuadraticSearch(t *testing.T) {
 			States:       []vocabulary.StateSpec{{Name: "open"}},
 		}},
 	})
-	p, _ := contract.protocolAt(0)
-	if contract.protocolAcquisitionCount(p) != width {
-		t.Fatalf("acquisition count = %d", contract.protocolAcquisitionCount(p))
+	p, _ := contract.protocols.ProtocolAt(0)
+	if contract.protocols.ProtocolAcquisitionCount(p) != width {
+		t.Fatalf("acquisition count = %d", contract.protocols.ProtocolAcquisitionCount(p))
 	}
 }
 
 func TestProtocolCallbackHoldersSealExactRetainedRelation(t *testing.T) {
 	contract := mustSeal(t, specWithProtocolCallbackHolder(vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}))
-	handle, ok := contract.protocolAt(0)
-	if !ok || contract.protocolCallbackHolderCount(handle) != 1 {
-		t.Fatalf("protocol callback-holder range = %d/%v", contract.protocolCallbackHolderCount(handle), ok)
+	handle, ok := contract.protocols.ProtocolAt(0)
+	if !ok || contract.protocols.ProtocolCallbackHolderCount(handle) != 1 {
+		t.Fatalf("protocol callback-holder range = %d/%v", contract.protocols.ProtocolCallbackHolderCount(handle), ok)
 	}
-	op, input, callback, ok := contract.protocolCallbackHolderAt(handle, 0)
+	op, input, callback, ok := contract.protocols.ProtocolCallbackHolderAt(handle, 0)
 	if !ok || input != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}) {
 		t.Fatalf("callback-holder input = %d/%#v/%d/%v", op, input, callback, ok)
 	}
@@ -269,13 +269,13 @@ func TestProtocolCallbackHoldersSealExactRetainedRelation(t *testing.T) {
 	if !lifecycleOK || !retainedCallbackLifecycle(lifecycle) {
 		t.Fatalf("callback-holder lifecycle = %d/%v", lifecycle, lifecycleOK)
 	}
-	if _, _, _, found := contract.protocolCallbackHolderAt(handle, 1); found {
+	if _, _, _, found := contract.protocols.ProtocolCallbackHolderAt(handle, 1); found {
 		t.Fatal("out-of-range callback holder resolved")
 	}
-	if contract.protocolCallbackHolderCount(vocabulary.Protocol(2)) != 0 {
+	if contract.protocols.ProtocolCallbackHolderCount(vocabulary.Protocol(2)) != 0 {
 		t.Fatal("opaque fabricated a callback-holder relation")
 	}
-	if allocs := testing.AllocsPerRun(1000, func() { _, _, _, _ = contract.protocolCallbackHolderAt(handle, 0) }); allocs != 0 {
+	if allocs := testing.AllocsPerRun(1000, func() { _, _, _, _ = contract.protocols.ProtocolCallbackHolderAt(handle, 0) }); allocs != 0 {
 		t.Fatalf("callback-holder query allocated %f times", allocs)
 	}
 }
@@ -295,9 +295,9 @@ func TestProtocolCallbackHoldersAcceptValuesVarAndIgnoreAuthorOrder(t *testing.T
 	if leftContract.ContentID() != rightContract.ContentID() {
 		t.Fatal("callback-holder author order changed ContentID")
 	}
-	handle, _ := leftContract.protocolAt(0)
-	if leftContract.protocolCallbackHolderCount(handle) != 2 {
-		t.Fatalf("callback-holder count = %d", leftContract.protocolCallbackHolderCount(handle))
+	handle, _ := leftContract.protocols.ProtocolAt(0)
+	if leftContract.protocols.ProtocolCallbackHolderCount(handle) != 2 {
+		t.Fatalf("callback-holder count = %d", leftContract.protocols.ProtocolCallbackHolderCount(handle))
 	}
 }
 

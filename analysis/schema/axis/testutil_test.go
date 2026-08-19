@@ -114,8 +114,8 @@ func scratchAlgebra() Algebra[uint64] {
 
 // scratchSpec is one complete axis declaration. Each law test starts from this
 // record and removes exactly the field the law is about.
-func scratchSpec(key, semantic schema.Key) Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64] {
-	return Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]{
+func scratchSpec(key, semantic schema.Key) Spec[scratchInputs] {
+	return Spec[scratchInputs]{
 		Key:         key,
 		Storage:     StorageFactor,
 		Cardinality: CardinalityDense,
@@ -123,14 +123,6 @@ func scratchSpec(key, semantic schema.Key) Spec[scratchInputs, *scratchFragment,
 		Mutability:  MutabilitySolve,
 		Concurrency: ConcurrencySingleWriter,
 		Semantic:    semantic,
-		Declare: func(context Declaration) (*scratchFragment, bool) {
-			resolved, ok := context.Roles.Key(semantic)
-			return &scratchFragment{semantic: resolved}, ok
-		},
-		Bind: func(context Binding[scratchInputs, *scratchFragment]) (*scratchAxis, bool) {
-			return &scratchAxis{fragment: context.Fragment}, context.Inputs.ready
-		},
-		Algebra: func(bound *scratchAxis) (Algebra[uint64], bool) { return scratchAlgebra(), true },
 	}
 }
 
@@ -161,7 +153,7 @@ func sealTable(t *testing.T, templates []*Template[scratchInputs]) (*schema.Sche
 	return builder.Seal()
 }
 
-func mustTemplate(t *testing.T, spec Spec[scratchInputs, *scratchFragment, *scratchAxis, uint64]) *Template[scratchInputs] {
+func mustTemplate(t *testing.T, spec Spec[scratchInputs]) *Template[scratchInputs] {
 	t.Helper()
 	template, ok := New(spec)
 	if !ok || template == nil {

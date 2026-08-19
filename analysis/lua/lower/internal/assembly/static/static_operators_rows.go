@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 func (rows *staticRows) TypeOf(term, scope, operand keyspace.Term) error {
@@ -14,7 +14,7 @@ func (rows *staticRows) TypeOf(term, scope, operand keyspace.Term) error {
 	if scope == 0 || operand == 0 {
 		return errors.New("program/lower/collector: incomplete TypeOf")
 	}
-	rows.typeOf = append(rows.typeOf, programstatic.TypeOf{Scope: scope, Operand: operand})
+	rows.typeOf = append(rows.typeOf, staticoperators.TypeOf{Scope: scope, Operand: operand})
 	return nil
 }
 
@@ -25,7 +25,7 @@ func (rows *staticRows) KeyOf(term, inner keyspace.Term) error {
 	if inner == 0 {
 		return errors.New("program/lower/collector: missing KeyOf child")
 	}
-	rows.keyOf = append(rows.keyOf, programstatic.KeyOf{Inner: inner})
+	rows.keyOf = append(rows.keyOf, staticoperators.KeyOf{Inner: inner})
 	return nil
 }
 
@@ -36,7 +36,7 @@ func (rows *staticRows) IndexAccess(term, object, index keyspace.Term) error {
 	if object == 0 || index == 0 {
 		return errors.New("program/lower/collector: incomplete IndexAccess")
 	}
-	rows.indexAccess = append(rows.indexAccess, programstatic.IndexAccess{Object: object, Index: index})
+	rows.indexAccess = append(rows.indexAccess, staticoperators.IndexAccess{Object: object, Index: index})
 	return nil
 }
 
@@ -47,6 +47,6 @@ func (rows *staticRows) Conditional(term, check, extends, then, otherwise keyspa
 	if check == 0 || extends == 0 || then == 0 || otherwise == 0 {
 		return errors.New("program/lower/collector: incomplete Conditional")
 	}
-	rows.conditional = append(rows.conditional, programstatic.Conditional{Check: check, Extends: extends, Then: then, Else: otherwise})
+	rows.conditional = append(rows.conditional, staticoperators.Conditional{Check: check, Extends: extends, Then: then, Else: otherwise})
 	return nil
 }

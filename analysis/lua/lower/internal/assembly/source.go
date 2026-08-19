@@ -115,24 +115,8 @@ func validFamilyTerm(c *Collector, term keyspace.Term, family keyspace.Family) b
 		keyspace.TermOrdinal(term) != 0 && keyspace.TermOrdinal(term) <= c.counts[family]
 }
 
-// sourceDirectFamily is the exact family boundary for authored Body roots.
-// It mirrors Source's canonical direct-body denominator without admitting a
-// term merely because its ordinal is present in the Collector census.
-func sourceDirectFamily(family keyspace.Family) bool {
-	switch family {
-	case keyspace.FamilyBody, keyspace.FamilyBind, keyspace.FamilyAssign,
-		keyspace.FamilyCall, keyspace.FamilyBranch, keyspace.FamilyLoop,
-		keyspace.FamilyReturn, keyspace.FamilyBreak, keyspace.FamilyGoto,
-		keyspace.FamilyLabel, keyspace.FamilyControlFault,
-		keyspace.FamilyTypeAlias, keyspace.FamilyTypeInterface:
-		return true
-	default:
-		return false
-	}
-}
-
 func validDirectBodyTerm(c *Collector, body, term keyspace.Term) bool {
-	if c == nil || !validBody(c, body) || !validTermInCounts(c, term) || !sourceDirectFamily(keyspace.TermFamily(term)) {
+	if c == nil || !validBody(c, body) || !validTermInCounts(c, term) || !source.AdmitsDirectBodyFamily(keyspace.TermFamily(term)) {
 		return false
 	}
 	if keyspace.TermFamily(term) == keyspace.FamilyBody {

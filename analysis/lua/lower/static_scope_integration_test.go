@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func TestNestedTypeOfCastComposition(t *testing.T) {
@@ -147,7 +147,7 @@ end)
 func assertStaticDeclarationRef(t *testing.T, p *program.Program, ref, want keyspace.Term) {
 	t.Helper()
 	resolution, target, root, ok := p.Static().References().Get(ref)
-	if !ok || resolution != static.TypeRefDeclaration || target != want || root != 0 {
+	if !ok || resolution != staticrefs.Declaration || target != want || root != 0 {
 		t.Fatalf("Static Reference(%v) = resolution %v target %v root %v ok %v; want declaration %v", ref, resolution, target, root, ok, want)
 	}
 }

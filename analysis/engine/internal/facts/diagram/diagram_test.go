@@ -684,3 +684,172 @@ func TestPartitionValueTerminalsRefinesThroughALentSupportShell(t *testing.T) {
 		t.Fatalf("lent read allocated %.0f times, unlent read allocated %.0f", lentAllocations, unlentAllocations)
 	}
 }
+
+func TestFoldValueUnderVisitsReachableTerminals(t *testing.T) {
+	fixture := newDiagramFixture(t)
+	builder := fixture.diagram.Begin()
+	root, ok := builder.Set(fixture.diagram.Empty(), factorFirst, 1, fixture.trueAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("first branch write")
+	}
+	root, ok = builder.Set(root, factorFirst, 1, fixture.falseAtOne, fixture.values[1])
+	if !ok {
+		t.Fatal("second branch write")
+	}
+	root, ok = builder.Seal(root)
+	if !ok {
+		t.Fatal("root seal")
+	}
+	value, present, valid := fixture.diagram.Get(root, factorFirst, 1)
+	if !valid || !present {
+		t.Fatal("value lookup")
+	}
+	whole, ok := support.True(fixture.manager)
+	if !ok {
+		t.Fatal("whole support")
+	}
+
+	var folded []terminal.ID[uint8]
+	completed := fixture.diagram.FoldValueUnder(value, whole, NewSoleScratch[testKey, uint8](), func(id terminal.ID[uint8]) bool {
+		folded = append(folded, id)
+		return true
+	})
+	if !completed || len(folded) != 2 {
+		t.Fatalf("direct fold = completed:%t ids:%d, want 2", completed, len(folded))
+	}
+	seen := map[terminal.ID[uint8]]bool{}
+	for _, id := range folded {
+		seen[id] = true
+	}
+	if !seen[fixture.values[0]] || !seen[fixture.values[1]] {
+		t.Fatalf("direct fold terminals = %v, want %v and %v", folded, fixture.values[0], fixture.values[1])
+	}
+
+	// The same terminal can be reached through two structural routes. The
+	// direct walk is allowed to visit that shared suffix once because the
+	// semantic consumer's Join is idempotent; it must still retain every
+	// distinct terminal reachable from the support.
+	branches := support.New(fixture.manager)
+	if branches == nil {
+		t.Fatal("shared-suffix support work")
+	}
+	// Use the second guard only on the high branch so both FDD routes share
+	// the value-10 terminal while the final high leaf carries value-30.
+	onOne, ok := branches.Literal(1, true)
+	if !ok {
+		t.Fatal("shared-suffix first literal")
+	}
+	onTwo, ok := branches.Literal(2, true)
+	if !ok {
+		t.Fatal("shared-suffix second literal")
+	}
+	offTwo, ok := branches.Literal(2, false)
+	if !ok {
+		t.Fatal("shared-suffix second complement")
+	}
+	sharedLow, ok := branches.And(onOne, offTwo)
+	if !ok {
+		t.Fatal("shared-suffix low branch")
+	}
+	sharedHigh, ok := branches.And(onOne, onTwo)
+	if !ok || !branches.Seal() {
+		t.Fatal("shared-suffix support seal")
+	}
+	sharedBuilder := fixture.diagram.Begin()
+	sharedRoot, ok := sharedBuilder.Set(fixture.diagram.Empty(), factorFirst, 2, fixture.falseAtOne, fixture.values[0])
+	if !ok {
+		t.Fatal("shared-suffix outer low")
+	}
+	sharedRoot, ok = sharedBuilder.Set(sharedRoot, factorFirst, 2, sharedLow, fixture.values[0])
+	if !ok {
+		t.Fatal("shared-suffix inner low")
+	}
+	sharedRoot, ok = sharedBuilder.Set(sharedRoot, factorFirst, 2, sharedHigh, fixture.values[2])
+	if !ok {
+		t.Fatal("shared-suffix inner high")
+	}
+	sharedRoot, ok = sharedBuilder.Seal(sharedRoot)
+	if !ok {
+		t.Fatal("shared-suffix root seal")
+	}
+	sharedValue, present, valid := fixture.diagram.Get(sharedRoot, factorFirst, 2)
+	if !valid || !present {
+		t.Fatal("shared-suffix value lookup")
+	}
+	var sharedFolded []terminal.ID[uint8]
+	if !fixture.diagram.FoldValueUnder(sharedValue, whole, NewSoleScratch[testKey, uint8](), func(id terminal.ID[uint8]) bool {
+		sharedFolded = append(sharedFolded, id)
+		return true
+	}) || len(sharedFolded) != 2 || sharedFolded[0] != fixture.values[0] || sharedFolded[1] != fixture.values[2] {
+		t.Fatalf("shared-suffix fold = %v, want [%v %v]", sharedFolded, fixture.values[0], fixture.values[2])
+	}
+
+	// A constant undefined terminal is still a reachable terminal, while an
+	// empty support has no reachable terminal at all.
+	constantBuilder := fixture.diagram.Begin()
+	constant, ok := constantBuilder.Constant(terminal.ID[uint8]{})
+	if !ok {
+		t.Fatal("undefined constant")
+	}
+	undefined := 0
+	if !fixture.diagram.FoldValueUnder(constant, whole, NewSoleScratch[testKey, uint8](), func(id terminal.ID[uint8]) bool {
+		if id != (terminal.ID[uint8]{}) {
+			t.Fatal("undefined constant changed terminal")
+		}
+		undefined++
+		return true
+	}) || undefined != 1 {
+		t.Fatalf("undefined fold callbacks = %d", undefined)
+	}
+	constantBuilder.Discard()
+	emptyWork := support.New(fixture.manager)
+	if emptyWork == nil {
+		t.Fatal("empty support work")
+	}
+	empty := emptyWork.False()
+	if !emptyWork.Seal() {
+		t.Fatal("empty support seal")
+	}
+	callbacks := 0
+	if !fixture.diagram.FoldValueUnder(value, empty, NewSoleScratch[testKey, uint8](), func(terminal.ID[uint8]) bool {
+		callbacks++
+		return true
+	}) || callbacks != 0 {
+		t.Fatalf("empty fold callbacks = %d", callbacks)
+	}
+
+	// Cancellation is observed before the first callback and does not turn a
+	// partial traversal into a successful read.
+	callbacks = 0
+	if fixture.diagram.FoldValueUnder(value, whole, NewSoleScratch[testKey, uint8](), func(terminal.ID[uint8]) bool {
+		callbacks++
+		return false
+	}) || callbacks != 1 {
+		t.Fatalf("cancelled fold = callbacks:%d", callbacks)
+	}
+
+	foreign, ok := New(Config[testFactor, testKey, uint8]{Factors: []testFactor{factorFirst}, Terminals: fixture.diagram.Terminals(), Guards: fixture.manager})
+	if !ok {
+		t.Fatal("foreign diagram")
+	}
+	foreignBuilder := foreign.Begin()
+	foreignValue, ok := foreignBuilder.Constant(fixture.values[0])
+	if !ok {
+		t.Fatal("foreign value")
+	}
+	if fixture.diagram.FoldValueUnder(foreignValue, whole, NewSoleScratch[testKey, uint8](), func(terminal.ID[uint8]) bool { return true }) {
+		t.Fatal("foreign diagram value was accepted")
+	}
+	foreignBuilder.Discard()
+	otherManager, err := guard.New([]guard.Atom{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherWhole, ok := support.True(otherManager)
+	if !ok {
+		t.Fatal("foreign support")
+	}
+	if fixture.diagram.FoldValueUnder(value, otherWhole, NewSoleScratch[testKey, uint8](), func(terminal.ID[uint8]) bool { return true }) {
+		t.Fatal("foreign support was accepted")
+	}
+}

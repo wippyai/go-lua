@@ -5,7 +5,7 @@ import "testing"
 func TestMountAdmissionRequiresArtifactAndUniqueModule(t *testing.T) {
 	module := orderLawID("module")
 	if (Mount{ModuleKey: module}).Available() {
-		t.Fatal("mount without an artifact was available")
+		t.Fatal("mount without a sealed snapshot was available")
 	}
 	if mountsAvailable([]Mount{{ModuleKey: module}, {ModuleKey: module}}) {
 		t.Fatal("duplicate incomplete mounts were admitted")

@@ -86,7 +86,7 @@ func (plane *programPlane) releaseColdFactorBindings() bool {
 // this graph. Enumerating by ordinal is what makes the result a property of the
 // sealed binding rather than of the order attachments happened to arrive in.
 func bindProgramPlaneFactors(state *schemaBindingState, runtime *runtimeBinding) ([]runtimeFactor, map[composition.Key]runtimeFactor, bool) {
-	if state == nil || runtime == nil || runtime.mode != runtimeBindingReceipt || runtime.state != state || runtime.authority == nil || !runtime.valid() {
+	if state == nil || runtime == nil || runtime.state != state || runtime.authority == nil || !runtime.valid() {
 		return nil, nil, false
 	}
 	state.mu.Lock()

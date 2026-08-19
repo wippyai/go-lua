@@ -291,10 +291,11 @@ func (solver *Solver) SolveWithReport(ctx context.Context) (state *State, status
 }
 
 // SolveWithDiagnostics executes one solve with a detached, bounded aggregate
-// collector and its existing first-incomplete certificate. A zero flag
+// collector and its existing first-incomplete certificate. A zero presentation
 // selection avoids aggregate collection but still returns that scalar
-// certificate if the single solve is incomplete. Invalid options return
-// SolveInvalid with an empty snapshot before any solver work begins.
+// certificate if the single solve is incomplete. Presentation and resource
+// settings never enter Snapshot identity. Invalid options return SolveInvalid
+// with an empty snapshot before any solver work begins.
 func (solver *Solver) SolveWithDiagnostics(ctx context.Context, options SolveDiagnosticOptions) (state *State, status SolveStatus, diagnostics SolveDiagnostics) {
 	if !options.Valid() {
 		return nil, SolveInvalid, SolveDiagnostics{}
@@ -550,7 +551,14 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 				return nil, SolveCanceled
 			}
 			key, keyed := query.PublicationKey()
-			if result == nil || result.owner != owner || result.key != query.query().Key() || !keyed || !publication.writeQuery(key, result.value) {
+			var value frozenValue
+			if result != nil {
+				value = result.value
+				if value != nil && !value.rowPresent() {
+					value = nil
+				}
+			}
+			if result == nil || result.owner != owner || result.key != query.query().Key() || !keyed || !publication.writeQuery(key, value) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))

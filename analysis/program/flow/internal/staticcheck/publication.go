@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -49,12 +50,12 @@ func validatePublications(
 		}
 		canonicalTarget := false
 		switch resolution {
-		case static.TypeRefDeclaration:
+		case staticrefs.Declaration:
 			if keyspace.TermOrdinal(targetDeclaration) == 0 ||
 				!staticrole.TypeReferenceTargetFamily(keyspace.TermFamily(targetDeclaration)) {
 				return errors.New("program/flow/staticcheck: Publication target is unavailable")
 			}
-		case static.TypeRefCanonicalPath:
+		case staticrefs.CanonicalPath:
 			canonicalTarget = true
 		default:
 			return errors.New("program/flow/staticcheck: Publication target is unavailable")

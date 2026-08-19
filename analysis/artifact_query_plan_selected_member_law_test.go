@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -35,8 +35,8 @@ return use(1)`, contract)
 		t.Fatal("runtime topology")
 	}
 	mounted := plan.state.artifacts.mounts[0]
-	bodyPoints := callableOccurrencePoints(t, mounted.artifact)
-	useBody, dormantBody := selectedDirectCalleeAndSibling(t, mounted.artifact)
+	bodyPoints := callableOccurrencePoints(t, mounted.snapshot)
+	useBody, dormantBody := selectedDirectCalleeAndSibling(t, mounted.snapshot)
 	if !useBody.Available() || !dormantBody.Available() {
 		t.Fatal("fixture lost the direct callee or its unused sibling")
 	}
@@ -44,11 +44,11 @@ return use(1)`, contract)
 		t.Fatal("callable bodies published no occurrence points")
 	}
 	selected := make(map[identity.ContentID]int)
-	for _, row := range plan.state.queryPlan.rows {
-		if _, inside := bodyPoints[useBody][row.point]; inside {
-			selected[row.point]++
+	for _, row := range plan.state.querySites {
+		if _, inside := bodyPoints[useBody][row.Point]; inside {
+			selected[row.Point]++
 		}
-		if _, forbidden := bodyPoints[dormantBody][row.point]; forbidden {
+		if _, forbidden := bodyPoints[dormantBody][row.Point]; forbidden {
 			t.Fatal("uncalled sibling became a query root")
 		}
 	}
@@ -84,18 +84,18 @@ return use(1)`, contract)
 	}
 }
 
-func callableOccurrencePoints(t *testing.T, artifact *programartifact.Artifact) map[identity.ContentID]map[identity.ContentID]struct{} {
+func callableOccurrencePoints(t *testing.T, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
 	t.Helper()
 	bodyPoints := make(map[identity.ContentID]map[identity.ContentID]struct{})
-	for bodyIndex := 0; bodyIndex < artifact.BodyCount(); bodyIndex++ {
-		body, bodyOK := artifact.BodyAt(bodyIndex)
+	for bodyIndex := 0; bodyIndex < snapshot.BodyCount(); bodyIndex++ {
+		body, bodyOK := snapshot.BodyAt(bodyIndex)
 		if !bodyOK || !body.Callable() {
 			continue
 		}
 		bodyPoints[body.ID()] = make(map[identity.ContentID]struct{})
 	}
-	for occurrenceIndex := 0; occurrenceIndex < artifact.OccurrenceCount(); occurrenceIndex++ {
-		occurrence, occurrenceOK := artifact.OccurrenceAt(occurrenceIndex)
+	for occurrenceIndex := 0; occurrenceIndex < snapshot.OccurrenceCount(); occurrenceIndex++ {
+		occurrence, occurrenceOK := snapshot.OccurrenceAt(occurrenceIndex)
 		owner, ownerOK := occurrence.BodyID()
 		if !occurrenceOK || !ownerOK {
 			continue
@@ -115,12 +115,12 @@ func callableOccurrencePoints(t *testing.T, artifact *programartifact.Artifact) 
 	return bodyPoints
 }
 
-func selectedDirectCalleeAndSibling(t *testing.T, artifact *programartifact.Artifact) (identity.ContentID, identity.ContentID) {
+func selectedDirectCalleeAndSibling(t *testing.T, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	rootBodies := make(map[identity.ContentID]struct{})
 	callable := make(map[identity.ContentID]struct{})
-	for bodyIndex := 0; bodyIndex < artifact.BodyCount(); bodyIndex++ {
-		body, bodyOK := artifact.BodyAt(bodyIndex)
+	for bodyIndex := 0; bodyIndex < snapshot.BodyCount(); bodyIndex++ {
+		body, bodyOK := snapshot.BodyAt(bodyIndex)
 		if !bodyOK {
 			t.Fatal("body row")
 		}
@@ -131,8 +131,8 @@ func selectedDirectCalleeAndSibling(t *testing.T, artifact *programartifact.Arti
 		rootBodies[body.ID()] = struct{}{}
 	}
 	var callee identity.ContentID
-	for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
-		call, callOK := artifact.CallAt(callIndex)
+	for callIndex := 0; callIndex < snapshot.CallCount(); callIndex++ {
+		call, callOK := snapshot.CallAt(callIndex)
 		target, targetOK := call.DirectTargetBody()
 		if !callOK || !targetOK {
 			continue

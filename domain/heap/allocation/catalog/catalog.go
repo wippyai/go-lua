@@ -150,7 +150,7 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, summar
 			return nil, SealFailureDuplicateMount
 		}
 		canonical, canonicalOK := heap.ArtifactMountForModule(module)
-		if !canonicalOK || canonical.ProgramID() != mounted.ProgramID() || canonical.Artifact() != mounted.Artifact() {
+		if !canonicalOK || canonical.ProgramID() != mounted.ProgramID() || canonical.Snapshot() != mounted.Snapshot() {
 			return nil, SealFailureMount
 		}
 		occurrence, occurrenceOK := heap.OccurrenceMountForModule(module)

@@ -71,7 +71,7 @@ func newCarryFootprintFixture(t *testing.T) carryFootprintFixture {
 	}
 	sourceImplementation, sourceImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, source)
 	carryImplementation, carryImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, carryRule)
-	if !sourceImplementationOK || !carryImplementationOK || carryImplementation.receipt.proof.carries != 1 {
+	if !sourceImplementationOK || !carryImplementationOK || carryImplementation.binding.proof.carries != 1 {
 		t.Fatal("carry footprint implementations")
 	}
 	sourceOperand := ruleUnitForSemantic(coldKey(947_605))
@@ -91,8 +91,8 @@ func newCarryFootprintFixture(t *testing.T) carryFootprintFixture {
 	}
 	boundary := equation.BoundaryInput(sourceSite, carrySite, compositionKeyOf(coldKey(947_609)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: carryImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+		{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.binding.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: carryImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.binding.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: carrySite}}, Groups: []equation.Group{
 		{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)},
 		{Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}},
@@ -116,9 +116,9 @@ func newCarryFootprintFixture(t *testing.T) carryFootprintFixture {
 				t.Fatal("carry footprint member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case carryImplementation.receipt.proof.semantic:
+			case carryImplementation.binding.proof.semantic:
 				carryMember = member
 			}
 		}

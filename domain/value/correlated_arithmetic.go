@@ -51,7 +51,7 @@ func (schema *valueBuilder) sealComputedArithmeticAtoms() bool {
 		return false
 	}
 	for _, mount := range schema.artifacts {
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		if artifact == nil {
 			return false
 		}
@@ -62,7 +62,7 @@ func (schema *valueBuilder) sealComputedArithmeticAtoms() bool {
 				(literal.Kind != keyspace.LiteralInteger && literal.Kind != keyspace.LiteralFloat) {
 				return false
 			}
-			if row.Role() != programartifact.ExactScalarSummaryResult {
+			if row.Role() != uint8(programartifact.ExactScalarSummaryResult) {
 				continue
 			}
 			if schema.atomForExactArithmetic(literal) != 0 {

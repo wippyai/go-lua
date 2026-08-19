@@ -14,6 +14,14 @@ import (
 type QueryFold[I, R any] struct {
 	Begin      func() R
 	Accumulate func(R, I) (R, bool)
+	// BorrowIssued declares that Accumulate consumes I synchronously and never
+	// retains it in R or elsewhere. The runtime may therefore present the
+	// issuer's generation-fenced view instead of reconstructing owned cells.
+	BorrowIssued bool
+	// TransferResult declares that Begin creates fresh owner-controlled fold
+	// storage and Accumulate retains no alias to its returned R. Publication
+	// may consume that final R instead of cloning it through Freeze.
+	TransferResult bool
 }
 
 func (fold QueryFold[I, R]) valid() bool {
@@ -61,7 +69,7 @@ type receiptQueryOwner struct {
 
 func (owner *receiptQueryOwner) validQueryOwner(runtime *solverRuntime, identity equation.Query) bool {
 	return owner != nil && runtime != nil && runtime.graph != nil && owner.state != nil && owner.authority != nil && owner.schema != nil && owner.state.schema == owner.schema && owner.state.phase == schemaBindingSealed && owner.state.authority == owner.authority &&
-		runtime.receiptState == owner.state && runtime.receiptAuthority == owner.authority &&
+		runtime.bindingState == owner.state && runtime.bindingAuthority == owner.authority &&
 		runtime.graph.OwnsQuery(identity) && owner.ordinal < owner.schema.queryCount() && owner.schema.querySemanticAt(owner.ordinal) == identity.Family()
 }
 
@@ -122,17 +130,17 @@ func duplicateBindingQuery(rows []equation.QueryInstance, query equation.QueryIn
 }
 
 func (implementation *ExactQueryImplementation[V, R]) boundTopologyQueryReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, uint64, bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return nil, nil, composition.Key{}, 0, false
 	}
-	return implementation.receipt.state, implementation.receipt.authority, implementation.receipt.state.schema.querySemanticAt(implementation.receipt.queryOrdinal), implementation.receipt.queryOrdinal, true
+	return implementation.binding.state, implementation.binding.authority, implementation.binding.state.schema.querySemanticAt(implementation.binding.queryOrdinal), implementation.binding.queryOrdinal, true
 }
 
 func (implementation *SummaryQueryImplementation[V, R]) boundTopologyQueryReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, uint64, bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return nil, nil, composition.Key{}, 0, false
 	}
-	return implementation.receipt.state, implementation.receipt.authority, implementation.receipt.state.schema.querySemanticAt(implementation.receipt.queryOrdinal), implementation.receipt.queryOrdinal, true
+	return implementation.binding.state, implementation.binding.authority, implementation.binding.state.schema.querySemanticAt(implementation.binding.queryOrdinal), implementation.binding.queryOrdinal, true
 }
 
 // schemaExactQueryBindingCell is the sole owner of one hot exact-query
@@ -140,16 +148,18 @@ func (implementation *SummaryQueryImplementation[V, R]) boundTopologyQueryReceip
 // exchange cells or receipts because state and authority are checked by
 // pointer at every boundary.
 type schemaExactQueryBindingCell[V, R any] struct {
-	state         *schemaBindingState
-	schema        *Schema
-	ordinal       uint64
-	factorOrdinal uint64
-	factor        composition.Key
-	project       func(OrderedCells[V]) R
-	begin         func() R
-	accumulate    func(R, OrderedCells[V]) (R, bool)
-	result        FrozenResult[R]
-	query         *QuerySlot[R]
+	state          *schemaBindingState
+	schema         *Schema
+	ordinal        uint64
+	factorOrdinal  uint64
+	factor         composition.Key
+	project        func(OrderedCells[V]) R
+	begin          func() R
+	accumulate     func(R, OrderedCells[V]) (R, bool)
+	borrowIssued   bool
+	transferResult bool
+	result         FrozenResult[R]
+	query          *QuerySlot[R]
 }
 
 type schemaQueryBindingCell interface {
@@ -163,17 +173,20 @@ type schemaQueryBindingCell interface {
 // concrete cell: the query projection kind is part of the sealed receipt
 // contract and must not be inferred from a callback.
 type schemaSummaryQueryBindingCell[V, R any] struct {
-	state         *schemaBindingState
-	schema        *Schema
-	ordinal       uint64
-	factorOrdinal uint64
-	factor        composition.Key
-	normalizer    composition.Key
-	project       func(OrderedCells[V]) R
-	begin         func() R
-	accumulate    func(R, OrderedCells[V]) (R, bool)
-	result        FrozenResult[R]
-	query         *QuerySlot[R]
+	state          *schemaBindingState
+	schema         *Schema
+	ordinal        uint64
+	factorOrdinal  uint64
+	factor         composition.Key
+	normalizer     composition.Key
+	project        func(OrderedCells[V]) R
+	begin          func() R
+	accumulate     func(R, OrderedCells[V]) (R, bool)
+	borrowIssued   bool
+	transferResult bool
+	keys           []uint64
+	result         FrozenResult[R]
+	query          *QuerySlot[R]
 }
 
 func (cell *schemaSummaryQueryBindingCell[V, R]) schemaBindingSchema() *Schema {
@@ -198,7 +211,7 @@ func (cell *schemaSummaryQueryBindingCell[V, R]) schemaQueryState() *schemaBindi
 }
 
 func (cell *schemaSummaryQueryBindingCell[V, R]) complete() bool {
-	if cell == nil || cell.state == nil || cell.schema == nil || !cell.schema.Available() || cell.state.schema != cell.schema || cell.state.phase != schemaBindingOpen || cell.query == nil || cell.query.Schema() != cell.schema || (cell.project == nil && (cell.begin == nil || cell.accumulate == nil)) || !validFrozenResult(cell.result) || !cell.factor.Available() || !cell.normalizer.Available() || cell.factorOrdinal >= uint64(len(cell.state.factors)) {
+	if cell == nil || cell.state == nil || cell.schema == nil || !cell.schema.Available() || cell.state.schema != cell.schema || cell.state.phase != schemaBindingOpen || cell.query == nil || cell.query.Schema() != cell.schema || (cell.project == nil && (cell.begin == nil || cell.accumulate == nil)) || !validFrozenResult(cell.result) || !cell.factor.Available() || !cell.normalizer.Available() || len(cell.keys) == 0 || cell.factorOrdinal >= uint64(len(cell.state.factors)) {
 		return false
 	}
 	shape, ok := cell.schema.queryShapeAt(cell.ordinal)
@@ -209,7 +222,7 @@ func (cell *schemaSummaryQueryBindingCell[V, R]) complete() bool {
 	return ok && projection.Kind == composition.QueryFactorSummary && projection.Factor == cell.factor && projection.Normalizer == cell.normalizer && cell.schema.factorSemanticAt(cell.factorOrdinal) == cell.factor
 }
 
-type summaryQueryRuntimeReceipt[V, R any] struct {
+type summaryQueryRuntimeBinding[V, R any] struct {
 	state         *schemaBindingState
 	authority     *schemaBindingAuthority
 	cell          *schemaSummaryQueryBindingCell[V, R]
@@ -220,7 +233,7 @@ type summaryQueryRuntimeReceipt[V, R any] struct {
 	issued        bool
 }
 
-func (receipt summaryQueryRuntimeReceipt[V, R]) valid() bool {
+func (receipt summaryQueryRuntimeBinding[V, R]) valid() bool {
 	if !receipt.issued || receipt.state == nil || receipt.authority == nil || receipt.cell == nil || receipt.state.phase != schemaBindingSealed || receipt.state.authority != receipt.authority || receipt.cell.state != receipt.state || receipt.cell.schema != receipt.state.schema || receipt.cell.ordinal != receipt.queryOrdinal || receipt.cell.factorOrdinal != receipt.factorOrdinal || receipt.cell.factor != receipt.factor || receipt.cell.normalizer != receipt.normalizer || (receipt.cell.project == nil && (receipt.cell.begin == nil || receipt.cell.accumulate == nil)) || !validFrozenResult(receipt.cell.result) || receipt.queryOrdinal >= uint64(len(receipt.state.queries)) || receipt.state.queries[receipt.queryOrdinal] != receipt.cell {
 		return false
 	}
@@ -270,10 +283,10 @@ func (cell *schemaExactQueryBindingCell[V, R]) complete() bool {
 // owning cell, and canonical ordinals; no cold row, callback copy, or key
 // domain is duplicated here.
 type ExactQueryImplementation[V, R any] struct {
-	receipt exactQueryRuntimeReceipt[V, R]
+	binding exactQueryRuntimeBinding[V, R]
 }
 
-type exactQueryRuntimeReceipt[V, R any] struct {
+type exactQueryRuntimeBinding[V, R any] struct {
 	state         *schemaBindingState
 	authority     *schemaBindingAuthority
 	cell          *schemaExactQueryBindingCell[V, R]
@@ -283,7 +296,7 @@ type exactQueryRuntimeReceipt[V, R any] struct {
 	issued        bool
 }
 
-func (receipt exactQueryRuntimeReceipt[V, R]) valid() bool {
+func (receipt exactQueryRuntimeBinding[V, R]) valid() bool {
 	if !receipt.issued || receipt.state == nil || receipt.authority == nil || receipt.cell == nil || receipt.state.phase != schemaBindingSealed || receipt.state.authority != receipt.authority || receipt.cell.state != receipt.state || receipt.cell.schema != receipt.state.schema || receipt.cell.ordinal != receipt.queryOrdinal || receipt.cell.factorOrdinal != receipt.factorOrdinal || receipt.cell.factor != receipt.factor || (receipt.cell.project == nil && (receipt.cell.begin == nil || receipt.cell.accumulate == nil)) || !validFrozenResult(receipt.cell.result) || receipt.queryOrdinal >= uint64(len(receipt.state.queries)) || receipt.state.queries[receipt.queryOrdinal] != receipt.cell {
 		return false
 	}
@@ -324,7 +337,7 @@ func BindExactQuery[V, R any](binding *SchemaBinding, query *QuerySlot[R], facto
 		state.poisonLocked()
 		return false
 	}
-	cell := &schemaExactQueryBindingCell[V, R]{state: state, schema: state.schema, ordinal: queryOrdinal, factorOrdinal: factorOrdinal, factor: factorKey, project: spec.Project, begin: spec.Fold.Begin, accumulate: spec.Fold.Accumulate, result: spec.Result, query: query}
+	cell := &schemaExactQueryBindingCell[V, R]{state: state, schema: state.schema, ordinal: queryOrdinal, factorOrdinal: factorOrdinal, factor: factorKey, project: spec.Project, begin: spec.Fold.Begin, accumulate: spec.Fold.Accumulate, borrowIssued: spec.Fold.BorrowIssued, transferResult: spec.Fold.TransferResult, result: spec.Result, query: query}
 	if !cell.complete() {
 		state.poisonLocked()
 		return false
@@ -378,7 +391,19 @@ func BindSummaryQuery[V, R any](binding *SchemaBinding, query *QuerySlot[R], fac
 		state.poisonLocked()
 		return false
 	}
-	cell := &schemaSummaryQueryBindingCell[V, R]{state: state, schema: state.schema, ordinal: queryOrdinal, factorOrdinal: factorOrdinal, factor: factorKey, normalizer: formShape.Semantic, project: spec.Project, begin: spec.Fold.Begin, accumulate: spec.Fold.Accumulate, result: spec.Result, query: query}
+	factorCell, factorBound := state.factors[factorOrdinal].(interface {
+		schemaFactorSummaryKeys() ([]uint64, bool)
+	})
+	if !factorBound {
+		state.poisonLocked()
+		return false
+	}
+	keys, keysIssued := factorCell.schemaFactorSummaryKeys()
+	if !keysIssued {
+		state.poisonLocked()
+		return false
+	}
+	cell := &schemaSummaryQueryBindingCell[V, R]{state: state, schema: state.schema, ordinal: queryOrdinal, factorOrdinal: factorOrdinal, factor: factorKey, normalizer: formShape.Semantic, project: spec.Project, begin: spec.Fold.Begin, accumulate: spec.Fold.Accumulate, borrowIssued: spec.Fold.BorrowIssued, transferResult: spec.Fold.TransferResult, keys: keys, result: spec.Result, query: query}
 	if !cell.complete() {
 		state.poisonLocked()
 		return false
@@ -406,52 +431,38 @@ func ExactQueryImplementationAt[V, R any](binding *SchemaBinding, slot *QuerySlo
 	if !ok || !cell.completeSealed(state) {
 		return nil, false
 	}
-	receipt := exactQueryRuntimeReceipt[V, R]{state: state, authority: state.authority, cell: cell, queryOrdinal: ordinal, factorOrdinal: cell.factorOrdinal, factor: cell.factor, issued: true}
+	receipt := exactQueryRuntimeBinding[V, R]{state: state, authority: state.authority, cell: cell, queryOrdinal: ordinal, factorOrdinal: cell.factorOrdinal, factor: cell.factor, issued: true}
 	if !receipt.valid() {
 		return nil, false
 	}
-	return &ExactQueryImplementation[V, R]{receipt: receipt}, true
+	return &ExactQueryImplementation[V, R]{binding: receipt}, true
 }
 
 // SummaryQueryImplementation is the sealed receipt for one summary Factor
 // Query. It carries no cold row or mutable callback registry.
 type SummaryQueryImplementation[V, R any] struct {
-	receipt summaryQueryRuntimeReceipt[V, R]
+	binding summaryQueryRuntimeBinding[V, R]
 }
 
 // boundTopologySummarySurfaceReceipt exposes only the sealed Factor/form
 // authority needed to admit a graph summary mapping. The query carries no
-// caller-owned coordinate vector, so topologySummaryMapping below derives
-// the whole sealed Factor key plane from its owner algebra.
+// caller-owned coordinate vector. The Factor owner issues its closed key plane
+// once during binding; topologySummaryMapping only borrows that sealed plane.
 func (implementation *SummaryQueryImplementation[V, R]) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return nil, nil, composition.Key{}, composition.Key{}, false
 	}
-	return implementation.receipt.state, implementation.receipt.authority, implementation.receipt.factor, implementation.receipt.normalizer, true
+	return implementation.binding.state, implementation.binding.authority, implementation.binding.factor, implementation.binding.normalizer, true
 }
 
 func (implementation *SummaryQueryImplementation[V, R]) topologySummaryMapping(surface equation.Surface) (equation.SummaryMapping, bool) {
-	if implementation == nil || !implementation.receipt.valid() || !surface.Available() || surface.Factor != implementation.receipt.factor || surface.Form != equation.SurfaceReadSummary || surface.Semantic != implementation.receipt.normalizer || surface.Normalizer != implementation.receipt.normalizer || surface.Mode != equation.TargetModeNone {
+	if implementation == nil || !implementation.binding.valid() || !surface.Available() || surface.Factor != implementation.binding.factor || surface.Form != equation.SurfaceReadSummary || surface.Semantic != implementation.binding.normalizer || surface.Normalizer != implementation.binding.normalizer || surface.Mode != equation.TargetModeNone {
 		return equation.SummaryMapping{}, false
 	}
-	if implementation.receipt.factorOrdinal >= uint64(len(implementation.receipt.state.factors)) {
+	if len(implementation.binding.cell.keys) == 0 {
 		return equation.SummaryMapping{}, false
 	}
-	cell, ok := implementation.receipt.state.factors[implementation.receipt.factorOrdinal].(interface {
-		schemaFactorAlgebra() anyFactorAlgebra
-	})
-	if !ok {
-		return equation.SummaryMapping{}, false
-	}
-	algebra := cell.schemaFactorAlgebra()
-	if algebra == nil || algebra.KeyEnd() == 0 || algebra.KeyEnd() > uint64(^uint(0)>>1) {
-		return equation.SummaryMapping{}, false
-	}
-	keys := make([]uint64, int(algebra.KeyEnd()))
-	for index := range keys {
-		keys[index] = uint64(index)
-	}
-	return equation.SummaryMapping{Surface: surface, Keys: keys}, true
+	return equation.SummaryMapping{Surface: surface, Keys: implementation.binding.cell.keys}, true
 }
 
 func SummaryQueryImplementationAt[V, R any](binding *SchemaBinding, slot *QuerySlot[R]) (*SummaryQueryImplementation[V, R], bool) {
@@ -472,25 +483,25 @@ func SummaryQueryImplementationAt[V, R any](binding *SchemaBinding, slot *QueryS
 	if !ok || cell == nil || cell.state != state || cell.schema != state.schema || cell.query != slot || (cell.project == nil && (cell.begin == nil || cell.accumulate == nil)) || !validFrozenResult(cell.result) {
 		return nil, false
 	}
-	receipt := summaryQueryRuntimeReceipt[V, R]{state: state, authority: state.authority, cell: cell, queryOrdinal: ordinal, factorOrdinal: cell.factorOrdinal, factor: cell.factor, normalizer: cell.normalizer, issued: true}
+	receipt := summaryQueryRuntimeBinding[V, R]{state: state, authority: state.authority, cell: cell, queryOrdinal: ordinal, factorOrdinal: cell.factorOrdinal, factor: cell.factor, normalizer: cell.normalizer, issued: true}
 	if !receipt.valid() {
 		return nil, false
 	}
-	return &SummaryQueryImplementation[V, R]{receipt: receipt}, true
+	return &SummaryQueryImplementation[V, R]{binding: receipt}, true
 }
 
 func (implementation *SummaryQueryImplementation[V, R]) projector() (func(OrderedCells[V]) R, bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.cell.project == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell.project == nil {
 		return nil, false
 	}
-	return implementation.receipt.cell.project, true
+	return implementation.binding.cell.project, true
 }
 
-func (implementation *SummaryQueryImplementation[V, R]) accumulator() (func() R, func(R, OrderedCells[V]) (R, bool), bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.cell.begin == nil || implementation.receipt.cell.accumulate == nil {
-		return nil, nil, false
+func (implementation *SummaryQueryImplementation[V, R]) accumulator() (func() R, func(R, OrderedCells[V]) (R, bool), bool, bool, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell.begin == nil || implementation.binding.cell.accumulate == nil {
+		return nil, nil, false, false, false
 	}
-	return implementation.receipt.cell.begin, implementation.receipt.cell.accumulate, true
+	return implementation.binding.cell.begin, implementation.binding.cell.accumulate, implementation.binding.cell.borrowIssued, implementation.binding.cell.transferResult, true
 }
 
 // frozenResult returns the result contract behind a valid receipt: the
@@ -499,17 +510,17 @@ func (implementation *SummaryQueryImplementation[V, R]) accumulator() (func() R,
 // writes the frozen form and checks it against that contract, so what reaches a
 // published column is what the domain says an answer is.
 func (implementation *SummaryQueryImplementation[V, R]) frozenResult() (FrozenResult[R], bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return FrozenResult[R]{}, false
 	}
-	return implementation.receipt.cell.result, true
+	return implementation.binding.cell.result, true
 }
 
 func (implementation *ExactQueryImplementation[V, R]) frozenResult() (FrozenResult[R], bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return FrozenResult[R]{}, false
 	}
-	return implementation.receipt.cell.result, true
+	return implementation.binding.cell.result, true
 }
 
 func (cell *schemaExactQueryBindingCell[V, R]) completeSealed(state *schemaBindingState) bool {
@@ -519,20 +530,20 @@ func (cell *schemaExactQueryBindingCell[V, R]) completeSealed(state *schemaBindi
 // projector returns the typed hot callback behind a valid receipt. It is
 // compiler-owned; callers receive no mutable binding cell or cold query row.
 func (implementation *ExactQueryImplementation[V, R]) projector() (func(OrderedCells[V]) R, bool) {
-	if implementation == nil || !implementation.receipt.valid() {
+	if implementation == nil || !implementation.binding.valid() {
 		return nil, false
 	}
-	if implementation.receipt.cell.project == nil {
+	if implementation.binding.cell.project == nil {
 		return nil, false
 	}
-	return implementation.receipt.cell.project, true
+	return implementation.binding.cell.project, true
 }
 
-func (implementation *ExactQueryImplementation[V, R]) accumulator() (func() R, func(R, OrderedCells[V]) (R, bool), bool) {
-	if implementation == nil || !implementation.receipt.valid() || implementation.receipt.cell.begin == nil || implementation.receipt.cell.accumulate == nil {
-		return nil, nil, false
+func (implementation *ExactQueryImplementation[V, R]) accumulator() (func() R, func(R, OrderedCells[V]) (R, bool), bool, bool, bool) {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell.begin == nil || implementation.binding.cell.accumulate == nil {
+		return nil, nil, false, false, false
 	}
-	return implementation.receipt.cell.begin, implementation.receipt.cell.accumulate, true
+	return implementation.binding.cell.begin, implementation.binding.cell.accumulate, implementation.binding.cell.borrowIssued, implementation.binding.cell.transferResult, true
 }
 
 // receiptExactQueryRuntime is the compiler-side query evidence. It is built
@@ -541,7 +552,7 @@ func (implementation *ExactQueryImplementation[V, R]) accumulator() (func() R, f
 // reconstructs a declaration row.
 type receiptExactQueryRuntime[V, R any] struct {
 	identity equation.Query
-	receipt  exactQueryRuntimeReceipt[V, R]
+	receipt  exactQueryRuntimeBinding[V, R]
 	factor   receiptQueryFactor[V]
 	surface  equation.Surface
 	unit     carrier.Unit
@@ -556,7 +567,7 @@ func (runtime *receiptExactQueryRuntime[V, R]) query() equation.Query {
 
 type receiptSummaryQueryRuntime[V, R any] struct {
 	identity equation.Query
-	receipt  summaryQueryRuntimeReceipt[V, R]
+	receipt  summaryQueryRuntimeBinding[V, R]
 	factor   receiptQueryFactor[V]
 	surface  equation.Surface
 	unit     carrier.Unit

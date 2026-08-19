@@ -1,6 +1,7 @@
 package activation_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -53,7 +54,7 @@ invoke(callee)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
-	calls, ok := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{ModuleKey: moduleKey, Artifact: artifact}})
+	calls, ok := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{ModuleKey: moduleKey, Snapshot: snapshottest.MustLower(t, artifact)}})
 	if !ok || calls == nil || calls.Bodies().Count() == 0 {
 		t.Fatal("call body fixture")
 	}
@@ -70,7 +71,7 @@ invoke(callee)
 		t.Fatal("body role")
 	}
 	if catalog, admitted := activation.NewTargetBatchCatalog([]activation.MountedTargetBatch{{
-		Artifact:  artifact,
+		Snapshot:  snapshottest.MustLower(t, artifact),
 		ModuleKey: moduleKey,
 		Rows:      []activation.TargetBatchRow{{Body: body, BodyPath: path, Role: role}},
 	}}); !admitted || catalog == nil {
@@ -93,7 +94,7 @@ invoke(callee)
 		t.Fatal("foreign artifact did not provide a mismatched artifact identity")
 	}
 	if catalog, admitted := activation.NewTargetBatchCatalog([]activation.MountedTargetBatch{{
-		Artifact:  foreignArtifact,
+		Snapshot:  snapshottest.MustLower(t, foreignArtifact),
 		ModuleKey: moduleKey,
 		Rows:      []activation.TargetBatchRow{{Body: body, BodyPath: path, Role: role}},
 	}}); admitted || catalog != nil {

@@ -84,6 +84,12 @@ func IsBinaryArithmetic(op BinaryOp) bool {
 	return op >= BinaryAdd && op <= BinaryPow
 }
 
+// IsBinaryOrder reports whether op is one of the closed primitive relational
+// order operators.
+func IsBinaryOrder(op BinaryOp) bool {
+	return op >= BinaryLess && op <= BinaryGreaterEqual
+}
+
 // SelectOp is Lua's short-circuit value-selection vocabulary.
 type SelectOp uint8
 

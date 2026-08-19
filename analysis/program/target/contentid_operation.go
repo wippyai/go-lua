@@ -227,6 +227,9 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
+	if err := c.encodeBehavior(w, op); err != nil {
+		return err
+	}
 
 	suspensions := c.suspensionCount(op)
 	if err := w.Count(uint64(suspensions)); err != nil {

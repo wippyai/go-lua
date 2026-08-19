@@ -3,7 +3,6 @@ package program
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -21,33 +20,13 @@ func (program *Program) CountRows() denominator.CountRows {
 
 func combineProgramCountRows(sourceRows, flowRows, staticRows, moduleRows denominator.CountRows) (denominator.CountRows, error) {
 	rows, ok := denominator.MergeCountRows(sourceRows, flowRows, staticRows, moduleRows)
-	if !ok {
+	if !ok || !denominator.GeneratedCountRowsCompleteForOwners(rows,
+		denominator.RelationOwnerProgramSource,
+		denominator.RelationOwnerProgramFlow,
+		denominator.RelationOwnerProgramStatic,
+		denominator.RelationOwnerProgramModule,
+	) {
 		return denominator.CountRows{}, errCountRows
-	}
-	expected := make(map[schema.EntryID]struct{})
-	for _, entry := range denominator.GeneratedRelationEntries() {
-		if entry == nil {
-			return denominator.CountRows{}, errCountRows
-		}
-		switch entry.Owner() {
-		case denominator.RelationOwnerProgramSource,
-			denominator.RelationOwnerProgramFlow,
-			denominator.RelationOwnerProgramStatic,
-			denominator.RelationOwnerProgramModule:
-			expected[entry.ID()] = struct{}{}
-		}
-	}
-	if len(expected) == 0 || rows.Count() != len(expected) {
-		return denominator.CountRows{}, errCountRows
-	}
-	for index := 0; index < rows.Count(); index++ {
-		row, ok := rows.At(index)
-		if !ok {
-			return denominator.CountRows{}, errCountRows
-		}
-		if _, known := expected[row.ID()]; !known {
-			return denominator.CountRows{}, errCountRows
-		}
 	}
 	return rows, nil
 }

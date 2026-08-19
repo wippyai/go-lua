@@ -14,6 +14,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkhost "github.com/wippyai/go-lua/analysis/program/link/host"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -31,7 +32,7 @@ type Schema struct{ owner *schema }
 // publication; Module is the compact mount identity that keeps duplicate
 // mounts distinct.
 type ArtifactMount struct {
-	artifact  *programartifact.Artifact
+	snapshot  *ingress.Snapshot
 	module    identity.ContentID
 	programID identity.ContentID
 }
@@ -51,7 +52,7 @@ func (issuer OccurrenceMount) valid() bool {
 		return false
 	}
 	canonical, ok := issuer.owner.artifacts[issuer.mount.module]
-	return ok && canonical.artifact == issuer.mount.artifact && canonical.programID == issuer.mount.programID
+	return ok && canonical.snapshot == issuer.mount.snapshot && canonical.programID == issuer.mount.programID
 }
 
 // OccurrenceMountForModule returns Heap's canonical occurrence issuer for one
@@ -90,7 +91,7 @@ func (issuer OccurrenceMount) IndexAccessForOccurrence(id identity.ContentID, re
 	}
 	// The inverse map is sealed from the canonical artifact rows, so no
 	// artifact occurrence directory needs to be reopened for this lookup.
-	receipt := IndexAccessReceipt{module: issuer.mount.module, programID: issuer.mount.programID, occurrence: id, read: read, artifact: issuer.mount.artifact}
+	receipt := IndexAccessReceipt{module: issuer.mount.module, programID: issuer.mount.programID, occurrence: id, read: read, snapshot: issuer.mount.snapshot}
 	return Schema{owner: issuer.owner}.IndexAccessForReceipt(receipt)
 }
 
@@ -121,17 +122,17 @@ func (issuer OccurrenceMount) AllocationCount() int {
 	if !issuer.valid() {
 		return 0
 	}
-	return issuer.mount.artifact.HeapAllocationCount()
+	return issuer.mount.snapshot.HeapAllocationCount()
 }
 
 // AllocationAt returns one mounted allocation ID and its exact Heap root in
 // artifact order. The occurrence-to-root resolution itself remains the
 // sealed Heap O(1) inverse.
 func (issuer OccurrenceMount) AllocationAt(index int) (identity.ContentID, Key, bool) {
-	if !issuer.valid() || index < 0 || index >= issuer.mount.artifact.HeapAllocationCount() {
+	if !issuer.valid() || index < 0 || index >= issuer.mount.snapshot.HeapAllocationCount() {
 		return identity.ContentID{}, Key{}, false
 	}
-	allocation, allocationOK := issuer.mount.artifact.HeapAllocationAt(index)
+	allocation, allocationOK := issuer.mount.snapshot.HeapAllocationAt(index)
 	if !allocationOK || !allocation.ID().Available() {
 		return identity.ContentID{}, Key{}, false
 	}
@@ -156,17 +157,17 @@ func (issuer OccurrenceMount) AllocationOrdinal(id identity.ContentID) (int, boo
 		return 0, false
 	}
 	ordinal := int(row.allocation.artifactRow - 1)
-	return ordinal, ordinal < issuer.mount.artifact.HeapAllocationCount()
+	return ordinal, ordinal < issuer.mount.snapshot.HeapAllocationCount()
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, programID identity.ContentID) (ArtifactMount, bool) {
-	if artifact == nil || !artifact.Available() || !module.Available() || !programID.Available() || artifact.CompileKey().ProgramID() != programID {
+func NewArtifactMount(snapshot *ingress.Snapshot, module, programID identity.ContentID) (ArtifactMount, bool) {
+	if snapshot == nil || !snapshot.Available() || !module.Available() || !programID.Available() || snapshot.ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
-	return ArtifactMount{artifact: artifact, module: module, programID: programID}, true
+	return ArtifactMount{snapshot: snapshot, module: module, programID: programID}, true
 }
 func (mount ArtifactMount) Available() bool {
-	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.programID.Available() && mount.artifact.CompileKey().ProgramID() == mount.programID
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.programID.Available() && mount.snapshot.ProgramID() == mount.programID
 }
 func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
@@ -180,11 +181,11 @@ func (mount ArtifactMount) ProgramID() identity.ContentID {
 	}
 	return mount.programID
 }
-func (mount ArtifactMount) Artifact() *programartifact.Artifact {
+func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	if !mount.Available() {
 		return nil
 	}
-	return mount.artifact
+	return mount.snapshot
 }
 
 // ArtifactMounts returns the artifact mounts this schema sealed, in the Link's
@@ -611,11 +612,11 @@ type IndexAccessReceipt struct {
 	programID  identity.ContentID
 	occurrence identity.ContentID
 	read       bool
-	artifact   *programartifact.Artifact
+	snapshot   *ingress.Snapshot
 }
 
 func (receipt IndexAccessReceipt) Available() bool {
-	return receipt.module.Available() && receipt.programID.Available() && receipt.occurrence.Available() && receipt.artifact != nil && receipt.artifact.Available() && receipt.artifact.CompileKey().ProgramID() == receipt.programID
+	return receipt.module.Available() && receipt.programID.Available() && receipt.occurrence.Available() && receipt.snapshot != nil && receipt.snapshot.Available() && receipt.snapshot.ProgramID() == receipt.programID
 }
 func (receipt IndexAccessReceipt) Module() identity.ContentID {
 	if !receipt.Available() {
@@ -645,11 +646,11 @@ func (mount ArtifactMount) IndexAccessReceipt(id identity.ContentID, read bool) 
 	if read {
 		kind = programartifact.OccurrenceIndexRead
 	}
-	row, ok := mount.artifact.OccurrenceForID(kind, id)
+	row, ok := mount.snapshot.OccurrenceForID(uint8(kind), id)
 	if !ok || row.ID() != id {
 		return IndexAccessReceipt{}, false
 	}
-	receipt := IndexAccessReceipt{module: mount.module, programID: mount.programID, occurrence: id, read: read, artifact: mount.artifact}
+	receipt := IndexAccessReceipt{module: mount.module, programID: mount.programID, occurrence: id, read: read, snapshot: mount.snapshot}
 	return receipt, receipt.Available()
 }
 
@@ -755,7 +756,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 		module, moduleOK := source.Project().ModuleKey(shard)
 		programID, programOK := source.Project().Mounts().ProgramID(shard)
 		mount, mountOK := byModule[module]
-		if !shardOK || !moduleOK || !programOK || !mountOK || !mount.Available() || mount.module != module || mount.programID != programID || mount.artifact.CompileKey().ProgramID() != programID {
+		if !shardOK || !moduleOK || !programOK || !mountOK || !mount.Available() || mount.module != module || mount.programID != programID || mount.snapshot.ProgramID() != programID {
 			return nil, nil, SealFailureProgramAllocations
 		}
 		ordered = append(ordered, mount)
@@ -787,7 +788,7 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 		if !shardOK || !moduleOK || !mountOK {
 			return false
 		}
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		if artifact == nil {
 			return false
 		}
@@ -809,8 +810,8 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 			if !allocationOK || !rootOK || !rootIDOK || allocation.ID() == (identity.ContentID{}) || uint64(index) >= uint64(^uint32(0)) {
 				return false
 			}
-			kind, kindOK := sealedAllocationKind(allocation.Role())
-			form, formOK := sealedAllocationForm(allocation.Form())
+			kind, kindOK := sealedAllocationKind(programartifact.AllocationRole(allocation.Role()))
+			form, formOK := sealedAllocationForm(programartifact.AllocationForm(allocation.Form()))
 			if !kindOK || !formOK {
 				return false
 			}
@@ -830,7 +831,7 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 	return true
 }
 
-func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, allocation programartifact.HeapAllocationRow, allocationRow uint32, field programartifact.HeapFieldRow, fieldRowIndex, valuesRow uint32) bool {
+func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, allocation ingress.HeapAllocation, allocationRow uint32, field ingress.HeapField, fieldRowIndex, valuesRow uint32) bool {
 	if owner == nil || root == 0 || int(root) > len(owner.roots) || !mount.Available() || !allocation.Available() || allocationRow == 0 || !field.Available() || fieldRowIndex == 0 || valuesRow == 0 {
 		return false
 	}
@@ -846,7 +847,7 @@ func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, all
 	var normalized keyspace.Key
 	var normalizedOK bool
 	switch field.Kind() {
-	case flowkind.FieldKey:
+	case uint8(flowkind.FieldKey):
 		keyValue, keyOK := owner.mountedValue(mount.module, field.SelectorSpan())
 		if !keyOK {
 			return false
@@ -856,8 +857,9 @@ func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, all
 			return false
 		}
 		slotID = owner.addDynamicSlot(keyValueID)
-	case flowkind.FieldList, flowkind.FieldName, flowkind.FieldExact:
-		normalized, normalizedOK = field.NormalizedKey()
+	case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
+		raw, normalizedOK := field.NormalizedKey()
+		normalized, normalizedOK = keyspace.Key(raw), normalizedOK
 		if !normalizedOK || normalized == 0 {
 			return false
 		}
@@ -878,7 +880,7 @@ func (owner *heapBuilder) addArtifactField(root uint32, mount ArtifactMount, all
 		return false
 	}
 	dense := uint32(len(owner.fields) + 1)
-	owner.fields = append(owner.fields, fieldRow{fieldSource: fieldSource{root: root, allocationID: allocation.ID(), fieldID: field.ID()}, kind: field.Kind(), width: width, finalOpen: finalOpen, normalized: normalized, normalizedOK: normalizedOK, slot: slotID, payload: payloadID, artifactRow: fieldRowIndex, valuesRow: valuesRow})
+	owner.fields = append(owner.fields, fieldRow{fieldSource: fieldSource{root: root, allocationID: allocation.ID(), fieldID: field.ID()}, kind: flowkind.FieldKind(field.Kind()), width: width, finalOpen: finalOpen, normalized: normalized, normalizedOK: normalizedOK, slot: slotID, payload: payloadID, artifactRow: fieldRowIndex, valuesRow: valuesRow})
 	if owner.roots[root-1].fieldStart == 0 {
 		owner.roots[root-1].fieldStart = dense
 	}
@@ -921,7 +923,7 @@ func (owner *heapBuilder) addArtifactIndexes(mounts map[identity.ContentID]Artif
 		if !shardOK || !moduleOK || !mountOK {
 			return false
 		}
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		if artifact == nil {
 			return false
 		}
@@ -960,7 +962,7 @@ func (owner *heapBuilder) addArtifactIndexes(mounts map[identity.ContentID]Artif
 				if !exactOK {
 					return false
 				}
-				key, keyOK := owner.sealProject().Keys().ForMounted(mount.module, exact)
+				key, keyOK := owner.sealProject().Keys().ForMounted(mount.module, keyspace.Key(exact))
 				literal, literalOK := owner.sealProject().Keys().Exact(key)
 				if !keyOK || !literalOK {
 					return false
@@ -1574,8 +1576,8 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 		if !mountOK || !mount.Available() || mount.programID != row.allocation.programID {
 			return false
 		}
-		allocation, allocationOK := mount.Artifact().HeapAllocationAt(int(row.allocation.artifactRow - 1))
-		sealed, sealedOK := sealedAllocationForm(allocation.Form())
+		allocation, allocationOK := mount.Snapshot().HeapAllocationAt(int(row.allocation.artifactRow - 1))
+		sealed, sealedOK := sealedAllocationForm(programartifact.AllocationForm(allocation.Form()))
 		if !allocationOK || allocation.ID() != row.allocation.allocationID || !sealedOK || sealed != row.allocation.form {
 			return false
 		}
@@ -1594,9 +1596,9 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 		if !mountOK || !mount.Available() || root.kind != RootAllocation || root.allocation.kind != AllocationTable {
 			return false
 		}
-		allocation, allocationOK := mount.Artifact().HeapAllocationAt(int(root.allocation.artifactRow - 1))
+		allocation, allocationOK := mount.Snapshot().HeapAllocationAt(int(root.allocation.artifactRow - 1))
 		field, fieldOK := allocation.FieldAt(int(row.artifactRow - 1))
-		values, valuesOK := mount.Artifact().ValuesAt(int(row.valuesRow - 1))
+		values, valuesOK := mount.Snapshot().ValuesAt(int(row.valuesRow - 1))
 		if !allocationOK || !fieldOK || !valuesOK || allocation.ID() != row.allocationID || field.ID() != row.fieldID || values.ID() != field.ValuesID() {
 			return false
 		}
@@ -1966,7 +1968,7 @@ func (schema Schema) Rebind(source *link.Link) (Schema, bool) {
 		if !shardOK || !moduleOK || !priorOK || !prior.Available() || !programOK || prior.programID != programID {
 			return Schema{}, false
 		}
-		mount, mountOK := NewArtifactMount(prior.artifact, module, programID)
+		mount, mountOK := NewArtifactMount(prior.snapshot, module, programID)
 		if !mountOK {
 			return Schema{}, false
 		}
@@ -2006,7 +2008,7 @@ func (schema Schema) KeyForAllocationReceipt(receipt AllocationReceipt) (Key, bo
 		return Key{}, false
 	}
 	mount, ok := schema.owner.artifacts[receipt.module]
-	if !ok || mount.artifact != receipt.artifact || mount.programID != receipt.programID {
+	if !ok || mount.snapshot != receipt.snapshot || mount.programID != receipt.programID {
 		return Key{}, false
 	}
 	slot := schema.owner.programAllocationOrdinals[programAllocationOccurrence{module: receipt.module, allocationID: receipt.allocationID}]
@@ -2198,30 +2200,30 @@ func (schema Schema) FieldAt(key Key, index int) (Field, bool) {
 // ArtifactAllocationForKey returns the exact reusable allocation descriptor
 // that was mounted to issue key. It performs only semantic-ID lookup against
 // Heap's already authenticated artifact mount; it never reopens Program.
-func (schema Schema) ArtifactAllocationForKey(key Key) (programartifact.HeapAllocationRow, bool) {
+func (schema Schema) ArtifactAllocationForKey(key Key) (ingress.HeapAllocation, bool) {
 	if !schema.OwnsKey(key) || key.Kind() != RootAllocation || schema.owner.artifacts == nil {
-		return programartifact.HeapAllocationRow{}, false
+		return ingress.HeapAllocation{}, false
 	}
 	receipt, receiptOK := key.AllocationReceipt()
 	root, rootOK := schema.owner.rootAt(key.slot)
 	if !receiptOK || !rootOK || root.kind != RootAllocation || root.allocation.module != receipt.module || root.allocation.programID != receipt.programID || root.allocation.allocationID != receipt.allocationID || root.allocation.kind != receipt.kind {
-		return programartifact.HeapAllocationRow{}, false
+		return ingress.HeapAllocation{}, false
 	}
 	mount, mountOK := schema.owner.artifacts[receipt.module]
 	if !mountOK || !mount.Available() {
-		return programartifact.HeapAllocationRow{}, false
+		return ingress.HeapAllocation{}, false
 	}
-	if mount.programID != receipt.programID || mount.artifact.CompileKey().ProgramID() != receipt.programID {
-		return programartifact.HeapAllocationRow{}, false
+	if mount.programID != receipt.programID || mount.snapshot.ProgramID() != receipt.programID {
+		return ingress.HeapAllocation{}, false
 	}
-	artifact := mount.Artifact()
+	artifact := mount.Snapshot()
 	if artifact == nil || root.allocation.artifactRow == 0 {
-		return programartifact.HeapAllocationRow{}, false
+		return ingress.HeapAllocation{}, false
 	}
 	allocation, allocationOK := artifact.HeapAllocationAt(int(root.allocation.artifactRow - 1))
-	sealed, sealedOK := sealedAllocationForm(allocation.Form())
-	if !allocationOK || allocation.ID() != receipt.allocationID || !sealedOK || sealed != root.allocation.form || !allocation.Role().Valid() {
-		return programartifact.HeapAllocationRow{}, false
+	sealed, sealedOK := sealedAllocationForm(programartifact.AllocationForm(allocation.Form()))
+	if !allocationOK || allocation.ID() != receipt.allocationID || !sealedOK || sealed != root.allocation.form || allocation.Role() == 0 {
+		return ingress.HeapAllocation{}, false
 	}
 	return allocation, true
 }
@@ -2229,21 +2231,21 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (programartifact.HeapAllo
 // ArtifactFieldFor returns one exact reusable field descriptor by its stable
 // allocation-field identity. No dense field ordinal or authored Term crosses
 // this boundary.
-func (schema Schema) ArtifactFieldFor(field Field) (programartifact.HeapFieldRow, bool) {
+func (schema Schema) ArtifactFieldFor(field Field) (ingress.HeapField, bool) {
 	if !schema.ownsField(field) {
-		return programartifact.HeapFieldRow{}, false
+		return ingress.HeapField{}, false
 	}
 	row := schema.owner.fields[field.index-1]
 	root, rootOK := schema.owner.rootAt(row.root)
 	if !rootOK || root.kind != RootAllocation || root.allocation.allocationID != row.allocationID {
-		return programartifact.HeapFieldRow{}, false
+		return ingress.HeapField{}, false
 	}
 	allocation, allocationOK := schema.ArtifactAllocationForKey(Key{owner: schema.owner, slot: row.root})
 	if !allocationOK || allocation.ID() != row.allocationID {
-		return programartifact.HeapFieldRow{}, false
+		return ingress.HeapField{}, false
 	}
 	if row.artifactRow == 0 {
-		return programartifact.HeapFieldRow{}, false
+		return ingress.HeapField{}, false
 	}
 	candidate, candidateOK := allocation.FieldAt(int(row.artifactRow - 1))
 	return candidate, candidateOK && candidate.ID() == row.fieldID
@@ -2252,24 +2254,24 @@ func (schema Schema) ArtifactFieldFor(field Field) (programartifact.HeapFieldRow
 // ArtifactValuesForField returns the exact ProgramArtifact Values denominator
 // named by a sealed field descriptor. The join is the Values semantic ID, not
 // an authored Term or a dense artifact position.
-func (schema Schema) ArtifactValuesForField(field Field) (programartifact.ValuesRow, bool) {
+func (schema Schema) ArtifactValuesForField(field Field) (ingress.Values, bool) {
 	if !schema.ownsField(field) {
-		return programartifact.ValuesRow{}, false
+		return ingress.Values{}, false
 	}
 	fieldRow, fieldOK := schema.ArtifactFieldFor(field)
 	physical := schema.owner.fields[field.index-1]
 	root, rootOK := schema.owner.rootAt(physical.root)
 	if !fieldOK || !rootOK || root.kind != RootAllocation {
-		return programartifact.ValuesRow{}, false
+		return ingress.Values{}, false
 	}
 	mount, mountOK := schema.owner.artifacts[root.allocation.module]
 	if !mountOK || !mount.Available() || mount.programID != root.allocation.programID {
-		return programartifact.ValuesRow{}, false
+		return ingress.Values{}, false
 	}
-	artifact := mount.Artifact()
+	artifact := mount.Snapshot()
 	valuesID := fieldRow.ValuesID()
 	if artifact == nil || !valuesID.Available() || physical.valuesRow == 0 {
-		return programartifact.ValuesRow{}, false
+		return ingress.Values{}, false
 	}
 	values, valuesOK := artifact.ValuesAt(int(physical.valuesRow - 1))
 	return values, valuesOK && values.ID() == valuesID
@@ -2314,7 +2316,7 @@ func (schema Schema) IndexAccessForReceipt(receipt IndexAccessReceipt) (IndexAcc
 		return IndexAccess{}, false
 	}
 	mount, ok := schema.owner.artifacts[receipt.module]
-	if !ok || mount.artifact != receipt.artifact || mount.programID != receipt.programID {
+	if !ok || mount.snapshot != receipt.snapshot || mount.programID != receipt.programID {
 		return IndexAccess{}, false
 	}
 	index := schema.owner.indexAccessOrdinals[indexAccessOccurrence{module: receipt.module, id: receipt.occurrence}]

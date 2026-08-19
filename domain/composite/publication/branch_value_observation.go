@@ -15,23 +15,30 @@ import (
 // did not authorize. One evidence point carries one attachment, shared by every
 // later reader of that point.
 type BranchValueObservationAttachment struct {
-	observation engine.ReceiptObservation[valuedomain.ValueSummaryObservation]
+	observation engine.ProgramObservation[valuedomain.ValueSummaryObservation]
 	id          identity.ContentID
 	mount       identity.ContentID
 	point       identity.ContentID
 	producer    schema.Key
 }
 
-func branchValueObservationAttachmentID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
+// BranchValueObservationID is the Snapshot row address of one mounted branch
+// evidence observation. Attach and detach both derive this identity; neither
+// retains a second publication table.
+func BranchValueObservationID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
 	if !mount.Available() || !point.Available() || !producer.Available() {
 		return identity.ContentID{}, false
 	}
 	return identity.DeriveContentID("analysis/branch-value-observation/v1", mount[:], point[:], []byte(producer))
 }
 
+func branchValueObservationAttachmentID(mount, point identity.ContentID, producer schema.Key) (identity.ContentID, bool) {
+	return BranchValueObservationID(mount, point, producer)
+}
+
 func (attachment BranchValueObservationAttachment) valid() bool {
 	want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
-	return ok && attachment.id == want && attachment.observation.MatchesID(attachment.id)
+	return ok && attachment.id == want && attachment.observation.SealedAs(attachment.id)
 }
 
 func (attachment BranchValueObservationAttachment) Valid() bool { return attachment.valid() }
@@ -55,23 +62,23 @@ func AttachBranchValueObservation(
 	role engine.RuleSlotCapability,
 	producer schema.Key,
 	mount, point, occurrence identity.ContentID,
-) (BranchValueObservationAttachment, engine.ReceiptObservationAttachFailure, bool) {
+) (BranchValueObservationAttachment, engine.SolveFailure, bool) {
 	if compilation == nil || query == nil {
-		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
+		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
 	}
 	id, idOK := branchValueObservationAttachmentID(mount, point, producer)
 	if !idOK {
-		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
+		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
 	}
-	observation, failure := engine.AttachMountedSummaryObservationWithFailure[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, occurrence)
-	if failure != engine.ReceiptObservationAttachFailureNone || !observation.Available() {
+	observation, failure := engine.AttachMountedSummary[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, occurrence)
+	if failure.Available() || !observation.Available() {
 		return BranchValueObservationAttachment{}, failure, false
 	}
 	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point, producer: producer}
 	if !attachment.valid() {
-		return BranchValueObservationAttachment{}, engine.ReceiptObservationAttachFailureArguments, false
+		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
 	}
-	return attachment, engine.ReceiptObservationAttachFailureNone, true
+	return attachment, engine.SolveFailure{}, true
 }
 
 // MemberAdmitted asks the construction whether the named role and occurrence

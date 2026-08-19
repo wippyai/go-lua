@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func TestNonNilValueClaimLowersBeforeMemberAccess(t *testing.T) {
@@ -150,7 +150,7 @@ local sameValue = value as typeof(value)
 		}
 		if index < 2 {
 			state, declaration, _, refOK := p.Static().References().Get(target)
-			if !refOK || state != static.TypeRefDeclaration || declaration == 0 {
+			if !refOK || state != staticrefs.Declaration || declaration == 0 {
 				t.Fatalf("ValueClaim %d target = state %v declaration %v ok %v", index, state, declaration, refOK)
 			}
 			continue

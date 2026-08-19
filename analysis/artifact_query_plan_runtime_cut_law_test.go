@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -26,7 +27,7 @@ return 42`, contract)
 		t.Fatalf("compile = %v/%v", status, plan)
 	}
 	defer plan.Close()
-	if plan.state.graph != nil || plan.state.queryPlan != nil {
+	if plan.state.committed.program != nil || len(plan.state.querySites) != 0 {
 		t.Fatal("Compile instantiated the runtime query plane")
 	}
 	if diagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated {
@@ -35,8 +36,8 @@ return 42`, contract)
 	mounted := plan.state.artifacts.mounts[0]
 	callableBodies := make(map[identity.ContentID]struct{})
 	rootBodies := make(map[identity.ContentID]struct{})
-	for bodyIndex := 0; bodyIndex < mounted.artifact.BodyCount(); bodyIndex++ {
-		body, bodyOK := mounted.artifact.BodyAt(bodyIndex)
+	for bodyIndex := 0; bodyIndex < mounted.snapshot.BodyCount(); bodyIndex++ {
+		body, bodyOK := mounted.snapshot.BodyAt(bodyIndex)
 		if !bodyOK {
 			t.Fatal("body row")
 		}
@@ -48,8 +49,8 @@ return 42`, contract)
 	}
 	callablePoints := make(map[identity.ContentID]struct{})
 	rootPoints := make(map[identity.ContentID]struct{})
-	for occurrenceIndex := 0; occurrenceIndex < mounted.artifact.OccurrenceCount(); occurrenceIndex++ {
-		occurrence, occurrenceOK := mounted.artifact.OccurrenceAt(occurrenceIndex)
+	for occurrenceIndex := 0; occurrenceIndex < mounted.snapshot.OccurrenceCount(); occurrenceIndex++ {
+		occurrence, occurrenceOK := mounted.snapshot.OccurrenceAt(occurrenceIndex)
 		body, bodyOK := occurrence.BodyID()
 		if !occurrenceOK || !bodyOK {
 			continue
@@ -67,18 +68,18 @@ return 42`, contract)
 			}
 		}
 	}
-	if len(callablePoints) == 0 || len(rootPoints) == 0 || plan.state.queryPlan == nil || len(plan.state.queryPlan.rows) == 0 {
-		t.Fatalf("fixture/query geometry = callable %d root %d queries %d", len(callablePoints), len(rootPoints), len(plan.state.queryPlan.rows))
+	if len(callablePoints) == 0 || len(rootPoints) == 0 || len(plan.state.querySites) == 0 {
+		t.Fatalf("fixture/query geometry = callable %d root %d queries %d", len(callablePoints), len(rootPoints), len(plan.state.querySites))
 	}
 	perPoint := make(map[identity.ContentID]int)
-	for _, row := range plan.state.queryPlan.rows {
-		if _, forbidden := callablePoints[row.point]; forbidden {
+	for _, row := range plan.state.querySites {
+		if _, forbidden := callablePoints[row.Point]; forbidden {
 			t.Fatal("uncalled callable interior became an unconditional query root")
 		}
-		if _, root := rootPoints[row.point]; !root {
+		if _, root := rootPoints[row.Point]; !root {
 			t.Fatal("query plan escaped the non-callable Program root")
 		}
-		perPoint[row.point]++
+		perPoint[row.Point]++
 	}
 	for point, count := range perPoint {
 		if count != 2 {
@@ -101,13 +102,11 @@ func TestArtifactQueryPlanAdmitsControlFaultChunk(t *testing.T) {
 				t.Fatalf("compile = %v/%v", status, plan)
 			}
 			defer plan.Close()
-			queryPlan, queryOK := newArtifactQueryPlan(plan.state.artifacts.mounts)
-			if !queryOK || queryPlan == nil || len(queryPlan.rows) == 0 {
-				rowCount := 0
-				if queryPlan != nil {
-					rowCount = len(queryPlan.rows)
-				}
-				t.Fatalf("control-fault chunk has no query plan: ok=%t rows=%d", queryOK, rowCount)
+			sealed, sealedOK := linkArtifactRows(plan.state.artifacts.mounts)
+			sites, queryOK := composite.SelectedQuerySites(sealed)
+			queryOK = sealedOK && queryOK
+			if !queryOK || len(sites) == 0 {
+				t.Fatalf("control-fault chunk has no query plan: ok=%t rows=%d", queryOK, len(sites))
 			}
 		})
 	}

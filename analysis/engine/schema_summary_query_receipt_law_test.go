@@ -29,6 +29,7 @@ func hotSummaryQuerySpec() HotSummaryQuerySpec[uint64, uint64] {
 			Clone:       func(value uint64) uint64 { return value },
 			Equal:       func(left, right uint64) bool { return left == right },
 			Fingerprint: func(value uint64) uint64 { return value },
+			Present:     func(value uint64) bool { return true },
 		},
 	}
 }

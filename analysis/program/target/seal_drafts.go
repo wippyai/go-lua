@@ -4,6 +4,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
@@ -11,13 +12,13 @@ type operationDraft struct {
 	source            int
 	semantics         schematype.Semantics
 	bindings          []vocabulary.BindingSpec
-	canonical         uint32
 	formals           []vocabulary.TypeFormalSpec
 	valuesVars        uint32
 	valuesTypes       []string
 	rowFormals        uint32
 	input             valuesDraft
 	outcomes          []outcomeDraft
+	behavior          behaviorDraft
 	callbacks         []callbackDraft
 	subedges          []subedgeDraft
 	suspensions       []suspensionDraft
@@ -32,6 +33,25 @@ type operationDraft struct {
 	declarations      map[string]schematype.Type
 	formalConstraints []schematype.Type
 	constraints       []string
+}
+
+type behaviorDraft struct {
+	results    []behaviorResultDraft
+	predicates []behaviorPredicateDraft
+}
+
+type behaviorResultDraft struct {
+	outcome  uint32
+	result   uint32
+	source   vocabulary.InputSource
+	relation schema.EntryID
+}
+
+type behaviorPredicateDraft struct {
+	outcome  uint32
+	result   uint32
+	subject  vocabulary.InputSource
+	relation schema.EntryID
 }
 
 type valuesDraft struct {
@@ -182,11 +202,6 @@ type freshResultDraft struct {
 	result  uint32
 	ordinal uint32
 	kind    schematype.FreshClass
-}
-
-type producedAnchorStep struct {
-	outcome string
-	result  uint32
 }
 
 type effectDraft struct {

@@ -45,7 +45,7 @@ func readSourceSpans(reader *framing.Reader, name string) ([keyspace.FamilyCount
 			if err != nil {
 				return counts, nil, err
 			}
-			if !validSourceCoordinate(startLine, startCol, endLine, endCol) {
+			if _, ok := CoordinateFromParts(startLine, startCol, endLine, endCol); !ok {
 				return counts, nil, framing.ErrMalformed
 			}
 			spans[index] = Span{
@@ -67,16 +67,6 @@ func sourceUint32(reader *framing.Reader) (uint32, error) {
 		return 0, framing.ErrMalformed
 	}
 	return uint32(value), nil
-}
-
-func validSourceCoordinate(startLine, startCol, endLine, endCol uint32) bool {
-	if startLine == 0 && startCol == 0 && endLine == 0 && endCol == 0 {
-		return true
-	}
-	if startLine == 0 || startCol == 0 || (endLine == 0) != (endCol == 0) {
-		return false
-	}
-	return endLine == 0 || endLine > startLine || endLine == startLine && endCol >= startCol
 }
 
 // preflightSourceSpans consumes one copied Reader without creating any span
@@ -119,7 +109,7 @@ func preflightSourceSpans(reader *framing.Reader, counts *[keyspace.FamilyCount]
 			if err != nil {
 				return err
 			}
-			if !validSourceCoordinate(startLine, startCol, endLine, endCol) {
+			if _, ok := CoordinateFromParts(startLine, startCol, endLine, endCol); !ok {
 				return framing.ErrMalformed
 			}
 		}

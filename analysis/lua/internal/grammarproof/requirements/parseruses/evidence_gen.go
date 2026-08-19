@@ -8,8 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts"
 )
 
-func init() {
-	Generated = Evidence{
+var Generated = Evidence{
 		ProductsDigest: "8d6f42c91dfc32495549bd6bc19df929ee6ba666f91fced802c3b5ee7e66b9ec",
 		Digest: "522dbf2beb95f62a96b19d9abb409f5d57882fcdf2c440fa47d44bf0dc797ff0",
 		UseSlots: []UseSlot{
@@ -4961,4 +4960,3 @@ func init() {
 			},
 		},
 	}
-}

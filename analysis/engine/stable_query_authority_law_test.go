@@ -11,7 +11,7 @@ import (
 
 type receiptQueryMatrixFixture struct {
 	solver       *Solver
-	queries      []ReceiptQuery
+	queries      []ProgramQuery
 	expected     []uint64
 	schemaID     CompositionID
 	topologyKey  composition.Key
@@ -23,14 +23,18 @@ type receiptQueryMatrixFixture struct {
 	// resolve the published query set the seal resolved against instead of
 	// reconstructing one.
 	binding              *SchemaBinding
-	graph                *ReceiptGraph
+	graph                *CommittedProgram
 	addressed            []composition.Key
 	queryImplementations []*ExactQueryImplementation[uint64, uint64]
 	// observations are the solve-local observation handles attached before the
 	// seal, in attach order, and observationIDs their identities in the same
 	// order. Both are empty unless the fixture was built observed.
-	observations   []ReceiptObservation[uint64]
+	observations   []receiptObservation[uint64]
 	observationIDs []identity.ContentID
+	// declaration is the same sealed program stated as one geometry
+	// declaration, for the transitional law that folds it through the pure
+	// constructor and measures the result against this committed geometry.
+	declaration topologyDeclaration
 }
 
 // TestReceiptQueryWarmStateAndCancellation keeps both terminal lifecycle
@@ -217,7 +221,7 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 			t.Fatal("receipt query matrix implementation receipt")
 		}
 	}
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !assemblyOK || assembly == nil {
 		t.Fatal("receipt query matrix assembly")
 	}
@@ -226,11 +230,11 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 	operands := make([]equation.Operand, count)
 	operandValues := make([]ruleUnit, count)
 	for index := 0; index < count; index++ {
-		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(951_100+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(951_100+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.admitAt(site)
 		value := ruleUnitForSemantic(coldKey(955_000 + index))
 		entity, entityOK := operandEntityForContent(value.content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
 			t.Fatal("receipt query matrix source admission")
 		}
@@ -239,26 +243,23 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 	if !assembly.SealSources() {
 		t.Fatal("receipt query matrix source seal")
 	}
-	pointRefs := make([]bindingPointRowRef, count)
-	for _, index := range order {
-		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
-		pointRef, semanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(byte(10+index)), point)
-		if !pointOK || !semanticOK {
-			t.Fatal("receipt query matrix Point receipt")
-		}
-		pointRefs[index] = pointRef
+	pointRank := make([]int, count)
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
+	for rank, index := range order {
+		declaration.points = append(declaration.points, declaredPointRow{ID: receiptAssemblySemanticID(byte(10 + index)), Site: sites[index]})
+		pointRank[index] = rank
 	}
 	for _, index := range order {
-		proof := ruleImplementations[index].receipt.proof
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index], Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}})
-		draft, draftOK := ruleImplementations[index].BeginBindingRuleRow(source)
+		proof := ruleImplementations[index].binding.proof
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index], Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}})
+		draft, draftOK := ruleImplementations[index].beginBindingRuleRow(source)
 		part, partOK := ruleImplementations[index].WritePart(source, 0)
 		rowOK := sourceOK && draftOK && partOK && draft.AddWrite(part)
-		row, issued := assembly.builder.issueRuleRow(draft)
-		_, semanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(byte(60+index)), row)
-		if !rowOK || !issued || !semanticOK {
+		row, issued := assembly.issueRuleRow(draft)
+		if !rowOK || !issued {
 			t.Fatal("receipt query matrix Rule topology")
 		}
+		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(byte(60 + index)), Row: row.row})
 	}
 	for _, index := range order {
 		queryOrdinal, queryOrdinalOK := queries[index].Ordinal()
@@ -266,24 +267,24 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 		if !queryOrdinalOK || !factorOrdinalOK {
 			t.Fatal("receipt query matrix ordinal mapping")
 		}
-		row, rowOK := assembly.builder.issueQueryRow(queryImplementations[index], equation.QueryInstance{Family: schema.querySemanticAt(queryOrdinal), Point: pointRefs[index].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(factorOrdinal), Form: equation.SurfaceReadExact, Local: 1}}})
-		if !rowOK {
-			t.Fatal("receipt query matrix Query row")
-		}
-		if _, semanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(byte(110+index)), row); !semanticOK {
-			t.Fatal("receipt query matrix Query directory")
-		}
+		instance := equation.QueryInstance{Family: schema.querySemanticAt(queryOrdinal), Point: equation.PointAt(pointRank[index]), Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(factorOrdinal), Form: equation.SurfaceReadExact, Local: 1}}}
+		declaration.queries = append(declaration.queries, declaredQueryRow{ID: receiptAssemblySemanticID(byte(110 + index)), Row: instance})
 	}
-	topology, graph, committed := assembly.Commit()
+	constructed, refusal := constructTopology(declaration)
+	topology, graph, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
 	if !committed || topology == nil || graph == nil || topology.topology == nil {
-		t.Fatal("receipt query matrix graph commit")
+		t.Fatalf("receipt query matrix graph commit stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
 	}
-	compilation, compilationOK := BeginProgramConstruction(binding, graph)
+	program := CommittedProgramFrom(topology, graph)
+	if program == nil {
+		t.Fatal("receipt query matrix committed program")
+	}
+	compilation, compilationOK := BeginProgramConstruction(binding, program)
 	if !compilationOK || compilation == nil {
 		t.Fatal("receipt query matrix compilation")
 	}
 	for index := 0; index < count; index++ {
-		if _, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(60 + index))); !memberOK {
+		if _, memberOK := program.RuleMember(receiptAssemblySemanticID(byte(60 + index))); !memberOK {
 			t.Fatal("receipt query matrix Rule member receipt")
 		}
 		if !installConstOperandResolver(ruleImplementations[index], operandValues[index]) {
@@ -293,34 +294,34 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 			t.Fatal("receipt query matrix Rule attachment")
 		}
 	}
-	queryReceipts := make([]ReceiptQuery, count)
+	queryReceipts := make([]ProgramQuery, count)
 	for index := 0; index < count; index++ {
-		query, queryOK := graph.Query(receiptAssemblySemanticID(byte(110 + index)))
+		query, queryOK := program.Query(receiptAssemblySemanticID(byte(110 + index)))
 		if !queryOK || !AttachExactQuery(compilation, queryImplementations[index], receiptAssemblySemanticID(byte(110+index))) {
 			t.Fatal("receipt query matrix Query attachment")
 		}
 		queryReceipts[index] = query
 	}
-	var observations []ReceiptObservation[uint64]
+	var observations []receiptObservation[uint64]
 	var observationIDs []identity.ContentID
 	if observed {
-		observations = make([]ReceiptObservation[uint64], 0, count)
+		observations = make([]receiptObservation[uint64], 0, count)
 		observationIDs = make([]identity.ContentID, 0, count)
 		for _, index := range order {
-			member, memberOK := graph.RuleMember(receiptAssemblySemanticID(byte(60 + index)))
+			member, memberOK := program.RuleMember(receiptAssemblySemanticID(byte(60 + index)))
 			if !memberOK {
 				t.Fatal("receipt query matrix observation member")
 			}
 			id := receiptAssemblySemanticID(byte(160 + index))
 			observation, failure := AttachRuleExactObservationWithFailure(compilation, queryImplementations[index], id, member)
-			if failure != ReceiptObservationAttachFailureNone || !observation.Available() {
+			if failure != receiptObservationAttachFailureNone || !observation.Available() {
 				t.Fatalf("receipt query matrix observation %d failure=%v", index, failure)
 			}
 			observations = append(observations, observation)
 			observationIDs = append(observationIDs, id)
 		}
 	}
-	addressed, addressedOK := graph.publishedQueryKeys()
+	addressed, addressedOK := program.publishedQueryKeys()
 	if !addressedOK {
 		t.Fatal("receipt query matrix published query addresses")
 	}
@@ -335,8 +336,8 @@ func buildReceiptQueryMatrixFixture(t testing.TB, count int, order, declarationO
 	return receiptQueryMatrixFixture{
 		solver: solver, queries: queryReceipts, expected: expected, topologyKey: topology.topology.Key(),
 		transferRuns: transferRuns, projectRuns: projectRuns, freezeRuns: freezeRuns, schemaID: schema.ID(),
-		binding: binding, graph: graph, addressed: addressed, queryImplementations: queryImplementations,
-		observations: observations, observationIDs: observationIDs,
+		binding: binding, graph: program, addressed: addressed, queryImplementations: queryImplementations,
+		observations: observations, observationIDs: observationIDs, declaration: declaration,
 	}
 }
 

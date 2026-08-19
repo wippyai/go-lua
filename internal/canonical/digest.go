@@ -32,7 +32,11 @@ func (w *DigestWriter) Reset(domain string, version uint64) error {
 	if w == nil {
 		return ErrNotStarted
 	}
-	w.hash = sha256.New()
+	if w.hash == nil {
+		w.hash = sha256.New()
+	} else {
+		w.hash.Reset()
+	}
 	w.started = true
 	w.finished = false
 	w.err = nil

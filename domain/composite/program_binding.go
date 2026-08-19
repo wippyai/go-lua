@@ -119,6 +119,42 @@ func (bound *ProgramBinding) EffectQuery() *effectowner.ExactQueryImplementation
 	return implementation
 }
 
+// QueryAdmission seals one selected-point query row from the family's own
+// implementation. Construction walks sealed issuance for sites; this recovers
+// the cell by projection.
+func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID, projection schema.Key) (engine.ProgramQueryAdmission, bool) {
+	if bound == nil {
+		return engine.ProgramQueryAdmission{}, false
+	}
+	switch projection {
+	case query.ProjectionSummary:
+		return engine.NewSummaryQueryAdmission(bound.ValueQuery(), id, mount, point)
+	case query.ProjectionExact:
+		return engine.NewExactQueryAdmission(bound.EffectQuery(), id, mount, point)
+	default:
+		return engine.ProgramQueryAdmission{}, false
+	}
+}
+
+// AttachQuery binds one selected-point query through the open construction
+// and returns the publication key Result reads Snapshot by.
+func (bound *ProgramBinding) AttachQuery(compilation *engine.ProgramConstruction, id identity.ContentID, projection schema.Key) (identity.ContentID, bool) {
+	if bound == nil || compilation == nil {
+		return identity.ContentID{}, false
+	}
+	var ok bool
+	switch projection {
+	case query.ProjectionSummary:
+		ok = engine.AttachSummaryQuery(compilation, bound.ValueQuery(), id)
+	case query.ProjectionExact:
+		ok = engine.AttachExactQuery(compilation, bound.EffectQuery(), id)
+	}
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	return compilation.QueryPublicationKey(id)
+}
+
 // RuntimeContexts is the cold authority pair a runtime joins to open allocation
 // contexts against this exact binding.
 func (bound *ProgramBinding) RuntimeContexts() RuntimeAllocationContextOwner {

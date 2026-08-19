@@ -199,10 +199,10 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 		if !shardOK || !moduleOK || !mountOK || !mount.Available() {
 			return SealFailureStorageTransferMount
 		}
-		artifact := mount.Artifact()
+		artifact := mount.Snapshot()
 		for rowIndex := 0; rowIndex < artifact.OccurrenceCount(); rowIndex++ {
 			row, rowOK := artifact.OccurrenceAt(rowIndex)
-			kind, kindOK := storageTransferKindForArtifact(row.Kind())
+			kind, kindOK := storageTransferKindForArtifact(programartifact.OccurrenceKind(row.Kind()))
 			if !rowOK || !kindOK {
 				continue
 			}

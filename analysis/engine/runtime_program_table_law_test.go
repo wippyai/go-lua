@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
@@ -292,11 +294,221 @@ func TestProgramConstructionRefusesADuplicateObservationIdentity(t *testing.T) {
 	implementation := fixture.queryImplementations[0]
 	id := fixture.observationIDs[0]
 	first, firstFailure := AttachRuleExactObservationWithFailure(construction, implementation, id, member)
-	if firstFailure != ReceiptObservationAttachFailureNone || first.ordinal != 0 {
+	if firstFailure != receiptObservationAttachFailureNone || first.ordinal != 0 {
 		t.Fatalf("first attach failure=%v ordinal=%d", firstFailure, first.ordinal)
 	}
 	second, secondFailure := AttachRuleExactObservationWithFailure(construction, implementation, id, member)
-	if secondFailure != ReceiptObservationAttachFailureDuplicate || second.Available() {
+	if secondFailure != receiptObservationAttachFailureDuplicate || second.Available() {
 		t.Fatalf("one identity reached a second ordinal: failure=%v available=%t", secondFailure, second.Available())
+	}
+}
+
+// TestAssembleMountedProgramConstructsFromSealedTemplates is the production
+// assemble floor: sealed templates and role capabilities enter directly.
+// CommittedProgram holds the equation graph and binding topology, not a
+// receipt wrapper.
+func TestAssembleMountedProgramConstructsFromSealedTemplates(t *testing.T) {
+	for _, name := range []string{"runtime_program_assemble.go", "runtime_program_construction.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "graph *ReceiptGraph") {
+			t.Fatalf("%s stores *ReceiptGraph", name)
+		}
+	}
+	src, err := os.ReadFile("runtime_program_assemble.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	for _, name := range []string{
+		"NewArtifactScalarReceipt",
+		"NewMountedArtifactReceipt",
+		"AssembleMountedArtifactReceipt",
+		"NewArtifactScalarBinding",
+		"ReceiptGraph",
+		"*ReceiptAssembly",
+	} {
+		if strings.Contains(body, name) {
+			t.Errorf("assemble still names %s", name)
+		}
+	}
+	for _, check := range []struct {
+		path      string
+		signature string
+		forbidden []string
+	}{
+		{
+			path:      "runtime_program_lower.go",
+			signature: "func assembleSealedProgramMounts",
+			forbidden: []string{"*ReceiptAssembly", "ReceiptGraph", "beginReceiptAssembly"},
+		},
+		{
+			path:      "runtime_program_lower.go",
+			signature: "func beginMountedProgramAssembly",
+			forbidden: []string{"*ReceiptAssembly", "beginReceiptAssembly"},
+		},
+		{
+			path:      "runtime_program_lower.go",
+			signature: "func admitMountedArtifactSites",
+			forbidden: []string{"*ReceiptAssembly"},
+		},
+		{
+			path:      "binding_topology_builder.go",
+			signature: "func (binding *BindingTopology) Graph(",
+			forbidden: []string{"&ReceiptGraph{"},
+		},
+		{
+			path:      "schema_factor_binding.go",
+			signature: "type RuleImplementation[K ~uint32 | ~uint64, V, O any] struct",
+			forbidden: []string{"receipt "},
+		},
+		{
+			path:      "schema_factor_binding.go",
+			signature: "type FactorImplementation[K ~uint32 | ~uint64, V any] struct",
+			forbidden: []string{"receipt "},
+		},
+		{
+			path:      "schema_activation_binding.go",
+			signature: "type ActivationRuleImplementation struct",
+			forbidden: []string{"receipt "},
+		},
+		{
+			path:      "schema_query_binding.go",
+			signature: "type ExactQueryImplementation[V, R any] struct",
+			forbidden: []string{"receipt "},
+		},
+		{
+			path:      "schema_query_binding.go",
+			signature: "type SummaryQueryImplementation[V, R any] struct",
+			forbidden: []string{"receipt "},
+		},
+		{
+			path:      "runtime_binding.go",
+			signature: "func (binding *runtimeBinding) pinBinding",
+			forbidden: []string{"pinReceipt"},
+		},
+		{
+			path:      "runtime_program_admit.go",
+			signature: "func applyMountedProgramAdmission",
+			forbidden: []string{"*ReceiptAssembly", "&ReceiptAssembly{"},
+		},
+		{
+			path:      "runtime_program_admit.go",
+			signature: "func (implementation *RuleImplementation[K, V, O]) AdmitMounted",
+			forbidden: []string{"*ReceiptAssembly"},
+		},
+		{
+			path:      "runtime_program_admit.go",
+			signature: "func (implementation *RuleImplementation[K, V, O]) AdmitLink",
+			forbidden: []string{"*ReceiptAssembly"},
+		},
+		{
+			path:      "runtime_activation_admit.go",
+			signature: "func AdmitMountedActivationOccurrence",
+			forbidden: []string{"*ReceiptAssembly"},
+		},
+		{
+			path:      "operand_resolver.go",
+			signature: "type RuleProgramAttach interface",
+			forbidden: []string{"*ReceiptAssembly"},
+		},
+		{
+			path:      "runtime_binding.go",
+			signature: "type runtimeBinding struct",
+			forbidden: []string{"runtimeBindingMode", "runtimeBindingReceipt"},
+		},
+	} {
+		source, err := os.ReadFile(check.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, ok := functionBody(string(source), check.signature)
+		if !ok {
+			t.Errorf("%s missing %s", check.path, check.signature)
+			continue
+		}
+		for _, name := range check.forbidden {
+			if strings.Contains(body, name) {
+				t.Errorf("%s still names %s", check.signature, name)
+			}
+		}
+	}
+}
+
+func functionBody(src, signature string) (string, bool) {
+	start := strings.Index(src, signature)
+	if start < 0 {
+		return "", false
+	}
+	open := strings.IndexByte(src[start:], '{')
+	if open < 0 {
+		return "", false
+	}
+	depth := 0
+	for index := start + open; index < len(src); index++ {
+		switch src[index] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return src[start : index+1], true
+			}
+		}
+	}
+	return "", false
+}
+
+// TestAssembleMountedProgramPublishesConstructedGeometry is the production
+// execution floor of the constructor switch: the one mounted-program entry
+// admits sealed templates plus owner admission rows and publishes the geometry
+// the pure constructor derives - the mounted member table, the native Call
+// stage inverse and the Link bootstrap anchor.
+func TestAssembleMountedProgramPublishesConstructedGeometry(t *testing.T) {
+	owner := newNativeCallStageQueryLawOwner(t)
+	rules := owner.rules()
+	mount, mountOK := owner.scalarMount(t, rules, owner.order())
+	bootstrap, bootstrapOK := NewProgramBootstrap(artifactScalarLawID(0x68), artifactScalarLawID(0x69))
+	queryID := artifactScalarLawID(0x7C)
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(owner.query, queryID, owner.mount, owner.base)
+	if !mountOK || !bootstrapOK || !queryAdmissionOK {
+		t.Fatal("mounted program inputs")
+	}
+	if !installConstOperandResolver(owner.implementation, struct{}{}) {
+		t.Fatal("mounted program operand resolver")
+	}
+	admission := MountedProgramAdmission{Mounted: make([]MountedRuleAdmission, 0, len(rules)), Queries: []ProgramQueryAdmission{queryAdmission}}
+	for _, rule := range rules {
+		admission.Mounted = append(admission.Mounted, MountedRuleAdmission{
+			Attach: owner.implementation, Capability: owner.capability,
+			Mount: owner.mount, Point: rule.Point, Occurrence: rule.ID,
+		})
+	}
+	program, refusal, committed := AssembleMountedProgram(owner.binding, []MountedProgramArtifact{mount}, admission, bootstrap)
+	if !committed || program == nil {
+		t.Fatalf("mounted program assemble stage=%v lowered=%t commit=%v schedule=%d", refusal.Stage(), refusal.Lowered(), refusal.Commit(), refusal.ScheduleRow())
+	}
+	artifactID := mount.Template.ArtifactID()
+	for _, reusable := range owner.order() {
+		if _, published := program.lookupPoint(mountedArtifactID("analysis/engine/artifact-point/v1", owner.mount, artifactID, reusable)); !published {
+			t.Fatalf("template point %v publishes no address", reusable)
+		}
+	}
+	if _, published := program.lookupPoint(linkBootstrapPointSemanticID(artifactScalarLawID(0x68), artifactScalarLawID(0x69))); !published {
+		t.Fatal("Link bootstrap anchor publishes no address")
+	}
+	for _, rule := range rules {
+		if _, published := program.MountedRuleMember(owner.capability, owner.mount, rule.Point, rule.ID); !published {
+			t.Fatalf("admitted member %v publishes no address", rule.ID)
+		}
+		stage, staged := program.MountedNativeCallStage(owner.capability, owner.mount, rule.ID)
+		if !staged || stage.Kind() != rule.Stage || stage.PointID() != rule.Point {
+			t.Fatalf("native Call stage %v unaddressed", rule.ID)
+		}
+	}
+	if _, published := program.Query(queryID); !published {
+		t.Fatal("admitted query publishes no address")
 	}
 }

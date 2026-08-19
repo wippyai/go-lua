@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -17,7 +18,11 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	compiler.diagnosticObservations = compiler.diagnosticObservations[:0]
-	compiler.diagnosticObservationByID = make(map[identity.ContentID]int)
+	if compiler.diagnosticObservationByID == nil {
+		compiler.diagnosticObservationByID = make(map[identity.ContentID]int)
+	} else {
+		clear(compiler.diagnosticObservationByID)
+	}
 	routes := compiler.input.Flow().Causal().Successors()
 	for index := 0; index < routes.TotalCount(); index++ {
 		route, routeOK := routes.FinalAt(index)
@@ -184,7 +189,7 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 		}
 		term := ref.Term()
 		resolution, target, rootTerm, relationOK := references.Get(term)
-		if !relationOK || resolution != programstatic.TypeRefUnresolved || target != 0 {
+		if !relationOK || resolution != staticrefs.Unresolved || target != 0 {
 			continue
 		}
 		location, locationOK := compiler.input.Source().Identity().Span(term)

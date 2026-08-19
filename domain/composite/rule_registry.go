@@ -29,16 +29,19 @@ func newRuleCells(entries []*template) ruleCells { return make(ruleCells, len(en
 // immutable afterwards; a rejected law leaves the table unavailable rather
 // than half usable.
 var registry struct {
-	once      sync.Once
-	sealed    *schema.Schema
-	failure   schema.SealFailure
-	templates []*template
-	axes      []*axisTemplate
+	once             sync.Once
+	sealed           *schema.Schema
+	failure          schema.SealFailure
+	templates        []*template
+	ruleContributors []ruleContributor
+	axes             []*axisTemplate
+	axisContributors []axisContributor
 	// queries is the admitted query inventory, in catalog order. The sealed
 	// surface states what each family declares; these rows additionally carry
 	// the contributor that answers it, which the declaration and binding passes
 	// drive.
-	queries []*query.Registration
+	queries           []*query.Registration
+	queryContributors []queryContributor
 	// observations is the pure-data inventory of the query result populations
 	// consumed by the live publication producers.
 	observations observation.Table
@@ -79,12 +82,12 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindStructure, Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
 			return
 		}
-		axes, axesOK := axisTemplates()
+		axes, axisContributors, axesOK := axisTemplates()
 		if !axesOK {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
-		templates, ok := ruleTemplates()
+		templates, ruleContributors, ok := ruleTemplates()
 		if !ok {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
@@ -104,7 +107,7 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindDenominator, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
-		queries, queriesOK := queryRegistrations(roles)
+		queries, contributors, queriesOK := queryRegistrations(roles)
 		if !queriesOK {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
@@ -172,8 +175,8 @@ func sealRegistry() {
 			}
 			slots[entry.Key()] = position + 1
 		}
-		registry.templates, registry.axes = templates, axes
-		registry.queries, registry.queryPositions = queries, positions
+		registry.templates, registry.ruleContributors, registry.axes, registry.axisContributors = templates, ruleContributors, axes, axisContributors
+		registry.queries, registry.queryContributors, registry.queryPositions = queries, contributors, positions
 		registry.slotsByKey = slots
 		registry.roles, registry.sealed = roles, sealed
 	})
@@ -339,13 +342,15 @@ func declareRules(builder *engine.SchemaBuilder, roles vocabulary.Roles, owners 
 	if registry.sealed == nil || builder == nil || !owners.available() {
 		return fragments, DiagnosticRuleUnknown, false
 	}
-	context := declaration{Builder: builder, Roles: roles, Principals: owners}
+	if len(registry.ruleContributors) != len(registry.templates) {
+		return fragments, DiagnosticRuleUnknown, false
+	}
 	for position, entry := range registry.templates {
 		slot := position + 1
 		if !owners.writes(entry.Writes()) || !owners.writes(entry.Owner()) {
 			return fragments, DiagnosticRule(slot), false
 		}
-		fragment, ok := entry.Declare(context)
+		fragment, ok := registry.ruleContributors[position].declare(builder, roles, owners)
 		if !ok {
 			return fragments, DiagnosticRule(slot), false
 		}
@@ -461,6 +466,12 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
+// mountedOccurrenceAttach is the owner-held post-commit attach for the
+// activation lane. Operand and Link rules publish RuleProgramAttach instead.
+type mountedOccurrenceAttach interface {
+	AttachMountedReceiptMember(*engine.ProgramConstruction, identity.ContentID, identity.ContentID, identity.ContentID) bool
+}
+
 // AttachMemberByKey binds one already-admitted occurrence to a committed
 // topology. The construction owns the graph row; activation keeps its own
 // member bridge.
@@ -475,10 +486,17 @@ func (rules *RuleBinding) AttachMemberByKey(key schema.Key, compilation *engine.
 	}
 	if entry.Lane() == rule.LaneActivation {
 		hot, hotOK := rules.cellByKey(key)
-		return hotOK && entry.Member(hot, compilation, mount, point, occurrence)
+		attach, attachOK := rule.Payload[mountedOccurrenceAttach](hot)
+		return hotOK && attachOK && attach.AttachMountedReceiptMember(compilation, mount, point, occurrence)
 	}
 	attach, attachOK := rules.programAttach(key)
-	return attachOK && attach.AttachMountedMember(compilation, capability, mount, point, occurrence)
+	if !attachOK {
+		return false
+	}
+	if !attach.AdmitsMounted(mount, point, occurrence) {
+		return true
+	}
+	return attach.AttachMountedMember(compilation, capability, mount, point, occurrence)
 }
 
 // AttachLinkMemberByKey binds one admitted Link occurrence to a committed
@@ -505,12 +523,25 @@ func (rules *RuleBinding) ProgramAttachByKey(key schema.Key) (engine.RuleProgram
 }
 
 func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
-	entry, entryOK := templateForKey(key)
 	hot, hotOK := rules.cellByKey(key)
-	if !entryOK || !hotOK {
+	contributor, contributorOK := ruleContributorFor(key)
+	if !hotOK || !contributorOK || contributor.linkCatalog == nil {
 		return nil, false
 	}
-	return entry.LinkCatalog(hot)
+	return contributor.linkCatalog(hot)
+}
+
+func ruleContributorFor(key schema.Key) (ruleContributor, bool) {
+	sealRegistry()
+	if len(registry.ruleContributors) != len(registry.templates) {
+		return ruleContributor{}, false
+	}
+	for index, entry := range registry.templates {
+		if entry != nil && entry.Key() == key {
+			return registry.ruleContributors[index], true
+		}
+	}
+	return ruleContributor{}, false
 }
 
 // bindRules drives the whole rule table in one transaction: bind every hot
@@ -524,7 +555,7 @@ func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bo
 // only be sealed after the binding is terminal.
 func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authorities, seal func() bool) (*RuleBinding, DiagnosticRule, RuleBindStage) {
 	sealRegistry()
-	if registry.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(registry.templates)+1 {
+	if registry.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(registry.templates)+1 || len(registry.ruleContributors) != len(registry.templates) {
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
 	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), attachers: make(map[schema.Key]engine.RuleProgramAttach, len(registry.templates))}
@@ -536,7 +567,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 		if !fragments[slot].Available() {
 			return nil, DiagnosticRule(slot), RuleBindStageFragment
 		}
-		hot, ok := entry.Bind(binding, set, fragments[slot])
+		hot, ok := registry.ruleContributors[position].bind(binding, set, fragments[slot])
 		if !ok {
 			return nil, DiagnosticRule(slot), RuleBindStageBind
 		}
@@ -556,7 +587,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 				continue
 			}
 			slot := position + 1
-			capability, ok := entry.Register(binding, fragments[slot])
+			capability, ok := registry.ruleContributors[position].register(binding, fragments[slot])
 			if !ok {
 				return nil, DiagnosticRule(slot), RuleBindStageRegister
 			}
@@ -574,9 +605,9 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 		capability := issued[slot]
 		return capability, capability.Mounted() || capability.Link()
 	}
-	for position, entry := range registry.templates {
+	for position := range registry.templates {
 		slot := position + 1
-		if entry.HasPair() && !entry.Pair(binding, fragments[slot], resolve) {
+		if contributor := registry.ruleContributors[position]; contributor.pair != nil && !contributor.pair(binding, fragments[slot], resolve) {
 			return nil, DiagnosticRule(slot), RuleBindStagePair
 		}
 	}
@@ -593,9 +624,9 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 			return nil, DiagnosticRule(slot), RuleBindStageCapability
 		}
 	}
-	for position, entry := range registry.templates {
+	for position := range registry.templates {
 		slot := position + 1
-		if entry.HasFinalize() && !entry.Finalize(set, rules.hot[slot]) {
+		if contributor := registry.ruleContributors[position]; contributor.finalize != nil && !contributor.finalize(set, rules.hot[slot]) {
 			return nil, DiagnosticRule(slot), RuleBindStageFinalize
 		}
 	}

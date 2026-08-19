@@ -120,13 +120,13 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 	if !boundary.Available() {
 		t.Fatal("exact-summary boundary")
 	}
-	exactSurface := equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}
-	summarySurface := equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(948_002)), Normalizer: compositionKeyOf(coldKey(948_002))}
+	exactSurface := equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadExact, Local: 1}
+	summarySurface := equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(948_002)), Normalizer: compositionKeyOf(coldKey(948_002))}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch: batch,
 		Rules: []equation.RuleInstance{
-			{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-			{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: exactSurface}, {Index: 1, Surface: summarySurface}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+			{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+			{Schema: readerImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: exactSurface}, {Index: 1, Surface: summarySurface}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 		},
 		Points:    []equation.PointSpec{{Site: sourceSite}, {Site: readerSite}},
 		Groups:    []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}, {Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}}},
@@ -151,9 +151,9 @@ func TestReceiptCompilerThreadsExactAndSummaryReadThroughProductEvidencePatch(t 
 				t.Fatal("exact-summary member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case readerImplementation.receipt.proof.semantic:
+			case readerImplementation.binding.proof.semantic:
 				readerMember = member
 			}
 		}

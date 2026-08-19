@@ -446,33 +446,48 @@ func surfaceIndex(rows []Surface, surface Surface) (int, bool) {
 	return index, index < len(rows) && rows[index] == surface
 }
 
-// SummaryKeyCount and SummaryKeyAt expose a compiled raw-key set without
-// allocating a copy. Raw keys remain in [0, KeyEnd); only the typed Factor
-// binder validates that range.
-func (graph *Graph) SummaryKeyCount(surface Surface) (int, bool) {
-	if !graph.valid() {
-		return 0, false
-	}
-	index, ok := surfaceIndex(graph.summarySurfaces, surface)
-	if !ok {
-		return 0, false
-	}
-	return graph.summaryOffsets[index+1] - graph.summaryOffsets[index], true
+// SummaryKeyRange is one equation-owned immutable view over a sealed summary
+// key row. The owner and offsets are private: callers can read raw keys only
+// through Count and At, so no mutable graph slice or caller correlation key
+// escapes the equation package.
+type SummaryKeyRange struct {
+	owner      *Graph
+	begin, end int
 }
 
-func (graph *Graph) SummaryKeyAt(surface Surface, index int) (uint64, bool) {
-	if !graph.valid() || index < 0 {
+// Count returns the number of raw keys in the issued range.
+func (keys SummaryKeyRange) Count() int {
+	if keys.owner == nil {
+		return 0
+	}
+	return keys.end - keys.begin
+}
+
+// At returns one raw key from the issued immutable range.
+func (keys SummaryKeyRange) At(index int) (uint64, bool) {
+	if keys.owner == nil || index < 0 || index >= keys.end-keys.begin {
 		return 0, false
+	}
+	return keys.owner.summaryKeys[keys.begin+index], true
+}
+
+// SummaryKeyRange validates the sealed graph and summary row once, then
+// returns a borrowed immutable range over Graph's flat CSR key payload. The
+// payload is never copied or exposed as a slice; typed Factor conversion and
+// key-domain checks remain the binder's responsibility.
+func (graph *Graph) SummaryKeyRange(surface Surface) (SummaryKeyRange, bool) {
+	if !graph.valid() {
+		return SummaryKeyRange{}, false
 	}
 	row, ok := surfaceIndex(graph.summarySurfaces, surface)
-	if !ok {
-		return 0, false
+	if !ok || row < 0 || row+1 >= len(graph.summaryOffsets) {
+		return SummaryKeyRange{}, false
 	}
 	begin, end := graph.summaryOffsets[row], graph.summaryOffsets[row+1]
-	if index >= end-begin {
-		return 0, false
+	if begin < 0 || end < begin || end > len(graph.summaryKeys) {
+		return SummaryKeyRange{}, false
 	}
-	return graph.summaryKeys[begin+index], true
+	return SummaryKeyRange{owner: graph, begin: begin, end: end}, true
 }
 
 // SummaryRepresentative returns the canonical read unit for an aliasing

@@ -117,7 +117,6 @@ func (domain *Domain[F, K, V]) Plane(root diagram.Root[F, K, V]) (Plane[F, K, V]
 // Empty returns this typed plane's immutable sparse bottom root.  It carries
 // no support; the heterogeneous carrier State alone owns that region.
 func (domain *Domain[F, K, V]) Empty() (Plane[F, K, V], bool) {
-	DbgEmpty.Add(1)
 	if domain == nil || domain.diagram == nil {
 		return Plane[F, K, V]{}, false
 	}
@@ -129,7 +128,6 @@ func (domain *Domain[F, K, V]) Empty() (Plane[F, K, V], bool) {
 // constructs a transient masked view for an operation such as joint state
 // restriction and never stores a second support beside the plane.
 func (domain *Domain[F, K, V]) Restrict(input Plane[F, K, V], region support.Mask) (Plane[F, K, V], bool) {
-	DbgRestrict.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(region) {
 		return Plane[F, K, V]{}, false
 	}
@@ -164,7 +162,6 @@ type ContributionRegions[K scalar.Key] func(K) (support.Mask, bool)
 // Present(Default), while sparse undefined outside it means Absent.  Raw
 // State operations intentionally do not use this routine.
 func (domain *Domain[F, K, V]) CloseContribution(input Plane[F, K, V], within support.Mask, regions ContributionRegions[K]) (Plane[F, K, V], bool) {
-	DbgCloseContribution.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(within) || regions == nil {
 		return Plane[F, K, V]{}, false
 	}
@@ -221,7 +218,6 @@ func (domain *Domain[F, K, V]) ContributionClosed(input Plane[F, K, V], within s
 // one read-only traversal, avoiding the nested support partitions that this
 // hot phase proof used to allocate.
 func (domain *Domain[F, K, V]) LessOrEqContribution(left, right Plane[F, K, V], regions ContributionRegions[K], scratch *diagram.SoleScratch[K, V]) bool {
-	DbgLessOrEqContribution.Add(1)
 	if !domain.validPlane(left) || !domain.validPlane(right) || regions == nil || scratch == nil {
 		return false
 	}
@@ -276,7 +272,6 @@ func (domain *Domain[F, K, V]) compareContributionCells(left, right Plane[F, K, 
 // region, so callers that summarize a carrier State must use SummaryUnder with
 // the state's sole support mask.
 func (domain *Domain[F, K, V]) Summary(input Plane[F, K, V], key K) (V, bool) {
-	DbgSummary.Add(1)
 	if domain == nil || domain.diagram == nil {
 		var zero V
 		return zero, false
@@ -321,6 +316,63 @@ func (domain *Domain[F, K, V]) SummaryUnder(input Plane[F, K, V], key K, region 
 	return domain.summaryUnderAt(input, factor, key, region)
 }
 
+// JoinUnderKey folds one declared key directly over the immutable FDD and
+// shared support region. It is the read-only counterpart to PartitionKey:
+// Diagram synchronizes the FDD and support BDD without constructing support
+// intersections, while this owner applies the admitted Factor Join. Sparse
+// undefined leaves are skipped and a stored Default remains present.
+//
+// The returned bools are (present, valid). An entirely absent coordinate is
+// therefore (false, true), and cancellation, foreign ownership, or an
+// invalid terminal is (false, false). scratch is caller-owned reusable
+// traversal storage and is never retained by Domain.
+func (domain *Domain[F, K, V]) JoinUnderKey(input Plane[F, K, V], key K, region support.Mask, scratch *diagram.SoleScratch[K, V]) (value V, present, valid bool) {
+	if domain == nil || domain.diagram == nil || scratch == nil || !domain.validPlane(input) || !domain.validSupport(region) {
+		return value, false, false
+	}
+	if support.Empty(region) {
+		return domain.ops.Default, false, true
+	}
+	factor, ok := domain.diagram.SoleFactor()
+	if !ok {
+		return value, false, false
+	}
+	stored, exists, readable := domain.diagram.Get(input.root, factor, key)
+	if !readable {
+		return value, false, false
+	}
+	if !exists {
+		return domain.ops.Default, false, true
+	}
+	completed := domain.diagram.FoldValueUnder(stored, region, scratch, func(id terminal.ID[V]) bool {
+		if id == (terminal.ID[V]{}) {
+			return true
+		}
+		candidate, found := domain.terminals.Value(id)
+		if !found {
+			return false
+		}
+		if !present {
+			value, present = candidate, true
+			return true
+		}
+		joined, joinedOK := domain.ops.Join(value, candidate)
+		if !joinedOK {
+			return false
+		}
+		value = joined
+		return true
+	})
+	if !completed {
+		var zero V
+		return zero, false, false
+	}
+	if !present {
+		return domain.ops.Default, false, true
+	}
+	return value, true, true
+}
+
 // PartitionKey refines region by exactly one typed key and emits its stored
 // terminal value together with whether that terminal is present. A sparse
 // branch carries Default with present=false; a stored Default, if an adjacent
@@ -332,7 +384,6 @@ func (domain *Domain[F, K, V]) SummaryUnder(input Plane[F, K, V], key K, region 
 // performs. It is the read's Boolean cost, and an evaluator reading one key at
 // a time owns exactly one such shell; a caller without one passes nil.
 func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region support.Mask, scratch *support.Work, visit func(value V, present bool, cell support.Mask) bool) bool {
-	DbgPartitionKey.Add(1)
 	if domain == nil || domain.diagram == nil || !domain.validPlane(input) || !domain.validSupport(region) || visit == nil {
 		return false
 	}
@@ -371,7 +422,6 @@ func (domain *Domain[F, K, V]) PartitionKey(input Plane[F, K, V], key K, region 
 // caller owns any coverage map used to combine these cells with authored
 // Target rows.
 func (domain *Domain[F, K, V]) ForEachNonDefault(input Plane[F, K, V], region support.Mask, visit func(key K, value V, cell support.Mask) bool) bool {
-	DbgForEachNonDefault.Add(1)
 	if domain == nil || domain.diagram == nil || !domain.validPlane(input) || !domain.validSupport(region) || visit == nil {
 		return false
 	}
@@ -398,7 +448,6 @@ func (domain *Domain[F, K, V]) ForEachNonDefault(input Plane[F, K, V], region su
 // FDD topology, so outer carrier code can form joint observations without another
 // payload carrier.
 func (domain *Domain[F, K, V]) Partition(input Plane[F, K, V], region support.Mask, visit func(support.Mask) bool) bool {
-	DbgPartition.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(region) || visit == nil {
 		return false
 	}
@@ -582,7 +631,6 @@ func (domain *Domain[F, K, V]) Guards() *guard.Manager { return domain.guards() 
 // Mu existentially discharges atom from each typed column at a validated
 // boundary.  Its caller closes the sole outer support at that same boundary.
 func (domain *Domain[F, K, V]) Mu(input Plane[F, K, V], inputSupport support.Mask, atom guard.Atom) (Plane[F, K, V], bool) {
-	DbgMu.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(inputSupport) {
 		return Plane[F, K, V]{}, false
 	}
@@ -615,7 +663,6 @@ func (domain *Domain[F, K, V]) Mu(input Plane[F, K, V], inputSupport support.Mas
 // target valuation. Thus an off-support FDD branch is never allowed to pollute
 // a forgotten or non-injective target fiber.
 func (domain *Domain[F, K, V]) Reindex(input Plane[F, K, V], source, target support.Mask, relation guard.Reindex) (Plane[F, K, V], bool) {
-	DbgReindex.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(source) || !domain.validSupport(target) || !relation.Valid() || relation.Source().Manager() != domain.guards() || relation.Target().Manager() != domain.guards() {
 		return Plane[F, K, V]{}, false
 	}
@@ -684,7 +731,6 @@ func (domain *Domain[F, K, V]) Reindex(input Plane[F, K, V], source, target supp
 // surface.  The routine masks every output column to that exact surface, so
 // no pre/post-hidden root can survive this publication boundary.
 func (domain *Domain[F, K, V]) ReindexContribution(input Plane[F, K, V], source, target support.Mask, relation guard.Reindex, sourceRegions, targetRegions ContributionRegions[K]) (Plane[F, K, V], bool) {
-	DbgReindexContribution.Add(1)
 	if !domain.validPlane(input) || !domain.validSupport(source) || !domain.validSupport(target) || !relation.Valid() || sourceRegions == nil || targetRegions == nil || relation.Source().Manager() != domain.guards() || relation.Target().Manager() != domain.guards() {
 		return Plane[F, K, V]{}, false
 	}

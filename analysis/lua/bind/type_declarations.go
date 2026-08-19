@@ -3,7 +3,7 @@ package bind
 import (
 	"strings"
 
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -297,7 +297,7 @@ func (b *binder) bindPrimitiveTypeRef(expr *ast.PrimitiveTypeExpr) {
 	if expr == nil {
 		return
 	}
-	if _, builtin := programstatic.PrimitiveKindForName(expr.Name); builtin {
+	if _, builtin := statictypes.PrimitiveKindForName(expr.Name); builtin {
 		return
 	}
 	decl, ok := b.lookupType(expr.Name)

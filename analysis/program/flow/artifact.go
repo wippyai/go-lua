@@ -3,8 +3,8 @@ package flow
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 var errInvalidArtifactComponent = errors.New("program/flow: invalid artifact component")

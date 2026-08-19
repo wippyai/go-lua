@@ -2,6 +2,7 @@ package dispatch_test
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -77,17 +78,21 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		}
 		var heapOK, valueOK, packOK bool
 		artifacts[index] = artifact
-		heapMounts[index], heapOK = heapdomain.NewArtifactMount(artifact, module, programID)
-		valueMounts[index], valueOK = valuedomain.NewArtifactMount(artifact, module, programID)
-		packMounts[index], packOK = packdomain.NewArtifactMount(artifact, module, programID)
+		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+		packMounts[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
-		callMounts[index] = calldomain.MountedArtifact{ModuleKey: module, Artifact: artifact}
+		callMounts[index] = calldomain.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatalf("site fixture artifact mounts %d", index)
 		}
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, heapMounts)
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, valueMounts)
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, valueMounts, structural)
 	types, typesErr := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || typesErr != nil || types == nil {
 		t.Fatalf("site fixture schemas heap=%s value=%s types=%v", heapFailure, valueFailure, typesErr)

@@ -682,6 +682,14 @@ func (work *Work) reindexSupport(mask support.Mask, plan guard.Reindex) (support
 	return support.ReindexWithWork(work.supportWork, mask, plan)
 }
 
+// entailsSupport proves one Boolean support inclusion through this Work's
+// reusable support shell.  It accepts sealed masks and masks from the shell's
+// current candidate transaction, while the carrier checkpoint remains
+// authoritative for the whole read.
+func (work *Work) entailsSupport(premise, conclusion support.Mask) bool {
+	return work != nil && work.live() && work.supportWork != nil && work.supportWork.EntailsWithCheckpoint(work.checkpointFunc(), premise, conclusion)
+}
+
 // SlotWork returns the exact attached typed evaluator for one physical slot.
 // It exposes only the payload-free SlotWork interface; semantic observation
 // resolution remains with the owning Binding.
@@ -710,7 +718,7 @@ func (work *Work) OwnsState(state State) bool {
 func (work *Work) OwnsViewOf(state State, view View) bool {
 	return work.OwnsState(state) && view.state.live() && sameState(state, view.state) &&
 		view.support.Valid() && view.support.Manager() == work.composition.guards &&
-		view.support.Entails(state.support)
+		work.entailsSupport(view.support, state.support)
 }
 
 // OwnsUnit proves a unit belongs to exactly this composition and physical
@@ -1039,7 +1047,7 @@ func (work *Work) EqualUnder(left, right State) bool {
 // LessOrEqUnder compares only the left support after the outer inclusion
 // proof, then invokes this Work's typed operation order checks without Product.
 func (work *Work) LessOrEqUnder(left, right State) bool {
-	if !work.live() || !work.liveFor(left, right) || left.contributionMarked() || right.contributionMarked() || !left.support.Entails(right.support) {
+	if !work.live() || !work.liveFor(left, right) || left.contributionMarked() || right.contributionMarked() || !work.entailsSupport(left.support, right.support) {
 		return false
 	}
 	for index, slot := range work.slots {
@@ -1186,12 +1194,12 @@ func (work *Work) merge3Under(kind MergeKind, left, right State, members []bool,
 	if kind != Join && kind != Widen && kind != Narrow {
 		return State{}, ChangeSet{}, false
 	}
-	if kind == Widen && !left.support.Entails(right.support) {
+	if kind == Widen && !work.entailsSupport(left.support, right.support) {
 		// Widen is monotone in carrier support.  A support-shrinking update is
 		// structural replacement, not a recurrence; callers must use Replace.
 		return State{}, ChangeSet{}, false
 	}
-	if kind == Narrow && !right.support.Entails(left.support) {
+	if kind == Narrow && !work.entailsSupport(right.support, left.support) {
 		return State{}, ChangeSet{}, false
 	}
 	if kind == Join && sameState(left, right) {
@@ -1378,7 +1386,7 @@ func (work *Work) AcceptAuthored(state State, change ChangeHandle, targets []Tar
 	for index, target := range targets {
 		slot, slotOK := target.Slot()
 		region := regions[index]
-		if !slotOK || slot != patch.slot || !work.composition.OwnsTarget(slot, target) || !region.Valid() || region.Manager() != work.composition.guards || support.Empty(region) || !region.Entails(state.support) {
+		if !slotOK || slot != patch.slot || !work.composition.OwnsTarget(slot, target) || !region.Valid() || region.Manager() != work.composition.guards || support.Empty(region) || !work.entailsSupport(region, state.support) {
 			work.Discard(patch)
 			return Patch{}, false
 		}

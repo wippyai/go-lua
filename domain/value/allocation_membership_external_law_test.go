@@ -2,6 +2,7 @@ package value_test
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -72,13 +73,17 @@ func allocationMembershipFixtureFor(t testing.TB, label string) allocationMember
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile allocation membership artifact: %s", failure.Error())
 	}
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !heapMountOK || !valueMountOK {
 		t.Fatal("allocation membership artifact mounts")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount})
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal allocation membership schemas heap=%s value=%s", heapFailure, valueFailure)
 	}

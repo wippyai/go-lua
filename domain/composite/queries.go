@@ -84,8 +84,11 @@ func declareQueries(builder *engine.SchemaBuilder, fragments axisCells) (queryCe
 	if builder == nil {
 		return cells, false
 	}
-	for position, entry := range registry.queries {
-		fragment, ok := entry.Declare(builder, subjects)
+	if len(registry.queryContributors) != len(registry.queries) {
+		return cells, false
+	}
+	for position, contributor := range registry.queryContributors {
+		fragment, ok := contributor.declare(builder, subjects)
 		if !ok {
 			return cells, false
 		}
@@ -108,8 +111,11 @@ func bindQueries(binding *engine.SchemaBinding, fragments queryCells, bound axis
 	if !subjectsOK {
 		return false
 	}
-	for position, entry := range registry.queries {
-		if !entry.Bind(binding, fragments[position], subjects) {
+	if len(registry.queryContributors) != len(registry.queries) {
+		return false
+	}
+	for position, contributor := range registry.queryContributors {
+		if !contributor.bind(binding, fragments[position], subjects) {
 			return false
 		}
 	}
@@ -125,9 +131,12 @@ func queryReceipts(binding *engine.SchemaBinding, fragments queryCells) (queryCe
 	if registry.sealed == nil || !fragments.available(registry.queries) {
 		return nil, false
 	}
+	if len(registry.queryContributors) != len(registry.queries) {
+		return nil, false
+	}
 	cells := newQueryCells(registry.queries)
-	for position, entry := range registry.queries {
-		receipt, ok := entry.Recover(binding, fragments[position])
+	for position, contributor := range registry.queryContributors {
+		receipt, ok := contributor.recover(binding, fragments[position])
 		if !ok {
 			return cells, false
 		}

@@ -90,7 +90,6 @@ func (changes KeyChanges[K]) At(index int) (K, support.Mask, bool) {
 // admitted during the patch cannot become readable through a published root
 // beforehand.
 func Begin[F ~uint64, K scalar.Key, V any](facts *diagram.Diagram[F, K, V], base diagram.Root[F, K, V], within support.Mask, config Config[K, V]) *Patch[F, K, V] {
-	DbgStageBegin.Add(1)
 	if facts == nil || !facts.Valid(base) || !within.Valid() || within.Manager() != facts.Guards() || config.AdmitAt == nil || config.Equal == nil || config.Join == nil || config.LessOrEq == nil {
 		return nil
 	}
@@ -117,7 +116,6 @@ func Begin[F ~uint64, K scalar.Key, V any](facts *diagram.Diagram[F, K, V], base
 // becomes sparse undefined in that region, preserving the declared absent-key
 // law without inventing a terminal for semantic absence.
 func (patch *Patch[F, K, V]) Set(key K, when support.Mask, value V) bool {
-	DbgStageSet.Add(1)
 	if !patch.open() || !patch.validKey(key) || !patch.admits(key, value) || !when.Valid() || when.Manager() != patch.diagram.Guards() || !when.Entails(patch.within) {
 		return false
 	}
@@ -149,7 +147,6 @@ func (patch *Patch[F, K, V]) Set(key K, when support.Mask, value V) bool {
 // as terminals merely to perform the join: only surviving output values enter
 // this candidate terminal page.
 func (patch *Patch[F, K, V]) WeakJoin(key K, when support.Mask, incoming V) bool {
-	DbgStageWeakJoin.Add(1)
 	if !patch.open() || !patch.validKey(key) || !patch.admits(key, incoming) {
 		return false
 	}
@@ -163,8 +160,6 @@ func (patch *Patch[F, K, V]) WeakJoin(key K, when support.Mask, incoming V) bool
 // candidate root; a failure leaves the publication candidate unchanged.  It
 // is intentionally private staging machinery, not a raw-key engine API.
 func (patch *Patch[F, K, V]) WeakJoinMany(keys []K, when support.Mask, incoming V) bool {
-	DbgStageWeakJoinMany.Add(1)
-	DbgStageWeakJoinManyKeys.Add(int64(len(keys)))
 	if !patch.open() || len(keys) == 0 {
 		return false
 	}
@@ -202,8 +197,6 @@ func (patch *Patch[F, K, V]) WeakJoinMany(keys []K, when support.Mask, incoming 
 // It is intentionally not a general state traversal.  Its key vector is
 // compiled by factbinding from the Rule's finite carried-target closure.
 func (patch *Patch[F, K, V]) Transform(keys []K, when support.Mask, apply func(V) (V, bool)) bool {
-	DbgStageTransform.Add(1)
-	DbgStageTransformKeys.Add(int64(len(keys)))
 	return patch.TransformSortedUnion(keys, nil, when, apply)
 }
 
@@ -288,7 +281,6 @@ func (patch *Patch[F, K, V]) TransformSortedUnion(left, right []K, when support.
 }
 
 func (patch *Patch[F, K, V]) rewrite(key K, when support.Mask, operation diagram.Transform[V]) bool {
-	DbgStageRewrite.Add(1)
 	if !patch.open() || !patch.validKey(key) || !when.Valid() || when.Manager() != patch.diagram.Guards() || !when.Entails(patch.within) {
 		return false
 	}
@@ -373,7 +365,6 @@ func (patch *Patch[F, K, V]) equalTerminal(left, right terminal.ID[V]) bool {
 // typed closure regions in that same Work; failure discards terminal, FDD,
 // and support candidates together. There is no post-seal delta work.
 func (patch *Patch[F, K, V]) Accept(consume func(KeyChanges[K], *support.Work) bool) (root diagram.Root[F, K, V], ok bool) {
-	DbgStageAccept.Add(1)
 	if !patch.open() || consume == nil {
 		return diagram.Root[F, K, V]{}, false
 	}
@@ -417,7 +408,6 @@ func (patch *Patch[F, K, V]) Accept(consume func(KeyChanges[K], *support.Work) b
 
 // Discard revokes the candidate FDD and terminal page exactly once.
 func (patch *Patch[F, K, V]) Discard() bool {
-	DbgStageDiscard.Add(1)
 	if !patch.open() {
 		return false
 	}

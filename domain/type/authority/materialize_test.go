@@ -3,12 +3,12 @@ package typeauthority
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/static"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
 func TestPrimitiveFunctionRetainsEstablishedMeaning(t *testing.T) {
-	got, ok := primitiveKind(uint8(static.PrimitiveFunction))
+	got, ok := primitiveKind(uint8(statictypes.PrimitiveFunction))
 	if !ok {
 		t.Fatal("function primitive was unsupported")
 	}

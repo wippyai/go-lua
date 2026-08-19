@@ -232,6 +232,8 @@ const (
 	RequiresTarget
 	RequiresClaimForm
 	RequiresProofLocation
+	RequiresHandled
+	RequiresMissing
 )
 
 func (requirement Requirement) has(other Requirement) bool { return requirement&other == other }
@@ -247,6 +249,8 @@ const (
 	PlaceholderQuotedSubject
 	PlaceholderTarget
 	PlaceholderClaimForm
+	PlaceholderHandled
+	PlaceholderMissing
 )
 
 func placeholderFor(name string) (Placeholder, bool) {
@@ -259,6 +263,10 @@ func placeholderFor(name string) (Placeholder, bool) {
 		return PlaceholderTarget, true
 	case "claim":
 		return PlaceholderClaimForm, true
+	case "handled":
+		return PlaceholderHandled, true
+	case "missing":
+		return PlaceholderMissing, true
 	default:
 		return PlaceholderInvalid, false
 	}
@@ -273,6 +281,10 @@ func (placeholder Placeholder) Requires() Requirement {
 		return RequiresTarget
 	case PlaceholderClaimForm:
 		return RequiresClaimForm
+	case PlaceholderHandled:
+		return RequiresHandled
+	case PlaceholderMissing:
+		return RequiresMissing
 	default:
 		return RequiresInvalid
 	}

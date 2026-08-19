@@ -2,6 +2,7 @@ package publication_test
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -98,15 +99,19 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if err != nil || statics == nil {
 		t.Fatalf("seal direct allocation static: %v", err)
 	}
-	packMount, packMountOK := packdomain.NewArtifactMount(artifact, module, programID)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
+	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !packMountOK || !heapMountOK || !valueMountOK {
 		t.Fatal("direct allocation artifact mounts")
 	}
 	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{packMount})
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount})
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
 	if !packsOK || packs == nil || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || values == nil {
 		t.Fatalf("seal direct allocation schemas pack=%t heap=%s value=%s", packsOK, heapFailure, valueFailure)
 	}

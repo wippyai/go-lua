@@ -42,7 +42,7 @@ type sourceOrderScratch struct {
 func newSourceOrderScratch(counts [keyspace.FamilyCount]uint32) sourceOrderScratch {
 	var scratch sourceOrderScratch
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if sourceDirectFamily(family) {
+		if AdmitsDirectBodyFamily(family) {
 			scratch.direct[family] = newSourceTermBits(counts[family])
 		}
 	}
@@ -101,7 +101,7 @@ func walkSourceOrder(reader *framing.Reader, counts [keyspace.FamilyCount]uint32
 				return err
 			}
 			family := keyspace.TermFamily(term)
-			if !sourceDirectFamily(family) {
+			if !AdmitsDirectBodyFamily(family) {
 				return framing.ErrMalformed
 			}
 			if scratch == nil {

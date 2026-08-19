@@ -203,7 +203,7 @@ func validArtifactScalarSpec(spec *ArtifactScalarSpec) bool {
 				return false
 			}
 			predecessor, predecessorOK := routes[rule.Route]
-			if !predecessorOK || predecessor.From != rule.Input {
+			if !predecessorOK || predecessor.To != rule.Input {
 				return false
 			}
 		}

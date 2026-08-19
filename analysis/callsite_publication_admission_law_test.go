@@ -131,7 +131,7 @@ func publicationTransitionPlanSource(t testing.TB, callback, published, reverseE
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.binding == nil {
 		t.Fatalf("compile publication transition fixture=%v diagnostics=%+v", status, diagnostics)
 	}
-	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.graph == nil || plan.state.queryPlan == nil {
+	if runtimeDiagnostic, instantiated := plan.state.instantiateRuntimeTopology(); !instantiated || plan.state.committed.program == nil || len(plan.state.querySites) == 0 {
 		t.Fatalf("publication transition runtime topology=%+v", runtimeDiagnostic)
 	}
 	return plan
@@ -140,14 +140,16 @@ func publicationTransitionPlanSource(t testing.TB, callback, published, reverseE
 func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.artifact == nil || mounted.artifact.RulePlacementCountForKey("effect-selected") == 0 {
+		if !mounted.valid() {
 			continue
 		}
-		row, ok := mounted.artifact.RulePlacementForKeyAt("effect-selected", 0)
-		if !ok || !row.ID().Available() {
-			t.Fatal("selected CallEffect occurrence")
+		for index := 0; index < mounted.snapshot.RulePlacementCount(); index++ {
+			row, ok := mounted.snapshot.RulePlacementAt(index)
+			if !ok || row.Key() != "effect-selected" || !row.OccurrenceID().Available() {
+				continue
+			}
+			return mounted.moduleKey, row.OccurrenceID()
 		}
-		return mounted.moduleKey, row.ID()
 	}
 	t.Fatal("fixture has no selected CallEffect occurrence")
 	return identity.ContentID{}, identity.ContentID{}
@@ -156,15 +158,27 @@ func selectedCallEffectOccurrence(t testing.TB, plan *Plan) (identity.ContentID,
 func selectedCallEffectOccurrences(t testing.TB, plan *Plan) (identity.ContentID, identity.ContentID, identity.ContentID) {
 	t.Helper()
 	for _, mounted := range plan.state.artifacts.mounts {
-		if mounted.artifact == nil || mounted.artifact.RulePlacementCountForKey("effect-selected") < 2 {
+		if !mounted.valid() {
 			continue
 		}
-		first, firstOK := mounted.artifact.RulePlacementForKeyAt("effect-selected", 0)
-		second, secondOK := mounted.artifact.RulePlacementForKeyAt("effect-selected", 1)
-		if !firstOK || !secondOK || !mounted.moduleKey.Available() || !first.ID().Available() || !second.ID().Available() || first.ID() == second.ID() {
-			t.Fatal("distinct selected CallEffect occurrences")
+		var first, second identity.ContentID
+		for index := 0; index < mounted.snapshot.RulePlacementCount(); index++ {
+			row, ok := mounted.snapshot.RulePlacementAt(index)
+			if !ok || row.Key() != "effect-selected" || !row.OccurrenceID().Available() {
+				continue
+			}
+			if !first.Available() {
+				first = row.OccurrenceID()
+				continue
+			}
+			if row.OccurrenceID() != first {
+				second = row.OccurrenceID()
+				break
+			}
 		}
-		return mounted.moduleKey, first.ID(), second.ID()
+		if mounted.moduleKey.Available() && first.Available() && second.Available() {
+			return mounted.moduleKey, first, second
+		}
 	}
 	t.Fatal("fixture has fewer than two selected CallEffect occurrences")
 	return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
@@ -178,10 +192,14 @@ func publicationTransitionCompilation(t testing.TB, plan *Plan) (*engine.Program
 
 func publicationTransitionCompilationFor(t testing.TB, plan *Plan, mount, occurrence identity.ContentID) *engine.ProgramConstruction {
 	t.Helper()
-	binding, graph := plan.state.binding, plan.state.graph
-	compilation, compiled := engine.BeginProgramConstruction(binding.SchemaBinding(), graph)
-	_, _, _, witnessOK := linkBootstrapWitness(plan.state, binding)
-	if !compiled || !witnessOK || !attachLinkBootstrapMembers(binding, compilation) || !attachArtifactRuleMembers(binding, compilation, plan.state.artifacts.mounts) || !plan.state.queryPlan.Attach(compilation, graph, binding) {
+	binding := plan.state.binding
+	compilation, compiled := plan.state.beginRuntimeConstruction()
+	_, witnessOK := linkBootstrapWitness(plan.state, binding)
+	sealed, sealedOK := linkArtifactRows(plan.state.artifacts.mounts)
+	if !compiled || !witnessOK || !sealedOK || binding.Rules() == nil || !binding.Rules().AttachLinkMembers(compilation) || !binding.Rules().AttachMountedMembers(compilation, sealed) {
+		t.Fatal("publication transition receipt compilation")
+	}
+	if _, attached := binding.AttachQueries(compilation, plan.state.querySites); !attached {
 		t.Fatal("publication transition receipt compilation")
 	}
 	return compilation

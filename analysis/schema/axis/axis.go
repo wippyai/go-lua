@@ -34,14 +34,13 @@
 package axis
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -231,18 +230,34 @@ func (algebra Algebra[V]) Available() bool {
 	return algebra.Widen.Available() && (algebra.Narrow.Available() || algebra.Narrow.Absent())
 }
 
-// Adopt projects one engine factor algebra onto the axis surface. It is the
-// single conversion between the carrier-typed hot spec an owner binds and the
-// ordinal-keyed view an axis entry publishes, so the two cannot drift and the
-// owner's carrier coordinate never needs a name outside its own package.
-func Adopt[K ~uint32 | ~uint64, V any](spec engine.HotFactorSpec[K, V]) (Algebra[V], bool) {
+// CarrierRank is one widening or narrowing measure on the owner's carrier
+// coordinate. Adopt projects it onto the axis ordinal key space.
+type CarrierRank[K ~uint32 | ~uint64, V any] struct {
+	Width int
+	At    func(key K, value V, component int) uint64
+}
+
+// CarrierAlgebra is the owner-typed factor algebra Adopt projects onto
+// Algebra. It is declared here so the axis surface never names an engine type.
+type CarrierAlgebra[K ~uint32 | ~uint64, V any] struct {
+	KeyEnd      uint64
+	Lattice     lattice.Lattice[V]
+	Default     V
+	AdmitAt     func(key K, value V) bool
+	Fingerprint func(value V) uint64
+	Widen       CarrierRank[K, V]
+	Narrow      CarrierRank[K, V]
+}
+
+// Adopt projects one carrier-typed factor algebra onto the axis surface.
+func Adopt[K ~uint32 | ~uint64, V any](spec CarrierAlgebra[K, V]) (Algebra[V], bool) {
 	algebra := Algebra[V]{
 		KeyEnd:      spec.KeyEnd,
 		Lattice:     spec.Lattice,
 		Default:     spec.Default,
 		Fingerprint: spec.Fingerprint,
-		Widen:       adoptRank(spec.WidenRank, spec.KeyEnd),
-		Narrow:      adoptRank(spec.NarrowRank, spec.KeyEnd),
+		Widen:       adoptRank(spec.Widen, spec.KeyEnd),
+		Narrow:      adoptRank(spec.Narrow, spec.KeyEnd),
 	}
 	if spec.AdmitAt != nil {
 		admit := spec.AdmitAt
@@ -255,7 +270,7 @@ func Adopt[K ~uint32 | ~uint64, V any](spec engine.HotFactorSpec[K, V]) (Algebra
 	return algebra, algebra.Available()
 }
 
-func adoptRank[K ~uint32 | ~uint64, V any](measure engine.Measure[K, V], keyEnd uint64) Rank[V] {
+func adoptRank[K ~uint32 | ~uint64, V any](measure CarrierRank[K, V], keyEnd uint64) Rank[V] {
 	if measure.At == nil {
 		return Rank[V]{Width: measure.Width}
 	}
@@ -292,23 +307,20 @@ func carrierKey[K ~uint32 | ~uint64](key, keyEnd uint64) (K, bool) {
 // axis never declared resolves nothing, so an identity an axis consumes is an
 // identity it is on record as consuming.
 type Declaration struct {
-	Builder *engine.SchemaBuilder
-	Roles   vocabulary.Roles
+	Roles vocabulary.Roles
 }
 
-// MountedArtifact is one Link mount's neutral view: the immutable compiled
-// artifact together with the Link-local identities that place that artifact at
-// one mount. It is the whole artifact vocabulary the mount phase carries, so a
-// mounting axis builds its own domain mount row from these three terms and no
-// composition-private mount type reaches a domain.
+// MountedArtifact is one Link mount's sealed ingress view plus the Link-local
+// identities that place that snapshot at one mount. Contributors receive no
+// ProgramArtifact.
 type MountedArtifact struct {
-	Artifact  *programartifact.Artifact
+	Snapshot  *ingress.Snapshot
 	ModuleKey identity.ContentID
 	ProgramID identity.ContentID
 }
 
 func (row MountedArtifact) Available() bool {
-	return row.Artifact != nil && row.Artifact.Available() && row.ModuleKey.Available() && row.ProgramID.Available()
+	return row.Snapshot != nil && row.Snapshot.Available() && row.ModuleKey.Available() && row.ProgramID.Available() && row.Snapshot.ProgramID() == row.ProgramID
 }
 
 // Mounting is the Link context an axis's Mount hook receives. Inputs is the
@@ -349,16 +361,14 @@ func NewMount[A, M, R any](hook func(Mounting[A]) (M, R, bool)) MountEntry[A] {
 // axis's Declare hook produced; Inputs is the composition's own Link input
 // record. Axes bind before rules, so no rule authority is reachable here.
 type Binding[A, F any] struct {
-	Binding  *engine.SchemaBinding
 	Fragment F
 	Inputs   A
 }
 
 // Spec is the authored declaration of one axis. A is the composition's Link
-// input record; F, H, and V are this axis's own cold fragment, hot axis, and
-// fact carrier. The owning domain keeps its algebra and its owner; what it
-// hands over here is the wiring and the published algebra view.
-type Spec[A, F, H, V any] struct {
+// input record. The owning domain keeps its algebra, owner, and contributor;
+// what it hands over here is the sealed declaration.
+type Spec[A any] struct {
 	// Key is the axis's authored identity and its diagnostic name, so an axis
 	// has exactly one spelling in the analyzer. It derives the entry identity
 	// a verdict carries.
@@ -391,20 +401,6 @@ type Spec[A, F, H, V any] struct {
 	// artifact view. It is optional: an axis that declares no mount has its
 	// authority supplied to the composition by some other owner.
 	Mount MountEntry[A]
-	// Declare records the axis's cold Schema shape and returns its fragment.
-	//
-	// Declare, Bind, and Algebra are the axis's hot half, and the declared
-	// storage settles whether it exists: a bound axis declares all three, and
-	// an engine-published axis declares none of them. An axis that declares
-	// some of the three states two different things about who fills its column
-	// and is rejected rather than read as either.
-	Declare func(Declaration) (F, bool)
-	// Bind instantiates the axis's typed factor binding and returns the hot
-	// axis. It is the one place the carrier coordinate is instantiated.
-	Bind func(Binding[A, F]) (H, bool)
-	// Algebra publishes the bound axis's algebra on the surface's ordinal key
-	// space. It runs immediately after Bind, against the same authority.
-	Algebra func(H) (Algebra[V], bool)
 }
 
 // Cell is the opaque per-axis payload the table carries between passes. It is
@@ -454,13 +450,11 @@ type Template[A any] struct {
 	semantic schema.Key
 	roles    []schema.Key
 	mount    MountEntry[A]
-	declare  func(Declaration) (Cell, bool)
-	bind     func(*engine.SchemaBinding, A, Cell) (Cell, bool)
 }
 
-// New admits one authored declaration and instantiates its typed hooks. A
-// rejected spec returns false rather than a partially usable template.
-func New[A, F, H, V any](spec Spec[A, F, H, V]) (*Template[A], bool) {
+// New admits one authored declaration. A rejected spec returns false rather
+// than a partially usable template. Contributor wiring is composition-owned.
+func New[A any](spec Spec[A]) (*Template[A], bool) {
 	if !specAdmissible(spec) {
 		return nil, false
 	}
@@ -478,50 +472,10 @@ func New[A, F, H, V any](spec Spec[A, F, H, V]) (*Template[A], bool) {
 		roles:        append([]schema.Key(nil), spec.Roles...),
 		mount:        spec.Mount,
 	}
-	// An engine-published axis has no hot half to instantiate: the pass that
-	// fills its column is not a factor lane, so there is no fragment to record
-	// and no binding to publish an algebra of.
-	if !spec.Storage.Bound() {
-		return template, template.EntryAvailable() && template.metadataComplete() && template.fieldsComplete()
-	}
-	// The hook receives exactly the roles this axis declared. Narrowing here is
-	// what makes the declared role list the whole of what a hook can consume,
-	// so an identity reaching a Declare body is one the table has on record.
-	declared := template.declaredRoles()
-	template.declare = func(context Declaration) (Cell, bool) {
-		roles, rolesOK := context.Roles.Restrict(declared...)
-		if !rolesOK {
-			return Cell{}, false
-		}
-		context.Roles = roles
-		fragment, ok := spec.Declare(context)
-		if !ok {
-			return Cell{}, false
-		}
-		return Cell{value: fragment}, true
-	}
-	// The bind thunk is the axis's typed instantiation: it performs the axis's
-	// own factor binding and publishes the algebra of that exact binding in one
-	// step, so a bound axis without a published algebra cannot exist.
-	template.bind = func(binding *engine.SchemaBinding, inputs A, holder Cell) (Cell, bool) {
-		fragment, fragmentOK := holder.value.(F)
-		if !fragmentOK {
-			return Cell{}, false
-		}
-		bound, ok := spec.Bind(Binding[A, F]{Binding: binding, Fragment: fragment, Inputs: inputs})
-		if !ok {
-			return Cell{}, false
-		}
-		algebra, algebraOK := spec.Algebra(bound)
-		if !algebraOK || !algebra.Available() {
-			return Cell{}, false
-		}
-		return Cell{value: bound, algebra: algebra}, true
-	}
 	return template, template.EntryAvailable() && template.metadataComplete() && template.fieldsComplete()
 }
 
-func specAdmissible[A, F, H, V any](spec Spec[A, F, H, V]) bool {
+func specAdmissible[A any](spec Spec[A]) bool {
 	if !spec.Key.Available() {
 		return false
 	}
@@ -536,11 +490,6 @@ func specAdmissible[A, F, H, V any](spec Spec[A, F, H, V]) bool {
 		if !role.Available() || role == spec.Semantic {
 			return false
 		}
-	}
-	declared := spec.Declare != nil && spec.Bind != nil && spec.Algebra != nil
-	absent := spec.Declare == nil && spec.Bind == nil && spec.Algebra == nil
-	if spec.Storage.Bound() != declared || (!spec.Storage.Bound() && !absent) {
-		return false
 	}
 	for _, dependency := range spec.Dependencies {
 		if !dependency.Available() || dependency == spec.Key {
@@ -742,14 +691,29 @@ func (template *Template[A]) metadataComplete() bool {
 // an engine-published axis declares none of it, because the pass that fills its
 // column is not a factor lane and there is nothing here to instantiate.
 func (template *Template[A]) fieldsComplete() bool {
-	if !template.semantic.Available() {
-		return false
+	return template.semantic.Available()
+}
+
+// DeclaredRoles is the whole role set this axis is declared against: its own
+// identity first, then the roles its contributor resolves.
+func (template *Template[A]) DeclaredRoles() []schema.Key {
+	return template.declaredRoles()
+}
+
+// NewCell holds one typed contributor payload in an opaque cell.
+func NewCell(value any) Cell {
+	if value == nil {
+		return Cell{}
 	}
-	bound := template.declare != nil && template.bind != nil
-	if template.storage.Bound() {
-		return bound
+	return Cell{value: value}
+}
+
+// NewBoundCell holds one bound axis and its published algebra.
+func NewBoundCell(value, algebra any) Cell {
+	if value == nil || algebra == nil {
+		return Cell{}
 	}
-	return template.declare == nil && template.bind == nil
+	return Cell{value: value, algebra: algebra}
 }
 
 // MountDeclared reports whether this axis seals its own Link authority.
@@ -773,27 +737,6 @@ func (template *Template[A]) Mount(inputs A) (Cell, Cell, bool) {
 		return Cell{}, rejection, false
 	}
 	return authority, Cell{}, true
-}
-
-// Declare records this axis's cold shape. An engine-published axis has none,
-// so it rejects the call rather than returning an empty fragment a later pass
-// would read as a declared one: a caller walks the bound axes, which is what
-// the declared storage tells it.
-func (template *Template[A]) Declare(context Declaration) (Cell, bool) {
-	if template == nil || template.declare == nil || context.Builder == nil {
-		return Cell{}, false
-	}
-	holder, ok := template.declare(context)
-	return holder, ok && holder.Available()
-}
-
-// Bind instantiates this axis's factor binding and publishes its algebra.
-func (template *Template[A]) Bind(binding *engine.SchemaBinding, inputs A, fragment Cell) (Cell, bool) {
-	if template == nil || template.bind == nil || binding == nil || !fragment.Available() {
-		return Cell{}, false
-	}
-	holder, ok := template.bind(binding, inputs, fragment)
-	return holder, ok && holder.Available() && holder.AlgebraAvailable()
 }
 
 // surface is the axis contribution to the analyzer declaration root.

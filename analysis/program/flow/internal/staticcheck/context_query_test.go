@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
 // This is the lowered shape of:
@@ -82,8 +84,8 @@ func TestStaticCheckNestedStaticFunctionSelfCaptureValidate(t *testing.T) {
 			}},
 		},
 		static: static.Input{
-			Contracts: static.ContractsInput{Function: []static.FunctionContract{{}, {}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: scopeCell, Operand: outer}}},
+			Contracts: staticcontracts.Input{Function: []staticcontracts.FunctionContract{{}, {}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: scopeCell, Operand: outer}}},
 		},
 	})
 	if !fixture.forest.Static(outer) || !fixture.forest.Static(inner) {

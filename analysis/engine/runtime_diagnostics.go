@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // SolveDiagnosticFlags selects the solve-local aggregate diagnostics. A zero
@@ -20,19 +21,43 @@ const (
 	SolveDiagnosticAll = SolveDiagnosticSchedule | SolveDiagnosticRestart | SolveDiagnosticPublication | SolveDiagnosticFold
 )
 
-// SolveDiagnosticOptions controls one call to Solver.SolveWithDiagnostics.
-// MaxRows bounds the detached restart aggregate; zero selects the default.
-type SolveDiagnosticOptions struct {
-	Flags   SolveDiagnosticFlags
+// SolveDiagnosticPresentation selects which aggregates to record. It is
+// presentation-only: a collection choice never enters Snapshot identity.
+type SolveDiagnosticPresentation struct {
+	Flags SolveDiagnosticFlags
+}
+
+// Valid accepts only the closed collection vocabulary.
+func (presentation SolveDiagnosticPresentation) Valid() bool {
+	return presentation.Flags&^SolveDiagnosticAll == 0
+}
+
+// SolveDiagnosticResources bounds detached collector storage. It is a
+// resource setting: it never enters Snapshot identity.
+type SolveDiagnosticResources struct {
 	MaxRows int
+}
+
+// Valid accepts only an explicit bounded row cap. Zero selects the default
+// once a presentation collection is selected.
+func (resources SolveDiagnosticResources) Valid() bool {
+	return resources.MaxRows >= 0 && resources.MaxRows <= maxSolveDiagnosticMaxRows
+}
+
+// SolveDiagnosticOptions is one SolveWithDiagnostics call's sealed
+// presentation collection and resource bound. Presentation never enters
+// Snapshot identity. A resource bound without a collection is rejected.
+type SolveDiagnosticOptions struct {
+	Presentation SolveDiagnosticPresentation
+	Resources    SolveDiagnosticResources
 }
 
 // Valid accepts only the closed diagnostic vocabulary and explicit bounded
 // resource settings. Invalid options are rejected before solver execution;
 // callers never get silently clamped or reinterpreted diagnostics.
 func (options SolveDiagnosticOptions) Valid() bool {
-	return options.Flags&^SolveDiagnosticAll == 0 && options.MaxRows >= 0 && options.MaxRows <= maxSolveDiagnosticMaxRows &&
-		(options.Flags != 0 || options.MaxRows == 0)
+	return options.Presentation.Valid() && options.Resources.Valid() &&
+		(options.Presentation.Flags != 0 || options.Resources.MaxRows == 0)
 }
 
 // SolveDiagnosticKind identifies the kind of event represented by a row.
@@ -45,29 +70,29 @@ const (
 	SolveDiagnosticKindInterfaceRefresh
 )
 
-// SolveDiagnosticRestartCallSite identifies the executor branch that began a
-// fresh recurrence episode.
-type SolveDiagnosticRestartCallSite uint8
+// solveDiagnosticRestartCallSite identifies the executor branch that began a
+// fresh recurrence episode. It stays inside this package.
+type solveDiagnosticRestartCallSite uint8
 
 const (
-	SolveDiagnosticRestartCandidateInterface SolveDiagnosticRestartCallSite = iota + 1
-	SolveDiagnosticRestartHeadInterface
-	SolveDiagnosticRestartAscentIngress
-	SolveDiagnosticRestartNarrowExact
-	SolveDiagnosticRestartNarrowCurrent
-	SolveDiagnosticRestartPostfixExact
+	solveDiagnosticRestartCandidateInterface solveDiagnosticRestartCallSite = iota + 1
+	solveDiagnosticRestartHeadInterface
+	solveDiagnosticRestartAscentIngress
+	solveDiagnosticRestartNarrowExact
+	solveDiagnosticRestartNarrowCurrent
+	solveDiagnosticRestartPostfixExact
 )
 
-// SolveDiagnosticRestartReason identifies the comparison which required a
+// solveDiagnosticRestartReason identifies the comparison which required a
 // fresh exact episode.
-type SolveDiagnosticRestartReason uint8
+type solveDiagnosticRestartReason uint8
 
 const (
-	SolveDiagnosticRestartCandidateNotOrdered SolveDiagnosticRestartReason = iota + 1
-	SolveDiagnosticRestartInterfaceChanged
-	SolveDiagnosticRestartIngressNotBelowCurrent
-	SolveDiagnosticRestartExactIncomparable
-	SolveDiagnosticRestartExactNotBelowCurrent
+	solveDiagnosticRestartCandidateNotOrdered solveDiagnosticRestartReason = iota + 1
+	solveDiagnosticRestartInterfaceChanged
+	solveDiagnosticRestartIngressNotBelowCurrent
+	solveDiagnosticRestartExactIncomparable
+	solveDiagnosticRestartExactNotBelowCurrent
 )
 
 // solveDiagnosticDirection is the semantic order observed between the
@@ -85,28 +110,29 @@ const (
 	solveDiagnosticDirectionIncomparable
 )
 
-// SolveDiagnosticRegionPhase identifies the recurrence phase in which a
+// solveDiagnosticRegionPhase identifies the recurrence phase in which a
 // restart was requested.
-type SolveDiagnosticRegionPhase uint8
+type solveDiagnosticRegionPhase uint8
 
 const (
-	SolveDiagnosticRegionAscent SolveDiagnosticRegionPhase = iota + 1
-	SolveDiagnosticRegionNarrow
+	solveDiagnosticRegionAscent solveDiagnosticRegionPhase = iota + 1
+	solveDiagnosticRegionNarrow
 )
 
-// SolveDiagnosticRow is one bounded aggregate restart bucket. Rows are keyed
-// by the activation-relation stamp, call site, reason, region, and head, and
-// they publish the attempt count for that bucket. The remaining per-bucket
-// sums are the collector's own accumulation detail and stay unexported. It
-// deliberately retains no runtime or carrier value.
+// SolveDiagnosticRow is one bounded aggregate restart bucket. The public
+// identity is the activation stamp, the event kind, and an opaque site for the
+// executor interior that formed the bucket. Attempt count is the published
+// evidence. Remaining per-bucket sums stay unexported.
 type SolveDiagnosticRow struct {
 	Revision identity.Generation
 	Kind     SolveDiagnosticKind
-	CallSite SolveDiagnosticRestartCallSite
-	Reason   SolveDiagnosticRestartReason
-	Phase    SolveDiagnosticRegionPhase
-	Region   int
-	Head     int
+	Site     identity.ContentID
+
+	callSite solveDiagnosticRestartCallSite
+	reason   solveDiagnosticRestartReason
+	phase    solveDiagnosticRegionPhase
+	region   int
+	head     int
 
 	Attempts  uint64
 	completed uint64
@@ -115,7 +141,6 @@ type SolveDiagnosticRow struct {
 	resetPoints    uint64
 	resetProducers uint64
 
-	faceIngressChanged                uint64
 	externalProducerIngressChanged    uint64
 	backProducerIngressChanged        uint64
 	externalEnvironmentIngressChanged uint64
@@ -142,7 +167,6 @@ type SolveDiagnosticRow struct {
 	interfaceRefreshes           uint64
 	interfaceRefreshCompleted    uint64
 	interfaceRefreshFallbacks    uint64
-	interfaceRefreshChangedFaces uint64
 	interfaceRefreshOldLessEqNew uint64
 	interfaceRefreshNewLessEqOld uint64
 	interfaceRefreshEqual        uint64
@@ -185,7 +209,6 @@ type SolveDiagnostics struct {
 	InterfaceRefreshes           uint64
 	InterfaceRefreshCompleted    uint64
 	InterfaceRefreshFallbacks    uint64
-	InterfaceRefreshChangedFaces uint64
 	InterfaceRefreshOldLessEqNew uint64
 	InterfaceRefreshNewLessEqOld uint64
 	InterfaceRefreshEqual        uint64
@@ -229,7 +252,6 @@ type solveDiagnosticState struct {
 	interfaceRefreshes           uint64
 	interfaceRefreshCompleted    uint64
 	interfaceRefreshFallbacks    uint64
-	interfaceRefreshChangedFaces uint64
 	interfaceRefreshOldLessEqNew uint64
 	interfaceRefreshNewLessEqOld uint64
 	interfaceRefreshEqual        uint64
@@ -248,11 +270,28 @@ type solveDiagnosticState struct {
 type solveDiagnosticRowKey struct {
 	revision identity.Generation
 	kind     SolveDiagnosticKind
-	callSite SolveDiagnosticRestartCallSite
-	reason   SolveDiagnosticRestartReason
-	phase    SolveDiagnosticRegionPhase
+	callSite solveDiagnosticRestartCallSite
+	reason   solveDiagnosticRestartReason
+	phase    solveDiagnosticRegionPhase
 	region   int
 	head     int
+}
+
+const (
+	solveDiagnosticRowSiteDomain  = "engine/solve-diagnostic-row-site"
+	solveDiagnosticRowSiteVersion = 1
+)
+
+func solveDiagnosticRowSite(key solveDiagnosticRowKey) identity.ContentID {
+	return framedContentID(solveDiagnosticRowSiteDomain, solveDiagnosticRowSiteVersion, func(writer *canonical.DigestWriter) bool {
+		return writer.Uint(uint64(key.revision)) == nil &&
+			writer.Uint(uint64(key.kind)) == nil &&
+			writer.Uint(uint64(key.callSite)) == nil &&
+			writer.Uint(uint64(key.reason)) == nil &&
+			writer.Uint(uint64(key.phase)) == nil &&
+			writer.Uint(uint64(key.region+1)) == nil &&
+			writer.Uint(uint64(key.head+1)) == nil
+	})
 }
 
 // solveDiagnosticRowKeyLess is the sole canonical diagnostic row order. It
@@ -283,8 +322,8 @@ func solveDiagnosticRowKeyLess(left, right solveDiagnosticRowKey) bool {
 
 func solveDiagnosticRowKeyOf(row SolveDiagnosticRow) solveDiagnosticRowKey {
 	return solveDiagnosticRowKey{
-		revision: row.Revision, kind: row.Kind, callSite: row.CallSite,
-		reason: row.Reason, phase: row.Phase, region: row.Region, head: row.Head,
+		revision: row.Revision, kind: row.Kind, callSite: row.callSite,
+		reason: row.reason, phase: row.phase, region: row.region, head: row.head,
 	}
 }
 
@@ -296,8 +335,8 @@ func (diagnostics *solveDiagnosticState) admitRow(key solveDiagnosticRowKey) (in
 		return index, true
 	}
 	row := SolveDiagnosticRow{
-		Revision: key.revision, Kind: key.kind, CallSite: key.callSite,
-		Reason: key.reason, Phase: key.phase, Region: key.region, Head: key.head,
+		Revision: key.revision, Kind: key.kind, Site: solveDiagnosticRowSite(key),
+		callSite: key.callSite, reason: key.reason, phase: key.phase, region: key.region, head: key.head,
 	}
 	if len(diagnostics.rows) < diagnostics.maxRows {
 		index := len(diagnostics.rows)
@@ -329,8 +368,7 @@ func (diagnostics *solveDiagnosticState) canonicalLastRow() (int, solveDiagnosti
 type solveDiagnosticInputKind uint8
 
 const (
-	solveDiagnosticInputFace solveDiagnosticInputKind = iota + 1
-	solveDiagnosticInputExternalProducer
+	solveDiagnosticInputExternalProducer solveDiagnosticInputKind = iota + 1
 	solveDiagnosticInputBackProducer
 	solveDiagnosticInputExternalEnvironment
 	solveDiagnosticInputBackEnvironment
@@ -400,7 +438,6 @@ type solveDiagnosticRestartSample struct {
 	resetPoints    uint64
 	resetProducers uint64
 
-	faceIngressChanged                uint64
 	externalProducerIngressChanged    uint64
 	backProducerIngressChanged        uint64
 	externalEnvironmentIngressChanged uint64
@@ -429,11 +466,11 @@ func newSolveDiagnosticState(options SolveDiagnosticOptions) *solveDiagnosticSta
 	if !options.Valid() {
 		return nil
 	}
-	flags := options.Flags & SolveDiagnosticAll
+	flags := options.Presentation.Flags & SolveDiagnosticAll
 	if flags == 0 {
 		return nil
 	}
-	maxRows := options.MaxRows
+	maxRows := options.Resources.MaxRows
 	if maxRows <= 0 {
 		maxRows = defaultSolveDiagnosticMaxRows
 	}
@@ -546,7 +583,6 @@ func (diagnostics *solveDiagnosticState) snapshot() SolveDiagnostics {
 		InterfaceRefreshes:           diagnostics.interfaceRefreshes,
 		InterfaceRefreshCompleted:    diagnostics.interfaceRefreshCompleted,
 		InterfaceRefreshFallbacks:    diagnostics.interfaceRefreshFallbacks,
-		InterfaceRefreshChangedFaces: diagnostics.interfaceRefreshChangedFaces,
 		InterfaceRefreshOldLessEqNew: diagnostics.interfaceRefreshOldLessEqNew,
 		InterfaceRefreshNewLessEqOld: diagnostics.interfaceRefreshNewLessEqOld,
 		InterfaceRefreshEqual:        diagnostics.interfaceRefreshEqual,
@@ -639,11 +675,11 @@ func (diagnostics *solveDiagnosticState) interfaceRefreshRow(epoch *executorEpoc
 		return nil
 	}
 	state := epoch.regions[region]
-	key := solveDiagnosticRowKey{revision: epoch.diagnosticRevision, kind: SolveDiagnosticKindInterfaceRefresh, callSite: SolveDiagnosticRestartHeadInterface, reason: SolveDiagnosticRestartInterfaceChanged, region: region, head: epoch.runtime.regions[region].head}
+	key := solveDiagnosticRowKey{revision: epoch.diagnosticRevision, kind: SolveDiagnosticKindInterfaceRefresh, callSite: solveDiagnosticRestartHeadInterface, reason: solveDiagnosticRestartInterfaceChanged, region: region, head: epoch.runtime.regions[region].head}
 	if state.phase == phaseAscent {
-		key.phase = SolveDiagnosticRegionAscent
+		key.phase = solveDiagnosticRegionAscent
 	} else if state.phase == phaseNarrow {
-		key.phase = SolveDiagnosticRegionNarrow
+		key.phase = solveDiagnosticRegionNarrow
 	}
 	index, retained := diagnostics.admitRow(key)
 	if !retained {
@@ -652,18 +688,16 @@ func (diagnostics *solveDiagnosticState) interfaceRefreshRow(epoch *executorEpoc
 	return &diagnostics.rows[index]
 }
 
-func (diagnostics *solveDiagnosticState) recordInterfaceRefreshBegin(epoch *executorEpoch, region int, changedFaces uint64) {
+func (diagnostics *solveDiagnosticState) recordInterfaceRefreshBegin(epoch *executorEpoch, region int) {
 	if diagnostics == nil || !diagnostics.restartEnabled() {
 		return
 	}
 	diagnostics.interfaceRefreshes++
-	diagnostics.interfaceRefreshChangedFaces += changedFaces
 	row := diagnostics.interfaceRefreshRow(epoch, region)
 	if row == nil {
 		return
 	}
 	row.interfaceRefreshes++
-	row.interfaceRefreshChangedFaces += changedFaces
 }
 
 func interfaceRefreshDirection(work *carrier.Work, old, current carrier.PointRHS) solveDiagnosticDirection {
@@ -772,11 +806,6 @@ func (diagnostics *solveDiagnosticState) rememberRegionInterfaces(epoch *executo
 		return
 	}
 	bound := epoch.runtime.regions[region]
-	for index, point := range bound.faces {
-		if point >= 0 && point < len(epoch.points) && epoch.work.OwnsPointState(epoch.points[point]) {
-			diagnostics.rememberPoint(solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputFace, index: index}, epoch.points[point])
-		}
-	}
 	diagnostics.rememberProducerInterfaces(epoch, region, bound.external, solveDiagnosticInputExternalProducer)
 	diagnostics.rememberProducerInterfaces(epoch, region, bound.back, solveDiagnosticInputBackProducer)
 	diagnostics.rememberEnvironmentInterfaces(epoch, region, bound.environmentBack, solveDiagnosticInputBackEnvironment)
@@ -817,7 +846,7 @@ func (diagnostics *solveDiagnosticState) rememberFactorInterfaces(epoch *executo
 	}
 }
 
-func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, region int, callSite SolveDiagnosticRestartCallSite, reason SolveDiagnosticRestartReason, pendingGroup int, pending carrier.RuleContribution) solveDiagnosticRestartSample {
+func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, region int, callSite solveDiagnosticRestartCallSite, reason solveDiagnosticRestartReason, pendingGroup int, pending carrier.RuleContribution) solveDiagnosticRestartSample {
 	sample := solveDiagnosticRestartSample{
 		key: solveDiagnosticRowKey{
 			revision: epoch.diagnosticRevision,
@@ -839,38 +868,22 @@ func (diagnostics *solveDiagnosticState) beginRestart(epoch *executorEpoch, regi
 	bound, state := epoch.runtime.regions[region], epoch.regions[region]
 	sample.key.head = bound.head
 	if state.phase == phaseAscent {
-		sample.key.phase = SolveDiagnosticRegionAscent
+		sample.key.phase = solveDiagnosticRegionAscent
 	} else if state.phase == phaseNarrow {
-		sample.key.phase = SolveDiagnosticRegionNarrow
+		sample.key.phase = solveDiagnosticRegionNarrow
 	}
 	sample.subtreePoints = uint64(len(bound.points))
 	diagnostics.captureRestartMismatches(epoch, region, bound, state, pendingGroup, pending, &sample)
 	switch callSite {
-	case SolveDiagnosticRestartAscentIngress:
+	case solveDiagnosticRestartAscentIngress:
 		sample.externalOrderFailures = 1
-	case SolveDiagnosticRestartNarrowExact, SolveDiagnosticRestartNarrowCurrent, SolveDiagnosticRestartPostfixExact:
+	case solveDiagnosticRestartNarrowExact, solveDiagnosticRestartNarrowCurrent, solveDiagnosticRestartPostfixExact:
 		sample.backOrderFailures = 1
 	}
 	return sample
 }
 
 func (diagnostics *solveDiagnosticState) captureRestartMismatches(epoch *executorEpoch, region int, bound runtimeRegion, state regionEpoch, pendingGroup int, pending carrier.RuleContribution, sample *solveDiagnosticRestartSample) {
-	version := func(point int) uint64 {
-		if point < 0 || point >= len(epoch.versions) {
-			return 0
-		}
-		return epoch.versions[point]
-	}
-	if len(bound.faces) != len(state.interfaces) {
-		sample.faceIngressChanged++
-		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
-	}
-	for index, point := range bound.faces {
-		if index >= len(state.interfaces) || state.interfaces[index] != version(point) {
-			sample.faceIngressChanged++
-			diagnostics.classifyPoint(epoch, solveDiagnosticInputKey{region: region, kind: solveDiagnosticInputFace, index: index}, point, sample)
-		}
-	}
 	if len(bound.external) != len(state.ingress) {
 		sample.externalProducerIngressChanged++
 		diagnostics.addDirection(solveDiagnosticDirectionUnknown, sample)
@@ -1079,7 +1092,6 @@ func (diagnostics *solveDiagnosticState) finishRestart(sample solveDiagnosticRes
 	row.subtreePoints += sample.subtreePoints
 	row.resetPoints += sample.resetPoints
 	row.resetProducers += sample.resetProducers
-	row.faceIngressChanged += sample.faceIngressChanged
 	row.externalProducerIngressChanged += sample.externalProducerIngressChanged
 	row.backProducerIngressChanged += sample.backProducerIngressChanged
 	row.externalEnvironmentIngressChanged += sample.externalEnvironmentIngressChanged

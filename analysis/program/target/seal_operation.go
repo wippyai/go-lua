@@ -1,8 +1,11 @@
 package target
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
@@ -63,6 +66,10 @@ func freezeOperation(source int, input vocabulary.OperationSpec, semantics schem
 	if err != nil {
 		return operationDraft{}, err
 	}
+	draft.behavior, err = draft.freezeBehavior(input.Behavior)
+	if err != nil {
+		return operationDraft{}, err
+	}
 	draft.suspensions, err = draft.freezeSuspensions(input.Suspensions)
 	if err != nil {
 		return operationDraft{}, err
@@ -108,6 +115,122 @@ func copyFormals(input []vocabulary.TypeFormalSpec) ([]vocabulary.TypeFormalSpec
 		return nil, nil
 	}
 	return append([]vocabulary.TypeFormalSpec(nil), input...), nil
+}
+
+// freezeBehavior copies the provider's neutral behavior declaration into
+// canonical Target-local rows. It resolves authored outcome ordinals after
+// outcome canonicalization and performs no interpretation of the relation
+// identity. A behavior row is an annotation of one fixed result slot; it is
+// not an additional result or value axis.
+func (d *operationDraft) freezeBehavior(input *vocabulary.OperationBehaviorSpec) (behaviorDraft, error) {
+	if input == nil || (len(input.Results) == 0 && len(input.Predicates) == 0) {
+		return behaviorDraft{}, nil
+	}
+	outcomes := make(map[uint32]uint32, len(d.outcomes))
+	for index, outcome := range d.outcomes {
+		outcomes[uint32(outcome.source)] = uint32(index)
+	}
+	resolve := func(outcome, result uint32) (uint32, error) {
+		canonical, ok := outcomes[outcome]
+		if !ok {
+			return 0, fmt.Errorf("behavior outcome %d is outside the operation", outcome)
+		}
+		if uint64(result) >= uint64(len(d.outcomes[canonical].values.types)) {
+			return 0, fmt.Errorf("behavior result %d is not a fixed outcome slot", result)
+		}
+		return canonical, nil
+	}
+	if _, err := vocabulary.CheckedStoredLength("behavior result table", len(input.Results)); err != nil {
+		return behaviorDraft{}, err
+	}
+	if _, err := vocabulary.CheckedStoredLength("behavior predicate table", len(input.Predicates)); err != nil {
+		return behaviorDraft{}, err
+	}
+	draft := behaviorDraft{
+		results:    make([]behaviorResultDraft, len(input.Results)),
+		predicates: make([]behaviorPredicateDraft, len(input.Predicates)),
+	}
+	for index, item := range input.Results {
+		outcome, err := resolve(item.Outcome, item.Result)
+		if err != nil {
+			return behaviorDraft{}, fmt.Errorf("behavior result %d: %w", index, err)
+		}
+		if !item.Relation.Available() {
+			return behaviorDraft{}, fmt.Errorf("behavior result %d has no relation identity", index)
+		}
+		if !validAuthoredInputSource(item.Source, d.valueFormalCount(), d.valuesVars) {
+			return behaviorDraft{}, fmt.Errorf("behavior result %d has an invalid input source", index)
+		}
+		draft.results[index] = behaviorResultDraft{outcome: outcome, result: item.Result, source: item.Source, relation: item.Relation}
+	}
+	for index, item := range input.Predicates {
+		outcome, err := resolve(item.Outcome, item.Result)
+		if err != nil {
+			return behaviorDraft{}, fmt.Errorf("behavior predicate %d: %w", index, err)
+		}
+		if !item.Relation.Available() {
+			return behaviorDraft{}, fmt.Errorf("behavior predicate %d has no relation identity", index)
+		}
+		if !validAuthoredInputSource(item.Subject, d.valueFormalCount(), d.valuesVars) {
+			return behaviorDraft{}, fmt.Errorf("behavior predicate %d has an invalid input subject", index)
+		}
+		draft.predicates[index] = behaviorPredicateDraft{outcome: outcome, result: item.Result, subject: item.Subject, relation: item.Relation}
+	}
+	sort.Slice(draft.results, func(left, right int) bool {
+		return compareBehaviorResult(draft.results[left], draft.results[right]) < 0
+	})
+	for index := 1; index < len(draft.results); index++ {
+		if draft.results[index-1].outcome == draft.results[index].outcome && draft.results[index-1].result == draft.results[index].result {
+			return behaviorDraft{}, errors.New("target: duplicate behavior result row")
+		}
+	}
+	sort.Slice(draft.predicates, func(left, right int) bool {
+		return compareBehaviorPredicate(draft.predicates[left], draft.predicates[right]) < 0
+	})
+	for index := 1; index < len(draft.predicates); index++ {
+		if draft.predicates[index-1].outcome == draft.predicates[index].outcome && draft.predicates[index-1].result == draft.predicates[index].result {
+			return behaviorDraft{}, errors.New("target: duplicate behavior predicate row")
+		}
+	}
+	return draft, nil
+}
+
+func compareBehaviorResult(left, right behaviorResultDraft) int {
+	if left.outcome != right.outcome {
+		if left.outcome < right.outcome {
+			return -1
+		}
+		return 1
+	}
+	if left.result != right.result {
+		if left.result < right.result {
+			return -1
+		}
+		return 1
+	}
+	if order := compareInputSource(left.source, right.source); order != 0 {
+		return order
+	}
+	return bytes.Compare(left.relation[:], right.relation[:])
+}
+
+func compareBehaviorPredicate(left, right behaviorPredicateDraft) int {
+	if left.outcome != right.outcome {
+		if left.outcome < right.outcome {
+			return -1
+		}
+		return 1
+	}
+	if left.result != right.result {
+		if left.result < right.result {
+			return -1
+		}
+		return 1
+	}
+	if order := compareInputSource(left.subject, right.subject); order != 0 {
+		return order
+	}
+	return bytes.Compare(left.relation[:], right.relation[:])
 }
 
 func (d *operationDraft) freezeType(value schematype.Type) (string, error) {

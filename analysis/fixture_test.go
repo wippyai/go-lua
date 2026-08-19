@@ -2,6 +2,8 @@ package analysis
 
 import (
 	"context"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/result"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -90,13 +92,16 @@ func fixtureSourceLink(t testing.TB, contract *target.Contract, name string, tex
 // non-terminating fixture is caught by the bounded runner rather than passing
 // as a cut-off sample.
 func fixtureSolveOptions() engine.SolveDiagnosticOptions {
-	return engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256}
+	return engine.SolveDiagnosticOptions{
+		Presentation: engine.SolveDiagnosticPresentation{Flags: engine.SolveDiagnosticAll},
+		Resources:    engine.SolveDiagnosticResources{MaxRows: 256},
+	}
 }
 
 // fixtureCompile compiles one named fixture and closes its plan when the test
 // completes. It requires CompileComplete: a law that judges compiled state has
 // nothing to state about a plan that was never built.
-func fixtureCompile(t *testing.T, name string) (*Plan, *link.Link, AnalyzeDiagnostics) {
+func fixtureCompile(t *testing.T, name string) (*Plan, *link.Link, anadiag.AnalyzeDiagnostics) {
 	t.Helper()
 	linked := fixtureLink(t, name)
 	plan, status, diagnostics := CompileWithDiagnostics(linked)
@@ -114,7 +119,7 @@ func fixtureCompile(t *testing.T, name string) (*Plan, *link.Link, AnalyzeDiagno
 // fixtureSolve compiles and diagnostically solves one named fixture. It
 // requires AnalyzeComplete, so a law reading the solved Result never reads a
 // partial one.
-func fixtureSolve(t *testing.T, name string) (*Plan, *Result, AnalyzeDiagnostics, *link.Link) {
+func fixtureSolve(t *testing.T, name string) (*Plan, *result.Result, anadiag.AnalyzeDiagnostics, *link.Link) {
 	t.Helper()
 	plan, linked, _ := fixtureCompile(t, name)
 	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), fixtureSolveOptions())

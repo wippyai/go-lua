@@ -1,6 +1,10 @@
 package wire
 
-import "github.com/wippyai/go-lua/domain/type/typ"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/domain/type/typ"
+)
 
 type CapturedInitialReadSpec = CapturedInitialRead
 
@@ -32,6 +36,44 @@ type Operation struct {
 	InputTailType     typ.Type `json:"-"`
 	OutcomeTailTypes  []OutcomeTailType
 	OutcomeAmendments []OutcomeAmendment
+	// Behavior carries provider-owned result and predicate correspondences.
+	// The relation is deliberately a plain wire key: this package is a
+	// portable module boundary and must not import the analyzer's schema
+	// identity package. The Lua-domain target adapter resolves the key against
+	// its structural vocabulary when it projects the operation.
+	Behavior *OperationBehavior `json:"Behavior,omitempty"`
+}
+
+// OperationBehavior is the generic, provider-owned behavior descriptor of an
+// operation. It contains no runtime-kind enum or evaluator; a relation is
+// only a neutral key that the consuming domain resolves at its own boundary.
+// A nil or empty descriptor carries no behavior rows.
+type OperationBehavior struct {
+	Results    []OperationResult
+	Predicates []OperationPredicate
+}
+
+// OperationResult declares that one fixed result slot of an authored outcome
+// classifies an existing operation input. Outcome is the zero-based authored
+// outcome ordinal, Result is the fixed result ordinal, and Source identifies
+// the input being classified. Relation is a provider-owned schema key carried
+// opaquely through the portable manifest.
+type OperationResult struct {
+	Outcome  uint32
+	Result   uint32
+	Source   InputSource
+	Relation string
+}
+
+// OperationPredicate declares the corresponding predicate relation for one
+// fixed result slot. Predicate polarity is intentionally outside this
+// declaration; consumers decide whether the row is used positively or
+// negatively while preserving the same provider-owned correspondence.
+type OperationPredicate struct {
+	Outcome  uint32
+	Result   uint32
+	Subject  InputSource
+	Relation string
 }
 
 type OutcomeTailType struct {
@@ -428,6 +470,19 @@ func CloneOperation(in Operation) Operation {
 		out.OutcomeAmendments[i].ResultAliases = append([]ResultAlias(nil), in.OutcomeAmendments[i].ResultAliases...)
 	}
 	out.Input = cloneValues(in.Input)
+	if in.Behavior != nil {
+		behavior := &OperationBehavior{
+			Results:    append([]OperationResult(nil), in.Behavior.Results...),
+			Predicates: append([]OperationPredicate(nil), in.Behavior.Predicates...),
+		}
+		sort.SliceStable(behavior.Results, func(left, right int) bool {
+			return compareOperationResult(behavior.Results[left], behavior.Results[right]) < 0
+		})
+		sort.SliceStable(behavior.Predicates, func(left, right int) bool {
+			return compareOperationPredicate(behavior.Predicates[left], behavior.Predicates[right]) < 0
+		})
+		out.Behavior = behavior
+	}
 	out.Outcomes = append([]Outcome(nil), in.Outcomes...)
 	for i := range out.Outcomes {
 		out.Outcomes[i].Values = cloneValues(in.Outcomes[i].Values)
@@ -472,6 +527,72 @@ func CloneOperation(in Operation) Operation {
 		out.SubedgeRelation = &value
 	}
 	return out
+}
+
+func compareOperationResult(left, right OperationResult) int {
+	if left.Outcome != right.Outcome {
+		if left.Outcome < right.Outcome {
+			return -1
+		}
+		return 1
+	}
+	if left.Result != right.Result {
+		if left.Result < right.Result {
+			return -1
+		}
+		return 1
+	}
+	if order := compareInputSource(left.Source, right.Source); order != 0 {
+		return order
+	}
+	if left.Relation < right.Relation {
+		return -1
+	}
+	if left.Relation > right.Relation {
+		return 1
+	}
+	return 0
+}
+
+func compareOperationPredicate(left, right OperationPredicate) int {
+	if left.Outcome != right.Outcome {
+		if left.Outcome < right.Outcome {
+			return -1
+		}
+		return 1
+	}
+	if left.Result != right.Result {
+		if left.Result < right.Result {
+			return -1
+		}
+		return 1
+	}
+	if order := compareInputSource(left.Subject, right.Subject); order != 0 {
+		return order
+	}
+	if left.Relation < right.Relation {
+		return -1
+	}
+	if left.Relation > right.Relation {
+		return 1
+	}
+	return 0
+}
+
+func compareInputSource(left, right InputSource) int {
+	if left.Kind != right.Kind {
+		if left.Kind < right.Kind {
+			return -1
+		}
+		return 1
+	}
+	if left.Ordinal < right.Ordinal {
+		return -1
+	}
+	if left.Ordinal > right.Ordinal {
+		return 1
+	}
+	return 0
 }
 
 func cloneValuesList(in []Values) []Values {

@@ -66,10 +66,10 @@ func TestSchemaBindingStoresPerSlotWriteProjector(t *testing.T) {
 		t.Fatal("rule bind")
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !ok || implementation == nil || implementation.receipt.cell == nil || implementation.receipt.cell.impl == nil {
+	if !ok || implementation == nil || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		t.Fatal("implementation")
 	}
-	local, projected := implementation.receipt.cell.impl.projectWrite(struct{}{})
+	local, projected := implementation.binding.cell.impl.projectWrite(struct{}{})
 	if !projected || local != 7 {
 		t.Fatalf("write projector: local=%d ok=%v", local, projected)
 	}
@@ -90,11 +90,11 @@ func TestSchemaBindingReceiptRuleZeroInputExactWrite(t *testing.T) {
 		t.Fatal("receipt rule bind")
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !ok || implementation == nil || !implementation.receipt.valid() {
+	if !ok || implementation == nil || !implementation.binding.valid() {
 		t.Fatal("receipt rule implementation")
 	}
 	state := binding.state
-	proof, ok := newSchemaRuleRuntimeProof(state, state.authority, implementation.receipt.proof.ordinal)
+	proof, ok := newSchemaRuleRuntimeProof(state, state.authority, implementation.binding.proof.ordinal)
 	if !ok || proof == nil || !proof.valid() || proof.outputKind != composition.FactorOutput {
 		t.Fatal("receipt rule proof")
 	}
@@ -154,10 +154,10 @@ func TestSchemaBindingCheckerActivationDerivationCarriesExactProofLaw(t *testing
 		t.Fatal("checker activation binding")
 	}
 	implementation, implementationOK := ActivationRuleImplementationAt(activationBinding, trigger)
-	if !implementationOK || implementation == nil || !implementation.receipt.valid() {
+	if !implementationOK || implementation == nil || !implementation.binding.valid() {
 		t.Fatal("checker activation implementation")
 	}
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	expectedComposition = proof.compositionID()
 	compiledActivation := &compiledActivationRule{proof: proof, schema: activationSchema, receipt: implementation, admission: admission, anchor: anchor}
 
@@ -168,7 +168,7 @@ func TestSchemaBindingCheckerActivationDerivationCarriesExactProofLaw(t *testing
 	carrierSchema, factor, rule, write := zeroWriteRuleSchema(t, 0)
 	carrierBinding, carrierImplementation := sealedSchemaRuleImplementation(t, carrierSchema, factor, rule, write)
 	operand := struct{}{}
-	graph, member := receiptRuleGraph(t, carrierSchema, carrierImplementation.receipt.proof, [32]byte{3})
+	graph, member := receiptRuleGraph(t, carrierSchema, carrierImplementation.binding.proof, [32]byte{3})
 	compilation, compilationOK := beginProgramConstruction(carrierBinding, graph)
 	boundRow, boundOK := attachProgramRuleMember(compilation, carrierImplementation, member, operand)
 	if !compilationOK || compilation == nil || !boundOK || boundRow == nil {
@@ -259,7 +259,7 @@ func sealedSchemaRuleImplementation(t testing.TB, schema *Schema, factor *Factor
 		t.Fatal("sealed receipt Rule")
 	}
 	implementation, ok := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !ok || implementation == nil || !implementation.receipt.valid() {
+	if !ok || implementation == nil || !implementation.binding.valid() {
 		t.Fatal("issued receipt Rule")
 	}
 	return binding, implementation
@@ -269,17 +269,17 @@ func TestSchemaRuleReceiptRejectsMixedCellAndForeignAuthority(t *testing.T) {
 	schema, factor, rule, write := zeroWriteRuleSchema(t, 0)
 	_, first := sealedSchemaRuleImplementation(t, schema, factor, rule, write)
 	_, second := sealedSchemaRuleImplementation(t, schema, factor, rule, write)
-	if first.receipt.state == second.receipt.state || first.receipt.authority == second.receipt.authority {
+	if first.binding.state == second.binding.state || first.binding.authority == second.binding.authority {
 		t.Fatal("distinct Binding authorities collapsed")
 	}
 	mixed := *first
-	mixed.receipt.cell = second.receipt.cell
-	if mixed.receipt.valid() {
+	mixed.binding.cell = second.binding.cell
+	if mixed.binding.valid() {
 		t.Fatal("foreign equal-Schema Rule cell crossed receipt authority")
 	}
 	mixed = *first
-	mixed.receipt.output = second.receipt.output
-	if mixed.receipt.valid() {
+	mixed.binding.output = second.binding.output
+	if mixed.binding.valid() {
 		t.Fatal("foreign equal-Schema output Factor crossed Rule receipt")
 	}
 }
@@ -287,7 +287,7 @@ func TestSchemaRuleReceiptRejectsMixedCellAndForeignAuthority(t *testing.T) {
 func TestSchemaRuleReceiptMemberGeometryIsExactAndStatic(t *testing.T) {
 	schema, factor, rule, write := zeroWriteRuleSchema(t, 0)
 	_, implementation := sealedSchemaRuleImplementation(t, schema, factor, rule, write)
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	valid := schemaRuleMemberGeometryFixture{
 		rule: proof.semantic, family: proof.operandFamily, writes: 1,
 		surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong},
@@ -373,10 +373,10 @@ func TestReceiptCompilerExecutesRuleThroughOneProofAndRejectsForeignBinding(t *t
 		t.Fatal("receipt compiler Rule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	if !implementationOK || implementation == nil || !implementation.receipt.valid() {
+	if !implementationOK || implementation == nil || !implementation.binding.valid() {
 		t.Fatal("receipt compiler Rule implementation")
 	}
-	graph, member := receiptRuleGraph(t, schema, implementation.receipt.proof, operand.content)
+	graph, member := receiptRuleGraph(t, schema, implementation.binding.proof, operand.content)
 	compilation, compiled := beginProgramConstruction(binding, graph)
 	row, rowOK := attachProgramRuleMember(compilation, implementation, member, operand)
 	if !compiled || compilation == nil || !rowOK || row == nil || len(compilation.members) != 1 {
@@ -530,8 +530,8 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
 		Batch: batch,
 		Rules: []equation.RuleInstance{
-			{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-			{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+			{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+			{Schema: readerImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadExact, Local: 1}}}, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 		},
 		Points: []equation.PointSpec{{Site: sourceSite}, {Site: readerSite}},
 		Groups: []equation.Group{
@@ -558,9 +558,9 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 				t.Fatal("exact-read member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case readerImplementation.receipt.proof.semantic:
+			case readerImplementation.binding.proof.semantic:
 				readerMember = member
 			}
 		}
@@ -584,8 +584,8 @@ func TestReceiptCompilerThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t
 	readerBase, readerBaseOK := work.BeginRuleContribution(readerPlan, compilation.carrier.Scope(), []carrier.PointState{sourcePoint}, whole)
 	readerResult := readerRow.execute(work, readerBase, []carrier.State{sourcePoint.State()}, whole)
 	readerContribution, readerFinished := work.FinishRuleContribution(readerBase, []carrier.Patch{readerResult.patch})
-	if !workOK || !wholeOK || !sourceSlotOK || !sourcePlanOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !sourcePoint.Valid() || !readerSlotOK || !readerPlanOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() || readerImplementation.receipt.proof.carries != 1 || transfers != 1 || checks != 1 {
-		t.Fatalf("exact-read/carry Product/evidence/patch work=%t whole=%t source-slot=%t source-plan=%t source-base=%t source-valid=%t source-wrote=%t source-finished=%t source-contribution=%t source-point=%t/%t reader-slot=%t reader-plan=%t reader-base=%t reader-valid=%t reader-wrote=%t reader-finished=%t reader-contribution=%t carries=%d transfers=%d checks=%d boundary=%v", workOK, wholeOK, sourceSlotOK, sourcePlanOK, sourceBaseOK, sourceResult.valid, sourceResult.wrote, sourceFinished, sourceContribution.Valid(), sourcePointOK, sourcePoint.Valid(), readerSlotOK, readerPlanOK, readerBaseOK, readerResult.valid, readerResult.wrote, readerFinished, readerContribution.Valid(), readerImplementation.receipt.proof.carries, transfers, checks, readerResult.boundary)
+	if !workOK || !wholeOK || !sourceSlotOK || !sourcePlanOK || !sourceBaseOK || !sourceResult.valid || !sourceResult.wrote || !sourceFinished || !sourceContribution.Valid() || !sourcePointOK || !sourcePoint.Valid() || !readerSlotOK || !readerPlanOK || !readerBaseOK || !readerResult.valid || !readerResult.wrote || !readerFinished || !readerContribution.Valid() || readerImplementation.binding.proof.carries != 1 || transfers != 1 || checks != 1 {
+		t.Fatalf("exact-read/carry Product/evidence/patch work=%t whole=%t source-slot=%t source-plan=%t source-base=%t source-valid=%t source-wrote=%t source-finished=%t source-contribution=%t source-point=%t/%t reader-slot=%t reader-plan=%t reader-base=%t reader-valid=%t reader-wrote=%t reader-finished=%t reader-contribution=%t carries=%d transfers=%d checks=%d boundary=%v", workOK, wholeOK, sourceSlotOK, sourcePlanOK, sourceBaseOK, sourceResult.valid, sourceResult.wrote, sourceFinished, sourceContribution.Valid(), sourcePointOK, sourcePoint.Valid(), readerSlotOK, readerPlanOK, readerBaseOK, readerResult.valid, readerResult.wrote, readerFinished, readerContribution.Valid(), readerImplementation.binding.proof.carries, transfers, checks, readerResult.boundary)
 	}
 	if _, duplicate := attachProgramRuleMember(compilation, readerImplementation, readerMember, readerOperand); duplicate {
 		t.Fatal("receipt compiler admitted a duplicate exact-read/carry member")
@@ -736,14 +736,14 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 		t.Fatal("summary source batch")
 	}
 	boundary := equation.BoundaryInput(sourceSite, readerSite, compositionKeyOf(coldKey(947_310)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	summarySurface := equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(947_301)), Normalizer: compositionKeyOf(coldKey(947_301))}
+	summarySurface := equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(947_301)), Normalizer: compositionKeyOf(coldKey(947_301))}
 	keys := make([]uint64, summaryWidth)
 	for index := range keys {
 		keys[index] = uint64(index)
 	}
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: readerImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: summarySurface}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+		{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: readerImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: readerOccurrence, Operand: readerOperandRow, Reads: []equation.ResolvedRead{{Index: 0, Surface: summarySurface}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: readerSite}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}, {Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}}}, Summaries: []equation.SummaryMapping{{Surface: summarySurface, Keys: keys}}})
 	if !topologyOK || topology == nil {
 		t.Fatal("summary topology")
@@ -764,9 +764,9 @@ func runSummaryReadThroughProductAndEvidence(t testing.TB, summaryWidth int) {
 				t.Fatal("summary member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case readerImplementation.receipt.proof.semantic:
+			case readerImplementation.binding.proof.semantic:
 				readerMember = member
 			}
 		}
@@ -845,7 +845,7 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	}
 	sourceImplementation, sourceImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, source)
 	carryImplementation, carryImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, carryRule)
-	if !sourceImplementationOK || !carryImplementationOK || carryImplementation.receipt.proof.carries != 1 {
+	if !sourceImplementationOK || !carryImplementationOK || carryImplementation.binding.proof.carries != 1 {
 		t.Fatal("carry receipt implementations")
 	}
 
@@ -866,8 +866,8 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 	}
 	boundary := equation.BoundaryInput(sourceSite, carrySite, compositionKeyOf(coldKey(947_409)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: carryImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.receipt.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
+		{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: sourceImplementation.binding.output.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: carryImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: carryOccurrence, Operand: carryOperandRow, Carries: []equation.ResolvedCarry{{Index: 0}}, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: carryImplementation.binding.output.semantic, Form: equation.SurfaceWriteExact, Local: 2, Mode: equation.TargetModeStrong}}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: carrySite}}, Groups: []equation.Group{
 		{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)},
 		{Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}},
@@ -891,9 +891,9 @@ func TestReceiptCompilerThreadsOneExactCarryThroughProductAndEvidence(t *testing
 				t.Fatal("carry receipt member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case carryImplementation.receipt.proof.semantic:
+			case carryImplementation.binding.proof.semantic:
 				carryMember = member
 			}
 		}
@@ -1011,12 +1011,12 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	if !factorImplementationOK || !sourceImplementationOK || !routeImplementationOK || routeRead.origin == nil || routeRead.origin.kind != composition.ReadSelect {
 		t.Fatal("selected-route implementations")
 	}
-	selectedReceipt := *routeImplementation.receipt.proof.selectedReadAt(1)
+	selectedReceipt := *routeImplementation.binding.proof.selectedReadAt(1)
 	selectedReceipt.dependencyCount++
 	if selectedReceipt.Valid() {
 		t.Fatal("selected receipt accepted wrong dependency cardinality")
 	}
-	routeReceipt := *routeImplementation.receipt.proof.routeWrite
+	routeReceipt := *routeImplementation.binding.proof.routeWrite
 	routeReceipt.read = 0
 	if routeReceipt.Valid() {
 		t.Fatal("route receipt accepted wrong predecessor")
@@ -1039,10 +1039,10 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 	}
 	boundary := equation.BoundaryInput(sourceSite, routeSite, compositionKeyOf(coldKey(947_809)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
 	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{Batch: batch, Rules: []equation.RuleInstance{
-		{Schema: sourceImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
-		{Schema: routeImplementation.receipt.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: routeOccurrence, Operand: routeOperandRow,
-			Reads:  []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadExact, Local: 1}}, {Index: 1, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceReadSelect, Local: 1, Semantic: factorImplementation.receipt.semantic}}},
-			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.receipt.semantic, Form: equation.SurfaceWriteRoute, Local: 1}, Route: 2}}},
+		{Schema: sourceImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: sourceOccurrence, Operand: sourceOperandRow, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}},
+		{Schema: routeImplementation.binding.proof.semantic, OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: routeOccurrence, Operand: routeOperandRow,
+			Reads:  []equation.ResolvedRead{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadExact, Local: 1}}, {Index: 1, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceReadSelect, Local: 1, Semantic: factorImplementation.binding.semantic}}},
+			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: factorImplementation.binding.semantic, Form: equation.SurfaceWriteRoute, Local: 1}, Route: 2}}},
 	}, Points: []equation.PointSpec{{Site: sourceSite}, {Site: routeSite}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}, {Members: []equation.RuleRef{equation.RuleAt(1)}, Output: equation.PointAt(1), Inputs: []equation.Input{boundary}}}})
 	if !topologyOK || topology == nil {
 		t.Fatal("selected-route topology")
@@ -1066,9 +1066,9 @@ func TestReceiptCompilerThreadsSelectedReadRouteThroughProductAndEvidence(t *tes
 				t.Fatal("selected-route member")
 			}
 			switch member.Rule() {
-			case sourceImplementation.receipt.proof.semantic:
+			case sourceImplementation.binding.proof.semantic:
 				sourceMember = member
-			case routeImplementation.receipt.proof.semantic:
+			case routeImplementation.binding.proof.semantic:
 				routeMember = member
 			}
 		}

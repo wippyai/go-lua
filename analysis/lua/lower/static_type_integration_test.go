@@ -6,7 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 // This vertical witness follows the final static and Flow owners only.  Static
@@ -87,7 +88,7 @@ func TestSourceTypesVerticalWitnesses(t *testing.T) {
 			t.Fatalf("ValueClaim target = %v/%v", target, targetOK)
 		}
 		resolution, declaration, root, refOK := p.Static().References().Get(target)
-		if !refOK || resolution != static.TypeRefDeclaration || declaration == 0 || root != 0 {
+		if !refOK || resolution != staticrefs.Declaration || declaration == 0 || root != 0 {
 			t.Fatalf("cast target reference = %v/%v/%v/%v", resolution, declaration, root, refOK)
 		}
 	})
@@ -237,7 +238,7 @@ func TestStaticAliasesPrimitivesAndReferencesUseStaticVocabulary(t *testing.T) {
 	_, nodeTarget, _, _, _ := aliases.Get(node)
 	_, receiverTarget, _, _, _ := aliases.Get(receiver)
 	assertStaticDeclarationRef(t, p, aTarget, b)
-	if primitive, ok := p.Static().Types().Primitives().Get(bTarget); !ok || primitive != static.PrimitiveNumber {
+	if primitive, ok := p.Static().Types().Primitives().Get(bTarget); !ok || primitive != statictypes.PrimitiveNumber {
 		t.Fatalf("B primitive = %v/%v, want number", primitive, ok)
 	}
 	assertStaticDeclarationRef(t, p, cTarget, a)
@@ -246,7 +247,7 @@ func TestStaticAliasesPrimitivesAndReferencesUseStaticVocabulary(t *testing.T) {
 		t.Fatal("missing Optional Node target")
 	}
 	assertStaticDeclarationRef(t, p, inner, c)
-	if primitive, ok := p.Static().Types().Primitives().Get(receiverTarget); !ok || primitive != static.PrimitiveSelf {
+	if primitive, ok := p.Static().Types().Primitives().Get(receiverTarget); !ok || primitive != statictypes.PrimitiveSelf {
 		t.Fatalf("Receiver primitive = %v/%v, want self", primitive, ok)
 	}
 }
@@ -283,7 +284,7 @@ func TestStaticCompositeRowsKeepExactChildren(t *testing.T) {
 	if !innerArrayOK || innerReadonly {
 		t.Fatalf("inner Array = %v/%v readonly=%v", element, innerArrayOK, innerReadonly)
 	}
-	if primitive, ok := p.Static().Types().Primitives().Get(element); !ok || primitive != static.PrimitiveNumber {
+	if primitive, ok := p.Static().Types().Primitives().Get(element); !ok || primitive != statictypes.PrimitiveNumber {
 		t.Fatalf("Nested element = %v/%v", primitive, ok)
 	}
 	_, dictionaryTarget, _, _, _ := aliases.Get(dictionary)
@@ -341,7 +342,7 @@ func TestStaticSignatureRowsKeepParametersAndReturns(t *testing.T) {
 	if !signatureOK || scope == 0 || variadic == 0 || !returnsKnown {
 		t.Fatalf("Signature = scope %v variadic %v known %v ok %v", scope, variadic, returnsKnown, signatureOK)
 	}
-	if primitive, ok := p.Static().Types().Primitives().Get(variadic); !ok || primitive != static.PrimitiveNumber {
+	if primitive, ok := p.Static().Types().Primitives().Get(variadic); !ok || primitive != statictypes.PrimitiveNumber {
 		t.Fatalf("Signature variadic = %v/%v", primitive, ok)
 	}
 	if count, ok := p.Static().Signatures().TypeFunctions().ParameterCount(signature); !ok || count != 1 {

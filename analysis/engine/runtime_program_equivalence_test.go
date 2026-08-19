@@ -171,7 +171,7 @@ func TestProgramRowExecutionMatchesDraftExecution(t *testing.T) {
 	if !implementationOK || implementation == nil {
 		t.Fatal("program row execution implementation")
 	}
-	graph, member := receiptRuleGraph(t, schema, implementation.receipt.proof, operand.content)
+	graph, member := receiptRuleGraph(t, schema, implementation.binding.proof, operand.content)
 	compilation, compiled := beginProgramConstruction(binding, graph)
 	draft, draftOK := attachProgramRuleMember(compilation, implementation, member, operand)
 	if !compiled || compilation == nil || !draftOK || draft == nil {

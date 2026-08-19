@@ -89,6 +89,7 @@ func (value *OutcomeTailType) UnmarshalJSON(data []byte) error {
 // nested Values and OutcomeTailType values own their own codecs.
 func (value Operation) MarshalJSON() ([]byte, error) {
 	type plain Operation
+	value = CloneOperation(value)
 	encoded, err := encodeOptionalType(value.InputTailType)
 	if err != nil {
 		return nil, err
@@ -112,8 +113,9 @@ func (value *Operation) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	*value = Operation(encoded.plain)
-	value.InputTailType = decoded
+	decodedOperation := CloneOperation(Operation(encoded.plain))
+	decodedOperation.InputTailType = decoded
+	*value = decodedOperation
 	return nil
 }
 

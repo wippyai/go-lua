@@ -525,7 +525,7 @@ func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
 	if !work.BeginPointRHSFold(basePoint, baseRHS) || !work.AddPointFoldEnvironment(transported) {
 		t.Fatal("transported fold inputs")
 	}
-	got, ok := work.FinishPointRHSFold()
+	got, _, ok := work.FinishPointRHSFold()
 	if !ok || !work.EqualPointRHS(got, wantRHS) {
 		t.Fatal("RHS adoption differs from complete transported merge")
 	}

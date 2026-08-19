@@ -3,9 +3,75 @@ package target
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"testing"
 )
+
+func TestBehaviorDescriptorProjectsOpaqueResultAndPredicateRows(t *testing.T) {
+	resultRelation := schema.NewEntryID(schema.SurfaceKindStructure, "behavior/runtime-kind/result")
+	predicateRelation := schema.NewEntryID(schema.SurfaceKindStructure, "behavior/runtime-kind/predicate")
+	spec := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"behavior"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{
+			{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed}},
+			{Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: vocabulary.ValuesClosed}},
+		},
+		Behavior: &vocabulary.OperationBehaviorSpec{
+			Results: []vocabulary.OperationResultSpec{{
+				Outcome: 0, Result: 0,
+				Source:   vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0},
+				Relation: resultRelation,
+			}},
+			Predicates: []vocabulary.OperationPredicateSpec{{
+				Outcome: 0, Result: 0,
+				Subject:  vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0},
+				Relation: predicateRelation,
+			}},
+		},
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
+	}
+	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{spec}})
+	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"behavior"}})
+	if !ok {
+		t.Fatal("behavior operation missing")
+	}
+	if contract.BehaviorResultCount(op) != 1 || contract.BehaviorPredicateCount(op) != 1 {
+		t.Fatalf("behavior counts = results:%d predicates:%d", contract.BehaviorResultCount(op), contract.BehaviorPredicateCount(op))
+	}
+	outcome, result, source, relation, ok := contract.BehaviorResultAt(op, 0)
+	if !ok || outcome != 0 || result != 0 || source.Kind != vocabulary.InputSourceValueFormal || source.Ordinal != 0 || relation != resultRelation {
+		t.Fatalf("behavior result = outcome:%d result:%d source:%#v relation:%v ok:%v", outcome, result, source, relation, ok)
+	}
+	predicateOutcome, predicateResult, subject, relation, ok := contract.BehaviorPredicateAt(op, 0)
+	if !ok || predicateOutcome != 0 || predicateResult != 0 || subject.Kind != vocabulary.InputSourceValueFormal || subject.Ordinal != 0 || relation != predicateRelation {
+		t.Fatalf("behavior predicate = outcome:%d result:%d subject:%#v relation:%v ok:%v", predicateOutcome, predicateResult, subject, relation, ok)
+	}
+
+	without := spec
+	without.Behavior = nil
+	withoutContract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{without}})
+	if contract.ContentID() == withoutContract.ContentID() {
+		t.Fatal("behavior descriptor did not participate in contract identity")
+	}
+}
+
+func TestBehaviorDescriptorRejectsUnidentifiedRelation(t *testing.T) {
+	spec := vocabulary.OperationSpec{
+		Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"behavior-invalid"}}},
+		Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{testAny}, Tail: vocabulary.ValuesClosed},
+		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed}}},
+		Behavior: &vocabulary.OperationBehaviorSpec{Results: []vocabulary.OperationResultSpec{{
+			Outcome: 0, Result: 0,
+			Source: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0},
+		}}},
+		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
+	}
+	if _, err := testSeal(&Spec{Operations: []vocabulary.OperationSpec{spec}}); err == nil {
+		t.Fatal("behavior row without a relation identity was accepted")
+	}
+}
 
 func TestModelHandlesRemainDenseAndZeroInvalid(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{builtin("model", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed})}})

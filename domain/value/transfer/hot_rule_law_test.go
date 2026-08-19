@@ -2,6 +2,7 @@ package transfer_test
 
 import (
 	"encoding/binary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -108,13 +109,17 @@ func transferFixture(t testing.TB, name string) *transferFixtureState {
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	heapMount, heapMountOK := heapdomain.NewArtifactMount(artifact, module, programID)
-	valueMount, valueMountOK := valuedomain.NewArtifactMount(artifact, module, programID)
+	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !shardOK || !moduleOK || !programIDOK || !heapMountOK || !valueMountOK {
 		t.Fatal("artifact mount")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount})
+	structural, structuralOK := composite.StructureVocabulary()
+	if !structuralOK {
+		t.Fatal("structure vocabulary")
+	}
+	schema, valueFailure := valuedomain.SealWithFailure(linked, heaps, []valuedomain.ArtifactMount{valueMount}, structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || schema.StorageTransferCount() == 0 {
 		t.Fatalf("schema seal heap=%s value=%s transfers=%d", heapFailure, valueFailure, schema.StorageTransferCount())
 	}

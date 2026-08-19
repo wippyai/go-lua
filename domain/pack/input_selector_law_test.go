@@ -1,6 +1,7 @@
 package pack_test
 
 import (
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"testing"
 
@@ -95,7 +96,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if err != nil || statics == nil {
 		t.Fatalf("seal selector static: %v", err)
 	}
-	mount, mountOK := packdomain.NewArtifactMount(artifact, module, programID)
+	mount, mountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	if !mountOK {
 		t.Fatal("selector Pack mount")
 	}

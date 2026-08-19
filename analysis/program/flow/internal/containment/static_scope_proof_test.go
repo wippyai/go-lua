@@ -8,6 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
 func TestStaticScopeProofCellIntroductionAndSourceOccurrence(t *testing.T) {
@@ -45,12 +50,12 @@ func TestStaticScopeProofCellIntroductionAndSourceOccurrence(t *testing.T) {
 			TypeValues: []authored.TypeValue{{Owner: body}},
 		},
 		static: static.Input{
-			Types: static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}, {Kind: static.PrimitiveString}}},
-			Declarations: static.DeclarationsInput{Alias: []static.TypeAlias{{
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}, {Kind: statictypes.PrimitiveString}}},
+			Declarations: staticdecl.Input{Alias: []staticdecl.TypeAlias{{
 				Owner: body, Target: primitive, Name: 1, NameCoordinate: coordinate,
 			}}},
-			Operands: static.OperandsInput{TypeValue: []static.TypeValueTarget{{Target: typeValuePrimitive}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{
+			Operands: staticoperands.Input{TypeValue: []staticoperands.TypeValueTarget{{Target: typeValuePrimitive}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{
 				{Scope: cell, Operand: typeValue},
 				{Scope: alias, Operand: typeValue},
 			}},
@@ -168,9 +173,9 @@ func TestStaticScopeProofDistinguishesFunctionGenericAndHeader(t *testing.T) {
 			Functions: authored.FunctionsInput{Rows: []authored.Function{{Owner: outer, Body: inner}}},
 		},
 		static: static.Input{
-			Declarations: static.DeclarationsInput{TypeParam: []static.TypeParam{{Owner: function, Name: 1}}},
-			Contracts:    static.ContractsInput{Function: []static.FunctionContract{{TypeParams: []keyspace.Term{generic}}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{
+			Declarations: staticdecl.Input{TypeParam: []staticdecl.TypeParam{{Owner: function, Name: 1}}},
+			Contracts:    staticcontracts.Input{Function: []staticcontracts.FunctionContract{{TypeParams: []keyspace.Term{generic}}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{
 				{Scope: generic, Operand: outerRead},
 				{Scope: function, Operand: innerRead},
 			}},
@@ -217,9 +222,9 @@ func TestStaticScopeProofRejectsForwardingCycle(t *testing.T) {
 			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body}}},
 		},
 		static: static.Input{
-			Types:     static.TypesInput{Primitive: []static.Primitive{{Kind: static.PrimitiveAny}}},
-			Operators: static.OperatorsInput{TypeOf: []static.TypeOf{{Scope: annotation, Operand: nilValue}}},
-			Operands: static.OperandsInput{Annotation: []static.Annotation{{
+			Types:     statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
+			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: annotation, Operand: nilValue}}},
+			Operands: staticoperands.Input{Annotation: []staticoperands.Annotation{{
 				Scope: annotation, Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1), Values: values, Name: 1,
 			}}},
 		},

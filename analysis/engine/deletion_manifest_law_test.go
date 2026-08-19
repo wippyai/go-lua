@@ -15,28 +15,14 @@ import (
 	"testing"
 )
 
-// deletionManifestFiles is the compile/receipt spine: every file listed here is
-// deleted whole at the receipt flash cut. The list is shrink-only. An entry may
-// be removed only once the file is gone from disk; adding an entry is a
-// deliberate edit of this constant.
+// deletionManifestFiles is the compile/receipt spine remaining after the
+// flash cut. The list is shrink-only and is empty once those files are gone.
 //
 // The manifest names files in the engine flat root only; engineSourceFiles
 // skips directories, so a surviving package under analysis/engine is out of
 // scope by construction. analysis/engine/rows is such a package: it holds
-// the ProgramArtifact declaration surface that outlives the cut, and
-// artifact_receipt.go keeps only the lowering that dies with the receipt.
-var deletionManifestFiles = []string{
-	"activation_candidate_issuer.go",
-	"artifact_receipt.go",
-	"receipt_observation.go",
-	"receipt_query_admission.go",
-	"receipt_rule_admission.go",
-	"schema_surface_receipt.go",
-	"semantic_directory.go",
-	"solver_compiler.go",
-	"structural_schedule_certificate.go",
-	"structural_witness.go",
-}
+// the ProgramArtifact declaration surface that outlives the cut.
+var deletionManifestFiles = []string{}
 
 // deletionReplacementFiles carry declarations that the cut replaces rather
 // than deletes outright. The list exists so their deletion is tracked with the
@@ -53,266 +39,7 @@ type pinnedRuntimeCompileEdge struct {
 	note       string
 }
 
-var pinnedRuntimeCompileEdges = []pinnedRuntimeCompileEdge{
-	{
-		from:       "operand_resolver.go",
-		identifier: "ReceiptAssembly",
-		target:     "solver_compiler.go",
-		note:       "the operand resolver installs against the compile-side assembly, owned by the operand resolver migration",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "AddActivationRuleFromDraft",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "AddExactRead",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "AddMountedActivationCandidate",
-		target:     "activation_candidate_issuer.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "AddRead",
-		target:     "receipt_rule_admission.go or solver_compiler.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "AdmitMountedRuleOccurrence",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "BeginMountedActivationRuleAdmission",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "BeginReceiptRuleRow",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "CompleteMountedActivationCandidates",
-		target:     "activation_candidate_issuer.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "QueueMountedRuleFinalizer",
-		target:     "solver_compiler.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "ReceiptAssembly",
-		target:     "solver_compiler.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "ReceiptReadPart",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_activation_admit.go",
-		identifier: "RuleSourceTransaction",
-		target:     "receipt_rule_admission.go",
-		note:       "activation admit still runs through the compile-side assembly, owned by the construction-plane activation admit",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AddAnchoredRouteWrite",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AddCarry",
-		target:     "receipt_rule_admission.go or solver_compiler.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AddRead",
-		target:     "receipt_rule_admission.go or solver_compiler.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AddRuleFromDraft",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AddWrite",
-		target:     "receipt_rule_admission.go or solver_compiler.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AdmitLinkRuleOccurrence",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AdmitMountedRuleOccurrence",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "admitRuleScope",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "AnchoredSelectedReadSurface",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "BeginReceiptRuleRow",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "ReceiptAssembly",
-		target:     "solver_compiler.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "ReceiptCarryPart",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "ReceiptReadPart",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "ReceiptWritePart",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "RuleOccurrenceReceipt",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "RuleSourceTransaction",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "runtime_program_admit.go",
-		identifier: "RuleSurfaceSourceReceipt",
-		target:     "receipt_rule_admission.go",
-		note:       "rule admission still runs through the compile-side transaction, owned by the runtime program admit migration",
-	},
-	{
-		from:       "rule_surface.go",
-		identifier: "mountedSelectedSurfaceAnchor",
-		target:     "solver_compiler.go",
-		note:       "RuleReadSurface.anchor and RuleWriteSurface.anchor carry the assembly-owned anchor",
-	},
-	{
-		from:       "rule_surface.go",
-		identifier: "bindingSummarySurfaceReceipt",
-		target:     "schema_surface_receipt.go",
-		note:       "ruleSummaryMapping.receipt is typed by the compile-side summary surface interface",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "LinkRuleMember",
-		target:     "solver_compiler.go",
-		note:       "link member lookup on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "MountedActivationMember",
-		target:     "solver_compiler.go",
-		note:       "activation member lookup on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "MountedNativeCallStageReceipt",
-		target:     "artifact_receipt.go",
-		note:       "native Call stage lookup on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "MountedRuleMember",
-		target:     "solver_compiler.go",
-		note:       "mounted member lookup on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "Query",
-		target:     "receipt_query_admission.go",
-		note:       "query row lookup on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "ReceiptGraph",
-		target:     "solver_compiler.go",
-		note:       "first construction still opens against the committed graph handle; this single edge carries nine method declarations, because runtime_program_construction.go hangs directProgramGraphValid, directProgramGraphState, directProgramGraphValue, directProgramTopology, directPublishedQueryKeys, directMountedRuleMember, directLinkRuleMember, directMountedActivationMember and directQuery off the dying *ReceiptGraph receiver, and the cut re-homes all nine",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "RuleMember",
-		target:     "artifact_receipt.go or solver_compiler.go",
-		note:       "member lookup by identity on the committed graph handle, owned by the runtime program construction migration",
-	},
-	{
-		from:       "schema_factor_binding.go",
-		identifier: "AddExactRead",
-		target:     "receipt_rule_admission.go",
-		note:       "exact read admission on the compile-side transaction, owned by the schema factor binding migration",
-	},
-	{
-		from:       "schema_factor_binding.go",
-		identifier: "AddExactWrite",
-		target:     "receipt_rule_admission.go",
-		note:       "exact write admission on the compile-side transaction, owned by the schema factor binding migration",
-	},
-	{
-		from:       "schema_factor_binding.go",
-		identifier: "RuleSourceTransaction",
-		target:     "receipt_rule_admission.go",
-		note:       "the factor admission hooks are typed by the compile-side transaction, owned by the schema factor binding migration",
-	},
-	{
-		from:       "runtime_program_construction.go",
-		identifier: "publishedQueryKeys",
-		target:     "solver_compiler.go",
-		note:       "addressed query keys are read off the committed graph handle, owned by the runtime program construction migration",
-	},
-}
+var pinnedRuntimeCompileEdges = []pinnedRuntimeCompileEdge{}
 
 func TestDeletionManifestPinsRuntimeCompileEdges(t *testing.T) {
 	manifest := manifestFileSet(t)
@@ -389,69 +116,7 @@ type pinnedExternalConsumerEdge struct {
 // The domain migration dissolves these edges continuously, so entries go stale
 // as it lands. That is the intended behaviour: whoever lands a migration step
 // deletes the entries it dissolved, and the countdown drops in the same change.
-var pinnedExternalConsumerEdges = []pinnedExternalConsumerEdge{
-	{consumer: "analysis/analyze.go", symbol: "ReceiptGraph", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_diagnostic_plan.go", symbol: "ReceiptGraph", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_diagnostic_plan.go", symbol: "ReceiptObservationAttachFailure", target: "receipt_observation.go"},
-	{consumer: "analysis/artifact_diagnostic_plan.go", symbol: "ReceiptObservationAttachFailureArguments", target: "receipt_observation.go"},
-	{consumer: "analysis/artifact_diagnostic_plan.go", symbol: "ReceiptObservationAttachFailureNone", target: "receipt_observation.go"},
-	{consumer: "analysis/artifact_diagnostic_plan.go", symbol: "ReceiptObservationAttachFailurePoint", target: "receipt_observation.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ArtifactScalarReceipt", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "AssembleMountedArtifactReceipt", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "BindRole", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "LinkBootstrapCatalog", target: "structural_witness.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "LinkBootstrapPoint", target: "structural_witness.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "LinkBootstrapWitness", target: "structural_witness.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "LinkCapability", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "MountedArtifactReceipt", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "MountedCapability", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "MountedQueryBatch", target: "receipt_query_admission.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "NewArtifactScalarBinding", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "NewArtifactScalarReceipt", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "NewLinkBootstrapWitnessByCapability", target: "structural_witness.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "NewMountedArtifactReceipt", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "Phase", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "QueueMountedQueryBatch", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptAssembly", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptAssemblyFailure", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptAssemblyFailureNone", target: "artifact_receipt.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptCommitFailure", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptGraph", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptSealFailure", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReceiptSealFailureArtifactRows", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ReleaseArtifactReceipt", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "ScheduleOrdinal", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "SealFailure", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_plan.go", symbol: "SealSources", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_query_plan.go", symbol: "AddMountedExactQuery", target: "receipt_query_admission.go"},
-	{consumer: "analysis/artifact_query_plan.go", symbol: "AddMountedSummaryQuery", target: "receipt_query_admission.go"},
-	{consumer: "analysis/artifact_query_plan.go", symbol: "MountedQueryBatch", target: "receipt_query_admission.go"},
-	{consumer: "analysis/artifact_query_plan.go", symbol: "Query", target: "receipt_query_admission.go"},
-	{consumer: "analysis/artifact_query_plan.go", symbol: "ReceiptGraph", target: "solver_compiler.go"},
-	{consumer: "analysis/artifact_rule_plan.go", symbol: "ReceiptAssembly", target: "solver_compiler.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "AttachMountedSummaryObservationWithFailure", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "MatchesID", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "ReceiptObservation", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "ReceiptObservationAttachFailure", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "ReceiptObservationAttachFailureArguments", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/branch_value_observation.go", symbol: "ReceiptObservationAttachFailureNone", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/direct_allocation_membership.go", symbol: "AttachMountedSummaryObservationWithFailure", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/direct_allocation_membership.go", symbol: "MatchesID", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/direct_allocation_membership.go", symbol: "ReceiptObservation", target: "receipt_observation.go"},
-	{consumer: "domain/composite/publication/direct_allocation_membership.go", symbol: "ReceiptObservationAttachFailureNone", target: "receipt_observation.go"},
-	{consumer: "domain/effect/callsite/occurrence.go", symbol: "MountedNativeCallStage", target: "artifact_receipt.go"},
-	{consumer: "domain/effect/callsite/occurrence.go", symbol: "MountedNativeCallStageReceipt", target: "artifact_receipt.go"},
-	{consumer: "domain/effect/callsite/occurrence.go", symbol: "Stage", target: "artifact_receipt.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "AttachRuleExactObservation", target: "receipt_observation.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "MatchesID", target: "receipt_observation.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "MountedNativeCallStageReceipt", target: "artifact_receipt.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "ReceiptObservation", target: "receipt_observation.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "RuleMember", target: "artifact_receipt.go or solver_compiler.go"},
-	{consumer: "domain/effect/callsite/publication_transition.go", symbol: "Stage", target: "artifact_receipt.go"},
-	{consumer: "domain/value/owner/hot_owner.go", symbol: "AddSummaryRead", target: "receipt_rule_admission.go"},
-	{consumer: "domain/value/owner/hot_owner.go", symbol: "RuleSourceTransaction", target: "receipt_rule_admission.go"},
-}
-
+var pinnedExternalConsumerEdges = []pinnedExternalConsumerEdge{}
 
 func TestDeletionManifestExternalConsumersOnlyShrink(t *testing.T) {
 	index := manifestDeclarations(t, manifestFileSet(t))
@@ -544,6 +209,410 @@ func TestDomainAndSchemaAdmissionHooksNameNoReceiptConstruction(t *testing.T) {
 	}
 }
 
+// TestEngineProductionNamesNoConstructProgramParallelSeam is the one-constructor
+// floor: engine production names BeginProgramConstruction as the remaining
+// first-construction entry. ConstructProgram, ProgramGraph, and the
+// ReceiptGraph direct* projection that existed only for that unused seam are gone.
+func TestEngineProductionNamesNoConstructProgramParallelSeam(t *testing.T) {
+	forbidden := map[string]struct{}{
+		"ConstructProgram":                  {},
+		"ProgramGraph":                      {},
+		"directProgramGraphValid":           {},
+		"directProgramGraphState":           {},
+		"directProgramGraphValue":           {},
+		"directProgramTopology":             {},
+		"directPublishedQueryKeys":          {},
+		"directMountedRuleMember":           {},
+		"directLinkRuleMember":              {},
+		"directMountedActivationMember":     {},
+		"directQuery":                       {},
+		"NewMountedProgramMember":           {},
+		"NewLinkProgramMember":              {},
+		"NewMountedActivationProgramMember": {},
+		"NewExactProgramQuery":              {},
+		"NewSummaryProgramQuery":            {},
+		"NewSummaryProgramObservation":      {},
+		"NewExactProgramObservation":        {},
+	}
+	visited := 0
+	for _, name := range engineSourceFiles(t) {
+		visited++
+		ast.Inspect(parseEngineFile(t, name), func(node ast.Node) bool {
+			ident, ok := node.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, banned := forbidden[ident.Name]; banned {
+				t.Errorf("%s names unused ConstructProgram parallel-seam identifier %s", name, ident.Name)
+			}
+			return true
+		})
+	}
+	if visited == 0 {
+		t.Fatal("engine production walk visited no files")
+	}
+}
+
+// TestAnalysisQueryAndObservationPlansNameNoReceiptGraph is the post-commit
+// attach floor: query and observation attach read ProgramConstruction only.
+func TestAnalysisQueryAndObservationPlansNameNoReceiptGraph(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	wanted := map[string]struct{}{
+		"domain/composite/query_sites.go": {},
+		"analysis/result/project.go":      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if _, keep := wanted[consumer.path]; !keep {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Errorf("%s lost its engine import", consumer.path)
+			continue
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if reference.identifier == "ReceiptGraph" {
+				t.Errorf("%s names ReceiptGraph", consumer.path)
+			}
+		}
+	}
+	if seen != len(wanted) {
+		t.Fatalf("query/observation plan walk visited %d files", seen)
+	}
+}
+
+// TestArtifactDiagnosticPlanNamesNoReceiptObservation is the observation-attach
+// floor: diagnostic attach reports SolveFailure only.
+func TestArtifactDiagnosticPlanNamesNoReceiptObservation(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	forbidden := map[string]struct{}{
+		"ReceiptObservationAttachFailure":          {},
+		"ReceiptObservationAttachFailureArguments": {},
+		"ReceiptObservationAttachFailureNone":      {},
+		"ReceiptObservationAttachFailurePoint":     {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/result/project.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatal("analysis/result/project.go lost its engine import")
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("analysis/result/project.go names %s", reference.identifier)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("diagnostic plan walk visited %d files", seen)
+	}
+}
+
+// TestPublicationNamesNoReceiptObservation is the publication-attach floor:
+// composite publication retains ProgramObservation and reports SolveFailure.
+func TestPublicationNamesNoReceiptObservation(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	wanted := map[string]struct{}{
+		"domain/composite/publication/branch_value_observation.go":     {},
+		"domain/composite/publication/direct_allocation_membership.go": {},
+	}
+	forbidden := map[string]struct{}{
+		"AttachMountedSummaryObservationWithFailure": {},
+		"MatchesID":                                {},
+		"ReceiptObservation":                       {},
+		"ReceiptObservationAttachFailure":          {},
+		"ReceiptObservationAttachFailureArguments": {},
+		"ReceiptObservationAttachFailureNone":      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if _, keep := wanted[consumer.path]; !keep {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Errorf("%s lost its engine import", consumer.path)
+			continue
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("%s names %s", consumer.path, reference.identifier)
+			}
+		}
+	}
+	if seen != len(wanted) {
+		t.Fatalf("publication walk visited %d files", seen)
+	}
+}
+
+// TestCallsiteNamesNoReceiptObservationOrStage is the callsite-attach floor:
+// occurrence and publication_transition retain ProgramCallStage and
+// ProgramObservation. They name no receipt stage or observation type.
+func TestCallsiteNamesNoReceiptObservationOrStage(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	wanted := map[string]struct{}{
+		"domain/effect/callsite/occurrence.go":             {},
+		"domain/effect/callsite/publication_transition.go": {},
+	}
+	forbidden := map[string]struct{}{
+		"AttachRuleExactObservation": {},
+		"MatchesID":                  {},
+		"MountedNativeCallStage":     {},
+		"ReceiptObservation":         {},
+		"RuleMember":                 {},
+		"Stage":                      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if _, keep := wanted[consumer.path]; !keep {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Errorf("%s lost its engine import", consumer.path)
+			continue
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("%s names %s", consumer.path, reference.identifier)
+			}
+		}
+		ast.Inspect(consumer.file, func(node ast.Node) bool {
+			ident, ok := node.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, banned := forbidden[ident.Name]; banned {
+				t.Errorf("%s names receipt identifier %s", consumer.path, ident.Name)
+			}
+			return true
+		})
+	}
+	if seen != len(wanted) {
+		t.Fatalf("callsite walk visited %d files", seen)
+	}
+}
+
+// TestAnalyzeNamesNoReceiptGraph is the analyze-root floor: Solve opens
+// construction through the assemble-owned handle and does not name ReceiptGraph.
+func TestAnalyzeNamesNoReceiptGraph(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/analyze.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatal("analysis/analyze.go lost its engine import")
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if reference.identifier == "ReceiptGraph" {
+				t.Errorf("analysis/analyze.go names ReceiptGraph")
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("analyze walk visited %d files", seen)
+	}
+}
+
+// TestAnalyzeNamesNoReceiptAttach is the first-construction attach floor:
+// analyze reports ProgramAttachFailure and does not name the receipt factory.
+func TestAnalyzeNamesNoReceiptAttach(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/analyze.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatal("analysis/analyze.go lost its engine import")
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if reference.identifier == "ReceiptCompilationAttachFailure" {
+				t.Errorf("analysis/analyze.go names ReceiptCompilationAttachFailure")
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("analyze attach walk visited %d files", seen)
+	}
+}
+
+// TestArtifactPlanNamesNoMountReceiptTypes is the mount-lowering floor:
+// artifact_plan supplies sealed templates and capabilities; engine mints
+// ArtifactScalarReceipt and MountedArtifactReceipt.
+func TestArtifactPlanNamesNoMountReceiptTypes(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	forbidden := map[string]struct{}{
+		"ArtifactScalarReceipt":          {},
+		"AssembleMountedArtifactReceipt": {},
+		"BindRole":                       {},
+		"MountedArtifactReceipt":         {},
+		"NewArtifactScalarBinding":       {},
+		"NewArtifactScalarReceipt":       {},
+		"NewMountedArtifactReceipt":      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/analyze.go" && consumer.path != "analysis/compile.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatalf("%s lost its engine import", consumer.path)
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("%s names mount receipt type %s", consumer.path, reference.identifier)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("construction walk visited %d files", seen)
+	}
+}
+
+// TestArtifactPlanNamesNoReceiptFailureOrBootstrap is the assemble-report
+// floor: artifact_plan reads ProgramAssembleRefusal and ProgramBootstrap only.
+func TestArtifactPlanNamesNoReceiptFailureOrBootstrap(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	forbidden := map[string]struct{}{
+		"LinkBootstrapCatalog":                {},
+		"LinkBootstrapPoint":                  {},
+		"LinkBootstrapWitness":                {},
+		"NewLinkBootstrapWitnessByCapability": {},
+		"ReceiptAssemblyFailure":              {},
+		"ReceiptAssemblyFailureNone":          {},
+		"ReceiptCommitFailure":                {},
+		"ReceiptSealFailure":                  {},
+		"ReceiptSealFailureArtifactRows":      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/analyze.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatal("analysis/analyze.go lost its engine import")
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("analysis/analyze.go names %s", reference.identifier)
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("assemble walk visited %d files", seen)
+	}
+}
+
+// TestArtifactPlanAndQueryPlanNameNoQueryBatch is the query-admit floor:
+// analysis supplies ProgramQueryAdmission rows; the batch stays in assemble.
+func TestArtifactPlanAndQueryPlanNameNoQueryBatch(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	wanted := map[string]struct{}{
+		"analysis/analyze.go":             {},
+		"domain/composite/query_sites.go": {},
+	}
+	forbidden := map[string]struct{}{
+		"AddMountedExactQuery":   {},
+		"AddMountedSummaryQuery": {},
+		"MountedQueryBatch":      {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if _, keep := wanted[consumer.path]; !keep {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Errorf("%s lost its engine import", consumer.path)
+			continue
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if _, banned := forbidden[reference.identifier]; banned {
+				t.Errorf("%s names %s", consumer.path, reference.identifier)
+			}
+		}
+	}
+	if seen != len(wanted) {
+		t.Fatalf("query-admit walk visited %d files", seen)
+	}
+}
+
+// TestArtifactPlanAndRulePlanNameNoReceiptAssembly is the pre-commit admit
+// floor: analysis and composite supply sealed admission rows; engine holds the
+// assembly.
+func TestArtifactPlanAndRulePlanNameNoReceiptAssembly(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	wanted := map[string]struct{}{
+		"analysis/analyze.go":                {},
+		"domain/composite/rule_admission.go": {},
+	}
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if _, keep := wanted[consumer.path]; !keep {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Errorf("%s lost its engine import", consumer.path)
+			continue
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if reference.identifier == "ReceiptAssembly" {
+				t.Errorf("%s names ReceiptAssembly", consumer.path)
+			}
+		}
+	}
+	if seen != len(wanted) {
+		t.Fatalf("assemble admission walk visited %d files", seen)
+	}
+}
+
+// TestArtifactPlanNamesNoReceiptGraph is the committed-handle floor:
+// artifact_plan opens construction through CommittedProgram only.
+func TestArtifactPlanNamesNoReceiptGraph(t *testing.T) {
+	index := manifestDeclarations(t, manifestFileSet(t))
+	seen := 0
+	for _, consumer := range productionFiles(t) {
+		if consumer.path != "analysis/analyze.go" {
+			continue
+		}
+		seen++
+		alias, imported := engineImportName(consumer.file)
+		if !imported {
+			t.Fatal("analysis/analyze.go lost its engine import")
+		}
+		for _, reference := range consumerReferences(t, consumer, alias, index) {
+			if reference.identifier == "ReceiptGraph" {
+				t.Errorf("analysis/analyze.go names ReceiptGraph")
+			}
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("assemble walk visited %d files", seen)
+	}
+}
+
 // deletionManifestTestFiles is the test-side countdown to the receipt cut:
 // every engine test file that names a declaration the deletion manifest owns,
 // and therefore dies or is rewritten with it. The list is shrink-only, and an
@@ -553,31 +622,7 @@ func TestDomainAndSchemaAdmissionHooksNameNoReceiptConstruction(t *testing.T) {
 // declaration is stale, because its subjects survive the cut. An unlisted file
 // that reaches one is a receipt-coupled test appearing unnoticed, and is either
 // dissolved or listed.
-var deletionManifestTestFiles = []string{
-	"artifact_bootstrap_transport_law_test.go",
-	"artifact_native_call_stage_receipt_law_test.go",
-	"artifact_predecessor_input_law_test.go",
-	"artifact_scalar_builder_law_test.go",
-	"identity_framing_laws_test.go",
-	"operand_resolver_law_test.go",
-	"receipt_assembly_lifecycle_law_test.go",
-	"receipt_exact_observation_law_test.go",
-	"receipt_observation_matches_id_law_test.go",
-	"receipt_semantic_directory_law_test.go",
-	"receipt_solver_fallback_law_test.go",
-	"runtime_executor_law_test.go",
-	"runtime_program_revision_law_test.go",
-	"runtime_program_table_law_test.go",
-	"runtime_region_discharge_law_test.go",
-	"semantic_directory_law_test.go",
-	"snapshot_materialize_law_test.go",
-	"solve_law_test.go",
-	"stable_query_authority_law_test.go",
-	"state_borrow_law_test.go",
-	"structural_schedule_stage_rank_law_test.go",
-	"structural_witness_capability_law_test.go",
-	"value_model_bench_test.go",
-}
+var deletionManifestTestFiles = []string{}
 
 func TestDeletionManifestCoversItsTestSide(t *testing.T) {
 	manifest := manifestFileSet(t)

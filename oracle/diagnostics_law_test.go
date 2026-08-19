@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis"
@@ -24,17 +25,17 @@ func TestPlanDiagnosticsRejectInvalidOptionsAtSetup(t *testing.T) {
 	if status != analysis.CompileComplete || plan == nil {
 		t.Fatal("diagnostic Plan fixture")
 	}
-	result, analyzeStatus, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{MaxRows: 1})
-	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != analysis.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != analysis.AnalyzeDiagnosticReasonInvalidOptions {
+	result, analyzeStatus, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Resources: engine.SolveDiagnosticResources{MaxRows: 1}})
+	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != anadiag.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != anadiag.AnalyzeDiagnosticReasonInvalidOptions {
 		t.Fatalf("invalid diagnostic options = result:%t status:%v phase:%v reason:%v", result != nil, analyzeStatus, diagnostics.Phase, diagnostics.Reason)
 	}
 	result, analyzeStatus, diagnostics = plan.SolveWithDiagnostics(nil, engine.SolveDiagnosticOptions{})
-	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != analysis.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != analysis.AnalyzeDiagnosticReasonInvalidPlan {
+	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != anadiag.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != anadiag.AnalyzeDiagnosticReasonInvalidPlan {
 		t.Fatalf("invalid diagnostic context = result:%t status:%v phase:%v reason:%v", result != nil, analyzeStatus, diagnostics.Phase, diagnostics.Reason)
 	}
 	var zero analysis.Plan
 	result, analyzeStatus, diagnostics = zero.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{})
-	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != analysis.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != analysis.AnalyzeDiagnosticReasonInvalidPlan {
+	if result != nil || analyzeStatus != analysis.AnalyzeInvalid || diagnostics.Phase != anadiag.AnalyzeDiagnosticPhaseSetup || diagnostics.Reason != anadiag.AnalyzeDiagnosticReasonInvalidPlan {
 		t.Fatalf("invalid diagnostic plan = result:%t status:%v phase:%v reason:%v", result != nil, analyzeStatus, diagnostics.Phase, diagnostics.Reason)
 	}
 }

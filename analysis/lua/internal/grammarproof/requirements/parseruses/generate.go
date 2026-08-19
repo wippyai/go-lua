@@ -41,7 +41,7 @@ func render(e Evidence) ([]byte, error) {
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/astcodec\"\n")
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/occurrence\"\n")
 	out.WriteString("\t\"github.com/wippyai/go-lua/analysis/lua/internal/grammarproof/requirements/parserproducts\"\n")
-	out.WriteString(")\n\nfunc init() {\n\tGenerated = Evidence{\n")
+	out.WriteString(")\n\nvar Generated = Evidence{\n")
 	writeQuoted(&out, "\t\t", "ProductsDigest", e.ProductsDigest)
 	writeQuoted(&out, "\t\t", "Digest", e.Digest)
 	renderSlots(&out, e.UseSlots)
@@ -50,7 +50,7 @@ func render(e Evidence) ([]byte, error) {
 	renderMutations(&out, e.MutationUsePaths)
 	renderTails(&out, e.ValuesTails)
 	renderLValues(&out, e.LValuePaths)
-	out.WriteString("\t}\n}\n")
+	out.WriteString("\t}\n")
 	return []byte(out.String()), nil
 }
 

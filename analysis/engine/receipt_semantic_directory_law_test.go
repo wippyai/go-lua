@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
-func issueReceiptAssemblyFixtureRule(t testing.TB, fixture receiptAssemblyRuleFixture) BindingRuleRowReceipt {
+func issueReceiptAssemblyFixtureRule(t testing.TB, fixture receiptAssemblyRuleFixture) bindingRuleRow {
 	t.Helper()
-	builder := fixture.assembly.builder
+	builder := fixture.assembly
 	source, sourceOK := builder.issueRuleSurfaceSource(fixture.sourceSpec())
-	draft, draftOK := fixture.implementation.BeginBindingRuleRow(source)
+	draft, draftOK := fixture.implementation.beginBindingRuleRow(source)
 	write, writeOK := fixture.implementation.WritePart(source, 0)
 	if !sourceOK || !draftOK || !writeOK || !draft.AddWrite(write) {
 		t.Fatal("semantic directory Rule draft")
@@ -25,18 +25,27 @@ func issueReceiptAssemblyFixtureRule(t testing.TB, fixture receiptAssemblyRuleFi
 
 func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testing.T) {
 	fixture := newReceiptAssemblyRuleFixture(t)
-	alias := *fixture.assembly
-	if !alias.SealSources() {
+	if !fixture.assembly.SealSources() {
 		t.Fatal("semantic directory source seal")
 	}
-	fixture.addTopology(t)
-	topology, first, ok := alias.Commit()
-	if !ok || topology == nil || first == nil {
-		t.Fatal("semantic directory commit")
+	row := issueReceiptAssemblyFixtureRule(t, fixture)
+	declaration := topologyDeclaration{
+		binding: fixture.assembly.binding, batch: fixture.assembly.inner.batch,
+		points:  []declaredPointRow{{ID: receiptAssemblySemanticID(1), Site: fixture.site}},
+		members: []declaredMemberRow{{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(2), Row: row.row}},
+	}
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, ok := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !ok || topology == nil || issued == nil {
+		t.Fatalf("semantic directory commit stage=%v step=%v", refusal.Stage(), refusal.Step())
+	}
+	first := CommittedProgramFrom(topology, issued)
+	if first == nil {
+		t.Fatal("semantic directory committed program")
 	}
 	point, pointOK := first.lookupPoint(receiptAssemblySemanticID(1))
 	member, memberOK := first.lookupRuleMember(receiptAssemblySemanticID(2))
-	if !pointOK || point.graph != first || !first.graph.OwnsPoint(point.point) || !memberOK || member.graph != first || !first.graph.OwnsMember(member.member) {
+	if !pointOK || !first.graph.OwnsPoint(point) || !memberOK || member.graph != first.graph || member.topology != first.topology || !first.graph.OwnsMember(member.member) {
 		t.Fatal("semantic directory exact first-revision receipts")
 	}
 	if _, found := first.lookupPoint(receiptAssemblySemanticID(99)); found {
@@ -45,15 +54,15 @@ func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testin
 	if _, found := first.lookupRuleMember(receiptAssemblySemanticID(0)); found {
 		t.Fatal("zero semantic member ID resolved")
 	}
-	second, secondOK := initialReceiptGraph(topology)
+	second, secondOK := initialCommittedProgram(topology)
 	secondPoint, secondPointOK := second.lookupPoint(receiptAssemblySemanticID(1))
 	secondMember, secondMemberOK := second.lookupRuleMember(receiptAssemblySemanticID(2))
-	if !secondOK || second == nil || second == first || !secondPointOK || secondPoint.graph != second || !second.graph.OwnsPoint(secondPoint.point) || !secondMemberOK || secondMember.graph != second || !second.graph.OwnsMember(secondMember.member) {
+	if !secondOK || second == nil || second == first || !secondPointOK || !second.graph.OwnsPoint(secondPoint) || !secondMemberOK || secondMember.graph != second.graph || secondMember.topology != second.topology || !second.graph.OwnsMember(secondMember.member) {
 		t.Fatal("semantic directory exact second-revision receipts")
 	}
 	// The directory is the topology's organ: every revision handle resolves
 	// one ContentID to the same immutable structural row.
-	if secondPoint.point.Key() != point.point.Key() || secondMember.member.Key() != member.member.Key() {
+	if secondPoint.Key() != point.Key() || secondMember.member.Key() != member.member.Key() {
 		t.Fatal("semantic directory resolved one identity to two rows")
 	}
 	pointLocator, pointLocatorOK := topology.directory.point(receiptAssemblySemanticID(1))
@@ -62,15 +71,21 @@ func TestReceiptAssemblySemanticDirectoryLookupIsExactAndRevisionOwned(t *testin
 	if !foreign.assembly.SealSources() {
 		t.Fatal("foreign topology source seal")
 	}
-	foreign.addTopology(t)
-	_, foreignGraph, foreignOK := foreign.assembly.Commit()
-	if !pointLocatorOK || !memberLocatorOK || !foreignOK || foreignGraph == nil {
-		t.Fatal("foreign topology commit")
+	foreignRow := issueReceiptAssemblyFixtureRule(t, foreign)
+	foreignDeclaration := topologyDeclaration{
+		binding: foreign.assembly.binding, batch: foreign.assembly.inner.batch,
+		points:  []declaredPointRow{{ID: receiptAssemblySemanticID(1), Site: foreign.site}},
+		members: []declaredMemberRow{{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(2), Row: foreignRow.row}},
 	}
-	if _, crossed := pointLocator.Resolve(foreignGraph.graph); crossed {
+	foreignConstructed, foreignRefusal := constructTopology(foreignDeclaration)
+	foreignIssued, foreignOK := foreignConstructed.graph, !foreignRefusal.Available() && foreignConstructed.Available()
+	if !pointLocatorOK || !memberLocatorOK || !foreignOK || foreignIssued == nil {
+		t.Fatalf("foreign topology commit stage=%v step=%v", foreignRefusal.Stage(), foreignRefusal.Step())
+	}
+	if _, crossed := pointLocator.Resolve(foreignIssued); crossed {
 		t.Fatal("directory Point locator resolved against a foreign topology graph")
 	}
-	if _, crossed := memberLocator.Resolve(foreignGraph.graph); crossed {
+	if _, crossed := memberLocator.Resolve(foreignIssued); crossed {
 		t.Fatal("directory member locator resolved against a foreign topology graph")
 	}
 }
@@ -80,16 +95,16 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if !fixture.assembly.SealSources() {
 		t.Fatal("duplicate semantic source seal")
 	}
-	point, pointOK := fixture.assembly.builder.issuePointRow(equation.PointSpec{Site: fixture.site})
+	point, pointOK := fixture.assembly.issuePointRow(equation.PointSpec{Site: fixture.site})
 	if !pointOK {
 		t.Fatal("duplicate semantic Point receipt")
 	}
 	id := receiptAssemblySemanticID(20)
-	if _, ok := fixture.assembly.builder.addSemanticPoint(id, point); !ok {
+	if _, ok := fixture.assembly.addSemanticPoint(id, point); !ok {
 		t.Fatal("first semantic ID")
 	}
 	row := issueReceiptAssemblyFixtureRule(t, fixture)
-	if _, ok := fixture.assembly.builder.addSemanticRule(id, row); ok {
+	if _, ok := fixture.assembly.addSemanticRule(id, row); ok {
 		t.Fatal("duplicate cross-role semantic ID admitted")
 	}
 	if fixture.assembly.Abort() || fixture.assembly.SealSources() {
@@ -100,11 +115,11 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if !fixture.assembly.SealSources() {
 		t.Fatal("zero semantic source seal")
 	}
-	point, pointOK = fixture.assembly.builder.issuePointRow(equation.PointSpec{Site: fixture.site})
+	point, pointOK = fixture.assembly.issuePointRow(equation.PointSpec{Site: fixture.site})
 	if !pointOK {
 		t.Fatal("zero semantic Point receipt")
 	}
-	if _, ok := fixture.assembly.builder.addSemanticPoint(receiptAssemblySemanticID(0), point); ok {
+	if _, ok := fixture.assembly.addSemanticPoint(receiptAssemblySemanticID(0), point); ok {
 		t.Fatal("zero semantic ID admitted")
 	}
 	if fixture.assembly.Abort() {
@@ -116,11 +131,11 @@ func TestReceiptAssemblySemanticDirectoryDuplicateZeroAndForeignFailTerminally(t
 	if !first.assembly.SealSources() || !second.assembly.SealSources() {
 		t.Fatal("foreign semantic source seal")
 	}
-	foreign, foreignOK := first.assembly.builder.issuePointRow(equation.PointSpec{Site: first.site})
+	foreign, foreignOK := first.assembly.issuePointRow(equation.PointSpec{Site: first.site})
 	if !foreignOK {
 		t.Fatal("foreign semantic Point receipt")
 	}
-	if _, ok := second.assembly.builder.addSemanticPoint(receiptAssemblySemanticID(21), foreign); ok {
+	if _, ok := second.assembly.addSemanticPoint(receiptAssemblySemanticID(21), foreign); ok {
 		t.Fatal("foreign equal-shape Point receipt admitted")
 	}
 	if second.assembly.Abort() || !first.assembly.Abort() {
@@ -135,60 +150,66 @@ func TestReceiptAssemblySemanticQueryDirectoryUsesExactParentReceipt(t *testing.
 		t.Fatal("semantic Query binding")
 	}
 	ruleImplementation, ruleOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	queryImplementation, queryOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	_, queryOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !ruleOK || !queryOK || !assemblyOK {
 		t.Fatal("semantic Query implementations")
 	}
-	site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_100)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.builder.admitAt(site)
+	site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(949_100)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+	occurrence, occurrenceOK := assembly.admitAt(site)
 	operandValue := ruleUnitForSemantic(coldKey(949_101))
 	entity, entityOK := operandEntityForContent(operandValue.content)
-	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+	operand, operandOK := assembly.admitOperand(occurrence, entity)
 	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
 		t.Fatal("semantic Query source")
 	}
-	pointReceipt, pointReceiptOK := assembly.builder.issuePointRow(equation.PointSpec{Site: site})
-	point, pointOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(30), pointReceipt)
-	proof := ruleImplementation.receipt.proof
-	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
+	proof := ruleImplementation.binding.proof
+	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
 		Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand,
 		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
 	})
-	draft, draftOK := ruleImplementation.BeginBindingRuleRow(source)
+	draft, draftOK := ruleImplementation.beginBindingRuleRow(source)
 	writePart, writePartOK := ruleImplementation.WritePart(source, 0)
-	if !pointReceiptOK || !pointOK || !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
+	if !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
 		t.Fatal("semantic Query Rule source")
 	}
-	ruleReceipt, ruleReceiptOK := assembly.builder.issueRuleRow(draft)
-	if _, memberOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(31), ruleReceipt); !ruleReceiptOK || !memberOK {
+	ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
+	if !ruleRowOK {
 		t.Fatal("semantic Query Rule topology")
 	}
-	queryRow := equation.QueryInstance{Family: schema.querySemanticAt(0), Point: point.ref, Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}}}
-	queryReceipt, queryReceiptOK := assembly.builder.issueQueryRow(queryImplementation, queryRow)
-	if !queryReceiptOK {
-		t.Fatal("semantic Query row receipt")
+	queryRow := equation.QueryInstance{Family: schema.querySemanticAt(0), Point: equation.PointAt(0), Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}}}
+	declaration := topologyDeclaration{
+		binding: binding, batch: assembly.inner.batch,
+		points:  []declaredPointRow{{ID: receiptAssemblySemanticID(30), Site: site}},
+		members: []declaredMemberRow{{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(31), Row: ruleRow.row}},
+		queries: []declaredQueryRow{{ID: receiptAssemblySemanticID(32), Row: queryRow}},
 	}
-	if _, ok := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(32), queryReceipt); !ok {
-		t.Fatal("semantic Query registration")
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !committed || issued == nil {
+		t.Fatalf("semantic Query commit stage=%v step=%v", refusal.Stage(), refusal.Step())
 	}
+	// Mutating the caller's row and the declaration's own row after
+	// construction must not reach the sealed geometry: constructTopology
+	// clones the Surfaces slice it publishes.
 	queryRow.Surfaces[0].Local = 99
-	queryReceipt.row.Surfaces[0].Local = 100
-	_, graph, committed := assembly.Commit()
-	if !committed || graph == nil {
-		t.Fatal("semantic Query commit")
+	declaration.queries[0].Row.Surfaces[0].Local = 100
+	graph := CommittedProgramFrom(topology, issued)
+	if graph == nil {
+		t.Fatal("semantic Query committed program")
 	}
-	queryResult, found := graph.lookupQuery(receiptAssemblySemanticID(32))
+	queryResult, found := graph.Query(receiptAssemblySemanticID(32))
 	surfaces := queryResult.identity.Surfaces()
-	if !found || queryResult.graph != graph || !graph.graph.OwnsQuery(queryResult.identity) || queryResult.identity.Family() != schema.querySemanticAt(0) || len(surfaces) != 1 || surfaces[0].Local != 1 {
+	if !found || queryResult.graph != graph.graph || queryResult.topology != graph.topology || !graph.graph.OwnsQuery(queryResult.identity) || queryResult.identity.Family() != schema.querySemanticAt(0) || len(surfaces) != 1 || surfaces[0].Local != 1 {
 		t.Fatal("semantic Query direct lookup")
 	}
 }
 
 type receiptSemanticActivationFixture struct {
-	assembly       *ReceiptAssembly
+	assembly       *BindingTopologyBuilder
 	implementation *ActivationRuleImplementation
-	trigger        BindingRuleRowRef
+	triggerSite    equation.Site
+	triggerReceipt bindingRuleRow
 	materialized   [2]equation.TemplateMaterialization
 }
 
@@ -209,27 +230,24 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 		t.Fatal("semantic Activation binding")
 	}
 	implementation, implementationOK := ActivationRuleImplementationAt(binding, triggerSlot)
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !implementationOK || !assemblyOK {
 		t.Fatal("semantic Activation implementation")
 	}
 	scope := equation.EmptyScope()
-	triggerSite, triggerSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_203)), scope, equation.TrueExpr(), equation.InitPresent)
-	targetSite, targetSiteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(949_204)), scope, equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.builder.admitAt(triggerSite)
+	triggerSite, triggerSiteOK := assembly.admitSite(compositionKeyOf(coldKey(949_203)), scope, equation.TrueExpr(), equation.InitPresent)
+	targetSite, targetSiteOK := assembly.admitSite(compositionKeyOf(coldKey(949_204)), scope, equation.TrueExpr(), equation.InitPresent)
+	occurrence, occurrenceOK := assembly.admitAt(triggerSite)
 	entity, entityOK := operandEntityForContent([32]byte{31})
-	operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+	operand, operandOK := assembly.admitOperand(occurrence, entity)
 	if !triggerSiteOK || !targetSiteOK || !occurrenceOK || !entityOK || !operandOK || !assembly.SealSources() {
 		t.Fatal("semantic Activation source")
 	}
-	pointReceipt, pointReceiptOK := assembly.builder.issuePointRow(equation.PointSpec{Site: triggerSite})
-	_, pointOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(40), pointReceipt)
-	proof := implementation.receipt.proof
-	source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
-	draft, draftOK := implementation.BeginBindingRuleRow(source)
-	ruleReceipt, ruleReceiptOK := assembly.builder.issueRuleRow(draft)
-	trigger, triggerRefOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(41), ruleReceipt)
-	if !pointReceiptOK || !pointOK || !sourceOK || !draftOK || !ruleReceiptOK || !triggerRefOK {
+	proof := implementation.binding.proof
+	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
+	draft, draftOK := implementation.beginBindingRuleRow(source)
+	ruleReceipt, ruleReceiptOK := assembly.issueRuleRow(draft)
+	if !sourceOK || !draftOK || !ruleReceiptOK {
 		t.Fatal("semantic Activation trigger member")
 	}
 
@@ -239,7 +257,7 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 	if !inputOK || !outputOK || !formals.Seal() {
 		t.Fatal("semantic Activation formal ports")
 	}
-	templateBinding, templateBindingOK := equation.SealTemplateBinding(formals, assembly.builder.inner.batch, []equation.FormalPortActual{{Role: input, Site: triggerSite}, {Role: output, Site: targetSite}})
+	templateBinding, templateBindingOK := equation.SealTemplateBinding(formals, assembly.inner.batch, []equation.FormalPortActual{{Role: input, Site: triggerSite}, {Role: output, Site: targetSite}})
 	first, firstOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{input.Site(), output.Site()}, nil)
 	second, secondOK := equation.MaterializeTemplateBoundary(schema.cold, templateBinding, []equation.Site{output.Site(), input.Site()}, nil)
 	shape, shapeOK := schema.cold.RuleShapeAt(proof.ordinal)
@@ -248,61 +266,69 @@ func newReceiptSemanticActivationFixture(t testing.TB) receiptSemanticActivation
 	if !templateBindingOK || !firstOK || !secondOK || !shapeOK || shape.OutputKind != composition.StructuralOutput || !firstOriginOK || !secondOriginOK || first.Key() == second.Key() || first.Batch() == second.Batch() {
 		t.Fatal("semantic Activation materializations")
 	}
-	return receiptSemanticActivationFixture{assembly: assembly, implementation: implementation, trigger: trigger, materialized: [2]equation.TemplateMaterialization{first, second}}
+	return receiptSemanticActivationFixture{assembly: assembly, implementation: implementation, triggerSite: triggerSite, triggerReceipt: ruleReceipt, materialized: [2]equation.TemplateMaterialization{first, second}}
 }
 
 func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *testing.T) {
 	fixture := newReceiptSemanticActivationFixture(t)
 	activationID := receiptAssemblySemanticID(42)
-	if !fixture.assembly.builder.addSemanticActivation(activationID, fixture.trigger) {
-		t.Fatal("semantic Activation member registration")
+	declaration := topologyDeclaration{
+		binding: fixture.assembly.binding, batch: fixture.assembly.inner.batch,
+		points: []declaredPointRow{{ID: receiptAssemblySemanticID(40), Site: fixture.triggerSite}},
+		members: []declaredMemberRow{
+			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(41), ActivationID: activationID, Activation: true, Row: fixture.triggerReceipt.row},
+		},
+		materializations: []equation.TemplateMaterialization{fixture.materialized[0], fixture.materialized[1]},
 	}
-	for _, value := range fixture.materialized {
-		receipt, issued := fixture.assembly.builder.issueMaterialization(value)
-		if !issued || !fixture.assembly.builder.addActivationCandidate(receipt) {
-			t.Fatal("semantic Activation candidate registration")
-		}
+	constructed, refusal := constructTopology(declaration)
+	topology, issuedGraph, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	if !committed || topology == nil || issuedGraph == nil {
+		t.Fatalf("semantic Activation commit stage=%v step=%v", refusal.Stage(), refusal.Step())
 	}
-	topology, graph, committed := fixture.assembly.Commit()
-	if !committed || topology == nil || graph == nil {
-		t.Fatal("semantic Activation commit")
+	graph := CommittedProgramFrom(topology, issuedGraph)
+	if graph == nil {
+		t.Fatal("semantic Activation committed program")
 	}
-	activationGraph, activationGraphOK := activationReceiptGraph(graph)
-	activationMember, activationMemberOK := activationGraph.lookupActivationMember(activationID)
+	activationMember, activationMemberOK := graph.ActivationMember(activationID)
 	ordinaryMember, ordinaryMemberOK := graph.lookupRuleMember(receiptAssemblySemanticID(41))
-	if !activationGraphOK || !activationMemberOK || !ordinaryMemberOK || activationMember.graph != activationGraph || activationMember.member.Key() != ordinaryMember.member.Key() {
+	if !activationMemberOK || !ordinaryMemberOK || activationMember.graph != graph.graph || activationMember.topology != graph.topology || activationMember.member.Key() != ordinaryMember.member.Key() {
 		t.Fatal("semantic Activation stable trigger lookup")
 	}
-	secondGraph, secondGraphOK := initialReceiptGraph(topology)
-	secondActivationGraph, secondActivationGraphOK := activationReceiptGraph(secondGraph)
-	secondActivationMember, secondActivationMemberOK := secondActivationGraph.lookupActivationMember(activationID)
-	if !secondGraphOK || !secondActivationGraphOK || !secondActivationMemberOK || secondGraph == graph || secondActivationMember.graph != secondActivationGraph || secondActivationMember.member.Key() != activationMember.member.Key() {
+	secondGraph, secondGraphOK := initialCommittedProgram(topology)
+	secondActivationMember, secondActivationMemberOK := secondGraph.ActivationMember(activationID)
+	if !secondGraphOK || !secondActivationMemberOK || secondGraph == graph || secondActivationMember.graph != secondGraph.graph || secondActivationMember.topology != secondGraph.topology || secondActivationMember.member.Key() != activationMember.member.Key() {
 		t.Fatal("semantic Activation receipt crossed graph revision")
 	}
 	locator, locatorOK := topology.directory.activation(activationID)
 	foreign := newReceiptSemanticActivationFixture(t)
-	if !foreign.assembly.builder.addSemanticActivation(activationID, foreign.trigger) {
-		t.Fatal("foreign semantic Activation registration")
+	foreignDeclaration := topologyDeclaration{
+		binding: foreign.assembly.binding, batch: foreign.assembly.inner.batch,
+		points: []declaredPointRow{{ID: receiptAssemblySemanticID(40), Site: foreign.triggerSite}},
+		members: []declaredMemberRow{
+			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(41), ActivationID: activationID, Activation: true, Row: foreign.triggerReceipt.row},
+		},
+		materializations: []equation.TemplateMaterialization{foreign.materialized[0], foreign.materialized[1]},
 	}
-	for _, value := range foreign.materialized {
-		receipt, issued := foreign.assembly.builder.issueMaterialization(value)
-		if !issued || !foreign.assembly.builder.addActivationCandidate(receipt) {
-			t.Fatal("foreign semantic Activation candidate")
-		}
-	}
-	_, foreignGraph, foreignCommitted := foreign.assembly.Commit()
+	foreignConstructed, foreignRefusal := constructTopology(foreignDeclaration)
+	foreignGraph, foreignCommitted := foreignConstructed.graph, !foreignRefusal.Available() && foreignConstructed.Available()
 	if !locatorOK || !foreignCommitted || foreignGraph == nil {
-		t.Fatal("foreign semantic Activation commit")
+		t.Fatalf("foreign semantic Activation commit stage=%v step=%v", foreignRefusal.Stage(), foreignRefusal.Step())
 	}
-	if _, crossed := locator.Resolve(foreignGraph.graph); crossed {
+	if _, crossed := locator.Resolve(foreignGraph); crossed {
 		t.Fatal("directory Activation locator resolved against a foreign topology graph")
 	}
 
 	duplicate := newReceiptSemanticActivationFixture(t)
-	if !duplicate.assembly.builder.addSemanticActivation(receiptAssemblySemanticID(42), duplicate.trigger) {
+	duplicatePoint, duplicatePointOK := duplicate.assembly.issuePointRow(equation.PointSpec{Site: duplicate.triggerSite})
+	_, duplicatePointSemanticOK := duplicate.assembly.addSemanticPoint(receiptAssemblySemanticID(40), duplicatePoint)
+	duplicateTrigger, duplicateTriggerOK := duplicate.assembly.addSemanticRule(receiptAssemblySemanticID(41), duplicate.triggerReceipt)
+	if !duplicatePointOK || !duplicatePointSemanticOK || !duplicateTriggerOK {
+		t.Fatal("duplicate semantic Activation trigger member")
+	}
+	if !duplicate.assembly.addSemanticActivation(receiptAssemblySemanticID(42), duplicateTrigger) {
 		t.Fatal("semantic Activation duplicate setup")
 	}
-	if duplicate.assembly.builder.addSemanticActivation(receiptAssemblySemanticID(43), duplicate.trigger) {
+	if duplicate.assembly.addSemanticActivation(receiptAssemblySemanticID(43), duplicateTrigger) {
 		t.Fatal("one trigger received multiple semantic Activation IDs")
 	}
 	if duplicate.assembly.Abort() {
@@ -310,21 +336,27 @@ func TestReceiptAssemblySemanticActivationOwnsOneMemberIDAndManyCandidates(t *te
 	}
 
 	mixedApplication := newReceiptSemanticActivationFixture(t)
-	if !mixedApplication.assembly.builder.addSemanticActivation(receiptAssemblySemanticID(42), mixedApplication.trigger) {
+	mixedPoint, mixedPointOK := mixedApplication.assembly.issuePointRow(equation.PointSpec{Site: mixedApplication.triggerSite})
+	_, mixedPointSemanticOK := mixedApplication.assembly.addSemanticPoint(receiptAssemblySemanticID(40), mixedPoint)
+	mixedTrigger, mixedTriggerOK := mixedApplication.assembly.addSemanticRule(receiptAssemblySemanticID(41), mixedApplication.triggerReceipt)
+	if !mixedPointOK || !mixedPointSemanticOK || !mixedTriggerOK {
+		t.Fatal("mixed-application semantic Activation trigger member")
+	}
+	if !mixedApplication.assembly.addSemanticActivation(receiptAssemblySemanticID(42), mixedTrigger) {
 		t.Fatal("mixed-application semantic Activation setup")
 	}
-	firstReceipt, firstIssued := mixedApplication.assembly.builder.issueMaterialization(mixedApplication.materialized[0])
-	if !firstIssued || !mixedApplication.assembly.builder.addActivationCandidate(firstReceipt) {
+	firstReceipt, firstIssued := mixedApplication.assembly.issueMaterialization(mixedApplication.materialized[0])
+	if !firstIssued || !mixedApplication.assembly.addActivationCandidate(firstReceipt) {
 		t.Fatal("mixed-application first candidate")
 	}
 	origin, originOK := mixedApplication.materialized[1].Origin()
 	origin.Application = compositionKeyOf(coldKey(949_212))
 	foreignApplication, rebound := mixedApplication.materialized[1].WithOrigin(origin)
-	foreignReceipt, foreignIssued := mixedApplication.assembly.builder.issueMaterialization(foreignApplication)
-	if !originOK || !rebound || !foreignIssued {
+	foreignReceipt, foreignMaterialized := mixedApplication.assembly.issueMaterialization(foreignApplication)
+	if !originOK || !rebound || !foreignMaterialized {
 		t.Fatal("mixed-application hostile candidate setup")
 	}
-	if mixedApplication.assembly.builder.addActivationCandidate(foreignReceipt) {
+	if mixedApplication.assembly.addActivationCandidate(foreignReceipt) {
 		t.Fatal("one trigger admitted candidates from multiple applications")
 	}
 	if mixedApplication.assembly.Abort() {

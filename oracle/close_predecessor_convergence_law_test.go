@@ -41,7 +41,10 @@ func TestNumericLoopWithGuardedBodyConverges(t *testing.T) {
 	if compileStatus != analysis.CompileComplete || plan == nil {
 		t.Fatalf("compile: status=%d plan=%t", compileStatus, plan != nil)
 	}
-	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{Flags: engine.SolveDiagnosticAll, MaxRows: 256})
+	result, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), engine.SolveDiagnosticOptions{
+		Presentation: engine.SolveDiagnosticPresentation{Flags: engine.SolveDiagnosticAll},
+		Resources:    engine.SolveDiagnosticResources{MaxRows: 256},
+	})
 	t.Logf("guarded numeric loop: epochs=%d passes=%d publications=%d rawOnly=%d bumps=%d restarts=%d",
 		diagnostics.Engine.Epochs, diagnostics.Engine.EpochPasses, diagnostics.Engine.Publications,
 		diagnostics.Engine.RawOnlyPublications, diagnostics.Engine.VersionBumps, diagnostics.Engine.Restarts)

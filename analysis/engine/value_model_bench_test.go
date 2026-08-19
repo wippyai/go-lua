@@ -529,7 +529,7 @@ func benchRetainedSolvedPopulation(b *testing.B, count int) (int64, int64) {
 	// until it built the populations thousands of times over.
 	solvers := make([]*Solver, 0, benchRetainedHeapReplicas)
 	states := make([]*State, 0, benchRetainedHeapReplicas)
-	queries := make([][]ReceiptQuery, 0, benchRetainedHeapReplicas)
+	queries := make([][]ProgramQuery, 0, benchRetainedHeapReplicas)
 
 	runtime.GC()
 	var before runtime.MemStats
@@ -575,7 +575,7 @@ func benchRetainedSolvedPopulation(b *testing.B, count int) (int64, int64) {
 // is benchDeclaredFactors at every member count.
 type benchFixedFactorPopulation struct {
 	solver   *Solver
-	queries  []ReceiptQuery
+	queries  []ProgramQuery
 	expected []uint64
 }
 
@@ -688,7 +688,7 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 		}
 	}
 
-	assembly, assemblyOK := beginReceiptAssembly(binding)
+	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
 	if !assemblyOK || assembly == nil {
 		b.Fatal("fixed factor population assembly")
 	}
@@ -697,11 +697,11 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 	operands := make([]equation.Operand, members)
 	operandValues := make([]ruleUnit, members)
 	for index := 0; index < members; index++ {
-		site, siteOK := assembly.builder.admitSite(compositionKeyOf(coldKey(965_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.builder.admitAt(site)
+		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(965_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
+		occurrence, occurrenceOK := assembly.admitAt(site)
 		value := ruleUnitForSemantic(coldKey(966_000 + index))
 		entity, entityOK := operandEntityForContent(value.content)
-		operand, operandOK := assembly.builder.admitOperand(occurrence, entity)
+		operand, operandOK := assembly.admitOperand(occurrence, entity)
 		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
 			b.Fatal("fixed factor population source admission")
 		}
@@ -710,26 +710,21 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 	if !assembly.SealSources() {
 		b.Fatal("fixed factor population source seal")
 	}
-	pointRefs := make([]bindingPointRowRef, members)
+	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
 	for index := 0; index < members; index++ {
-		point, pointOK := assembly.builder.issuePointRow(equation.PointSpec{Site: sites[index]})
-		pointRef, semanticOK := assembly.builder.addSemanticPoint(receiptAssemblySemanticID(byte(1+index)), point)
-		if !pointOK || !semanticOK {
-			b.Fatal("fixed factor population Point receipt")
-		}
-		pointRefs[index] = pointRef
+		declaration.points = append(declaration.points, declaredPointRow{ID: receiptAssemblySemanticID(byte(1 + index)), Site: sites[index]})
 	}
 	for index := 0; index < members; index++ {
-		proof := ruleImplementations[index].receipt.proof
-		source, sourceOK := assembly.builder.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index], Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}})
-		draft, draftOK := ruleImplementations[index].BeginBindingRuleRow(source)
+		proof := ruleImplementations[index].binding.proof
+		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index], Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}})
+		draft, draftOK := ruleImplementations[index].beginBindingRuleRow(source)
 		part, partOK := ruleImplementations[index].WritePart(source, 0)
 		rowOK := sourceOK && draftOK && partOK && draft.AddWrite(part)
-		row, issued := assembly.builder.issueRuleRow(draft)
-		_, semanticOK := assembly.builder.addSemanticRule(receiptAssemblySemanticID(byte(1+members+index)), row)
-		if !rowOK || !issued || !semanticOK {
+		row, issued := assembly.issueRuleRow(draft)
+		if !rowOK || !issued {
 			b.Fatal("fixed factor population Rule topology")
 		}
+		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(byte(1 + members + index)), Row: row.row})
 	}
 	for index := 0; index < members; index++ {
 		queryOrdinal, queryOrdinalOK := queries[index].Ordinal()
@@ -737,17 +732,14 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 		if !queryOrdinalOK || !factorOrdinalOK {
 			b.Fatal("fixed factor population ordinal mapping")
 		}
-		row, rowOK := assembly.builder.issueQueryRow(queryImplementations[index], equation.QueryInstance{Family: schema.querySemanticAt(queryOrdinal), Point: pointRefs[index].ref, Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(factorOrdinal), Form: equation.SurfaceReadExact, Local: 1}}})
-		if !rowOK {
-			b.Fatal("fixed factor population Query row")
-		}
-		if _, semanticOK := assembly.builder.addSemanticQuery(receiptAssemblySemanticID(byte(1+2*members+index)), row); !semanticOK {
-			b.Fatal("fixed factor population Query directory")
-		}
+		instance := equation.QueryInstance{Family: schema.querySemanticAt(queryOrdinal), Point: equation.PointAt(index), Surfaces: []equation.Surface{{Factor: schema.factorSemanticAt(factorOrdinal), Form: equation.SurfaceReadExact, Local: 1}}}
+		declaration.queries = append(declaration.queries, declaredQueryRow{ID: receiptAssemblySemanticID(byte(1 + 2*members + index)), Row: instance})
 	}
-	_, graph, committed := assembly.Commit()
+	constructed, refusal := constructTopology(declaration)
+	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
+	graph := CommittedProgramFrom(topology, issued)
 	if !committed || graph == nil {
-		b.Fatal("fixed factor population graph commit")
+		b.Fatalf("fixed factor population graph commit stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
 	}
 	compilation, compilationOK := BeginProgramConstruction(binding, graph)
 	if !compilationOK || compilation == nil {
@@ -764,7 +756,7 @@ func newBenchFixedFactorPopulation(b *testing.B, members int) benchFixedFactorPo
 			b.Fatal("fixed factor population Rule attachment")
 		}
 	}
-	queryReceipts := make([]ReceiptQuery, members)
+	queryReceipts := make([]ProgramQuery, members)
 	for index := 0; index < members; index++ {
 		query, queryOK := graph.Query(receiptAssemblySemanticID(byte(1 + 2*members + index)))
 		if !queryOK || !AttachExactQuery(compilation, queryImplementations[index], receiptAssemblySemanticID(byte(1+2*members+index))) {

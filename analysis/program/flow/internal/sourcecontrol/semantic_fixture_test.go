@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 )
 
 // semanticFixture is assembled through every owner that contributes to
@@ -73,10 +74,10 @@ func openSemanticFixture(t *testing.T, spec semanticSpec) *semanticFixture {
 	// Static carries one empty contract sidecar row for every Flow Function
 	// and Call, even when the case has no static type arguments.
 	if len(staticInput.Contracts.Function) == 0 && spec.counts[keyspace.FamilyFunction] != 0 {
-		staticInput.Contracts.Function = make([]static.FunctionContract, spec.counts[keyspace.FamilyFunction])
+		staticInput.Contracts.Function = make([]staticcontracts.FunctionContract, spec.counts[keyspace.FamilyFunction])
 	}
 	if len(staticInput.Contracts.Call) == 0 && spec.counts[keyspace.FamilyCall] != 0 {
-		staticInput.Contracts.Call = make([]static.CallContract, spec.counts[keyspace.FamilyCall])
+		staticInput.Contracts.Call = make([]staticcontracts.CallContract, spec.counts[keyspace.FamilyCall])
 	}
 	staticInput.Counts[keyspace.FamilyFunction] = uint32(len(staticInput.Contracts.Function))
 	staticInput.Counts[keyspace.FamilyCall] = uint32(len(staticInput.Contracts.Call))

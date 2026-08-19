@@ -4,7 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 )
 
 func TestLowerParsedInterfacePreservesOneAuthoredMemberSequence(t *testing.T) {
@@ -32,7 +33,7 @@ return Shape()
 		t.Fatalf("extends = %d/%v, want one", count, ok)
 	}
 	extends, _ := interfaces.ExtendAt(shape, 0)
-	if state, target, _, ok := staticView.References().Get(extends); !ok || state != static.TypeRefDeclaration || target != base {
+	if state, target, _, ok := staticView.References().Get(extends); !ok || state != staticrefs.Declaration || target != base {
 		t.Fatalf("extends = %v/%v/%v", state, target, ok)
 	}
 	if count, ok := interfaces.MemberCount(shape); !ok || count != 4 {
@@ -42,8 +43,8 @@ return Shape()
 	second, _ := interfaces.MemberAt(shape, 1)
 	third, _ := interfaces.MemberAt(shape, 2)
 	fourth, _ := interfaces.MemberAt(shape, 3)
-	if first.Kind != static.InterfaceField || second.Kind != static.InterfaceMethod ||
-		third.Kind != static.InterfaceField || fourth.Kind != static.InterfaceMethod {
+	if first.Kind != staticdecl.InterfaceField || second.Kind != staticdecl.InterfaceMethod ||
+		third.Kind != staticdecl.InterfaceField || fourth.Kind != staticdecl.InterfaceMethod {
 		t.Fatalf("member kinds = %#v %#v %#v %#v, want field/method/field/method", first, second, third, fourth)
 	}
 	if _, _, optional, ok := staticView.Types().Fields().Get(first.Field); !ok || optional {
@@ -94,8 +95,8 @@ end
 		second, _ := interfaces.MemberAt(iface, 1)
 		third, _ := interfaces.MemberAt(iface, 2)
 		fourth, _ := interfaces.MemberAt(iface, 3)
-		if first.Kind != static.InterfaceField || second.Kind != static.InterfaceField ||
-			third.Kind != static.InterfaceMethod || fourth.Kind != static.InterfaceMethod ||
+		if first.Kind != staticdecl.InterfaceField || second.Kind != staticdecl.InterfaceField ||
+			third.Kind != staticdecl.InterfaceMethod || fourth.Kind != staticdecl.InterfaceMethod ||
 			first.Field == second.Field || third.Name != fourth.Name || third.Signature == fourth.Signature {
 			t.Fatalf("duplicate member identities = %#v %#v %#v %#v", first, second, third, fourth)
 		}

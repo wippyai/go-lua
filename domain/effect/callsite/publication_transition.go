@@ -3,15 +3,14 @@ package callsite
 import (
 	"bytes"
 	"crypto/sha256"
-	"github.com/wippyai/go-lua/analysis/engine/rows"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/pack"
-
-	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 const publicationObservationDomain = "wippy.analysis.effect.publication-observation.v1\x00"
@@ -25,8 +24,8 @@ type publicationTransitionSet struct {
 	rule        *HotRule
 	mount       identity.ContentID
 	occurrence  identity.ContentID
-	stage       engine.MountedNativeCallStageReceipt
-	observation engine.ReceiptObservation[effectfactor.EffectObservation]
+	stage       engine.ProgramCallStage
+	observation engine.ProgramObservation[effectfactor.EffectObservation]
 	rows        []publicationTransitionRow
 	sealed      bool
 }
@@ -82,8 +81,8 @@ func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.Prog
 	issuer, issuerOK := rule.ForMount(mount)
 	operand, operandOK := issuer.ReceiptForOccurrence(occurrence)
 	stage, stageOK := rule.MountedSelectedCallEffectStage(compilation, mount, occurrence)
-	member, memberOK := stage.RuleMember()
-	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Stage() != rows.ArtifactRuleStageCallEffect || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !memberOK {
+	capability, capabilityOK := rule.implementation.MountedCapability()
+	if !issuerOK || !operandOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
 		return PublicationTransitionCandidates{}, false
 	}
 	rows, rowsOK := rule.publicationTransitionRows(operand, mount, occurrence)
@@ -94,8 +93,8 @@ func (rule *HotRule) AttachMountedPublicationCandidates(compilation *engine.Prog
 		return PublicationTransitionCandidates{set: &publicationTransitionSet{rule: rule, mount: mount, occurrence: occurrence, stage: stage, sealed: true}}, true
 	}
 	observationID, idOK := publicationTransitionID(publicationObservationDomain, mount, occurrence)
-	observation, attached := engine.AttachRuleExactObservation(compilation, effectQuery, observationID, member)
-	if !idOK || !attached || !observation.Available() {
+	observation, failure := engine.AttachMountedExact(compilation, effectQuery, observationID, capability, mount, stage.PointID(), occurrence)
+	if !idOK || failure.Available() || !observation.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
 	set := &publicationTransitionSet{rule: rule, mount: mount, occurrence: occurrence, stage: stage, observation: observation, rows: rows, sealed: true}
@@ -161,17 +160,17 @@ func publicationTransitionID(domain string, ids ...identity.ContentID) (identity
 }
 
 func (set *publicationTransitionSet) valid() bool {
-	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || set.rule.binding == nil || !set.rule.binding.Sealed() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Stage() != rows.ArtifactRuleStageCallEffect || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
+	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || set.rule.binding == nil || !set.rule.binding.Sealed() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Kind() != rows.ArtifactRuleStageIssued5 || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
 		return false
 	}
 	if len(set.rows) == 0 {
 		return !set.observation.Available()
 	}
 	observationKey, observationKeyOK := set.observationKey()
-	if !set.observation.Available() || !observationKeyOK || !set.observation.MatchesID(observationKey) || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
+	if !set.observation.Available() || !observationKeyOK || !set.observation.SealedAs(observationKey) || set.rule.effects == nil || set.rule.effects.Algebra() == nil {
 		return false
 	}
-	if _, memberOK := set.stage.RuleMember(); !memberOK {
+	if !set.stage.HasMember() {
 		return false
 	}
 	previous := identity.ContentID{}

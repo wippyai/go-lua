@@ -159,7 +159,7 @@ func (compiled *compiledActivationRule) executableInstance() bool {
 	}
 	if compiled.receipt != nil {
 		shape, ok := compiled.proof.schema.ruleShapeAt(compiled.proof.ordinal)
-		return compiled.schema == compiled.proof.schema && compiled.receipt.receipt.valid() && compiled.proof.state != nil && compiled.proof.outputKind == composition.StructuralOutput && compiled.proof.output == (composition.Key{}) && ok && shape.ActivationFamily.Available()
+		return compiled.schema == compiled.proof.schema && compiled.receipt.binding.valid() && compiled.proof.state != nil && compiled.proof.outputKind == composition.StructuralOutput && compiled.proof.output == (composition.Key{}) && ok && shape.ActivationFamily.Available()
 	}
 	return false
 }
@@ -546,11 +546,11 @@ func (compiled *compiledActivationRule) derivation(execution *ruleExecution, rea
 // compiler. It consumes the exact SchemaBinding proof and graph-owned trigger
 // member; it never reconstructs a declaration-shaped rule.
 func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
-	if implementation == nil || !implementation.receipt.valid() || topology == nil || graph == nil ||
-		!topology.OwnsComposition(implementation.receipt.proof.schema.cold) || !topology.OwnsGraph(graph) || !trigger.Available() {
+	if implementation == nil || !implementation.binding.valid() || topology == nil || graph == nil ||
+		!topology.OwnsComposition(implementation.binding.proof.schema.cold) || !topology.OwnsGraph(graph) || !trigger.Available() {
 		return nil, false
 	}
-	proof := implementation.receipt.proof
+	proof := implementation.binding.proof
 	shape, shapeOK := proof.schema.ruleShapeAt(proof.ordinal)
 	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
 		return nil, false
@@ -566,8 +566,8 @@ func compileActivationRuleReceipt(implementation *ActivationRuleImplementation, 
 	if !applicationSemanticOK {
 		return nil, false
 	}
-	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.receipt.cell.impl.admission, topology: topology, trigger: trigger, application: applicationSemantic, graph: graph}
-	compiled.run = retainActivationRunReceipt(compiled, implementation.receipt.cell.impl.run)
+	compiled := &compiledActivationRule{proof: proof, schema: proof.schema, receipt: implementation, admission: implementation.binding.cell.impl.admission, topology: topology, trigger: trigger, application: applicationSemantic, graph: graph}
+	compiled.run = retainActivationRunReceipt(compiled, implementation.binding.cell.impl.run)
 	return compiled, true
 }
 

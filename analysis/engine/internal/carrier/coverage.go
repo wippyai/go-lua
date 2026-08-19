@@ -322,9 +322,9 @@ func (work *Work) unionSlotCoverage(left, right slotCoverage) (slotCoverage, boo
 		return right, true
 	case len(right.targets) == 0:
 		return left, true
-	case sameSlotCoverage(left, right) || slotCoverageContains(left, right):
+	case sameSlotCoverage(left, right) || work.slotCoverageContains(left, right):
 		return left, true
-	case slotCoverageContains(right, left):
+	case work.slotCoverageContains(right, left):
 		return right, true
 	}
 	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
@@ -372,7 +372,7 @@ func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (s
 		if index != 0 && !rows[index-1].target.Less(row.target) {
 			orderedRows = false
 		}
-		if !row.region.Entails(within) {
+		if !work.entailsSupport(row.region, within) {
 			orderedRows = false
 		}
 	}
@@ -388,7 +388,7 @@ func (work *Work) canonicalCoverage(rows []TargetRegion, within support.Mask) (s
 			return slotCoverage{}, false
 		}
 		region := row.region
-		if !region.Entails(within) {
+		if !work.entailsSupport(region, within) {
 			region, ok = work.intersectSupport(region, within)
 			if !ok {
 				return slotCoverage{}, false
@@ -428,7 +428,7 @@ func (work *Work) restrictSlotCoverage(input slotCoverage, within support.Mask) 
 			return slotCoverage{}, false
 		}
 		region := row.region
-		if !region.Entails(within) {
+		if !work.entailsSupport(region, within) {
 			region, ok = work.intersectSupport(region, within)
 			if !ok {
 				return slotCoverage{}, false
@@ -477,10 +477,10 @@ func (work *Work) mergeSlotCoverage(left, right slotCoverage, within support.Mas
 	// allocating the merged row vector; this is exact authored coverage
 	// inclusion, not a semantic-root shortcut, so coverage-only wake/version
 	// evidence remains unchanged by the caller's outer publication.
-	if sameSlotCoverage(left, right) || slotCoverageContains(left, right) {
+	if sameSlotCoverage(left, right) || work.slotCoverageContains(left, right) {
 		return left, true
 	}
-	if slotCoverageContains(right, left) {
+	if work.slotCoverageContains(right, left) {
 		return right, true
 	}
 	rows := make([]TargetRegion, 0, len(left.targets)+len(right.targets))
@@ -518,7 +518,7 @@ func (work *Work) mergeSlotCoverage(left, right slotCoverage, within support.Mas
 // super and its authored region is included by super's region.  The merge
 // union is therefore super.  This helper is intentionally local to the one
 // carrier fold and retains no index/cache authority.
-func slotCoverageContains(super, sub slotCoverage) bool {
+func (work *Work) slotCoverageContains(super, sub slotCoverage) bool {
 	if len(sub.targets) == 0 {
 		return true
 	}
@@ -534,7 +534,7 @@ func slotCoverageContains(super, sub slotCoverage) bool {
 		case subRow.target.Less(superRow.target):
 			return false
 		default:
-			if !superRow.target.Same(subRow.target) || !subRow.region.SameHandle(superRow.region) && !subRow.region.Entails(superRow.region) {
+			if !superRow.target.Same(subRow.target) || !subRow.region.SameHandle(superRow.region) && !work.entailsSupport(subRow.region, superRow.region) {
 				return false
 			}
 			superIndex++
@@ -558,7 +558,7 @@ func (work *Work) validContributionSurface(state State, coverage contributionCov
 // It deliberately never calls raw State order, which would inspect latent
 // physical point branches or totalize an absent authored cell to Default.
 func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
-	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !leftState.support.Entails(rightState.support) {
+	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !work.entailsSupport(leftState.support, rightState.support) {
 		return false
 	}
 	if sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
@@ -578,7 +578,7 @@ func (work *Work) lessOrEqContributionSurface(leftState State, leftCoverage cont
 }
 
 func (work *Work) ascentOrderedContributionSurface(leftState State, leftCoverage contributionCoverage, rightState State, rightCoverage contributionCoverage) bool {
-	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !leftState.support.Entails(rightState.support) {
+	if !work.validContributionSurface(leftState, leftCoverage) || !work.validContributionSurface(rightState, rightCoverage) || !work.liveFor(leftState, rightState) || !work.entailsSupport(leftState.support, rightState.support) {
 		return false
 	}
 	if sameState(leftState, rightState) && sameContributionCoverage(leftCoverage, rightCoverage) {
@@ -614,7 +614,7 @@ func coverageRows(slot slotCoverage) SlotCoverage { return SlotCoverage{value: &
 // Keeping this transaction role-neutral is important: recurrence has one
 // carrier authority and one exact-C law for every nominal point role that
 // reaches it.
-func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState State, currentCoverage contributionCoverage, selectedState State, selectedCoverage contributionCoverage, exactState State, exactCoverage contributionCoverage, selected MergeScope) (State, ChangeSet, bool) {
+func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState State, currentCoverage contributionCoverage, selectedState State, selectedCoverage contributionCoverage, exactState State, exactCoverage contributionCoverage, exactClosed bool, selected MergeScope) (State, ChangeSet, bool) {
 	if !work.validContributionSurface(currentState, currentCoverage) || !work.validContributionSurface(selectedState, selectedCoverage) || !work.validContributionSurface(exactState, exactCoverage) || !selected.validFor(work.composition, kind) {
 		return State{}, ChangeSet{}, false
 	}
@@ -625,7 +625,7 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 	for _, member := range selected.members {
 		hasSelected = hasSelected || member
 	}
-	if kind == Widen && !selectedState.support.Equal(exactState.support) || hasSelected && kind == Widen && !currentState.support.Entails(selectedState.support) || hasSelected && kind == Narrow && (!selectedState.support.Entails(currentState.support) || !selectedState.support.Equal(exactState.support)) {
+	if kind == Widen && !selectedState.support.Equal(exactState.support) || hasSelected && kind == Widen && !work.entailsSupport(currentState.support, selectedState.support) || hasSelected && kind == Narrow && (!work.entailsSupport(selectedState.support, currentState.support) || !selectedState.support.Equal(exactState.support)) {
 		return State{}, ChangeSet{}, false
 	}
 	// Narrow has one exact desired RHS. Accepting an independently supplied
@@ -687,6 +687,14 @@ func (work *Work) mergeSelectedContributionSurface(kind MergeKind, currentState 
 		var valid bool
 		if hasSelected && selected.members[position] {
 			change, valid = slot.MergeSelectedContributionUnder(kind, selected.scopes[position], currentState.roots[position], selectedState.roots[position], exactState.roots[position], selectedSplit, exactSplit, coverageRows(currentCoverage.slot(physical)), coverageRows(selectedCoverage.slot(physical)), coverageRows(exactCoverage.slot(physical)), delta)
+		} else if exactClosed {
+			// The exact RHS owner has already physically closed this root to its
+			// authored surface. Reusing that issued root through the typed
+			// replacement path preserves the current-to-exact ChangeSet while
+			// avoiding a second CloseContribution/EqualUnder reconstruction.
+			// Selected slots still take the Widen/Narrow path above because their
+			// result is newly derived and therefore not covered by this proof.
+			change, valid = slot.ReplaceUnder(currentState.roots[position], exactState.roots[position], exactSplit, delta)
 		} else {
 			change, valid = slot.CloseContributionUnder(currentState.roots[position], exactState.roots[position], exactSplit, coverageRows(exactCoverage.slot(physical)), delta)
 		}

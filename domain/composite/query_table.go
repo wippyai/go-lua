@@ -29,24 +29,26 @@ const (
 // states membership and order alone and no fold reaches this package. A family
 // appears once: this list is the whole query surface, and a family withheld
 // from it is a family nothing answers rather than one answered by a default.
-func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, bool) {
+func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryContributor, bool) {
 	var admitted []*query.Registration
+	var contributors []queryContributor
 	rejected := false
-	add := func(entry *query.Registration, ok bool) {
-		if !ok {
+	add := func(entry *query.Registration, contributor queryContributor, ok bool) {
+		if !ok || !contributor.complete() {
 			rejected = true
 			return
 		}
 		admitted = append(admitted, entry)
+		contributors = append(contributors, contributor)
 	}
 
-	add(query.New(valueowner.QueryEntry(), roles))
-	add(query.New(effectowner.QueryEntry(), roles))
+	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery))
+	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery))
 
 	if rejected {
-		return nil, false
+		return nil, nil, false
 	}
-	return admitted, true
+	return admitted, contributors, true
 }
 
 // queryRoleVocabulary is the Artifact population and projection catalog

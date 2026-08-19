@@ -2,21 +2,18 @@ package mounted
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
-// Mount is one placed compiled Program: the immutable artifact together with
-// the Link-local module identity that places it. It is the complete input
-// vocabulary every population in this package reads, and deliberately smaller
-// than the neutral mount row the mount phase carries: a population is keyed by
-// where a program sits, never by which Program it is a copy of.
+// Mount is one placed compiled Program: the sealed ingress snapshot together
+// with the Link-local module identity that places it.
 type Mount struct {
 	ModuleKey identity.ContentID
-	Artifact  *programartifact.Artifact
+	Snapshot  *ingress.Snapshot
 }
 
 func (mount Mount) Available() bool {
-	return mount.ModuleKey.Available() && mount.Artifact != nil && mount.Artifact.Available() && mount.Artifact.ID().Available()
+	return mount.ModuleKey.Available() && mount.Snapshot != nil && mount.Snapshot.Available()
 }
 
 // mountsAvailable states the admission every seal shares: at least one mount,

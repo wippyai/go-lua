@@ -1043,6 +1043,53 @@ func validateResolvedInstance(row RuleInstance, schema composition.Rule) bool {
 	}
 	return validateReads(row.Reads, schema.Reads) && validateCarries(row.Carries, schema.Carries) && validateWrites(row.Writes, schema.Writes) && validateSupports(row.Supports, schema.Supports) && validatePrunes(row.Prunes, schema.Prunes)
 }
+
+// validateResolvedInstanceAt authenticates one instance against scalar
+// projections of the sealed cold Rule.  It is the hot path used by
+// RuleInstance.ValidFor: unlike Rules/RuleAt it never detaches the Rule or
+// any of its child slices from the immutable Composition.
+func validateResolvedInstanceAt(row RuleInstance, source *composition.Composition, ordinal uint64) bool {
+	if source == nil || !row.Schema.Available() || !row.OperandFamily.Available() || !row.Operand.Available() {
+		return false
+	}
+	shape, ok := source.RuleShapeAt(ordinal)
+	if !ok || row.OperandFamily != shape.OperandFamily || shape.ActivationCount > 1 ||
+		uint64(len(row.Reads)) != shape.ReadCount || uint64(len(row.Carries)) != shape.CarryCount ||
+		uint64(len(row.Writes)) != shape.WriteCount || uint64(len(row.Supports)) != shape.SupportCount ||
+		uint64(len(row.Prunes)) != shape.PruneCount {
+		return false
+	}
+	for index, value := range row.Reads {
+		expected, expectedOK := source.RuleReadShapeAt(ordinal, uint64(index))
+		if !expectedOK || value.Index != uint64(index) || !matchesReadShape(value.Surface, expected) {
+			return false
+		}
+	}
+	for index, value := range row.Carries {
+		if value.Index != uint64(index) {
+			return false
+		}
+	}
+	for index, value := range row.Writes {
+		expected, expectedOK := source.RuleWriteShapeAt(ordinal, uint64(index))
+		if !expectedOK || value.Index != uint64(index) || !matchesWriteShape(value.Surface, expected) || !validResolvedWriteRouteShape(value, expected) {
+			return false
+		}
+	}
+	for index, value := range row.Supports {
+		expected, expectedOK := source.RuleSupportShapeAt(ordinal, uint64(index))
+		if !expectedOK || value.Index != uint64(index) || !matchesSupportShape(value.Surface, expected) {
+			return false
+		}
+	}
+	for index, value := range row.Prunes {
+		expected, expectedOK := source.RulePruneShapeAt(ordinal, uint64(index))
+		if !expectedOK || value.Index != uint64(index) || !matchesPruneShape(value.Surface, expected) {
+			return false
+		}
+	}
+	return true
+}
 func validateReads(values []ResolvedRead, schemas []composition.Read) bool {
 	if len(values) != len(schemas) {
 		return false
@@ -1078,14 +1125,22 @@ func validateWrites(values []ResolvedWrite, schemas []composition.Write) bool {
 }
 
 func validResolvedWriteRoute(value ResolvedWrite, schema composition.Write) bool {
-	switch schema.Kind {
+	return validResolvedWriteRouteFields(value.Route, schema.Kind, schema.Route)
+}
+
+func validResolvedWriteRouteShape(value ResolvedWrite, schema composition.RuleWriteShape) bool {
+	return validResolvedWriteRouteFields(value.Route, schema.Kind, schema.Route)
+}
+
+func validResolvedWriteRouteFields(route uint64, kind composition.WriteKind, expected uint64) bool {
+	switch kind {
 	case composition.WriteExact:
-		return value.Route == 0
+		return route == 0
 	case composition.WriteRoute:
 		// Schema validation already proves Route is a one-based ReadSelect
 		// ordinal. It is not a write ordinal, so its range is unrelated to
 		// len(writes) and may validly exceed it.
-		return value.Route == schema.Route && value.Route != 0
+		return route == expected && route != 0
 	default:
 		return false
 	}
@@ -1114,25 +1169,41 @@ func validatePrunes(values []ResolvedPrune, schemas []composition.Prune) bool {
 	return true
 }
 func matchesReadSurface(surface Surface, schema composition.Read) bool {
-	if !surface.Available() || surface.Factor != schema.Factor {
+	return matchesReadFields(surface, schema.Kind, schema.Factor, schema.Semantic, schema.Normalizer)
+}
+
+func matchesReadShape(surface Surface, schema composition.RuleReadShape) bool {
+	return matchesReadFields(surface, schema.Kind, schema.Factor, schema.Semantic, schema.Normalizer)
+}
+
+func matchesReadFields(surface Surface, kind composition.ReadKind, factor, semantic, normalizer composition.Key) bool {
+	if !surface.Available() || surface.Factor != factor {
 		return false
 	}
-	switch schema.Kind {
+	switch kind {
 	case composition.ReadExact:
 		return surface.Form == SurfaceReadExact && surface.Mode == TargetModeNone && !surface.Semantic.Available() && !surface.Normalizer.Available()
 	case composition.ReadSummary:
-		return surface.Form == SurfaceReadSummary && surface.Mode == TargetModeNone && surface.Semantic == schema.Semantic && surface.Normalizer == schema.Normalizer
+		return surface.Form == SurfaceReadSummary && surface.Mode == TargetModeNone && surface.Semantic == semantic && surface.Normalizer == normalizer
 	case composition.ReadSelect:
-		return surface.Form == SurfaceReadSelect && surface.Mode == TargetModeNone && surface.Semantic == schema.Semantic && surface.Normalizer == schema.Normalizer
+		return surface.Form == SurfaceReadSelect && surface.Mode == TargetModeNone && surface.Semantic == semantic && surface.Normalizer == normalizer
 	default:
 		return false
 	}
 }
 func matchesWriteSurface(surface Surface, schema composition.Write) bool {
-	if !surface.Available() || surface.Factor != schema.Factor {
+	return matchesWriteFields(surface, schema.Kind, schema.Factor)
+}
+
+func matchesWriteShape(surface Surface, schema composition.RuleWriteShape) bool {
+	return matchesWriteFields(surface, schema.Kind, schema.Factor)
+}
+
+func matchesWriteFields(surface Surface, kind composition.WriteKind, factor composition.Key) bool {
+	if !surface.Available() || surface.Factor != factor {
 		return false
 	}
-	switch schema.Kind {
+	switch kind {
 	case composition.WriteExact:
 		return surface.Form == SurfaceWriteExact && (surface.Mode == TargetModeStrong || surface.Mode == TargetModeWeak) && !surface.Semantic.Available() && !surface.Normalizer.Available()
 	case composition.WriteRoute:
@@ -1142,10 +1213,19 @@ func matchesWriteSurface(surface Surface, schema composition.Write) bool {
 	}
 }
 func matchesSupportSurface(surface StructuralSurface, schema composition.Support) bool {
-	return surface.Available() && surface.Semantic == schema.Semantic
+	return matchesStructuralSurface(surface, schema.Semantic)
 }
 func matchesPruneSurface(surface StructuralSurface, schema composition.Prune) bool {
-	return surface.Available() && surface.Semantic == schema.Semantic
+	return matchesStructuralSurface(surface, schema.Semantic)
+}
+func matchesSupportShape(surface StructuralSurface, schema composition.RuleSupportShape) bool {
+	return matchesStructuralSurface(surface, schema.Semantic)
+}
+func matchesPruneShape(surface StructuralSurface, schema composition.RulePruneShape) bool {
+	return matchesStructuralSurface(surface, schema.Semantic)
+}
+func matchesStructuralSurface(surface StructuralSurface, semantic composition.Key) bool {
+	return surface.Available() && surface.Semantic == semantic
 }
 func copyInstance(row RuleInstance) RuleInstance {
 	result := row

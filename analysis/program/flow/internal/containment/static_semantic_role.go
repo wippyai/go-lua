@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
 // Static structural roles are permanent semantic vocabulary. They describe
@@ -238,12 +239,12 @@ func sealStaticStructuralRoles(result *Result, view static.View, moduleView impo
 				return errors.New("program/flow/containment: invalid Interface member")
 			}
 			switch row.Kind {
-			case static.InterfaceField:
+			case staticdecl.InterfaceField:
 				fieldRank++
 				if set(parent, row.Field, staticRoleInterfaceField, fieldRank) != nil {
 					return errors.New("program/flow/containment: invalid Interface field semantic role")
 				}
-			case static.InterfaceMethod:
+			case staticdecl.InterfaceMethod:
 				methodRank++
 				if set(parent, row.Signature, staticRoleInterfaceMethod, methodRank) != nil {
 					return errors.New("program/flow/containment: invalid Interface method semantic role")

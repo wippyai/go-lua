@@ -12,6 +12,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/static"
 )
 
@@ -19,19 +20,19 @@ import (
 // Module is opaque and keeps repeated Program artifacts mounted at distinct
 // Link locations without introducing a Shard coordinate.
 type ArtifactMount struct {
-	artifact *programartifact.Artifact
+	snapshot *ingress.Snapshot
 	module   identity.ContentID
 	program  identity.ContentID
 }
 
-func NewArtifactMount(artifact *programartifact.Artifact, module, program identity.ContentID) (ArtifactMount, bool) {
-	if artifact == nil || !artifact.Available() || !module.Available() || !program.Available() || artifact.CompileKey().ProgramID() != program {
+func NewArtifactMount(snapshot *ingress.Snapshot, module, program identity.ContentID) (ArtifactMount, bool) {
+	if snapshot == nil || !snapshot.Available() || !module.Available() || !program.Available() || snapshot.ProgramID() != program {
 		return ArtifactMount{}, false
 	}
-	return ArtifactMount{artifact: artifact, module: module, program: program}, true
+	return ArtifactMount{snapshot: snapshot, module: module, program: program}, true
 }
 func (mount ArtifactMount) Available() bool {
-	return mount.artifact != nil && mount.artifact.Available() && mount.module.Available() && mount.program.Available() && mount.artifact.CompileKey().ProgramID() == mount.program
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
 }
 func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
@@ -39,11 +40,11 @@ func (mount ArtifactMount) Module() identity.ContentID {
 	}
 	return mount.module
 }
-func (mount ArtifactMount) Artifact() *programartifact.Artifact {
+func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	if !mount.Available() {
 		return nil
 	}
-	return mount.artifact
+	return mount.snapshot
 }
 
 type artifactValuesKey struct{ module, values identity.ContentID }
@@ -288,7 +289,7 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 			return nil, false
 		}
 		seenModules[mount.module] = struct{}{}
-		artifact := mount.artifact
+		artifact := mount.snapshot
 		for i := 0; i < artifact.ValuesCount(); i++ {
 			row, ok := artifact.ValuesAt(i)
 			if !ok {
@@ -307,8 +308,8 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = position
 			}
 		}
-		for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
-			row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+		for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
+			row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
 			if !ok || row.InputCount() == 0 {
 				return nil, false
 			}
@@ -438,7 +439,7 @@ func mountedArtifactMatchesLink(source *link.Link, index int, mount ArtifactMoun
 }
 
 func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.artifact
+	state, artifact := schema.state, mount.snapshot
 	for i := 0; i < artifact.ValuesCount(); i++ {
 		row, ok := artifact.ValuesAt(i)
 		if !ok {
@@ -476,7 +477,7 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 	return true
 }
 
-func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail programartifact.ValuesTail) (Port, bool) {
+func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail ingress.ValuesTail) (Port, bool) {
 	state := schema.state
 	id := tail.ID()
 	endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{module, id}]
@@ -490,9 +491,9 @@ func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail pro
 	}
 	kind := TailProducerInvalid
 	switch tail.Kind() {
-	case programartifact.ValuesTailCall:
+	case uint8(programartifact.ValuesTailCall):
 		kind = TailProducerCall
-	case programartifact.ValuesTailVararg:
+	case uint8(programartifact.ValuesTailVararg):
 		kind = TailProducerVararg
 	default:
 		return Port{}, false
@@ -532,9 +533,9 @@ func (state *schema) addArtifactRoot(classes *static.ClassSet, kind rootKind, mo
 }
 
 func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.artifact
-	for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
-		row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+	state, artifact := schema.state, mount.snapshot
+	for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
+		row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
 		if !ok || row.InputCount() == 0 {
 			return false
 		}
@@ -573,9 +574,9 @@ func sealMountedArtifactBinds(schema *Schema, mount ArtifactMount) bool {
 // Bodies are mounted directly from the canonical Artifact Body and callable
 // boundary columns. Pack retains only its runtime substitution state.
 func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.artifact
-	for i := 0; i < artifact.BodyCount(); i++ {
-		row, rowOK := artifact.BodyAt(i)
+	state, artifact := schema.state, mount.snapshot
+	for i := 0; i < artifact.BodyTransportCount(); i++ {
+		row, rowOK := artifact.BodyTransportAt(i)
 		if !rowOK {
 			return false
 		}
@@ -626,7 +627,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		// Pack owns only normal and return boundary roots. The artifact owns
 		// other terminal geometry; validate Body ownership but mint no Pack root.
-		if row.Kind() != programartifact.OutcomeNormal && row.Kind() != programartifact.OutcomeReturn {
+		if row.Kind() != uint8(programartifact.OutcomeNormal) && row.Kind() != uint8(programartifact.OutcomeReturn) {
 			continue
 		}
 		key := artifactOutcomeKey{mount.module, row.ID()}
@@ -643,9 +644,9 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 		}
 		out := outcomeRow{root: root, bodyIndex: bodyIndex, moduleKey: mount.module, bodyID: row.BodyID(), outcomeID: row.ID(), port: port, sealed: true}
 		switch row.Kind() {
-		case programartifact.OutcomeNormal:
+		case uint8(programartifact.OutcomeNormal):
 			out.kind = 1
-		case programartifact.OutcomeReturn:
+		case uint8(programartifact.OutcomeReturn):
 			out.kind = 2
 		}
 		if out.kind == 2 {
@@ -666,7 +667,7 @@ func sealMountedArtifactBodies(schema *Schema, mount ArtifactMount) bool {
 }
 
 func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.artifact
+	state, artifact := schema.state, mount.snapshot
 	for i := 0; i < artifact.CallCount(); i++ {
 		row, rowOK := artifact.CallAt(i)
 		if !rowOK {
@@ -686,8 +687,8 @@ func sealMountedArtifactCalls(schema *Schema, authority *static.Authority, mount
 		if !rootOK {
 			return false
 		}
-		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: row.Form(), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
-		if row.Form() == programartifact.CallFormMethod {
+		out := callRow{root: root, mountedID: row.ID(), occurrenceID: row.ID(), valuesID: row.ValuesID(), typesID: row.TypeArgumentsID(), form: programartifact.CallForm(row.Form()), moduleKey: mount.module, formalID: row.FormalID(), typeFormal: typeFormal, port: port}
+		if row.Form() == uint8(programartifact.CallFormMethod) {
 			receiverID, receiverOK := row.ReceiverID()
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, receiverID}]
 			if !receiverOK || !endpointOK {
@@ -787,7 +788,7 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		state.semanticEndpoints[key] = endpoint
 		return true
 	}
-	artifact := mount.artifact
+	artifact := mount.snapshot
 	for i := 0; i < artifact.ValuesCount(); i++ {
 		row, ok := artifact.ValuesAt(i)
 		if !ok {
@@ -803,8 +804,8 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 			return false
 		}
 	}
-	for i := 0; i < artifact.OccurrenceKindCount(programartifact.OccurrenceStorageBind); i++ {
-		row, ok := artifact.OccurrenceKindAt(programartifact.OccurrenceStorageBind, i)
+	for i := 0; i < artifact.OccurrenceKindCount(uint8(programartifact.OccurrenceStorageBind)); i++ {
+		row, ok := artifact.OccurrenceKindAt(uint8(programartifact.OccurrenceStorageBind), i)
 		if !ok || row.InputCount() == 0 {
 			return false
 		}

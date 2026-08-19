@@ -21,6 +21,11 @@ type Guard struct {
 	slot    uint32
 }
 
+// Manager returns the exact immutable guard universe that issued g. It is a
+// provenance accessor for owner packages such as support; callers still need
+// Manager.Valid before reading the handle.
+func (g Guard) Manager() *Manager { return g.manager }
+
 const (
 	falseSlot uint32 = iota
 	trueSlot
@@ -39,6 +44,11 @@ type Manager struct {
 	atoms map[Atom]uint64
 	order []Atom
 	all   Scope
+	// terminalKeys is an embedded page-shaped identity namespace for this
+	// Manager's two terminals. It is never exposed as a readable BDD page;
+	// it only gives Work-local exact-key maps a compact owner+slot key that is
+	// distinct across Managers without a global counter or a semantic ID.
+	terminalKeys page
 }
 
 // pageNodeCapacity is physical storage granularity, not an analysis bound.

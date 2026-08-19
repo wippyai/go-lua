@@ -514,10 +514,10 @@ type RuleInstance struct {
 	activation Member
 }
 
-// RuleSurfaceSourceReceipt is the immutable equation-owned surface source
+// SurfaceSource is the immutable equation-owned surface source
 // issued during exact Batch admission. It carries the complete resolved row
 // geometry while keeping the underlying Rule/Batch authorities private.
-type RuleSurfaceSourceReceipt struct {
+type SurfaceSource struct {
 	authority  *ruleSurfaceSourceAuthority
 	source     *composition.Composition
 	batch      *Batch
@@ -549,15 +549,15 @@ type RuleSurfaceSourceSpec struct {
 	Prunes        []ResolvedPrune
 }
 
-func (batch *Batch) IssueRuleSurfaceSource(source *composition.Composition, spec RuleSurfaceSourceSpec) (RuleSurfaceSourceReceipt, bool) {
+func (batch *Batch) IssueRuleSurfaceSource(source *composition.Composition, spec RuleSurfaceSourceSpec) (SurfaceSource, bool) {
 	row := RuleInstance{Schema: spec.Schema, OperandFamily: spec.OperandFamily, Occurrence: spec.Occurrence, Operand: spec.Operand, Reads: spec.Reads, Carries: spec.Carries, Writes: spec.Writes, Supports: spec.Supports, Prunes: spec.Prunes}
 	if source == nil || batch == nil || !row.ValidFor(source) || !batch.Sealed() || !batch.OwnsOccurrence(row.Occurrence) || !batch.OwnsOperand(row.Operand) || !row.Operand.Occurrence().Same(row.Occurrence) {
-		return RuleSurfaceSourceReceipt{}, false
+		return SurfaceSource{}, false
 	}
-	return RuleSurfaceSourceReceipt{authority: &ruleSurfaceSourceAuthority{}, source: source, batch: batch, rule: row.Schema, occurrence: row.Occurrence, operand: row.Operand, reads: append([]ResolvedRead(nil), row.Reads...), carries: append([]ResolvedCarry(nil), row.Carries...), writes: cloneResolvedWrites(row.Writes), supports: append([]ResolvedSupport(nil), row.Supports...), prunes: append([]ResolvedPrune(nil), row.Prunes...)}, true
+	return SurfaceSource{authority: &ruleSurfaceSourceAuthority{}, source: source, batch: batch, rule: row.Schema, occurrence: row.Occurrence, operand: row.Operand, reads: append([]ResolvedRead(nil), row.Reads...), carries: append([]ResolvedCarry(nil), row.Carries...), writes: cloneResolvedWrites(row.Writes), supports: append([]ResolvedSupport(nil), row.Supports...), prunes: append([]ResolvedPrune(nil), row.Prunes...)}, true
 }
 
-func (receipt RuleSurfaceSourceReceipt) ValidFor(source *composition.Composition, batch *Batch, rule composition.Key) bool {
+func (receipt SurfaceSource) ValidFor(source *composition.Composition, batch *Batch, rule composition.Key) bool {
 	if receipt.authority == nil || receipt.source != source || receipt.batch != batch || receipt.batch == nil || !receipt.batch.Sealed() || receipt.rule != rule || receipt.source == nil {
 		return false
 	}
@@ -565,37 +565,37 @@ func (receipt RuleSurfaceSourceReceipt) ValidFor(source *composition.Composition
 	return ok
 }
 
-func (receipt RuleSurfaceSourceReceipt) Occurrence() Occurrence { return receipt.occurrence }
-func (receipt RuleSurfaceSourceReceipt) Operand() Operand       { return receipt.operand }
-func (receipt RuleSurfaceSourceReceipt) Rule() composition.Key  { return receipt.rule }
-func (receipt RuleSurfaceSourceReceipt) Same(other RuleSurfaceSourceReceipt) bool {
+func (receipt SurfaceSource) Occurrence() Occurrence { return receipt.occurrence }
+func (receipt SurfaceSource) Operand() Operand       { return receipt.operand }
+func (receipt SurfaceSource) Rule() composition.Key  { return receipt.rule }
+func (receipt SurfaceSource) Same(other SurfaceSource) bool {
 	return receipt.authority != nil && receipt.authority == other.authority && receipt.source == other.source && receipt.batch == other.batch && receipt.rule == other.rule && receipt.occurrence == other.occurrence && receipt.operand == other.operand
 }
-func (receipt RuleSurfaceSourceReceipt) ReadAt(index uint64) (ResolvedRead, bool) {
+func (receipt SurfaceSource) ReadAt(index uint64) (ResolvedRead, bool) {
 	if index >= uint64(len(receipt.reads)) {
 		return ResolvedRead{}, false
 	}
 	return receipt.reads[index], true
 }
-func (receipt RuleSurfaceSourceReceipt) CarryAt(index uint64) (ResolvedCarry, bool) {
+func (receipt SurfaceSource) CarryAt(index uint64) (ResolvedCarry, bool) {
 	if index >= uint64(len(receipt.carries)) {
 		return ResolvedCarry{}, false
 	}
 	return receipt.carries[index], true
 }
-func (receipt RuleSurfaceSourceReceipt) WriteAt(index uint64) (ResolvedWrite, bool) {
+func (receipt SurfaceSource) WriteAt(index uint64) (ResolvedWrite, bool) {
 	if index >= uint64(len(receipt.writes)) {
 		return ResolvedWrite{}, false
 	}
 	return cloneResolvedWrites(receipt.writes[index : index+1])[0], true
 }
-func (receipt RuleSurfaceSourceReceipt) SupportAt(index uint64) (ResolvedSupport, bool) {
+func (receipt SurfaceSource) SupportAt(index uint64) (ResolvedSupport, bool) {
 	if index >= uint64(len(receipt.supports)) {
 		return ResolvedSupport{}, false
 	}
 	return receipt.supports[index], true
 }
-func (receipt RuleSurfaceSourceReceipt) PruneAt(index uint64) (ResolvedPrune, bool) {
+func (receipt SurfaceSource) PruneAt(index uint64) (ResolvedPrune, bool) {
 	if index >= uint64(len(receipt.prunes)) {
 		return ResolvedPrune{}, false
 	}
@@ -614,10 +614,10 @@ func (row RuleInstance) ValidFor(source *composition.Composition) bool {
 		return false
 	}
 	ordinal, ok := source.RuleIndex(row.Schema)
-	if !ok || ordinal >= uint64(len(source.Rules())) {
+	if !ok {
 		return false
 	}
-	return validateResolvedInstance(row, source.Rules()[ordinal])
+	return validateResolvedInstanceAt(row, source, ordinal)
 }
 
 // PointSpec declares one stable state coordinate from one exact sealed Site.

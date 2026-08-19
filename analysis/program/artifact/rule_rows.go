@@ -25,9 +25,9 @@ const (
 
 func (stage RuleStage) valid() bool { return stage >= RuleStageBase && stage <= RuleStageCallEffect }
 
-// RuleInputKind preserves the owner-issued Span polarity of a rule input.
-// None is lawful only for source rules; Entry and Finish are exact Program
-// proof roles, never Link-side point inference.
+// RuleInputKind preserves the owner-issued placement polarity of a rule input.
+// None is lawful only for source rules; Entry, Finish, and the guarded route's
+// destination predecessor are exact Program proof roles, never Link inference.
 type RuleInputKind uint8
 
 const (
@@ -98,7 +98,7 @@ func (row RuleOccurrenceRow) OutputSemanticID() (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	switch row.OccurrenceKind() {
-	case OccurrenceValueSource:
+	case OccurrenceValueSource, OccurrenceFormalEntry:
 		return row.row.ID(), true
 	case OccurrenceStorageRead:
 		return row.row.ID(), true
@@ -108,9 +108,6 @@ func (row RuleOccurrenceRow) OutputSemanticID() (identity.ContentID, bool) {
 		return row.row.InputAt(2)
 	case OccurrenceBinaryEquality, OccurrenceBinaryArithmetic, OccurrenceBinaryOrder:
 		return row.row.ID(), true
-	case OccurrenceBinaryPresenceRefinement:
-		_, target, _, _, _, ok := row.row.BinaryPresenceRefinement()
-		return target, ok
 	default:
 		return identity.ContentID{}, false
 	}

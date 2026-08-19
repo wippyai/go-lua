@@ -11,26 +11,35 @@ import (
 // regionRHS keeps recurrence operands private until one exact carrier
 // transition publishes the head. E includes Init and external producers; B
 // starts at bottom and contains every back producer, including mixed Groups.
-func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex int, region runtimeRegion, current carrier.PointState) (ingress, exact carrier.PointRHS, ok bool) {
+func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex int, region runtimeRegion, current carrier.PointState) (carrier.PointRHS, carrier.ChangeSet, bool) {
 	if epoch != nil && epoch.diagnostics != nil {
 		epoch.diagnostics.recordRegionRHS()
 	}
 	if epoch == nil || !region.active || !epoch.work.OwnsPointState(current) {
-		return carrier.PointRHS{}, carrier.PointRHS{}, false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, false
 	}
 	base, ok := epoch.pointBase(point, pointIndex)
 	if !ok {
-		return carrier.PointRHS{}, carrier.PointRHS{}, false
+		return carrier.PointRHS{}, carrier.ChangeSet{}, false
 	}
-	ingress, ok = epoch.foldPointInputs(current, base, region.environmentExternal, region.factorExternal, region.external) // E = base \sqcup external ingress
-	if !ok {
-		return carrier.PointRHS{}, carrier.PointRHS{}, false
+	sets := pointFoldTermSets{
+		first: pointFoldTermSet{
+			environments: region.environmentExternal,
+			factors:      region.factorExternal,
+			groups:       region.external,
+		},
+		second: pointFoldTermSet{
+			environments: region.environmentBack,
+			factors:      region.factorBack,
+			groups:       region.back,
+		},
+		count: 2,
 	}
-	exact, ok = epoch.foldPointInputs(current, ingress, region.environmentBack, region.factorBack, region.back) // R = E \sqcup B
-	if !ok || epoch.canceled() {
-		return carrier.PointRHS{}, carrier.PointRHS{}, false
+	exact, changes, _, foldOK := epoch.foldPointTermSetsWithBoundary(current, base, sets, equation.Point{}) // R = base \sqcup E \sqcup B
+	if !foldOK || epoch.canceled() {
+		return carrier.PointRHS{}, carrier.ChangeSet{}, false
 	}
-	return ingress, exact, true
+	return exact, changes, true
 }
 
 // regionSelected is the ordinary ascent widening surface. It intentionally
@@ -48,7 +57,11 @@ func (epoch *executorEpoch) regionSelected(current carrier.PointState, region ru
 	return epoch.foldPointInputs(current, currentRHS, region.environmentBack, region.factorBack, region.back) // P = X \sqcup B
 }
 
-func (epoch *executorEpoch) regionInterfacesChanged(region int) bool {
+// regionExternalIngressChanged checks only the direct producer and structural
+// ingress versions that feed this Region head. Interior input versions are
+// owned by the producer candidate token snapshot; they are classified at the
+// candidate-order boundary instead of being copied into a Region face plane.
+func (epoch *executorEpoch) regionExternalIngressChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
@@ -56,15 +69,9 @@ func (epoch *executorEpoch) regionInterfacesChanged(region int) bool {
 	if !state.hasExact {
 		return false
 	}
-	if len(bound.faces) != len(state.interfaces) || len(bound.external) != len(state.ingress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.factorExternal) != len(state.factorIngress) {
+	if len(bound.external) != len(state.ingress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.factorExternal) != len(state.factorIngress) {
 		_ = epoch.invalidateRegionPostfix(region)
 		return true
-	}
-	for index, point := range bound.faces {
-		if point < 0 || point >= len(epoch.versions) || state.interfaces[index] != epoch.versions[point] {
-			_ = epoch.invalidateRegionPostfix(region)
-			return true
-		}
 	}
 	for index, group := range bound.external {
 		if group < 0 || group >= len(epoch.producers) || state.ingress[index] != epoch.producers[group].version {
@@ -108,45 +115,25 @@ func (epoch *executorEpoch) beginRegionInterfaceRefresh(region int) bool {
 		return false
 	}
 	if epoch.diagnostics != nil {
-		epoch.diagnostics.recordInterfaceRefreshBegin(epoch, region, epoch.interfaceRefreshChangedFaces(region))
+		epoch.diagnostics.recordInterfaceRefreshBegin(epoch, region)
 	}
 	return true
-}
-
-// interfaceRefreshChangedFaces is diagnostics-only evidence. Publication has
-// already routed all consumers; this bounded version walk records only the
-// stale face count without adding a second dependency structure or a hot-path
-// allocation.
-func (epoch *executorEpoch) interfaceRefreshChangedFaces(region int) uint64 {
-	if epoch == nil || epoch.runtime == nil || epoch.runtime.graph == nil || !epoch.activeRegion(region) || region >= len(epoch.runtime.regions) || region >= len(epoch.regions) {
-		return 0
-	}
-	bound, state := epoch.runtime.regions[region], epoch.regions[region]
-	if len(bound.faces) != len(state.interfaces) {
-		return 0
-	}
-	var changedFaces uint64
-	for index, pointIndex := range bound.faces {
-		if pointIndex < 0 || pointIndex >= len(epoch.versions) || state.interfaces[index] == epoch.versions[pointIndex] {
-			continue
-		}
-		changedFaces++
-	}
-	return changedFaces
 }
 
 // regionExactInputsChanged checks the disposable proof recorded with the
 // episode.exact head RHS.  The ordered producer and source-point versions are
 // the complete semantic input list for E⊔B: queue readiness alone is not
 // evidence that the stored exact carrier still describes the live recurrence.
-// Faces and external ingress remain part of the interface proof because a
-// changed enclosing point must restart the local episode before narrowing.
+// Direct external ingress remains part of the interface proof because a
+// changed source outside the Region must restart the local episode before
+// narrowing. Interior producer inputs are checked by candidate tokens at
+// their evaluation boundary.
 func (epoch *executorEpoch) regionExactInputsChanged(region int) bool {
 	if epoch == nil || !epoch.activeRegion(region) || region >= len(epoch.regions) {
 		return true
 	}
 	state := epoch.regions[region]
-	if !state.hasExact || epoch.regionInterfacesChanged(region) {
+	if !state.hasExact || epoch.regionExternalIngressChanged(region) {
 		return true
 	}
 	bound := epoch.runtime.regions[region]
@@ -180,14 +167,8 @@ func (epoch *executorEpoch) rememberRegionInterfaces(region int) bool {
 		return false
 	}
 	bound, state := epoch.runtime.regions[region], &epoch.regions[region]
-	if len(bound.faces) != len(state.interfaces) || len(bound.external) != len(state.ingress) || len(bound.back) != len(state.backIngress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorExternal) != len(state.factorIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
+	if len(bound.external) != len(state.ingress) || len(bound.back) != len(state.backIngress) || len(bound.environmentExternal) != len(state.environmentIngress) || len(bound.environmentBack) != len(state.environmentBackIngress) || len(bound.factorExternal) != len(state.factorIngress) || len(bound.factorBack) != len(state.factorBackIngress) {
 		return false
-	}
-	for index, point := range bound.faces {
-		if point < 0 || point >= len(epoch.versions) {
-			return false
-		}
-		state.interfaces[index] = epoch.versions[point]
 	}
 	for index, group := range bound.external {
 		if group < 0 || group >= len(epoch.producers) {
@@ -275,7 +256,7 @@ func (epoch *executorEpoch) regionSubtree(root int) ([]int, bool) {
 // restart never changes an enclosing region from Narrow to Ascent while its
 // narrowed head is still retained. Every selected Group rooted inside is made
 // dirty before any later head widening can observe an old candidate.
-func (epoch *executorEpoch) restartRegion(region int, callSite SolveDiagnosticRestartCallSite, reason SolveDiagnosticRestartReason, pendingGroup int, pending carrier.RuleContribution) (ok bool) {
+func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRestartCallSite, reason solveDiagnosticRestartReason, pendingGroup int, pending carrier.RuleContribution) (ok bool) {
 	var sample solveDiagnosticRestartSample
 	if epoch != nil && epoch.diagnostics != nil && epoch.diagnostics.restartEnabled() {
 		sample = epoch.diagnostics.beginRestart(epoch, region, callSite, reason, pendingGroup, pending)
@@ -309,7 +290,6 @@ func (epoch *executorEpoch) restartRegion(region int, callSite SolveDiagnosticRe
 		epoch.regions[index].postfix = regionPostfixProof{}
 		epoch.regions[index].invalid = true
 		epoch.regions[index].interfaceRefreshPending = false
-		clear(epoch.regions[index].interfaces)
 		clear(epoch.regions[index].ingress)
 		clear(epoch.regions[index].backIngress)
 		clear(epoch.regions[index].environmentIngress)
@@ -494,7 +474,7 @@ func (epoch *executorEpoch) regionPostfixed(regionIndex int) (bool, bool) {
 	exact := episode.exact
 	if !epoch.work.LessOrEqPointRHSPoint(exact, current) {
 		if phase == phaseNarrow {
-			if !epoch.restartRegion(regionIndex, SolveDiagnosticRestartPostfixExact, SolveDiagnosticRestartExactNotBelowCurrent, -1, carrier.RuleContribution{}) {
+			if !epoch.restartRegion(regionIndex, solveDiagnosticRestartPostfixExact, solveDiagnosticRestartExactNotBelowCurrent, -1, carrier.RuleContribution{}) {
 				return false, false
 			}
 			return false, true

@@ -28,6 +28,7 @@ func publishedCodes() []diagnostic.Code {
 		DiagnosticCodeUnusedLocal,
 		typedomain.Code,
 		typedomain.CallArgumentCode,
+		typedomain.ChannelSelectExhaustivenessCode,
 	}
 }
 

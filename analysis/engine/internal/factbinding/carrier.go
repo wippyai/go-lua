@@ -1682,53 +1682,19 @@ func (work *bindingWork[K, V]) observeDistributiveSummary(input semantic.Plane[p
 	work.resetSpine()
 	cell, count := -1, 0
 	for _, key := range keys {
-		if !work.live() || !work.partitionKey(input, key, within) {
+		if !work.live() {
 			return false
 		}
-		entry, ok := work.foldPieces()
-		if !ok {
+		value, present, valid := work.binding.plane.domain.JoinUnderKey(input, key, within, &work.scratch)
+		if !valid {
 			return false
 		}
-		cell, count = work.appendCell(cell, entry), count+1
+		cell, count = work.appendCell(cell, ObservationEntry[V]{value: value, present: present}), count+1
 	}
 	clear(work.partials)
 	work.partials = work.partials[:0]
 	work.partials = append(work.partials, observationGroup{cell: cell, count: count, region: within, previous: -1})
 	return work.emitGroups(root, unit, visit)
-}
-
-// foldPieces reduces one declared coordinate's exact pieces to the cell a
-// coordinate-wise reader derives from the joint partition: stored pieces join
-// under the Factor lattice and absent pieces contribute nothing, so presence
-// is the disjunction over the pieces. An entirely absent coordinate keeps its
-// first absent token, whose value the reader ignores.
-func (work *bindingWork[K, V]) foldPieces() (ObservationEntry[V], bool) {
-	if work.binding == nil || work.binding.algebra == nil || len(work.pieces) == 0 {
-		return ObservationEntry[V]{}, false
-	}
-	var stored ObservationEntry[V]
-	var absent ObservationEntry[V]
-	found := false
-	for _, piece := range work.pieces {
-		if !piece.entry.present {
-			if !found {
-				absent, found = piece.entry, true
-			}
-			continue
-		}
-		if !stored.present {
-			stored = piece.entry
-			continue
-		}
-		stored.value = work.binding.algebra.join(stored.value, piece.entry.value)
-	}
-	if stored.present {
-		return stored, true
-	}
-	if found {
-		return absent, true
-	}
-	return ObservationEntry[V]{}, false
 }
 
 func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {

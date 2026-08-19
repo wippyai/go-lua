@@ -91,7 +91,11 @@ func (identity RouteIdentity) causal() causal.RouteIdentity {
 
 // Available reports whether identity came from a sealed Causal route.
 func (identity RouteIdentity) Available() bool {
-	return identity.causal().Available()
+	// Route identities are issued by Causal's sealed route directory.  The
+	// public value has no setters or physical row capability, so consuming it
+	// only needs the owner's issued-shape fence; re-hashing the same preimage
+	// on every Artifact query would rederive an identity Flow already issued.
+	return identity.causal().Issued()
 }
 
 func (identity RouteIdentity) Equal(other RouteIdentity) bool {
@@ -221,67 +225,13 @@ func publicFinalRoute(result *causal.Result, successor causal.Successor) (FinalR
 }
 
 func (route FinalRoute) Available() bool {
-	if route.owner == nil || !route.identity.Available() || !route.fromPoint.Available() || !route.toPoint.Available() {
+	if route.owner == nil || !route.successor.route.IssuedBy(route.owner) {
 		return false
 	}
-	issued, ok := route.owner.Successors().Resolve(route.identity.causal())
-	if !ok {
-		return false
-	}
-	issuedIdentity, issuedOK := issued.Identity()
-	issuedPublic := publicSuccessor(issued)
-	issuedSemanticID, semanticOK := issuedPublic.SemanticID()
-	if !issuedOK || issuedIdentity != route.identity.causal() || !semanticOK || issuedSemanticID != route.semanticID ||
-		issuedPublic.route != route.successor.route || issuedPublic.Arm != route.successor.Arm {
-		return false
-	}
-	issuedFromPoint, issuedFromPointOK := issuedPublic.FromPoint()
-	issuedToPoint, issuedToPointOK := issuedPublic.ToPoint()
-	if !issuedFromPointOK || !issuedToPointOK || issuedFromPoint.PathID() != route.fromPath || issuedToPoint.PathID() != route.toPath {
-		return false
-	}
-	_, issuedComponent := issued.Component()
-	if issuedComponent != route.component || (issued.Decision != 0) != route.guarded {
-		return false
-	}
-	if issued.Decision == 0 {
-		if route.decision.Available() {
-			return false
-		}
-	} else if decisionSite, decisionSiteOK := route.owner.SiteForTerm(issued.Decision); decisionSiteOK {
-		if !route.decision.Available() || route.decision.site != decisionSite {
-			return false
-		}
-	} else if route.decision.Available() {
-		return false
-	}
-	if issued.Mu == 0 {
-		if route.mu.Available() {
-			return false
-		}
-	} else if muSite, muSiteOK := route.owner.SiteForTerm(issued.Mu); muSiteOK {
-		if !route.mu.Available() || route.mu.site != muSite {
-			return false
-		}
-	} else if route.mu.Available() {
-		return false
-	}
-	if route.guarded {
-		guardIdentity, guardOK := route.guard.RouteIdentity()
-		guardRouteID, guardRouteIDOK := route.guard.RouteID()
-		if !guardOK || !guardIdentity.Equal(route.identity) || !guardRouteIDOK || guardRouteID != route.semanticID || !route.guard.Available() {
-			return false
-		}
-	} else if route.guard.Available() {
-		return false
-	}
-	if route.component {
-		recurrenceIdentity, recurrenceOK := route.recurrence.RouteIdentity()
-		recurrenceRouteID, recurrenceRouteIDOK := route.recurrence.RouteID()
-		if !recurrenceOK || !recurrenceIdentity.Equal(route.identity) || !recurrenceRouteIDOK || recurrenceRouteID != route.semanticID || !route.recurrence.Available() {
-			return false
-		}
-	} else if route.recurrence.Available() {
+	issuedIdentity, identityOK := route.successor.Identity()
+	semanticID, semanticOK := route.successor.SemanticID()
+	if !identityOK || !semanticOK || issuedIdentity != route.identity || semanticID != route.semanticID ||
+		!route.fromPath.Available() || !route.toPath.Available() || route.guarded != (route.successor.Decision != 0) {
 		return false
 	}
 	return true

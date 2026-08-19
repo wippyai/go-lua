@@ -8,10 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// TestArtifactScalarReceiptRetainsSealedTemplate pins the mounted-input pair:
-// the receipt seals over the exact sealed template it was bound from and
-// republishes none of the template's row planes as its own.
-func TestArtifactScalarReceiptRetainsSealedTemplate(t *testing.T) {
+// TestArtifactScalarTemplateRetainsSealedPlanes pins the sealed template:
+// row planes stay on the template and are not republished by the mount pair.
+func TestArtifactScalarTemplateRetainsSealedPlanes(t *testing.T) {
 	artifactID, program, schema := artifactScalarLawID(1), artifactScalarLawID(2), artifactScalarLawID(3)
 	pointID, regionID, bodyID := artifactScalarLawID(4), artifactScalarLawID(5), artifactScalarLawID(6)
 	spec, ok := rows.NewArtifactScalarSpec(artifactID, program, schema, rows.ArtifactScalarCapacity{Points: 1, Regions: 1, Events: 3, Bodies: 1})
@@ -30,10 +29,11 @@ func TestArtifactScalarReceiptRetainsSealedTemplate(t *testing.T) {
 		t.Fatal("artifact scalar rows")
 	}
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
-	binding, bindingOK := NewArtifactScalarBinding(template)
-	receipt, receiptOK := NewArtifactScalarReceipt(binding)
-	if !templateOK || !bindingOK || !receiptOK || receipt == nil || !receipt.sealed || receipt.template != template {
-		t.Fatal("artifact scalar template/receipt")
+	if !templateOK || template == nil {
+		t.Fatal("artifact scalar template")
+	}
+	if _, ok := sealMountedProgramArtifacts([]MountedProgramArtifact{{Template: template, Module: artifactScalarLawID(7)}}); !ok {
+		t.Fatal("zero-role template did not seal")
 	}
 	sealedRegion, sealedRegionOK := template.RegionAt(0)
 	sealedBody, sealedBodyOK := template.BodyAt(0)

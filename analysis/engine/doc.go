@@ -122,17 +122,10 @@
 //	solve_report.go the failure reason, the solve boundary, the program
 //	                construction stages and the solve report
 //
-// # Condemned compile plane
+// # Compile plane
 //
-// Every file below is deleted whole at the receipt flash cut. Solved results
-// are read from Snapshot.Query by family and stable row identity.
-// deletion_manifest_law_test.go is the law: it holds the shrink-only manifest
-// and pins each surviving reference into it.
-//
-//	activation_candidate_issuer.go   receipt_query_admission.go   solver_compiler.go
-//	artifact_receipt.go              receipt_rule_admission.go    structural_schedule_certificate.go
-//	receipt_observation.go           schema_surface_receipt.go     structural_witness.go
-//	semantic_directory.go
+// Construction lives on BindingTopologyBuilder and AssembleMountedProgram.
+// Solved results are read from Snapshot.Query by family and stable row identity.
 //
 // # Subpackages
 //

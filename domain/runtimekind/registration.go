@@ -3,7 +3,37 @@ package runtimekind
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
+
+// RuntimeKindResultRole is the one semantic relation the runtime-kind
+// provider exposes to operation declarations. It identifies the fact that a
+// result value classifies an existing input value through the runtime-kind
+// vocabulary. Individual family names remain the rows of CategoryRuntimeKind;
+// they are not repeated in the operation or provider wire model.
+const RuntimeKindResultRole = "runtime-kind/result"
+
+// RuntimeKindPredicateRole is the neutral operation-predicate relation used
+// when a runtime-kind result is compared against a declared family name. The
+// branch polarity and route remain Program/Value-owned geometry.
+const RuntimeKindPredicateRole = "runtime-kind/predicate"
+
+// RuntimeKindResultRelationKey is the structural key of RuntimeKindResultRole.
+// A portable provider carries this key as a string; manifesttarget derives the
+// opaque schema.EntryID from it after the manifest crosses into the Lua domain.
+const RuntimeKindResultRelationKey schema.Key = "semantic/" + RuntimeKindResultRole
+
+// RuntimeKindPredicateRelationKey is the structural key of
+// RuntimeKindPredicateRole.
+const RuntimeKindPredicateRelationKey schema.Key = "semantic/" + RuntimeKindPredicateRole
+
+// BehaviorStructureSpecs contributes the runtime-kind behavior relation to
+// the sealed structural semantic-role vocabulary. It is separate from
+// StructureSpecs so the latter remains exactly the closed family catalog that
+// Kind and Set own.
+func BehaviorStructureSpecs() []structure.Spec {
+	return vocabulary.RoleSpecs(RuntimeKindResultRole, RuntimeKindPredicateRole)
+}
 
 // StructureSpecs is this domain's declaration of the Lua runtime family
 // vocabulary: one row per family type() distinguishes, in the domain's own

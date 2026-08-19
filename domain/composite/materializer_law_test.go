@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -76,7 +77,12 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 			t.Fatalf("compile artifact %d: %v", index, failure)
 		}
 		artifacts[index] = artifact
-		rows[index] = axis.MountedArtifact{Artifact: artifact, ModuleKey: module, ProgramID: programID}
+		vocabulary, vocabularyOK := StructureVocabulary()
+		snapshot, lowered := ingress.Lower(artifact, vocabulary)
+		if !vocabularyOK || !lowered {
+			t.Fatalf("lower artifact %d", index)
+		}
+		rows[index] = axis.MountedArtifact{Snapshot: snapshot, ModuleKey: module, ProgramID: programID}
 		statics[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)

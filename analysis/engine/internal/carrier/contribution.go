@@ -53,6 +53,11 @@ type RuleContributionBase struct{ value *contributionBase }
 type contributionInput struct {
 	state    State
 	coverage contributionCoverage
+	// closed is the source PointState's carrier-issued physical-closure proof.
+	// A legacy Contribution carries the same proof by construction.  It stays
+	// private because it is usable only together with the exact source State,
+	// root, support, and coverage checks at Finish.
+	closed bool
 }
 
 type contributionBase struct {
@@ -165,14 +170,14 @@ func (work *Work) contributionInputFromContribution(input Contribution) (contrib
 	if work == nil || !work.admittedContribution(input) || !work.OwnsState(input.state) || input.state.previewMarked() || input.state.contributionMarked() {
 		return contributionInput{}, false
 	}
-	return contributionInput{state: input.state, coverage: input.coverage}, true
+	return contributionInput{state: input.state, coverage: input.coverage, closed: true}, true
 }
 
 func (work *Work) contributionInputFromPoint(input PointState) (contributionInput, bool) {
 	if work == nil || !work.admittedPointState(input) || input.state.previewMarked() || input.state.contributionMarked() {
 		return contributionInput{}, false
 	}
-	return contributionInput{state: input.state, coverage: input.coverage}, true
+	return contributionInput{state: input.state, coverage: input.coverage, closed: input.closed}, true
 }
 
 func (work *Work) contributionInputsFromContributions(inputs []Contribution) ([]contributionInput, bool) {
@@ -316,7 +321,7 @@ func (work *Work) ownsContributionBase(owner *contributionBase) bool {
 }
 
 func sameContributionInput(left, right contributionInput) bool {
-	return sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
+	return left.closed == right.closed && sameState(left.state, right.state) && sameContributionCoverage(left.coverage, right.coverage)
 }
 
 // OwnsRuleContributionBase proves this Work owns a nominal PointState-input
@@ -423,7 +428,7 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch, r
 	} else {
 		retained = owner.state.support
 	}
-	if !retained.Valid() || retained.Manager() != work.composition.guards || !retained.Entails(owner.state.support) || !owner.plan.supportPrune && !retained.Equal(owner.state.support) {
+	if !retained.Valid() || retained.Manager() != work.composition.guards || !work.entailsSupport(retained, owner.state.support) || !owner.plan.supportPrune && !retained.Equal(owner.state.support) {
 		dropPatches(patches)
 		return Contribution{}, false
 	}
@@ -536,6 +541,15 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch, r
 			}
 			authored = original.authored
 		}
+		// A closed PointState/Contribution source can retain its exact root
+		// without reopening the typed close when this slot is untouched and the
+		// final surface is unchanged.  The helper revalidates both opaque roots
+		// through State.HandleAt before allowing the sparse commit to omit this
+		// slot; any patch, support prune, alias, or coverage difference stays on
+		// the ordinary typed close below.
+		if original == nil && !withSupport && !owner.plan.supportPrune && work.canBorrowClosedContributionSlot(owner, physical, retained, coverage.slot(physical)) {
+			continue
+		}
 		change, valid := slot.CloseContributionUnder(owner.state.roots[position], candidate, split, coverageRows(coverage.slot(physical)), delta)
 		if !valid {
 			delta.Discard()
@@ -627,6 +641,34 @@ func containsContributionCarry(carries []ContributionSource, slot shape.Slot) bo
 		}
 	}
 	return false
+}
+
+func (work *Work) canBorrowClosedContributionSlot(owner *contributionBase, slot shape.Slot, retained support.Mask, final slotCoverage) bool {
+	if work == nil || owner == nil || owner.plan == nil || !retained.Valid() || !owner.state.support.Equal(retained) {
+		return false
+	}
+	source, ok := contributionSourceAt(owner, slot)
+	if !ok || !source.closed || !source.state.Support().Equal(retained) || !sameSlotCoverage(source.coverage.slot(slot), final) {
+		return false
+	}
+	sourceRoot, sourceOK := source.state.HandleAt(slot)
+	ownerRoot, ownerOK := owner.state.HandleAt(slot)
+	return sourceOK && ownerOK && sameRoot(sourceRoot, ownerRoot)
+}
+
+func contributionSourceAt(owner *contributionBase, slot shape.Slot) (contributionInput, bool) {
+	if owner == nil || owner.plan == nil {
+		return contributionInput{}, false
+	}
+	for _, carry := range owner.plan.carries {
+		if carry.Slot == slot && carry.Input >= 0 && carry.Input < len(owner.inputs) {
+			return owner.inputs[carry.Input], true
+		}
+	}
+	if owner.plan.environment && owner.hasEnvironment {
+		return owner.environment, true
+	}
+	return contributionInput{}, false
 }
 
 // contributionPatchesOwned proves the whole proposed batch belongs to one

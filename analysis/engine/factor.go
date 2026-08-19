@@ -42,7 +42,7 @@ type Ref[K ~uint32 | ~uint64] struct {
 // coordinates: callers with an owner-private K can construct it by type
 // inference, while only Assembly later reads its canonical Ref vector.
 type ClosedRefs[K ~uint32 | ~uint64] struct {
-	receipt factorRuntimeReceipt
+	receipt factorRuntimeBinding
 	digest  [32]byte
 	refs    []Ref[K]
 	closed  bool
@@ -138,17 +138,37 @@ func (refs *ClosedRefs[K]) Close() bool {
 }
 
 // OrderedCells is the typed, read-only Factor observation handed to an E
-// callback. D can name it in a form but cannot construct one.
-type OrderedCells[V any] struct{ record *orderedCellsRecord[V] }
+// callback. D can name it in a form but cannot construct one. A materialized
+// projector owns a record; a synchronous fold may instead borrow the exact
+// generation-fenced view issued by the Factor binding.
+type OrderedCells[V any] struct {
+	record *orderedCellsRecord[V]
+	view   orderedCellsView[V]
+}
+
+// orderedCellsView is the private borrowed half of OrderedCells. The issuing
+// owner decides its lifetime; Count and At fail closed after that generation
+// ends. Keeping the view private prevents a domain from constructing or
+// extending an observation lifetime.
+type orderedCellsView[V any] interface {
+	Count() int
+	At(int) (V, bool, bool)
+}
 
 // Count reports the exact finite typed observation width while its Product or
 // Query frame is live. A revoked observation reports zero rather than leaking
 // stale abstract values into a later transfer or proof check.
 func (cells OrderedCells[V]) Count() int {
-	if cells.record == nil || !cells.record.live.Load() {
+	if cells.record != nil {
+		if !cells.record.live.Load() {
+			return 0
+		}
+		return len(cells.record.cells)
+	}
+	if cells.view == nil {
 		return 0
 	}
-	return len(cells.record.cells)
+	return cells.view.Count()
 }
 
 // At returns one exact typed observation cell and its presence bit. It is a
@@ -156,11 +176,17 @@ func (cells OrderedCells[V]) Count() int {
 // root and a revoked Product/Query frame rejects the read.
 func (cells OrderedCells[V]) At(index int) (V, bool, bool) {
 	var zero V
-	if cells.record == nil || !cells.record.live.Load() || index < 0 || index >= len(cells.record.cells) {
+	if cells.record != nil {
+		if !cells.record.live.Load() || index < 0 || index >= len(cells.record.cells) {
+			return zero, false, false
+		}
+		cell := cells.record.cells[index]
+		return cell.value, cell.present, true
+	}
+	if cells.view == nil {
 		return zero, false, false
 	}
-	cell := cells.record.cells[index]
-	return cell.value, cell.present, true
+	return cells.view.At(index)
 }
 
 // summaryCell is private runtime observation storage. Its fields stay hidden

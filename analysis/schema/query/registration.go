@@ -14,13 +14,9 @@
 // fragments and joined, while a general fold must see its subject whole - so
 // the contract is declared per family and never inferred from a codec.
 //
-// A family also carries its contributor: the typed hooks that open its query
-// slot, install its fold against the bound principal, and recover the sealed
-// implementation its answers are read through. The contributor is erased in
-// the family's own cold fragment and sealed implementation, so the declaration
-// table carries it without naming a domain, and the fold, freeze, and equality behaviour it
-// declares stays where the facts it folds are owned. A family declared without
-// one is refused rather than answered by some default.
+// The contributor that opens a slot, installs a fold, and recovers a sealed
+// implementation is composition wiring. It is selected by this family's
+// declaration key and does not live on the sealed record.
 //
 // The codec and fold-contract identities are named as semantic roles and
 // resolved against the sealed role vocabulary when the family is admitted, so
@@ -32,7 +28,6 @@
 package query
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -52,7 +47,7 @@ const (
 	LawSubjectDeclared
 	LawSubjectUnique
 	LawSubjectResolves
-	LawContributorDeclared
+	_
 	LawPopulationDeclared
 	LawPopulationResolves
 	LawProjectionDeclared
@@ -125,10 +120,10 @@ func (subjects Subjects) restrict(keys []schema.Key) (Subjects, bool) {
 }
 
 // Declaration is the cold context one family's Declare hook receives: the
-// builder its query slot is opened on, the two identities the family is
-// declared under, and the payloads of its declared subject axes' cold pass.
+// two identities the family is declared under, and the payloads of its
+// declared subject axes' cold pass. The schema builder is composition
+// wiring and is not carried here.
 type Declaration struct {
-	Builder *engine.SchemaBuilder
 	// Semantic is the identity the query slot is declared under, and Freezer
 	// the identity its results are published and opened under. Both are
 	// resolved from the roles the family named, so a contributor installs the
@@ -138,30 +133,24 @@ type Declaration struct {
 	Subjects Subjects
 }
 
-// Binding is the hot context one family's Bind hook receives: the open schema
-// binding, the cold fragment its own Declare hook produced, and the payloads of
-// its declared subject axes' hot pass. Queries bind after every axis, so the
-// bound principal a family folds is reachable here.
+// Binding is the hot context one family's Bind hook receives: the cold
+// fragment its own Declare hook produced, and the payloads of its declared
+// subject axes' hot pass. The schema binding is composition wiring.
 type Binding[F any] struct {
-	Binding  *engine.SchemaBinding
 	Fragment F
 	Subjects Subjects
 }
 
 // Sealed is the sealed context one family's Recover hook receives. It runs
-// after the binding seals, which is when an implementation may be recovered
-// from a slot at all, so the recover pass is separate from the bind pass rather
-// than folded into it.
+// after the binding seals. The schema binding is composition wiring.
 type Sealed[F any] struct {
-	Binding  *engine.SchemaBinding
 	Fragment F
 }
 
-// Spec is the authored declaration of one query family. F is the family's own
-// cold fragment and R the sealed implementation its answers are read through;
-// the owning domain keeps its fold and its observation type, and what it hands
-// over here is the declaration and the wiring.
-type Spec[F, R any] struct {
+// Spec is the authored declaration of one query family. The owning domain
+// keeps its fold, observation type, and contributor; what it hands over here
+// is the sealed declaration.
+type Spec struct {
 	// Family is the query's authored identity and its diagnostic name, so a
 	// family has exactly one spelling in the analyzer. It derives the entry
 	// identity a verdict carries.
@@ -185,20 +174,6 @@ type Spec[F, R any] struct {
 	Population schema.Key
 	// Projection is the read shape construction uses to attach this family.
 	Projection schema.Key
-	// Declare opens this family's query slot and records the read its fold runs
-	// over, returning the family's cold fragment.
-	//
-	// Declare, Bind, and Recover are the family's contributor and are declared
-	// together: a family that opens a slot nothing folds, or folds into a
-	// recovers an implementation nothing reads, states two different things about how it is
-	// answered.
-	Declare func(Declaration) (F, bool)
-	// Bind installs this family's fold and result contract on the bound
-	// principal its subject axis produced.
-	Bind func(Binding[F]) bool
-	// Recover recovers the sealed implementation this family's answers are
-	// materialized and read through.
-	Recover func(Sealed[F]) (R, bool)
 }
 
 // Cell is the opaque per-family payload the table carries between passes. It is
@@ -231,22 +206,15 @@ type Registration struct {
 
 	semantic identity.SemanticKey
 	freezer  identity.SemanticKey
-	declare  func(*engine.SchemaBuilder, Subjects) (Cell, bool)
-	bind     func(*engine.SchemaBinding, Cell, Subjects) bool
-	recover  func(*engine.SchemaBinding, Cell) (Cell, bool)
 }
 
-// New admits one authored declaration and instantiates its typed hooks. The
-// identities the family is published under are resolved from the sealed role
-// vocabulary here, so the declaration and the slot the contributor opens name
-// one contract. A rejected spec returns false rather than a partially usable
-// registration.
-func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool) {
+// New admits one authored declaration. The identities the family is
+// published under are resolved from the sealed role vocabulary here, so the
+// declaration and the slot the contributor opens name one contract. A
+// rejected spec returns false rather than a partially usable registration.
+func New(spec Spec, roles vocabulary.Roles) (*Registration, bool) {
 	if !spec.Family.Available() || !spec.Fold.Available() || len(spec.Subjects) == 0 ||
 		!spec.Population.Available() || !spec.Projection.Available() {
-		return nil, false
-	}
-	if spec.Declare == nil || spec.Bind == nil || spec.Recover == nil {
 		return nil, false
 	}
 	semantic, semanticOK := roles.Key(spec.Semantic)
@@ -279,77 +247,46 @@ func New[F, R any](spec Spec[F, R], roles vocabulary.Roles) (*Registration, bool
 		semantic:   semantic,
 		freezer:    codec,
 	}
-	// The hooks receive exactly the subject axes this family declared, and the
-	// identities it was admitted under. Narrowing here is what makes the
-	// declared subject list the whole of what a contributor can read, so a
-	// coordinate space reaching a hook body is one the table has on record.
-	registration.declare = func(builder *engine.SchemaBuilder, subjects Subjects) (Cell, bool) {
-		narrowed, narrowedOK := subjects.restrict(registration.subjects)
-		if !narrowedOK {
-			return Cell{}, false
-		}
-		fragment, declared := spec.Declare(Declaration{
-			Builder:  builder,
-			Semantic: registration.semantic,
-			Freezer:  registration.freezer,
-			Subjects: narrowed,
-		})
-		if !declared {
-			return Cell{}, false
-		}
-		return Cell{value: fragment}, true
-	}
-	registration.bind = func(binding *engine.SchemaBinding, holder Cell, subjects Subjects) bool {
-		fragment, fragmentOK := holder.value.(F)
-		narrowed, narrowedOK := subjects.restrict(registration.subjects)
-		if !fragmentOK || !narrowedOK {
-			return false
-		}
-		return spec.Bind(Binding[F]{Binding: binding, Fragment: fragment, Subjects: narrowed})
-	}
-	registration.recover = func(binding *engine.SchemaBinding, holder Cell) (Cell, bool) {
-		fragment, fragmentOK := holder.value.(F)
-		if !fragmentOK {
-			return Cell{}, false
-		}
-		implementation, recovered := spec.Recover(Sealed[F]{Binding: binding, Fragment: fragment})
-		if !recovered {
-			return Cell{}, false
-		}
-		return Cell{value: implementation}, true
-	}
 	return registration, registration.EntryAvailable() && registration.declarationComplete()
 }
 
-// Declare opens this family's cold query shape and returns its fragment.
-func (registration *Registration) Declare(builder *engine.SchemaBuilder, subjects Subjects) (Cell, bool) {
-	if registration == nil || registration.declare == nil || builder == nil {
-		return Cell{}, false
-	}
-	return registration.declare(builder, subjects)
+// RestrictSubjects narrows a pass's payloads to exactly one family's declared
+// subjects. A declared subject the pass produced no payload for leaves the
+// view unavailable rather than partial.
+func RestrictSubjects(subjects Subjects, keys []schema.Key) (Subjects, bool) {
+	return subjects.restrict(keys)
 }
 
-// Bind installs this family's fold on the bound principal its subject produced.
-func (registration *Registration) Bind(binding *engine.SchemaBinding, fragment Cell, subjects Subjects) bool {
-	if registration == nil || registration.bind == nil || binding == nil || !fragment.Available() {
-		return false
+// NewCell holds one typed contributor payload in an opaque cell.
+func NewCell(value any) Cell {
+	if value == nil {
+		return Cell{}
 	}
-	return registration.bind(binding, fragment, subjects)
+	return Cell{value: value}
 }
 
-// Recover recovers this family's sealed implementation from the bound schema.
-func (registration *Registration) Recover(binding *engine.SchemaBinding, fragment Cell) (Cell, bool) {
-	if registration == nil || registration.recover == nil || binding == nil || !fragment.Available() {
-		return Cell{}, false
+// Semantic is the identity the family's query slot is declared under.
+func (registration *Registration) Semantic() identity.SemanticKey {
+	if registration == nil {
+		return identity.SemanticKey{}
 	}
-	return registration.recover(binding, fragment)
+	return registration.semantic
 }
 
-// ContributorDeclared reports whether this family carries the three hooks that
-// answer it.
-func (registration *Registration) ContributorDeclared() bool {
-	return registration != nil && registration.declare != nil &&
-		registration.bind != nil && registration.recover != nil
+// Freezer is the identity the family's results are published under.
+func (registration *Registration) Freezer() identity.SemanticKey {
+	if registration == nil {
+		return identity.SemanticKey{}
+	}
+	return registration.freezer
+}
+
+// Subjects returns the family's declared subject axes in declaration order.
+func (registration *Registration) Subjects() []schema.Key {
+	if registration == nil {
+		return nil
+	}
+	return append([]schema.Key(nil), registration.subjects...)
 }
 
 func (registration *Registration) Key() schema.Key { return registration.family }
@@ -505,12 +442,6 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 			if !axisDeclared(axes, subject) {
 				return failure(registration.id, LawSubjectResolves, schema.DispositionIncomplete)
 			}
-		}
-		// A family is answered by its contributor and by nothing else. Stating
-		// it here is what makes a withdrawn contributor a rejected table rather
-		// than a family that seals and then answers from some fallback.
-		if !registration.ContributorDeclared() {
-			return failure(registration.id, LawContributorDeclared, schema.DispositionIncomplete)
 		}
 		if !registration.population.Available() {
 			return failure(registration.id, LawPopulationDeclared, schema.DispositionIncomplete)

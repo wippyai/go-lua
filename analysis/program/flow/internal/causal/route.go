@@ -410,6 +410,42 @@ func (id RouteIdentity) available() bool {
 	}
 }
 
+// issued reports the already-sealed shape of a route identity without
+// rebuilding its digest preimage.  The digest is issued by buildRouteIndex,
+// which performs the complete preimage validation once.  Hot projections must
+// consume that issued value directly; they must not re-derive the same route
+// identity merely to ask whether the owner-issued value is present.
+func (id RouteIdentity) issued() bool {
+	if !id.SourceID.Available() || !id.FlowID.Available() || !id.StaticID.Available() || !id.ModuleID.Available() ||
+		!validIdentityTerm(id.From) || !validIdentityTerm(id.To) || !id.Digest.Available() || !isKnownArm(id.Arm) {
+		return false
+	}
+	if id.Decision == 0 {
+		if id.Truth {
+			return false
+		}
+	} else if !isDecision(id.Decision) {
+		return false
+	}
+	switch id.Arm {
+	case BoundaryLocal:
+		if keyspace.TermFamily(id.From) == keyspace.FamilyCall {
+			return false
+		}
+		return validIdentityMu(id)
+	case BoundarySelectTrue, BoundarySelectFalse:
+		return keyspace.TermFamily(id.From) == keyspace.FamilyCall && id.Decision != 0 &&
+			keyspace.TermFamily(id.Decision) == keyspace.FamilySelect && validIdentityMu(id)
+	default:
+		return keyspace.TermFamily(id.From) == keyspace.FamilyCall && id.Decision == 0 && !id.Truth && validIdentityMu(id)
+	}
+}
+
+// Issued reports whether this value has the shape of a sealed route identity.
+// It is intentionally distinct from Available: callers holding a value
+// issued by Successor do not need to hash its already-issued preimage again.
+func (id RouteIdentity) Issued() bool { return id.issued() }
+
 func validIdentityMu(id RouteIdentity) bool {
 	if id.Mu == 0 {
 		return id.ResetCount == 0 && !id.ResetDigest.Available()
@@ -811,7 +847,7 @@ func (r *Result) routeIdentityForRef(ref successorRef) (RouteIdentity, []keyspac
 // the digest to this existing successor ref, while the immutable row carries
 // only the reset commitment needed to authenticate the rest of the preimage.
 func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool) {
-	if r == nil || !r.available() {
+	if r == nil || !r.available() || !r.routesReady || !ref.routeDigest.Available() {
 		return RouteIdentity{}, false
 	}
 	if !isKnownArm(ref.arm) {
@@ -834,7 +870,7 @@ func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool)
 			From: row.From, To: row.To, Decision: row.Decision, Truth: row.Truth, Mu: row.Mu,
 			Arm: BoundaryLocal, ResetDigest: resetDigest, ResetCount: resetCount, Digest: ref.routeDigest,
 		}
-		return id, id.available()
+		return id, id.issued()
 	}
 	if uint64(ref.index) >= uint64(len(r.boundaries.rows)) || !isBoundaryArm(ref.arm) {
 		return RouteIdentity{}, false
@@ -860,7 +896,7 @@ func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool)
 		From: row.Call, To: to, Decision: decision, Truth: truth, Mu: proof.mu, Arm: ref.arm,
 		ResetDigest: resetDigest, ResetCount: resetCount, Digest: ref.routeDigest,
 	}
-	return id, id.available()
+	return id, id.issued()
 }
 
 func edgeResetWitness(row edgeRow) (identity.ContentID, uint32, bool) {

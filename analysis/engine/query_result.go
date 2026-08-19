@@ -13,6 +13,7 @@ import (
 type frozenValue interface {
 	equal(frozenValue) bool
 	fingerprint() uint64
+	rowPresent() bool
 }
 
 type typedFrozenValue[R any] struct {
@@ -29,6 +30,10 @@ func (value *typedFrozenValue[R]) fingerprint() uint64 {
 		return 0
 	}
 	return value.freeze.Fingerprint(value.value)
+}
+
+func (value *typedFrozenValue[R]) rowPresent() bool {
+	return value != nil && value.freeze.Present(value.value)
 }
 
 type queryResult struct {

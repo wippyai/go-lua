@@ -31,6 +31,7 @@ type compiler struct {
 	callOperands               []CallOperandRow
 	callArguments              []CallArgumentRow
 	callTypeArguments          []CallTypeArgumentRow
+	callsByID                  map[identity.ContentID]CallRow
 	bodies                     []BodyRow
 	functionBoundaries         []FunctionBoundaryRow
 	callTargets                []CallTargetRow
@@ -57,6 +58,7 @@ type compiler struct {
 	pointGeometry              map[identity.ContentID]Point
 	occurrenceSpans            map[occurrenceLookup]occurrenceSpanGeometry
 	routeOccurrences           map[identity.ContentID]identity.ContentID
+	predecessorStages          map[identity.ContentID]identity.ContentID
 	localStages                map[identity.ContentID]identity.ContentID
 	computationStages          map[identity.ContentID][]computationStage
 	callStages                 map[identity.ContentID]callStageSet

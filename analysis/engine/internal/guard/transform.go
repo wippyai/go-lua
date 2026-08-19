@@ -33,7 +33,7 @@ func (w *Work) restrictNode(root Guard, target uint64, value bool) Guard {
 		}
 		n := w.node(frame.guard)
 		if n.rank == target {
-			key := restrictKey{guard: frame.guard, rank: target, value: value}
+			key := restrictKey{guard: keyOf(frame.guard), rank: target, value: value}
 			if value {
 				w.restrict[key] = n.high
 			} else {
@@ -56,18 +56,18 @@ func (w *Work) restrictNode(root Guard, target uint64, value bool) Guard {
 		default:
 			low, _ := w.restrictResult(n.low, target, value)
 			high, _ := w.restrictResult(n.high, target, value)
-			w.restrict[restrictKey{guard: frame.guard, rank: target, value: value}] = w.makeNode(n.rank, low, high)
+			w.restrict[restrictKey{guard: keyOf(frame.guard), rank: target, value: value}] = w.nodeOrExisting(n.rank, low, high, frame.guard, Guard{})
 			stack = stack[:len(stack)-1]
 		}
 	}
-	return w.restrict[restrictKey{guard: root, rank: target, value: value}]
+	return w.restrict[restrictKey{guard: keyOf(root), rank: target, value: value}]
 }
 
 func (w *Work) restrictResult(g Guard, target uint64, value bool) (Guard, bool) {
 	if isTerminal(g) || w.rank(g) > target {
 		return g, true
 	}
-	result, exists := w.restrict[restrictKey{guard: g, rank: target, value: value}]
+	result, exists := w.restrict[restrictKey{guard: keyOf(g), rank: target, value: value}]
 	return result, exists
 }
 
@@ -104,7 +104,7 @@ func (w *Work) existsNode(root Guard, target uint64) Guard {
 		}
 		n := w.node(frame.guard)
 		if n.rank == target {
-			w.exists[existsKey{guard: frame.guard, rank: target}] = w.applyNode(orOperation, n.low, n.high)
+			w.exists[existsKey{guard: keyOf(frame.guard), rank: target}] = w.applyNode(orOperation, n.low, n.high)
 			stack = stack[:len(stack)-1]
 			continue
 		}
@@ -122,18 +122,18 @@ func (w *Work) existsNode(root Guard, target uint64) Guard {
 		default:
 			low, _ := w.existsResult(n.low, target)
 			high, _ := w.existsResult(n.high, target)
-			w.exists[existsKey{guard: frame.guard, rank: target}] = w.makeNode(n.rank, low, high)
+			w.exists[existsKey{guard: keyOf(frame.guard), rank: target}] = w.nodeOrExisting(n.rank, low, high, frame.guard, Guard{})
 			stack = stack[:len(stack)-1]
 		}
 	}
-	return w.exists[existsKey{guard: root, rank: target}]
+	return w.exists[existsKey{guard: keyOf(root), rank: target}]
 }
 
 func (w *Work) existsResult(g Guard, target uint64) (Guard, bool) {
 	if isTerminal(g) || w.rank(g) > target {
 		return g, true
 	}
-	result, exists := w.exists[existsKey{guard: g, rank: target}]
+	result, exists := w.exists[existsKey{guard: keyOf(g), rank: target}]
 	return result, exists
 }
 

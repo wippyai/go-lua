@@ -19,5 +19,4 @@ type Evidence struct {
 	Rows   []Row
 }
 
-// Generated is assigned by the checked-in generated evidence source.
-var Generated Evidence
+// Generated is the checked-in immutable output-owner evidence value.

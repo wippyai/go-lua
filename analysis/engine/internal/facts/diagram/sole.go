@@ -44,14 +44,17 @@ type SoleScratch[K scalar.Key, V any] struct {
 	// transaction.  Flat tuple storage avoids one slice allocation per FDD
 	// state, while the exact memo prevents shared suffixes from being expanded
 	// repeatedly.
-	manyCursors  []avlCursor[K, V]
-	manyHeads    []*keyNode[K, V]
-	manyHeap     []int
-	manyNodes    []*node[V]
-	manyWidth    int
-	manySupports []support.Mask
-	manyPresent  []bool
-	manyIDs      []terminal.ID[V]
+	manyCursors     []avlCursor[K, V]
+	manyHeads       []*keyNode[K, V]
+	manyHeap        []int
+	manyNodes       []*node[V]
+	manyWidth       int
+	manySupports    []support.Mask
+	manyViews       []support.Decomposition
+	manyRegionRanks []uint64
+	manyNodeRanks   []uint64
+	manyPresent     []bool
+	manyIDs         []terminal.ID[V]
 
 	manyLowNodes     []*node[V]
 	manyHighNodes    []*node[V]
@@ -70,6 +73,52 @@ type SoleScratch[K scalar.Key, V any] struct {
 	manySeedState map[*node[V]]uint8
 	manyPriorIDs  []terminal.ID[V]
 	manyPriorSeen map[terminal.ID[V]]struct{}
+
+	// manyRootNodes and manyRoots are operation-local input views. The former
+	// is the diagram's borrowed key-root vector; the latter is a typed root
+	// vector borrowed by a semantic caller through BorrowRootVector. Neither
+	// survives Clear, and neither is a fact representation.
+	manyRootNodes []*keyNode[K, V]
+	manyRoots     soleRootBuffer
+}
+
+// soleRootBuffer is the type-erased owner of one generic Root vector. A
+// SoleScratch is intentionally only parameterized by key and terminal value,
+// while Root also carries the factor marker. Keeping this one operation-local
+// buffer behind a tiny erasure lets semantic callers reuse the same backing
+// array without exposing diagram internals or allocating a new Root slice on
+// every fold.
+type soleRootBuffer interface {
+	clear()
+}
+
+type soleRootVector[F ~uint64, K scalar.Key, V any] struct {
+	roots []Root[F, K, V]
+}
+
+func (vector *soleRootVector[F, K, V]) clear() {
+	if vector == nil {
+		return
+	}
+	clear(vector.roots)
+	vector.roots = vector.roots[:0]
+}
+
+// BorrowRootVector returns caller-owned, operation-local storage for one
+// typed Root vector. The vector is valid until the next scratch operation and
+// must not be retained by the caller. It carries no semantic state: Clear
+// drops every element while preserving capacity for the next fold.
+func BorrowRootVector[F ~uint64, K scalar.Key, V any](scratch *SoleScratch[K, V], count int) []Root[F, K, V] {
+	if scratch == nil || count < 0 {
+		return nil
+	}
+	vector, ok := scratch.manyRoots.(*soleRootVector[F, K, V])
+	if !ok {
+		vector = &soleRootVector[F, K, V]{}
+		scratch.manyRoots = vector
+	}
+	vector.roots = resizeClear(vector.roots, count)
+	return vector.roots
 }
 
 type soleManyState[V any] struct {
@@ -133,6 +182,22 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	clear(scratch.trackedFrames)
 	scratch.trackedFrames = scratch.trackedFrames[:0]
 	clear(scratch.tracked)
+	scratch.clearManyWork()
+	clear(scratch.manyRootNodes)
+	scratch.manyRootNodes = scratch.manyRootNodes[:0]
+	if scratch.manyRoots != nil {
+		scratch.manyRoots.clear()
+	}
+}
+
+// clearManyWork drops all logical state for the synchronized fold while
+// preserving the caller-owned Root vector and key-root vector. Merge starts
+// with this reset after its inputs have been validated; Clear additionally
+// clears those input views.
+func (scratch *SoleScratch[K, V]) clearManyWork() {
+	if scratch == nil {
+		return
+	}
 	for index := range scratch.manyCursors {
 		scratch.manyCursors[index].clear()
 	}
@@ -147,6 +212,12 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	scratch.manyWidth = 0
 	clear(scratch.manySupports)
 	scratch.manySupports = scratch.manySupports[:0]
+	clear(scratch.manyViews)
+	scratch.manyViews = scratch.manyViews[:0]
+	clear(scratch.manyRegionRanks)
+	scratch.manyRegionRanks = scratch.manyRegionRanks[:0]
+	clear(scratch.manyNodeRanks)
+	scratch.manyNodeRanks = scratch.manyNodeRanks[:0]
 	clear(scratch.manyPresent)
 	scratch.manyPresent = scratch.manyPresent[:0]
 	clear(scratch.manyIDs)
@@ -202,6 +273,14 @@ func resizeClear[T any](values []T, count int) []T {
 	return values
 }
 
+func (scratch *SoleScratch[K, V]) borrowManyRootNodes(count int) []*keyNode[K, V] {
+	if scratch == nil || count < 0 {
+		return nil
+	}
+	scratch.manyRootNodes = resizeClear(scratch.manyRootNodes, count)
+	return scratch.manyRootNodes
+}
+
 // prepareMany opens a k-way ascending sparse-key zipper.  Each cursor owns
 // only borrowed immutable nodes.  Normal exhaustion is represented solely by
 // an empty heap; cancellation remains the caller's separate live check.
@@ -209,7 +288,7 @@ func (scratch *SoleScratch[K, V]) prepareMany(roots []*keyNode[K, V]) bool {
 	if !scratch.live() || len(roots) == 0 {
 		return false
 	}
-	scratch.Clear()
+	scratch.clearManyWork()
 	count := len(roots)
 	scratch.manyCursors = resizeClear(scratch.manyCursors, count)
 	scratch.manyHeads = resizeClear(scratch.manyHeads, count)

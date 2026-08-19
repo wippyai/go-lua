@@ -7,6 +7,12 @@ import (
 	"runtime"
 	"testing"
 
+	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+
+	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -67,12 +73,12 @@ func TestArtifactSectionCanonicalizesSparseClaimOrder(t *testing.T) {
 	claimTwo := keyspace.MakeTerm(keyspace.FamilyValueClaim, 2)
 	primitiveOne := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	primitiveTwo := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 3)
-	first.Operands.Claim = []ClaimTarget{
+	first.Operands.Claim = []staticoperands.ClaimTarget{
 		{Claim: claimTwo, Target: primitiveTwo},
 		{Claim: claimOne, Target: primitiveOne},
 	}
 	second := first
-	second.Operands.Claim = []ClaimTarget{
+	second.Operands.Claim = []staticoperands.ClaimTarget{
 		{Claim: claimOne, Target: primitiveOne},
 		{Claim: claimTwo, Target: primitiveTwo},
 	}
@@ -95,17 +101,19 @@ func TestArtifactSectionCanonicalizesSparseClaimOrder(t *testing.T) {
 	}
 }
 
+// TestArtifactSectionExcludesCommittedDerivedState proves the payload carries
+// authored relations only. The census column and the dense query lookups the
+// operand and declaration verticals retain are derived from those relations,
+// so widening the external denominators they are sized by must not move a
+// single byte of the stream.
 func TestArtifactSectionExcludesCommittedDerivedState(t *testing.T) {
-	component := staticContentComponent(t, staticFixture(t))
-	before := encodeStaticArtifactComponent(t, component, false)
+	input := staticFixture(t)
+	before := encodeStaticArtifactComponent(t, staticContentComponent(t, input), false)
 
-	component.census[keyspace.FamilyTypeAlias]++
-	component.operands.claimTargets[0] = 0
-	component.operands.annotationTargets[0] = 0
-	component.operands.annotationRanges[0] = poolRange{}
-	component.operands.annotationTerms[0] = 0
-
-	after := encodeStaticArtifactComponent(t, component, false)
+	widened := input
+	widened.Counts[keyspace.FamilyValueClaim]++
+	widened.Counts[keyspace.FamilyCell]++
+	after := encodeStaticArtifactComponent(t, staticContentComponent(t, widened), false)
 	if !bytes.Equal(before, after) {
 		t.Fatal("derived Static indexes changed artifact payload")
 	}
@@ -384,7 +392,7 @@ func encodeStaticDensePrimitiveSection(t *testing.T, count, badRow int) []byte {
 			t.Fatal(err)
 		}
 		for index := 0; index < count; index++ {
-			kind := uint64(PrimitiveAny)
+			kind := uint64(statictypes.PrimitiveAny)
 			if index == badRow {
 				kind = 0
 			}
@@ -410,7 +418,7 @@ func encodeStaticDensePrimitiveFinalPublicationSection(t *testing.T, count int) 
 			t.Fatal(err)
 		}
 		for index := 0; index < count; index++ {
-			if err := writer.Uint(uint64(PrimitiveAny)); err != nil {
+			if err := writer.Uint(uint64(statictypes.PrimitiveAny)); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -559,7 +567,7 @@ func encodeStaticHostileGenericBase(t *testing.T) []byte {
 		if err := writer.Count(1); err != nil {
 			t.Fatal(err)
 		}
-		if err := writer.Uint(uint64(PrimitiveAny)); err != nil {
+		if err := writer.Uint(uint64(statictypes.PrimitiveAny)); err != nil {
 			t.Fatal(err)
 		}
 		for index, count := range []uint64{0, 0, 0, 0, 1} {
@@ -595,7 +603,7 @@ func encodeStaticHostileRecordField(t *testing.T) []byte {
 		if err := writer.Count(1); err != nil {
 			t.Fatal(err)
 		}
-		if err := writer.Uint(uint64(PrimitiveAny)); err != nil {
+		if err := writer.Uint(uint64(statictypes.PrimitiveAny)); err != nil {
 			t.Fatal(err)
 		}
 		for range 6 { // literal, optional, union, intersection, generic, array
@@ -635,7 +643,7 @@ func encodeStaticHostileReferenceRoot(t *testing.T) []byte {
 			t.Fatal(err)
 		}
 		for _, value := range []uint64{
-			uint64(TypeRefUnresolved), 0,
+			uint64(staticrefs.Unresolved), 0,
 			uint64(keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)),
 			2, 1, 2, 0,
 		} {
@@ -748,7 +756,7 @@ func encodeStaticHostileClaimOrder(t *testing.T) []byte {
 		if err := writer.Count(1); err != nil {
 			t.Fatal(err)
 		}
-		if err := writer.Uint(uint64(PrimitiveAny)); err != nil {
+		if err := writer.Uint(uint64(statictypes.PrimitiveAny)); err != nil {
 			t.Fatal(err)
 		}
 		for range 9 {
@@ -774,7 +782,7 @@ func encodeStaticHostileClaimOrder(t *testing.T) []byte {
 				t.Fatal(err)
 			}
 		}
-		for range 2 { // TypeValue and Annotation
+		for range 2 { // TypeValue and staticoperands.Annotation
 			if err := writer.Count(0); err != nil {
 				t.Fatal(err)
 			}
@@ -804,46 +812,6 @@ func staticArtifactInputEmpty(input Input) bool {
 		len(input.Operators.Conditional) == 0 && len(input.Operands.Claim) == 0 &&
 		len(input.Operands.TypeValue) == 0 && len(input.Operands.Annotation) == 0 &&
 		len(input.Publications.Type) == 0
-}
-
-func TestArtifactContractsDecoderRetainsFunctionAndCallRows(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, contractsFixture(t))
-	if len(decoded.Contracts.Function) != 1 || len(decoded.Contracts.Call) != 1 {
-		t.Fatalf("decoded contract rows = (%d, %d), want (1, 1)", len(decoded.Contracts.Function), len(decoded.Contracts.Call))
-	}
-	function := decoded.Contracts.Function[0]
-	if !function.ReturnsKnown || len(function.TypeParams) != 1 ||
-		function.TypeParams[0] != keyspace.MakeTerm(keyspace.FamilyTypeParam, 1) ||
-		len(function.Returns) != 1 || function.Returns[0] != keyspace.MakeTerm(keyspace.FamilyTypeAsserts, 1) {
-		t.Fatalf("decoded function contract = %+v", function)
-	}
-	call := decoded.Contracts.Call[0]
-	wantArgs := []keyspace.Term{
-		keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 2),
-		keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 3),
-	}
-	if len(call.TypeArguments) != len(wantArgs) || call.TypeArguments[0] != wantArgs[0] || call.TypeArguments[1] != wantArgs[1] {
-		t.Fatalf("decoded call contract arguments = %v, want %v", call.TypeArguments, wantArgs)
-	}
-}
-
-func TestArtifactDeclarationsDecoderRetainsTypedRowsAndMembers(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, declarationFixture(t))
-	if len(decoded.Declarations.Alias) != 1 || len(decoded.Declarations.TypeParam) != 1 || len(decoded.Declarations.Interface) != 1 {
-		t.Fatalf("decoded declaration counts = aliases:%d params:%d interfaces:%d",
-			len(decoded.Declarations.Alias), len(decoded.Declarations.TypeParam), len(decoded.Declarations.Interface))
-	}
-	alias := decoded.Declarations.Alias[0]
-	if alias.Owner != keyspace.MakeTerm(keyspace.FamilyBody, 1) ||
-		alias.Target != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1) ||
-		len(alias.Params) != 1 || alias.Params[0] != keyspace.MakeTerm(keyspace.FamilyTypeParam, 1) {
-		t.Fatalf("decoded alias = %+v", alias)
-	}
-	if got := decoded.Declarations.Interface[0].Members; len(got) != 2 ||
-		got[0].Kind != InterfaceField || got[0].Field != keyspace.MakeTerm(keyspace.FamilyTypeField, 1) ||
-		got[1].Kind != InterfaceMethod || got[1].Signature != keyspace.MakeTerm(keyspace.FamilyTypeFunction, 1) {
-		t.Fatalf("decoded interface members = %+v", got)
-	}
 }
 
 func decodeStaticArtifactInputForTest(t *testing.T, input Input) Input {
@@ -882,125 +850,5 @@ func TestArtifactDecoderPreflightsMissingSectionPayload(t *testing.T) {
 	}
 	if !staticArtifactInputEmpty(decoded) {
 		t.Fatal("decoder returned partial input after preflight failure")
-	}
-}
-
-func TestArtifactOperandsDecoderRetainsSparseAndDenseRelations(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, operandsFixture(t))
-	if len(decoded.Operands.Claim) != 1 || len(decoded.Operands.TypeValue) != 1 || len(decoded.Operands.Annotation) != 2 {
-		t.Fatalf("decoded operand counts = claims:%d type-values:%d annotations:%d",
-			len(decoded.Operands.Claim), len(decoded.Operands.TypeValue), len(decoded.Operands.Annotation))
-	}
-	if row := decoded.Operands.Claim[0]; row.Claim != keyspace.MakeTerm(keyspace.FamilyValueClaim, 1) ||
-		row.Target != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1) {
-		t.Fatalf("decoded claim row = %+v", row)
-	}
-	if target := decoded.Operands.TypeValue[0].Target; target != keyspace.MakeTerm(keyspace.FamilyTypeRef, 1) {
-		t.Fatalf("decoded type-value target = %v", target)
-	}
-	if decoded.Operands.Annotation[1].Scope != keyspace.MakeTerm(keyspace.FamilyValueClaim, 2) ||
-		decoded.Operands.Annotation[1].Name != 3 {
-		t.Fatalf("decoded annotation row = %+v", decoded.Operands.Annotation[1])
-	}
-}
-
-func TestArtifactOperatorsDecoderRetainsEachTypedOperator(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, operatorFixture())
-	if len(decoded.Operators.TypeOf) != 2 || len(decoded.Operators.KeyOf) != 1 ||
-		len(decoded.Operators.IndexAccess) != 1 || len(decoded.Operators.Conditional) != 1 {
-		t.Fatalf("decoded operator counts = typeof:%d keyof:%d index:%d conditional:%d",
-			len(decoded.Operators.TypeOf), len(decoded.Operators.KeyOf), len(decoded.Operators.IndexAccess), len(decoded.Operators.Conditional))
-	}
-	if row := decoded.Operators.TypeOf[0]; row.Scope != keyspace.MakeTerm(keyspace.FamilyCell, 1) ||
-		row.Operand != keyspace.MakeTerm(keyspace.FamilyRead, 1) {
-		t.Fatalf("decoded typeof row = %+v", row)
-	}
-	if row := decoded.Operators.Conditional[0]; row.Check != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 3) ||
-		row.Extends != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 4) ||
-		row.Then != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 5) ||
-		row.Else != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 6) {
-		t.Fatalf("decoded conditional row = %+v", row)
-	}
-}
-
-func TestArtifactPublicationsDecoderRetainsAssignPairAndTarget(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, publicationFixture(t))
-	if len(decoded.Publications.Type) != 1 {
-		t.Fatalf("decoded publication count = %d, want 1", len(decoded.Publications.Type))
-	}
-	row := decoded.Publications.Type[0]
-	if row.Assign != keyspace.MakeTerm(keyspace.FamilyAssign, 1) || row.Pair != 0 ||
-		row.Target != keyspace.MakeTerm(keyspace.FamilyTypeRef, 1) {
-		t.Fatalf("decoded publication row = %+v", row)
-	}
-}
-
-func TestArtifactReferencesDecoderRetainsAuthoredDispositions(t *testing.T) {
-	counts := [keyspace.FamilyCount]uint32{
-		keyspace.FamilyTypeRef:   3,
-		keyspace.FamilyTypeAlias: 1,
-		keyspace.FamilyCell:      1,
-	}
-	input := referenceInput(counts, ReferencesInput{TypeRef: []TypeRef{
-		{Resolution: TypeRefDeclaration, Source: []keyspace.Key{1}, Target: keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)},
-		{Resolution: TypeRefCanonicalPath, Source: []keyspace.Key{2, 3}, Root: keyspace.MakeTerm(keyspace.FamilyCell, 1), Canonical: []keyspace.Key{7, 8}},
-		{Resolution: TypeRefUnresolved, Source: []keyspace.Key{4, 5}, Root: keyspace.MakeTerm(keyspace.FamilyCell, 1)},
-	}})
-	decoded := decodeStaticArtifactInputForTest(t, input)
-	if len(decoded.References.TypeRef) != 3 {
-		t.Fatalf("decoded reference count = %d, want 3", len(decoded.References.TypeRef))
-	}
-	if decoded.References.TypeRef[0].Resolution != TypeRefDeclaration ||
-		decoded.References.TypeRef[0].Target != keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1) {
-		t.Fatalf("decoded declaration reference = %+v", decoded.References.TypeRef[0])
-	}
-	canonical := decoded.References.TypeRef[1]
-	if canonical.Resolution != TypeRefCanonicalPath || canonical.Root != keyspace.MakeTerm(keyspace.FamilyCell, 1) ||
-		len(canonical.Source) != 2 || canonical.Source[1] != 3 || len(canonical.Canonical) != 2 || canonical.Canonical[0] != 7 {
-		t.Fatalf("decoded canonical reference = %+v", canonical)
-	}
-	if decoded.References.TypeRef[2].Resolution != TypeRefUnresolved ||
-		decoded.References.TypeRef[2].Target != 0 || len(decoded.References.TypeRef[2].Canonical) != 0 {
-		t.Fatalf("decoded unresolved reference = %+v", decoded.References.TypeRef[2])
-	}
-}
-
-func TestArtifactSignaturesDecoderRetainsFunctionAndAssertionRows(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, signatureFixture(t))
-	if len(decoded.Signatures.TypeFunction) != 1 || len(decoded.Signatures.TypeAsserts) != 1 {
-		t.Fatalf("decoded signature counts = functions:%d assertions:%d",
-			len(decoded.Signatures.TypeFunction), len(decoded.Signatures.TypeAsserts))
-	}
-	function := decoded.Signatures.TypeFunction[0]
-	if function.Scope != keyspace.MakeTerm(keyspace.FamilyCell, 1) || len(function.TypeParams) != 1 ||
-		len(function.Parameters) != 1 || function.Parameters[0].Type != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1) ||
-		function.Variadic != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 2) ||
-		!function.ReturnsKnown || len(function.Returns) != 1 {
-		t.Fatalf("decoded function signature = %+v", function)
-	}
-	assertion := decoded.Signatures.TypeAsserts[0]
-	if !assertion.Bound || assertion.Name != 9 || assertion.Narrow != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 3) {
-		t.Fatalf("decoded assertion = %+v", assertion)
-	}
-}
-
-func TestArtifactTypesDecoderRetainsTypedForestRows(t *testing.T) {
-	decoded := decodeStaticArtifactInputForTest(t, staticTypeDenominatorInput(t))
-	if len(decoded.Types.Primitive) != 20 || len(decoded.Types.Literal) != 1 ||
-		len(decoded.Types.Optional) != 1 || len(decoded.Types.Union) != 1 ||
-		len(decoded.Types.Intersection) != 1 || len(decoded.Types.Generic) != 1 ||
-		len(decoded.Types.Array) != 1 || len(decoded.Types.Map) != 1 ||
-		len(decoded.Types.Record) != 1 || len(decoded.Types.Field) != 1 {
-		t.Fatalf("decoded type counts = primitive:%d literal:%d optional:%d union:%d intersection:%d generic:%d array:%d map:%d record:%d field:%d",
-			len(decoded.Types.Primitive), len(decoded.Types.Literal), len(decoded.Types.Optional),
-			len(decoded.Types.Union), len(decoded.Types.Intersection), len(decoded.Types.Generic),
-			len(decoded.Types.Array), len(decoded.Types.Map), len(decoded.Types.Record), len(decoded.Types.Field))
-	}
-	if decoded.Types.Union[0].Members[0] != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 2) ||
-		decoded.Types.Generic[0].Base != keyspace.MakeTerm(keyspace.FamilyTypeRef, 1) ||
-		decoded.Types.Array[0].Element != keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 7) ||
-		decoded.Types.Array[0].ReadOnly || decoded.Types.Record[0].ReadOnly {
-		t.Fatalf("decoded typed forest rows = unions:%+v generic:%+v array:%+v record:%+v",
-			decoded.Types.Union, decoded.Types.Generic, decoded.Types.Array, decoded.Types.Record)
 	}
 }

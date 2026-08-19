@@ -3,6 +3,8 @@ package denominator
 import (
 	"math"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 func TestSumCountRowsAddsDuplicateIdentities(t *testing.T) {
@@ -67,5 +69,39 @@ func TestGeneratedCountRowsRequireEveryRelationIncludingZero(t *testing.T) {
 	missing, missingOK := NewCountRows(rows[:len(rows)-1])
 	if !missingOK || GeneratedCountRowsComplete(missing) {
 		t.Fatal("incomplete generated catalog was accepted")
+	}
+}
+
+func TestGeneratedOwnerIDsAreTheCatalogTotality(t *testing.T) {
+	owners := []RelationOwner{
+		RelationOwnerProgramSource, RelationOwnerProgramFlow, RelationOwnerProgramStatic, RelationOwnerProgramModule,
+		RelationOwnerTarget, RelationOwnerLinkProject, RelationOwnerLinkBoundary, RelationOwnerLinkModule,
+		RelationOwnerLinkStatic, RelationOwnerLinkHost,
+	}
+	seen := make(map[schema.EntryID]RelationOwner)
+	for _, owner := range owners {
+		ids := generatedOwnerIDs(owner)
+		if len(ids) == 0 {
+			t.Fatalf("owner %v issued no generated identities", owner)
+		}
+		for _, id := range ids {
+			if prior, duplicate := seen[id]; duplicate {
+				t.Fatalf("identity %v belongs to both %v and %v", id, prior, owner)
+			}
+			seen[id] = owner
+		}
+	}
+	entries := GeneratedRelationEntries()
+	if len(seen) != len(entries) {
+		t.Fatalf("generated owner views cover %d identities, catalog has %d", len(seen), len(entries))
+	}
+	for _, entry := range entries {
+		if entry == nil {
+			t.Fatal("generated catalog contained a nil entry")
+		}
+		owner, ok := seen[entry.ID()]
+		if !ok || owner != entry.Owner() {
+			t.Fatalf("catalog entry %v owner %v missing from generated owner view", entry.ID(), entry.Owner())
+		}
 	}
 }
