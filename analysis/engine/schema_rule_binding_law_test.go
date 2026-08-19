@@ -424,6 +424,46 @@ func TestSchemaRuleBindingDirectRouteAndSelectedReadsComplete(t *testing.T) {
 	}
 }
 
+func TestSchemaRuleBindingDirectSummaryReadCompletes(t *testing.T) {
+	base := uint64(997_731)
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(base))
+	form, formOK := factor.SummaryRead(coldKey(base + 1))
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(base + 2), OperandFamily: coldKey(base + 3), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(base + 4)}, Output: factor.Ref(),
+	})
+	input, inputOK := rule.Input(0)
+	summarySlot, summaryOK := SchemaRead(rule, form, input)
+	carry, carryOK := SchemaCarryFrom(rule, input, factor.Ref())
+	write, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	binding := NewSchemaBinding(schema)
+	spec := directSelectedRuleHotLaw()
+	spec.Admission = AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(base + 4))
+	bound := factorOK && formOK && writeOK && ruleOK && inputOK && summaryOK && carryOK && writeSlotOK && schemaOK &&
+		BindFactor(binding, factor, hotUintFactorSpec()) &&
+		BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
+			func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
+			func(left, right OrderedCells[uint64]) bool {
+				return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
+			},
+			func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) &&
+		BindSelectedRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), spec, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true })
+	if !bound {
+		t.Fatal("direct summary Rule cell")
+	}
+	summaryRuntime, summaryBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, struct{}, uint64, OrderedCells[uint64]](binding, rule, summarySlot, factor.Ref(), form, struct{ closed bool }{closed: true})
+	if !summaryBound || summaryRuntime.origin == nil || summaryRuntime.origin.kind != composition.ReadSummary || summaryRuntime.origin.readOrdinal != 0 || summaryRuntime.origin.formOrdinal != 0 || summaryRuntime.origin.semantic != compositionKeyOf(coldKey(base+1)) || !binding.Seal() {
+		t.Fatalf("direct summary read bound=%t sealed=%t poisoned=%t", summaryBound, binding.Sealed(), binding.Poisoned())
+	}
+	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !implementationOK || implementation == nil || implementation.binding.proof == nil || implementation.binding.proof.reads != 1 || implementation.binding.proof.carries != 1 || implementation.binding.proof.writes != 1 {
+		t.Fatal("direct summary Rule proof")
+	}
+}
+
 func TestSchemaRuleBindingDirectConstructorsRejectWrongGeometry(t *testing.T) {
 	schema, factor, rule, _, _, _, carry, write := directRouteRuleLawSchema(t)
 	binding := NewSchemaBinding(schema)

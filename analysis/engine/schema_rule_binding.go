@@ -417,6 +417,44 @@ func BindSelectedRuleDirectOperandRead[K ~uint32 | ~uint64, V, O, RV any, Tag se
 	return read, true
 }
 
+// BindSelectedRuleDirectSummaryRead installs one typed summary Read into the
+// direct Rule cell at its packed cold ordinal. The sealed Rule row supplies
+// the summary semantic and zero-dependency geometry; the Factor form supplies
+// the typed normalizer and closed summary receipt. No read is appended.
+func BindSelectedRuleDirectSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], form SchemaReadForm[RV], admit any) (Read[S], bool) {
+	state := bindingState(binding)
+	if state == nil {
+		return Read[S]{}, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if form.cell == nil || form.cell.schema != state.schema || !summaryReadFormKind(form.cell.kind) {
+		state.poisonLocked()
+		return Read[S]{}, false
+	}
+	cell, readOrdinal, factorCell, ok := directRuleReadCell[K](state, rule, slot, factor)
+	if !ok {
+		return Read[S]{}, false
+	}
+	shape, shapeOK := state.schema.ruleReadShapeAt(cell.ordinal, readOrdinal)
+	factorOrdinal, factorOK := factorRefOrdinal(factor, state.schema)
+	formFactor, formOrdinal := form.cell.ordinal>>32, uint64(uint32(form.cell.ordinal))
+	formShape, formShapeOK := state.schema.factorFormShapeAt(factorOrdinal, formOrdinal)
+	if !shapeOK || shape.Kind != composition.ReadSummary || shape.DependencyCount != 0 || !shape.Semantic.Available() || shape.Semantic != shape.Normalizer || !factorOK || formFactor != factorOrdinal || !formShapeOK || !summaryReadRowKind(formShape.Kind) || formShape.Semantic != shape.Semantic || state.schema.factorSemanticAt(factorOrdinal) != shape.Factor {
+		state.poisonLocked()
+		return Read[S]{}, false
+	}
+	formCell, formOK := factorCell.schemaFactorFormAt(formOrdinal).(schemaOpaqueSummaryRuleReadForm[RV, S])
+	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: cell.ordinal, readOrdinal: readOrdinal, input: shape.Input, factor: factorOrdinal, kind: composition.ReadSummary, semantic: shape.Semantic, formOrdinal: formOrdinal}
+	read := Read[S]{origin: origin, index: int(readOrdinal), resolve: resolveTypedRead[RV, S]}
+	if !formOK || !formCell.schemaSummaryRuleReadComplete(state, origin) {
+		state.poisonLocked()
+		return Read[S]{}, false
+	}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSummaryRuleReadBinding[RV, S]{origin: origin, form: formCell, read: read, admit: admit}
+	return read, true
+}
+
 // BindSelectedExactRule is the carry-free sibling for Rules whose output write
 // is exact and whose cold geometry declares no carry.
 func BindSelectedExactRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output FactorRef[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRouteRuleBindingTransaction[K, V, O]) bool) bool {
