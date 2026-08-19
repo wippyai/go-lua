@@ -110,7 +110,6 @@ type CommittedProgram struct {
 	authority         *schemaBindingAuthority
 	directory         *semanticDirectory
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
-	carrier           *committedSourceCarrier
 	members           []programMemberBinding
 	queries           []programQueryBinding
 	addressed         []composition.Key
@@ -125,7 +124,7 @@ func (committed *CommittedProgram) valid() bool {
 		!committed.directory.ownedBy(committed.topology, committed.state, committed.authority) ||
 		committed.state.phase != schemaBindingSealed || committed.state.authority != committed.authority || committed.state.schema == nil ||
 		!committed.topology.OwnsComposition(committed.state.schema.cold) || !committed.graph.OwnsComposition(committed.state.schema.cold) ||
-		!committed.topology.OwnsGraph(committed.graph) || !committed.carrier.valid() {
+		!committed.topology.OwnsGraph(committed.graph) {
 		return false
 	}
 	ownerAvailable, pointAvailable, semanticAvailable := committed.bootstrapOwner.Available(), committed.bootstrapPoint.Available(), committed.bootstrapSemantic.Available()

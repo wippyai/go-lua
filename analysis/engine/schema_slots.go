@@ -425,7 +425,6 @@ type schemaFormDraft struct {
 	semantic  identity.SemanticKey
 	formKind  SchemaFormKind
 	read      bool
-	canonical uint64
 	token     *schemaTokenCell
 }
 
@@ -647,23 +646,6 @@ func (slot SchemaReadSlot[T]) Ref() SchemaReadRef { return SchemaReadRef{slot.sl
 func SchemaRead[T, V, O any](rule *RuleSlot[V, O], form SchemaReadForm[T], input SchemaInput) (SchemaReadSlot[T], bool) {
 	ruleDraft, ok := rule.ruleDraft()
 	return appendSchemaRead(ruleDraft, ok, form, input, nil)
-}
-
-// SchemaReadAs binds an exact source Factor form to a typed ordered-cell
-// observation. The source form owns the Factor element type V; T is the
-// immutable observation representation consumed by the later hot binder.
-// This keeps selected-read predecessor rows typed as OrderedCells[V] without
-// pretending that the callback-free Schema form itself carries that wrapper.
-func SchemaReadAs[T, V, O any](rule *RuleSlot[V, O], form SchemaReadForm[V], input SchemaInput) (SchemaReadSlot[T], bool) {
-	ruleDraft, ok := rule.ruleDraft()
-	if !ok {
-		return SchemaReadSlot[T]{}, false
-	}
-	base, ok := appendSchemaRead(ruleDraft, true, form, input, nil)
-	if !ok {
-		return SchemaReadSlot[T]{}, false
-	}
-	return SchemaReadSlot[T]{base.slotHandle}, true
 }
 
 // SchemaActivationRead attaches a typed Factor projection to the exact opaque
@@ -1228,7 +1210,7 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 		if !ok {
 			return false
 		}
-		form.canonical = factorIndex
+		canonical := factorIndex
 		if wantKind, optional := factorFormRowKind(form.formKind); optional {
 			formIndex, formFound := uint64(0), false
 			for index, candidate := range factors[int(factorIndex)].Forms {
@@ -1240,9 +1222,9 @@ func (builder *SchemaBuilder) bindSealed(schema *Schema, sealed *coldcomposition
 			if !formFound {
 				return false
 			}
-			form.canonical = factorIndex<<32 | formIndex
+			canonical = factorIndex<<32 | formIndex
 		}
-		if !add(form.token, form.canonical) {
+		if !add(form.token, canonical) {
 			return false
 		}
 	}
