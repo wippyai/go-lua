@@ -51,15 +51,14 @@ func (c *Component) HostRelationID() (identity.ContentID, bool) {
 
 type ownerView interface{ owner() *Component }
 
-func (c *Component) owner() *Component    { return c }
-func (c Actors) owner() *Component        { return c.component }
-func (c Roots) owner() *Component         { return c.component }
-func (c Cache) owner() *Component         { return c.component }
-func (c Coordinates) owner() *Component   { return c.component }
-func (c Generations) owner() *Component   { return c.component }
-func (c Outcomes) owner() *Component      { return c.component }
-func (c ReadySubjects) owner() *Component { return c.component }
-func (c Terminals) owner() *Component     { return c.component }
+func (c *Component) owner() *Component  { return c }
+func (c Actors) owner() *Component      { return c.component }
+func (c Roots) owner() *Component       { return c.component }
+func (c Cache) owner() *Component       { return c.component }
+func (c Coordinates) owner() *Component { return c.component }
+func (c Generations) owner() *Component { return c.component }
+func (c Outcomes) owner() *Component    { return c.component }
+func (c Terminals) owner() *Component   { return c.component }
 func live(view ownerView) bool {
 	c := view.owner()
 	return c != nil && c.authority != nil && c.authority.component == c
@@ -122,37 +121,11 @@ func (c Roots) ID(root AnalysisRoot) (identity.ContentID, bool) {
 	}
 	return denseID(c.component.authority.content, 0x6d6f64756c652d72, uint64(root.ordinal)), true
 }
-func (c Roots) Find(id identity.ContentID) (AnalysisRoot, bool) {
-	if !live(c.component) || !id.Available() {
-		return AnalysisRoot{}, false
-	}
-	ordinal, ok := c.component.authority.rootByID[id]
-	if !ok {
-		return AnalysisRoot{}, false
-	}
-	return AnalysisRoot{c.component, ordinal}, true
-}
-func (c Roots) Rebind(root AnalysisRoot) (AnalysisRoot, bool) {
-	if root.component == nil {
-		return AnalysisRoot{}, false
-	}
-	id, ok := root.component.Roots().ID(root)
-	if !ok {
-		return AnalysisRoot{}, false
-	}
-	return c.Find(id)
-}
 func (c Cache) InstanceCount() int {
 	if !live(c) {
 		return 0
 	}
 	return len(c.component.authority.instances)
-}
-func (c Cache) InstanceAt(index int) (ModuleCacheInstance, bool) {
-	if !live(c.component) || index < 0 || index >= len(c.component.authority.instances) {
-		return ModuleCacheInstance{}, false
-	}
-	return ModuleCacheInstance{c.component, uint32(index + 1)}, true
 }
 func (c Cache) EntryCount() int {
 	if !live(c) {
@@ -165,6 +138,13 @@ func (c Cache) EntryAt(index int) (ModuleCacheEntry, bool) {
 		return ModuleCacheEntry{}, false
 	}
 	return ModuleCacheEntry{c.component, uint32(index + 1)}, true
+}
+func (c Cache) EntryMapping(entry ModuleCacheEntry) (linkproject.Application, AnalysisRoot, AnalysisRoot, bool) {
+	if !valid(c.component, entry.ordinal, len(c.component.authority.entries)) || entry.component != c.component {
+		return linkproject.Application{}, AnalysisRoot{}, AnalysisRoot{}, false
+	}
+	r := c.component.authority.entries[entry.ordinal-1]
+	return r.application, AnalysisRoot{c.component, r.from}, AnalysisRoot{c.component, r.to}, true
 }
 
 func (c Roots) Mapping(root AnalysisRoot) (linkproject.Shard, Actor, ModuleCacheInstance, bool) {
@@ -200,37 +180,6 @@ func (c Roots) ForShardAt(shard linkproject.Shard, index int) (AnalysisRoot, boo
 	}
 	return AnalysisRoot{c.component, c.component.authority.rootIngress[at]}, true
 }
-func (c Cache) Representative(instance ModuleCacheInstance) (ModuleCacheInstance, bool) {
-	if !valid(c.component, instance.ordinal, len(c.component.authority.instances)) || instance.component != c.component {
-		return ModuleCacheInstance{}, false
-	}
-	return ModuleCacheInstance{c.component, c.component.authority.instances[instance.ordinal-1].representative}, true
-}
-func (c Cache) CallRepresentative(root AnalysisRoot, representative ModuleCacheInstance, application linkproject.Application) (ModuleCacheInstance, bool) {
-	if !c.component.cacheRepresentativeAtRoot(root, representative) {
-		return ModuleCacheInstance{}, false
-	}
-	shard, _, ok := c.component.authority.project.Applications().Call(application)
-	if !ok || c.component.authority.roots[root.ordinal-1].shard != shard {
-		return ModuleCacheInstance{}, false
-	}
-	return representative, true
-}
-func (c Cache) EntryMapping(entry ModuleCacheEntry) (linkproject.Application, AnalysisRoot, AnalysisRoot, bool) {
-	if !valid(c.component, entry.ordinal, len(c.component.authority.entries)) || entry.component != c.component {
-		return linkproject.Application{}, AnalysisRoot{}, AnalysisRoot{}, false
-	}
-	r := c.component.authority.entries[entry.ordinal-1]
-	return r.application, AnalysisRoot{c.component, r.from}, AnalysisRoot{c.component, r.to}, true
-}
-func (c *Component) cacheRepresentativeAtRoot(root AnalysisRoot, rep ModuleCacheInstance) bool {
-	if !valid(c, root.ordinal, len(c.authority.roots)) || !valid(c, rep.ordinal, len(c.authority.instances)) || root.component != c || rep.component != c {
-		return false
-	}
-	instance := c.authority.instances[rep.ordinal-1]
-	return instance.representative == rep.ordinal && instance.actor == c.authority.roots[root.ordinal-1].actor
-}
-
 func (c Cache) EntryID(entry ModuleCacheEntry) (identity.ContentID, bool) {
 	if !valid(c.component, entry.ordinal, len(c.component.authority.entries)) || entry.component != c.component {
 		return identity.ContentID{}, false
@@ -238,91 +187,11 @@ func (c Cache) EntryID(entry ModuleCacheEntry) (identity.ContentID, bool) {
 	return denseID(c.component.authority.content, 0x6d6f64756c652d65, uint64(entry.ordinal)), true
 }
 
-// InstanceID is the detached identity of one exact cache instance. The typed
-// owner helper is intentionally narrow: the source rows needs a stable
-// identity, while no generic relation registry is introduced.
-func (c Cache) InstanceID(instance ModuleCacheInstance) (identity.ContentID, bool) {
-	if !valid(c.component, instance.ordinal, len(c.component.authority.instances)) || instance.component != c.component {
-		return identity.ContentID{}, false
-	}
-	return denseID(c.component.authority.content, 0x6d6f64756c652d69, uint64(instance.ordinal)), true
-}
-func (c Cache) FindEntry(id identity.ContentID) (ModuleCacheEntry, bool) {
-	if !live(c.component) || !id.Available() {
-		return ModuleCacheEntry{}, false
-	}
-	ord, ok := c.component.authority.entryByID[id]
-	if !ok {
-		return ModuleCacheEntry{}, false
-	}
-	return ModuleCacheEntry{c.component, ord}, true
-}
-func (c Cache) RebindEntry(entry ModuleCacheEntry) (ModuleCacheEntry, bool) {
-	if entry.component == nil {
-		return ModuleCacheEntry{}, false
-	}
-	id, ok := entry.component.Cache().EntryID(entry)
-	if !ok {
-		return ModuleCacheEntry{}, false
-	}
-	return c.FindEntry(id)
-}
-
 func (c Coordinates) Count() int {
 	if !live(c) {
 		return 0
 	}
 	return len(c.component.authority.coordinates)
-}
-func (c Coordinates) At(index int) (ModuleCoordinate, bool) {
-	if !live(c.component) || index < 0 || index >= len(c.component.authority.coordinates) {
-		return ModuleCoordinate{}, false
-	}
-	return ModuleCoordinate{c.component, uint32(index + 1)}, true
-}
-func (c Coordinates) ForRoot(root AnalysisRoot) (ModuleCoordinate, bool) {
-	shard, actor, instance, ok := c.component.Roots().Mapping(root)
-	if !ok {
-		return ModuleCoordinate{}, false
-	}
-	rep, ok := c.component.Cache().Representative(instance)
-	if !ok {
-		return ModuleCoordinate{}, false
-	}
-	return c.component.coordinate(coordinateRow{actor: actor.ordinal, shard: shard, representative: rep.ordinal})
-}
-func (c Coordinates) Mapping(coordinate ModuleCoordinate) (Actor, linkproject.Shard, ModuleCacheInstance, bool) {
-	if !valid(c.component, coordinate.ordinal, len(c.component.authority.coordinates)) || coordinate.component != c.component {
-		return Actor{}, linkproject.Shard{}, ModuleCacheInstance{}, false
-	}
-	r := c.component.authority.coordinates[coordinate.ordinal-1]
-	return Actor{c.component, r.actor}, r.shard, ModuleCacheInstance{c.component, r.representative}, true
-}
-func (c Coordinates) ID(coordinate ModuleCoordinate) (identity.ContentID, bool) {
-	if !valid(c.component, coordinate.ordinal, len(c.component.authority.coordinates)) || coordinate.component != c.component {
-		return identity.ContentID{}, false
-	}
-	return denseID(c.component.authority.content, 0x6d6f64756c652d63, uint64(coordinate.ordinal)), true
-}
-func (c Coordinates) Find(id identity.ContentID) (ModuleCoordinate, bool) {
-	if !live(c.component) || !id.Available() {
-		return ModuleCoordinate{}, false
-	}
-	ordinal, ok := c.component.authority.coordinateByID[id]
-	if !ok {
-		return ModuleCoordinate{}, false
-	}
-	return ModuleCoordinate{c.component, ordinal}, true
-}
-func (c Coordinates) Rebind(coordinate ModuleCoordinate) (ModuleCoordinate, bool) {
-	if coordinate.component == nil {
-		return ModuleCoordinate{}, false
-	}
-	id, ok := coordinate.component.Coordinates().ID(coordinate)
-	if !ok {
-		return ModuleCoordinate{}, false
-	}
-	return c.Find(id)
 }
 func (c *Component) coordinate(row coordinateRow) (ModuleCoordinate, bool) {
 	if !live(c) {
@@ -369,13 +238,6 @@ func (c Generations) Entry(g ModuleInitGeneration) (ModuleCacheEntry, ModuleCoor
 	}
 	return ModuleCacheEntry{c.component, g.ordinal}, coordinate, to.shard, term, true
 }
-func (c Generations) ID(g ModuleInitGeneration) (identity.ContentID, bool) {
-	ref, ok := c.Ref(g)
-	if !ok {
-		return identity.ContentID{}, false
-	}
-	return hashGeneration(ref), true
-}
 func (c Generations) Ref(g ModuleInitGeneration) (ModuleInitGenerationRef, bool) {
 	if !valid(c.component, g.ordinal, len(c.component.authority.entries)) || g.component != c.component {
 		return ModuleInitGenerationRef{}, false
@@ -385,26 +247,6 @@ func (c Generations) Ref(g ModuleInitGeneration) (ModuleInitGenerationRef, bool)
 		return ModuleInitGenerationRef{}, false
 	}
 	return ModuleInitGenerationRef{c.component.authority.content, entry}, true
-}
-func (c Generations) FindRef(ref ModuleInitGenerationRef) (ModuleInitGeneration, bool) {
-	if !live(c.component) || ref.component != c.component.authority.content {
-		return ModuleInitGeneration{}, false
-	}
-	entry, ok := c.component.Cache().FindEntry(ref.entry)
-	if !ok {
-		return ModuleInitGeneration{}, false
-	}
-	return ModuleInitGeneration{c.component, entry.ordinal}, true
-}
-func (c Generations) Rebind(g ModuleInitGeneration) (ModuleInitGeneration, bool) {
-	if g.component == nil {
-		return ModuleInitGeneration{}, false
-	}
-	ref, ok := g.component.Generations().Ref(g)
-	if !ok {
-		return ModuleInitGeneration{}, false
-	}
-	return c.FindRef(ref)
 }
 
 func (c Outcomes) Count(g ModuleInitGeneration) int {
@@ -467,14 +309,6 @@ func (c Outcomes) Ref(o ModuleInitOutcome) (ModuleInitOutcomeRef, bool) {
 	}
 	return ModuleInitOutcomeRef{g, o.kind, o.ordinal}, true
 }
-func (c Outcomes) FindRef(ref ModuleInitOutcomeRef) (ModuleInitOutcome, bool) {
-	g, ok := c.component.Generations().FindRef(ref.generation)
-	if !ok {
-		return ModuleInitOutcome{}, false
-	}
-	o := ModuleInitOutcome{c.component, g.ordinal, ref.kind, ref.ordinal}
-	return o, c.component.validOutcome(o)
-}
 func (c Outcomes) ID(o ModuleInitOutcome) (identity.ContentID, bool) {
 	ref, ok := c.Ref(o)
 	if !ok {
@@ -482,167 +316,12 @@ func (c Outcomes) ID(o ModuleInitOutcome) (identity.ContentID, bool) {
 	}
 	return hashOutcome(ref), true
 }
-func (c Outcomes) Find(id identity.ContentID) (ModuleInitOutcome, bool) {
-	if !live(c) {
-		return ModuleInitOutcome{}, false
-	}
-	row, ok := c.component.authority.outcomeByID[id]
-	if !ok {
-		return ModuleInitOutcome{}, false
-	}
-	return ModuleInitOutcome{c.component, row.generation, row.kind, row.ordinal}, true
-}
-func (c Outcomes) Rebind(o ModuleInitOutcome) (ModuleInitOutcome, bool) {
-	if o.component == nil {
-		return ModuleInitOutcome{}, false
-	}
-	ref, ok := o.component.Outcomes().Ref(o)
-	if !ok {
-		return ModuleInitOutcome{}, false
-	}
-	return c.FindRef(ref)
-}
-func (c Outcomes) Source(o ModuleInitOutcome) (linkproject.Shard, keyspace.Term, bool) {
-	if !c.component.validOutcome(o) {
-		return linkproject.Shard{}, 0, false
-	}
-	_, _, shard, entry, ok := c.component.Generations().Entry(ModuleInitGeneration{c.component, o.generation})
-	if !ok {
-		return linkproject.Shard{}, 0, false
-	}
-	p, ok := c.component.authority.project.Mounts().Program(shard)
-	if !ok {
-		return linkproject.Shard{}, 0, false
-	}
-	if o.kind == flowkind.OutcomeReturn {
-		term, ok := p.Module().Entry().ReturnAt(int(o.ordinal))
-		return shard, term, ok && term != 0
-	}
-	term := moduleExit(p, entry, o.kind)
-	return shard, term, term != 0
-}
-func (c Outcomes) Provenance(o ModuleInitOutcome) (ModuleInitGeneration, linkproject.Shard, keyspace.Term, bool) {
-	shard, term, ok := c.Source(o)
-	if !ok {
-		return ModuleInitGeneration{}, linkproject.Shard{}, 0, false
-	}
-	return ModuleInitGeneration{c.component, o.generation}, shard, term, true
-}
-func (c Outcomes) Kind(o ModuleInitOutcome) (flowkind.OutcomeKind, bool) {
-	return o.kind, c.component.validOutcome(o)
-}
-func (c Outcomes) ReadySubject(o ModuleInitOutcome) (ModuleReadySubject, bool) {
-	if !c.component.validOutcome(o) {
-		return ModuleReadySubject{}, false
-	}
-	if o.kind == flowkind.OutcomeNormal {
-		return ModuleReadySubject{c.component, ModuleReadySubjectDefaultTrue, linkboundary.Value{}}, true
-	}
-	if o.kind != flowkind.OutcomeReturn {
-		return ModuleReadySubject{}, false
-	}
-	shard, term, ok := c.Source(o)
-	if !ok {
-		return ModuleReadySubject{}, false
-	}
-	p, ok := c.component.authority.project.Mounts().Program(shard)
-	if !ok {
-		return ModuleReadySubject{}, false
-	}
-	_, values, ok := p.Flow().Authored().Control().Returns().Get(term)
-	if !ok {
-		return ModuleReadySubject{}, false
-	}
-	view := p.Flow().Authored().Values()
-	n, ok := view.Len(values)
-	if !ok {
-		return ModuleReadySubject{}, false
-	}
-	var subject keyspace.Term
-	if n == 0 {
-		_, tail, ok := view.Get(values)
-		if !ok || tail == 0 {
-			return ModuleReadySubject{c.component, ModuleReadySubjectDefaultTrue, linkboundary.Value{}}, ok
-		}
-		subject = tail
-	} else {
-		subject, ok = view.Member(values, 0)
-		if !ok {
-			return ModuleReadySubject{}, false
-		}
-		if keyspace.TermFamily(subject) == keyspace.FamilyNil {
-			return ModuleReadySubject{c.component, ModuleReadySubjectDefaultTrue, linkboundary.Value{}}, true
-		}
-	}
-	value, ok := c.component.authority.boundary.Values().Of(shard, subject)
-	if !ok {
-		return ModuleReadySubject{}, false
-	}
-	return ModuleReadySubject{c.component, ModuleReadySubjectExistingValue, value}, true
-}
-func (c ReadySubjects) Value(s ModuleReadySubject) (linkboundary.Value, bool) {
-	if !c.component.validSubject(s) || s.kind != ModuleReadySubjectExistingValue {
-		return linkboundary.Value{}, false
-	}
-	return s.value, true
-}
-func (c ReadySubjects) Compare(a, b ModuleReadySubject) (int, bool) {
-	if !c.component.validSubject(a) || !c.component.validSubject(b) {
-		return 0, false
-	}
-	if a.kind < b.kind {
-		return -1, true
-	}
-	if a.kind > b.kind {
-		return 1, true
-	}
-	if a.kind != ModuleReadySubjectExistingValue {
-		return 0, true
-	}
-	return c.component.authority.boundary.Values().Compare(a.value, b.value)
-}
-func (c Generations) Compare(a, b ModuleInitGeneration) (int, bool) {
-	if !valid(c.component, a.ordinal, len(c.component.authority.entries)) || !valid(c.component, b.ordinal, len(c.component.authority.entries)) || a.component != c.component || b.component != c.component {
-		return 0, false
-	}
-	if a.ordinal < b.ordinal {
-		return -1, true
-	}
-	if a.ordinal > b.ordinal {
-		return 1, true
-	}
-	return 0, true
-}
 
 func (c Terminals) Count() int {
 	if !live(c) {
 		return 0
 	}
 	return len(c.component.authority.terminals)
-}
-func (c Terminals) At(index int) (ModuleInitTerminal, bool) {
-	if !live(c.component) || index < 0 || index >= len(c.component.authority.terminals) {
-		return ModuleInitTerminal{}, false
-	}
-	o := c.component.authority.terminals[index]
-	return ModuleInitTerminal{ModuleInitOutcome{c.component, o.generation, o.kind, o.ordinal}}, true
-}
-func (c Terminals) Outcome(t ModuleInitTerminal) (ModuleInitOutcome, bool) {
-	if !c.component.validTerminal(t) {
-		return ModuleInitOutcome{}, false
-	}
-	return t.outcome, true
-}
-func (c Terminals) Provenance(t ModuleInitTerminal) (ModuleInitOutcome, ModuleInitGeneration, ModuleCoordinate, flowkind.OutcomeKind, bool) {
-	if !c.component.validTerminal(t) {
-		return ModuleInitOutcome{}, ModuleInitGeneration{}, ModuleCoordinate{}, 0, false
-	}
-	g := ModuleInitGeneration{c.component, t.outcome.generation}
-	_, coord, _, _, ok := c.component.Generations().Entry(g)
-	if !ok {
-		return ModuleInitOutcome{}, ModuleInitGeneration{}, ModuleCoordinate{}, 0, false
-	}
-	return t.outcome, g, coord, t.outcome.kind, true
 }
 func (c Terminals) ID(t ModuleInitTerminal) (identity.ContentID, bool) {
 	if !c.component.validTerminal(t) {
@@ -653,42 +332,6 @@ func (c Terminals) ID(t ModuleInitTerminal) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return denseID(id, 0x6d6f64756c652d74, 1), true
-}
-func (c Terminals) Ref(t ModuleInitTerminal) (ModuleInitTerminalRef, bool) {
-	if !c.component.validTerminal(t) {
-		return ModuleInitTerminalRef{}, false
-	}
-	o, ok := c.component.Outcomes().Ref(t.outcome)
-	return ModuleInitTerminalRef{o}, ok
-}
-func (c Terminals) Find(id identity.ContentID) (ModuleInitTerminal, bool) {
-	if !live(c) {
-		return ModuleInitTerminal{}, false
-	}
-	ordinal, ok := c.component.authority.terminalByID[id]
-	if !ok || ordinal == 0 || uint64(ordinal) > uint64(len(c.component.authority.terminals)) {
-		return ModuleInitTerminal{}, false
-	}
-	row := c.component.authority.terminals[ordinal-1]
-	return ModuleInitTerminal{ModuleInitOutcome{c.component, row.generation, row.kind, row.ordinal}}, true
-}
-func (c Terminals) FindRef(ref ModuleInitTerminalRef) (ModuleInitTerminal, bool) {
-	o, ok := c.component.Outcomes().FindRef(ref.outcome)
-	if !ok {
-		return ModuleInitTerminal{}, false
-	}
-	t := ModuleInitTerminal{o}
-	return t, c.component.validTerminal(t)
-}
-func (c Terminals) Rebind(t ModuleInitTerminal) (ModuleInitTerminal, bool) {
-	if t.outcome.component == nil {
-		return ModuleInitTerminal{}, false
-	}
-	ref, ok := t.outcome.component.Terminals().Ref(t)
-	if !ok {
-		return ModuleInitTerminal{}, false
-	}
-	return c.FindRef(ref)
 }
 
 func (a *authority) indexes() error {
@@ -723,33 +366,33 @@ func (a *authority) indexes() error {
 	}
 	a.coordinates = out
 	a.coordinateOrdinals = make(map[coordinateRow]uint32, len(out))
-	a.coordinateByID = make(map[identity.ContentID]uint32, len(out))
+	seenCoordinate := make(map[identity.ContentID]struct{}, len(out))
 	for i, row := range out {
 		a.coordinateOrdinals[row] = uint32(i + 1)
 		id := denseID(a.content, 0x6d6f64756c652d63, uint64(i+1))
-		if _, duplicate := a.coordinateByID[id]; duplicate {
+		if _, duplicate := seenCoordinate[id]; duplicate {
 			return errors.New("link/module: duplicate coordinate identity")
 		}
-		a.coordinateByID[id] = uint32(i + 1)
+		seenCoordinate[id] = struct{}{}
 	}
-	a.rootByID = make(map[identity.ContentID]uint32, len(a.roots))
+	seenRoot := make(map[identity.ContentID]struct{}, len(a.roots))
 	for i := range a.roots {
 		id := denseID(a.content, 0x6d6f64756c652d72, uint64(i+1))
-		if _, duplicate := a.rootByID[id]; duplicate {
+		if _, duplicate := seenRoot[id]; duplicate {
 			return errors.New("link/module: duplicate root identity")
 		}
-		a.rootByID[id] = uint32(i + 1)
+		seenRoot[id] = struct{}{}
 	}
-	a.entryByID = make(map[identity.ContentID]uint32, len(a.entries))
+	seenEntry := make(map[identity.ContentID]struct{}, len(a.entries))
 	for i := range a.entries {
 		id := denseID(a.content, 0x6d6f64756c652d65, uint64(i+1))
-		if _, dup := a.entryByID[id]; dup {
+		if _, dup := seenEntry[id]; dup {
 			return errors.New("link/module: duplicate entry identity")
 		}
-		a.entryByID[id] = uint32(i + 1)
+		seenEntry[id] = struct{}{}
 	}
-	a.outcomeByID = map[identity.ContentID]outcomeCoordinate{}
-	a.terminalByID = map[identity.ContentID]uint32{}
+	seenOutcome := map[identity.ContentID]struct{}{}
+	seenTerminal := map[identity.ContentID]struct{}{}
 	for i := range a.entries {
 		g := ModuleInitGeneration{a.component, uint32(i + 1)}
 		for j := 0; j < a.component.Outcomes().Count(g); j++ {
@@ -761,21 +404,20 @@ func (a *authority) indexes() error {
 			if !ok {
 				return errors.New("link/module: unavailable outcome identity")
 			}
-			row := outcomeCoordinate{o.generation, o.kind, o.ordinal}
-			if _, dup := a.outcomeByID[id]; dup {
+			if _, dup := seenOutcome[id]; dup {
 				return errors.New("link/module: duplicate outcome identity")
 			}
-			a.outcomeByID[id] = row
+			seenOutcome[id] = struct{}{}
 			if terminalKind(o.kind) {
-				a.terminals = append(a.terminals, row)
+				a.terminals = append(a.terminals, outcomeCoordinate{o.generation, o.kind, o.ordinal})
 				terminalID, terminalOK := a.component.Terminals().ID(ModuleInitTerminal{o})
 				if !terminalOK || !terminalID.Available() {
 					return errors.New("link/module: unavailable terminal identity")
 				}
-				if _, duplicate := a.terminalByID[terminalID]; duplicate {
+				if _, duplicate := seenTerminal[terminalID]; duplicate {
 					return errors.New("link/module: duplicate terminal identity")
 				}
-				a.terminalByID[terminalID] = uint32(len(a.terminals))
+				seenTerminal[terminalID] = struct{}{}
 			}
 		}
 	}
@@ -809,19 +451,6 @@ func (c *Component) validOutcome(o ModuleInitOutcome) bool {
 	default:
 		return false
 	}
-}
-func (c *Component) validSubject(s ModuleReadySubject) bool {
-	if !live(c) || s.component != c {
-		return false
-	}
-	if s.kind == ModuleReadySubjectDefaultTrue {
-		return s.value == (linkboundary.Value{})
-	}
-	if s.kind == ModuleReadySubjectExistingValue {
-		_, _, ok := c.authority.boundary.Values().Origin(s.value)
-		return ok
-	}
-	return false
 }
 func (c *Component) validTerminal(t ModuleInitTerminal) bool {
 	return c.validOutcome(t.outcome) && terminalKind(t.outcome.kind)

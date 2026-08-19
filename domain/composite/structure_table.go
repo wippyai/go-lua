@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/schema"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch"
@@ -127,8 +128,13 @@ func occurrenceVocabulary() []structure.Spec {
 		"body", "outcome", "return-value", "unary", "select",
 		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
 		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement")
-	declare(structure.CategoryIssuanceForm,
-		"base", "local", "computation", "local-predecessor", "call-stage")
+	declare(structure.CategoryIssuanceForm, "base")
+	specs = append(specs,
+		structure.Spec{Key: "issuance/local", Category: structure.CategoryIssuanceForm, Ordinal: 2, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"},
+		structure.Spec{Key: "issuance/computation", Category: structure.CategoryIssuanceForm, Ordinal: 3, Spelling: "computation", Accepted: true, Framing: "analysis/program-artifact/local-computation-stage"},
+		structure.Spec{Key: "issuance/local-predecessor", Category: structure.CategoryIssuanceForm, Ordinal: 4, Spelling: "local-predecessor", Accepted: true, Framing: "analysis/program-artifact/local-predecessor-stage"},
+		structure.Spec{Key: "issuance/call-stage", Category: structure.CategoryIssuanceForm, Ordinal: 5, Spelling: "call-stage", Accepted: true},
+	)
 	declare(structure.CategoryIssuanceInput,
 		"none", "finish", "entry", "predecessor")
 	declare(structure.CategoryIssuanceRequirement,
@@ -136,9 +142,9 @@ func occurrenceVocabulary() []structure.Spec {
 	declare(structure.CategoryIssuanceStage,
 		"base", "local")
 	specs = append(specs,
-		structure.Spec{Key: "stage/call-dispatch", Category: structure.CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Native: true},
-		structure.Spec{Key: "stage/call-summary", Category: structure.CategoryIssuanceStage, Ordinal: 4, Spelling: "call-summary", Accepted: true, Native: true, Predecessor: "stage/call-dispatch"},
-		structure.Spec{Key: "stage/call-effect", Category: structure.CategoryIssuanceStage, Ordinal: 5, Spelling: "call-effect", Accepted: true, Native: true, Predecessor: "stage/call-summary"},
+		structure.Spec{Key: "stage/call-dispatch", Category: structure.CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Native: true, Framing: "analysis/program-artifact/call-dispatch-stage"},
+		structure.Spec{Key: "stage/call-summary", Category: structure.CategoryIssuanceStage, Ordinal: 4, Spelling: "call-summary", Accepted: true, Native: true, Predecessor: "stage/call-dispatch", Framing: "analysis/program-artifact/call-summary-stage"},
+		structure.Spec{Key: "stage/call-effect", Category: structure.CategoryIssuanceStage, Ordinal: 5, Spelling: "call-effect", Accepted: true, Native: true, Predecessor: "stage/call-summary", Framing: "analysis/program-artifact/call-effect-stage"},
 	)
 	return specs
 }
@@ -205,6 +211,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		denominatorpublication.StructureSpecs(),
 		typedomain.ChannelSelectStructureSpecs(),
 		selectapply.StructureSpecs(),
+		programmount.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {

@@ -656,7 +656,7 @@ return b.source`)})
 	}
 	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	callMount := calldomain.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
+	callMount := calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
 	structural, structuralOK := composite.StructureVocabulary()
 	if !structuralOK {

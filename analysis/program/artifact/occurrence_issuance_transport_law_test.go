@@ -16,8 +16,22 @@ type transportDeclaration struct {
 	transport bool
 }
 
-func transportDirectory(declarations ...transportDeclaration) IssuanceDirectory {
-	directory := make(IssuanceDirectory, 0, len(declarations))
+// declaredStageFramings is the framing every staged cut is declared under. The
+// fixtures state it once, from the pinned spelling the identity laws hold.
+func declaredStageFramings() (map[IssuanceForm]string, map[RuleStage]string) {
+	return map[IssuanceForm]string{
+			IssuanceFormLocal:            pinnedLocalStageFraming,
+			IssuanceFormComputation:      pinnedLocalComputationStageFraming,
+			IssuanceFormLocalPredecessor: pinnedLocalPredecessorStageFraming,
+		}, map[RuleStage]string{
+			RuleStageCallDispatch: pinnedCallDispatchStageFraming,
+			RuleStageCallSummary:  pinnedCallSummaryStageFraming,
+			RuleStageCallEffect:   pinnedCallEffectStageFraming,
+		}
+}
+
+func transportPlacements(declarations ...transportDeclaration) []IssuancePlacement {
+	placements := make([]IssuancePlacement, 0, len(declarations))
 	for _, declaration := range declarations {
 		placement := IssuancePlacement{
 			Occurrence:  OccurrenceCall,
@@ -32,7 +46,17 @@ func transportDirectory(declarations ...transportDeclaration) IssuanceDirectory 
 		if declaration.stage != RuleStageBase {
 			placement.Form, placement.Input = IssuanceFormCallStage, RuleInputFinish
 		}
-		directory = append(directory, placement)
+		placements = append(placements, placement)
+	}
+	return placements
+}
+
+func transportDirectory(t *testing.T, placements ...IssuancePlacement) IssuanceDirectory {
+	t.Helper()
+	forms, stages := declaredStageFramings()
+	directory, ok := NewIssuanceDirectory(placements, forms, stages)
+	if !ok {
+		t.Fatal("the declared placements and framings were refused admission")
 	}
 	return directory
 }
@@ -40,8 +64,8 @@ func transportDirectory(declarations ...transportDeclaration) IssuanceDirectory 
 // declaredCallStageTransport mirrors the sealed composition's shape: three
 // base-stage axes, one axis produced at the call-dispatch stage, and one
 // produced at the call-effect stage by more than one rule.
-func declaredCallStageTransport() IssuanceDirectory {
-	return transportDirectory(
+func declaredCallStagePlacements() []IssuancePlacement {
+	return transportPlacements(
 		transportDeclaration{key: "value-source", writes: "value", stage: RuleStageBase, transport: true},
 		transportDeclaration{key: "raw-get", writes: "value", stage: RuleStageLocal, transport: true},
 		transportDeclaration{key: "pack-source", writes: "pack", stage: RuleStageBase, transport: true},
@@ -70,7 +94,7 @@ func assertKeys(t *testing.T, label string, got []schema.Key, want ...schema.Key
 // every mounted axis, split by which stage produces the axis. No key list is
 // authored, so a declaration change moves the plan with it.
 func TestCallStageTransportIsDerivedFromDeclaredWrites(t *testing.T) {
-	plan, planOK := declaredCallStageTransport().callStageTransport()
+	plan, planOK := transportDirectory(t, declaredCallStagePlacements()...).callStageTransport()
 	if !planOK {
 		t.Fatal("the declared directory produced no call-stage transport plan")
 	}
@@ -82,10 +106,10 @@ func TestCallStageTransportIsDerivedFromDeclaredWrites(t *testing.T) {
 // TestCallStageTransportFollowsAnAddedDeclaredAxis proves the plan carries a
 // mounted axis the compiler was never told about by name.
 func TestCallStageTransportFollowsAnAddedDeclaredAxis(t *testing.T) {
-	directory := append(declaredCallStageTransport(), transportDirectory(
+	extended := append(declaredCallStagePlacements(), transportPlacements(
 		transportDeclaration{key: "probe-source", writes: "probe", stage: RuleStageBase, transport: true},
 	)...)
-	plan, planOK := directory.callStageTransport()
+	plan, planOK := transportDirectory(t, extended...).callStageTransport()
 	if !planOK {
 		t.Fatal("the extended directory produced no call-stage transport plan")
 	}
@@ -99,13 +123,14 @@ func TestCallStageTransportFollowsAnAddedDeclaredAxis(t *testing.T) {
 // leaves no plan to compile from rather than a stale authored list.
 func TestCallStageTransportRefusesAStageWithNoDeclaredWrite(t *testing.T) {
 	for _, withdrawn := range []RuleStage{RuleStageCallDispatch, RuleStageCallEffect} {
-		remaining := make(IssuanceDirectory, 0, len(declaredCallStageTransport()))
-		for _, placement := range declaredCallStageTransport() {
+		declared := declaredCallStagePlacements()
+		remaining := make([]IssuancePlacement, 0, len(declared))
+		for _, placement := range declared {
 			if placement.Stage != withdrawn {
 				remaining = append(remaining, placement)
 			}
 		}
-		if _, planOK := remaining.callStageTransport(); planOK {
+		if _, planOK := transportDirectory(t, remaining...).callStageTransport(); planOK {
 			t.Fatalf("a directory declaring no write at stage %d still produced a transport plan", withdrawn)
 		}
 	}
@@ -115,7 +140,7 @@ func TestCallStageTransportRefusesAStageWithNoDeclaredWrite(t *testing.T) {
 // transports share: one axis is named by one declared key, whichever arm of the
 // compiler transports it.
 func TestTransportKeyIsTheLowestDeclaredWriterOfItsAxis(t *testing.T) {
-	directory := declaredCallStageTransport()
+	directory := transportDirectory(t, declaredCallStagePlacements()...)
 	for axis, want := range map[schema.Key]schema.Key{"value": "raw-get", "pack": "pack-source", "heap": "heap-ingress", "call": "call-dispatch", "effect": "effect-body"} {
 		key, keyOK := directory.TransportKey(axis)
 		if !keyOK || key != want {

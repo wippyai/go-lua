@@ -54,7 +54,7 @@ invoke(callee)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
-	calls, ok := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{ModuleKey: moduleKey, Snapshot: snapshottest.MustLower(t, artifact)}})
+	calls, ok := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{{Program: snapshottest.MustMount(t, artifact, moduleKey), Snapshot: snapshottest.MustLower(t, artifact)}})
 	if !ok || calls == nil || calls.Bodies().Count() == 0 {
 		t.Fatal("call body fixture")
 	}

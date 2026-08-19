@@ -22,7 +22,7 @@ func TestOwnerIndexesAreInstalledOnceAtSeal(t *testing.T) {
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := CompileDetailed(published, grammar, nil)
+	artifact, failure := CompileDetailed(published, grammar, IssuanceDirectory{})
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("artifact compile failed: %s", failure.Error())
 	}

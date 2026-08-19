@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -95,9 +96,19 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(outcome))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.callTargets))))
-	for _, target := range artifact.callTargets {
-		sink.add(bytesField(target.allocation), bytesField(target.body), bytesField(target.context), bytesField(target.function), bytesField(target.formal))
+	// The call-target family is read out of the sealed cold publication in its
+	// emitted order, which is the order the identity has always committed to.
+	targets, published := cold.CallTargetCount(&artifact.frozen, artifact.coldCatalog)
+	if !published {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(targets)))
+	for index := 0; index < targets; index++ {
+		target, held := cold.CallTargetAt(&artifact.frozen, artifact.coldCatalog, index)
+		if !held {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(target.Allocation), bytesField(target.Body), bytesField(target.Context), bytesField(target.Function), bytesField(target.Formal))
 	}
 	sink.add(uintField(uint64(len(artifact.boundaries))))
 	for _, row := range artifact.boundaries {

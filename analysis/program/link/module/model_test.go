@@ -107,7 +107,7 @@ func TestModuleColdLifecycleAndDetachedSpec(t *testing.T) {
 	}
 }
 
-func TestModuleEquivalentHandlesFenceAndRebind(t *testing.T) {
+func TestModuleEquivalentHandlesFence(t *testing.T) {
 	left := sealModuleFixture(t)
 	right := sealModuleFixture(t)
 	if left.ContentID() != right.ContentID() {
@@ -121,52 +121,13 @@ func TestModuleEquivalentHandlesFenceAndRebind(t *testing.T) {
 	if _, _, _, ok := right.Roots().Mapping(root); ok {
 		t.Fatal("foreign Root accepted")
 	}
-	if _, ok := right.Roots().Rebind(root); !ok {
-		t.Fatal("Root rebind failed")
-	}
-	instance, _ := left.Cache().InstanceAt(0)
-	if _, ok := right.Cache().Representative(instance); ok {
-		t.Fatal("foreign Instance accepted")
-	}
-	entry, _ := left.Cache().EntryAt(0)
-	if _, _, _, ok := right.Cache().EntryMapping(entry); ok {
-		t.Fatal("foreign Entry accepted")
-	}
-	if _, ok := right.Cache().RebindEntry(entry); !ok {
-		t.Fatal("Entry rebind failed")
-	}
-	coordinate, _ := left.Coordinates().At(0)
-	if _, _, _, ok := right.Coordinates().Mapping(coordinate); ok {
-		t.Fatal("foreign Coordinate accepted")
-	}
-	if _, ok := right.Coordinates().Rebind(coordinate); !ok {
-		t.Fatal("Coordinate rebind failed")
-	}
 	generation, _ := left.Generations().At(0)
 	if _, _, _, _, ok := right.Generations().Entry(generation); ok {
 		t.Fatal("foreign Generation accepted")
 	}
-	if _, ok := right.Generations().Rebind(generation); !ok {
-		t.Fatal("Generation rebind failed")
-	}
 	outcome, _ := left.Outcomes().At(generation, 0)
-	if _, ok := right.Outcomes().Kind(outcome); ok {
+	if _, ok := right.Outcomes().ID(outcome); ok {
 		t.Fatal("foreign Outcome accepted")
-	}
-	if _, ok := right.Outcomes().Rebind(outcome); !ok {
-		t.Fatal("Outcome rebind failed")
-	}
-	terminal, _ := left.Terminals().At(0)
-	if _, ok := right.Terminals().Outcome(terminal); ok {
-		t.Fatal("foreign Terminal accepted")
-	}
-	if _, ok := right.Terminals().Rebind(terminal); !ok {
-		t.Fatal("Terminal rebind failed")
-	}
-	if subject, ok := left.Outcomes().ReadySubject(outcome); ok {
-		if _, ok := right.ReadySubjects().Value(subject); ok {
-			t.Fatal("foreign ReadySubject accepted")
-		}
 	}
 }
 
@@ -254,24 +215,10 @@ func TestModulePrerequisiteFencesAndCanonicalPermutation(t *testing.T) {
 	}
 }
 
-func TestModuleGenerationHashAndTerminalIndexAreExact(t *testing.T) {
+func TestModuleGenerationHashDistinguishesEntryID(t *testing.T) {
 	component := sealModuleFixture(t)
-	for index := 0; index < component.Terminals().Count(); index++ {
-		terminal, ok := component.Terminals().At(index)
-		if !ok {
-			t.Fatalf("terminal %d unavailable", index)
-		}
-		id, ok := component.Terminals().ID(terminal)
-		if !ok {
-			t.Fatalf("terminal %d lacks ID", index)
-		}
-		found, ok := component.Terminals().Find(id)
-		if !ok {
-			t.Fatalf("terminal %d index miss", index)
-		}
-		if got, ok := component.Terminals().ID(found); !ok || got != id {
-			t.Fatalf("terminal %d index mismatch", index)
-		}
+	if component.Terminals().Count() == 0 {
+		t.Fatal("missing terminal")
 	}
 	first := ModuleInitGenerationRef{component: component.ContentID(), entry: [32]byte{1}}
 	second := first

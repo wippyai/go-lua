@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
@@ -121,6 +122,7 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 	// engine axis is the compile-time ChannelSelect column so a select-only
 	// publication can seal the prefix.
 	addPublished(axis.New(selectapply.AxisEntry[LinkInputs]()))
+	addPublished(axis.New(programmount.AxisEntry[LinkInputs]()))
 	addPublished(axis.New(executionowner.AxisEntry[LinkInputs]()))
 	addPublished(axis.New(denominatorpublication.AxisEntry[LinkInputs]()))
 

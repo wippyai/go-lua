@@ -413,23 +413,8 @@ func (view Successors) FinalAt(index int) (FinalRoute, bool) {
 	return publicFinalRoute(view.result, successor.route)
 }
 
-func (view Successors) ResolveFinal(identity RouteIdentity) (FinalRoute, bool) {
-	if view.result == nil {
-		return FinalRoute{}, false
-	}
-	successor, ok := view.Resolve(identity)
-	if !ok {
-		return FinalRoute{}, false
-	}
-	return publicFinalRoute(view.result, successor.route)
-}
-
 func (view Causal) OwnsFinalRoute(route FinalRoute) bool {
 	return view.result != nil && route.owner == view.result && route.Available()
-}
-
-func (view Causal) OwnsRouteSite(route FinalRoute, site Site) bool {
-	return view.result != nil && route.owner == view.result && route.OwnsSite(site)
 }
 
 // Component reports the recurrence-issued Program-local cyclic head for this
@@ -498,13 +483,6 @@ func (proof RouteRecurrence) Equal(other RouteRecurrence) bool {
 	return leftRouteOK && rightRouteOK && leftRouteID == rightRouteID && proof.HasMu() == other.HasMu() &&
 		leftMuPath == rightMuPath && leftMuPathOK == rightMuPathOK && leftCount == rightCount && leftCountOK == rightCountOK &&
 		leftDigest == rightDigest && leftDigestOK == rightDigestOK
-}
-
-// SameComponent compares only the parent-issued SCC identity. It is distinct
-// from Equal, which also authenticates the exact final route and recurrence
-// witness.
-func (proof RouteRecurrence) SameComponent(other RouteRecurrence) bool {
-	return proof.Available() && other.Available() && proof.ComponentID() == other.ComponentID()
 }
 
 func (proof RouteRecurrence) RouteIdentity() (RouteIdentity, bool) {

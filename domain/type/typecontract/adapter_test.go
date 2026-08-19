@@ -16,7 +16,7 @@ func TestPrimitiveAndScopedGraphRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Encode(%v): %v", value, err)
 		}
-		if !portable.IsPrimitive() {
+		if _, ok := portable.Primitive(); !ok {
 			t.Fatalf("Encode(%v) did not use primitive envelope", value)
 		}
 		decoded, err := Decode(ctx, portable, nil)

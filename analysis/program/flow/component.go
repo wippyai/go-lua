@@ -302,13 +302,6 @@ func (view View) AccessGeometry() AccessGeometry {
 	return AccessGeometry{result: view.component.accessGeometry, available: true}
 }
 
-func (view View) Selectors() Selectors {
-	if !view.available() {
-		return Selectors{}
-	}
-	return Selectors{result: view.component.accessGeometry}
-}
-
 func (view View) Causal() Causal {
 	if !view.available() {
 		return Causal{}

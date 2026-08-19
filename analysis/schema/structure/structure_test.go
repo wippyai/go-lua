@@ -512,6 +512,39 @@ func TestSealRejectsUnknownStagePredecessor(t *testing.T) {
 	}
 }
 
+// TestSealRejectsOneFramingOnTwoStagedCuts states the framing law at the
+// public seal path: a digest framing is a content address preimage, so it names
+// exactly one staged cut.
+func TestSealRejectsOneFramingOnTwoStagedCuts(t *testing.T) {
+	var entries []*Entry
+	for _, contribution := range canonicalContributions() {
+		for _, spec := range contribution {
+			if spec.Category == CategoryIssuanceForm && (spec.Key == "issuance/base" || spec.Key == "issuance/local") {
+				spec.Framing = "analysis/program-artifact/one-stage"
+			}
+			entries = append(entries, mustEntry(t, spec))
+		}
+	}
+	_, failure := sealEntries(t, entries)
+	if failure.Law != LawStageFraming || failure.Disposition != schema.DispositionDuplicate {
+		t.Fatalf("one framing on two staged cuts sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestNewRejectsAFramingOnACategoryThatStagesNothing keeps the column scoped to
+// the two vocabularies whose members name a staged execution cut.
+func TestNewRejectsAFramingOnACategoryThatStagesNothing(t *testing.T) {
+	if _, ok := New(Spec{Key: "arm/local", Category: CategoryArm, Ordinal: 1, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"}); ok {
+		t.Fatal("a member of a vocabulary that stages nothing declared a digest framing")
+	}
+	if _, ok := New(Spec{Key: "issuance/local", Category: CategoryIssuanceForm, Ordinal: 2, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"}); !ok {
+		t.Fatal("a placement form that stages a cut could not declare its framing")
+	}
+	if _, ok := New(Spec{Key: "stage/call-dispatch", Category: CategoryIssuanceStage, Ordinal: 3, Spelling: "call-dispatch", Accepted: true, Framing: "analysis/program-artifact/call-dispatch-stage"}); !ok {
+		t.Fatal("an issuance stage that stages a cut could not declare its framing")
+	}
+}
+
 // TestTwoContributorsCannotDeclareOneSemanticRole is the law that replaced the
 // closed semantic vocabulary's own distinctness check. Every identity the
 // analyzer binds under is a member of one category here, so the spelling law

@@ -24,8 +24,11 @@ func (compiler *compiler) localComputationStage(base identity.ContentID, key sch
 		!key.Available() || !left.Available() || !right.Available() {
 		return identity.ContentID{}, false
 	}
-	point := digest("analysis/program-artifact/local-computation-stage", artifactFormat,
-		bytesField(base), keyField(key), bytesField(occurrence))
+	framing, framingOK := compiler.issuance.formFraming(IssuanceFormComputation)
+	if !framingOK {
+		return identity.ContentID{}, false
+	}
+	point := digest(framing, artifactFormat, bytesField(base), keyField(key), bytesField(occurrence))
 	stage := computationStage{base: base, point: point, occurrence: occurrence, key: key, left: left, right: right}
 	if !stage.available() {
 		return identity.ContentID{}, false
@@ -119,10 +122,16 @@ func (compiler *compiler) callStage(base identity.ContentID) (callStageSet, bool
 	if _, known := compiler.pointGeometry[base]; !known {
 		return callStageSet{}, false
 	}
+	dispatch, dispatchOK := compiler.issuance.stageFraming(RuleStageCallDispatch)
+	summary, summaryOK := compiler.issuance.stageFraming(RuleStageCallSummary)
+	effect, effectOK := compiler.issuance.stageFraming(RuleStageCallEffect)
+	if !dispatchOK || !summaryOK || !effectOK {
+		return callStageSet{}, false
+	}
 	stages := callStageSet{
-		dispatch: digest("analysis/program-artifact/call-dispatch-stage", artifactFormat, bytesField(base)),
-		summary:  digest("analysis/program-artifact/call-summary-stage", artifactFormat, bytesField(base)),
-		effect:   digest("analysis/program-artifact/call-effect-stage", artifactFormat, bytesField(base)),
+		dispatch: digest(dispatch, artifactFormat, bytesField(base)),
+		summary:  digest(summary, artifactFormat, bytesField(base)),
+		effect:   digest(effect, artifactFormat, bytesField(base)),
 	}
 	if !stages.available(base) {
 		return callStageSet{}, false
@@ -131,43 +140,43 @@ func (compiler *compiler) callStage(base identity.ContentID) (callStageSet, bool
 	return stages, true
 }
 
-func (compiler *compiler) localStage(base identity.ContentID) (identity.ContentID, bool) {
-	if compiler == nil || compiler.localStages == nil || !base.Available() {
+// reusableStage raises the memoized cut one placement form names over a base.
+// The local-family cuts differ only in the memo they occupy and the framing
+// their form declares, so they are one constructor.
+func (compiler *compiler) reusableStage(memo map[identity.ContentID]identity.ContentID, form IssuanceForm, base identity.ContentID) (identity.ContentID, bool) {
+	if compiler == nil || memo == nil || !base.Available() {
 		return identity.ContentID{}, false
 	}
-	if stage := compiler.localStages[base]; stage.Available() {
+	if stage := memo[base]; stage.Available() {
 		return stage, true
 	}
-	if _, known := compiler.pointGeometry[base]; !known {
+	framing, framingOK := compiler.issuance.formFraming(form)
+	if _, known := compiler.pointGeometry[base]; !known || !framingOK {
 		return identity.ContentID{}, false
 	}
-	stage := digest("analysis/program-artifact/local-stage", artifactFormat, bytesField(base))
+	stage := digest(framing, artifactFormat, bytesField(base))
 	if !stage.Available() || stage == base {
 		return identity.ContentID{}, false
 	}
-	compiler.localStages[base] = stage
+	memo[base] = stage
 	return stage, true
+}
+
+func (compiler *compiler) localStage(base identity.ContentID) (identity.ContentID, bool) {
+	if compiler == nil {
+		return identity.ContentID{}, false
+	}
+	return compiler.reusableStage(compiler.localStages, IssuanceFormLocal, base)
 }
 
 // predecessorStage is the Program-owned execution cut for a routed strong
 // write. It is distinct from the ordinary local cut because rules at one point
 // all read one immutable incoming state.
 func (compiler *compiler) predecessorStage(base identity.ContentID) (identity.ContentID, bool) {
-	if compiler == nil || compiler.predecessorStages == nil || !base.Available() {
+	if compiler == nil {
 		return identity.ContentID{}, false
 	}
-	if stage := compiler.predecessorStages[base]; stage.Available() {
-		return stage, true
-	}
-	if _, known := compiler.pointGeometry[base]; !known {
-		return identity.ContentID{}, false
-	}
-	stage := digest("analysis/program-artifact/local-predecessor-stage", artifactFormat, bytesField(base))
-	if !stage.Available() || stage == base {
-		return identity.ContentID{}, false
-	}
-	compiler.predecessorStages[base] = stage
-	return stage, true
+	return compiler.reusableStage(compiler.predecessorStages, IssuanceFormLocalPredecessor, base)
 }
 
 // installLocalStagesFailure splices every reusable synthetic execution cut

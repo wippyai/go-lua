@@ -119,6 +119,7 @@ func pinnedSemanticRoles() []struct {
 		{"query/projection/exact", "48a68958bf20dc222d49ce6a7fa54282d4781675545bfec8521fb033af421109"},
 		{"fact/channel-select-case", "472811b2d71eb3c197eb5de89e5f29e38dacccc185ae769776243822b57e5372"},
 		{"axis/channel-select-case", "c8eb80826a2e5c51af116e53c6cbecce82c2335914d81de3498fc83bbbb3209a"},
+		{"axis/program-mount", "4be7e64d5f7b07709f9291a2ea9ae4e3582503fc7d8731c2db6fe498e598f25a"},
 		{"rule/value/runtime-kind-call", "7029954eb4588b43a3a45d525fb14a8c3fab1b103db075cf695e1ab42eca5207"},
 		{"operand/value/runtime-kind-call", "6a2a01bf5de5fca20f244473090efa8976b3ae70f0470e467a4fa14c61c93df4"},
 		{"evidence/value/runtime-kind-call", "40c875be6d3567064444e844c578b5fc85af831875cf0eb9c9e99bd2d623dab7"},

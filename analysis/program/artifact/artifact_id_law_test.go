@@ -5,8 +5,36 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 )
+
+// coldLawPublication seals an empty cold publication. The identity walk reads
+// the families that live there, so an artifact assembled for a law about some
+// other column still needs one: an artifact without a cold publication has no
+// content address at all, which is the whole point of publishing the families
+// there rather than beside it.
+func coldLawPublication(t *testing.T) (snapshot.Frozen, identity.ContentID) {
+	t.Helper()
+	catalog, derived := cold.CatalogID(identity.ContentID{0xC0, 0x1D})
+	if !derived {
+		t.Fatal("cold catalog")
+	}
+	content, sealed := cold.CallTargetContent(nil, catalog)
+	if !sealed {
+		t.Fatal("empty cold family")
+	}
+	builder := snapshot.NewFrozen(catalog, identity.StoreID(1))
+	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargets(catalog), content); err != nil {
+		t.Fatalf("put cold column: %v", err)
+	}
+	frozen, err := builder.Seal()
+	if err != nil {
+		t.Fatalf("seal cold publication: %v", err)
+	}
+	return frozen, catalog
+}
 
 // TestArtifactIDSealsEveryDiagnosticObservationPayload states the identity law
 // for the diagnostic-observation column: the ArtifactID preimage carries the
@@ -15,8 +43,9 @@ import (
 // artifacts with distinct payloads one content address.
 func TestArtifactIDSealsEveryDiagnosticObservationPayload(t *testing.T) {
 	span := programsource.Span{File: "observation.lua", StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 2}
+	frozen, catalog := coldLawPublication(t)
 	observation := func(kind structure.DiagnosticObservationKind, decision identity.ContentID) *Artifact {
-		return &Artifact{diagnosticObservations: []DiagnosticObservationRow{{
+		return &Artifact{frozen: frozen, coldCatalog: catalog, diagnosticObservations: []DiagnosticObservationRow{{
 			id:       identity.ContentID{1},
 			kind:     kind,
 			location: span,

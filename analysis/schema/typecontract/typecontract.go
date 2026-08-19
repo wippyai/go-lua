@@ -93,9 +93,6 @@ func (value Type) Available() bool {
 	return value.primitive.Available() || len(value.encoded) != 0
 }
 
-// IsPrimitive reports whether value is an atom rather than a domain graph.
-func (value Type) IsPrimitive() bool { return value.primitive.Available() }
-
 // Primitive returns the atom carried by value. The second result is false for
 // encoded graph declarations.
 func (value Type) Primitive() (Primitive, bool) {

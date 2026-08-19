@@ -23,7 +23,7 @@ return identity(1)
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}
-	artifact, failure := programartifact.CompileDetailed(published, grammar, nil)
+	artifact, failure := programartifact.CompileDetailed(published, grammar, programartifact.IssuanceDirectory{})
 	if failure.Available() || artifact == nil || !artifact.Available() || artifact.CallCount() == 0 {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
 	}

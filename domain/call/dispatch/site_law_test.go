@@ -82,7 +82,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		packMounts[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
-		callMounts[index] = calldomain.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
+		callMounts[index] = calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatalf("site fixture artifact mounts %d", index)
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
@@ -41,8 +42,8 @@ type allocationTargetKey struct {
 // Call internally derives all closure target rows from it; no raw
 // allocation/body scalar bundle enters the domain boundary.
 type MountedArtifact struct {
-	ModuleKey identity.ContentID
-	Snapshot  *ingress.Snapshot
+	cold.Program
+	Snapshot *ingress.Snapshot
 }
 
 type bodyTargetReceipt struct {
@@ -96,11 +97,11 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 	receipts := make([]bodyTargetReceipt, 0)
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
-		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.ModuleKey.Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() {
 			return false
 		}
-		programID := mount.Snapshot.ProgramID()
-		if !programID.Available() {
+		programID := mount.ProgramID
+		if programID != mount.Snapshot.ProgramID() {
 			return false
 		}
 		if _, duplicate := seenMounts[mount.ModuleKey]; duplicate {
@@ -118,14 +119,18 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			}
 			bodies[body.BodyID()] = body
 		}
-		for index := 0; index < mount.Snapshot.CallTargetCount(); index++ {
-			target, ok := mount.Snapshot.CallTargetAt(index)
-			body, bodyOK := bodies[target.BodyID()]
+		targetCount, targetsPublished := mount.CallTargetCount()
+		if !targetsPublished {
+			return false
+		}
+		for index := 0; index < targetCount; index++ {
+			target, ok := mount.CallTargetAt(index)
+			body, bodyOK := bodies[target.Body]
 			function, formal := body.FunctionID(), body.CallFormalID()
-			if !ok || !target.Available() || !bodyOK || !body.Callable() || !function.Available() || !formal.Available() || target.ContextID() != body.ContextID() || target.FunctionContextID() != function || target.CallFormalID() != formal {
+			if !ok || !target.Available() || !bodyOK || !body.Callable() || !function.Available() || !formal.Available() || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
 				return false
 			}
-			receipts = append(receipts, bodyTargetReceipt{moduleKey: mount.ModuleKey, artifactID: mount.Snapshot.ArtifactID(), programID: programID, allocationID: target.AllocationID(), bodyPath: target.BodyID(), bodyContext: target.ContextID(), functionContext: target.FunctionContextID(), formalID: target.CallFormalID()})
+			receipts = append(receipts, bodyTargetReceipt{moduleKey: mount.ModuleKey, artifactID: mount.ArtifactID, programID: programID, allocationID: target.Allocation, bodyPath: target.Body, bodyContext: target.Context, functionContext: target.Function, formalID: target.Formal})
 		}
 	}
 	for _, issued := range receipts {

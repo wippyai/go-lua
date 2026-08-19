@@ -43,7 +43,7 @@ return identity(1)
 		snapshot.LocalTransferCount() != artifact.LocalTransferCount() || snapshot.RegionCount() != artifact.RegionCount() ||
 		snapshot.EventCount() != artifact.WTOEventCount() || snapshot.RulePlacementCount() != artifact.RulePlacementCount() ||
 		snapshot.BodyTransportCount() != artifact.BodyCount() || snapshot.FunctionBoundaryCount() != artifact.FunctionBoundaryCount() ||
-		snapshot.CallCount() != artifact.CallCount() || snapshot.CallTargetCount() != artifact.CallTargetCount() ||
+		snapshot.CallCount() != artifact.CallCount() ||
 		snapshot.HeapAllocationCount() != artifact.HeapAllocationCount() || snapshot.ValuesCount() != artifact.ValuesCount() ||
 		snapshot.HeapIndexCount() != artifact.HeapIndexCount() || snapshot.OccurrenceCount() != artifact.OccurrenceCount() ||
 		snapshot.StaticTypeValueCount() != artifact.StaticTypeValueCount() ||

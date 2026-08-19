@@ -64,7 +64,6 @@ type Snapshot struct {
 	boundaries          []FunctionBoundary
 	calls               []Call
 	arguments           []CallArgument
-	targets             []CallTarget
 	allocations         []HeapAllocation
 	values              []Values
 	occurrences         []Occurrence
@@ -264,18 +263,6 @@ func (snapshot *Snapshot) CallForID(id identity.ContentID) (Call, bool) {
 		found, foundOne = row, true
 	}
 	return found, foundOne
-}
-func (snapshot *Snapshot) CallTargetCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.targets)
-}
-func (snapshot *Snapshot) CallTargetAt(index int) (CallTarget, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.targets) {
-		return CallTarget{}, false
-	}
-	return snapshot.targets[index], true
 }
 func (snapshot *Snapshot) HeapAllocationCount() int {
 	if !snapshot.Available() {
@@ -864,19 +851,6 @@ func (snapshot *Snapshot) CallArgumentFor(callIndex, childIndex int) (CallArgume
 	}
 	return call.ArgumentAt(childIndex)
 }
-
-type CallTarget struct {
-	allocation, body, context, function, formal identity.ContentID
-}
-
-func (row CallTarget) Available() bool {
-	return row.allocation.Available() && row.body.Available() && row.context.Available() && row.function.Available() && row.formal.Available()
-}
-func (row CallTarget) AllocationID() identity.ContentID      { return row.allocation }
-func (row CallTarget) BodyID() identity.ContentID            { return row.body }
-func (row CallTarget) ContextID() identity.ContentID         { return row.context }
-func (row CallTarget) FunctionContextID() identity.ContentID { return row.function }
-func (row CallTarget) CallFormalID() identity.ContentID      { return row.formal }
 
 type HeapField struct {
 	id, selector, valuesID, valuesSpan identity.ContentID
@@ -1677,17 +1651,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		snapshot.arguments = append(snapshot.arguments, CallArgument{
 			id: row.ID(), call: row.CallID(), values: row.ValuesID(),
 			member: row.MemberID(), span: row.SpanID(), position: row.Index(),
-		})
-	}
-	snapshot.targets = make([]CallTarget, 0, artifact.CallTargetCount())
-	for index := 0; index < artifact.CallTargetCount(); index++ {
-		row, ok := artifact.CallTargetAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.targets = append(snapshot.targets, CallTarget{
-			allocation: row.AllocationID(), body: row.BodyID(), context: row.ContextID(),
-			function: row.FunctionContextID(), formal: row.CallFormalID(),
 		})
 	}
 	snapshot.allocations = make([]HeapAllocation, 0, artifact.HeapAllocationCount())

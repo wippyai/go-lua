@@ -182,15 +182,6 @@ type bootAttachmentRow struct {
 }
 type edgeRange struct{ start, end uint32 }
 
-// resolvedHost is the single admitted Host relation.  Both authored syntax and
-// portable replay are reduced to these owner-fenced handles before the shared
-// finalizer derives ReplaySpec and ContentID.
-type resolvedHost struct {
-	capabilities       []ProviderCapabilitySpec
-	seeds              []capabilitySeedRow
-	activeSeeds        []uint32
-	exposures, members []selectorRow
-}
 type authority struct {
 	component          *Component
 	project            *linkproject.Component

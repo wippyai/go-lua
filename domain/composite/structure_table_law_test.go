@@ -51,7 +51,7 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryIssuanceInput:         4,
 		structure.CategoryIssuanceRequirement:   2,
 		structure.CategoryIssuanceStage:         5,
-		structure.CategorySemanticRole:          92,
+		structure.CategorySemanticRole:          93,
 	}
 	declared := 0
 	for category, size := range sizes {
@@ -128,5 +128,48 @@ func TestStructureTableIsHostedFromItsContributions(t *testing.T) {
 		if entry.Spelling() == "" {
 			t.Fatalf("member %q was collected without a rendered name", entry.Key())
 		}
+	}
+}
+
+// TestStagedCutMembersDeclareOneFraming states the framing column over the
+// authored table: a member that names a staged execution cut declares the
+// digest framing that cut's points are derived under, and no other member
+// declares one. The cut inventory is stated here independently of the table, so
+// a framing added to a member that stages nothing, or withdrawn from one that
+// does, is a verdict rather than a table that agrees with itself.
+func TestStagedCutMembersDeclareOneFraming(t *testing.T) {
+	sealed, failure := Table()
+	if failure.Available() || sealed == nil {
+		t.Fatalf("declaration table rejected: contributor=%d law=%d", failure.Contributor, failure.Law)
+	}
+	view, viewOK := sealed.Surface(schema.SurfaceKindStructure)
+	if !viewOK {
+		t.Fatal("sealed table holds no structural surface")
+	}
+	staged := map[schema.Key]struct{}{
+		"issuance/local": {}, "issuance/computation": {}, "issuance/local-predecessor": {},
+		"stage/call-dispatch": {}, "stage/call-summary": {}, "stage/call-effect": {},
+	}
+	declared := make(map[string]schema.Key, len(staged))
+	for position := 0; position < view.Count(); position++ {
+		row, rowOK := view.At(position)
+		entry, entryOK := row.(*structure.Entry)
+		if !rowOK || !entryOK || entry == nil {
+			t.Fatalf("structural row %d is not a vocabulary member", position)
+		}
+		_, stages := staged[entry.Key()]
+		if stages != (entry.Framing() != "") {
+			t.Fatalf("member %q stages a cut = %v but declares framing %q", entry.Key(), stages, entry.Framing())
+		}
+		if !stages {
+			continue
+		}
+		if prior, duplicate := declared[entry.Framing()]; duplicate {
+			t.Fatalf("members %q and %q declare one framing %q", prior, entry.Key(), entry.Framing())
+		}
+		declared[entry.Framing()] = entry.Key()
+	}
+	if len(declared) != len(staged) {
+		t.Fatalf("the table declares %d staged-cut framings, the cut inventory holds %d", len(declared), len(staged))
 	}
 }

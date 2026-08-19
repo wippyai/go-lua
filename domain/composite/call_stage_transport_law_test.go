@@ -37,7 +37,11 @@ func readCallStageTransportDeclarations(t *testing.T) callStageTransportDeclarat
 		byStage:  make(map[programartifact.RuleStage]map[schema.Key]struct{}),
 		transfer: directory,
 	}
-	for _, placement := range directory {
+	for index := 0; index < directory.Count(); index++ {
+		placement, placementOK := directory.At(index)
+		if !placementOK {
+			t.Fatalf("directory placement %d is unavailable", index)
+		}
 		if !placement.Transport {
 			continue
 		}

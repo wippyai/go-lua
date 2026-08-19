@@ -78,6 +78,7 @@ const (
 	LawSpellingDeclared
 	LawSpellingUnique
 	LawStagePredecessor
+	LawStageFraming
 )
 
 // Category is the closed catalog of structural vocabularies this surface
@@ -191,6 +192,14 @@ type Spec struct {
 	// Predecessor is the issuance-stage that must already own the input point
 	// of a native cut. Other categories leave it unset.
 	Predecessor schema.Key
+	// Framing is the digest framing a Program artifact derives a point staged
+	// for this member under. It is a content-address preimage, so the exact
+	// bytes are part of every artifact that carries such a point.
+	//
+	// A cut inside the local stage is named by the placement form that raises
+	// it; the native call cuts are named by their own issuance stage. Every
+	// other member raises no staged point and leaves this unset.
+	Framing string
 }
 
 // Entry is one admitted structural vocabulary member. It is immutable once
@@ -204,6 +213,7 @@ type Entry struct {
 	accepted    bool
 	native      bool
 	predecessor schema.Key
+	framing     string
 }
 
 // New admits one authored declaration. A rejected spec returns false rather
@@ -213,6 +223,9 @@ func New(spec Spec) (*Entry, bool) {
 		return nil, false
 	}
 	if spec.Category != CategoryIssuanceStage && (spec.Native || spec.Predecessor.Available()) {
+		return nil, false
+	}
+	if spec.Framing != "" && spec.Category != CategoryIssuanceForm && spec.Category != CategoryIssuanceStage {
 		return nil, false
 	}
 	if spec.Predecessor.Available() && spec.Predecessor == spec.Key {
@@ -227,6 +240,7 @@ func New(spec Spec) (*Entry, bool) {
 		accepted:    spec.Accepted,
 		native:      spec.Native,
 		predecessor: spec.Predecessor,
+		framing:     spec.Framing,
 	}
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
 }
@@ -329,6 +343,15 @@ func (entry *Entry) Predecessor() schema.Key {
 	return entry.predecessor
 }
 
+// Framing is the declared digest framing of the point this member stages. A
+// member that raises no staged point declares none.
+func (entry *Entry) Framing() string {
+	if entry == nil {
+		return ""
+	}
+	return entry.framing
+}
+
 // EntryAvailable is the root's admissibility question: does this row identify
 // one entry. Whether the vocabulary it belongs to is completely declared is
 // the surface's own law, stated by Seal.
@@ -357,7 +380,10 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := content.Bool(entry.native); err != nil {
 		return err
 	}
-	return content.String(string(entry.predecessor))
+	if err := content.String(string(entry.predecessor)); err != nil {
+		return err
+	}
+	return content.String(entry.framing)
 }
 
 func (entry *Entry) declarationComplete() bool {
@@ -466,6 +492,7 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 	var accepted [categoryLimit]int
 	var claimed [categoryLimit]map[uint16]schema.EntryID
 	var spelled [categoryLimit]map[string]schema.EntryID
+	framed := make(map[string]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		entry, entryOK := row.(*Entry)
@@ -521,6 +548,15 @@ func (contribution surface) Seal(view schema.View, _ schema.Sealed) schema.SealF
 			return failure(prior, LawSpellingUnique, schema.DispositionDuplicate)
 		}
 		spelled[entry.category][entry.spelling] = entry.id
+		// A framing is a content-address preimage, so it names one staged cut.
+		// Two members declaring one framing would stage two cuts onto one point,
+		// which is a verdict here rather than a collision a compiler discovers.
+		if entry.framing != "" {
+			if prior, duplicate := framed[entry.framing]; duplicate {
+				return failure(prior, LawStageFraming, schema.DispositionDuplicate)
+			}
+			framed[entry.framing] = entry.id
+		}
 		counts[entry.category]++
 	}
 	// A vocabulary is total only if its ordinals are dense from one. A gap

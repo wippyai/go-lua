@@ -108,14 +108,11 @@ func (a *authority) sealResolved() error {
 	if a == nil {
 		return errUnavailable
 	}
-	// This snapshot is deliberately the only point where either admission path
-	// becomes Host state. It excludes authored Spec and replay transport bytes.
-	resolved := resolvedHost{
-		capabilities: a.capabilities, seeds: a.seeds, activeSeeds: a.activeSeeds,
-		exposures: a.exposures, members: a.members,
-	}
-	a.capabilities, a.seeds, a.activeSeeds = resolved.capabilities, resolved.seeds, resolved.activeSeeds
-	a.exposures, a.members = resolved.exposures, resolved.members
+	// Capabilities/seeds/activeSeeds/exposures/members are already Host state
+	// by this point: build() and buildReplay() each populate them along their
+	// own admission path before calling sealResolved. What remains here is the
+	// shared finalizer: derive ReplaySpec, drop the authored Spec dialect, and
+	// compute ContentID/CountRows.
 	var ok bool
 	if a.replay, ok = makeReplaySpec(a); !ok {
 		return errUnavailable

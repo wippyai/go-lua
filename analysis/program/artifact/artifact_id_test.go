@@ -22,7 +22,7 @@ func TestArtifactIDCommitsCompileKeyIdentity(t *testing.T) {
 		if !ok {
 			t.Fatal("valid grammar identity was rejected")
 		}
-		artifact, failure := programartifact.CompileDetailed(published, grammar, nil)
+		artifact, failure := programartifact.CompileDetailed(published, grammar, programartifact.IssuanceDirectory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("artifact compile failed: %s", failure.Error())
 		}
@@ -49,7 +49,7 @@ func TestCompiledArtifactIDIsStableAcrossIndependentCompiles(t *testing.T) {
 		if !ok {
 			t.Fatal("valid grammar identity was rejected")
 		}
-		artifact, failure := programartifact.CompileDetailed(published, grammar, nil)
+		artifact, failure := programartifact.CompileDetailed(published, grammar, programartifact.IssuanceDirectory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("artifact compile failed: %s", failure.Error())
 		}

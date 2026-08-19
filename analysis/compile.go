@@ -27,7 +27,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -475,12 +477,16 @@ func (state *compiledState) newProgramBinding(source *link.Link) (composite.Link
 			}
 			bodies[row.ID()] = row
 		}
-		for rowIndex := 0; rowIndex < snapshot.CallTargetCount(); rowIndex++ {
-			row, rowOK := snapshot.CallTargetAt(rowIndex)
-			body, bodyOK := bodies[row.BodyID()]
+		targetCount, targetsPublished := published.program.CallTargetCount()
+		if !targetsPublished {
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
+		}
+		for rowIndex := 0; rowIndex < targetCount; rowIndex++ {
+			row, rowOK := published.program.CallTargetAt(rowIndex)
+			body, bodyOK := bodies[row.Body]
 			function, formal := body.FunctionID(), body.CallFormalID()
 			if !rowOK || !row.Available() || !bodyOK || !body.Callable() || !function.Available() || !formal.Available() ||
-				row.ContextID() != body.ContextID() || row.FunctionContextID() != function || row.CallFormalID() != formal {
+				row.Context != body.ContextID() || row.Function != function || row.Formal != formal {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, allocationcatalog.SealFailureNone
 			}
 		}
@@ -613,8 +619,22 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 		apps = append(apps, progApps...)
 		handlers = append(handlers, selectapply.Handlers(prog, progApps)...)
 	}
+	mountWrite, mountMinted := engine.MintColumnWrite[identity.ContentID, cold.Program](state.binding.SchemaBinding(), programmount.OutputKey, programmount.AxisKey)
+	if !mountMinted || !mountWrite.Available() {
+		return false
+	}
+	if state.artifacts == nil {
+		return false
+	}
+	directory, directoryOK := mountDirectoryContent(state.sourceID, state.artifacts.mounts)
+	if !directoryOK {
+		return false
+	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
 	if err := selectapply.Publish(write, &builder, apps); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(mountWrite, &builder, directory); err != nil {
 		return false
 	}
 	sealed, err := builder.Seal()
@@ -652,7 +672,7 @@ func linkArtifactRows(mounts []mountedProgramArtifact) ([]axis.MountedArtifact, 
 		if !mounted.valid() {
 			return nil, false
 		}
-		row := axis.MountedArtifact{Snapshot: mounted.snapshot, ModuleKey: mounted.moduleKey, ProgramID: mounted.programID}
+		row := axis.MountedArtifact{Program: mounted.program, Snapshot: mounted.snapshot}
 		if !row.Available() {
 			return nil, false
 		}
@@ -666,6 +686,11 @@ func linkArtifactRows(mounts []mountedProgramArtifact) ([]axis.MountedArtifact, 
 // snapshot and template are shared by ProgramID; the mount row is never
 // shared. The owner-handoff ProgramArtifact lives on compiledArtifactSet.byProgram.
 type mountedProgramArtifact struct {
+	// program is this mount's entry in the Link's mount directory: the
+	// artifact's frozen cold publication under the module key it is mounted
+	// at. Families that have moved onto the cold publication are read through
+	// it; the ingress view below still carries the families that have not.
+	program   cold.Program
 	snapshot  *ingress.Snapshot
 	template  *rows.ArtifactScalarTemplate
 	roles     *artifactScalarRoleDirectory
@@ -795,6 +820,21 @@ type artifactCacheEntry struct {
 	complete bool
 }
 
+// mountDirectoryContent projects the Link's mount records onto the directory
+// column's payload. Every mount contributes exactly one row, so the column is
+// total over the Link's module directory by construction.
+func mountDirectoryContent(linkID identity.ContentID, mounts []mountedProgramArtifact) (snapshot.Content[identity.ContentID, cold.Program], bool) {
+	denominator, derived := programmount.DenominatorID(linkID)
+	if !derived {
+		return snapshot.Content[identity.ContentID, cold.Program]{}, false
+	}
+	directory := make([]cold.Program, 0, len(mounts))
+	for _, mount := range mounts {
+		directory = append(directory, mount.program)
+	}
+	return programmount.Content(directory, denominator)
+}
+
 // globalArtifactCache owns the reusable sealed ProgramArtifact together with
 // its owner-neutral Engine template and the sealed ingress snapshot they
 // were projected from. No payload retains Link authority.
@@ -896,7 +936,18 @@ func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (
 		if _, held := result.byProgram[programID]; !held {
 			result.byProgram[programID] = artifact
 		}
-		result.mounts = append(result.mounts, mountedProgramArtifact{snapshot: snapshot, template: template, roles: roles, programID: programID, moduleKey: moduleKey})
+		frozen, catalog, coldOK := artifact.ColdPublication()
+		if !coldOK || !catalog.Available() {
+			return nil, false
+		}
+		program := cold.Program{
+			Frozen: frozen, ModuleKey: moduleKey, ArtifactID: artifact.ID(),
+			ProgramID: programID, SchemaID: receipt.Digest(),
+		}
+		if !program.Available() {
+			return nil, false
+		}
+		result.mounts = append(result.mounts, mountedProgramArtifact{program: program, snapshot: snapshot, template: template, roles: roles, programID: programID, moduleKey: moduleKey})
 	}
 	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), artifactSetMounts(result.mounts))
 	if !sitesOK || !sites.Available() {

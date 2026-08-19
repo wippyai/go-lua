@@ -111,7 +111,7 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			{kind: WTOEventPoint, point: entry},
 			{kind: WTOEventPoint, point: finish},
 		},
-		issuance: IssuanceDirectory{
+		issuance: transportDirectory(t, []IssuancePlacement{
 			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
 			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
 			{Occurrence: OccurrenceValueSource, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: RuleInputNone, Stage: RuleStageBase, Key: "value-source", Writes: "value", Transport: true},
@@ -120,7 +120,7 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
 			{Occurrence: OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
 			{Occurrence: OccurrenceCallActivation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: RuleInputFinish, Stage: RuleStageCallSummary, Key: "call-activation", Writes: "call"},
-		},
+		}...),
 	}
 	if failure := transaction.deriveRuleOccurrencesFailure(); failure.Available() {
 		t.Fatalf("derive call rules: %+v", failure)

@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 func (artifact *Artifact) validateSealIndexes(state *sealValidationState) CompileFailure {
@@ -118,8 +119,12 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	seenCallAllocations := make(map[identity.ContentID]struct{}, len(artifact.callTargets))
-	seenCallBodies := make(map[identity.ContentID]struct{}, len(artifact.callTargets))
+	targetCount, targetsPublished := cold.CallTargetCount(&artifact.frozen, artifact.coldCatalog)
+	if !targetsPublished {
+		return compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	seenCallAllocations := make(map[identity.ContentID]struct{}, targetCount)
+	seenCallBodies := make(map[identity.ContentID]struct{}, targetCount)
 	bodyByContext := make(map[identity.ContentID]BodyRow, len(artifact.bodies))
 	for _, body := range artifact.bodies {
 		if _, duplicate := bodyByContext[body.context]; duplicate {
@@ -127,19 +132,20 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 		}
 		bodyByContext[body.context] = body
 	}
-	for index, target := range artifact.callTargets {
-		body, bodyOK := bodyByContext[target.context]
-		if !target.Available() || !bodyOK || !body.Callable() || body.ID() != target.body ||
-			body.context != target.context || body.function != target.function || body.formal != target.formal {
+	for index := 0; index < targetCount; index++ {
+		target, held := cold.CallTargetAt(&artifact.frozen, artifact.coldCatalog, index)
+		body, bodyOK := bodyByContext[target.Context]
+		if !held || !target.Available() || !bodyOK || !body.Callable() || body.ID() != target.Body ||
+			body.context != target.Context || body.function != target.Function || body.formal != target.Formal {
 			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		if _, duplicate := seenCallAllocations[target.allocation]; duplicate {
+		if _, duplicate := seenCallAllocations[target.Allocation]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyDuplicate)
 		}
-		if _, duplicate := seenCallBodies[target.context]; duplicate {
+		if _, duplicate := seenCallBodies[target.Context]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowBody, index, -1, CompileReasonBodyDuplicate)
 		}
-		seenCallAllocations[target.allocation], seenCallBodies[target.context] = struct{}{}, struct{}{}
+		seenCallAllocations[target.Allocation], seenCallBodies[target.Context] = struct{}{}, struct{}{}
 	}
 	seenBoundaries := make(map[identity.ContentID]struct{}, len(artifact.boundaries))
 	for index, row := range artifact.boundaries {

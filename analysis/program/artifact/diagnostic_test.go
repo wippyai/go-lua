@@ -12,7 +12,7 @@ func TestCompileFailureIsClosedAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, failure := programartifact.CompileDetailed(published, programartifact.GrammarIdentity{}, nil)
+	_, failure := programartifact.CompileDetailed(published, programartifact.GrammarIdentity{}, programartifact.IssuanceDirectory{})
 	if !failure.Available() || failure.Stage() != programartifact.CompileStageAuthority || failure.RowKind() != programartifact.CompileRowAuthority || failure.Reason() != programartifact.CompileReasonGrammarUnavailable {
 		t.Fatalf("invalid grammar did not produce a closed authority failure: %s", failure.Error())
 	}

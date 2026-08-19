@@ -70,16 +70,97 @@ func (placement IssuancePlacement) Available() bool {
 		placement.Key.Available() && placement.Writes.Available()
 }
 
-// IssuanceDirectory is the sealed subscription catalog the compiler places
-// from. It is built at the composition root from rule.Issues.
-type IssuanceDirectory []IssuancePlacement
+// IssuanceDirectory is the sealed catalog the compiler compiles from: every
+// subscription the mounted rules declare, and the digest framing of every
+// staged execution cut those placements raise. It is built at the composition
+// root from rule.Issues and the sealed structure table.
+//
+// The framings are content-address preimages, so they are declared beside the
+// member that names the cut rather than authored here: a cut inside the local
+// stage is named by its placement form, and the three native call cuts by their
+// own issuance stage.
+type IssuanceDirectory struct {
+	placements []IssuancePlacement
+	forms      [issuanceFormLimit]string
+	stages     [ruleStageLimit]string
+}
+
+const (
+	issuanceFormLimit = IssuanceFormCallStage + 1
+	ruleStageLimit    = RuleStageCallEffect + 1
+)
+
+// NewIssuanceDirectory admits one sealed catalog. A framing names exactly one
+// cut, so two members declaring one framing are refused rather than sealed into
+// a catalog that stages two cuts onto one point.
+func NewIssuanceDirectory(placements []IssuancePlacement, formFraming map[IssuanceForm]string, stageFraming map[RuleStage]string) (IssuanceDirectory, bool) {
+	directory := IssuanceDirectory{placements: append([]IssuancePlacement(nil), placements...)}
+	for _, placement := range directory.placements {
+		if !placement.Available() {
+			return IssuanceDirectory{}, false
+		}
+	}
+	declared := make(map[string]struct{}, len(formFraming)+len(stageFraming))
+	for form, framing := range formFraming {
+		if !form.valid() || framing == "" {
+			return IssuanceDirectory{}, false
+		}
+		if _, duplicate := declared[framing]; duplicate {
+			return IssuanceDirectory{}, false
+		}
+		declared[framing] = struct{}{}
+		directory.forms[form] = framing
+	}
+	for stage, framing := range stageFraming {
+		if !stage.valid() || framing == "" {
+			return IssuanceDirectory{}, false
+		}
+		if _, duplicate := declared[framing]; duplicate {
+			return IssuanceDirectory{}, false
+		}
+		declared[framing] = struct{}{}
+		directory.stages[stage] = framing
+	}
+	return directory, true
+}
+
+// Count is the number of admitted placements.
+func (directory IssuanceDirectory) Count() int { return len(directory.placements) }
+
+// At returns one admitted placement in declaration order.
+func (directory IssuanceDirectory) At(index int) (IssuancePlacement, bool) {
+	if index < 0 || index >= len(directory.placements) {
+		return IssuancePlacement{}, false
+	}
+	return directory.placements[index], true
+}
+
+// formFraming is the declared digest framing of the cut one placement form
+// raises inside the local stage.
+func (directory IssuanceDirectory) formFraming(form IssuanceForm) (string, bool) {
+	if !form.valid() {
+		return "", false
+	}
+	framing := directory.forms[form]
+	return framing, framing != ""
+}
+
+// stageFraming is the declared digest framing of the cut one native call stage
+// raises.
+func (directory IssuanceDirectory) stageFraming(stage RuleStage) (string, bool) {
+	if !stage.valid() {
+		return "", false
+	}
+	framing := directory.stages[stage]
+	return framing, framing != ""
+}
 
 func (directory IssuanceDirectory) writesFor(key schema.Key) (schema.Key, bool) {
 	if !key.Available() {
 		return "", false
 	}
 	var writes schema.Key
-	for _, placement := range directory {
+	for _, placement := range directory.placements {
 		if !placement.Available() {
 			return "", false
 		}
@@ -101,7 +182,7 @@ func (directory IssuanceDirectory) writesFor(key schema.Key) (schema.Key, bool) 
 // choice a property of the declarations rather than an authored preference.
 func (directory IssuanceDirectory) transportRepresentatives() (map[schema.Key]schema.Key, bool) {
 	representative := make(map[schema.Key]schema.Key)
-	for _, placement := range directory {
+	for _, placement := range directory.placements {
 		if !placement.Available() {
 			return nil, false
 		}
@@ -173,7 +254,7 @@ func (directory IssuanceDirectory) stageAxes(stage RuleStage) (map[schema.Key]st
 		return nil, false
 	}
 	axes := make(map[schema.Key]struct{})
-	for _, placement := range directory {
+	for _, placement := range directory.placements {
 		if !placement.Available() {
 			return nil, false
 		}
@@ -224,7 +305,7 @@ func (compiler *compiler) matching(row OccurrenceRow) ([]IssuancePlacement, bool
 		return nil, false
 	}
 	var matched []IssuancePlacement
-	for _, placement := range compiler.issuance {
+	for _, placement := range compiler.issuance.placements {
 		if !placement.Available() || placement.Occurrence != row.kind {
 			continue
 		}

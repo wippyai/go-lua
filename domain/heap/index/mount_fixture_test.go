@@ -53,7 +53,7 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 		result.heap[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		result.value[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		result.pack[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		result.call[index] = calldomain.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
+		result.call[index] = calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatal("index fixture mount receipt")
 		}

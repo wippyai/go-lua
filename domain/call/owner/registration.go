@@ -68,7 +68,7 @@ func mountCallAlgebra[A axisInputs](inputs A) (*call.Algebra, MountRejection, bo
 			return nil, MountRejectionInput, false
 		}
 		seen[row.ModuleKey] = struct{}{}
-		mounts = append(mounts, call.MountedArtifact{ModuleKey: row.ModuleKey, Snapshot: row.Snapshot})
+		mounts = append(mounts, call.MountedArtifact{Program: row.Program, Snapshot: row.Snapshot})
 	}
 	algebra, sealed := call.NewWithMountedArtifacts(source, mounts)
 	if !sealed || algebra == nil || !algebra.Valid() {

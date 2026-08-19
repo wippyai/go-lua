@@ -32,7 +32,7 @@ func CompileArtifactDetailed(input *program.Program, compilation Compilation) (*
 	grammar, _ := ArtifactGrammar(compilation)
 	issuance, issuanceOK := ArtifactIssuanceDirectory()
 	if !issuanceOK {
-		return programartifact.CompileDetailed(input, grammar, nil)
+		return programartifact.CompileDetailed(input, grammar, programartifact.IssuanceDirectory{})
 	}
 	return programartifact.CompileDetailed(input, grammar, issuance)
 }

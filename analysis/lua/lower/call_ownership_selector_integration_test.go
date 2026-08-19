@@ -22,7 +22,7 @@ func sourceKeyText(t testing.TB, p *program.Program, key keyspace.Key) string {
 func TestFlowSelectorsKeepDirectSelectorCalls(t *testing.T) {
 	p := parseBindLower(t, "\nlocal key = \"abs\"\nmath.abs(1)\nmath[key](2)\nmath:abs(3)\n")
 	calls := p.Flow().Authored().Calls()
-	bindings := p.Flow().Selectors()
+	bindings := p.Flow().AccessGeometry()
 	var plain, method keyspace.Term
 	for index := 0; index < calls.Count(); index++ {
 		call, _ := calls.At(index)
@@ -78,11 +78,11 @@ func TestModuleImportAndStaticPublicationUseTheirFinalOwners(t *testing.T) {
 	if !publicationRowOK || assign == 0 || pair != 0 || target == 0 {
 		t.Fatalf("Static publication = assign %v pair %d target %v ok %v", assign, pair, target, publicationRowOK)
 	}
-	root, owner, depth, bindingOK := p.Flow().Selectors().TypePublication(publication)
+	root, owner, depth, bindingOK := p.Flow().AccessGeometry().TypePublication(publication)
 	if !bindingOK || root != imported.Alias || owner == 0 || depth != 2 {
 		t.Fatalf("Flow publication binding = root %v owner %v depth %d ok %v", root, owner, depth, bindingOK)
 	}
-	path, pathOK := p.Flow().Selectors().TypePublicationPath(publication)
+	path, pathOK := p.Flow().AccessGeometry().TypePublicationPath(publication)
 	if !pathOK {
 		t.Fatal("missing Flow publication path cursor")
 	}
@@ -125,15 +125,15 @@ func TestFlowExactSelectorDeepPathIsAllocationFree(t *testing.T) {
 	if !ok {
 		t.Fatal("missing Call")
 	}
-	read, form, bindingOK := p.Flow().Selectors().DirectCall(call)
+	read, form, bindingOK := p.Flow().AccessGeometry().DirectCall(call)
 	if !bindingOK || form != flow.CallFormPlain {
 		t.Fatalf("direct Call binding = read %v form %v ok %v", read, form, bindingOK)
 	}
-	if _, gotDepth, ok := p.Flow().Selectors().ExactRead(read); !ok || gotDepth != depth {
+	if _, gotDepth, ok := p.Flow().AccessGeometry().ExactRead(read); !ok || gotDepth != depth {
 		t.Fatalf("deep selector depth = %d/%v, want %d", gotDepth, ok, depth)
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		path, _ := p.Flow().Selectors().ExactReadPath(read)
+		path, _ := p.Flow().AccessGeometry().ExactReadPath(read)
 		for {
 			_, next, ok := path.Segment()
 			if !ok {

@@ -164,22 +164,25 @@ func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifa
 // the algebra supplies every selector; a row whose body path or program does
 // not match the artifact it was read from is rejected.
 func mountedTargetBatchRows(mount axis.MountedArtifact, algebra *calldomain.Algebra) ([]TargetBatchRow, bool) {
-	artifact := mount.Snapshot
-	if artifact == nil || algebra == nil {
+	if algebra == nil || !mount.Program.Available() {
 		return nil, false
 	}
-	rows := make([]TargetBatchRow, 0, artifact.CallTargetCount())
-	for index := 0; index < artifact.CallTargetCount(); index++ {
-		target, targetOK := artifact.CallTargetAt(index)
-		capability, capabilityOK := algebra.TargetForAllocation(mount.ModuleKey, target.AllocationID())
+	targetCount, targetsPublished := mount.CallTargetCount()
+	if !targetsPublished {
+		return nil, false
+	}
+	rows := make([]TargetBatchRow, 0, targetCount)
+	for index := 0; index < targetCount; index++ {
+		target, targetOK := mount.CallTargetAt(index)
+		capability, capabilityOK := algebra.TargetForAllocation(mount.ModuleKey, target.Allocation)
 		body, bodyCapabilityOK := capability.Body()
 		role, roleOK := body.RoleID()
 		bodyPath, pathOK := body.BodyPath()
 		programID, programOK := body.ProgramID()
-		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.BodyID() || programID != mount.ProgramID {
+		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.Body || programID != mount.ProgramID {
 			return nil, false
 		}
-		rows = append(rows, TargetBatchRow{Body: body, BodyPath: target.BodyID(), Role: role})
+		rows = append(rows, TargetBatchRow{Body: body, BodyPath: target.Body, Role: role})
 	}
 	return rows, true
 }

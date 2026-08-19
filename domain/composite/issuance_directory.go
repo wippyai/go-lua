@@ -18,29 +18,64 @@ import (
 func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 	sealRegistry()
 	if registry.sealed == nil {
-		return nil, false
+		return programartifact.IssuanceDirectory{}, false
 	}
-	var directory programartifact.IssuanceDirectory
+	var placements []programartifact.IssuancePlacement
 	for _, entry := range registry.templates {
 		if entry == nil || entry.Lane() == rule.LaneLink {
 			continue
 		}
 		if !entry.Key().Available() {
-			return nil, false
+			return programartifact.IssuanceDirectory{}, false
 		}
 		for index := 0; index < entry.IssuanceCount(); index++ {
 			issued, ok := entry.IssuanceAt(index)
 			if !ok {
-				return nil, false
+				return programartifact.IssuanceDirectory{}, false
 			}
 			placement, ok := issuancePlacement(issued, entry.Key(), entry.Writes(), entry.Lane() == rule.LaneMounted)
 			if !ok {
-				return nil, false
+				return programartifact.IssuanceDirectory{}, false
 			}
-			directory = append(directory, placement)
+			placements = append(placements, placement)
 		}
 	}
-	return directory, true
+	forms, formsOK := structureFramings(structure.CategoryIssuanceForm)
+	stages, stagesOK := structureFramings(structure.CategoryIssuanceStage)
+	if !formsOK || !stagesOK {
+		return programartifact.IssuanceDirectory{}, false
+	}
+	formFraming := make(map[programartifact.IssuanceForm]string, len(forms))
+	for ordinal, framing := range forms {
+		formFraming[programartifact.IssuanceForm(ordinal)] = framing
+	}
+	stageFraming := make(map[programartifact.RuleStage]string, len(stages))
+	for ordinal, framing := range stages {
+		stageFraming[programartifact.RuleStage(ordinal)] = framing
+	}
+	return programartifact.NewIssuanceDirectory(placements, formFraming, stageFraming)
+}
+
+// structureFramings projects the declared digest framing of every member of one
+// category that names a staged execution cut. A member that stages nothing
+// declares none and contributes no row.
+func structureFramings(category structure.Category) (map[uint16]string, bool) {
+	view, viewOK := registry.sealed.Surface(schema.SurfaceKindStructure)
+	table, tableOK := structure.NewTable(view)
+	if !viewOK || !tableOK {
+		return nil, false
+	}
+	framings := make(map[uint16]string)
+	for ordinal := uint16(1); int(ordinal) <= table.Count(category); ordinal++ {
+		entry, ok := table.At(category, ordinal)
+		if !ok {
+			return nil, false
+		}
+		if framing := entry.Framing(); framing != "" {
+			framings[entry.Ordinal()] = framing
+		}
+	}
+	return framings, true
 }
 
 func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport bool) (programartifact.IssuancePlacement, bool) {

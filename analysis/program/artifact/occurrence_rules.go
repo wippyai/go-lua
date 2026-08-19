@@ -37,13 +37,13 @@ func orderPlacementsByDeclaration(directory IssuanceDirectory, rows []RuleOccurr
 	if len(rows) == 0 {
 		return rows
 	}
-	byKey := make(map[schema.Key][]RuleOccurrence, len(directory))
+	byKey := make(map[schema.Key][]RuleOccurrence, directory.Count())
 	for _, row := range rows {
 		byKey[row.key] = append(byKey[row.key], row)
 	}
 	ordered := make([]RuleOccurrence, 0, len(rows))
-	seen := make(map[schema.Key]struct{}, len(directory))
-	for _, issued := range directory {
+	seen := make(map[schema.Key]struct{}, directory.Count())
+	for _, issued := range directory.placements {
 		if !issued.Key.Available() {
 			continue
 		}

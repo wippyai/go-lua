@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
@@ -82,7 +83,18 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		if !vocabularyOK || !lowered {
 			t.Fatalf("lower artifact %d", index)
 		}
-		rows[index] = axis.MountedArtifact{Snapshot: snapshot, ModuleKey: module, ProgramID: programID}
+		frozen, catalog, coldOK := artifact.ColdPublication()
+		if !coldOK || !catalog.Available() {
+			t.Fatalf("artifact %d publishes no cold value", index)
+		}
+		program := cold.Program{
+			Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+			ProgramID: programID, SchemaID: artifact.CompileKey().SchemaDigest(),
+		}
+		if !program.Available() {
+			t.Fatalf("mount row %d unavailable", index)
+		}
+		rows[index] = axis.MountedArtifact{Program: program, Snapshot: snapshot}
 		statics[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)

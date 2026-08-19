@@ -31,11 +31,12 @@ func TestArtifactIssuanceDirectoryPlacesEveryMountedSubscription(t *testing.T) {
 			t.Fatalf("mounted rule %q declares no issuance", entry.Key())
 		}
 	}
-	if len(directory) != want {
-		t.Fatalf("directory holds %d placements, sealed subscriptions = %d", len(directory), want)
+	if directory.Count() != want {
+		t.Fatalf("directory holds %d placements, sealed subscriptions = %d", directory.Count(), want)
 	}
-	for _, placement := range directory {
-		if !placement.Available() {
+	for index := 0; index < directory.Count(); index++ {
+		placement, placementOK := directory.At(index)
+		if !placementOK || !placement.Available() {
 			t.Fatalf("directory projected an unavailable placement: %+v", placement)
 		}
 	}

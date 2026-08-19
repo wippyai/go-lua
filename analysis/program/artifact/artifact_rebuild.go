@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
@@ -34,7 +35,7 @@ type compiler struct {
 	callsByID                  map[identity.ContentID]CallRow
 	bodies                     []BodyRow
 	functionBoundaries         []FunctionBoundaryRow
-	callTargets                []CallTargetRow
+	callTargets                []cold.CallTarget
 	boundaries                 []BoundaryRow
 	outcomes                   []OutcomeRow
 	returnValues               []ReturnValue

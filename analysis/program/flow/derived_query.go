@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
@@ -156,7 +155,6 @@ type Candidates struct{ result *candidates.Result }
 func (view Candidates) Unary() UnaryCandidates   { return UnaryCandidates(view) }
 func (view Candidates) Binary() BinaryCandidates { return BinaryCandidates(view) }
 func (view Candidates) Access() AccessCandidates { return AccessCandidates(view) }
-func (view Candidates) Loops() LoopCandidates    { return LoopCandidates(view) }
 
 type UnaryCandidates struct{ result *candidates.Result }
 
@@ -273,107 +271,4 @@ func (view AccessCandidates) SetAt(index int) (keyspace.Term, bool) {
 		return 0, false
 	}
 	return view.result.IndexSet().At(index)
-}
-
-type LoopCandidates struct{ result *candidates.Result }
-
-func (view LoopCandidates) GenericCount() int {
-	if view.result == nil {
-		return 0
-	}
-	return view.result.GenericLoop().Count()
-}
-func (view LoopCandidates) GenericAt(index int) (keyspace.Term, bool) {
-	if view.result == nil {
-		return 0, false
-	}
-	return view.result.GenericLoop().At(index)
-}
-
-type Selectors struct{ result *accessgeometry.Result }
-
-func (view Selectors) ExactRead(read keyspace.Term) (keyspace.Term, int, bool) {
-	if view.result == nil {
-		return 0, 0, false
-	}
-	return view.result.ExactReads().Get(read)
-}
-
-// ExactReadPath opens one immutable leaf-to-root cursor over a sealed exact
-// selector chain. Each Segment advances one existing parent-chain edge in O(1)
-// without materializing or restarting the path.
-func (view Selectors) ExactReadPath(read keyspace.Term) (ExactReadPath, bool) {
-	if view.result == nil {
-		return ExactReadPath{}, false
-	}
-	path, ok := view.result.ExactReads().PathCursor(read)
-	return ExactReadPath{path: path}, ok
-}
-
-type ExactReadPath struct{ path accessgeometry.ExactReadPath }
-
-func (path ExactReadPath) Segment() (keyspace.Key, ExactReadPath, bool) {
-	key, next, ok := path.path.Segment()
-	if !ok {
-		return 0, ExactReadPath{}, false
-	}
-	return key, ExactReadPath{path: next}, true
-}
-
-func (view Selectors) TypePublication(publication keyspace.Term) (root, owner keyspace.Term, depth int, ok bool) {
-	if view.result == nil {
-		return 0, 0, 0, false
-	}
-	return view.result.TypePublications().Get(publication)
-}
-
-// PublicationPath opens one immutable leaf-to-root cursor over the sealed
-// exact Static publication path. Segment is O(1) and allocation-free.
-func (view Selectors) TypePublicationPath(publication keyspace.Term) (PublicationPath, bool) {
-	if view.result == nil {
-		return PublicationPath{}, false
-	}
-	path, ok := view.result.TypePublications().PathCursor(publication)
-	return PublicationPath{path: path}, ok
-}
-
-type PublicationPath struct {
-	path accessgeometry.PublicationPath
-}
-
-func (path PublicationPath) Segment() (keyspace.Key, PublicationPath, bool) {
-	key, next, ok := path.path.Segment()
-	if !ok {
-		return 0, PublicationPath{}, false
-	}
-	return key, PublicationPath{path: next}, true
-}
-func (view Selectors) DirectCall(call keyspace.Term) (keyspace.Term, CallForm, bool) {
-	if view.result == nil {
-		return 0, 0, false
-	}
-	read, form, ok := view.result.DirectCalls().Get(call)
-	if !ok {
-		return 0, 0, false
-	}
-	return read, publicCallForm(form), true
-}
-
-// CallForm is the closed direct-call syntax disposition.
-type CallForm uint8
-
-const (
-	CallFormPlain  CallForm = 1
-	CallFormMethod CallForm = 2
-)
-
-func publicCallForm(form uint8) CallForm {
-	switch form {
-	case 1:
-		return CallFormPlain
-	case 2:
-		return CallFormMethod
-	default:
-		return 0
-	}
 }

@@ -367,8 +367,12 @@ func TestBindEnumeratesSealedCallTargets(t *testing.T) {
 		t.Fatal("newProgramBinding body unbound")
 	}
 	body := rest[:len(bind)+end]
-	if !strings.Contains(body, "snapshot.CallTargetCount()") || !strings.Contains(body, "snapshot.CallTargetAt") ||
-		!strings.Contains(body, "row.ContextID()") || !strings.Contains(body, "body.Callable()") {
+	// The family moved onto the artifact's cold publication, so bind
+	// enumerates it through the mount directory row rather than the ingress
+	// view. What the law states is unchanged: bind walks every sealed target
+	// and checks it against the body it names.
+	if !strings.Contains(body, "published.program.CallTargetCount()") || !strings.Contains(body, "published.program.CallTargetAt") ||
+		!strings.Contains(body, "row.Context") || !strings.Contains(body, "body.Callable()") {
 		t.Fatal("bind does not enumerate sealed call-target rows")
 	}
 }

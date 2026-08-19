@@ -100,40 +100,11 @@ type ModuleInitGenerationRef struct {
 	entry     identity.ContentID
 }
 
-func (r ModuleInitGenerationRef) ComponentID() identity.ContentID { return r.component }
-func (r ModuleInitGenerationRef) EntryID() identity.ContentID     { return r.entry }
-
 type ModuleInitOutcomeRef struct {
 	generation ModuleInitGenerationRef
 	kind       flowkind.OutcomeKind
 	ordinal    uint32
 }
-
-func (r ModuleInitOutcomeRef) Generation() ModuleInitGenerationRef { return r.generation }
-func (r ModuleInitOutcomeRef) Kind() flowkind.OutcomeKind          { return r.kind }
-func (r ModuleInitOutcomeRef) ReturnOrdinal() uint32               { return r.ordinal }
-
-type ModuleInitTerminalRef struct{ outcome ModuleInitOutcomeRef }
-
-func (r ModuleInitTerminalRef) ComponentID() identity.ContentID {
-	return r.outcome.generation.component
-}
-
-type ModuleReadySubjectKind uint8
-
-const (
-	ModuleReadySubjectInvalid ModuleReadySubjectKind = iota
-	ModuleReadySubjectExistingValue
-	ModuleReadySubjectDefaultTrue
-)
-
-type ModuleReadySubject struct {
-	component *Component
-	kind      ModuleReadySubjectKind
-	value     linkboundary.Value
-}
-
-func (s ModuleReadySubject) Kind() ModuleReadySubjectKind { return s.kind }
 
 type actorRow struct{ name string }
 type instanceRow struct {
@@ -172,12 +143,7 @@ type authority struct {
 	rootIngress        []uint32
 	coordinates        []coordinateRow
 	coordinateOrdinals map[coordinateRow]uint32
-	rootByID           map[identity.ContentID]uint32
-	coordinateByID     map[identity.ContentID]uint32
-	entryByID          map[identity.ContentID]uint32
-	outcomeByID        map[identity.ContentID]outcomeCoordinate
-	terminals          []outcomeCoordinate // direct projection index; At is O(1)
-	terminalByID       map[identity.ContentID]uint32
+	terminals          []outcomeCoordinate
 	spec               Spec
 	content            identity.ContentID
 	counts             denominator.CountRows

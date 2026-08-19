@@ -96,7 +96,7 @@ func CountRows(view View) (denominator.CountRows, error) {
 		if !ok {
 			return denominator.CountRows{}, errFlowCounts
 		}
-		if _, _, ok := view.Selectors().DirectCall(term); ok {
+		if _, _, ok := view.AccessGeometry().DirectCall(term); ok {
 			directCalls++
 		}
 	}

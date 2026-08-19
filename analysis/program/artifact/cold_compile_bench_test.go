@@ -26,7 +26,7 @@ func coldCompileFixtureProgram(tb testing.TB) (*program.Program, GrammarIdentity
 func BenchmarkColdCompilePhases(b *testing.B) {
 	source := lower.Source{Name: "artifact-compile-bench.lua", Text: []byte(coldCompileFixture)}
 	published, grammar := coldCompileFixtureProgram(b)
-	sealed, failure := CompileDetailed(published, grammar, nil)
+	sealed, failure := CompileDetailed(published, grammar, IssuanceDirectory{})
 	if failure.Available() || sealed == nil || !sealed.Available() {
 		b.Fatalf("artifact compile failed: %s", failure.Error())
 	}
@@ -42,7 +42,7 @@ func BenchmarkColdCompilePhases(b *testing.B) {
 	b.Run("compile", func(b *testing.B) {
 		b.ReportAllocs()
 		for index := 0; index < b.N; index++ {
-			artifact, compileFailure := CompileDetailed(published, grammar, nil)
+			artifact, compileFailure := CompileDetailed(published, grammar, IssuanceDirectory{})
 			if compileFailure.Available() || artifact == nil || !artifact.Available() {
 				b.Fatalf("artifact compile failed: %s", compileFailure.Error())
 			}

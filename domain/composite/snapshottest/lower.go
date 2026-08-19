@@ -3,7 +3,9 @@ package snapshottest
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -18,4 +20,24 @@ func MustLower(t testing.TB, artifact *programartifact.Artifact) *ingress.Snapsh
 		t.Fatal("ingress lower")
 	}
 	return snapshot
+}
+
+// MustMount builds one Link mount directory row for an artifact placed at a
+// module key. Tests share this helper so a fixture states the mount the same
+// way the composition does, instead of assembling the row's identities by
+// hand and drifting from what Available accepts.
+func MustMount(t testing.TB, artifact *programartifact.Artifact, module identity.ContentID) cold.Program {
+	t.Helper()
+	frozen, catalog, published := artifact.ColdPublication()
+	if !published || !catalog.Available() {
+		t.Fatal("artifact publishes no cold value")
+	}
+	row := cold.Program{
+		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !row.Available() {
+		t.Fatal("mount directory row unavailable")
+	}
+	return row
 }

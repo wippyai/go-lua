@@ -20,7 +20,7 @@ func BenchmarkCompileDetailed(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		artifact, failure := programartifact.CompileDetailed(published, grammar, nil)
+		artifact, failure := programartifact.CompileDetailed(published, grammar, programartifact.IssuanceDirectory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			b.Fatalf("artifact compile failed: %s", failure.Error())
 		}

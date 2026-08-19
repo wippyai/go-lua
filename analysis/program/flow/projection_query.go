@@ -121,6 +121,93 @@ func (view AccessGeometry) IndexAccesses() AccessIndexAccesses {
 	return AccessIndexAccesses{view: view.result.IndexAccesses()}
 }
 
+func (view AccessGeometry) ExactRead(read keyspace.Term) (keyspace.Term, int, bool) {
+	if !view.Available() {
+		return 0, 0, false
+	}
+	return view.result.ExactReads().Get(read)
+}
+
+// ExactReadPath opens one immutable leaf-to-root cursor over a sealed exact
+// selector chain. Each Segment advances one existing parent-chain edge in O(1)
+// without materializing or restarting the path.
+func (view AccessGeometry) ExactReadPath(read keyspace.Term) (ExactReadPath, bool) {
+	if !view.Available() {
+		return ExactReadPath{}, false
+	}
+	path, ok := view.result.ExactReads().PathCursor(read)
+	return ExactReadPath{path: path}, ok
+}
+
+type ExactReadPath struct{ path accessgeometry.ExactReadPath }
+
+func (path ExactReadPath) Segment() (keyspace.Key, ExactReadPath, bool) {
+	key, next, ok := path.path.Segment()
+	if !ok {
+		return 0, ExactReadPath{}, false
+	}
+	return key, ExactReadPath{path: next}, true
+}
+
+func (view AccessGeometry) TypePublication(publication keyspace.Term) (root, owner keyspace.Term, depth int, ok bool) {
+	if !view.Available() {
+		return 0, 0, 0, false
+	}
+	return view.result.TypePublications().Get(publication)
+}
+
+// PublicationPath opens one immutable leaf-to-root cursor over the sealed
+// exact Static publication path. Segment is O(1) and allocation-free.
+func (view AccessGeometry) TypePublicationPath(publication keyspace.Term) (PublicationPath, bool) {
+	if !view.Available() {
+		return PublicationPath{}, false
+	}
+	path, ok := view.result.TypePublications().PathCursor(publication)
+	return PublicationPath{path: path}, ok
+}
+
+type PublicationPath struct {
+	path accessgeometry.PublicationPath
+}
+
+func (path PublicationPath) Segment() (keyspace.Key, PublicationPath, bool) {
+	key, next, ok := path.path.Segment()
+	if !ok {
+		return 0, PublicationPath{}, false
+	}
+	return key, PublicationPath{path: next}, true
+}
+
+func (view AccessGeometry) DirectCall(call keyspace.Term) (keyspace.Term, CallForm, bool) {
+	if !view.Available() {
+		return 0, 0, false
+	}
+	read, form, ok := view.result.DirectCalls().Get(call)
+	if !ok {
+		return 0, 0, false
+	}
+	return read, publicCallForm(form), true
+}
+
+// CallForm is the closed direct-call syntax disposition.
+type CallForm uint8
+
+const (
+	CallFormPlain  CallForm = 1
+	CallFormMethod CallForm = 2
+)
+
+func publicCallForm(form uint8) CallForm {
+	switch form {
+	case 1:
+		return CallFormPlain
+	case 2:
+		return CallFormMethod
+	default:
+		return 0
+	}
+}
+
 // AccessTableFields is the normalized-key view over authored TableFields.
 type AccessTableFields struct{ view accessgeometry.TableFields }
 
