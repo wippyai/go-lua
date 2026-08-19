@@ -1,10 +1,11 @@
-package analysis
+package oracle
 
 import (
 	"context"
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis"
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	"github.com/wippyai/go-lua/internal/testfixture"
@@ -35,19 +36,22 @@ local function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>, timeout
 end
 return handle
 `
-	linked := mustLink(t, source, contract)
-	plan, status := Compile(linked)
-	if status != CompileComplete || plan == nil {
+	linked, err := testfixture.SealSource(contract, "analysis.lua", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, status := analysis.Compile(linked)
+	if status != analysis.CompileComplete || plan == nil {
 		t.Fatalf("compile = %v plan=%t", status, plan != nil)
 	}
 	t.Cleanup(func() { plan.Close() })
-	offResult, offReport, offStatus, _ := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), anadiag.DiagnosticPolicy{})
-	if offStatus != AnalyzeComplete || offResult == nil || offReport != nil {
+	offResult, offReport, offStatus, _ := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), anadiag.DiagnosticPolicy{})
+	if offStatus != analysis.AnalyzeComplete || offResult == nil || offReport != nil {
 		t.Fatalf("policy-off solve = %v result=%t report=%t", offStatus, offResult != nil, offReport != nil)
 	}
 	policy := anadiag.DiagnosticPolicy{Enabled: []anadiag.DiagnosticCode{typedomain.ChannelSelectExhaustivenessCode}}
-	result, report, solveStatus, diagnostics := plan.SolveWithReport(context.Background(), fixtureSolveOptions(), policy)
-	if solveStatus != AnalyzeComplete || result == nil || report == nil || result.ContentID() != offResult.ContentID() {
+	result, report, solveStatus, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), policy)
+	if solveStatus != analysis.AnalyzeComplete || result == nil || report == nil || result.ContentID() != offResult.ContentID() {
 		t.Fatalf("policy solve = %v result=%t report=%t identity=%v/%v diagnostics=%+v", solveStatus, result != nil, report != nil, result.ContentID(), offResult.ContentID(), diagnostics)
 	}
 	if report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 1 {
@@ -102,7 +106,7 @@ func TestChannelSelectDefaultCoversRemainingArms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	linked := mustLink(t, `type Event = {kind: string}
+	linked, err := testfixture.SealSource(contract, "analysis.lua", []byte(`type Event = {kind: string}
 type Stop = {reason: string}
 
 local function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>): string
@@ -117,18 +121,21 @@ local function handle(events_ch: Channel<Event>, stop_ch: Channel<Stop>): string
     return "d"
 end
 return handle
-`, contract)
-	plan, status := Compile(linked)
-	if status != CompileComplete || plan == nil {
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, status := analysis.Compile(linked)
+	if status != analysis.CompileComplete || plan == nil {
 		t.Fatalf("compile = %v plan=%t", status, plan != nil)
 	}
 	t.Cleanup(func() { plan.Close() })
 	result, report, solveStatus, diagnostics := plan.SolveWithReport(
 		context.Background(),
-		fixtureSolveOptions(),
+		corpusHarnessSolveOptions(),
 		anadiag.DiagnosticPolicy{Enabled: []anadiag.DiagnosticCode{typedomain.ChannelSelectExhaustivenessCode}},
 	)
-	if solveStatus != AnalyzeComplete || result == nil || report == nil ||
+	if solveStatus != analysis.AnalyzeComplete || result == nil || report == nil ||
 		report.CollectionFailure() != anadiag.DiagnosticCollectionOK || report.FindingCount() != 0 {
 		t.Fatalf("default-covered report = %v result=%t report=%t failure=%d findings=%d diagnostics=%+v",
 			solveStatus, result != nil, report != nil, report.CollectionFailure(), report.FindingCount(), diagnostics)

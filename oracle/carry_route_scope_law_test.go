@@ -1,8 +1,11 @@
-package analysis
+package oracle
 
 import (
 	"context"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // A routed table write names its concrete heap target only at execution, so
@@ -33,9 +36,12 @@ return module
 
 func solveCarryRouteSource(t *testing.T, law, source string) {
 	t.Helper()
-	linked := mustLink(t, source, fixtureContract(t))
-	plan, compileStatus, compileDiagnostics := CompileWithDiagnostics(linked)
-	if compileStatus != CompileComplete || plan == nil {
+	linked, err := testfixture.SealSource(corpusHarnessContract(t), "analysis.lua", []byte(source))
+	if err != nil {
+		t.Fatalf("%s: seal=%v", law, err)
+	}
+	plan, compileStatus, compileDiagnostics := analysis.CompileWithDiagnostics(linked)
+	if compileStatus != analysis.CompileComplete || plan == nil {
 		t.Fatalf("%s: compile=%v plan=%t diagnostics=%+v", law, compileStatus, plan != nil, compileDiagnostics)
 	}
 	t.Cleanup(func() {
@@ -43,8 +49,8 @@ func solveCarryRouteSource(t *testing.T, law, source string) {
 			t.Error("close compiled plan")
 		}
 	})
-	analyzed, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), fixtureSolveOptions())
-	if status != AnalyzeComplete || analyzed == nil {
+	analyzed, status, diagnostics := plan.SolveWithDiagnostics(context.Background(), corpusHarnessSolveOptions())
+	if status != analysis.AnalyzeComplete || analyzed == nil {
 		t.Fatalf("%s: solve=%v result=%t stage=%v construction=%v attach=%v", law, status, analyzed != nil,
 			diagnostics.AssembleStage, diagnostics.Construction, diagnostics.ObservationAttach)
 	}

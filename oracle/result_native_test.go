@@ -1,12 +1,14 @@
-package analysis
+package oracle
 
 import (
 	"sort"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/result"
 )
 
 func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
-	_, result, _, _ := testCorpusDiagnosticLaw(t, "advice/always-true-guard")
+	result := nativePublicationCorpusResult(t, "advice/always-true-guard")
 	if !result.NativePublicationAvailable() || result.NativePublicationCount() == 0 {
 		t.Fatal("completed branch solve did not expose its typed native publication")
 	}
@@ -33,7 +35,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 		t.Fatalf("native branch families=%v, want constant/representation/truthiness/partition", seen)
 	}
 
-	_, foreign, _, _ := testCorpusDiagnosticLaw(t, "advice/always-true-guard")
+	foreign := nativePublicationCorpusResult(t, "advice/always-true-guard")
 	row, _ := result.NativePublicationAt(0)
 	if _, ok := foreign.NativePublicationByToken(row.Token()); ok {
 		t.Fatal("foreign equal-content Result accepted native row token")
@@ -108,7 +110,7 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			_, result, _, _ := testCorpusDiagnosticLaw(t, fixture.name)
+			result := nativePublicationCorpusResult(t, fixture.name)
 			if result == nil || !result.NativePublicationAvailable() {
 				t.Fatal("solved fixture exposes no native publication")
 			}
@@ -132,4 +134,13 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nativePublicationCorpusResult keeps these Result-owned assertions on the
+// oracle's one canonical corpus spine; it does not rebuild a publication or
+// retain an analyzer implementation handle.
+func nativePublicationCorpusResult(t *testing.T, name string) *result.Result {
+	t.Helper()
+	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
+	return run.result
 }

@@ -1,8 +1,9 @@
-package analysis
+package oracle
 
 import (
-	"context"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis"
 )
 
 // A declared query with no folded row is proven absent on the sealed column.
@@ -10,8 +11,9 @@ import (
 func TestAnalyzeCompletesDeclaredProvenAbsence(t *testing.T) {
 	for _, name := range []string{"core/control-for-loop", "core/query-zero-row"} {
 		t.Run(name, func(t *testing.T) {
-			result, status := Analyze(context.Background(), fixtureLink(t, name))
-			if status != AnalyzeComplete || result == nil {
+			run := corpusHarnessFixtureRun(t, name, corpusHarnessCensusMode())
+			result, status := run.result, run.status
+			if status != analysis.AnalyzeComplete || result == nil {
 				t.Fatalf("Analyze %s = %v result=%t", name, status, result != nil)
 			}
 		})
