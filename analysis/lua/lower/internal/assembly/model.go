@@ -153,18 +153,8 @@ func validSpan(c *Collector, span source.Span) bool {
 }
 
 func validSourceSpan(span source.Span) bool {
-	allZero := span.StartLine == 0 && span.StartCol == 0 && span.EndLine == 0 && span.EndCol == 0
-	if allZero {
-		return true
-	}
-	if span.StartLine == 0 || span.StartCol == 0 {
-		return false
-	}
-	if span.EndLine == 0 || span.EndCol == 0 {
-		return span.EndLine == 0 && span.EndCol == 0
-	}
-	return span.EndLine > span.StartLine ||
-		(span.EndLine == span.StartLine && span.EndCol >= span.StartCol)
+	_, ok := source.CoordinateFromParts(span.StartLine, span.StartCol, span.EndLine, span.EndCol)
+	return ok
 }
 
 func validBodyTerm(term keyspace.Term) bool {

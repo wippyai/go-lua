@@ -213,17 +213,8 @@ func (r *Rows) FillImport(ordinal uint32, span programsource.Span) bool {
 }
 
 func validSpan(span programsource.Span) bool {
-	allZero := span.StartLine == 0 && span.StartCol == 0 && span.EndLine == 0 && span.EndCol == 0
-	if allZero {
-		return true
-	}
-	if span.StartLine == 0 || span.StartCol == 0 {
-		return false
-	}
-	if span.EndLine == 0 || span.EndCol == 0 {
-		return span.EndLine == 0 && span.EndCol == 0
-	}
-	return span.EndLine > span.StartLine || (span.EndLine == span.StartLine && span.EndCol >= span.StartCol)
+	_, ok := programsource.CoordinateFromParts(span.StartLine, span.StartCol, span.EndLine, span.EndCol)
+	return ok
 }
 
 func (r *Rows) ImportComplete() bool {

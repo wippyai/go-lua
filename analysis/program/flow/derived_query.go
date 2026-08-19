@@ -91,6 +91,16 @@ func (view Ports) Finish(term keyspace.Term) (keyspace.Term, bool) {
 	return view.result.Finish(term)
 }
 
+// termCount returns the canonical denominator bound carried by Flow's sealed
+// evaluation ports. It remains private to Flow's owner-local transitive
+// queries; callers cannot use it to reconstruct a term directory.
+func (view Ports) termCount() uint32 {
+	if view.result == nil {
+		return 0
+	}
+	return view.result.TermCount()
+}
+
 type Pending struct{ result *evaluation.Pending }
 
 func (view Pending) Count(subject keyspace.Term) (int, bool) {

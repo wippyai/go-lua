@@ -20,3 +20,13 @@ func (ports *Ports) Finish(term keyspace.Term) (keyspace.Term, bool) {
 	}
 	return ports.plane(keyspace.TermFamily(term), keyspace.TermOrdinal(term), &ports.finish)
 }
+
+// TermCount returns the pre-Outcome Source denominator captured by this
+// sealed port proof. It bounds a transitive Finish query without retaining or
+// rebuilding a second term index.
+func (ports *Ports) TermCount() uint32 {
+	if !ports.available() {
+		return 0
+	}
+	return ports.termCount
+}

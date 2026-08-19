@@ -10,19 +10,10 @@ import "github.com/wippyai/go-lua/analysis/program/source"
 // value. Otherwise the start must be positive, and the end is either absent
 // as exactly (0, 0) or a non-reversed positive coordinate.
 func Build(file string, startLine, startCol, endLine, endCol int) (source.Span, bool) {
-	if startLine == 0 && startCol == 0 && endLine == 0 && endCol == 0 {
-		return source.Span{File: file}, true
-	}
-	if !positive(startLine) || !positive(startCol) {
+	if !fitsUint32(startLine) || !fitsUint32(startCol) || !fitsUint32(endLine) || !fitsUint32(endCol) {
 		return source.Span{}, false
 	}
-	if endLine == 0 || endCol == 0 {
-		if endLine != 0 || endCol != 0 {
-			return source.Span{}, false
-		}
-		return source.Span{File: file, StartLine: uint32(startLine), StartCol: uint32(startCol)}, true
-	}
-	if !positive(endLine) || !positive(endCol) || endLine < startLine || endLine == startLine && endCol < startCol {
+	if _, ok := source.CoordinateFromParts(uint32(startLine), uint32(startCol), uint32(endLine), uint32(endCol)); !ok {
 		return source.Span{}, false
 	}
 	return source.Span{
@@ -40,6 +31,6 @@ func Invalid(file string) source.Span {
 	return source.Span{File: file, StartCol: 1}
 }
 
-func positive(value int) bool {
-	return value > 0 && uint64(value) <= uint64(^uint32(0))
+func fitsUint32(value int) bool {
+	return value >= 0 && uint64(value) <= uint64(^uint32(0))
 }

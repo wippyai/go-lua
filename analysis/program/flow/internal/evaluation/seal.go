@@ -103,6 +103,11 @@ func validateAuthoredCounts(view authored.View, counts [keyspace.FamilyCount]int
 
 func newPorts(counts [keyspace.FamilyCount]int, sourceID, flowID, staticID, moduleID identity.ContentID) *Ports {
 	ports := &Ports{sourceID: sourceID, flowID: flowID, staticID: staticID, moduleID: moduleID}
+	var total uint64
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		total += uint64(counts[family])
+	}
+	ports.termCount = uint32(total)
 	for _, family := range entryFamilies {
 		count := counts[family]
 		if count == 0 {

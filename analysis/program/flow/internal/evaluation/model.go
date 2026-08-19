@@ -28,8 +28,12 @@ type Ports struct {
 	flowID   identity.ContentID
 	staticID identity.ContentID
 	moduleID identity.ContentID
-	entry    [keyspace.FamilyCount][]keyspace.Term
-	finish   [keyspace.FamilyCount][]keyspace.Term
+	// termCount is the sealed pre-Outcome Source denominator used only to
+	// bound owner-local Finish-chain normalization. It is a scalar seal fact,
+	// not a second term index.
+	termCount uint32
+	entry     [keyspace.FamilyCount][]keyspace.Term
+	finish    [keyspace.FamilyCount][]keyspace.Term
 }
 
 // Matches reports whether ports was sealed for the exact Source, authored
