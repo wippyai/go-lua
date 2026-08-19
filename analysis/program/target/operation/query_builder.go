@@ -54,6 +54,7 @@ func (core *Core) beginQuery() error {
 			return invalidQuery("callback geometry has no owner")
 		}
 		core.query.callbacks[index].owner = callback.owner
+		core.query.callbacks[index].source = uint32(callback.source)
 	}
 	return nil
 }
@@ -257,13 +258,36 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 		effectVar:   input.EffectVar,
 	}
 	row.outcomes = queryRange{start: len(core.query.outcomeRows)}
-	for _, outcome := range input.Outcomes {
+	row.outcomeSources = make([]uint32, len(input.Outcomes))
+	sourceSeen := make([]bool, len(input.Outcomes))
+	hasSources := len(input.Outcomes) != 0 && input.Outcomes[0].HasSource
+	for index, outcome := range input.Outcomes {
+		if outcome.HasSource != hasSources {
+			return invalidQuery("operation outcome source coordinates are mixed")
+		}
+		source := uint32(index)
+		if hasSources {
+			source = outcome.Source
+			if source >= uint32(len(input.Outcomes)) || sourceSeen[source] {
+				return invalidQuery("operation outcome source coordinate is malformed")
+			}
+			sourceSeen[source] = true
+		}
+		row.outcomeSources[source] = uint32(index)
 		if outcome.Values != 0 && !core.query.validValues(outcome.Values) {
 			return invalidQuery("outcome Values is outside Values table")
 		}
-		core.query.outcomeRows = append(core.query.outcomeRows, queryOutcomeRow{kind: outcome.Kind, values: outcome.Values})
+		core.query.outcomeRows = append(core.query.outcomeRows, queryOutcomeRow{source: source, kind: outcome.Kind, values: outcome.Values})
 	}
 	row.outcomes.end = len(core.query.outcomeRows)
+	// Install the incomplete row only inside the one-shot builder so the
+	// operation-owned subedge validator can resolve this operation's input and
+	// type formals. FinishQuery remains the sole publication boundary, and the
+	// completed row overwrites this construction value below.
+	core.query.operations[int(op)-1] = row
+	if err := core.appendQueryCallbackValues(op, input.CallbackValues); err != nil {
+		return err
+	}
 	if err := core.appendQuerySubedges(op, &row, input); err != nil {
 		return err
 	}

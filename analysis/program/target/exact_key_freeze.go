@@ -66,13 +66,13 @@ func freezeExactKeys(drafts []operationDraft, roots []vocabulary.InitialRootSpec
 			}
 		}
 		for _, edge := range draft.subedges {
-			switch edge.callee {
+			switch edge.Callee.Kind {
 			case vocabulary.SubedgeCalleeCapturedInitialRead:
-				if err := add(edge.readKey); err != nil {
+				if err := add(edge.Callee.Read.Key); err != nil {
 					return exactkey.Table{}, err
 				}
 			case vocabulary.SubedgeCalleeMetaKey:
-				if err := add(edge.metaKey); err != nil {
+				if err := add(edge.Callee.MetaKey); err != nil {
 					return exactkey.Table{}, err
 				}
 			}
@@ -90,21 +90,21 @@ func resolveSubedgeInitialReads(drafts []operationDraft, table *bootvalue.Table,
 	for operation := range drafts {
 		for edgeIndex := range drafts[operation].subedges {
 			edge := &drafts[operation].subedges[edgeIndex]
-			if edge.callee != vocabulary.SubedgeCalleeCapturedInitialRead {
+			if edge.Callee.Kind != vocabulary.SubedgeCalleeCapturedInitialRead {
 				continue
 			}
-			root, ok := table.InitialRootByIdentity(edge.readRoot)
+			root, ok := table.InitialRootByIdentity(edge.Callee.Read.Root)
 			if !ok {
 				return errors.New("target: captured initial read has unknown root")
 			}
-			key, ok := keys.Handle(edge.readKey)
+			key, ok := keys.Handle(edge.Callee.Read.Key)
 			if !ok {
 				return errors.New("target: captured initial read has unknown key")
 			}
 			if _, _, found := table.InitialEntry(root, key); !found {
 				return errors.New("target: captured initial read lacks boot entry")
 			}
-			edge.readRootID = root
+			drafts[operation].subedgeReadRoots[edgeIndex] = root
 		}
 	}
 	return nil

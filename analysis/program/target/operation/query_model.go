@@ -12,6 +12,7 @@ import (
 type QueryOperationInput struct {
 	Input              vocabulary.Values
 	Outcomes           []QueryOutcomeInput
+	CallbackValues     []CallbackQueryInput
 	Subedges           []SubedgeInput
 	SubedgeRelation    *SubedgeRelationInput
 	Produced           []ProducedQueryInput
@@ -30,6 +31,9 @@ type QueryOperationInput struct {
 	RowFormals         uint32
 	EffectTail         vocabulary.RowTail
 	EffectVar          vocabulary.RowVar
+	// Semantics is the domain adapter for the Values transport laws. It is
+	// construction input only; Core retains no adapter after FinishQuery.
+	Semantics schematype.Semantics
 }
 
 // SubedgeInput is the neutral, already-resolved sealed declaration for one
@@ -40,22 +44,39 @@ type SubedgeInput struct {
 	// Source is the zero-based authoring coordinate retained only long enough
 	// for Core to preserve source-referenced sibling identity while issuing
 	// canonical dense SubedgeIDs. It is never published in a query row.
-	Source           uint32
-	Role             uint32
-	Family           vocabulary.SubedgeFamily
-	Callee           vocabulary.SubedgeCalleeKind
-	Callback         vocabulary.CallbackID
-	ReadRoot         vocabulary.InitialRoot
-	ReadKey          vocabulary.ExactKey
-	MetaKey          vocabulary.ExactKey
-	Admission        schematype.CallableAdmission
+	Source uint32
+	Role   uint32
+	Family vocabulary.SubedgeFamily
+	Callee vocabulary.SubedgeCalleeKind
+	// CallbackSource is the zero-based authored callback coordinate. Core
+	// resolves it through the owner geometry and publishes the CallbackID.
+	CallbackSource uint32
+	ReadRoot       vocabulary.InitialRoot
+	ReadKey        vocabulary.ExactKey
+	MetaKey        vocabulary.ExactKey
+	Admission      schematype.CallableAdmission
+	// Arguments and Terminals are the authored endpoints. Callback-backed
+	// edges must leave both empty; Core obtains their effective endpoints from
+	// CallbackValues and validates the union here.
 	Arguments        vocabulary.Values
 	RuleEntry        bool
 	ArgumentOrigins  []SubedgeArgumentOriginInput
-	Outcomes         [5]vocabulary.Values
+	Terminals        []SubedgeTerminalInput
 	AdmissionFailure vocabulary.Values
 	AdmissionRoute   SubedgeRouteInput
 	Routes           [5]SubedgeRouteInput
+}
+
+type SubedgeTerminalInput struct {
+	Kind   flowkind.OutcomeKind
+	Values vocabulary.Values
+}
+
+type CallbackQueryInput struct {
+	Source    uint32
+	Admission schematype.CallableAdmission
+	Arguments vocabulary.Values
+	Outcomes  [5]vocabulary.Values
 }
 
 type SubedgeArgumentOriginInput struct {
@@ -77,12 +98,13 @@ type SubedgeRouteInput struct {
 	Outcome     uint32
 	HasSibling  bool
 	SiblingRank uint32
-	Destination vocabulary.Values
 }
 
 type SubedgeRelationInput struct {
-	Operand       vocabulary.ValueFormal
-	Selector      uint32
+	Operand  vocabulary.ValueFormal
+	Selector uint32
+	// SubedgeRank is the zero-based authored source coordinate. Core resolves
+	// it through the canonical role order before publishing the relation.
 	SubedgeRank   uint32
 	ResultOutcome uint32
 	Result        uint32
@@ -151,8 +173,12 @@ type ResumeInput struct {
 }
 
 type QueryOutcomeInput struct {
-	Kind   flowkind.OutcomeKind
-	Values vocabulary.Values
+	// Source is the zero-based authored outcome coordinate. It is consumed by
+	// Core while resolving subedge/relation destinations and never published.
+	Source    uint32
+	HasSource bool
+	Kind      flowkind.OutcomeKind
+	Values    vocabulary.Values
 }
 
 type BehaviorResultInput struct {

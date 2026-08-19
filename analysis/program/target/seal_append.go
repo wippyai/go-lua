@@ -57,7 +57,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		}
 	}
 	for _, subedge := range draft.subedges {
-		if err := visitSubedgeValues(subedge, addValues); err != nil {
+		if err := draft.visitSubedgeValues(subedge, addValues); err != nil {
 			return err
 		}
 	}
@@ -80,7 +80,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		valuesHandle[key] = handle
 	}
 	operationInput := valuesHandle[inputKey]
-	callbackIDs, err = c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
+	callbackIDs, callbackValues, err := c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		}
 		operationEffects[index] = handle
 	}
-	subedges, subedgeRelation, subedgeErr := c.querySubedgeInputs(draft, callbackIDs, valuesHandle, keys, len(operationEffects))
+	subedges, subedgeRelation, subedgeErr := c.querySubedgeInputs(draft, valuesHandle, keys, len(operationEffects))
 	if subedgeErr != nil {
 		return subedgeErr
 	}
@@ -107,8 +107,9 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 	query := operationvalue.QueryOperationInput{
 		Input: operationInput, RowFormals: draft.rowFormals,
 		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
-		EffectIndices: operationEffects,
-		Subedges:      subedges, SubedgeRelation: subedgeRelation,
+		EffectIndices:  operationEffects,
+		CallbackValues: callbackValues, Subedges: subedges, SubedgeRelation: subedgeRelation,
+		Semantics:   draft.semantics,
 		TypeFormals: make([]vocabulary.Type, len(draft.constraints)),
 		ValuesTypes: make([]vocabulary.Type, len(draft.valuesTypes)),
 	}
@@ -133,7 +134,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		if !found {
 			return errors.New("target: unresolved operation outcome Values")
 		}
-		query.Outcomes = append(query.Outcomes, operationvalue.QueryOutcomeInput{Kind: outcome.kind, Values: value})
+		query.Outcomes = append(query.Outcomes, operationvalue.QueryOutcomeInput{Source: uint32(outcome.source), HasSource: true, Kind: outcome.kind, Values: value})
 		for _, produced := range outcome.produced {
 			captures := make([]operationvalue.CaptureInput, len(produced.captures))
 			for captureIndex, capture := range produced.captures {
@@ -260,7 +261,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 		},
 	}}
 	issuedOpaque := callbackIDForOpaque(c.Operations, opaque)
-	_, err = c.appendCallbacks(builder, opaque, []callbackDraft{{
+	_, opaqueCallbacks, err := c.appendCallbacks(builder, opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
@@ -275,7 +276,8 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	}
 	c.operations = append(c.operations, operationRow{})
 	return builder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
-		Input: unknown,
+		Input:          unknown,
+		CallbackValues: opaqueCallbacks,
 		Outcomes: []operationvalue.QueryOutcomeInput{
 			{Kind: flowkind.OutcomeNormal, Values: unknown},
 			{Kind: flowkind.OutcomeThrow, Values: unknown},

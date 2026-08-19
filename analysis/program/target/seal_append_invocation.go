@@ -11,68 +11,76 @@ import (
 // querySubedgeInputs resolves the Target draft's Values and exact-key
 // declarations into the neutral operation-owner boundary. No Target row or
 // draft escapes into operation.Core.
-func (c *Contract) querySubedgeInputs(draft *operationDraft, callbacks []vocabulary.CallbackID, values map[string]vocabulary.Values, keys exactkey.Table, effectCount int) ([]operationvalue.SubedgeInput, *operationvalue.SubedgeRelationInput, error) {
+func (c *Contract) querySubedgeInputs(draft *operationDraft, values map[string]vocabulary.Values, keys exactkey.Table, effectCount int) ([]operationvalue.SubedgeInput, *operationvalue.SubedgeRelationInput, error) {
 	if draft == nil {
 		return nil, nil, errors.New("target: nil subedge draft")
 	}
 	rows := make([]operationvalue.SubedgeInput, len(draft.subedges))
 	for index, edge := range draft.subedges {
-		arguments, err := lookupDraftValues(values, edge.arguments)
-		if err != nil {
-			return nil, nil, err
-		}
 		row := operationvalue.SubedgeInput{
-			Source: uint32(edge.source), Role: edge.role, Family: edge.family, Callee: edge.callee,
-			Admission: edge.admission, Arguments: arguments, RuleEntry: edge.ruleEntry,
+			Source: uint32(index), Role: edge.Role, Family: edge.Family, Callee: edge.Callee.Kind,
+			Admission: edge.Admission, RuleEntry: edge.RuleEntry,
 		}
-		for terminal := range edge.outcomes {
-			value, valueErr := lookupDraftValues(values, edge.outcomes[terminal])
-			if valueErr != nil {
-				return nil, nil, valueErr
+		if edge.Callee.Kind == vocabulary.SubedgeCalleeCallback {
+			if edge.Callee.Callback == 0 {
+				return nil, nil, errors.New("target: zero callback subedge source")
 			}
-			row.Outcomes[terminal] = value
+			row.CallbackSource = uint32(edge.Callee.Callback - 1)
+		} else {
+			arguments, err := lookupSpecValues(draft, values, edge.Arguments)
+			if err != nil {
+				return nil, nil, err
+			}
+			row.Arguments = arguments
+			row.CallbackSource = ^uint32(0)
+			row.Terminals = make([]operationvalue.SubedgeTerminalInput, len(edge.Outcomes))
+			for terminal, endpoint := range edge.Outcomes {
+				value, valueErr := lookupSpecValues(draft, values, endpoint.Values)
+				if valueErr != nil {
+					return nil, nil, valueErr
+				}
+				row.Terminals[terminal] = operationvalue.SubedgeTerminalInput{Kind: endpoint.Kind, Values: value}
+			}
 		}
-		failure, failureErr := lookupDraftValues(values, edge.admissionFailure)
+		failure, failureErr := lookupSpecValues(draft, values, edge.AdmissionFailure.Values)
 		if failureErr != nil {
 			return nil, nil, failureErr
 		}
 		row.AdmissionFailure = failure
-		row.ArgumentOrigins = make([]operationvalue.SubedgeArgumentOriginInput, len(edge.argumentOrigins))
-		for originIndex, origin := range edge.argumentOrigins {
+		row.ArgumentOrigins = make([]operationvalue.SubedgeArgumentOriginInput, len(edge.ArgumentOrigins))
+		for originIndex, origin := range edge.ArgumentOrigins {
 			row.ArgumentOrigins[originIndex] = operationvalue.SubedgeArgumentOriginInput{
-				Segment: origin.segment, Index: origin.index, Kind: origin.kind, Source: origin.source,
+				Segment: origin.Segment, Index: origin.Index, Kind: origin.Kind, Source: origin.Source,
 			}
 		}
-		if edge.callee == vocabulary.SubedgeCalleeCallback {
-			if edge.callback == 0 || int(edge.callback) > len(callbacks) || callbacks[edge.callback-1] == 0 {
-				return nil, nil, errors.New("target: unresolved callback subedge callee")
-			}
-			row.Callback = callbacks[edge.callback-1]
-		}
-		if edge.callee == vocabulary.SubedgeCalleeCapturedInitialRead {
-			if edge.readRootID == 0 {
+		if edge.Callee.Kind == vocabulary.SubedgeCalleeCapturedInitialRead {
+			if index >= len(draft.subedgeReadRoots) || draft.subedgeReadRoots[index] == 0 {
 				return nil, nil, errors.New("target: unresolved captured initial read root")
 			}
-			key, keyErr := exactKeyHandle(keys, edge.readKey)
+			key, keyErr := exactKeyHandle(keys, edge.Callee.Read.Key)
 			if keyErr != nil {
 				return nil, nil, keyErr
 			}
-			row.ReadRoot, row.ReadKey = edge.readRootID, key
+			row.ReadRoot, row.ReadKey = draft.subedgeReadRoots[index], key
 		}
-		if edge.callee == vocabulary.SubedgeCalleeMetaKey {
-			key, keyErr := exactKeyHandle(keys, edge.metaKey)
+		if edge.Callee.Kind == vocabulary.SubedgeCalleeMetaKey {
+			key, keyErr := exactKeyHandle(keys, edge.Callee.MetaKey)
 			if keyErr != nil {
 				return nil, nil, keyErr
 			}
 			row.MetaKey = key
 		}
 		var routeErr error
-		row.AdmissionRoute, routeErr = c.querySubedgeRouteInput(edge.admissionRoute, values)
+		failureRoute := edge.AdmissionFailure.Route
+		row.AdmissionRoute, routeErr = querySubedgeRouteInput(draft, failureRoute.Route, failureRoute.Adjustment, failureRoute.Result, failureRoute.Placement, failureRoute.Offset, failureRoute.Outcome, failureRoute.Subedge, values)
 		if routeErr != nil {
 			return nil, nil, routeErr
 		}
-		for terminal, route := range edge.routes {
-			row.Routes[terminal], routeErr = c.querySubedgeRouteInput(route, values)
+		if len(edge.Routes) != len(row.Routes) {
+			return nil, nil, errors.New("target: incomplete subedge route table")
+		}
+		for terminal, route := range edge.Routes {
+			row.Routes[terminal], routeErr = querySubedgeRouteInput(draft, route.Route, route.Adjustment, route.Result, route.Placement, route.Offset, route.Outcome, route.Subedge, values)
 			if routeErr != nil {
 				return nil, nil, routeErr
 			}
@@ -82,55 +90,63 @@ func (c *Contract) querySubedgeInputs(draft *operationDraft, callbacks []vocabul
 	var relation *operationvalue.SubedgeRelationInput
 	if draft.subedgeRelation != nil {
 		r := draft.subedgeRelation
-		effects := append([]uint32(nil), r.effects...)
+		if r.Subedge == 0 {
+			return nil, nil, errors.New("target: zero subedge relation source")
+		}
+		effects := append([]uint32(nil), r.EffectAliases...)
+		sort.Slice(effects, func(left, right int) bool { return effects[left] < effects[right] })
 		if len(effects) > effectCount {
 			return nil, nil, errors.New("target: subedge relation effect alias outside operation")
 		}
 		relation = &operationvalue.SubedgeRelationInput{
-			Operand: r.operand, Selector: r.selector, SubedgeRank: r.subedgeRank,
-			ResultOutcome: r.resultOutcome, Result: r.result, EffectAliases: effects,
+			Operand: r.Operand, Selector: r.Selector, SubedgeRank: uint32(r.Subedge - 1),
+			ResultOutcome: r.ResultOutcome, Result: r.Result, EffectAliases: effects,
 		}
 	}
 	return rows, relation, nil
 }
 
-func (c *Contract) querySubedgeRouteInput(route subedgeRouteDraft, values map[string]vocabulary.Values) (operationvalue.SubedgeRouteInput, error) {
-	result, resultErr := lookupDraftValues(values, route.result)
+func lookupSpecValues(draft *operationDraft, values map[string]vocabulary.Values, spec vocabulary.ValuesSpec) (vocabulary.Values, error) {
+	row, err := draft.freezeValues(spec, false)
+	if err != nil {
+		return 0, err
+	}
+	return lookupDraftValues(values, row)
+}
+
+func querySubedgeRouteInput(draft *operationDraft, route vocabulary.SubedgeRoute, adjustment vocabulary.Adjustment, resultSpec vocabulary.ValuesSpec, placement vocabulary.Placement, offset, outcome uint32, sibling vocabulary.SubedgeRef, values map[string]vocabulary.Values) (operationvalue.SubedgeRouteInput, error) {
+	result, resultErr := lookupSpecValues(draft, values, resultSpec)
 	if resultErr != nil {
 		return operationvalue.SubedgeRouteInput{}, resultErr
 	}
-	destination := vocabulary.Values(0)
-	if route.destination.tail != 0 || route.destination.varID != 0 || route.destination.tailType != "" || len(route.destination.types) != 0 || len(route.destination.suffix) != 0 {
-		var destinationErr error
-		destination, destinationErr = lookupDraftValues(values, route.destination)
-		if destinationErr != nil {
-			return operationvalue.SubedgeRouteInput{}, destinationErr
-		}
-	}
 	siblingRank := uint32(0)
-	if route.subedge != 0 {
-		siblingRank = uint32(route.subedge - 1)
+	if sibling != 0 {
+		siblingRank = uint32(sibling - 1)
+	}
+	if route == vocabulary.RouteSubedge || route == vocabulary.RouteContinue || route == vocabulary.RoutePropagateYield || (route == vocabulary.RouteRejectYield && sibling != 0) {
+		outcome = ^uint32(0)
 	}
 	return operationvalue.SubedgeRouteInput{
-		Route: route.route, Adjustment: route.adjustment, Result: result,
-		Placement: route.placement, Offset: route.offset, Outcome: route.outcome,
-		HasSibling: route.subedge != 0, SiblingRank: siblingRank, Destination: destination,
+		Route: route, Adjustment: adjustment, Result: result,
+		Placement: placement, Offset: offset, Outcome: outcome,
+		HasSibling: sibling != 0, SiblingRank: siblingRank,
 	}, nil
 }
 
-func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, error) {
+func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, []operationvalue.CallbackQueryInput, error) {
 	if _, err := checkedStoredRange("callback table", len(c.callbacks), len(input)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(issued) != len(input) {
-		return nil, errors.New("target: operation callback geometry mismatch")
+		return nil, nil, errors.New("target: operation callback geometry mismatch")
 	}
 	ids := append([]vocabulary.CallbackID(nil), issued...)
+	query := make([]operationvalue.CallbackQueryInput, len(input))
 	for index := range input {
 		callback := &input[index]
 		id := issued[index]
 		if id == 0 {
-			return nil, errors.New("target: operation callback geometry has zero handle")
+			return nil, nil, errors.New("target: operation callback geometry has zero handle")
 		}
 		ids[callback.source] = id
 		callback.sealed = id
@@ -139,17 +155,17 @@ func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner v
 			effects[effectIndex] = effectInput(effect)
 		}
 		if err := builder.AppendCallbackEffects(id, callback.effects.tail, callback.effects.variable, effects); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		arguments, valuesErr := lookupDraftValues(values, callback.arguments)
 		if valuesErr != nil {
-			return nil, valuesErr
+			return nil, nil, valuesErr
 		}
 		var outcomes [5]vocabulary.Values
 		for terminal := range callback.outcomes {
 			value, terminalErr := lookupDraftValues(values, callback.outcomes[terminal])
 			if terminalErr != nil {
-				return nil, terminalErr
+				return nil, nil, terminalErr
 			}
 			outcomes[terminal] = value
 		}
@@ -157,8 +173,12 @@ func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner v
 			function: callback.function, admission: callback.admission,
 			arguments: arguments, outcomes: outcomes,
 		})
+		query[index] = operationvalue.CallbackQueryInput{
+			Source: uint32(callback.source), Admission: callback.admission,
+			Arguments: arguments, Outcomes: outcomes,
+		}
 	}
-	return ids, nil
+	return ids, query, nil
 }
 
 func effectInput(effect effectDraft) operationvalue.EffectInput {

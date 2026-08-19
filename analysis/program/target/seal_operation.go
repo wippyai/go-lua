@@ -97,10 +97,8 @@ func freezeOperation(source int, input vocabulary.OperationSpec, semantics schem
 		return operationDraft{}, err
 	}
 	if input.SubedgeRelation != nil {
-		branch, branchErr := draft.freezeSubedgeRelation(*input.SubedgeRelation)
-		if branchErr != nil {
-			return operationDraft{}, branchErr
-		}
+		branch := *input.SubedgeRelation
+		branch.EffectAliases = append([]uint32(nil), input.SubedgeRelation.EffectAliases...)
 		draft.subedgeRelation = &branch
 	}
 	return draft, nil
@@ -382,7 +380,7 @@ func (d *operationDraft) sealValuesVarTypes() error {
 		}
 	}
 	for _, subedge := range d.subedges {
-		if err := visitSubedgeValues(subedge, check); err != nil {
+		if err := d.visitSubedgeValues(subedge, check); err != nil {
 			return err
 		}
 	}
@@ -400,28 +398,54 @@ func (d *operationDraft) sealValuesVarTypes() error {
 	return nil
 }
 
-// visitSubedgeValues is the complete closure of Values endpoints owned by one
-// Subedge relation. Keeping this enumeration singular makes the class-table
-// and interning closures agree as the relation evolves.
-func visitSubedgeValues(edge subedgeDraft, visit func(valuesDraft) error) error {
-	if err := visit(edge.arguments); err != nil {
-		return err
+// visitSubedgeValues is the complete closure of authored Values endpoints
+// needed to issue operation-owned Values handles. It performs only the
+// Target-specific type freeze; operation.Core validates the relation that
+// connects these endpoints.
+func (d *operationDraft) visitSubedgeValues(edge vocabulary.SubedgeSpec, visit func(valuesDraft) error) error {
+	freeze := func(values vocabulary.ValuesSpec) (valuesDraft, error) {
+		return d.freezeValues(values, false)
 	}
-	for _, terminal := range edge.outcomes {
-		if err := visit(terminal); err != nil {
+	if edge.Callee.Kind != vocabulary.SubedgeCalleeCallback {
+		arguments, err := freeze(edge.Arguments)
+		if err != nil {
+			return err
+		}
+		if err := visit(arguments); err != nil {
+			return err
+		}
+	}
+	for _, terminal := range edge.Outcomes {
+		values, valuesErr := freeze(terminal.Values)
+		if valuesErr != nil {
+			return valuesErr
+		}
+		if err := visit(values); err != nil {
 			return err
 		}
 	}
 	// Admission failure is a distinct Values source, and its route owns a
 	// separate projected Result. Neither is derived from a callee terminal.
-	if err := visit(edge.admissionFailure); err != nil {
+	failure, failureErr := freeze(edge.AdmissionFailure.Values)
+	if failureErr != nil {
+		return failureErr
+	}
+	if err := visit(failure); err != nil {
 		return err
 	}
-	if err := visit(edge.admissionRoute.result); err != nil {
+	failureResult, failureResultErr := freeze(edge.AdmissionFailure.Route.Result)
+	if failureResultErr != nil {
+		return failureResultErr
+	}
+	if err := visit(failureResult); err != nil {
 		return err
 	}
-	for _, route := range edge.routes {
-		if err := visit(route.result); err != nil {
+	for _, route := range edge.Routes {
+		result, resultErr := freeze(route.Result)
+		if resultErr != nil {
+			return resultErr
+		}
+		if err := visit(result); err != nil {
 			return err
 		}
 	}

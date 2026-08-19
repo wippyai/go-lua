@@ -48,9 +48,7 @@ func TestQueryBuilderPublishesOperationValuesAndEffects(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendQueryOperation: %v", err)
 	}
-	if err := builder.AppendQueryOperation(2, QueryOperationInput{
-		Outcomes: []QueryOutcomeInput{{}, {}, {}, {}},
-	}); err != nil {
+	if err := appendTestOpaqueQuery(builder); err != nil {
 		t.Fatalf("AppendQueryOperation opaque: %v", err)
 	}
 	query, err := builder.FinishQuery()
@@ -99,7 +97,7 @@ func TestQueryBuilderConsumesDeclarationSlices(t *testing.T) {
 	if err := builder.AppendQueryOperation(1, QueryOperationInput{Input: values, Outcomes: []QueryOutcomeInput{{Values: values}}}); err != nil {
 		t.Fatalf("AppendQueryOperation: %v", err)
 	}
-	if err := builder.AppendQueryOperation(2, QueryOperationInput{Outcomes: []QueryOutcomeInput{{}, {}, {}, {}}}); err != nil {
+	if err := appendTestOpaqueQuery(builder); err != nil {
 		t.Fatalf("AppendQueryOperation opaque: %v", err)
 	}
 	query, err := builder.FinishQuery()
@@ -109,6 +107,22 @@ func TestQueryBuilderConsumesDeclarationSlices(t *testing.T) {
 	if got, ok := query.ValuesAt(values, 0); !ok || got != types["any"] {
 		t.Fatalf("query retained caller slice = %d/%v", got, ok)
 	}
+}
+
+func appendTestOpaqueQuery(builder *QueryBuilder) error {
+	unknown, err := builder.AppendQueryValues(QueryValuesDeclaration{Owner: 2, Tail: vocabulary.ValuesUnknown}, nil)
+	if err != nil {
+		return err
+	}
+	outcomes := [5]vocabulary.Values{unknown, unknown, unknown, unknown, unknown}
+	return builder.AppendQueryOperation(2, QueryOperationInput{
+		Input:    unknown,
+		Outcomes: []QueryOutcomeInput{{Values: unknown}, {Values: unknown}, {Values: unknown}, {Values: unknown}},
+		CallbackValues: []CallbackQueryInput{{
+			Source: 0, Admission: schematype.CallableAdmissionOrdinary,
+			Arguments: unknown, Outcomes: outcomes,
+		}},
+	})
 }
 
 // Keep the test relation opaque while exercising the schema.EntryID handoff.

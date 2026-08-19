@@ -2,30 +2,33 @@ package target
 
 import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
 type operationDraft struct {
-	source            int
-	semantics         schematype.Semantics
-	bindings          []vocabulary.BindingSpec
-	formals           []vocabulary.TypeFormalSpec
-	valuesVars        uint32
-	valuesTypes       []string
-	rowFormals        uint32
-	input             valuesDraft
-	outcomes          []outcomeDraft
-	behavior          behaviorDraft
-	callbacks         []callbackDraft
-	subedges          []subedgeDraft
+	source      int
+	semantics   schematype.Semantics
+	bindings    []vocabulary.BindingSpec
+	formals     []vocabulary.TypeFormalSpec
+	valuesVars  uint32
+	valuesTypes []string
+	rowFormals  uint32
+	input       valuesDraft
+	outcomes    []outcomeDraft
+	behavior    behaviorDraft
+	callbacks   []callbackDraft
+	// Subedges remain authored vocabulary until the operation query boundary.
+	// Target only freezes their Values/type and boot-key inputs; operation.Core
+	// owns construction, canonical ordering, and every relation fence.
+	subedges          []vocabulary.SubedgeSpec
+	subedgeReadRoots  []vocabulary.InitialRoot
 	suspensions       []suspensionDraft
 	spawns            []spawnDraft
 	resumes           []resumeDraft
 	transfers         []transferDraft
-	subedgeRelation   *subedgeRelationDraft
+	subedgeRelation   *vocabulary.SubedgeRelationSpec
 	effects           []effectDraft
 	effectTail        vocabulary.RowTail
 	effectVar         vocabulary.RowVar
@@ -105,16 +108,6 @@ type transferDraft struct {
 	outcomes     []vocabulary.TransferPossibility
 }
 
-type subedgeRelationDraft struct {
-	operand       vocabulary.ValueFormal
-	selector      uint32
-	subedgeSource vocabulary.SubedgeRef
-	subedgeRank   uint32
-	resultOutcome uint32
-	result        uint32
-	effects       []uint32
-}
-
 type callbackResultDraft struct {
 	result   uint32
 	callback vocabulary.CallbackRef
@@ -135,50 +128,6 @@ type callbackDraft struct {
 	effects   rowDraft
 	release   *callbackReleaseDraft
 	sealed    vocabulary.CallbackID
-}
-
-// subedgeDraft keeps only normalized Target-local structure. Authoring refs
-// are resolved after stable callback/subedge identity ordering; no Go call or
-// recursive execution occurs while sealing a cyclic edge graph.
-type subedgeDraft struct {
-	source           int
-	role             uint32
-	family           vocabulary.SubedgeFamily
-	callee           vocabulary.SubedgeCalleeKind
-	callback         vocabulary.CallbackRef
-	callbackRank     uint32
-	readRoot         string
-	readKey          keyspace.LiteralValue
-	readRootID       vocabulary.InitialRoot
-	metaKey          keyspace.LiteralValue
-	admission        schematype.CallableAdmission
-	arguments        valuesDraft
-	ruleEntry        bool
-	argumentOrigins  []subedgeArgumentOriginDraft
-	outcomes         [5]valuesDraft
-	admissionFailure valuesDraft
-	admissionRoute   subedgeRouteDraft
-	routes           [5]subedgeRouteDraft
-	sealed           vocabulary.SubedgeID
-}
-
-type subedgeArgumentOriginDraft struct {
-	segment vocabulary.ArgumentSegment
-	index   uint32
-	kind    vocabulary.ArgumentSource
-	source  vocabulary.InputSource
-}
-
-type subedgeRouteDraft struct {
-	route       vocabulary.SubedgeRoute
-	adjustment  vocabulary.Adjustment
-	result      valuesDraft
-	placement   vocabulary.Placement
-	offset      uint32
-	outcome     uint32
-	subedge     vocabulary.SubedgeRef
-	subedgeRank uint32
-	destination valuesDraft
 }
 
 type callbackReleaseDraft struct {

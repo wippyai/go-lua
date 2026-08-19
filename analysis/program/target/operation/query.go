@@ -35,6 +35,7 @@ type queryState struct {
 type queryOperationRow struct {
 	input              vocabulary.Values
 	outcomes           queryRange
+	outcomeSources     []uint32
 	subedges           queryRange
 	subedgeRelation    uint32
 	suspensions        queryRange
@@ -102,7 +103,12 @@ type querySubedgeRelationRow struct {
 // the sealed expected-effect range and row schema for that callback.
 type queryCallbackRow struct {
 	owner      vocabulary.Operation
+	source     uint32
 	subedge    vocabulary.SubedgeID
+	admission  schematype.CallableAdmission
+	arguments  vocabulary.Values
+	outcomes   [5]vocabulary.Values
+	valuesSet  bool
 	effects    queryRange
 	effectTail vocabulary.RowTail
 	effectVar  vocabulary.RowVar
@@ -131,6 +137,7 @@ type queryValuesRow struct {
 }
 
 type queryOutcomeRow struct {
+	source          uint32
 	kind            flowkind.OutcomeKind
 	values          vocabulary.Values
 	produced        queryRange
