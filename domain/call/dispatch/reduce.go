@@ -74,9 +74,9 @@ func dispatchAtom(bound site, atom valuedomain.Atom) (capability calldomain.Targ
 		if !values.OwnsHeapSchema(bound.heaps) {
 			return calldomain.Target{}, false, true
 		}
-		receipt, programAllocation := key.AllocationReceipt()
-		if programAllocation && receipt.Available() && receipt.Kind() == heapdomain.AllocationClosure {
-			capability, admitted := algebra.TargetForAllocation(receipt.Module(), receipt.AllocationID())
+		module, _, allocationID, kind, _, programAllocation := bound.heaps.AllocationOriginForKey(key)
+		if programAllocation && kind == heapdomain.AllocationClosure {
+			capability, admitted := algebra.TargetForAllocation(module, allocationID)
 			if !admitted {
 				return calldomain.Target{}, false, true
 			}

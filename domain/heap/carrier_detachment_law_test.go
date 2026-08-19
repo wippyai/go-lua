@@ -29,8 +29,6 @@ func TestPublishedHeapRowsRetainNoLinkCoordinates(t *testing.T) {
 		reflect.TypeOf(ExactKey{}),
 		reflect.TypeOf(Slot{}),
 		reflect.TypeOf(Reference{}),
-		reflect.TypeOf(IndexAccessReceipt{}),
-		reflect.TypeOf(AllocationReceipt{}),
 	}
 	seen := make(map[reflect.Type]bool)
 	var walk func(reflect.Type, string)

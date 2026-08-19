@@ -57,9 +57,9 @@ func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 	if implementation, issued := rule.Implementation(); !issued || implementation == nil {
 		t.Fatal("sealed Empty binding did not issue receipt")
 	}
-	allocation, allocationOK := root.AllocationReceipt()
-	issuer, issuerOK := rule.ForMount(allocation.Module())
-	admitted, admittedOK := issuer.ReceiptForOccurrence(allocation.AllocationID())
+	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
+	issuer, issuerOK := rule.ForMount(module)
+	admitted, admittedOK := issuer.ReceiptForOccurrence(allocationID)
 	if !allocationOK || !issuerOK || !admittedOK || !admitted.FencedTo(heapSchema) {
 		t.Fatal("Empty mounted occurrence receipt")
 	}
@@ -199,8 +199,8 @@ func emptyRoot(t testing.TB, schema heapdomain.Schema) heapdomain.Key {
 	t.Helper()
 	for index := 0; index < schema.KeyCount(); index++ {
 		root, rootOK := schema.KeyAt(index)
-		receipt, receiptOK := root.AllocationReceipt()
-		if rootOK && receiptOK && receipt.Kind() == heapdomain.AllocationClosure {
+		_, _, _, kind, _, originOK := schema.AllocationOriginForKey(root)
+		if rootOK && originOK && kind == heapdomain.AllocationClosure {
 			return root
 		}
 	}

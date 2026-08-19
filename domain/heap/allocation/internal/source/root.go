@@ -51,12 +51,11 @@ type Root struct {
 // Program origin and are rejected: their guarded creation has a separate
 // semantic owner.
 func New(schema heap.Schema, key heap.Key) (Root, bool) {
-	receipt, originOK := key.AllocationReceipt()
+	_, _, _, kind, _, originOK := schema.AllocationOriginForKey(key)
 	id, idOK := key.ContentID()
 	if !originOK || !schema.OwnsKey(key) || !idOK || !id.Available() {
 		return Root{}, false
 	}
-	kind := receipt.Kind()
 	form, formOK := classify(schema, key, kind)
 	if !formOK {
 		return Root{}, false
@@ -113,9 +112,9 @@ func (root Root) same(other Root) bool {
 // its exact Heap schema issuer; recurrent transfer must not reconstruct Link
 // allocation topology for every Product row.
 func (root Root) FencedTo(schema heap.Schema) bool {
-	receipt, receiptOK := root.key.AllocationReceipt()
+	_, _, _, kind, _, originOK := schema.AllocationOriginForKey(root.key)
 	return schema.Valid() && root.schema == schema && root.id.Available() && root.kind != heap.AllocationInvalid && root.form != FormInvalid &&
-		schema.OwnsKey(root.key) && root.key.Kind() == heap.RootAllocation && receiptOK && receipt.Kind() == root.kind
+		schema.OwnsKey(root.key) && root.key.Kind() == heap.RootAllocation && originOK && kind == root.kind
 }
 
 // Closed is the complete schema-fenced structural view of one scalar table
@@ -249,8 +248,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 	if valueSchema == nil {
 		return nil, nil, false
 	}
-	rootReceipt, rootOK := root.key.AllocationReceipt()
-	module := rootReceipt.Module()
+	module, _, _, _, _, rootOK := schema.AllocationOriginForKey(root.key)
 	if !rootOK || !module.Available() {
 		return nil, nil, false
 	}

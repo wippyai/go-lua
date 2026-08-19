@@ -332,6 +332,10 @@ type rawHotMountedPlan struct {
 
 func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.ContentID, artifact *programartifact.Artifact, heapMount heapdomain.ArtifactMount, heapSchema heapdomain.Schema, valueSchema *valuedomain.Schema, packs *packdomain.Schema) rawHotMountedPlan {
 	t.Helper()
+	occurrenceMount, occurrenceMountOK := heapSchema.OccurrenceMountForModule(module)
+	if !occurrenceMountOK {
+		t.Fatal("raw mounted occurrence issuer")
+	}
 	var getID, setID identity.ContentID
 	var getGeometry, setGeometry heapdomain.IndexGeometry
 	var getAccess heapdomain.IndexAccess
@@ -340,10 +344,9 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 	var mountedCount, fixedCount, tailCount, nilCount, sourceFactCount, nilSourceCount, tableSourceCount int
 	for index := 0; index < artifact.RulePlacementCountForKey("raw-get"); index++ {
 		row, rowOK := artifact.RulePlacementForKeyAt("raw-get", index)
-		receipt, receiptOK := heapMount.IndexAccessReceipt(row.ID(), true)
-		access, accessOK := heapSchema.IndexAccessForReceipt(receipt)
+		access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), true)
 		geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
-		if rowOK && receiptOK && accessOK && geometryOK && !getID.Available() {
+		if rowOK && accessOK && geometryOK && !getID.Available() {
 			getID, getAccess, getGeometry = row.ID(), access, geometry
 		}
 	}
@@ -352,10 +355,9 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 		if !rowOK {
 			continue
 		}
-		receipt, receiptOK := heapMount.IndexAccessReceipt(row.ID(), false)
-		access, accessOK := heapSchema.IndexAccessForReceipt(receipt)
+		access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), false)
 		geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
-		if !receiptOK || !accessOK || !geometryOK {
+		if !accessOK || !geometryOK {
 			continue
 		}
 		mounted, mountedOK := packs.PayloadForMounted(module, geometry.ValuesID, geometry.Position)
@@ -419,11 +421,10 @@ func buildRawHotMountedPlan(t testing.TB, linked *link.Link, module identity.Con
 			if !rowOK {
 				continue
 			}
-			receipt, receiptOK := heapMount.IndexAccessReceipt(row.ID(), true)
-			access, accessOK := heapSchema.IndexAccessForReceipt(receipt)
+			access, accessOK := occurrenceMount.IndexAccessForOccurrence(row.ID(), true)
 			geometry, geometryOK := heapSchema.IndexAccessGeometry(access)
 			_, pointOK := row.PointAt(0)
-			if receiptOK && accessOK && geometryOK && pointOK && geometry.BaseValueID != setGeometry.BaseValueID {
+			if accessOK && geometryOK && pointOK && geometry.BaseValueID != setGeometry.BaseValueID {
 				getID, getAccess, getGeometry = row.ID(), access, geometry
 				break
 			}
@@ -549,8 +550,8 @@ func rawHotOuterTableKeys(schema heapdomain.Schema, source heapdomain.Key) ([2]h
 	count := 0
 	for index := 0; index < schema.KeyCount(); index++ {
 		key, keyOK := schema.KeyAt(index)
-		receipt, receiptOK := key.AllocationReceipt()
-		if !keyOK || !receiptOK || receipt.Kind() != heapdomain.AllocationTable || key == source {
+		_, _, _, kind, _, sourceOK := schema.AllocationOriginForKey(key)
+		if !keyOK || !sourceOK || kind != heapdomain.AllocationTable || key == source {
 			continue
 		}
 		if count == len(result) {

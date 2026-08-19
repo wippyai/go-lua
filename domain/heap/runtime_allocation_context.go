@@ -389,18 +389,19 @@ func (schema Schema) AllocationRequirementForKey(key Key) (AllocationRequirement
 	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
 		return AllocationRequirement{}, false
 	}
-	receipt, ok := key.AllocationReceipt()
-	if !ok {
+	mount, programID, allocationID, kind, form, originOK := schema.AllocationOriginForKey(key)
+	artifactMount, mountOK := schema.ArtifactMountForModule(mount)
+	if !originOK || !mountOK || artifactMount.ProgramID() != programID || artifactMount.Snapshot() == nil {
 		return AllocationRequirement{}, false
 	}
 	keyID, keyOK := schema.KeyID(key)
 	localID, localOK := schema.AllocationRootValueID(key)
-	artifactID := receipt.snapshot.ArtifactID()
+	artifactID := artifactMount.Snapshot().ArtifactID()
 	if !keyOK || !localOK || !artifactID.Available() {
 		return AllocationRequirement{}, false
 	}
-	id := allocationRequirementID(schema.id(), keyID, artifactID, receipt.Module(), receipt.ProgramID(), receipt.AllocationID(), localID, receipt.Kind(), receipt.Form())
-	requirement := AllocationRequirement{heapID: schema.id(), keyID: keyID, artifactID: artifactID, mount: receipt.Module(), program: receipt.ProgramID(), allocation: receipt.AllocationID(), localID: localID, kind: receipt.Kind(), form: receipt.Form(), id: id}
+	id := allocationRequirementID(schema.id(), keyID, artifactID, mount, programID, allocationID, localID, kind, form)
+	requirement := AllocationRequirement{heapID: schema.id(), keyID: keyID, artifactID: artifactID, mount: mount, program: programID, allocation: allocationID, localID: localID, kind: kind, form: form, id: id}
 	return requirement, requirement.valid()
 }
 

@@ -317,8 +317,8 @@ func (topology *Topology) build() bool {
 				return false
 			}
 		case heapdomain.RootAllocation:
-			if receipt, source := key.AllocationReceipt(); source {
-				if receipt.Kind() == heapdomain.AllocationTable && !topology.appendStatic(key) {
+			if _, _, _, kind, _, source := topology.heap.AllocationOriginForKey(key); source {
+				if kind == heapdomain.AllocationTable && !topology.appendStatic(key) {
 					return false
 				}
 				continue

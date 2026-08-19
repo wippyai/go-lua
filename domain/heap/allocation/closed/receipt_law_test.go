@@ -31,8 +31,8 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 	root := tableRoot(t, heapSchema, 1)
 	operand, operandOK := source.NewClosed(heapSchema, valueSchema, root)
 	if !operandOK || !operand.RevalidateFor(heapSchema, valueSchema) || !operand.FencedTo(heapSchema, valueSchema) {
-		receipt, receiptOK := root.AllocationReceipt()
-		t.Fatalf("closed source receipt was not schema-fenced: operand=%t revalidate=%t fenced=%t root=%t receipt=%t kind=%v fields=%d keys=%d values=%d", operandOK, operand.RevalidateFor(heapSchema, valueSchema), operand.FencedTo(heapSchema, valueSchema), root.Valid(), receiptOK, receipt.Kind(), heapSchema.FieldCount(root), heapSchema.KeyCount(), valueSchema.CoordinateCount())
+		_, _, _, kind, _, originOK := heapSchema.AllocationOriginForKey(root)
+		t.Fatalf("closed source was not schema-fenced: operand=%t revalidate=%t fenced=%t root=%t origin=%t kind=%v fields=%d keys=%d values=%d", operandOK, operand.RevalidateFor(heapSchema, valueSchema), operand.FencedTo(heapSchema, valueSchema), root.Valid(), originOK, kind, heapSchema.FieldCount(root), heapSchema.KeyCount(), valueSchema.CoordinateCount())
 	}
 
 	builder := engine.NewSchema()
@@ -55,9 +55,9 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 		t.Fatal("closed rule implementation receipt")
 	}
 
-	allocation, allocationOK := root.AllocationReceipt()
-	issuer, issuerOK := rule.ForMount(allocation.Module())
-	admitted, admittedOK := issuer.ReceiptForOccurrence(allocation.AllocationID())
+	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
+	issuer, issuerOK := rule.ForMount(module)
+	admitted, admittedOK := issuer.ReceiptForOccurrence(allocationID)
 	if !allocationOK || !issuerOK || !admittedOK || !admitted.RevalidateFor(heapSchema, valueSchema) || admitted.Key() != operand.Key() {
 		t.Fatal("closed allocation occurrence was not reissued by its mounted receipt")
 	}
@@ -150,8 +150,8 @@ func tableRoot(t testing.TB, schema heapdomain.Schema, fields int) heapdomain.Ke
 	t.Helper()
 	for index := 0; index < schema.KeyCount(); index++ {
 		root, rootOK := schema.KeyAt(index)
-		receipt, receiptOK := root.AllocationReceipt()
-		if rootOK && receiptOK && receipt.Kind() == heapdomain.AllocationTable && schema.FieldCount(root) == fields {
+		_, _, _, kind, _, originOK := schema.AllocationOriginForKey(root)
+		if rootOK && originOK && kind == heapdomain.AllocationTable && schema.FieldCount(root) == fields {
 			return root
 		}
 	}

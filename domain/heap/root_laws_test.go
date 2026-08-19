@@ -1,8 +1,8 @@
 package heap_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -20,7 +20,6 @@ import (
 // Keep the law prose compact while making the test's dependency direction
 // explicit: this root suite is an external consumer of Heap's public seam.
 type ArtifactMount = heapdomain.ArtifactMount
-type AllocationReceipt = heapdomain.AllocationReceipt
 type CellState = heapdomain.CellState
 type Containment = heapdomain.Containment
 type Key = heapdomain.Key
@@ -541,16 +540,22 @@ func TestHeapRootPayloadAuthorityAndRoleMatrix(t *testing.T) {
 	if !schema.ContentID().Available() || schema.LinkContentID() != linked.ContentID() || !schema.OwnsKey(allocation) || schema.OwnsKey(Key{}) {
 		t.Fatal("root authority fence")
 	}
-	allocationReceipt, receiptOK := allocation.AllocationReceipt()
-	if !receiptOK || !allocationReceipt.Available() {
-		t.Fatal("allocation receipt")
+	module, _, allocationID, kind, form, originOK := schema.AllocationOriginForKey(allocation)
+	if !originOK || !module.Available() || !allocationID.Available() || kind != heapdomain.AllocationTable || !form.Valid() {
+		t.Fatal("sealed allocation origin")
 	}
-	resolved, resolvedOK := schema.KeyForAllocationReceipt(allocationReceipt)
-	if !resolvedOK || resolved != allocation {
-		t.Fatal("allocation receipt inverse")
+	occurrence, occurrenceOK := schema.OccurrenceMountForModule(module)
+	resolved, resolvedOK := occurrence.AllocationRootForOccurrence(allocationID)
+	if !occurrenceOK || !resolvedOK || resolved != allocation {
+		t.Fatal("allocation occurrence inverse")
 	}
 	_, foreignSchema, _ := compactHeapFixture(t, "compact_authority_foreign", compactHeapSource, nil)
-	if _, ok := schema.KeyForAllocationReceipt(mustAllocationReceipt(t, foreignSchema)); ok {
+	foreignKey := compactAllocationKeys(t, foreignSchema, 1)[0]
+	foreignModule, _, foreignAllocationID, _, _, foreignOriginOK := foreignSchema.AllocationOriginForKey(foreignKey)
+	if !foreignOriginOK || !foreignModule.Available() || !foreignAllocationID.Available() {
+		t.Fatal("foreign sealed allocation origin")
+	}
+	if _, ok := schema.OccurrenceMountForModule(foreignModule); ok {
 		t.Fatal("foreign allocation receipt crossed owner fence")
 	}
 
@@ -606,21 +611,6 @@ func TestHeapRootPayloadAuthorityAndRoleMatrix(t *testing.T) {
 	if !schema.Admits(allocation, value) {
 		t.Fatal("owner-issued payload value rejected")
 	}
-}
-
-func mustAllocationReceipt(t testing.TB, schema Schema) AllocationReceipt {
-	t.Helper()
-	for index := 0; index < schema.KeyCount(); index++ {
-		key, ok := schema.KeyAt(index)
-		if ok && key.Kind() == RootAllocation {
-			receipt, receiptOK := key.AllocationReceipt()
-			if receiptOK {
-				return receipt
-			}
-		}
-	}
-	t.Fatal("allocation receipt")
-	return AllocationReceipt{}
 }
 
 func TestHeapOccurrenceInverseLaws(t *testing.T) {

@@ -865,7 +865,7 @@ func (schema *valueBuilder) sealAllocationResults() bool {
 		if row.allocationResult != nil {
 			return false
 		}
-		_, programRoot := row.allocation.AllocationReceipt()
+		_, _, _, _, _, programRoot := schema.heap.AllocationOriginForKey(row.allocation)
 		subjectID, subjectOK := schema.heap.AllocationRootValueID(row.allocation)
 		if !programRoot || !subjectOK {
 			continue
@@ -1096,8 +1096,9 @@ func (schema *valueBuilder) addAllocationReference(key heap.Key) bool {
 		return true
 	}
 	refKind := ReferenceInvalid
-	if receipt, sourceRoot := key.AllocationReceipt(); sourceRoot {
-		switch receipt.Kind() {
+	_, _, _, kind, _, sourceRoot := schema.heap.AllocationOriginForKey(key)
+	if sourceRoot {
+		switch kind {
 		case heap.AllocationTable:
 			refKind = ReferenceTable
 		case heap.AllocationClosure:

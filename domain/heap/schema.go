@@ -91,8 +91,17 @@ func (issuer OccurrenceMount) IndexAccessForOccurrence(id identity.ContentID, re
 	}
 	// The inverse map is sealed from the canonical artifact rows, so no
 	// artifact occurrence directory needs to be reopened for this lookup.
-	receipt := IndexAccessReceipt{module: issuer.mount.module, programID: issuer.mount.programID, occurrence: id, read: read, snapshot: issuer.mount.snapshot}
-	return Schema{owner: issuer.owner}.IndexAccessForReceipt(receipt)
+	schema := Schema{owner: issuer.owner}
+	index := schema.owner.indexAccessOrdinals[indexAccessOccurrence{module: issuer.mount.module, id: id}]
+	if index == 0 || int(index) > len(schema.owner.indexAccesses) {
+		return IndexAccess{}, false
+	}
+	row := schema.owner.indexAccesses[index-1]
+	if row.module != issuer.mount.module || row.programID != issuer.mount.programID || row.isRead != read {
+		return IndexAccess{}, false
+	}
+	access := IndexAccess{owner: issuer.owner, index: index}
+	return access, schema.ownsIndexAccess(access)
 }
 
 // AllocationRootForOccurrence resolves one exact mounted Program allocation
@@ -602,56 +611,6 @@ type Field struct {
 type IndexAccess struct {
 	owner *schema
 	index uint32
-}
-
-// IndexAccessReceipt is the opaque artifact occurrence substitution for one
-// mounted index candidate. It contains no Program/Flow proof or raw mount
-// ordinal.
-type IndexAccessReceipt struct {
-	module     identity.ContentID
-	programID  identity.ContentID
-	occurrence identity.ContentID
-	read       bool
-	snapshot   *ingress.Snapshot
-}
-
-func (receipt IndexAccessReceipt) Available() bool {
-	return receipt.module.Available() && receipt.programID.Available() && receipt.occurrence.Available() && receipt.snapshot != nil && receipt.snapshot.Available() && receipt.snapshot.ProgramID() == receipt.programID
-}
-func (receipt IndexAccessReceipt) Module() identity.ContentID {
-	if !receipt.Available() {
-		return identity.ContentID{}
-	}
-	return receipt.module
-}
-func (receipt IndexAccessReceipt) ProgramID() identity.ContentID {
-	if !receipt.Available() {
-		return identity.ContentID{}
-	}
-	return receipt.programID
-}
-func (receipt IndexAccessReceipt) OccurrenceID() identity.ContentID {
-	if !receipt.Available() {
-		return identity.ContentID{}
-	}
-	return receipt.occurrence
-}
-func (receipt IndexAccessReceipt) Read() bool { return receipt.Available() && receipt.read }
-
-func (mount ArtifactMount) IndexAccessReceipt(id identity.ContentID, read bool) (IndexAccessReceipt, bool) {
-	if !mount.Available() || !id.Available() {
-		return IndexAccessReceipt{}, false
-	}
-	kind := programartifact.OccurrenceIndexWrite
-	if read {
-		kind = programartifact.OccurrenceIndexRead
-	}
-	row, ok := mount.snapshot.OccurrenceForID(uint8(kind), id)
-	if !ok || row.ID() != id {
-		return IndexAccessReceipt{}, false
-	}
-	receipt := IndexAccessReceipt{module: mount.module, programID: mount.programID, occurrence: id, read: read, snapshot: mount.snapshot}
-	return receipt, receipt.Available()
 }
 
 // IndexGeometry is Heap's direct immutable copy of one sealed candidate row.
@@ -2000,26 +1959,18 @@ func (schema Schema) KeyAt(index int) (Key, bool) {
 	return Key{owner: schema.owner, slot: uint32(index + 1)}, true
 }
 
-// KeyForAllocationReceipt resolves a compact artifact-owned allocation
-// receipt without reopening Link or Program. Mount
-// identity is part of the receipt, preserving duplicate mounts.
-func (schema Schema) KeyForAllocationReceipt(receipt AllocationReceipt) (Key, bool) {
-	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
-		return Key{}, false
+// AllocationOriginForKey projects the canonical sealed Program allocation row
+// already owned by this Heap schema. It returns scalar row columns directly;
+// no boundary transport object or artifact occurrence receipt is minted.
+func (schema Schema) AllocationOriginForKey(key Key) (module, programID, allocationID identity.ContentID, kind AllocationKind, form AllocationForm, ok bool) {
+	if !schema.valid() || !schema.OwnsKey(key) || key.Kind() != RootAllocation {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, AllocationInvalid, AllocationFormInvalid, false
 	}
-	mount, ok := schema.owner.artifacts[receipt.module]
-	if !ok || mount.snapshot != receipt.snapshot || mount.programID != receipt.programID {
-		return Key{}, false
+	row, rowOK := schema.owner.rootAt(key.slot)
+	if !rowOK || row.kind != RootAllocation || !row.allocation.module.Available() || !row.allocation.programID.Available() || !row.allocation.allocationID.Available() || !row.allocation.kind.Valid() || !row.allocation.form.Valid() {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, AllocationInvalid, AllocationFormInvalid, false
 	}
-	slot := schema.owner.programAllocationOrdinals[programAllocationOccurrence{module: receipt.module, allocationID: receipt.allocationID}]
-	if slot == 0 {
-		return Key{}, false
-	}
-	row, rowOK := schema.owner.rootAt(slot)
-	if !rowOK || row.kind != RootAllocation || row.allocation.module != receipt.module || row.allocation.programID != receipt.programID || row.allocation.allocationID != receipt.allocationID || row.allocation.kind != receipt.kind || row.allocation.form != receipt.form {
-		return Key{}, false
-	}
-	return Key{owner: schema.owner, slot: slot}, true
+	return row.allocation.module, row.allocation.programID, row.allocation.allocationID, row.allocation.kind, row.allocation.form, true
 }
 
 // AllocationRootValueID returns the sealed mounted semantic identity for one
@@ -2049,11 +2000,6 @@ func (schema Schema) AllocationFormForKey(key Key) (AllocationForm, bool) {
 		return AllocationFormInvalid, false
 	}
 	return row.allocation.form, true
-}
-
-// FreshenAllocationReceipt is the post-seal artifact-native allocation lane.
-func (schema Schema) FreshenAllocationReceipt(receipt AllocationReceipt) (Key, bool) {
-	return schema.KeyForAllocationReceipt(receipt)
 }
 
 // OwnsKey rejects a forged or foreign Heap coordinate without reconstructing
@@ -2204,16 +2150,16 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (ingress.HeapAllocation, 
 	if !schema.OwnsKey(key) || key.Kind() != RootAllocation || schema.owner.artifacts == nil {
 		return ingress.HeapAllocation{}, false
 	}
-	receipt, receiptOK := key.AllocationReceipt()
+	module, programID, allocationID, kind, form, originOK := schema.AllocationOriginForKey(key)
 	root, rootOK := schema.owner.rootAt(key.slot)
-	if !receiptOK || !rootOK || root.kind != RootAllocation || root.allocation.module != receipt.module || root.allocation.programID != receipt.programID || root.allocation.allocationID != receipt.allocationID || root.allocation.kind != receipt.kind {
+	if !originOK || !rootOK || root.kind != RootAllocation || root.allocation.module != module || root.allocation.programID != programID || root.allocation.allocationID != allocationID || root.allocation.kind != kind {
 		return ingress.HeapAllocation{}, false
 	}
-	mount, mountOK := schema.owner.artifacts[receipt.module]
+	mount, mountOK := schema.owner.artifacts[module]
 	if !mountOK || !mount.Available() {
 		return ingress.HeapAllocation{}, false
 	}
-	if mount.programID != receipt.programID || mount.snapshot.ProgramID() != receipt.programID {
+	if mount.programID != programID || mount.snapshot.ProgramID() != programID {
 		return ingress.HeapAllocation{}, false
 	}
 	artifact := mount.Snapshot()
@@ -2222,7 +2168,7 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (ingress.HeapAllocation, 
 	}
 	allocation, allocationOK := artifact.HeapAllocationAt(int(root.allocation.artifactRow - 1))
 	sealed, sealedOK := sealedAllocationForm(programartifact.AllocationForm(allocation.Form()))
-	if !allocationOK || allocation.ID() != receipt.allocationID || !sealedOK || sealed != root.allocation.form || allocation.Role() == 0 {
+	if !allocationOK || allocation.ID() != allocationID || !sealedOK || sealed != form || allocation.Role() == 0 {
 		return ingress.HeapAllocation{}, false
 	}
 	return allocation, true
@@ -2306,28 +2252,6 @@ func (schema Schema) IndexAccessAt(index int) (IndexAccess, bool) {
 		return IndexAccess{}, false
 	}
 	access := IndexAccess{owner: schema.owner, index: uint32(index + 1)}
-	return access, schema.ownsIndexAccess(access)
-}
-
-// IndexAccessForReceipt resolves a mounted artifact occurrence in O(1) after
-// Heap seal. It never reopens the mounted Program.
-func (schema Schema) IndexAccessForReceipt(receipt IndexAccessReceipt) (IndexAccess, bool) {
-	if !schema.valid() || !receipt.Available() || schema.owner.artifacts == nil {
-		return IndexAccess{}, false
-	}
-	mount, ok := schema.owner.artifacts[receipt.module]
-	if !ok || mount.snapshot != receipt.snapshot || mount.programID != receipt.programID {
-		return IndexAccess{}, false
-	}
-	index := schema.owner.indexAccessOrdinals[indexAccessOccurrence{module: receipt.module, id: receipt.occurrence}]
-	if index == 0 || int(index) > len(schema.owner.indexAccesses) {
-		return IndexAccess{}, false
-	}
-	row := schema.owner.indexAccesses[index-1]
-	if row.module != receipt.module || row.programID != receipt.programID || row.isRead != receipt.read {
-		return IndexAccess{}, false
-	}
-	access := IndexAccess{owner: schema.owner, index: index}
 	return access, schema.ownsIndexAccess(access)
 }
 

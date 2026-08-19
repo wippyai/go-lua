@@ -1,8 +1,8 @@
 package heap_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -243,9 +243,7 @@ return table.field
 		}
 		mounted, mountedOK := fixture.schema.OccurrenceMountForModule(module)
 		got, gotOK := mounted.IndexAccessForOccurrence(occurrence, read)
-		receipt, receiptOK := fixture.mount.IndexAccessReceipt(occurrence, read)
-		fromReceipt, fromReceiptOK := fixture.schema.IndexAccessForReceipt(receipt)
-		if !mountedOK || !gotOK || got != access || !receiptOK || !fromReceiptOK || fromReceipt != access {
+		if !mountedOK || !gotOK || got != access {
 			t.Fatalf("index occurrence inverse row %d", index)
 		}
 		if firstID == (identity.ContentID{}) {
@@ -268,15 +266,11 @@ return table.field
 	}
 	foreignID, _, foreignAllocationOK := foreignIssuer.AllocationAt(0)
 	foreignAccess, foreignAccessOK := foreignIssuer.IndexAccessForOccurrence(firstID, firstRead)
-	foreignReceipt, foreignReceiptOK := foreign.mount.IndexAccessReceipt(firstID, firstRead)
-	if !foreignAllocationOK || foreignAccessOK || foreignReceiptOK {
+	if !foreignAllocationOK || foreignAccessOK {
 		t.Fatal("foreign occurrence crossed the artifact fence")
 	}
 	if _, ok := fixture.schema.OccurrenceMountForModule(foreign.module); ok {
 		t.Fatal("foreign module acquired a local occurrence issuer")
-	}
-	if _, ok := fixture.schema.IndexAccessForReceipt(foreignReceipt); ok {
-		t.Fatal("foreign receipt crossed the Heap schema fence")
 	}
 	_ = foreignID
 	_ = foreignAccess

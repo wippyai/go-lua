@@ -197,8 +197,8 @@ func staticTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema
 	var root heapdomain.Key
 	for index := 0; index < heap.KeyCount(); index++ {
 		candidate, ok := heap.KeyAt(index)
-		receipt, source := candidate.AllocationReceipt()
-		if ok && source && receipt.Kind() == heapdomain.AllocationTable {
+		_, _, _, kind, _, source := heap.AllocationOriginForKey(candidate)
+		if ok && source && kind == heapdomain.AllocationTable {
 			root = candidate
 			break
 		}

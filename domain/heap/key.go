@@ -9,10 +9,8 @@ package heap
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -67,68 +65,7 @@ func (key Key) Kind() RootKind {
 	return row.kind
 }
 
-// AllocationReceipt is Heap's pointer-free mounted allocation identity. The
-// module key is the concrete mount receipt, so duplicate mounts of one
-// Program remain distinct while allocation identity stays reusable.
-type AllocationReceipt struct {
-	module       identity.ContentID
-	programID    identity.ContentID
-	allocationID identity.ContentID
-	kind         AllocationKind
-	form         AllocationForm
-	snapshot     *ingress.Snapshot
-}
-
 func (kind AllocationKind) Valid() bool { return kind == AllocationTable || kind == AllocationClosure }
-func (receipt AllocationReceipt) Available() bool {
-	return receipt.module.Available() && receipt.programID.Available() && receipt.allocationID.Available() && receipt.kind.Valid() && receipt.form.Valid() && receipt.snapshot != nil && receipt.snapshot.Available() && receipt.snapshot.ProgramID() == receipt.programID
-}
-func (receipt AllocationReceipt) Module() identity.ContentID       { return receipt.module }
-func (receipt AllocationReceipt) ProgramID() identity.ContentID    { return receipt.programID }
-func (receipt AllocationReceipt) AllocationID() identity.ContentID { return receipt.allocationID }
-func (receipt AllocationReceipt) Kind() AllocationKind {
-	if !receipt.Available() {
-		return AllocationInvalid
-	}
-	return receipt.kind
-}
-func (receipt AllocationReceipt) Form() AllocationForm {
-	if !receipt.Available() {
-		return AllocationFormInvalid
-	}
-	return receipt.form
-}
-
-// AllocationReceipt issues an opaque owner receipt for an artifact allocation
-// occurrence. The artifact occurrence catalog is the sole Program fact plane.
-func (mount ArtifactMount) AllocationReceipt(id identity.ContentID, kind AllocationKind, form AllocationForm) (AllocationReceipt, bool) {
-	if !mount.Available() || !id.Available() || !kind.Valid() || !form.Valid() {
-		return AllocationReceipt{}, false
-	}
-	row, ok := mount.snapshot.OccurrenceForID(uint8(programartifact.OccurrenceAllocation), id)
-	if !ok || row.ID() != id || row.Code() != uint64(form) {
-		return AllocationReceipt{}, false
-	}
-	receipt := AllocationReceipt{module: mount.module, programID: mount.programID, allocationID: id, kind: kind, form: form, snapshot: mount.snapshot}
-	return receipt, receipt.Available()
-}
-
-// AllocationReceipt returns the compact identity for one Heap allocation key.
-func (key Key) AllocationReceipt() (AllocationReceipt, bool) {
-	if !key.valid() || key.Kind() != RootAllocation {
-		return AllocationReceipt{}, false
-	}
-	row, ok := key.owner.rootAt(key.slot)
-	if !ok || row.kind != RootAllocation || !row.allocation.module.Available() {
-		return AllocationReceipt{}, false
-	}
-	mount, mounted := key.owner.artifacts[row.allocation.module]
-	if !mounted {
-		return AllocationReceipt{}, false
-	}
-	receipt := AllocationReceipt{module: row.allocation.module, programID: row.allocation.programID, allocationID: row.allocation.allocationID, kind: row.allocation.kind, form: row.allocation.form, snapshot: mount.snapshot}
-	return receipt, receipt.Available()
-}
 
 // FreshResult returns the exact creation occurrence selected by this Key.
 // Program aggregates return false. Its target Call coordinate remains opaque:
