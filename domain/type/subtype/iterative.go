@@ -201,29 +201,16 @@ func (c *checker) proofRule(call proofCall) proofExpr {
 	return c.subtypeRule(call.sub, call.super)
 }
 
+// subtypeRule states one step of the relation. A *typ.Ref is an unresolved
+// reference and carries no denotation of its own: resolution binds a
+// reference to the node its declaration owns, by node identity, upstream of
+// this prover (subst.SelfRef, the manifest scoper, the artifact authority's
+// cycle closure, the static-reference decoders). A reference that arrives
+// here still unresolved therefore proves nothing structural and falls
+// through to the reflexive equality rule, which relates it only to a
+// reference naming the same declaration. The presentation Name a Recursive
+// or Alias node happens to carry is never a resolution channel.
 func (c *checker) subtypeRule(sub, super typ.Type) proofExpr {
-	if ref, ok := sub.(*typ.Ref); ok && ref.Module == "" {
-		if a, ok := super.(*typ.Alias); ok && a.Name == ref.Name {
-			return proofTrue()
-		}
-		if r, ok := super.(*typ.Ref); ok && r.Module == "" && r.Name == ref.Name {
-			return proofTrue()
-		}
-		if r, ok := super.(*typ.Recursive); ok && r.Name == ref.Name {
-			return proofTrue()
-		}
-	}
-	if ref, ok := super.(*typ.Ref); ok && ref.Module == "" {
-		if a, ok := sub.(*typ.Alias); ok && a.Name == ref.Name {
-			return proofTrue()
-		}
-		if r, ok := sub.(*typ.Ref); ok && r.Module == "" && r.Name == ref.Name {
-			return proofTrue()
-		}
-		if r, ok := sub.(*typ.Recursive); ok && r.Name == ref.Name {
-			return proofTrue()
-		}
-	}
 	if a, ok := sub.(*typ.Alias); ok {
 		return subtypeOf(a.Target, super)
 	}
