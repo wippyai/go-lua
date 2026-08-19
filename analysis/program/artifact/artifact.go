@@ -33,7 +33,6 @@ type Artifact struct {
 	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
 	staticTypeNodes        []StaticTypeNodeRow
-	staticInputs           []StaticInputRow
 	occurrenceByKind       map[OccurrenceKind][]uint32
 }
 

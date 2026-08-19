@@ -107,9 +107,13 @@ func (a *Authority) sealMountedCoordinates() error {
 		if !mount.NamespaceID.Available() {
 			return errors.New("static: mounted namespace unavailable")
 		}
-		for index := 0; index < mount.Artifact.StaticExpressionCount(); index++ {
-			row, ok := mount.Artifact.StaticExpressionAt(index)
-			if !ok || !row.Available() || row.Owner() != mount.ProgramID {
+		expressionCount, countOK := mount.Program.StaticExpressionCount()
+		if !mount.Program.Available() || !countOK {
+			return errors.New("static: unavailable mounted expression family")
+		}
+		for index := 0; index < expressionCount; index++ {
+			row, ok := mount.Program.StaticExpressionAt(index)
+			if !ok || !row.Available() || row.Owner() != mount.Program.ProgramID {
 				return errors.New("static: malformed mounted expression row")
 			}
 			ref, ok := a.types.FindByReferenceID(row.ReferenceID())

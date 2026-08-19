@@ -5,6 +5,22 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
+// StaticExpressionRow is the artifact compiler's construction vocabulary for
+// one authored static expression. The sealed Artifact reads the canonical
+// programschema.StaticExpression family and recreates this narrow row view
+// only for legacy artifact-local callers.
+type StaticExpressionRow struct {
+	id, reference, owner identity.ContentID
+}
+
+func (row StaticExpressionRow) Available() bool {
+	return row.id.Available() && row.reference.Available() && row.owner.Available()
+}
+
+func (row StaticExpressionRow) ID() identity.ContentID          { return row.id }
+func (row StaticExpressionRow) ReferenceID() identity.ContentID { return row.reference }
+func (row StaticExpressionRow) Owner() identity.ContentID       { return row.owner }
+
 // StaticTypeValueRow is the closed Program row for one executable
 // TypeValue source. Its BodyPath and occurrence identity are sufficient for
 // mounted substitution; Static decides the semantic class and runtime
@@ -161,17 +177,4 @@ func (artifact *Artifact) StaticExpressionByID(id identity.ContentID) (StaticExp
 		}
 	}
 	return StaticExpressionRow{}, false
-}
-
-func (artifact *Artifact) StaticInputCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.staticInputs)
-}
-func (artifact *Artifact) StaticInputAt(index int) (StaticInputRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.staticInputs) {
-		return StaticInputRow{}, false
-	}
-	return artifact.staticInputs[index], true
 }

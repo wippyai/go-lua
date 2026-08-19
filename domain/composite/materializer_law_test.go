@@ -64,7 +64,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	mounts := linked.Project().Mounts()
 	artifacts := make([]*programartifact.Artifact, mounts.Count())
 	rows := make([]programmount.MountedArtifact, mounts.Count())
-	statics := make([]staticdomain.MountedArtifact, mounts.Count())
+	statics := make([]staticdomain.MountedProgram, mounts.Count())
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
 		mounted, mountedOK := mounts.Program(shard)
@@ -98,13 +98,13 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 			t.Fatalf("mount row %d unavailable", index)
 		}
 		rows[index] = programmount.MountedArtifact{Program: program, Snapshot: snapshot}
-		statics[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
+		statics[index] = staticdomain.MountedProgram{Program: program.Program, ModuleID: module, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
 	if err != nil || types == nil {
 		t.Fatalf("seal the type authority: %v", err)
 	}
-	inventory, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, statics)
+	inventory, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, statics)
 	if err != nil || inventory == nil {
 		t.Fatalf("seal the static authority: %v", err)
 	}

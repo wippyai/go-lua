@@ -130,7 +130,7 @@ func typeArgumentFormalIdentity(value typ.Type) (TypeArgumentFormal, bool) {
 	return formal, formal.Available()
 }
 
-// sealMountedTypeArgumentFormals consumes only ProgramArtifact rows and the
+// sealMountedTypeArgumentFormals consumes only canonical Program rows and the
 // Link-local type authority. It does not reopen source graph authority.
 func (a *Authority) sealMountedTypeArgumentFormals() bool {
 	if a == nil || a.types == nil || len(a.mounts) == 0 {
@@ -138,24 +138,16 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 	}
 	table := typeArgumentFormalTable{byArgument: make(map[identity.ContentID]TypeArgumentFormal), mounted: make(map[mountedTypeArgumentsKey][]TypeArgumentFormal), sealed: true}
 	for _, mount := range a.mounts {
-		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() {
-			return false
-		}
-		frozen, catalog, published := mount.Artifact.ColdPublication()
-		program := programschema.Program{
-			Frozen: frozen, ArtifactID: mount.Artifact.ID(),
-			ProgramID: mount.Artifact.CompileKey().ProgramID(), SchemaID: mount.Artifact.CompileKey().SchemaDigest(),
-		}
-		if !published || !catalog.Available() || !program.Available() {
+		if !mount.Program.Available() || !mount.ModuleID.Available() {
 			return false
 		}
 		grouped := make(map[identity.ContentID][]programschema.CallTypeArgument)
-		callCount, callsOK := program.CallCount()
+		callCount, callsOK := mount.Program.CallCount()
 		if !callsOK {
 			return false
 		}
 		for callIndex := 0; callIndex < callCount; callIndex++ {
-			call, callOK := program.CallAt(callIndex)
+			call, callOK := mount.Program.CallAt(callIndex)
 			typesID := call.TypeArgumentsID()
 			if !callOK || !typesID.Available() {
 				return false
@@ -164,12 +156,12 @@ func (a *Authority) sealMountedTypeArgumentFormals() bool {
 				grouped[typesID] = nil
 			}
 		}
-		typeArgumentCount, typeArgumentsOK := program.CallTypeArgumentCount()
+		typeArgumentCount, typeArgumentsOK := mount.Program.CallTypeArgumentCount()
 		if !typeArgumentsOK {
 			return false
 		}
 		for index := 0; index < typeArgumentCount; index++ {
-			row, rowOK := program.CallTypeArgumentAt(index)
+			row, rowOK := mount.Program.CallTypeArgumentAt(index)
 			if !rowOK || !row.Available() {
 				return false
 			}

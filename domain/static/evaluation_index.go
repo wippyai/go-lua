@@ -5,10 +5,10 @@ import (
 	"math"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
@@ -40,13 +40,17 @@ func (a *Authority) sealContainedOperands() error {
 
 func (a *Authority) sealMountedContainedOperands() error {
 	for _, mount := range a.mounts {
-		for index := 0; index < mount.Artifact.StaticInputCount(); index++ {
-			row, ok := mount.Artifact.StaticInputAt(index)
-			if !ok || !row.Available() || row.Owner() != mount.ProgramID {
+		inputCount, countOK := mount.Program.StaticInputCount()
+		if !mount.Program.Available() || !countOK {
+			return errors.New("static: unavailable mounted input family")
+		}
+		for index := 0; index < inputCount; index++ {
+			row, ok := mount.Program.StaticInputAt(index)
+			if !ok || !row.Available() || row.Owner() != mount.Program.ProgramID {
 				return errors.New("static: malformed mounted input row")
 			}
 			operand := ContainedOperand{owner: row.Owner(), source: row.OperandID(), namespace: mount.NamespaceID, law: a.lawID, dependency: row.Owner(), site: row.SourceID(), frontierBody: row.FrontierID(), frontierCursor: row.Cursor()}
-			switch row.OperandKind() {
+			switch staticquery.StaticOperandKind(row.OperandKind()) {
 			case staticquery.StaticOperandKnown:
 				literal := row.OperandLiteral()
 				var value typ.Type
@@ -108,13 +112,26 @@ func (a *Authority) sealTypeOfOutputs() error {
 
 func (a *Authority) sealMountedTypeOfOutputs() error {
 	for _, mount := range a.mounts {
-		for index := 0; index < mount.Artifact.StaticInputCount(); index++ {
-			row, ok := mount.Artifact.StaticInputAt(index)
-			if !ok || !row.Available() || row.Owner() != mount.ProgramID || row.Kind() != programartifact.StaticInputTypeOf {
+		inputCount, countOK := mount.Program.StaticInputCount()
+		expressionCount, expressionsOK := mount.Program.StaticExpressionCount()
+		if !mount.Program.Available() || !countOK || !expressionsOK {
+			return errors.New("static: unavailable mounted static family")
+		}
+		for index := 0; index < inputCount; index++ {
+			row, ok := mount.Program.StaticInputAt(index)
+			if !ok || !row.Available() || row.Owner() != mount.Program.ProgramID || row.Kind() != programschema.StaticInputTypeOf {
 				continue
 			}
-			expression, expressionOK := mount.Artifact.StaticExpressionByID(row.ExpressionID())
-			if !expressionOK {
+			var expression programschema.StaticExpression
+			expressionOK := false
+			for expressionIndex := 0; expressionIndex < expressionCount; expressionIndex++ {
+				candidate, candidateOK := mount.Program.StaticExpressionAt(expressionIndex)
+				if candidateOK && candidate.ID() == row.ExpressionID() {
+					expression, expressionOK = candidate, true
+					break
+				}
+			}
+			if !expressionOK || !expression.Available() {
 				return errors.New("static: mounted typeof expression unavailable")
 			}
 			ref, refOK := a.types.FindByReferenceID(expression.ReferenceID())

@@ -66,7 +66,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts, localTransfers: compiler.localTransfers,
 		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, ruleOccurrences: compiler.ruleOccurrences,
-		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes, staticInputs: compiler.staticInputs,
+		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes,
 	}
 	artifact.id = artifactID(artifact)
 	if failure := artifact.validUnsealedFailure(); failure.Available() {
@@ -205,9 +205,9 @@ func coldEnvironmentPlanes(rows []EnvironmentEdge) ([]programschema.EnvironmentE
 	return edges, resets, true
 }
 
-// coldStaticPlanes copies the compiler's flat authored-static rows one for
-// one; both rows are already flat, so the conversion is a change of
-// vocabulary only.
+// coldStaticPlanes copies the compiler's remaining local authored-static rows
+// into their canonical families. StaticInput rows are already canonical and
+// enter Publication directly, so they are deliberately absent here.
 func coldStaticPlanes(values []StaticTypeValueRow, expressions []StaticExpressionRow) ([]programschema.StaticTypeValue, []programschema.StaticExpression, bool) {
 	typeValues := make([]programschema.StaticTypeValue, 0, len(values))
 	for _, row := range values {
@@ -318,6 +318,7 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		EnvironmentResets:    resets,
 		StaticTypeValues:     typeValues,
 		StaticExpressions:    staticExpressions,
+		StaticInputs:         compiler.staticInputs,
 		Regions:              regions,
 		RegionMembers:        regionMembers,
 		WTOEvents:            events,

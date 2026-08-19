@@ -16,7 +16,7 @@ func TestStaticCarrierBoundaryGate(t *testing.T) {
 	roots := []reflect.Type{
 		reflect.TypeOf(Authority{}),
 		reflect.TypeOf(MountContext{}),
-		reflect.TypeOf(MountedArtifact{}),
+		reflect.TypeOf(MountedProgram{}),
 		reflect.TypeOf(resultRow{}),
 		reflect.TypeOf(Symbolic{}),
 		reflect.TypeOf(RuntimeSubject{}),

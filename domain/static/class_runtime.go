@@ -81,11 +81,15 @@ func (s *ClassSet) sealMountedTypeValueOccurrences(runtime *typeauthority.Runtim
 	rows := make([]typeValueRow, 0)
 	seen := make(map[identity.ContentID]struct{})
 	for _, mount := range a.mounts {
-		if mount.Artifact == nil || !mount.Artifact.Available() {
+		if !mount.Program.Available() {
 			return errors.New("static: unavailable mounted TypeValue artifact")
 		}
-		for index := 0; index < mount.Artifact.StaticTypeValueCount(); index++ {
-			artifactRow, rowOK := mount.Artifact.StaticTypeValueAt(index)
+		typeValueCount, countOK := mount.Program.StaticTypeValueCount()
+		if !countOK {
+			return errors.New("static: unavailable mounted TypeValue family")
+		}
+		for index := 0; index < typeValueCount; index++ {
+			artifactRow, rowOK := mount.Program.StaticTypeValueAt(index)
 			if !rowOK || !artifactRow.Available() {
 				return errors.New("static: malformed mounted TypeValue row")
 			}

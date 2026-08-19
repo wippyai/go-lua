@@ -639,9 +639,9 @@ return b.source`)})
 	valueSchema, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, []calldomain.MountedArtifact{callMount})
 	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-	staticMount := staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
+	staticMount := staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}
 	types, typeErr := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
-	statics, _, staticErr := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedArtifact{staticMount})
+	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedProgram{staticMount})
 	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, []packdomain.ArtifactMount{packMount})
 	if !heapMountOK || !valueMountOK || !packMountOK || heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || !callsOK || typeErr != nil || types == nil || staticErr != nil || statics == nil || !packsOK {
 		t.Fatalf("domain schemas heapMount=%t valueMount=%t packMount=%t heapFailure=%v valueFailure=%v calls=%t typeErr=%v types=%t staticErr=%v statics=%t packs=%t", heapMountOK, valueMountOK, packMountOK, heapFailure, valueFailure, callsOK, typeErr, types != nil, staticErr, statics != nil, packsOK)

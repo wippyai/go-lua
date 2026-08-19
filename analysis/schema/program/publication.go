@@ -34,6 +34,7 @@ type Publication struct {
 	EnvironmentResets    []EnvironmentReset
 	StaticTypeValues     []StaticTypeValue
 	StaticExpressions    []StaticExpression
+	StaticInputs         []StaticInput
 	Regions              []Region
 	RegionMembers        []RegionMember
 	WTOEvents            []WTOEvent
@@ -77,6 +78,7 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		EnvironmentResetFamily().Put(&builder, publication.EnvironmentResets, catalog) &&
 		StaticTypeValueFamily().Put(&builder, publication.StaticTypeValues, catalog) &&
 		StaticExpressionFamily().Put(&builder, publication.StaticExpressions, catalog) &&
+		StaticInputFamily().Put(&builder, publication.StaticInputs, catalog) &&
 		RegionFamily().Put(&builder, publication.Regions, catalog) &&
 		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
 		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog) &&

@@ -9,7 +9,6 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/program"
@@ -66,7 +65,6 @@ type Snapshot struct {
 	occurrences     []Occurrence
 	observations    []DiagnosticObservation
 	staticTypeNodes []StaticTypeNode
-	staticInputs    []StaticInput
 }
 
 func (snapshot *Snapshot) Available() bool {
@@ -465,18 +463,6 @@ func (snapshot *Snapshot) StaticExpressionAt(index int) (StaticExpression, bool)
 		return StaticExpression{}, false
 	}
 	return StaticExpression{row: row}, true
-}
-func (snapshot *Snapshot) StaticInputCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.staticInputs)
-}
-func (snapshot *Snapshot) StaticInputAt(index int) (StaticInput, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticInputs) {
-		return StaticInput{}, false
-	}
-	return snapshot.staticInputs[index], true
 }
 func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
 	if !snapshot.Available() {
@@ -956,44 +942,6 @@ func (row StaticExpression) ReferenceID() identity.ContentID { return row.row.Re
 func (row StaticExpression) Owner() identity.ContentID       { return row.row.Owner() }
 func (row StaticExpression) Available() bool                 { return row.row.Available() }
 
-type StaticInput struct {
-	id, owner, expression, source, target, operand, frontier identity.ContentID
-	operandReference, operandSubject, operandBody            identity.ContentID
-	literal                                                  keyspace.LiteralValue
-	kind, operandKind                                        uint8
-	cursor                                                   uint32
-}
-
-func (row StaticInput) ID() identity.ContentID                 { return row.id }
-func (row StaticInput) Owner() identity.ContentID              { return row.owner }
-func (row StaticInput) Kind() uint8                            { return row.kind }
-func (row StaticInput) ExpressionID() identity.ContentID       { return row.expression }
-func (row StaticInput) SourceID() identity.ContentID           { return row.source }
-func (row StaticInput) TargetID() identity.ContentID           { return row.target }
-func (row StaticInput) OperandID() identity.ContentID          { return row.operand }
-func (row StaticInput) FrontierID() identity.ContentID         { return row.frontier }
-func (row StaticInput) Cursor() uint32                         { return row.cursor }
-func (row StaticInput) OperandKind() uint8                     { return row.operandKind }
-func (row StaticInput) OperandLiteral() keyspace.LiteralValue  { return row.literal }
-func (row StaticInput) OperandReferenceID() identity.ContentID { return row.operandReference }
-func (row StaticInput) OperandSubjectID() identity.ContentID   { return row.operandSubject }
-func (row StaticInput) OperandBodyPathID() identity.ContentID  { return row.operandBody }
-func (row StaticInput) Available() bool {
-	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(staticquery.StaticOperandInvalid) {
-		return false
-	}
-	switch staticquery.StaticOperandKind(row.operandKind) {
-	case staticquery.StaticOperandKnown:
-		return row.operandSubject == (identity.ContentID{}) && row.operandReference == (identity.ContentID{})
-	case staticquery.StaticOperandRuntimeSubject:
-		return row.operandSubject.Available() && row.operandBody.Available() && row.operandReference == (identity.ContentID{})
-	case staticquery.StaticOperandTypeValue:
-		return row.operandReference.Available() && row.operandBody.Available() && row.operandSubject == (identity.ContentID{})
-	default:
-		return false
-	}
-}
-
 type Occurrence struct {
 	kind    uint8
 	id      identity.ContentID
@@ -1448,20 +1396,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		}
 		snapshot.staticTypeNodes = append(snapshot.staticTypeNodes, StaticTypeNode{
 			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
-		})
-	}
-	snapshot.staticInputs = make([]StaticInput, 0, artifact.StaticInputCount())
-	for index := 0; index < artifact.StaticInputCount(); index++ {
-		row, ok := artifact.StaticInputAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.staticInputs = append(snapshot.staticInputs, StaticInput{
-			id: row.ID(), owner: row.Owner(), expression: row.ExpressionID(), source: row.SourceID(),
-			target: row.TargetID(), operand: row.OperandID(), frontier: row.FrontierID(),
-			operandReference: row.OperandReferenceID(), operandSubject: row.OperandSubjectID(),
-			operandBody: row.OperandBodyPathID(), literal: row.OperandLiteral(),
-			kind: uint8(row.Kind()), operandKind: uint8(row.OperandKind()), cursor: row.Cursor(),
 		})
 	}
 	snapshot.observations = make([]DiagnosticObservation, 0, artifact.DiagnosticObservationCount())

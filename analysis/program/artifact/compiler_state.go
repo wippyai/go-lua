@@ -49,7 +49,7 @@ type compiler struct {
 	staticTypeValues           []StaticTypeValueRow
 	staticTypeNodes            []StaticTypeNodeRow
 	staticExpressions          []StaticExpressionRow
-	staticInputs               []StaticInputRow
+	staticInputs               []programschema.StaticInput
 	diagnosticObservationByID  map[identity.ContentID]int
 	pointGeometry              map[identity.ContentID]Point
 	occurrenceSpans            map[occurrenceLookup]occurrenceSpanGeometry

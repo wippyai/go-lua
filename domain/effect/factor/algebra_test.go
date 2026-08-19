@@ -65,7 +65,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	projectMounts := linked.Project().Mounts()
 	packMounts := make([]pack.ArtifactMount, projectMounts.Count())
 	effectMounts := make([]effectfactor.MountedArtifact, projectMounts.Count())
-	staticMounts := make([]staticdomain.MountedArtifact, projectMounts.Count())
+	staticMounts := make([]staticdomain.MountedProgram, projectMounts.Count())
 	artifacts := make([]*programartifact.Artifact, projectMounts.Count())
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
@@ -85,13 +85,13 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 			t.Fatalf("pack artifact mount %d", index)
 		}
 		effectMounts[index] = effectfactor.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
-		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
+		staticMounts[index] = staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
 	if err != nil || types == nil {
 		t.Fatalf("seal type authority: %v", err)
 	}
-	statics, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
+	statics, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
 	if err != nil || statics == nil {
 		t.Fatalf("seal static mounts: %v", err)
 	}

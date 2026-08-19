@@ -353,6 +353,62 @@ func (row Program) UnarySummaryAt(index int) (UnarySummary, bool) {
 	return UnarySummaryFamily().At(&row.Frozen, catalog, index)
 }
 
+// StaticInputCount is the sealed width of the authored static-input family.
+func (row Program) StaticInputCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return StaticInputFamily().Count(&row.Frozen, catalog)
+}
+
+// StaticInputAt returns one authored static input by emitted ordinal.
+func (row Program) StaticInputAt(index int) (StaticInput, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return StaticInput{}, false
+	}
+	return StaticInputFamily().At(&row.Frozen, catalog, index)
+}
+
+// StaticExpressionCount is the sealed width of the authored static-expression
+// family.
+func (row Program) StaticExpressionCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return StaticExpressionFamily().Count(&row.Frozen, catalog)
+}
+
+// StaticExpressionAt returns one authored static expression by emitted
+// ordinal.
+func (row Program) StaticExpressionAt(index int) (StaticExpression, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return StaticExpression{}, false
+	}
+	return StaticExpressionFamily().At(&row.Frozen, catalog, index)
+}
+
+// StaticTypeValueCount is the sealed width of the authored TypeValue family.
+func (row Program) StaticTypeValueCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return StaticTypeValueFamily().Count(&row.Frozen, catalog)
+}
+
+// StaticTypeValueAt returns one authored TypeValue by emitted ordinal.
+func (row Program) StaticTypeValueAt(index int) (StaticTypeValue, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return StaticTypeValue{}, false
+	}
+	return StaticTypeValueFamily().At(&row.Frozen, catalog, index)
+}
+
 // FunctionBoundaryCount is the sealed width of the callable-interface
 // family. Child formals, varargs, and captures are read through the spans on
 // each boundary rather than through retained nested slices.

@@ -90,17 +90,16 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	}
 	contract, _ := linked.Boundary().Target()
 	types, typeErr := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
-	staticMounts := make([]staticdomain.MountedArtifact, 0, len(artifacts))
+	staticMounts := make([]staticdomain.MountedProgram, 0, len(artifacts))
 	for index, artifact := range artifacts {
 		shard, shardOK := linked.Project().Mounts().At(index)
 		module, moduleOK := linked.Project().ModuleKey(shard)
-		programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-		if !shardOK || !moduleOK || !programIDOK {
+		if !shardOK || !moduleOK {
 			t.Fatal("index schemas static mount")
 		}
-		staticMounts = append(staticMounts, staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module})
+		staticMounts = append(staticMounts, staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module})
 	}
-	statics, _, staticErr := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
+	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
 	packs, packsOK := packdomain.SealMountedArtifacts(linked, statics, mounts.pack)
 	mounts.packs = packs
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || !callsOK || typeErr != nil || types == nil || staticErr != nil || statics == nil || !packsOK || packs == nil {

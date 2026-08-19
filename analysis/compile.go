@@ -115,7 +115,7 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if !sealedOK {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
-	staticMounts := make([]staticdomain.MountedArtifact, len(state.artifacts.mounts))
+	staticMounts := make([]staticdomain.MountedProgram, len(state.artifacts.mounts))
 	staticValueIDs := make([]staticdomain.MountedValueID, 0)
 	staticValues := source.Boundary().Values()
 	// Row shape and cross-family membership are sealed by the owning axes below;
@@ -131,7 +131,7 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 			artifact.CompileKey().ProgramID() != published.programID {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
-		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: published.moduleKey, ProgramID: published.programID, NamespaceID: published.moduleKey}
+		staticMounts[index] = staticdomain.MountedProgram{Program: published.program.Program, ModuleID: published.moduleKey, NamespaceID: published.moduleKey}
 		if index >= len(sealed) || sealed[index].ModuleKey != published.moduleKey || sealed[index].Snapshot != published.snapshot {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
@@ -155,7 +155,7 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if !staticTargetOK {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
-	static, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{
+	static, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{
 		LinkID:   state.sourceID,
 		Target:   staticTarget,
 		ValueIDs: staticValueIDs,

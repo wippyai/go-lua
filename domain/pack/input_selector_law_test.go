@@ -93,7 +93,7 @@ func selectorLawSchema(t testing.TB, contract *target.Contract, label string) se
 	if err != nil || types == nil {
 		t.Fatalf("seal selector types: %v", err)
 	}
-	statics, _, err := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedArtifact{{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}})
+	statics, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, []staticdomain.MountedProgram{{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}})
 	if err != nil || statics == nil {
 		t.Fatalf("seal selector static: %v", err)
 	}

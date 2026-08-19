@@ -347,7 +347,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	}
 
 	for _, input := range compiler.staticInputs {
-		if !input.Available() || input.Kind() != StaticInputAnnotation || input.OperandKind() != staticquery.StaticOperandRuntimeSubject {
+		if !input.Available() || input.Kind() != programschema.StaticInputAnnotation || staticquery.StaticOperandKind(input.OperandKind()) != staticquery.StaticOperandRuntimeSubject {
 			continue
 		}
 		mask, numericOK := typeMask(input.TargetID(), make(map[identity.ContentID]bool))

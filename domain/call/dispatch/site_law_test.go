@@ -62,7 +62,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 	heapMounts := make([]heapdomain.ArtifactMount, mounts.Count())
 	valueMounts := make([]valuedomain.ArtifactMount, mounts.Count())
 	packMounts := make([]packdomain.ArtifactMount, mounts.Count())
-	staticMounts := make([]staticdomain.MountedArtifact, mounts.Count())
+	staticMounts := make([]staticdomain.MountedProgram, mounts.Count())
 	callMounts := make([]calldomain.MountedArtifact, mounts.Count())
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
@@ -81,7 +81,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		heapMounts[index], heapOK = heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		valueMounts[index], valueOK = valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 		packMounts[index], packOK = packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
-		staticMounts[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
+		staticMounts[index] = staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}
 		callMounts[index] = calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 		if !heapOK || !valueOK || !packOK {
 			t.Fatalf("site fixture artifact mounts %d", index)
@@ -97,7 +97,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || typesErr != nil || types == nil {
 		t.Fatalf("site fixture schemas heap=%s value=%s types=%v", heapFailure, valueFailure, typesErr)
 	}
-	statics, _, staticErr := staticdomain.SealMountedArtifacts(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
+	statics, _, staticErr := staticdomain.SealMountedPrograms(staticdomain.MountContext{LinkID: linked.ContentID(), Target: contract}, types, staticMounts)
 	if staticErr != nil || statics == nil {
 		t.Fatalf("site fixture Static: %v", staticErr)
 	}

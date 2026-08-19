@@ -12,7 +12,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -96,7 +95,7 @@ type Authority struct {
 	classes    *ClassSet
 	runtime    *typeauthority.Runtime
 	typeValues []typeValueRow
-	mounts     []MountedArtifact
+	mounts     []MountedProgram
 	valueIDs   map[mountedValueKey]identity.ContentID // construction-only scalar substitution
 }
 
@@ -125,7 +124,7 @@ type MountContext struct {
 	ValueIDs []MountedValueID
 }
 
-func sealMounted(context MountContext, types *typeauthority.Authority, mounts []MountedArtifact) (*Authority, *typeauthority.Runtime, error) {
+func sealMounted(context MountContext, types *typeauthority.Authority, mounts []MountedProgram) (*Authority, *typeauthority.Runtime, error) {
 	if !context.LinkID.Available() || context.Target == nil || !context.Target.ContentID().Available() || types == nil || types.LinkID() != context.LinkID {
 		return nil, nil, errors.New("static: Link/type authority mismatch")
 	}
@@ -139,7 +138,7 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 		closedByBytes: make(map[string]Value), symbolicByKey: make(map[Symbolic]Value),
 		memo:            make(map[evaluationKey]Value),
 		coordinateIndex: make(map[coordinateKey]uint32), operands: make(map[identity.ContentID]ContainedOperand),
-		namespaceIDs: make(map[identity.ContentID]struct{}), mounts: append([]MountedArtifact(nil), mounts...),
+		namespaceIDs: make(map[identity.ContentID]struct{}), mounts: append([]MountedProgram(nil), mounts...),
 	}
 	targetID := context.Target.ContentID()
 	a.target = context.Target
@@ -212,58 +211,46 @@ func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]identity.Co
 	return sealed, true
 }
 
-// MountedArtifact is the closed Link substitution receipt Static admits at
-// its production boundary.  The artifact is immutable and reusable by
-// ProgramID; ModuleID is the Link-local mount identity.  Static's inference
-// remains the owner of all judgments, while this seam authenticates that the
-// mounted rows belong to the exact Program occurrence being linked.
-type MountedArtifact struct {
-	Artifact    *programartifact.Artifact
+// MountedProgram is the canonical compiled Program together with the
+// Link-local identities Static needs while sealing its authority. Static owns
+// no Artifact projection and does not reconstruct Program from one.
+type MountedProgram struct {
+	Program     programschema.Program
 	ModuleID    identity.ContentID
-	ProgramID   identity.ContentID
 	NamespaceID identity.ContentID
 }
 
-// SealMountedArtifacts is the production Static ingress.  It admits only
-// closed, owner-issued artifacts and rejects duplicate mounts before any
-// inference begins.  The old Link-only Seal remains available to construction
-// and law fixtures while callers migrate; production analysis must use this
-// mounted seam so Static never receives source graph authority.
-func SealMountedArtifacts(context MountContext, types *typeauthority.Authority, mounts []MountedArtifact) (*Authority, *typeauthority.Runtime, error) {
+// SealMountedPrograms admits canonical compiled Programs and rejects duplicate
+// mounts before inference begins. Static never receives source graph or
+// ProgramArtifact authority through this boundary.
+func SealMountedPrograms(context MountContext, types *typeauthority.Authority, mounts []MountedProgram) (*Authority, *typeauthority.Runtime, error) {
 	if len(mounts) == 0 {
 		return nil, nil, errors.New("static: no mounted artifacts")
 	}
 	seenModules := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
-		if mount.Artifact == nil || !mount.Artifact.Available() || !mount.ModuleID.Available() || !mount.ProgramID.Available() {
+		if !mount.Program.Available() || !mount.ModuleID.Available() {
 			return nil, nil, errors.New("static: unavailable mounted artifact")
-		}
-		if mount.Artifact.CompileKey().ProgramID() != mount.ProgramID {
-			return nil, nil, errors.New("static: mounted artifact/program mismatch")
 		}
 		if !mount.NamespaceID.Available() {
 			return nil, nil, errors.New("static: unavailable mounted namespace")
 		}
-		frozen, catalog, published := mount.Artifact.ColdPublication()
-		program := programschema.Program{
-			Frozen: frozen, ArtifactID: mount.Artifact.ID(),
-			ProgramID: mount.Artifact.CompileKey().ProgramID(), SchemaID: mount.Artifact.CompileKey().SchemaDigest(),
-		}
-		if !published || !catalog.Available() || !program.Available() {
-			return nil, nil, errors.New("static: unavailable mounted cold program")
-		}
-		typeArgumentCount, typeArgumentsOK := program.CallTypeArgumentCount()
+		typeArgumentCount, typeArgumentsOK := mount.Program.CallTypeArgumentCount()
 		if !typeArgumentsOK {
 			return nil, nil, errors.New("static: unavailable mounted type-argument family")
 		}
 		for rowIndex := 0; rowIndex < typeArgumentCount; rowIndex++ {
-			row, rowOK := program.CallTypeArgumentAt(rowIndex)
+			row, rowOK := mount.Program.CallTypeArgumentAt(rowIndex)
 			if !rowOK || !row.Available() {
 				return nil, nil, errors.New("static: malformed mounted type-argument row")
 			}
 		}
-		for rowIndex := 0; rowIndex < mount.Artifact.StaticTypeValueCount(); rowIndex++ {
-			row, rowOK := mount.Artifact.StaticTypeValueAt(rowIndex)
+		typeValueCount, typeValuesOK := mount.Program.StaticTypeValueCount()
+		if !typeValuesOK {
+			return nil, nil, errors.New("static: unavailable mounted TypeValue family")
+		}
+		for rowIndex := 0; rowIndex < typeValueCount; rowIndex++ {
+			row, rowOK := mount.Program.StaticTypeValueAt(rowIndex)
 			if !rowOK || !row.Available() {
 				return nil, nil, errors.New("static: malformed mounted TypeValue row")
 			}

@@ -489,10 +489,18 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(row.ID()), bytesField(row.ReferenceID()), bytesField(row.Owner()))
 	}
-	sink.add(uintField(uint64(len(artifact.staticInputs))))
-	for _, row := range artifact.staticInputs {
-		exact := row.literal
-		sink.add(bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), uintField(uint64(row.operandKind)), bytesField(row.expression), bytesField(row.source), bytesField(row.target), bytesField(row.operand), bytesField(row.frontier), bytesField(row.operandReference), bytesField(row.operandSubject), bytesField(row.operandBody), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, uintField(uint64(row.cursor)))
+	inputCount, inputsPublished := coldCount(artifact, programschema.StaticInputFamily())
+	if !inputsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(inputCount)))
+	for index := 0; index < inputCount; index++ {
+		row, held := coldRow(artifact, programschema.StaticInputFamily(), index)
+		if !held || !row.Available() {
+			return identity.ContentID{}
+		}
+		exact := row.OperandLiteral()
+		sink.add(bytesField(row.ID()), bytesField(row.Owner()), uintField(uint64(row.Kind())), uintField(uint64(row.OperandKind())), bytesField(row.ExpressionID()), bytesField(row.SourceID()), bytesField(row.TargetID()), bytesField(row.OperandID()), bytesField(row.FrontierID()), bytesField(row.OperandReferenceID()), bytesField(row.OperandSubjectID()), bytesField(row.OperandBodyPathID()), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, uintField(uint64(row.Cursor())))
 	}
 	// The environment plane and its reset witnesses are read out of the sealed
 	// cold publication. The witness span preserves the emitted order, so the

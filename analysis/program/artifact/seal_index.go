@@ -268,16 +268,21 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	seenStaticInputs := make(map[identity.ContentID]struct{}, len(artifact.staticInputs))
-	for index, row := range artifact.staticInputs {
-		if !row.Available() {
+	inputCount, inputsPublished := coldCount(artifact, programschema.StaticInputFamily())
+	if !inputsPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	seenStaticInputs := make(map[identity.ContentID]struct{}, inputCount)
+	for index := 0; index < inputCount; index++ {
+		row, held := coldRow(artifact, programschema.StaticInputFamily(), index)
+		if !held || !row.Available() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		if _, duplicate := seenStaticInputs[row.id]; duplicate {
+		if _, duplicate := seenStaticInputs[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		seenStaticInputs[row.id] = struct{}{}
-		if _, exists := seenStaticExpressions[row.expression]; !exists {
+		seenStaticInputs[row.ID()] = struct{}{}
+		if _, exists := seenStaticExpressions[row.ExpressionID()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}

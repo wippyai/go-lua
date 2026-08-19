@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 func staticNodeID(owner identity.ContentID, ref staticquery.StaticTypeRef) (id identity.ContentID, ok bool) {
@@ -29,7 +30,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 	compiler.staticExpressions = make([]StaticExpressionRow, 0, view.StaticTypes().Count())
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
-	compiler.staticInputs = make([]StaticInputRow, 0, typeOfs.Count())
+	compiler.staticInputs = make([]programschema.StaticInput, 0, typeOfs.Count())
 	operandRow := func(term keyspace.Term) (staticquery.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
 		operand, ok := ownerProgram.StaticOperandAt(term)
 		if !ok {
@@ -88,7 +89,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				if !expressionIDOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
-				compiler.staticInputs = append(compiler.staticInputs, StaticInputRow{id: rowID, owner: owner, expression: expressionID, source: sourceID, target: sourceID, operand: operandID, frontier: frontierID, kind: StaticInputTypeOf, operandKind: operandKind, literal: literal, operandReference: operandReference, operandSubject: operandSubject, operandBody: operandBody, cursor: cursor})
+				row, rowOK := programschema.NewStaticInput(rowID, owner, expressionID, sourceID, sourceID, operandID, frontierID, operandReference, operandSubject, operandBody, literal, programschema.StaticInputTypeOf, uint8(operandKind), cursor)
+				if !rowOK {
+					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
+				}
+				compiler.staticInputs = append(compiler.staticInputs, row)
 				continue
 			}
 		}
@@ -136,7 +141,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			if !expressionIDOK {
 				return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, valueIndex, CompileReasonProgramUnavailable)
 			}
-			compiler.staticInputs = append(compiler.staticInputs, StaticInputRow{id: rowID, owner: owner, expression: expressionID, source: annotationSourceID, target: targetID, operand: operandID, frontier: frontierID, kind: StaticInputAnnotation, operandKind: operandKind, literal: literal, operandReference: operandReference, operandSubject: operandSubject, operandBody: operandBody, cursor: cursor})
+			row, rowOK := programschema.NewStaticInput(rowID, owner, expressionID, annotationSourceID, targetID, operandID, frontierID, operandReference, operandSubject, operandBody, literal, programschema.StaticInputAnnotation, uint8(operandKind), cursor)
+			if !rowOK {
+				return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, valueIndex, CompileReasonProgramUnavailable)
+			}
+			compiler.staticInputs = append(compiler.staticInputs, row)
 		}
 	}
 	for index := 0; index < view.StaticTypes().Count(); index++ {
