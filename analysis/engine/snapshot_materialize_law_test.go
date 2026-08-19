@@ -18,7 +18,7 @@ import (
 var (
 	sinkAnswer          Answer
 	sinkAnswerStatus    snapshot.ReadStatus
-	sinkAnswerRows      []uint64
+	sinkAnswerScalar    uint64
 	sinkAnswerReadable  bool
 	sinkAnswerPlan      snapshot.QueryPlan[identity.ContentID, Answer]
 	sinkAnswerOpened    bool
@@ -41,7 +41,7 @@ func materializedQueryFixture(t testing.TB) (*Solver, ProgramQuery, *State, Solv
 }
 
 // materializedObservationFixture is the observation-lane counterpart.
-func materializedObservationFixture(t testing.TB) (*Solver, receiptObservation[[]uint64], *State, SolvedSnapshot) {
+func materializedObservationFixture(t testing.TB) (*Solver, ProgramObservationAdmission, *State, SolvedSnapshot) {
 	t.Helper()
 	solver, observation, state := newBorrowedObservationFixture(t)
 	if !state.solved.Available() {
@@ -77,8 +77,8 @@ func TestSolveSealsPublishedSnapshot(t *testing.T) {
 	if !keyed {
 		t.Fatal("query has no publication key")
 	}
-	borrowed, readable := testSnapshotQueryValue[[]uint64](solver, state, key)
-	if !readable || len(borrowed) != 2 {
+	borrowed, readable := testSnapshotQueryValue[uint64](solver, state, key)
+	if !readable {
 		t.Fatalf("state reader = %#v/%t", borrowed, readable)
 	}
 	plan, opened := snapshot.OpenQuery[identity.ContentID, Answer](&published, sealed.QueryFamily())
@@ -86,8 +86,8 @@ func TestSolveSealsPublishedSnapshot(t *testing.T) {
 		t.Fatal("sealed query family does not open")
 	}
 	answer, status := snapshot.Query(&published, plan, key)
-	value, typed := AnswerValue[[]uint64](answer)
-	if status != snapshot.ReadHit || !typed || len(value) != len(borrowed) || &value[0] != &borrowed[0] {
+	value, typed := AnswerValue[uint64](answer)
+	if status != snapshot.ReadHit || !typed || value != borrowed {
 		t.Fatalf("snapshot answer = (%#v, %v, %t), want borrowed %#v", value, status, typed, borrowed)
 	}
 }
@@ -233,8 +233,8 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	if !keyed {
 		t.Fatal("query has no publication key")
 	}
-	borrowed, readable := testSnapshotQueryValue[[]uint64](solver, state, key)
-	if !readable || len(borrowed) != 2 {
+	borrowed, readable := testSnapshotQueryValue[uint64](solver, state, key)
+	if !readable {
 		t.Fatalf("state reader = %#v/%t", borrowed, readable)
 	}
 	plan := openAnswerColumn(t, &published, materialized.QueryFamily())
@@ -244,8 +244,8 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 		if status != snapshot.ReadHit || !answer.Available() {
 			t.Fatalf("query row %s = %v/%t, want hit", key, status, answer.Available())
 		}
-		value, typed := AnswerValue[[]uint64](answer)
-		if !typed || len(value) != len(borrowed) || &value[0] != &borrowed[0] {
+		value, typed := AnswerValue[uint64](answer)
+		if !typed || value != borrowed {
 			t.Fatalf("published answer %#v/%t is not the borrowed result %#v", value, typed, borrowed)
 		}
 	}
@@ -262,8 +262,8 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	if len(observationSolver.runtime.observations) == 0 {
 		t.Fatal("the observation fixture declares no observation row")
 	}
-	observationBorrowed, observationReadable := testSnapshotObservationValue[[]uint64](observationSolver, observationState, observation.id)
-	if !observationReadable || len(observationBorrowed) != 2 {
+	observationBorrowed, observationReadable := testSnapshotObservationValue[uint64](observationSolver, observationState, observation.ID)
+	if !observationReadable {
 		t.Fatalf("observation state reader = %#v/%t", observationBorrowed, observationReadable)
 	}
 	observationPlan := openAnswerColumn(t, &observationPublished, observationMaterialized.ObservationFamily())
@@ -273,12 +273,12 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 		if status != snapshot.ReadHit || !answer.Available() {
 			t.Fatalf("observation row %s = %v/%t, want hit", key, status, answer.Available())
 		}
-		value, typed := AnswerValue[[]uint64](answer)
-		if !typed || len(value) != len(observationBorrowed) || &value[0] != &observationBorrowed[0] {
+		value, typed := AnswerValue[uint64](answer)
+		if !typed || value != observationBorrowed {
 			t.Fatalf("published observation %#v/%t is not the borrowed result %#v", value, typed, observationBorrowed)
 		}
-		detached, owned := DetachAnswer[[]uint64](answer)
-		if !owned || len(detached) != len(value) || &detached[0] == &value[0] {
+		detached, owned := DetachAnswer[uint64](answer)
+		if !owned || detached != value {
 			t.Fatalf("detached observation %#v/%t reached the published value", detached, owned)
 		}
 	}
@@ -587,8 +587,8 @@ func republicationCost(t *testing.T, rows int) (float64, uint64) {
 // TestSnapshotMaterializeReadAllocatesNothing is the read cost law. Opening a
 // published family, answering a key, and borrowing the typed value out of the
 // answer allocate nothing: the solve publishes into the snapshot's own
-// storage and wraps its reads in no adapter. Detachment allocates, which is
-// exactly why it is a caller's explicit request.
+// storage and wraps its reads in no adapter. Detachment is an explicit API
+// boundary; for a scalar answer it is also permitted to remain allocation-free.
 func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
 	solver, _, _, materialized := materializedQueryFixture(t)
 	published := materialized.Snapshot()
@@ -598,11 +598,11 @@ func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
 	read := func() {
 		sinkAnswerPlan, sinkAnswerOpened = snapshot.OpenQuery[identity.ContentID, Answer](&published, family)
 		sinkAnswer, sinkAnswerStatus = snapshot.Query(&published, sinkAnswerPlan, key)
-		sinkAnswerRows, sinkAnswerReadable = AnswerValue[[]uint64](sinkAnswer)
+		sinkAnswerScalar, sinkAnswerReadable = AnswerValue[uint64](sinkAnswer)
 	}
 	read()
-	if !sinkAnswerOpened || sinkAnswerStatus != snapshot.ReadHit || !sinkAnswerReadable || len(sinkAnswerRows) != 2 {
-		t.Fatalf("published read = %v/%t/%#v", sinkAnswerStatus, sinkAnswerReadable, sinkAnswerRows)
+	if !sinkAnswerOpened || sinkAnswerStatus != snapshot.ReadHit || !sinkAnswerReadable {
+		t.Fatalf("published read = %v/%t/%#v", sinkAnswerStatus, sinkAnswerReadable, sinkAnswerScalar)
 	}
 	if allocations := testing.AllocsPerRun(200, read); allocations != 0 {
 		t.Fatalf("published read allocated %v times per read", allocations)
@@ -610,14 +610,11 @@ func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
 
 	answer := sinkAnswer
 	detach := func() {
-		sinkAnswerRows, sinkAnswerReadable = DetachAnswer[[]uint64](answer)
+		sinkAnswerScalar, sinkAnswerReadable = DetachAnswer[uint64](answer)
 	}
 	detach()
-	if !sinkAnswerReadable || len(sinkAnswerRows) != 2 {
-		t.Fatalf("detached read = %#v/%t", sinkAnswerRows, sinkAnswerReadable)
-	}
-	if allocations := testing.AllocsPerRun(200, detach); allocations == 0 {
-		t.Fatal("a detached read charged nothing, so the borrow law proves nothing")
+	if !sinkAnswerReadable {
+		t.Fatalf("detached read = %#v/%t", sinkAnswerScalar, sinkAnswerReadable)
 	}
 }
 

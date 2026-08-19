@@ -4,108 +4,117 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-func selectedOverlaySemanticID(value byte) identity.ContentID {
-	var id identity.ContentID
-	id[0] = value
-	return id
-}
-
-// selectedOverlayFixture is one sealed, unsolved program whose first solve
-// takes a real activation revision: an accepted direct activation widens demand
-// into a body the initial demand closure does not reach. It is the fixture every
-// revision law is measured on, because it is the smallest construction whose
-// solve cannot complete without one.
-type selectedOverlayFixture struct {
+type selectedOverlayLawFixture struct {
 	solver            *Solver
-	binding           *SchemaBinding
 	graph             *CommittedProgram
-	construction      *ProgramConstruction
-	observation       receiptObservation[uint64]
+	observationID     identity.ContentID
+	activationID      identity.ContentID
 	triggerID         identity.ContentID
 	bodyID            identity.ContentID
 	ordinaryTransfers *int
-	// declaration is the same sealed program stated as one geometry
-	// declaration. The transitional equivalence law folds it through the pure
-	// constructor and measures the result against this fixture's committed
-	// geometry.
-	declaration topologyDeclaration
 }
 
-// TestSelectedOverlayWidensUndemandedWTO proves that an accepted direct
-// activation can widen demand into a previously inactive body. The trigger
-// and target are initially demanded by the observation; the activation's
-// transport selects the body, whose ordinary producer then executes through
-// the widened recurrence schedule without rebuilding the sealed runtime.
+func selectedOverlayLawID(value uint64) identity.ContentID {
+	var id identity.ContentID
+	id[0], id[1], id[2], id[3] = 0xd4, byte(value), byte(value>>8), byte(value>>16)
+	return id
+}
+
+// TestSelectedOverlayWidensUndemandedWTO builds one current sealed program
+// whose activation candidate reaches a body absent from the initial demand
+// closure. The accepted candidate is materialized by ConstructProgram and the
+// runtime widens its immutable epoch through the selected overlay.
 func TestSelectedOverlayWidensUndemandedWTO(t *testing.T) {
-	fixture := newSelectedOverlayFixture(t)
-	solver, graph, observation := fixture.solver, fixture.graph, fixture.observation
-	baseGraph := solver.runtime.graph
-	baseProgram := solver.runtime.program
-	baseCarrier := solver.runtime.carrier
-	initialRelation := solver.relation
-	triggerReceipt, triggerReceiptOK := graph.lookupPoint(fixture.triggerID)
-	triggerIndex, triggerIndexOK := solver.runtime.graph.PointIndex(triggerReceipt)
-	bodyReceipt, bodyReceiptOK := graph.lookupPoint(fixture.bodyID)
-	bodyIndex, bodyIndexOK := solver.runtime.graph.PointIndex(bodyReceipt)
-	if !triggerReceiptOK || !triggerIndexOK || triggerIndex < 0 || triggerIndex >= len(solver.runtime.activePoints) || !solver.runtime.activePoints[triggerIndex] || !bodyReceiptOK || !bodyIndexOK || bodyIndex < 0 || bodyIndex >= len(solver.runtime.activePoints) || solver.runtime.activePoints[bodyIndex] {
-		t.Fatal("selected overlay did not start with an active trigger and undemanded body")
+	fixture := newSelectedOverlayLawFixture(t)
+	trigger, triggerOK := fixture.graph.lookupPoint(fixture.triggerID)
+	body, bodyOK := fixture.graph.lookupPoint(fixture.bodyID)
+	if !triggerOK || !bodyOK {
+		t.Fatal("selected overlay point directory")
 	}
-	state, status, report := solver.SolveWithReport(context.Background())
-	if status != SolveComplete || state == nil {
-		for index := 0; index < solver.runtime.graph.PointCount(); index++ {
-			point, _ := solver.runtime.graph.PointAt(schedule.Node(index))
-			t.Logf("selected overlay point index=%d key=%v reportKey=%v active=%t", index, point.Key(), reportedSemanticKey(point.Key()), solver.runtime.activePoints[index])
-		}
-		t.Fatalf("selected overlay solve state=%t status=%v report=%t reason=%v failure=%v point=%v group=%v member=%v rule=%v", state != nil, status, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
+	triggerIndex, triggerIndexed := fixture.solver.runtime.graph.PointIndex(trigger)
+	bodyIndex, bodyIndexed := fixture.solver.runtime.graph.PointIndex(body)
+	if !triggerIndexed || !bodyIndexed || triggerIndex < 0 || bodyIndex < 0 || triggerIndex >= len(fixture.solver.runtime.activePoints) || bodyIndex >= len(fixture.solver.runtime.activePoints) || !fixture.solver.runtime.activePoints[triggerIndex] || fixture.solver.runtime.activePoints[bodyIndex] {
+		t.Fatalf("selected overlay initial demand trigger=%t body=%t", fixture.solver.runtime.activePoints[triggerIndex], fixture.solver.runtime.activePoints[bodyIndex])
 	}
-	sealedRelation, sealedRelationOK := solver.runtime.topology.InitialRelation()
-	if !sealedRelationOK || !initialRelation.Precedes(solver.relation) || !sealedRelation.Precedes(solver.relation) || solver.runtime.graph != baseGraph || solver.runtime.program != baseProgram || solver.runtime.carrier != baseCarrier || solver.runtime.graph.RegionCount() == 0 || !solver.runtime.activePoints[triggerIndex] || !solver.runtime.activePoints[bodyIndex] {
-		t.Fatalf("selected overlay revision=%d advanced=%t graphSame=%t programSame=%t carrierSame=%t triggerActive=%t bodyActive=%t regions=%d", solver.relation.Generation(), initialRelation.Precedes(solver.relation), solver.runtime.graph == baseGraph, solver.runtime.program == baseProgram, solver.runtime.carrier == baseCarrier, triggerIndex < len(solver.runtime.activePoints) && solver.runtime.activePoints[triggerIndex], bodyIndex < len(solver.runtime.activePoints) && solver.runtime.activePoints[bodyIndex], solver.runtime.graph.RegionCount())
+	baseGraph, baseProgram, baseCarrier := fixture.solver.runtime.graph, fixture.solver.runtime.program, fixture.solver.runtime.carrier
+	initialRelation := fixture.solver.relation
+	state, status, report := fixture.solver.SolveWithReport(context.Background())
+	if state == nil || status != SolveComplete {
+		t.Fatalf("selected overlay solve state=%t status=%v report=%t reason=%v failure=%v", state != nil, status, report.Available(), report.Reason(), report.Failure())
 	}
-	value, readable := testSnapshotObservationValue[uint64](solver, state, observation.id)
+	if !initialRelation.Precedes(fixture.solver.relation) || fixture.solver.runtime.graph != baseGraph || fixture.solver.runtime.program != baseProgram || fixture.solver.runtime.carrier != baseCarrier || !fixture.solver.runtime.activePoints[triggerIndex] || !fixture.solver.runtime.activePoints[bodyIndex] {
+		t.Fatalf("selected overlay did not widen one sealed runtime frontier generation=%d advanced=%t graph=%t program=%t carrier=%t trigger=%t body=%t", fixture.solver.relation.Generation(), initialRelation.Precedes(fixture.solver.relation), fixture.solver.runtime.graph == baseGraph, fixture.solver.runtime.program == baseProgram, fixture.solver.runtime.carrier == baseCarrier, fixture.solver.runtime.activePoints[triggerIndex], fixture.solver.runtime.activePoints[bodyIndex])
+	}
+	value, readable := testSnapshotObservationValue[uint64](fixture.solver, state, fixture.observationID)
 	if !readable || value != 1 || *fixture.ordinaryTransfers == 0 {
-		t.Fatalf("selected overlay Snapshot value=%d readable=%t ordinaryTransfers=%d", value, readable, *fixture.ordinaryTransfers)
-	}
-	sealed, sealedOK := solver.PublishedSnapshot(state)
-	if !sealedOK {
-		t.Fatal("selected overlay has no sealed Snapshot")
-	}
-	bodyState, bodyReadable := readPointState(sealed.Snapshot(), bodyReceipt.Key())
-	if !bodyReadable || !bodyState.Valid() {
-		t.Fatalf("selected overlay body PointState readable=%t valid=%t", bodyReadable, bodyState.Valid())
+		t.Fatalf("selected overlay observation=%d readable=%t transfers=%d", value, readable, *fixture.ordinaryTransfers)
 	}
 }
 
-func newSelectedOverlayFixture(t testing.TB) selectedOverlayFixture {
+func newSelectedOverlayLawFixture(t testing.TB) selectedOverlayLawFixture {
+	return newSelectedOverlayLawFixtureWithCandidates(t, 1, false)
+}
+
+func newSelectedOverlayLawFixtureWithCandidates(t testing.TB, candidateCount int, duplicateApplication bool) selectedOverlayLawFixture {
 	t.Helper()
+	if candidateCount < 1 {
+		t.Fatal("selected overlay candidate count")
+	}
+	const (
+		factorSemantic        = 998_600
+		transportSemantic     = 998_601
+		querySemantic         = 998_602
+		queryResultSemantic   = 998_603
+		activationFamily      = 998_604
+		activationRule        = 998_605
+		activationAdmission   = 998_606
+		ordinaryRule          = 998_607
+		ordinaryAdmission     = 998_608
+		triggerPoint          = 998_609
+		targetPoint           = 998_610
+		bodyPoint             = 998_611
+		triggerOccurrence     = 998_612
+		targetOccurrence      = 998_613
+		bodyOccurrence        = 998_614
+		activationApplication = 998_615
+		activationTarget      = 998_616
+		activationEndpoint    = 998_617
+		bodyID                = 998_618
+		artifactID            = 998_619
+		programID             = 998_620
+		mountID               = 998_621
+		ownerID               = 998_622
+		observationID         = 998_623
+		queryID               = 998_624
+	)
 	builder := NewSchema()
-	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(949_600))
-	transportFactor, transportFactorOK := DeclareFactorSlot[uint64](builder, coldKey(949_618))
-	write, writeOK := factor.ExactWrite()
-	read, readOK := factor.ExactRead()
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(949_601), Freezer: coldKey(949_602)})
-	ordinarySlot, ordinaryOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
-		Semantic: coldKey(949_614), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(949_615)}, Output: factor.Ref(),
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(factorSemantic))
+	transport, transportOK := DeclareFactorSlot[uint64](builder, coldKey(transportSemantic))
+	writeForm, writeOK := factor.ExactWrite()
+	readForm, readOK := factor.ExactRead()
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(querySemantic), Freezer: coldKey(queryResultSemantic)})
+	ordinary, ordinaryOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(ordinaryRule), OperandFamily: unitOperandFamily, Inputs: 0,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(ordinaryAdmission)}, Output: factor.Ref(),
 	})
-	ordinaryWrite, ordinaryWriteOK := SchemaWrite(ordinarySlot, write)
-	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(949_603))
-	triggerSlot, triggerOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{Semantic: coldKey(949_604), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(949_605)}, Activation: family})
-	if !factorOK || !transportFactorOK || !writeOK || !readOK || !queryOK || !SchemaQueryRead(query, read) || !ordinaryOK || !ordinaryWriteOK || !familyOK || !triggerOK {
-		t.Fatal("receipt activation schema")
-	}
+	ordinaryWrite, ordinaryWriteOK := SchemaWrite(ordinary, writeForm)
+	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(activationFamily))
+	activation, activationOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{
+		Semantic: coldKey(activationRule), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(activationAdmission)}, Activation: family,
+	})
+	queryReadOK := SchemaQueryRead(query, readForm)
 	schema, schemaOK := builder.Seal()
-	if !schemaOK || schema == nil {
-		t.Fatal("receipt activation schema seal")
+	if !factorOK || !transportOK || !writeOK || !readOK || !queryOK || !queryReadOK || !ordinaryOK || !ordinaryWriteOK || !familyOK || !activationOK || !schemaOK || schema == nil {
+		t.Fatal("selected overlay schema")
 	}
-	ordinaryTransfers := new(int)
+	transfers := new(int)
 	querySpec := hotExactQuerySpec()
+	querySpec.Result.Semantic = coldKey(queryResultSemantic)
 	querySpec.Project = func(cells OrderedCells[uint64]) uint64 {
 		value, present, valid := cells.At(0)
 		if !valid || !present || value != 1 {
@@ -113,193 +122,200 @@ func newSelectedOverlayFixture(t testing.TB) selectedOverlayFixture {
 		}
 		return value
 	}
-	querySpec.Result.Semantic = coldKey(949_602)
-	binding := NewSchemaBinding(schema)
 	ordinarySpec := HotRuleSpec[uint64, ruleUnit]{
 		OperandContent: ruleUnitContent,
-		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(949_615)),
+		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(ordinaryAdmission)),
 		Transfer: func(access Access[uint64, ruleUnit]) bool {
-			*ordinaryTransfers++
+			*transfers++
 			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
-	if !BindFactor(binding, factor, hotExactObservationFactorSpec()) || !BindFactor(binding, transportFactor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, ordinarySlot, ordinaryWrite, factor, ordinarySpec, testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, querySpec) {
-		t.Fatal("receipt activation factor/query bind")
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindFactor(binding, transport, hotUintFactorSpec()) {
+		t.Fatal("selected overlay factor binding")
 	}
-	application := coldKey(949_606)
-	target := coldKey(949_607)
-	endpoint := coldKey(949_608)
-	activationSpec := HotActivationSpec{Admission: AdmitActivationByTrustedTheorem(coldKey(949_605)), Run: func(value Activation) bool {
+	if !BindRule[uint64, uint64, ruleUnit](binding, ordinary, ordinaryWrite, factor, ordinarySpec, testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, querySpec) {
+		t.Fatal("selected overlay factor/query binding")
+	}
+	application, target, endpoint := coldKey(activationApplication), coldKey(activationTarget), coldKey(activationEndpoint)
+	activationSpec := HotActivationSpec{Admission: AdmitActivationByTrustedTheorem(coldKey(activationAdmission)), Run: func(value Activation) bool {
 		return Activate(value, application, target, endpoint)
 	}}
-	if !BindActivationRule(binding, triggerSlot, activationSpec) || !binding.Seal() {
-		t.Fatal("receipt activation bind")
+	if !BindActivationRule(binding, activation, activationSpec) {
+		t.Fatal("selected overlay activation binding")
 	}
-	activationImplementation, implementationOK := ActivationRuleImplementationAt(binding, triggerSlot)
-	ordinaryImplementation, ordinaryImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, ordinarySlot)
+	ordinaryCapability, ordinaryCapabilityOK := IssueMountedRuleCapability(binding, ordinary)
+	activationCapability, activationCapabilityOK := IssueActivationRuleCapability(binding, activation)
+	issuer, issuerOK := BindMountedActivationCandidateIssuer(binding, activation, []AnyFactorRef{transport.Ref().Any()}, factor.Ref().Any())
+	if !ordinaryCapabilityOK || !activationCapabilityOK || !issuerOK || issuer == nil || !RegisterRuleSlot(binding, ordinary, ordinaryCapability) || !RegisterActivationRuleSlot(binding, activation, activationCapability) || !binding.Seal() {
+		t.Fatal("selected overlay capabilities")
+	}
+	ordinaryImplementation, ordinaryImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, ordinary)
+	activationImplementation, activationImplementationOK := ActivationRuleImplementationAt(binding, activation)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
-	if !implementationOK || activationImplementation == nil || !ordinaryImplementationOK || ordinaryImplementation == nil || !queryImplementationOK || queryImplementation == nil || !assemblyOK {
-		t.Fatal("receipt activation assembly")
+	ordinaryProgram, ordinaryProgramOK := SealProgramRule(ordinaryImplementation)
+	_, activationProgramOK := SealActivationProgramRule(activationImplementation)
+	if !ordinaryImplementationOK || !activationImplementationOK || !queryImplementationOK || !ordinaryProgramOK || !activationProgramOK {
+		t.Fatal("selected overlay sealed implementations")
 	}
-	scope := equation.EmptyScope()
-	triggerSite, triggerSiteOK := assembly.admitSite(compositionKeyOf(coldKey(949_609)), scope, equation.TrueExpr(), equation.InitPresent)
-	targetSite, targetSiteOK := assembly.admitSite(compositionKeyOf(coldKey(949_610)), scope, equation.TrueExpr(), equation.InitPresent)
-	bodySite, bodySiteOK := assembly.admitSite(compositionKeyOf(coldKey(949_619)), scope, equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.admitAt(triggerSite)
-	entity, entityOK := operandEntityForContent([32]byte{62})
-	operand, operandOK := assembly.admitOperand(occurrence, entity)
-	ordinaryOccurrence, ordinaryOccurrenceOK := assembly.admitAt(targetSite)
-	bodyOccurrence, bodyOccurrenceOK := assembly.admitAt(bodySite)
-	ordinaryOperandValue := ruleUnitForSemantic(coldKey(949_616))
-	ordinaryEntity, ordinaryEntityOK := operandEntityForContent(ordinaryOperandValue.content)
-	ordinaryOperand, ordinaryOperandOK := assembly.admitOperand(ordinaryOccurrence, ordinaryEntity)
-	bodyEntity, bodyEntityOK := operandEntityForContent(ordinaryOperandValue.content)
-	bodyOperand, bodyOperandOK := assembly.admitOperand(bodyOccurrence, bodyEntity)
-	if !triggerSiteOK || !targetSiteOK || !bodySiteOK || !occurrenceOK || !entityOK || !operandOK || !ordinaryOccurrenceOK || !bodyOccurrenceOK || !ordinaryEntityOK || !ordinaryOperandOK || !bodyEntityOK || !bodyOperandOK || assembly.sealSources().Available() {
-		t.Fatal("receipt activation source")
+	if !ordinaryImplementation.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(998_630)), true }) {
+		t.Fatal("selected overlay operand resolver")
 	}
-	// The declared point plane is trigger, target, body: the PointRef of the
-	// nth declared row is PointAt(n).
-	triggerPointRef, targetPointRef, bodyPointRef := equation.PointAt(0), equation.PointAt(1), equation.PointAt(2)
-	proof := activationImplementation.binding.proof
-	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand})
-	draft, draftOK := activationImplementation.beginBindingRuleRow(source)
-	triggerRow, triggerRowOK := assembly.issueRuleRow(draft)
-	ordinaryProof := ordinaryImplementation.binding.proof
-	ordinarySource, ordinarySourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-		Schema: ordinaryProof.semantic, OperandFamily: ordinaryProof.operandFamily, Occurrence: ordinaryOccurrence, Operand: ordinaryOperand,
-		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: ordinaryProof.output, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}}},
-	})
-	ordinaryDraft, ordinaryDraftOK := ordinaryImplementation.beginBindingRuleRow(ordinarySource)
-	ordinaryPart, ordinaryPartOK := ordinaryImplementation.WritePart(ordinarySource, 0)
-	ordinaryRow, ordinaryRowOK := bindingRuleRow{}, false
-	if ordinaryDraftOK && ordinaryPartOK && ordinaryDraft.AddWrite(ordinaryPart) {
-		ordinaryRow, ordinaryRowOK = assembly.issueRuleRow(ordinaryDraft)
+	artifact, artifactOK := rows.NewArtifactScalarSpec(selectedOverlayLawID(artifactID), selectedOverlayLawID(programID), identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 3, Events: 5, Rules: 3, Bodies: 1, Regions: 1, Transfers: 1})
+	if !artifactOK {
+		t.Fatal("selected overlay artifact header")
 	}
-	bodySource, bodySourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-		Schema: ordinaryProof.semantic, OperandFamily: ordinaryProof.operandFamily, Occurrence: bodyOccurrence, Operand: bodyOperand,
-		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: ordinaryProof.output, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}}},
-	})
-	bodyDraft, bodyDraftOK := ordinaryImplementation.beginBindingRuleRow(bodySource)
-	bodyPart, bodyPartOK := ordinaryImplementation.WritePart(bodySource, 0)
-	bodyRow, bodyRowOK := bindingRuleRow{}, false
-	if bodyDraftOK && bodyPartOK && bodyDraft.AddWrite(bodyPart) {
-		bodyRow, bodyRowOK = assembly.issueRuleRow(bodyDraft)
-	}
-	loop := equation.BoundaryInput(triggerSite, triggerSite, compositionKeyOf(coldKey(949_611)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	triggerDependency := equation.BoundaryInput(triggerSite, targetSite, compositionKeyOf(coldKey(949_617)), equation.TrueExpr(), equation.IdentityReindex(scope), equation.TrueExpr())
-	if !loop.Available() || !triggerDependency.Available() {
-		t.Fatal("receipt activation topology group")
-	}
-	if !sourceOK || !draftOK || !triggerRowOK || !ordinarySourceOK || !ordinaryDraftOK || !ordinaryPartOK || !ordinaryRowOK || !bodySourceOK || !bodyDraftOK || !bodyPartOK || !bodyRowOK {
-		t.Fatal("receipt activation topology rows")
-	}
-	shape, shapeOK := schema.cold.RuleShapeAt(proof.ordinal)
-	activationID := selectedOverlaySemanticID(65)
-	transportSet, transportSetOK := equation.NewDirectActivationTransportSet(schema.cold, assembly.inner.batch,
-		[]equation.PointRef{targetPointRef}, []equation.PointRef{bodyPointRef},
-		[]composition.Key{compositionKeyOf(coldKey(949_618))}, compositionKeyOf(coldKey(949_600)))
-	origin := equation.MaterializationOrigin{Family: shape.ActivationFamily, Application: compositionKeyOf(application), Target: compositionKeyOf(target), Endpoint: compositionKeyOf(endpoint), TriggerOrdinal: 0}
-	candidate, candidateOK := equation.NewDirectActivationCandidate(schema.cold, assembly.inner.batch, origin, triggerPointRef, transportSet)
-	if !shapeOK || !transportSetOK || !candidateOK {
-		t.Fatal("receipt activation candidate")
-	}
-	declaration := topologyDeclaration{
-		binding: binding, batch: assembly.inner.batch,
-		points: []declaredPointRow{
-			{ID: selectedOverlaySemanticID(61), Site: triggerSite},
-			{ID: selectedOverlaySemanticID(62), Site: targetSite},
-			{ID: selectedOverlaySemanticID(64), Site: bodySite},
-		},
-		members: []declaredMemberRow{
-			{Plane: declaredMemberOwner, ID: selectedOverlaySemanticID(63), ActivationID: activationID, Activation: true, Row: triggerRow.row, EnvironmentInput: loop},
-			{Plane: declaredMemberOwner, ID: selectedOverlaySemanticID(67), Row: ordinaryRow.row, EnvironmentInput: triggerDependency},
-			{Plane: declaredMemberOwner, ID: selectedOverlaySemanticID(68), Row: bodyRow.row},
-		},
-		directCandidates:   []equation.DirectActivationCandidate{candidate},
-		observationQueries: true,
-	}
-	constructed, refusal := constructTopology(declaration)
-	topology, issued := constructed.topology, constructed.graph
-	if refusal.Available() || !constructed.Available() {
-		t.Fatalf("receipt activation construction stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
-	}
-	graph := CommittedProgramFrom(topology, issued)
-	if graph == nil {
-		t.Fatal("receipt activation committed program")
-	}
-	_, activationMemberOK := graph.ActivationMember(activationID)
-	ordinaryMember, ordinaryMemberOK := graph.RuleMember(selectedOverlaySemanticID(67))
-	if !activationMemberOK || !ordinaryMemberOK {
-		t.Fatal("receipt activation graph receipts")
-	}
-	ordinarySurface, ordinarySurfaceOK := ordinaryMember.member.WriteAt(0)
-	if !ordinarySurfaceOK || ordinarySurface.Factor != ordinaryProof.output || ordinarySurface.Form != equation.SurfaceWriteExact || ordinarySurface.Mode != equation.TargetModeStrong || ordinarySurface.Local != 7 {
-		t.Fatal("receipt activation committed ordinary write coordinate")
-	}
-	compilation, compilationOK := BeginProgramConstruction(binding, graph)
-	if !compilationOK || compilation == nil {
-		t.Fatal("receipt activation compilation")
-	}
-	if !installConstOperandResolver(ordinaryImplementation, ordinaryOperandValue) {
-		t.Fatal("receipt ordinary resolver")
-	}
-	if !AttachRuleMember(compilation, ordinaryImplementation, selectedOverlaySemanticID(67)) {
-		t.Fatal("receipt ordinary attachment")
-	}
-	if !AttachRuleMember(compilation, ordinaryImplementation, selectedOverlaySemanticID(68)) {
-		t.Fatal("receipt body attachment")
-	}
-	if !AttachActivationMember(compilation, activationImplementation, activationID) {
-		t.Fatal("receipt activation attachment")
-	}
-	observation, observationFailure := AttachRuleExactObservationWithFailure(compilation, queryImplementation, selectedOverlaySemanticID(66), ordinaryMember)
-	if observationFailure != receiptObservationAttachFailureNone || !observation.Available() {
-		t.Fatalf("receipt activation exact observation failure=%v available=%t", observationFailure, observation.Available())
-	}
-	solver, _, solverOK := compilation.Seal()
-	if !solverOK || solver == nil || solver.runtime == nil || solver.runtime.program == nil || solver.runtime.carrier == nil {
-		t.Fatal("selected overlay solver")
-	}
-	return selectedOverlayFixture{
-		solver: solver, binding: binding, graph: graph, construction: compilation, observation: observation,
-		triggerID: selectedOverlaySemanticID(61), bodyID: selectedOverlaySemanticID(64), ordinaryTransfers: ordinaryTransfers,
-		declaration: declaration,
-	}
-}
-
-func TestReceiptExactObservationRejectsNonExactWriteMetadata(t *testing.T) {
-	factor := compositionKeyOf(coldKey(949_620))
-	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
-	for name, fixture := range map[string]exactObservationWriteFixture{
-		"route": {count: 1, surface: write, route: 1},
-	} {
-		if read, accepted := exactObservationReadSurface(fixture, factor); accepted || read.Available() {
-			t.Fatalf("exact observation accepted write metadata %s", name)
+	ordinaryRole, ordinaryRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_640))
+	activationRole, activationRoleOK := artifact.DeclareRole(selectedOverlayLawID(998_641))
+	points := []identity.ContentID{selectedOverlayLawID(triggerPoint), selectedOverlayLawID(targetPoint), selectedOverlayLawID(bodyPoint)}
+	for index, point := range points {
+		if _, ok := artifact.AddPoint(rows.ArtifactScalarPoint{ID: point, Initial: index == 0}); !ok {
+			t.Fatal("selected overlay artifact point")
 		}
 	}
+	if _, ok := artifact.AddTransfer(rows.ArtifactScalarTransfer{ID: selectedOverlayLawID(998_643), From: points[0], To: points[1], Full: true}); !ok {
+		t.Fatal("selected overlay artifact transfer")
+	}
+	region, regionOK := artifact.AddRegion(rows.ArtifactScalarRegion{ID: selectedOverlayLawID(998_642), Head: points[0]})
+	for _, point := range points {
+		regionOK = regionOK && artifact.AddRegionMember(region, point)
+	}
+	if !regionOK || !artifact.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventEnter, Region: selectedOverlayLawID(998_642)}) {
+		t.Fatal("selected overlay artifact region")
+	}
+	for _, point := range points {
+		if !artifact.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventPoint, Point: point}) {
+			t.Fatal("selected overlay artifact event")
+		}
+	}
+	if !artifact.AddEvent(rows.ArtifactScalarEvent{Kind: rows.ArtifactEventExit, Region: selectedOverlayLawID(998_642)}) {
+		t.Fatal("selected overlay artifact exit")
+	}
+	if !ordinaryRoleOK || !activationRoleOK || !artifact.AddRule(rows.ArtifactScalarRule{Role: activationRole, Stage: rows.ArtifactRuleStageBase, Point: points[0], ID: selectedOverlayLawID(triggerOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageLocal, Point: points[1], Input: points[0], ID: selectedOverlayLawID(targetOccurrence)}) || !artifact.AddRule(rows.ArtifactScalarRule{Role: ordinaryRole, Stage: rows.ArtifactRuleStageBase, Point: points[2], ID: selectedOverlayLawID(bodyOccurrence)}) {
+		t.Fatal("selected overlay artifact rules")
+	}
+	body, bodyOK := artifact.AddBody(rows.ArtifactScalarBody{ID: selectedOverlayLawID(bodyID)})
+	if !bodyOK || !artifact.AddBodyEntry(body, points[1]) || !artifact.AddBodyExit(body, points[2]) {
+		t.Fatal("selected overlay artifact body")
+	}
+	template, templateOK := rows.NewArtifactScalarTemplate(artifact)
+	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: ordinaryRole, Capability: ordinaryCapability}, {Scalar: activationRole, Capability: activationCapability}}, Module: selectedOverlayLawID(mountID)}
+	bootstrap, bootstrapOK := NewProgramBootstrap(selectedOverlayLawID(ownerID), points[0])
+	if !templateOK || !bootstrapOK {
+		t.Fatal("selected overlay artifact seal")
+	}
+	admission := MountedProgramAdmission{
+		Mounted: []MountedRuleAdmission{
+			{Declaration: ordinaryProgram, Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[1], Occurrence: selectedOverlayLawID(targetOccurrence)},
+			{Declaration: ordinaryProgram, Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[2], Occurrence: selectedOverlayLawID(bodyOccurrence)},
+		},
+	}
+	candidates := []MountedActivationCandidate{{Target: target, Endpoint: endpoint, Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)}}
+	for index := 1; index < candidateCount; index++ {
+		candidates = append(candidates, MountedActivationCandidate{Target: coldKey(activationTarget + uint64(index)), Endpoint: coldKey(activationEndpoint + uint64(index)), Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)})
+	}
+	activationAdmit := MountedActivationAdmit{Implementation: activationImplementation, Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: points[0], Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
+	admission.Activation = []MountedActivationAdmit{activationAdmit}
+	if duplicateApplication {
+		activationAdmit.Application = coldKey(activationApplication + 1)
+		admission.Activation = append(admission.Activation, activationAdmit)
+	}
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, selectedOverlayLawID(queryID), selectedOverlayLawID(mountID), points[1])
+	if !queryAdmissionOK {
+		t.Fatal("selected overlay query admission")
+	}
+	admission.Queries = []ProgramQueryAdmission{queryAdmission}
+	activationIdentity := mountedRuleActivationID(activationCapability, selectedOverlayLawID(mountID), points[0], selectedOverlayLawID(triggerOccurrence))
+	if !activationIdentity.Available() {
+		t.Fatal("selected overlay activation identity")
+	}
+	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Admission: admission})
+	if duplicateApplication {
+		if constructed || program != nil || !refusal.Commit().Available() {
+			t.Fatal("conflicting activation applications crossed the sealed trigger fence")
+		}
+		return selectedOverlayLawFixture{activationID: activationIdentity}
+	}
+	if !constructed || program == nil {
+		t.Fatalf("selected overlay ConstructProgram stage=%v lower=%v lowerFailure=%v commit=%v constructionStep=%v constructionOrdinal=%d seal=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Commit(), refusal.construction.Step(), refusal.construction.Ordinal(), refusal.Seal())
+	}
+	observationIdentity := selectedOverlayLawID(observationID)
+	observation, observationOK := NewExactObservationAdmission(queryImplementation, observationIdentity, ordinaryCapability, selectedOverlayLawID(mountID), points[1], selectedOverlayLawID(targetOccurrence))
+	if !observationOK {
+		t.Fatal("selected overlay observation admission")
+	}
+	solver, failure, solverOK := program.Seal([]ProgramObservationAdmission{observation})
+	if !solverOK || solver == nil {
+		t.Fatalf("selected overlay Solver failure=%v", failure)
+	}
+	triggerIdentity := mountedArtifactID("analysis/engine/artifact-point/v1", selectedOverlayLawID(mountID), selectedOverlayLawID(artifactID), points[0])
+	bodyIdentity := mountedArtifactID("analysis/engine/artifact-point/v1", selectedOverlayLawID(mountID), selectedOverlayLawID(artifactID), points[2])
+	if !triggerIdentity.Available() || !bodyIdentity.Available() {
+		t.Fatal("selected overlay point identities")
+	}
+	return selectedOverlayLawFixture{solver: solver, graph: program, observationID: observationIdentity, activationID: activationIdentity, triggerID: triggerIdentity, bodyID: bodyIdentity, ordinaryTransfers: transfers}
 }
 
-func initialCommittedProgram(topology *BindingTopology) (*CommittedProgram, bool) {
-	if topology == nil || !topology.valid() {
-		return nil, false
-	}
-	relation, ok := topology.topology.InitialRelation()
-	if !ok {
-		return nil, false
-	}
-	graph, ok := topology.Graph(relation)
-	program := CommittedProgramFrom(topology, graph)
-	return program, ok && program != nil
+type selectedOverlayObservationWriteLaw struct {
+	count   int
+	surface equation.Surface
+	route   uint64
 }
 
-// initialEquationGraph resolves the sealed base publication of a Topology and
-// the graph issued for it.
-func initialEquationGraph(topology *equation.Topology) (*equation.Graph, bool) {
-	relation, ok := topology.InitialRelation()
-	if !ok {
-		return nil, false
+func (fixture selectedOverlayObservationWriteLaw) WriteCount() int { return fixture.count }
+func (fixture selectedOverlayObservationWriteLaw) WriteAt(index int) (equation.Surface, bool) {
+	return fixture.surface, index == 0
+}
+func (fixture selectedOverlayObservationWriteLaw) WriteRouteRead(index int) (uint64, bool) {
+	return fixture.route, index == 0
+}
+
+func committedPointIDs(program *CommittedProgram) []identity.ContentID {
+	if program == nil || program.directory == nil || program.graph == nil {
+		return nil
 	}
-	return topology.Graph(relation)
+	type pointWithIndex struct {
+		index int
+		id    identity.ContentID
+	}
+	points := make([]pointWithIndex, 0, program.graph.PointCount())
+	for id, entry := range program.directory.entries {
+		if entry.kind != bindingSemanticPoint {
+			continue
+		}
+		locator, ok := program.directory.point(id)
+		point, resolved := locator.Resolve(program.graph)
+		index, indexed := program.graph.PointIndex(point)
+		if ok && resolved && indexed {
+			points = append(points, pointWithIndex{index: index, id: id})
+		}
+	}
+	for left := 0; left < len(points); left++ {
+		for right := left + 1; right < len(points); right++ {
+			if points[right].index < points[left].index {
+				points[left], points[right] = points[right], points[left]
+			}
+		}
+	}
+	result := make([]identity.ContentID, len(points))
+	for index, point := range points {
+		result[index] = point.id
+	}
+	return result
+}
+
+// TestSelectedOverlayRejectsNonExactWriteMetadata keeps observation demand
+// closed when a committed member publishes a route or weak write.
+func TestSelectedOverlayRejectsNonExactWriteMetadata(t *testing.T) {
+	factor := compositionKeyOf(coldKey(998_700))
+	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
+	for name, fixture := range map[string]selectedOverlayObservationWriteLaw{
+		"route":      {count: 1, surface: write, route: 1},
+		"weak":       {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeWeak}},
+		"two-writes": {count: 2, surface: write},
+	} {
+		if read, accepted := exactObservationReadSurface(fixture, factor); accepted || read.Available() {
+			t.Fatalf("exact observation accepted non-exact metadata %s", name)
+		}
+	}
 }

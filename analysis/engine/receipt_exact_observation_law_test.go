@@ -8,354 +8,83 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-type exactObservationWriteFixture struct {
-	count   int
-	surface equation.Surface
-	route   uint64
-}
-
-func hotExactObservationFactorSpec() HotFactorSpec[uint64, uint64] {
-	spec := hotUintFactorSpec()
-	// The law observes a graph-owned coordinate other than Local 1. Keep the
-	// factor bound exact to the largest hostile fixture coordinate (Local 9).
-	spec.KeyEnd = 9
-	return spec
-}
-
-func (fixture exactObservationWriteFixture) WriteCount() int { return fixture.count }
-func (fixture exactObservationWriteFixture) WriteAt(index int) (equation.Surface, bool) {
-	return fixture.surface, index == 0
-}
-func (fixture exactObservationWriteFixture) WriteRouteRead(index int) (uint64, bool) {
-	return fixture.route, index == 0
-}
-
+// TestExactObservationDerivesCommittedExactWriteCoordinate keeps observation
+// geometry on the committed graph. Every observed member has one strong exact
+// write, and every runtime observation points at an owned Group output.
 func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
-	factor := compositionKeyOf(coldKey(948_010))
-	other := compositionKeyOf(coldKey(948_011))
-	write := equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}
-	read, readOK := exactObservationReadSurface(exactObservationWriteFixture{count: 1, surface: write}, factor)
-	if !readOK || read.Factor != factor || read.Form != equation.SurfaceReadExact || read.Local != write.Local || read.Mode != equation.TargetModeNone || read.Semantic.Available() || read.Normalizer.Available() {
-		t.Fatal("exact observation did not derive its read from the committed exact write")
+	fixture := newObservedReceiptQueryMatrixFixture(t, 5, nil, nil)
+	graph := fixture.graph.graph
+	for index := 0; index < graph.GroupCount(); index++ {
+		group, ok := graph.HyperedgeAt(index)
+		if !ok || !graph.OwnsPoint(group.Output()) {
+			t.Fatalf("group %d has no owned observation output", index)
+		}
+		for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
+			member, memberOK := group.MemberAt(memberIndex)
+			write, writeOK := member.WriteAt(0)
+			if !memberOK || !graph.OwnsMember(member) || member.WriteCount() != 1 || !writeOK || !write.Available() || write.Form != equation.SurfaceWriteExact || write.Mode != equation.TargetModeStrong || write.Local == 0 || write.Semantic.Available() || write.Normalizer.Available() {
+				t.Fatalf("member %d did not retain one exact committed write", memberIndex)
+			}
+		}
 	}
-	for name, fixture := range map[string]exactObservationWriteFixture{
-		"same-point other member factor": {count: 1, surface: equation.Surface{Factor: other, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}},
-		"multiple writes":                {count: 2, surface: write},
-		"non-exact write":                {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Local: 7}},
-		"weak exact write":               {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeWeak}},
-		"zero coordinate":                {count: 1, surface: equation.Surface{Factor: factor, Form: equation.SurfaceWriteExact, Mode: equation.TargetModeStrong}},
-	} {
-		if read, accepted := exactObservationReadSurface(fixture, factor); accepted || read.Available() {
-			t.Fatalf("exact observation accepted %s", name)
+	if len(fixture.solver.runtime.observations) != len(fixture.observations) {
+		t.Fatal("observation runtime/table cardinality diverged")
+	}
+	for index, observation := range fixture.solver.runtime.observations {
+		if observation == nil || observation.observationID() != fixture.observations[index].ID || !graph.OwnsPoint(observation.observationPoint()) {
+			t.Fatalf("observation %d lost its committed point or public ID", index)
 		}
 	}
 }
 
-func TestRuleExactObservationReadsCommittedMemberAndRejectsForeignState(t *testing.T) {
-	fixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
-	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, identity.ContentID{}, fixture.member); attached {
-		t.Fatal("exact observation accepted unavailable ID")
+// TestExactObservationReadsCommittedMemberAndRejectsForeignState proves an
+// observation is readable only from the Solver and State that sealed its
+// committed member table.
+func TestExactObservationReadsCommittedMemberAndRejectsForeignState(t *testing.T) {
+	firstSolver, firstObservation, firstState := newBorrowedObservationFixture(t)
+	value, readable := testSnapshotObservationValue[uint64](firstSolver, firstState, firstObservation.ID)
+	if !readable {
+		t.Fatal("committed exact observation was not readable")
 	}
-	observation, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(92), fixture.member)
-	if !attached || !observation.Available() {
-		t.Fatal("exact observation attachment")
+	foreignSolver, _, foreignState := newBorrowedObservationFixture(t)
+	if _, readable := testSnapshotObservationValue[uint64](foreignSolver, firstState, firstObservation.ID); readable {
+		t.Fatal("foreign Solver read the committed observation")
 	}
-	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(92), fixture.member); attached {
-		t.Fatal("exact observation accepted duplicate ID")
+	if _, readable := testSnapshotObservationValue[uint64](firstSolver, foreignState, firstObservation.ID); readable {
+		t.Fatal("foreign State crossed the observation fence")
 	}
-	points, pointsOK := indexReceiptObservationPoints(fixture.member.graph)
-	memberPoint, memberPointOK := points[fixture.member.member.Key()]
-	otherPoint, otherPointOK := points[fixture.otherMember.member.Key()]
-	if !pointsOK || !memberPointOK || !otherPointOK || memberPoint.Key() != otherPoint.Key() {
-		t.Fatal("exact observation fixture did not retain two members at one output point")
+	if _, failure, ok := newObservedReceiptQueryMatrixFixture(t, 1, nil, nil).graph.Seal([]ProgramObservationAdmission{firstObservation, firstObservation}); ok || !failure.Available() {
+		t.Fatal("duplicate exact observation identity sealed")
 	}
-	if _, failure := AttachRuleExactObservationWithFailure(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(95), fixture.otherMember); failure != receiptObservationAttachFailureMapping {
-		t.Fatalf("exact observation accepted same-point foreign-factor member failure=%v", failure)
-	}
-	foreignFixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
-	if _, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(93), foreignFixture.member); attached {
-		t.Fatal("exact observation accepted foreign Rule member")
-	}
-	if _, attached := AttachRuleExactObservation(fixture.compilation, foreignFixture.implementation, receiptAssemblySemanticID(93), fixture.member); attached {
-		t.Fatal("exact observation accepted foreign exact implementation")
-	}
-	solver, _, solverOK := fixture.compilation.Seal()
-	if !solverOK || solver == nil {
-		t.Fatal("exact observation solver")
-	}
-	state, status, report := solver.SolveWithReport(context.Background())
-	if status != SolveComplete || state == nil {
-		t.Fatalf("exact observation solve = status:%v state:%t report:%t reason:%v phase:%v point:%v group:%v member:%v rule:%v", status, state != nil, report.Available(), report.Reason(), report.Failure(), report.Point(), report.Group(), report.Member(), report.Rule())
-	}
-	value, readable := testSnapshotObservationValue[uint64](solver, state, observation.id)
-	if !readable || value != 1 {
-		t.Fatalf("exact observation = value:%d readable:%t", value, readable)
-	}
-	write, writeOK := fixture.member.member.WriteAt(0)
-	if !writeOK || write.Local != 7 {
-		t.Fatal("exact observation fixture lost its nonzero committed coordinate")
-	}
-	foreignObservation, foreignAttached := AttachRuleExactObservation(foreignFixture.compilation, foreignFixture.implementation, receiptAssemblySemanticID(92), foreignFixture.member)
-	foreign, _, foreignSolverOK := foreignFixture.compilation.Seal()
-	if !foreignAttached || !foreignObservation.Available() || !foreignSolverOK || foreign == nil {
-		t.Fatal("foreign exact observation fixture")
-	}
-	foreignState, foreignStatus := foreign.Solve(context.Background())
-	if foreignStatus != SolveComplete || foreignState == nil {
-		t.Fatalf("foreign exact observation solve = status:%v state:%t", foreignStatus, foreignState != nil)
-	}
-	if _, readable := testSnapshotObservationValue[uint64](foreign, state, observation.id); readable {
-		t.Fatal("exact observation read through a foreign solver")
-	}
-	if _, readable := testSnapshotObservationValue[uint64](solver, foreignState, observation.id); readable {
-		t.Fatal("exact observation read a foreign completed state")
+	if value == ^uint64(0) {
+		t.Fatalf("fixture exact observation unexpectedly saturated: %d", value)
 	}
 }
 
-func TestReceiptObservationTopologyNeedsOwnedObservationBeforeSolver(t *testing.T) {
-	fixture := newExactRuleObservationFixture(t, hotExactQuerySpec())
-	if solver, _, assembled := fixture.compilation.Seal(); assembled || solver != nil {
-		t.Fatal("observation topology assembled without an owned observation root")
+// TestObservationPublicationRequiresOwnedObservationRow proves a solver with
+// no observation inventory publishes no observation answer, while a sealed
+// observation row publishes one stable value and can be explicitly detached.
+func TestObservationPublicationRequiresOwnedObservationRow(t *testing.T) {
+	querySolver, _, queryState := newBorrowedQueryFixture(t)
+	if _, readable := testSnapshotObservationValue[uint64](querySolver, queryState, identity.ContentID{0xEE}); readable {
+		t.Fatal("query-only publication manufactured an observation row")
 	}
-}
-
-func TestReceiptAssemblyCommitDoesNotImplicitlyDeferQueryFamilies(t *testing.T) {
-	if _, committed := buildExactRuleObservationFixture(t, hotExactQuerySpec(), false); committed {
-		t.Fatal("ordinary receipt commit deferred a declared query family")
+	solver, observation, state := newBorrowedObservationFixture(t)
+	first, firstReadable := testSnapshotObservationValue[uint64](solver, state, observation.ID)
+	second, secondReadable := testSnapshotObservationValue[uint64](solver, state, observation.ID)
+	if !firstReadable || !secondReadable || first != second {
+		t.Fatal("observation publication was not stable across borrowed reads")
 	}
-}
-
-// hotMutableExactQuerySpec is the exact-query spec of a result type whose
-// value is a mutable backing store. Its freezer copies, so materialization
-// detaches the projector's scratch, and its Clone copies, so an explicit
-// detachment hands the caller an owned value.
-func hotMutableExactQuerySpec(project func(OrderedCells[uint64]) []uint64) HotExactQuerySpec[uint64, []uint64] {
-	clone := func(value []uint64) []uint64 { return append([]uint64(nil), value...) }
-	return HotExactQuerySpec[uint64, []uint64]{
-		Project: project,
-		Result: FrozenResult[[]uint64]{
-			Semantic: coldKey(949_902), Freeze: clone, Clone: clone,
-			Equal: func(left, right []uint64) bool {
-				if len(left) != len(right) {
-					return false
-				}
-				for index := range left {
-					if left[index] != right[index] {
-						return false
-					}
-				}
-				return true
-			},
-			Fingerprint: func(value []uint64) uint64 {
-				var fingerprint uint64
-				for index, item := range value {
-					fingerprint ^= uint64(index+1)*0x9e3779b97f4a7c15 ^ item
-				}
-				return fingerprint
-			},
-			Present: func(value []uint64) bool { return true },
-		},
+	published, ok := solver.PublishedSnapshot(state)
+	if !ok {
+		t.Fatal("observation publication unavailable")
 	}
-}
-
-// TestRuleExactObservationFreezesOnceAndDetachesOnDemand fixes the borrow
-// contract for a mutable result type. Materialization freezes the projector's
-// backing store, so a later mutation of that scratch is invisible; every
-// borrowed read then returns that one published value without copying it; and a
-// caller that needs an owned copy asks for one explicitly and mutates it
-// without reaching the published result.
-func TestRuleExactObservationFreezesOnceAndDetachesOnDemand(t *testing.T) {
-	scratch := []uint64{7, 11}
-	fixture := newExactRuleObservationFixture(t, hotMutableExactQuerySpec(func(_ OrderedCells[uint64]) []uint64 { return scratch }))
-	observation, attached := AttachRuleExactObservation(fixture.compilation, fixture.implementation, receiptAssemblySemanticID(94), fixture.member)
-	if !attached || !observation.Available() {
-		t.Fatal("mutable exact observation attachment")
+	answer, answerReadable := testSnapshotAnswer(solver, state, published.ObservationFamily(), observation.ID)
+	owned, ownedOK := DetachAnswer[uint64](answer)
+	if !answerReadable || !ownedOK || owned != first {
+		t.Fatalf("detached exact observation=%d/%t", owned, ownedOK)
 	}
-	solver, _, solverOK := fixture.compilation.Seal()
-	if !solverOK || solver == nil {
-		t.Fatal("mutable exact observation solver")
+	if _, solveStatus := solver.Solve(context.Background()); solveStatus != SolveComplete {
+		t.Fatal("warm observation solve did not complete")
 	}
-	state, status := solver.Solve(context.Background())
-	if status != SolveComplete || state == nil {
-		t.Fatalf("mutable exact observation solve = status:%v state:%t", status, state != nil)
-	}
-	// The projector deliberately returns its mutable scratch backing store. A
-	// materialized observation must retain the freezer's detached copy.
-	scratch[0] = 99
-	first, firstReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
-	if !firstReadable || len(first) != 2 || first[0] != 7 || first[1] != 11 {
-		t.Fatalf("first frozen observation read = %#v/%t", first, firstReadable)
-	}
-	second, secondReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
-	if !secondReadable || len(second) != 2 || &second[0] != &first[0] {
-		t.Fatalf("a borrowed read copied the published result = %#v/%t", second, secondReadable)
-	}
-	sealed, sealedOK := solver.PublishedSnapshot(state)
-	if !sealedOK {
-		t.Fatal("mutable exact observation has no sealed snapshot")
-	}
-	answer, answerReadable := testSnapshotAnswer(solver, state, sealed.ObservationFamily(), observation.id)
-	detached, detachedReadable := DetachAnswer[[]uint64](answer)
-	detachedReadable = answerReadable && detachedReadable
-	if !detachedReadable || len(detached) != 2 || detached[0] != 7 || detached[1] != 11 || &detached[0] == &first[0] {
-		t.Fatalf("detached observation read = %#v/%t", detached, detachedReadable)
-	}
-	detached[0], detached[1] = 101, 103
-	third, thirdReadable := testSnapshotObservationValue[[]uint64](solver, state, observation.id)
-	if !thirdReadable || len(third) != 2 || third[0] != 7 || third[1] != 11 {
-		t.Fatalf("a detached copy reached the published result = %#v/%t", third, thirdReadable)
-	}
-}
-
-// newExactRuleObservationFixture intentionally has no graph query row: the
-// attached observation itself supplies the exact committed-member demand root.
-// This keeps the law focused on observation ownership rather than ordinary
-// query execution.
-type exactRuleObservationFixture[R any] struct {
-	compilation    *ProgramConstruction
-	implementation *ExactQueryImplementation[uint64, R]
-	member         ProgramMember
-	otherMember    ProgramMember
-}
-
-func newExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQuerySpec[uint64, R]) exactRuleObservationFixture[R] {
-	t.Helper()
-	fixture, committed := buildExactRuleObservationFixture(t, querySpec, true)
-	if !committed {
-		t.Fatal("exact observation commit")
-	}
-	return fixture
-}
-
-func buildExactRuleObservationFixture[R any](t testing.TB, querySpec HotExactQuerySpec[uint64, R], deferredQueries bool) (exactRuleObservationFixture[R], bool) {
-	t.Helper()
-	builder := NewSchema()
-	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(948_001))
-	writeForm, writeFormOK := factor.ExactWrite()
-	readForm, readOK := factor.ExactRead()
-	otherFactor, otherFactorOK := DeclareFactorSlot[uint64](builder, coldKey(948_011))
-	otherWriteForm, otherWriteFormOK := otherFactor.ExactWrite()
-	rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
-		Semantic: coldKey(948_031), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(948_032)}, Output: factor.Ref(),
-	})
-	write, writeOK := SchemaWrite(rule, writeForm)
-	otherRule, otherRuleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
-		Semantic: coldKey(948_033), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(948_034)}, Output: otherFactor.Ref(),
-	})
-	otherWrite, otherWriteOK := SchemaWrite(otherRule, otherWriteForm)
-	query, queryOK := DeclareQuerySlot[R](builder, SchemaQuerySpec{Semantic: coldKey(948_002), Freezer: querySpec.Result.Semantic})
-	queryReadOK := SchemaQueryRead(query, readForm)
-	schema, schemaOK := builder.Seal()
-	if !factorOK || !writeFormOK || !readOK || !otherFactorOK || !otherWriteFormOK || !ruleOK || !writeOK || !otherRuleOK || !otherWriteOK || !queryOK || !queryReadOK || !schemaOK || schema == nil {
-		t.Fatal("exact observation schema")
-	}
-	binding := NewSchemaBinding(schema)
-	ruleSpec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
-		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(948_032)),
-		Transfer: func(access Access[uint64, ruleUnit]) bool {
-			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
-		},
-	}
-	otherRuleSpec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
-		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(948_034)),
-		Transfer: func(access Access[uint64, ruleUnit]) bool {
-			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(9)) })
-		},
-	}
-	if binding == nil || !BindFactor(binding, factor, hotExactObservationFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) ||
-		!BindFactor(binding, otherFactor, hotExactObservationFactorSpec()) ||
-		!BindRule[uint64, uint64, ruleUnit](binding, otherRule, otherWrite, otherFactor, otherRuleSpec, testRuleProjector[ruleUnit]) ||
-		!BindExactQuery(binding, query, factor, querySpec) || !binding.Seal() {
-		t.Fatal("exact observation binding")
-	}
-	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	otherImplementation, otherImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, otherRule)
-	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, R](binding, query)
-	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
-	if !implementationOK || implementation == nil || !otherImplementationOK || otherImplementation == nil || !queryImplementationOK || queryImplementation == nil || !assemblyOK || assembly == nil {
-		t.Fatal("exact observation assembly")
-	}
-
-	proof := implementation.binding.proof
-	otherProof := otherImplementation.binding.proof
-	if proof == nil || otherProof == nil {
-		t.Fatal("exact observation rule proof")
-	}
-	site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(949_900)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := assembly.admitAt(site)
-	operandValue := ruleUnitForSemantic(coldKey(949_901))
-	entity, entityOK := operandEntityForContent(operandValue.content)
-	operand, operandOK := assembly.admitOperand(occurrence, entity)
-	otherOccurrence, otherOccurrenceOK := assembly.admitAt(site)
-	otherOperandValue := ruleUnitForSemantic(coldKey(949_903))
-	otherEntity, otherEntityOK := operandEntityForContent(otherOperandValue.content)
-	otherOperand, otherOperandOK := assembly.admitOperand(otherOccurrence, otherEntity)
-	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !otherOccurrenceOK || !otherEntityOK || !otherOperandOK || assembly.sealSources().Available() {
-		t.Fatal("exact observation source")
-	}
-	source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-		Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrence, Operand: operand,
-		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 7, Mode: equation.TargetModeStrong}}},
-	})
-	draft, draftOK := implementation.beginBindingRuleRow(source)
-	part, partOK := implementation.WritePart(source, 0)
-	if !sourceOK || !draftOK || !partOK || !draft.AddWrite(part) {
-		t.Fatal("exact observation rule row")
-	}
-	ruleRow, ruleRowOK := assembly.issueRuleRow(draft)
-	otherSource, otherSourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-		Schema: otherProof.semantic, OperandFamily: otherProof.operandFamily, Occurrence: otherOccurrence, Operand: otherOperand,
-		Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: otherProof.output, Form: equation.SurfaceWriteExact, Local: 9, Mode: equation.TargetModeStrong}}},
-	})
-	otherDraft, otherDraftOK := otherImplementation.beginBindingRuleRow(otherSource)
-	otherPart, otherPartOK := otherImplementation.WritePart(otherSource, 0)
-	if !otherSourceOK || !otherDraftOK || !otherPartOK || !otherDraft.AddWrite(otherPart) {
-		t.Fatal("exact observation foreign-factor rule row")
-	}
-	otherRuleRow, otherRuleRowOK := assembly.issueRuleRow(otherDraft)
-	if !ruleRowOK || !otherRuleRowOK {
-		t.Fatal("exact observation topology")
-	}
-	declaration := topologyDeclaration{
-		binding: binding, batch: assembly.inner.batch,
-		points: []declaredPointRow{{ID: receiptAssemblySemanticID(90), Site: site}},
-		members: []declaredMemberRow{
-			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(91), Row: ruleRow.row},
-			{Plane: declaredMemberOwner, ID: receiptAssemblySemanticID(96), Row: otherRuleRow.row},
-		},
-		observationQueries: deferredQueries,
-	}
-	constructed, refusal := constructTopology(declaration)
-	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
-	if !committed || issued == nil {
-		if deferredQueries {
-			t.Fatalf("exact observation deferred commit committed=%t graph=%t stage=%v step=%v", committed, issued != nil, refusal.Stage(), refusal.Step())
-		}
-		return exactRuleObservationFixture[R]{}, false
-	}
-	graph := CommittedProgramFrom(topology, issued)
-	if graph == nil {
-		return exactRuleObservationFixture[R]{}, false
-	}
-	member, memberOK := graph.RuleMember(receiptAssemblySemanticID(91))
-	otherMember, otherMemberOK := graph.RuleMember(receiptAssemblySemanticID(96))
-	compilation, compilationOK := BeginProgramConstruction(binding, graph)
-	if !memberOK || !otherMemberOK || !compilationOK || compilation == nil {
-		t.Fatal("exact observation receipt compilation")
-	}
-	if !installConstOperandResolver(implementation, operandValue) || !installConstOperandResolver(otherImplementation, otherOperandValue) {
-		t.Fatal("exact observation resolver")
-	}
-	if attached := AttachRuleMember(compilation, implementation, receiptAssemblySemanticID(91)); !attached {
-		t.Fatal("exact observation member attachment")
-	}
-	if attached := AttachRuleMember(compilation, otherImplementation, receiptAssemblySemanticID(96)); !attached {
-		t.Fatal("exact observation same-point member attachment")
-	}
-	return exactRuleObservationFixture[R]{compilation: compilation, implementation: queryImplementation, member: member, otherMember: otherMember}, true
 }

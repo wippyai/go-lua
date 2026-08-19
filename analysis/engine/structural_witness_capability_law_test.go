@@ -6,73 +6,74 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// TestStructuralWitnessCapabilityResolvesDisjointClaim proves a Link-global
-// occurrence resolves to the exact capability that admitted it, and that the
-// answer does not depend on the unordered capability namespace walk.
+func witnessLawID(value byte) identity.ContentID {
+	var id identity.ContentID
+	id[0] = value
+	return id
+}
+
+func witnessLawCapability(t testing.TB, ordinal uint64) RuleSlotCapability {
+	t.Helper()
+	return framingLawCapability(t.(*testing.T), ruleCapabilityLink, ordinal, false)
+}
+
+// TestStructuralWitnessCapabilityResolvesDisjointClaim proves that a
+// Link-global witness resolves each occurrence through exactly its issuing
+// capability namespace, without a mount or domain-role interpretation.
 func TestStructuralWitnessCapabilityResolvesDisjointClaim(t *testing.T) {
-	owner := newBootstrapTransportLawOwner(t)
-	value := bootstrapTransportLawID(9, 40)
-	heap := bootstrapTransportLawID(9, 41)
+	value, heap := witnessLawID(41), witnessLawID(42)
+	first, second := witnessLawCapability(t, 0), witnessLawCapability(t, 1)
 	witness, ok := NewLinkBootstrapWitnessByCapability(
-		bootstrapTransportLawID(9, 42),
-		LinkBootstrapPoint{PointID: bootstrapTransportLawID(9, 43), Known: true, Initial: true},
-		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{value}},
-		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{heap}},
+		witnessLawID(1),
+		LinkBootstrapPoint{PointID: witnessLawID(2), Known: true, Initial: true},
+		LinkBootstrapCatalog{Capability: first, Occurrences: []identity.ContentID{value}},
+		LinkBootstrapCatalog{Capability: second, Occurrences: []identity.ContentID{heap}},
 	)
-	if !ok || !witness.Available() {
-		t.Fatal("disjoint capability witness")
+	if !ok || !witness.Available() || witness.OccurrenceCount() != 2 {
+		t.Fatal("disjoint witness did not seal")
 	}
-	for repeat := 0; repeat < 64; repeat++ {
-		valueCapability, valueOK := witness.capabilityFor(value)
-		heapCapability, heapOK := witness.capabilityFor(heap)
-		if !valueOK || valueCapability != owner.value {
-			t.Fatalf("repeat %d value capability", repeat)
+	for occurrence, want := range map[identity.ContentID]RuleSlotCapability{value: first, heap: second} {
+		got, found := witness.capabilityFor(occurrence)
+		if !found || got != want {
+			t.Fatalf("occurrence %x resolved to %v/%t, want %v/true", occurrence, got, found, want)
 		}
-		if !heapOK || heapCapability != owner.heap {
-			t.Fatalf("repeat %d heap capability", repeat)
-		}
+	}
+	if _, found := witness.capabilityFor(witnessLawID(99)); found {
+		t.Fatal("unclaimed occurrence resolved through a witness")
 	}
 }
 
-// TestStructuralWitnessCapabilityRejectsCrossSlotClaim proves an occurrence
-// claimed by more than one capability is refused. Capability namespaces are
-// disjoint by contract, so a cross-slot claim has no legitimate winner.
+// TestStructuralWitnessCapabilityRejectsCrossSlotClaim proves that an
+// occurrence cannot be interpreted by two slot capabilities, even if a
+// malformed in-memory witness is presented to the resolver.
 func TestStructuralWitnessCapabilityRejectsCrossSlotClaim(t *testing.T) {
-	owner := newBootstrapTransportLawOwner(t)
-	shared := bootstrapTransportLawID(9, 50)
-	witness := LinkBootstrapWitness{
-		owner:       bootstrapTransportLawID(9, 51),
-		point:       LinkBootstrapPoint{PointID: bootstrapTransportLawID(9, 52), Known: true, Initial: true},
-		occurrences: []identity.ContentID{shared},
-		byCapability: map[RuleSlotCapability]map[identity.ContentID]struct{}{
-			owner.value: {shared: struct{}{}},
-			owner.heap:  {shared: struct{}{}},
-		},
-		transportCapabilities: []RuleSlotCapability{owner.value, owner.heap},
+	shared := witnessLawID(51)
+	first, second := witnessLawCapability(t, 2), witnessLawCapability(t, 3)
+	witness, ok := NewLinkBootstrapWitnessByCapability(
+		witnessLawID(3), LinkBootstrapPoint{PointID: witnessLawID(4), Known: true, Initial: true},
+		LinkBootstrapCatalog{Capability: first, Occurrences: []identity.ContentID{shared}},
+		LinkBootstrapCatalog{Capability: second, Occurrences: []identity.ContentID{witnessLawID(52)}},
+	)
+	if !ok {
+		t.Fatal("base witness")
 	}
-	if !witness.Available() {
-		t.Fatal("cross-slot witness fixture")
-	}
-	for repeat := 0; repeat < 64; repeat++ {
-		capability, ok := witness.capabilityFor(shared)
-		if ok || capability != (RuleSlotCapability{}) {
-			t.Fatalf("repeat %d: cross-slot occurrence resolved to a capability", repeat)
-		}
+	witness.byCapability[second][shared] = struct{}{}
+	if capability, found := witness.capabilityFor(shared); found || capability.Available() {
+		t.Fatal("cross-slot occurrence claim was resolved")
 	}
 }
 
-// TestStructuralWitnessCapabilityRejectsCrossSlotAdmission proves the sealing
-// constructor is the first authority refusing a cross-slot occurrence.
+// TestStructuralWitnessCapabilityRejectsCrossSlotAdmission proves the public
+// witness constructor refuses duplicate occurrence claims before a witness is
+// published.
 func TestStructuralWitnessCapabilityRejectsCrossSlotAdmission(t *testing.T) {
-	owner := newBootstrapTransportLawOwner(t)
-	shared := bootstrapTransportLawID(9, 60)
-	witness, ok := NewLinkBootstrapWitnessByCapability(
-		bootstrapTransportLawID(9, 61),
-		LinkBootstrapPoint{PointID: bootstrapTransportLawID(9, 62), Known: true, Initial: true},
-		LinkBootstrapCatalog{Capability: owner.value, Occurrences: []identity.ContentID{shared}},
-		LinkBootstrapCatalog{Capability: owner.heap, Occurrences: []identity.ContentID{shared}},
-	)
-	if ok || witness.Available() {
-		t.Fatal("cross-slot occurrence admitted")
+	shared := witnessLawID(61)
+	first, second := witnessLawCapability(t, 4), witnessLawCapability(t, 5)
+	if witness, ok := NewLinkBootstrapWitnessByCapability(
+		witnessLawID(5), LinkBootstrapPoint{PointID: witnessLawID(6), Known: true, Initial: true},
+		LinkBootstrapCatalog{Capability: first, Occurrences: []identity.ContentID{shared}},
+		LinkBootstrapCatalog{Capability: second, Occurrences: []identity.ContentID{shared}},
+	); ok || witness.Available() {
+		t.Fatal("duplicate cross-slot occurrence claim was admitted")
 	}
 }

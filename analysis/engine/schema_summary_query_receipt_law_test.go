@@ -6,91 +6,61 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
-func summaryQuerySchemaFixture(t testing.TB) (*Schema, *FactorSlot[uint64], SchemaReadForm[uint64], *QuerySlot[uint64]) {
+func summaryQueryLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], SchemaReadForm[uint64], *QuerySlot[uint64]) {
 	t.Helper()
 	builder := NewSchema()
-	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(949_001))
-	form, formOK := factor.SummaryRead(coldKey(949_002))
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(949_003), Freezer: coldKey(949_004)})
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(954_001))
+	form, formOK := factor.SummaryRead(coldKey(954_002))
+	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(954_003), Freezer: coldKey(953_100)})
 	readOK := SchemaQueryRead(query, form)
 	schema, schemaOK := builder.Seal()
 	if !factorOK || !formOK || !queryOK || !readOK || !schemaOK || schema == nil {
-		t.Fatal("summary query schema")
+		t.Fatal("summary query law schema")
 	}
 	return schema, factor, form, query
 }
 
-func hotSummaryQuerySpec() HotSummaryQuerySpec[uint64, uint64] {
-	return HotSummaryQuerySpec[uint64, uint64]{
-		Project: func(cells OrderedCells[uint64]) uint64 { return uint64(cells.Count()) },
-		Result: FrozenResult[uint64]{
-			Semantic:    coldKey(949_004),
-			Freeze:      func(value uint64) uint64 { return value },
-			Clone:       func(value uint64) uint64 { return value },
-			Equal:       func(left, right uint64) bool { return left == right },
-			Fingerprint: func(value uint64) uint64 { return value },
-			Present:     func(value uint64) bool { return true },
-		},
-	}
+func bindSummaryQueryLaw(binding *SchemaBinding, factor *FactorSlot[uint64], form SchemaReadForm[uint64], query *QuerySlot[uint64]) bool {
+	return BindFactor(binding, factor, hotUintFactorSpec()) &&
+		BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
+			func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
+			func(left, right OrderedCells[uint64]) bool {
+				return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
+			},
+			func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) &&
+		BindSummaryQuery(binding, query, factor, form, hotSummaryQueryLawSpec())
 }
 
-func bindSummaryQueryFixture(binding *SchemaBinding, factor *FactorSlot[uint64], form SchemaReadForm[uint64], query *QuerySlot[uint64]) bool {
-	if !BindFactor(binding, factor, hotUintFactorSpec()) {
-		return false
-	}
-	if !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
-		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
-		func(left, right OrderedCells[uint64]) bool {
-			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
-		},
-		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) {
-		return false
-	}
-	return BindSummaryQuery(binding, query, factor, form, hotSummaryQuerySpec())
-}
-
-func TestSchemaSummaryQueryReceiptBindsExactFormAndRejectsDuplicate(t *testing.T) {
-	schema, factor, form, query := summaryQuerySchemaFixture(t)
+func TestSchemaSummaryQueryBindsExactFormAndRejectsDuplicate(t *testing.T) {
+	schema, factor, form, query := summaryQueryLawSchema(t)
 	binding := NewSchemaBinding(schema)
-	if binding == nil || !bindSummaryQueryFixture(binding, factor, form, query) || !binding.Seal() {
-		t.Fatal("summary query receipt binding")
+	if binding == nil || !bindSummaryQueryLaw(binding, factor, form, query) || !binding.Seal() {
+		t.Fatal("summary query form did not seal")
 	}
 	implementation, ok := SummaryQueryImplementationAt[uint64, uint64](binding, query)
-	if !ok || implementation == nil {
-		t.Fatal("summary query implementation")
+	if !ok || implementation == nil || !implementation.binding.valid() {
+		t.Fatal("summary query implementation lost its sealed form")
 	}
-	project, ok := implementation.projector()
-	if !ok || project == nil || project(OrderedCells[uint64]{}) != 0 {
-		t.Fatal("summary query projector")
-	}
-
-	duplicate := NewSchemaBinding(schema)
-	if duplicate == nil || !BindFactor(duplicate, factor, hotUintFactorSpec()) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](duplicate, factor, form,
-		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
-		func(left, right OrderedCells[uint64]) bool {
-			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
-		},
-		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) || !BindSummaryQuery(duplicate, query, factor, form, hotSummaryQuerySpec()) || BindSummaryQuery(duplicate, query, factor, form, hotSummaryQuerySpec()) || !duplicate.Poisoned() {
-		// A second cell for the same canonical query row is rejected; this
-		// check deliberately occurs before Seal so no partial receipt exists.
-		t.Fatal("duplicate summary query attachment")
+	duplicateSchema, duplicateFactor, duplicateForm, duplicateQuery := summaryQueryLawSchema(t)
+	duplicate := NewSchemaBinding(duplicateSchema)
+	if duplicate == nil || !bindSummaryQueryLaw(duplicate, duplicateFactor, duplicateForm, duplicateQuery) || BindSummaryQuery(duplicate, duplicateQuery, duplicateFactor, duplicateForm, hotSummaryQueryLawSpec()) || !duplicate.Poisoned() {
+		t.Fatal("duplicate summary query row was admitted")
 	}
 }
 
-func TestSchemaSummaryQueryReceiptRejectsForeignEqualSchemaAndIncompleteInventory(t *testing.T) {
-	schema, factor, form, _ := summaryQuerySchemaFixture(t)
-	foreignSchema, _, _, foreignQuery := summaryQuerySchemaFixture(t)
+func TestSchemaSummaryQueryRejectsForeignEqualSchemaAndIncompleteInventory(t *testing.T) {
+	schema, factor, form, _ := summaryQueryLawSchema(t)
+	foreignSchema, _, _, foreignQuery := summaryQueryLawSchema(t)
 	if schema.ID() != foreignSchema.ID() {
-		t.Fatal("equal summary schemas")
+		t.Fatal("equal summary schemas did not canonicalize")
 	}
 	binding := NewSchemaBinding(schema)
-	if binding == nil || BindSummaryQuery(binding, foreignQuery, factor, form, hotSummaryQuerySpec()) || !binding.Poisoned() {
-		t.Fatal("foreign equal-schema summary query crossed owner fence")
+	if binding == nil || BindSummaryQuery(binding, foreignQuery, factor, form, hotSummaryQueryLawSpec()) || !binding.Poisoned() {
+		t.Fatal("foreign summary query crossed the binding authority")
 	}
-
-	// A fresh binding makes the missing Query inventory check unambiguous.
-	missing := NewSchemaBinding(schema)
-	if missing == nil || !BindFactor(missing, factor, hotUintFactorSpec()) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](missing, factor, form,
+	missingSchema, missingFactor, missingForm, _ := summaryQueryLawSchema(t)
+	missing := NewSchemaBinding(missingSchema)
+	if missing == nil || !BindFactor(missing, missingFactor, hotUintFactorSpec()) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](missing, missingFactor, missingForm,
 		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
 		func(left, right OrderedCells[uint64]) bool {
 			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
@@ -100,77 +70,24 @@ func TestSchemaSummaryQueryReceiptRejectsForeignEqualSchemaAndIncompleteInventor
 	}
 }
 
-func TestReceiptCompilerBindsSummaryQueryGraphSurface(t *testing.T) {
-	builder := NewSchema()
-	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(949_010))
-	form, formOK := factor.SummaryRead(coldKey(949_011))
-	writeForm, writeFormOK := factor.ExactWrite()
-	rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
-		Semantic: coldKey(949_012), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(949_013)}, Output: factor.Ref(),
-	})
-	write, writeOK := SchemaWrite(rule, writeForm)
-	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(949_014), Freezer: coldKey(949_015)})
-	queryReadOK := SchemaQueryRead(query, form)
-	schema, schemaOK := builder.Seal()
-	if !factorOK || !formOK || !writeFormOK || !ruleOK || !writeOK || !queryOK || !queryReadOK || !schemaOK || schema == nil {
-		t.Fatal("summary graph schema")
-	}
-
-	batch := equation.NewBatch()
-	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(949_016)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-	occurrence, occurrenceOK := batch.At(site)
-	operandValue := ruleUnitForSemantic(coldKey(949_017))
-	operandEntity, operandEntityOK := operandEntityForContent(operandValue.content)
-	operand, operandOK := batch.AdmitOperand(occurrence, operandEntity)
-	if !siteOK || !occurrenceOK || !operandEntityOK || !operandOK || !batch.Seal() {
-		t.Fatal("summary graph batch")
-	}
-	surface := equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(949_011)), Normalizer: compositionKeyOf(coldKey(949_011))}
-	// A summary query surface carries its raw key set with it, the way
-	// addMountedQuery registers the implementation's mapping before issuing
-	// the query row. The mapping spans the bound Factor's dense universe.
-	summaryKeys := make([]uint64, hotUintFactorSpec().KeyEnd)
-	for index := range summaryKeys {
-		summaryKeys[index] = uint64(index)
-	}
-	topology, topologyOK := equation.SealTopology(schema.cold, equation.TopologySpec{
-		Batch:  batch,
-		Rules:  []equation.RuleInstance{{Schema: schema.ruleSemanticAt(0), OperandFamily: compositionKeyOf(unitOperandFamily), Occurrence: occurrence, Operand: operand, Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: schema.factorSemanticAt(0), Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}}}},
-		Points: []equation.PointSpec{{Site: site}}, Groups: []equation.Group{{Members: []equation.RuleRef{equation.RuleAt(0)}, Output: equation.PointAt(0)}}, Queries: []equation.QueryInstance{{Family: schema.querySemanticAt(0), Point: equation.PointAt(0), Surfaces: []equation.Surface{surface}}},
-		Summaries: []equation.SummaryMapping{{Surface: surface, Keys: summaryKeys}},
-	})
-	if !topologyOK || topology == nil {
-		t.Fatal("summary graph topology")
-	}
-	graph, graphOK := initialEquationGraph(topology)
-	if !graphOK || graph == nil {
-		t.Fatal("summary graph identity")
-	}
-	identity, identityOK := graph.QueryAt(0)
-	if !identityOK {
-		t.Fatal("summary graph query identity")
-	}
-	// A hot receipt carries the identities its cold slot declared: the Rule's
-	// trusted-theorem identity and the Query's freezer semantic both belong to
-	// this schema, not to the fixture the shared spec helpers were shaped for.
-	ruleSpec := receiptExactQueryRuleSpec()
-	ruleSpec.Admission = AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(949_013))
-	querySpec := hotSummaryQuerySpec()
-	querySpec.Result.Semantic = coldKey(949_015)
+func TestSummaryQueryPublishesItsDeclaredForm(t *testing.T) {
+	schema, factor, form, query := summaryQueryLawSchema(t)
 	binding := NewSchemaBinding(schema)
-	if binding == nil || !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSummaryReadForFactor[uint64, uint64, OrderedCells[uint64]](binding, factor, form,
-		func(value OrderedCells[uint64]) OrderedCells[uint64] { return value },
-		func(left, right OrderedCells[uint64]) bool {
-			return equalOrderedCellRecords(left.record, right.record, func(left, right uint64) bool { return left == right })
-		},
-		func(value OrderedCells[uint64]) uint64 { return uint64(value.Count()) }) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, ruleSpec, testRuleProjector[ruleUnit]) || !BindSummaryQuery(binding, query, factor, form, querySpec) || !binding.Seal() {
-		t.Fatal("summary graph binding")
+	if binding == nil || !bindSummaryQueryLaw(binding, factor, form, query) || !binding.Seal() {
+		t.Fatal("summary query binding")
 	}
-	implementation, implementationOK := SummaryQueryImplementationAt[uint64, uint64](binding, query)
-	compilation, compiled := beginProgramConstruction(binding, graph)
-	runtime, joined := bindReceiptSummaryQuery[uint64, uint64](compilation.programPlane, implementation, identity)
-	if !implementationOK || !compiled || !joined || runtime == nil || runtime.query().Key() != identity.Key() || runtime.surface.Form != equation.SurfaceReadSummary || runtime.surface.Semantic != compositionKeyOf(coldKey(949_011)) {
-		t.Fatal("summary graph evidence join")
+	implementation, ok := SummaryQueryImplementationAt[uint64, uint64](binding, query)
+	if !ok || implementation == nil || implementation.binding.normalizer != compositionKeyOf(coldKey(954_002)) {
+		t.Fatal("summary query implementation retained a foreign form")
+	}
+	surface := equation.Surface{Factor: compositionKeyOf(coldKey(954_001)), Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(954_002)), Normalizer: compositionKeyOf(coldKey(954_002))}
+	mapping, mappingOK := implementation.topologySummaryMapping(surface)
+	if !mappingOK || mapping.Surface != surface || len(mapping.Keys) == 0 {
+		t.Fatal("summary query evidence surface was not published")
+	}
+	wrong := surface
+	wrong.Form = equation.SurfaceReadExact
+	if _, accepted := implementation.topologySummaryMapping(wrong); accepted {
+		t.Fatal("summary query accepted an exact surface in the summary lane")
 	}
 }

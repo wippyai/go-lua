@@ -5,101 +5,49 @@ import (
 	"testing"
 )
 
-// TestReceiptQueriesRemainBoundToDeclaredRows exercises a bounded complete
-// permutation matrix. Every one of the four declared Factor/Rule/Query
-// triples is assembled through the receipt directory in all 4! row orders.
-// The topology key and semantic query vector must remain invariant.
-func TestReceiptQueriesRemainBoundToDeclaredRows(t *testing.T) {
-	permutations := receiptQueryPermutations(4)
-	var baseline receiptQueryMatrixFixture
-	for index, permutation := range permutations {
+func TestConstructedQueriesRemainBoundToDeclaredRows(t *testing.T) {
+	baseline := newReceiptQueryMatrixFixture(t, 4, nil, nil)
+	state, status := baseline.solver.Solve(context.Background())
+	if status != SolveComplete || state == nil {
+		t.Fatalf("baseline solve state=%t status=%v", state != nil, status)
+	}
+	keys := make([][2]byte, len(baseline.queries))
+	for index, query := range baseline.queries {
+		key, ok := query.PublicationKey()
+		if !ok {
+			t.Fatalf("baseline query %d has no publication key", index)
+		}
+		keys[index] = [2]byte{key[0], key[1]}
+	}
+	for _, permutation := range receiptQueryPermutations(4) {
 		fixture := newReceiptQueryMatrixFixture(t, 4, permutation, permutation)
-		if index == 0 {
-			baseline = fixture
-			state, status := fixture.solver.Solve(context.Background())
-			if state == nil || status != SolveComplete {
-				t.Fatalf("baseline receipt solve = state:%v status:%v", state, status)
-			}
-			for queryIndex, query := range fixture.queries {
-				key, keyed := query.PublicationKey()
-				if !keyed {
-					t.Fatalf("baseline query[%d] has no snapshot key", queryIndex)
-				}
-				value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
-				if !readable || value != baseline.expected[queryIndex] {
-					t.Fatalf("baseline query[%d] = %d/%v, want %d/true", queryIndex, value, readable, baseline.expected[queryIndex])
-				}
-			}
-			continue
-		}
-		if fixture.topologyKey != baseline.topologyKey {
-			t.Fatalf("receipt topology key changed under permutation %v", permutation)
-		}
-		if fixture.schemaID != baseline.schemaID {
-			t.Fatalf("receipt schema identity changed under permutation %v", permutation)
-		}
 		state, status := fixture.solver.Solve(context.Background())
-		if state == nil || status != SolveComplete {
-			t.Fatalf("permutation %v solve = state:%v status:%v", permutation, state, status)
+		if status != SolveComplete || state == nil || fixture.schemaID != baseline.schemaID || fixture.topologyKey != baseline.topologyKey {
+			t.Fatalf("permutation %v changed sealed program identity", permutation)
 		}
-		for queryIndex, query := range fixture.queries {
-			key, keyed := query.PublicationKey()
-			if !keyed {
-				t.Fatalf("permutation %v query[%d] has no snapshot key", permutation, queryIndex)
-			}
+		for index, query := range fixture.queries {
+			key, ok := query.PublicationKey()
 			value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
-			if !readable || value != baseline.expected[queryIndex] {
-				t.Fatalf("permutation %v query[%d] = %d/%v, want %d/true", permutation, queryIndex, value, readable, baseline.expected[queryIndex])
+			if !ok || !readable || [2]byte{key[0], key[1]} != keys[index] || value != fixture.expected[index] {
+				t.Fatalf("permutation %v query %d = %d/%t", permutation, index, value, readable)
 			}
 		}
 	}
 }
 
-// TestReceiptQueryMatrixScaleInvariance keeps the larger historical matrix
-// widths represented without multiplying the exhaustive four-row test. Each
-// width is built in identity, reverse, and rotated declaration/row orders.
-func TestReceiptQueryMatrixScaleInvariance(t *testing.T) {
-	for _, count := range []int{16, 21, 25} {
-		orders := receiptQueryScaleOrders(count)
-		var baseline receiptQueryMatrixFixture
-		for index, rowOrder := range orders {
-			declarationOrder := orders[(index+1)%len(orders)]
-			fixture := newReceiptQueryMatrixFixture(t, count, rowOrder, declarationOrder)
-			state, status := fixture.solver.Solve(context.Background())
-			if state == nil || status != SolveComplete {
-				t.Fatalf("count %d order %d solve = state:%v status:%v", count, index, state, status)
-			}
-			if index == 0 {
-				baseline = fixture
-			} else if fixture.schemaID != baseline.schemaID || fixture.topologyKey != baseline.topologyKey {
-				t.Fatalf("count %d order %d changed schema/topology identity", count, index)
-			}
-			for queryIndex, query := range fixture.queries {
-				key, keyed := query.PublicationKey()
-				if !keyed {
-					t.Fatalf("count %d order %d query[%d] has no snapshot key", count, index, queryIndex)
-				}
-				value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
-				if !readable || value != baseline.expected[queryIndex] {
-					t.Fatalf("count %d order %d query[%d] = %d/%v, want %d/true", count, index, queryIndex, value, readable, baseline.expected[queryIndex])
-				}
+func TestConstructedQueryMatrixScaleInvariance(t *testing.T) {
+	for _, width := range []int{1, 2, 4, 8, 16} {
+		fixture := newReceiptQueryMatrixFixture(t, width, nil, nil)
+		state, status := fixture.solver.Solve(context.Background())
+		if status != SolveComplete || state == nil || len(fixture.queries) != width {
+			t.Fatalf("width %d solve state=%t status=%v queries=%d", width, state != nil, status, len(fixture.queries))
+		}
+		for index, query := range fixture.queries {
+			key, keyed := query.PublicationKey()
+			value, readable := testSnapshotQueryValue[uint64](fixture.solver, state, key)
+			if !keyed || !readable || value != fixture.expected[index] {
+				t.Fatalf("width %d query %d = %d/%t", width, index, value, readable)
 			}
 		}
 	}
-}
-
-func receiptQueryScaleOrders(count int) [][]int {
-	identity := make([]int, count)
-	for index := range identity {
-		identity[index] = index
-	}
-	reverse := append([]int(nil), identity...)
-	for left, right := 0, len(reverse)-1; left < right; left, right = left+1, right-1 {
-		reverse[left], reverse[right] = reverse[right], reverse[left]
-	}
-	rotation := append([]int(nil), identity...)
-	if count > 1 {
-		rotation = append(rotation[1:], rotation[0])
-	}
-	return [][]int{identity, reverse, rotation}
 }

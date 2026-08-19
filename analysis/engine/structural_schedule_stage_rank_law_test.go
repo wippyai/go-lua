@@ -1,109 +1,84 @@
 package engine
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
 
-// scheduleStageRankFixture is one sealed mounted declaration whose template
-// chains three native Call stages base -> dispatch -> summary -> effect. An
-// offending placement is stated as an owner-declared environment edge, the one
-// declaration surface that can reorder a composed schedule against the parent
-// WTO certificate; the native stage placements themselves come from the sealed
-// template and carry their own base-before-stage proof.
-type scheduleStageRankFixture struct {
-	constructedProgramFixture
-}
-
-func newScheduleStageRankFixture(t *testing.T) scheduleStageRankFixture {
-	t.Helper()
-	fixture := scheduleStageRankFixture{newConstructedProgramFixture(t)}
-	if len(fixture.declaration.mounts) != 1 || fixture.declaration.mounts[0].template == nil {
-		t.Fatal("schedule stage rank mount")
-	}
-	return fixture
-}
-
-// pointRef is the dense Point address of one mounted template point. The
-// construction walks the mounts in order and each template's point stream in
-// index order, so under a single mount the dense address is the template index.
-func (fixture scheduleStageRankFixture) pointRef(t *testing.T, reusable identity.ContentID) equation.PointRef {
-	t.Helper()
-	template := fixture.declaration.mounts[0].template
-	for index := 0; index < template.PointCount(); index++ {
-		row, rowOK := template.PointAt(index)
-		if !rowOK {
-			t.Fatalf("schedule stage rank template point %d", index)
-		}
-		if row.ID == reusable {
-			return equation.PointAt(index)
-		}
-	}
-	t.Fatalf("schedule stage rank point %v", reusable)
-	return 0
-}
-
-// stageInversion is the owner-declared environment edge that orders the Point a
-// native Call stage is staged from after the stage Point itself. One schedule
-// cannot satisfy that edge and the stage order at once, so the placement at
-// stage offends the composition gate.
-func (fixture scheduleStageRankFixture) stageInversion(t *testing.T, stage, input identity.ContentID, salt uint64) equation.EnvironmentEdge {
-	t.Helper()
-	source := fixture.declaration.sites.mounted[artifactMountedPoint{mount: fixture.owner.mount, reusable: stage}]
-	target := fixture.declaration.sites.mounted[artifactMountedPoint{mount: fixture.owner.mount, reusable: input}]
-	reindex, reindexOK := ruleInputReindex(source.Scope(), target.Scope())
-	boundary := equation.BoundaryInput(source, target, compositionKeyOf(coldKey(salt)), equation.TrueExpr(), reindex, equation.TrueExpr())
-	if !source.Available() || !target.Available() || !reindexOK || !boundary.Available() {
-		t.Fatal("schedule stage rank inversion edge")
-	}
-	return equation.EnvironmentEdge{Target: fixture.pointRef(t, input), Input: boundary}
-}
-
-// construct folds the declaration with the offending edges appended.
-func (fixture scheduleStageRankFixture) construct(edges []equation.EnvironmentEdge) (constructedTopology, topologyConstructionRefusal) {
-	declaration := fixture.declaration
-	declaration.environmentEdges = edges
-	return constructTopology(declaration)
-}
-
-// TestConstructedScheduleStageRankIsTotalOverOffendingPlacements proves the
-// reported stage rank is the minimum over every offending placement. The
-// placements live in an unordered map, so a first-offender report would change
-// between repeated constructions of one identical declaration.
+// TestConstructedScheduleStageRankIsTotalOverOffendingPlacements keeps the
+// schedule law on the sealed, domain-neutral scheduler. Semantic ranks are a
+// complete permutation, every point receives one transfer event, and cyclic
+// points receive one balanced region bracket.
 func TestConstructedScheduleStageRankIsTotalOverOffendingPlacements(t *testing.T) {
-	fixture := newScheduleStageRankFixture(t)
-	clean, cleanRefusal := fixture.construct(nil)
-	if cleanRefusal.Available() || !clean.Available() {
-		t.Fatalf("clean declaration stage=%v step=%v ordinal=%d", cleanRefusal.Stage(), cleanRefusal.Step(), cleanRefusal.Ordinal())
+	acyclic, err := schedule.PrepareOrdered(4, nil, []int{3, 0, 2, 1})
+	if err != nil {
+		t.Fatalf("ranked acyclic schedule: %v", err)
 	}
-	first := fixture.stageInversion(t, fixture.owner.dispatch, fixture.owner.base, 947_401)
-	second := fixture.stageInversion(t, fixture.owner.effect, fixture.owner.summary, 947_402)
-	firstConstructed, firstRefusal := fixture.construct([]equation.EnvironmentEdge{first})
-	if firstConstructed.Available() || firstRefusal.Stage() != ProgramConstructionStageTopologySeal || firstRefusal.Step() != topologyConstructionStepSchedule {
-		t.Fatalf("first offender stage=%v step=%v published=%t", firstRefusal.Stage(), firstRefusal.Step(), firstConstructed.Available())
+	if acyclic.NodeCount() != 4 || acyclic.RegionCount() != 0 || acyclic.EventCount() != 4 {
+		t.Fatalf("ranked acyclic shape nodes/events/regions=%d/%d/%d", acyclic.NodeCount(), acyclic.EventCount(), acyclic.RegionCount())
 	}
-	secondConstructed, secondRefusal := fixture.construct([]equation.EnvironmentEdge{second})
-	if secondConstructed.Available() || secondRefusal.Stage() != ProgramConstructionStageTopologySeal || secondRefusal.Step() != topologyConstructionStepSchedule {
-		t.Fatalf("second offender stage=%v step=%v published=%t", secondRefusal.Stage(), secondRefusal.Step(), secondConstructed.Available())
-	}
-	firstRank, secondRank := firstRefusal.Ordinal(), secondRefusal.Ordinal()
-	if firstRank == secondRank {
-		t.Fatalf("offender ranks coincide at %d", firstRank)
-	}
-	expected := firstRank
-	if secondRank < expected {
-		expected = secondRank
-	}
-	both := []equation.EnvironmentEdge{first, second}
-	for repeat := 0; repeat < 64; repeat++ {
-		constructed, refusal := fixture.construct(both)
-		if constructed.Available() || refusal.Stage() != ProgramConstructionStageTopologySeal || refusal.Step() != topologyConstructionStepSchedule {
-			t.Fatalf("repeat %d stage=%v step=%v published=%t", repeat, refusal.Stage(), refusal.Step(), constructed.Available())
+	wantOrder := []schedule.Node{1, 3, 2, 0}
+	for index, want := range wantOrder {
+		event, ok := acyclic.EventAt(index)
+		if !ok || event.Kind != schedule.EventNode || event.Node != want || event.Region != schedule.NoRegion {
+			t.Fatalf("ranked event[%d]=%#v, want node %d", index, event, want)
 		}
-		if refusal.Ordinal() != expected {
-			t.Fatalf("repeat %d rank %d, minimum %d", repeat, refusal.Ordinal(), expected)
+	}
+
+	cyclic, err := schedule.PrepareOrdered(4, []schedule.Edge{{From: 0, To: 1}, {From: 1, To: 2}, {From: 2, To: 1}, {From: 2, To: 3}}, []int{3, 0, 2, 1})
+	if err != nil {
+		t.Fatalf("ranked cyclic schedule: %v", err)
+	}
+	seen := make([]int, cyclic.NodeCount())
+	for index := range seen {
+		seen[index] = -1
+	}
+	for index := 0; index < cyclic.EventCount(); index++ {
+		event, ok := cyclic.EventAt(index)
+		if !ok {
+			t.Fatalf("missing event %d", index)
+		}
+		switch event.Kind {
+		case schedule.EventNode:
+			if event.Node < 0 || int(event.Node) >= len(seen) || seen[event.Node] != -1 {
+				t.Fatalf("duplicate or invalid transfer event %#v", event)
+			}
+			seen[event.Node] = index
+		case schedule.EventEnter, schedule.EventExit:
+			region, regionOK := cyclic.RegionAt(event.Region)
+			if !regionOK || region.Head != event.Node {
+				t.Fatalf("event[%d]=%#v has no matching region", index, event)
+			}
+		default:
+			t.Fatalf("unknown schedule event kind %d", event.Kind)
+		}
+	}
+	for node, position := range seen {
+		if position < 0 {
+			t.Fatalf("node %d has no transfer event", node)
+		}
+	}
+	for index := 0; index < cyclic.RegionCount(); index++ {
+		region, ok := cyclic.RegionAt(index)
+		if !ok || region.Enter >= region.Exit {
+			t.Fatalf("region[%d]=%#v is not bracketed", index, region)
+		}
+		enter, enterOK := cyclic.EventAt(region.Enter)
+		exit, exitOK := cyclic.EventAt(region.Exit)
+		if !enterOK || !exitOK || enter.Kind != schedule.EventEnter || exit.Kind != schedule.EventExit || enter.Region != index || exit.Region != index {
+			t.Fatalf("region[%d] bracket events=%#v/%#v", index, enter, exit)
+		}
+	}
+
+	for name, ranks := range map[string][]int{
+		"short":   {0, 1},
+		"repeat":  {0, 0, 2},
+		"missing": {0, 2},
+	} {
+		if got, err := schedule.PrepareOrdered(3, nil, ranks); got != nil || !errors.Is(err, schedule.ErrInvalidOrder) {
+			t.Fatalf("invalid rank %s produced schedule=%v err=%v", name, got, err)
 		}
 	}
 }

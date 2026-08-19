@@ -1,333 +1,238 @@
 package engine
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// The I3 construction laws are measured against these constants. R is the
-// number of distinct root bindings the sealed topology admits, counted from
-// the topology alone; a directory that indexed paths, pages, generations or
-// products of the root bindings would exceed the linear ceilings immediately.
-const (
-	semanticDirectoryConstructionBase  = 8
-	semanticDirectoryOperationsPerRoot = 2
-	semanticDirectoryCapacityPerRoot   = 3
-	semanticDirectoryPublicationBytes  = 4096
-)
-
-const (
-	semanticDirectoryPointRole = iota + 1
-	semanticDirectoryMemberRole
-	semanticDirectoryQueryRole
-)
-
-func semanticDirectoryScaleID(role byte, index int) identity.ContentID {
-	var id identity.ContentID
-	id[0] = role
-	id[1] = byte(index + 1)
-	id[2] = byte((index + 1) >> 8)
-	id[3] = byte((index + 1) >> 16)
-	return id
-}
-
-type semanticDirectoryScaleFixture struct {
-	topology *BindingTopology
-	graph    *CommittedProgram
-	roots    int
-}
-
-// newSemanticDirectoryScaleFixture commits one topology carrying count Points,
-// count Rule members and count Queries, so the admitted root-binding count
-// scales with count and nothing else.
-func newSemanticDirectoryScaleFixture(t testing.TB, count int) semanticDirectoryScaleFixture {
-	t.Helper()
-	schema, factor, rule, write, query := receiptExactQuerySchemaFixture(t)
-	binding := NewSchemaBinding(schema)
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, ruleUnit](binding, rule, write, factor, receiptExactQueryRuleSpec(), testRuleProjector[ruleUnit]) || !BindExactQuery(binding, query, factor, hotExactQuerySpec()) || !binding.Seal() {
-		t.Fatal("directory scale binding")
-	}
-	ruleImplementation, ruleOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	_, queryOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	assembly, assemblyOK := binding.beginBindingTopologyBuilder()
-	if !ruleOK || !queryOK || !assemblyOK {
-		t.Fatal("directory scale implementations")
-	}
-	sites := make([]equation.Site, count)
-	occurrences := make([]equation.Occurrence, count)
-	operands := make([]equation.Operand, count)
-	for index := 0; index < count; index++ {
-		site, siteOK := assembly.admitSite(compositionKeyOf(coldKey(960_000+index)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
-		occurrence, occurrenceOK := assembly.admitAt(site)
-		entity, entityOK := operandEntityForContent(ruleUnitForSemantic(coldKey(970_000 + index)).content)
-		operand, operandOK := assembly.admitOperand(occurrence, entity)
-		if !siteOK || !occurrenceOK || !entityOK || !operandOK {
-			t.Fatal("directory scale source rows")
-		}
-		sites[index], occurrences[index], operands[index] = site, occurrence, operand
-	}
-	if assembly.sealSources().Available() {
-		t.Fatal("directory scale source seal")
-	}
-	proof := ruleImplementation.binding.proof
-	declaration := topologyDeclaration{binding: binding, batch: assembly.inner.batch}
-	for index := 0; index < count; index++ {
-		declaration.points = append(declaration.points, declaredPointRow{ID: semanticDirectoryScaleID(semanticDirectoryPointRole, index), Site: sites[index]})
-		source, sourceOK := assembly.issueRuleSurfaceSource(equation.RuleSurfaceSourceSpec{
-			Schema: proof.semantic, OperandFamily: proof.operandFamily, Occurrence: occurrences[index], Operand: operands[index],
-			Writes: []equation.ResolvedWrite{{Index: 0, Surface: equation.Surface{Factor: proof.output, Form: equation.SurfaceWriteExact, Local: 1, Mode: equation.TargetModeStrong}}},
-		})
-		draft, draftOK := ruleImplementation.beginBindingRuleRow(source)
-		writePart, writePartOK := ruleImplementation.WritePart(source, 0)
-		if !sourceOK || !draftOK || !writePartOK || !draft.AddWrite(writePart) {
-			t.Fatal("directory scale Rule source")
-		}
-		ruleReceipt, ruleReceiptOK := assembly.issueRuleRow(draft)
-		if !ruleReceiptOK {
-			t.Fatal("directory scale topology rows")
-		}
-		declaration.members = append(declaration.members, declaredMemberRow{Plane: declaredMemberOwner, ID: semanticDirectoryScaleID(semanticDirectoryMemberRole, index), Row: ruleReceipt.row})
-		declaration.queries = append(declaration.queries, declaredQueryRow{ID: semanticDirectoryScaleID(semanticDirectoryQueryRole, index), Row: equation.QueryInstance{
-			Family: schema.querySemanticAt(0), Point: equation.PointAt(index),
-			Surfaces: []equation.Surface{{Factor: proof.output, Form: equation.SurfaceReadExact, Local: 1}},
-		}})
-	}
-	constructed, refusal := constructTopology(declaration)
-	topology, issued, committed := constructed.topology, constructed.graph, !refusal.Available() && constructed.Available()
-	if !committed || topology == nil || issued == nil {
-		t.Fatalf("directory scale commit: stage=%v step=%v ordinal=%d", refusal.Stage(), refusal.Step(), refusal.Ordinal())
-	}
-	graph := CommittedProgramFrom(topology, issued)
-	if graph == nil {
-		t.Fatal("directory scale committed program")
-	}
-	return semanticDirectoryScaleFixture{topology: topology, graph: graph, roots: admittedRootBindings(topology.topology)}
-}
-
-// admittedRootBindings counts the distinct root bindings the sealed topology
-// admits. It reads only the sealed topology, never the directory that indexes
-// it, so it is an independent denominator for the entry law.
-func admittedRootBindings(topology *equation.Topology) int {
-	roots := topology.PointRowCount() + topology.RuleMemberRowCount() + topology.QueryRowCount()
-	for index := 0; index < topology.RuleMemberRowCount(); index++ {
-		if _, ok := topology.ActivationMemberRow(equation.RuleAt(index)); ok {
-			roots++
-		}
-	}
-	return roots
-}
-
-// semanticDirectoryRows rebuilds the exact admitted row set of a scale fixture
-// so a construction law can hand the constructor a hostile variant of it.
-func semanticDirectoryRows(count int) *bindingSemanticRows {
-	rows := &bindingSemanticRows{
-		points:      make(map[identity.ContentID]equation.PointRef, count),
-		members:     make(map[identity.ContentID]equation.RuleRef, count),
-		queries:     make(map[identity.ContentID]uint64, count),
-		activations: map[identity.ContentID]equation.RuleRef{},
-	}
-	for index := 0; index < count; index++ {
-		rows.points[semanticDirectoryScaleID(semanticDirectoryPointRole, index)] = equation.PointAt(index)
-		rows.members[semanticDirectoryScaleID(semanticDirectoryMemberRole, index)] = equation.RuleAt(index)
-		rows.queries[semanticDirectoryScaleID(semanticDirectoryQueryRole, index)] = uint64(index)
-	}
-	return rows
-}
-
-// TestSemanticDirectoryResolvesAtMostOneLocatorPerContentID proves the
-// published directory is a function from ContentID to one role locator, and
-// that a construction aliasing one identity across two roles, or two
-// identities onto one row slot, rejects the seal instead of publishing an
-// ambiguous entry.
+// The directory is a sealed function from a published content identity to one
+// locator. These laws exercise it through the current ConstructProgram result;
+// no disposable construction workspace is retained by the test.
 func TestSemanticDirectoryResolvesAtMostOneLocatorPerContentID(t *testing.T) {
-	const count = 4
-	fixture := newSemanticDirectoryScaleFixture(t, count)
-	directory := fixture.topology.directory
+	fixture := newReceiptQueryMatrixFixture(t, 4, nil, nil)
+	directory := fixture.graph.directory
+	if directory == nil || len(directory.entries) == 0 {
+		t.Fatal("sealed program published no semantic directory")
+	}
 	for id, entry := range directory.entries {
-		_, isPoint := directory.point(id)
-		_, isMember := directory.member(id)
-		_, isQuery := directory.query(id)
-		_, isActivation := directory.activation(id)
 		roles := 0
-		for _, resolved := range []bool{isPoint, isMember, isQuery, isActivation} {
-			if resolved {
-				roles++
+		if _, ok := directory.point(id); ok {
+			roles++
+		}
+		if _, ok := directory.member(id); ok {
+			roles++
+		}
+		if _, ok := directory.query(id); ok {
+			roles++
+		}
+		if _, ok := directory.activation(id); ok {
+			roles++
+		}
+		if roles != 1 || entry.slot >= uint32(len(directory.entries)) {
+			t.Fatalf("directory identity %x resolves through %d role planes", id[:4], roles)
+		}
+	}
+	if _, ok := directory.resolve(identity.ContentID{}); ok {
+		t.Fatal("unavailable identity resolved")
+	}
+	if _, ok := directory.resolve(programMatrixID(250)); ok {
+		t.Fatal("unknown identity resolved")
+	}
+	for _, id := range fixture.observationIDs {
+		if _, ok := directory.resolve(id); ok {
+			t.Fatalf("observation identity entered the construction directory: %x", id[:4])
+		}
+	}
+}
+
+// TestSemanticDirectoryLocatorsRemainOwnedByOneTopologyRevision maps the
+// exact/revision/foreign directory law onto CommittedProgram.Seal: every
+// locator resolves against both fresh runtime seals of its owner topology and
+// against neither an equal-shaped foreign program nor a wrong role plane.
+func TestSemanticDirectoryLocatorsRemainOwnedByOneTopologyRevision(t *testing.T) {
+	fixture := newReceiptQueryMatrixFixture(t, 2, nil, nil)
+	directory := fixture.graph.directory
+	queryID := programMatrixID(110)
+	queryLocator, queryOK := directory.query(queryID)
+	if !queryOK {
+		t.Fatal("query directory locator")
+	}
+	var pointID, memberID identity.ContentID
+	for id, entry := range directory.entries {
+		switch entry.kind {
+		case bindingSemanticPoint:
+			pointID = id
+		case bindingSemanticMember:
+			memberID = id
+		}
+	}
+	pointLocator, pointOK := directory.point(pointID)
+	memberLocator, memberOK := directory.member(memberID)
+	if !pointOK || !memberOK || !pointID.Available() || !memberID.Available() {
+		t.Fatal("point/member directory locators")
+	}
+	first, firstFailure, firstOK := fixture.graph.Seal(nil)
+	second, secondFailure, secondOK := fixture.graph.Seal(nil)
+	if !firstOK || !secondOK || first == nil || second == nil || firstFailure.Available() || secondFailure.Available() {
+		t.Fatalf("fresh seals = %v/%v/%v and %v/%v/%v", first, firstFailure, firstOK, second, secondFailure, secondOK)
+	}
+	if _, ok := pointLocator.Resolve(first.runtime.graph); !ok {
+		t.Fatal("point locator crossed its owner revision")
+	}
+	if _, ok := memberLocator.Resolve(second.runtime.graph); !ok {
+		t.Fatal("member locator crossed its owner revision")
+	}
+	if _, ok := queryLocator.Resolve(first.runtime.graph); !ok {
+		t.Fatal("query locator crossed its owner revision")
+	}
+	foreign := newReceiptQueryMatrixFixture(t, 2, nil, nil)
+	if _, ok := pointLocator.Resolve(foreign.graph.graph); ok {
+		t.Fatal("point locator resolved against a foreign graph")
+	}
+	if _, ok := memberLocator.Resolve(foreign.graph.graph); ok {
+		t.Fatal("member locator resolved against a foreign graph")
+	}
+	if _, ok := queryLocator.Resolve(foreign.graph.graph); ok {
+		t.Fatal("query locator resolved against a foreign graph")
+	}
+	if _, ok := directory.point(memberID); ok {
+		t.Fatal("member identity entered the point directory")
+	}
+	if _, ok := directory.member(pointID); ok {
+		t.Fatal("point identity entered the member directory")
+	}
+}
+
+// TestSemanticDirectoryQuerySurfaceIsDetached keeps the query-row clone law
+// on the committed Query value: a caller's surface slice edit cannot mutate
+// the directory's parent graph or a later revision lookup.
+func TestSemanticDirectoryQuerySurfaceIsDetached(t *testing.T) {
+	fixture := newReceiptQueryMatrixFixture(t, 1, nil, nil)
+	locator, located := fixture.graph.directory.query(programMatrixID(110))
+	query, resolved := locator.Resolve(fixture.graph.graph)
+	if !located || !resolved {
+		t.Fatal("query directory row")
+	}
+	surfaces := query.Surfaces()
+	if len(surfaces) != 1 {
+		t.Fatal("query surface cardinality")
+	}
+	surfaces[0].Local = 99
+	again, resolved := locator.Resolve(fixture.graph.graph)
+	if !resolved || len(again.Surfaces()) != 1 || again.Surfaces()[0].Local != 1 {
+		t.Fatal("query surface edit crossed the committed row")
+	}
+}
+
+// TestSemanticDirectoryRejectsDuplicateAndZeroRows keeps the directory's
+// terminal identity fence on the current sealed rows. The old assembly test
+// supplied duplicate/zero identities; this law feeds the same malformed
+// identity classes to the sole directory sealer.
+func TestSemanticDirectoryRejectsDuplicateAndZeroRows(t *testing.T) {
+	fixture := newReceiptQueryMatrixFixture(t, 2, nil, nil)
+	var pointID, memberID identity.ContentID
+	rows := &bindingSemanticRows{
+		points:      make(map[identity.ContentID]equation.PointRef),
+		members:     make(map[identity.ContentID]equation.RuleRef),
+		queries:     make(map[identity.ContentID]uint64),
+		activations: make(map[identity.ContentID]equation.RuleRef),
+	}
+	for id, entry := range fixture.graph.directory.entries {
+		switch entry.kind {
+		case bindingSemanticPoint:
+			pointID = id
+			rows.points[id] = equation.PointAt(int(entry.slot) + 1)
+		case bindingSemanticMember:
+			memberID = id
+			rows.members[id] = equation.RuleAt(int(entry.slot) + 1)
+		case bindingSemanticQuery:
+			rows.queries[id] = uint64(entry.slot)
+		}
+	}
+	if pointID == (identity.ContentID{}) || memberID == (identity.ContentID{}) {
+		t.Fatal("directory source rows")
+	}
+	duplicate := *rows
+	duplicate.members = make(map[identity.ContentID]equation.RuleRef, len(rows.members)+1)
+	for id, ref := range rows.members {
+		duplicate.members[id] = ref
+	}
+	duplicate.members[pointID] = equation.RuleAt(1)
+	if directory, ok := sealSemanticDirectory(fixture.graph.topology, fixture.graph.state, fixture.graph.authority, &duplicate); ok || directory != nil {
+		t.Fatal("duplicate structural identity entered the directory")
+	}
+	zero := *rows
+	zero.points = make(map[identity.ContentID]equation.PointRef, len(rows.points)+1)
+	for id, ref := range rows.points {
+		zero.points[id] = ref
+	}
+	zero.points[identity.ContentID{}] = equation.PointAt(1)
+	if directory, ok := sealSemanticDirectory(fixture.graph.topology, fixture.graph.state, fixture.graph.authority, &zero); ok || directory != nil {
+		t.Fatal("zero structural identity entered the directory")
+	}
+}
+
+// TestSemanticDirectoryActivationLocatorIsExactAndForeignSafe maps the
+// activation-directory law to the selected overlay's sealed trigger row.
+func TestSemanticDirectoryActivationLocatorIsExactAndForeignSafe(t *testing.T) {
+	fixture := newSelectedOverlayLawFixtureWithCandidates(t, 2, false)
+	locator, located := fixture.graph.directory.activation(fixture.activationID)
+	if !located {
+		t.Fatal("activation directory locator")
+	}
+	if _, ok := locator.Resolve(fixture.graph.graph); !ok {
+		t.Fatal("activation locator did not resolve its committed trigger")
+	}
+	foreign := newSelectedOverlayLawFixture(t)
+	if _, ok := locator.Resolve(foreign.graph.graph); ok {
+		t.Fatal("activation locator resolved against a foreign graph")
+	}
+}
+
+// TestSemanticDirectoryActivationRejectsConflictingApplications keeps the
+// old mixed-application terminal law at the current admission boundary: one
+// trigger identity cannot be published twice under different applications.
+func TestSemanticDirectoryActivationRejectsConflictingApplications(t *testing.T) {
+	conflict := newSelectedOverlayLawFixtureWithCandidates(t, 2, true)
+	if conflict.graph != nil {
+		t.Fatal("conflicting activation applications published a trigger directory")
+	}
+}
+
+func TestSemanticDirectoryEntriesAreBoundedByPublishedRows(t *testing.T) {
+	for _, width := range []int{1, 4, 16, 32} {
+		fixture := newReceiptQueryMatrixFixture(t, width, nil, nil)
+		graph := fixture.graph.graph
+		roots := graph.PointCount() + graph.GroupCount() + graph.QueryCount()
+		if roots == 0 || len(fixture.graph.directory.entries) > roots*2 {
+			t.Fatalf("width %d directory entries=%d published roots=%d", width, len(fixture.graph.directory.entries), roots)
+		}
+		for index := 0; index < width; index++ {
+			if _, ok := fixture.graph.Query(programMatrixID(110 + index)); !ok {
+				t.Fatalf("width %d query %d lost its directory locator", width, index)
 			}
 		}
-		if roles != 1 || entry.kind < bindingSemanticPoint || entry.kind > bindingSemanticActivation {
-			t.Fatalf("ContentID %v resolved %d role locators", id[0], roles)
-		}
-	}
-	if _, resolved := directory.resolve(identity.ContentID{}); resolved {
-		t.Fatal("unavailable ContentID resolved")
-	}
-	if _, resolved := directory.point(semanticDirectoryScaleID(semanticDirectoryMemberRole, 0)); resolved {
-		t.Fatal("member identity resolved a Point locator")
-	}
-
-	topology, state, authority := fixture.topology.topology, fixture.topology.state, fixture.topology.authority
-	if _, ok := sealSemanticDirectory(topology, state, authority, semanticDirectoryRows(count)); !ok {
-		t.Fatal("admitted row set rejected")
-	}
-	aliased := semanticDirectoryRows(count)
-	aliased.members[semanticDirectoryScaleID(semanticDirectoryPointRole, 0)] = equation.RuleAt(0)
-	if _, ok := sealSemanticDirectory(topology, state, authority, aliased); ok {
-		t.Fatal("one ContentID reached two role locators")
-	}
-	shared := semanticDirectoryRows(count)
-	shared.points[semanticDirectoryScaleID(semanticDirectoryPointRole, count)] = equation.PointAt(0)
-	if _, ok := sealSemanticDirectory(topology, state, authority, shared); ok {
-		t.Fatal("two ContentIDs reached one row slot")
-	}
-	unavailable := semanticDirectoryRows(count)
-	unavailable.points[identity.ContentID{}] = equation.PointAt(0)
-	if _, ok := sealSemanticDirectory(topology, state, authority, unavailable); ok {
-		t.Fatal("unavailable ContentID entered the directory")
 	}
 }
 
-// semanticDirectoryCost reads the I3 construction cost directly off the sealed
-// directory. Construction claims one entry per installed row and validates one
-// query-order slot per query, so the installed row planes are the construction
-// operation count; the reserved slots are the row planes themselves.
-func semanticDirectoryCost(directory *semanticDirectory) (operations, capacity int) {
-	if directory == nil {
-		return 0, 0
-	}
-	operations = len(directory.entries) + len(directory.queryOrder)
-	capacity = len(directory.entries) + len(directory.points) + len(directory.members) +
-		len(directory.activations) + len(directory.queries) + len(directory.queryOrder)
-	return operations, capacity
-}
-
-// TestSemanticDirectoryEntriesAreBoundedByAdmittedRootBindings is I3 law (a):
-// entries never exceed R, the root bindings the sealed topology admits.
-func TestSemanticDirectoryEntriesAreBoundedByAdmittedRootBindings(t *testing.T) {
-	for _, count := range []int{1, 4, 16, 64} {
-		fixture := newSemanticDirectoryScaleFixture(t, count)
-		directory := fixture.topology.directory
-		roots := fixture.roots
-		if roots != 3*count {
-			t.Fatalf("%d admitted root bindings for %d declared rows, want %d", roots, count, 3*count)
-		}
-		if len(directory.entries) > roots {
-			t.Fatalf("directory holds %d entries for %d root bindings", len(directory.entries), roots)
-		}
-		for index := 0; index < count; index++ {
-			_, pointOK := directory.point(semanticDirectoryScaleID(semanticDirectoryPointRole, index))
-			_, memberOK := directory.member(semanticDirectoryScaleID(semanticDirectoryMemberRole, index))
-			_, queryOK := directory.query(semanticDirectoryScaleID(semanticDirectoryQueryRole, index))
-			if !pointOK || !memberOK || !queryOK {
-				t.Fatalf("root binding %d is unresolvable", index)
-			}
-		}
-	}
-}
-
-// TestSemanticDirectoryConstructionIsLinearInAdmittedRootBindings is I3 law
-// (b): construction operations and reserved capacity stay under a+bR, and
-// quadrupling R at most quadruples both counters.
-func TestSemanticDirectoryConstructionIsLinearInAdmittedRootBindings(t *testing.T) {
-	small := newSemanticDirectoryScaleFixture(t, 16)
-	large := newSemanticDirectoryScaleFixture(t, 64)
-	for _, fixture := range []semanticDirectoryScaleFixture{small, large} {
-		operations, capacity := semanticDirectoryCost(fixture.topology.directory)
-		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryOperationsPerRoot*fixture.roots; operations > ceiling {
-			t.Fatalf("construction ran %d operations for %d root bindings, want at most %d", operations, fixture.roots, ceiling)
-		}
-		if ceiling := semanticDirectoryConstructionBase + semanticDirectoryCapacityPerRoot*fixture.roots; capacity > ceiling {
-			t.Fatalf("construction reserved %d slots for %d root bindings, want at most %d", capacity, fixture.roots, ceiling)
-		}
-	}
-	growth := large.roots / small.roots
-	smallOperations, smallCapacity := semanticDirectoryCost(small.topology.directory)
-	largeOperations, largeCapacity := semanticDirectoryCost(large.topology.directory)
-	if largeOperations > growth*smallOperations || largeCapacity > growth*smallCapacity {
-		t.Fatalf("%dx root bindings cost %dx operations and %dx capacity", growth, largeOperations/smallOperations, largeCapacity/smallCapacity)
-	}
-}
-
-// TestSemanticDirectoryGenerationUpdateReplacesRootBindings is I3 law (c): a
-// generation update republishes the root bindings a locator resolves against
-// and appends nothing to the directory, so retained generations cannot grow it.
-func TestSemanticDirectoryGenerationUpdateReplacesRootBindings(t *testing.T) {
-	const generations = 32
-	fixture := newSemanticDirectoryScaleFixture(t, 16)
-	directory := fixture.topology.directory
-	beforeOperations, beforeCapacity := semanticDirectoryCost(directory)
+func TestSemanticDirectoryIsStableAcrossCommittedProgramSeals(t *testing.T) {
+	fixture := newReceiptQueryMatrixFixture(t, 8, nil, nil)
+	directory := fixture.graph.directory
 	entries := len(directory.entries)
-	relation, relationOK := fixture.topology.topology.InitialRelation()
-	if !relationOK {
-		t.Fatal("initial relation")
-	}
-	retained := make([]*CommittedProgram, 0, generations)
-	for generation := 0; generation < generations; generation++ {
-		next, published := fixture.topology.topology.Publish(relation, nil)
-		issued, graphOK := fixture.topology.Graph(next)
-		graph := CommittedProgramFrom(fixture.topology, issued)
-		if !published || !graphOK || graph == nil {
-			t.Fatalf("generation %d publication", generation)
-		}
-		for index := 0; index < 16; index++ {
-			point, pointOK := graph.lookupPoint(semanticDirectoryScaleID(semanticDirectoryPointRole, index))
-			member, memberOK := graph.lookupRuleMember(semanticDirectoryScaleID(semanticDirectoryMemberRole, index))
-			if !pointOK || !memberOK || !graph.graph.OwnsPoint(point) || member.graph != graph.graph || member.topology != graph.topology {
-				t.Fatalf("generation %d lost root binding %d", generation, index)
-			}
-		}
-		retained = append(retained, graph)
-		relation = next
-	}
-	operations, capacity := semanticDirectoryCost(directory)
-	if fixture.topology.directory != directory || len(directory.entries) != entries || operations != beforeOperations || capacity != beforeCapacity {
-		t.Fatalf("%d retained generations grew the directory from %d to %d entries", len(retained), entries, len(directory.entries))
-	}
-}
-
-// TestSemanticDirectoryPublicationAllocationIsIndependentOfRetainedGenerations
-// is I3 law (d): publishing a generation that admits no new root binding costs
-// a constant allocation, whatever R is and however many generations are held.
-func TestSemanticDirectoryPublicationAllocationIsIndependentOfRetainedGenerations(t *testing.T) {
-	const generations = 64
-	counts := []int{16, 64}
-	allocated := make([]uint64, len(counts))
-	roots := make([]int, len(counts))
-	for step, count := range counts {
-		fixture := newSemanticDirectoryScaleFixture(t, count)
-		relation, relationOK := fixture.topology.topology.InitialRelation()
-		if !relationOK {
-			t.Fatal("initial relation")
-		}
-		retained := make([]*CommittedProgram, 0, generations)
-		var before, after runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&before)
-		for generation := 0; generation < generations; generation++ {
-			next, published := fixture.topology.topology.Publish(relation, nil)
-			issued, graphOK := fixture.topology.Graph(next)
-			graph := CommittedProgramFrom(fixture.topology, issued)
-			if !published || !graphOK || graph == nil {
-				t.Fatalf("generation %d publication", generation)
-			}
-			retained = append(retained, graph)
-			relation = next
-		}
-		runtime.ReadMemStats(&after)
-		if len(retained) != generations {
-			t.Fatal("retained generations")
-		}
-		allocated[step], roots[step] = after.TotalAlloc-before.TotalAlloc, fixture.roots
-		if ceiling := uint64(generations * semanticDirectoryPublicationBytes); allocated[step] > ceiling {
-			t.Fatalf("%d generations over %d root bindings allocated %d bytes, want at most %d", generations, roots[step], allocated[step], ceiling)
+	for index := 0; index < 8; index++ {
+		if _, ok := fixture.graph.Query(programMatrixID(110 + index)); !ok {
+			t.Fatal("baseline query locator")
 		}
 	}
-	// The delta between the two runs is the root-binding count alone, so an
-	// allocation that grew with it would price retention by R instead of by the
-	// changed root bindings.
-	if roots[1] <= roots[0] || allocated[1] > allocated[0]+generations*semanticDirectoryConstructionBase {
-		t.Fatalf("%d root bindings allocated %d bytes against %d bytes for %d", roots[1], allocated[1], allocated[0], roots[0])
+	for attempt := 0; attempt < 16; attempt++ {
+		solver, failure, ok := fixture.graph.Seal(nil)
+		if !ok || solver == nil || failure.Available() {
+			t.Fatalf("seal %d failed: %v", attempt, failure)
+		}
+		if fixture.graph.directory != directory || len(directory.entries) != entries {
+			t.Fatal("sealing a committed program grew or replaced its directory")
+		}
 	}
 }
