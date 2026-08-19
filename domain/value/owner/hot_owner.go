@@ -116,6 +116,19 @@ func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value,
 	})
 }
 
+// BindSelectedRuleDirect installs Value's exact-write selected Rule cell at
+// its declared ordinal. The returned issuer fills each cold read ordinal;
+// no transaction handle or pending token crosses the Value boundary.
+func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[value.Value, O], carry engine.SchemaCarrySlot[value.Value], write engine.SchemaWriteSlot[value.Value], output engine.FactorRef[value.Value], spec engine.HotRuleSpec[value.Value, O], carrySpec engine.HotCarrySpec[value.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
+		return nil, false
+	}
+	if !engine.BindSelectedRuleDirect[coordinate](owner.binding, slot, carry, write, output, spec, carrySpec, projectWrite) {
+		return nil, false
+	}
+	return &RuleImplementation[O]{owner: owner, slot: slot}, true
+}
+
 func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool) {
 	if tx == nil || tx.owner == nil || tx.issuer == nil {
 		return nil, false
@@ -128,6 +141,16 @@ func AddSelectedRuleExactRead[O any, RV any](tx *SelectedRuleBinding[O], slot en
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
 	return engine.AddSelectedRouteExactRead(tx.tx, slot, factor, project)
+}
+
+// AddSelectedRuleDirectExactRead fills the direct Rule's exact read at the
+// SchemaReadSlot's packed ordinal. The slot itself, rather than append order,
+// is the only read-position authority.
+func AddSelectedRuleDirectExactRead[O any, RV any](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
+		return engine.Read[engine.OrderedCells[RV]]{}, false
+	}
+	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
 func AddSelectedRuleRead[O any, RV any, Tag interface {

@@ -257,6 +257,83 @@ func TestSchemaRuleBindingReadCarryAndSelectedProductProof(t *testing.T) {
 	}
 }
 
+func directSelectedRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *FactorSlot[uint64], *RuleSlot[uint64, struct{}], SchemaReadSlot[uint64], SchemaReadSlot[uint64], SchemaCarrySlot[uint64], SchemaWriteSlot[uint64]) {
+	t.Helper()
+	builder := NewSchema()
+	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_701))
+	foreign, foreignOK := DeclareFactorSlot[uint64](builder, coldKey(997_702))
+	readForm, readOK := factor.ExactRead()
+	writeForm, writeOK := factor.ExactWrite()
+	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
+		Semantic: coldKey(997_703), OperandFamily: coldKey(997_704), Inputs: 1,
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(997_705)}, Output: factor.Ref(),
+	})
+	input, inputOK := rule.Input(0)
+	left, leftOK := SchemaRead(rule, readForm, input)
+	right, rightOK := SchemaRead(rule, readForm, input)
+	carry, carryOK := SchemaCarryFrom(rule, input, factor.Ref())
+	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
+	schema, schemaOK := builder.Seal()
+	if !factorOK || !foreignOK || !readOK || !writeOK || !ruleOK || !inputOK || !leftOK || !rightOK || !carryOK || !writeSlotOK || !schemaOK || schema == nil {
+		t.Fatal("direct selected Rule schema")
+	}
+	return schema, factor, foreign, rule, left, right, carry, writeSlot
+}
+
+func directSelectedRuleHotLaw() HotRuleSpec[uint64, struct{}] {
+	return HotRuleSpec[uint64, struct{}]{
+		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7a}, true },
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(997_705)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
+	}
+}
+
+func bindDirectSelectedRuleLaw(t testing.TB) (*SchemaBinding, *FactorSlot[uint64], *FactorSlot[uint64], *RuleSlot[uint64, struct{}], SchemaReadSlot[uint64], SchemaReadSlot[uint64]) {
+	t.Helper()
+	schema, factor, foreign, rule, left, right, carry, write := directSelectedRuleLawSchema(t)
+	binding := NewSchemaBinding(schema)
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindFactor(binding, foreign, hotUintFactorSpec()) ||
+		!BindSelectedRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), directSelectedRuleHotLaw(), HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }) {
+		t.Fatal("direct selected Rule binding")
+	}
+	return binding, factor, foreign, rule, left, right
+}
+
+func TestSchemaRuleBindingDirectReadOrdinalsAreOrderIndependent(t *testing.T) {
+	binding, factor, _, rule, leftSlot, rightSlot := bindDirectSelectedRuleLaw(t)
+	right, rightOK := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, rightSlot, factor.Ref(), func(struct{}) (uint64, bool) { return 1, true })
+	left, leftOK := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, leftSlot, factor.Ref(), func(struct{}) (uint64, bool) { return 0, true })
+	if !rightOK || !leftOK || right.index != 1 || left.index != 0 || right.origin == nil || left.origin == nil || right.origin.readOrdinal != 1 || left.origin.readOrdinal != 0 || !binding.Seal() {
+		t.Fatalf("direct ordinal binding right=%t/%d left=%t/%d sealed=%t", rightOK, right.index, leftOK, left.index, binding.Sealed())
+	}
+	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
+	if !implementationOK || implementation == nil || implementation.binding.proof == nil || implementation.binding.proof.reads != 2 || implementation.binding.proof.carries != 1 || implementation.binding.proof.writes != 1 {
+		t.Fatal("direct selected Rule proof")
+	}
+}
+
+func TestSchemaRuleBindingDirectReadMismatchAndDuplicatePoison(t *testing.T) {
+	binding, factor, foreign, rule, leftSlot, _ := bindDirectSelectedRuleLaw(t)
+	if _, ok := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, leftSlot, foreign.Ref(), func(struct{}) (uint64, bool) { return 0, true }); ok || !binding.Poisoned() {
+		t.Fatal("foreign read Factor crossed direct Rule")
+	}
+
+	binding, factor, _, rule, leftSlot, _ = bindDirectSelectedRuleLaw(t)
+	if _, ok := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, leftSlot, factor.Ref(), func(struct{}) (uint64, bool) { return 0, true }); !ok {
+		t.Fatal("initial direct read")
+	}
+	if _, ok := BindSelectedRuleDirectExactRead[uint64, uint64, struct{}, uint64](binding, rule, leftSlot, factor.Ref(), func(struct{}) (uint64, bool) { return 0, true }); ok || !binding.Poisoned() {
+		t.Fatal("duplicate direct read was not poisoned")
+	}
+}
+
+func TestSchemaRuleBindingDirectIncompleteSealPoisons(t *testing.T) {
+	binding, _, _, _, _, _ := bindDirectSelectedRuleLaw(t)
+	if binding.Seal() || !binding.Poisoned() {
+		t.Fatal("incomplete direct Rule sealed")
+	}
+}
+
 func lawProgramRuleAnchor(t testing.TB) ruleSurfaceAnchor {
 	t.Helper()
 	batch := equation.NewBatch()
