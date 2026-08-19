@@ -186,15 +186,3 @@ func writeAnchor(writer *canonical.DigestWriter, occurrence equation.Occurrence,
 	return writer.Bytes(occurrenceKey.ID[:]) == nil && writer.Uint(occurrenceKey.Version) == nil &&
 		writer.Bytes(operandKey.ID[:]) == nil && writer.Uint(operandKey.Version) == nil
 }
-
-func RouteWriteSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, write uint64, ref Ref[K]) (RuleWriteSurface, bool) {
-	_, routeOK := proof.routeWriteAt(write)
-	if !routeOK || proof.bindingAuthority == nil || ref.binding.authority != nil && ref.binding.authority != proof.bindingAuthority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
-		return RuleWriteSurface{}, false
-	}
-	shape, shapeOK := proof.schema.ruleWriteShapeAt(proof.ordinal, write)
-	if !shapeOK || ref.binding.semanticKey() != shape.Factor {
-		return RuleWriteSurface{}, false
-	}
-	return RuleWriteSurface{value: equation.Surface{Factor: shape.Factor, Form: equation.SurfaceWriteRoute, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority, proof: proof, write: write}, true
-}
