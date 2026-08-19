@@ -1,11 +1,7 @@
 package boot
 
 import (
-	"errors"
-
-	"github.com/wippyai/go-lua/analysis/identity"
 	sealedrows "github.com/wippyai/go-lua/analysis/program/internal/rows"
-	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -13,11 +9,7 @@ import (
 // immutable owner value; no target-owned mutable table is appended later.
 func Compile(input Input) (Table, error) {
 	cloned := cloneInput(input)
-	operations, err := freezeOperations(cloned.Operations)
-	if err != nil {
-		return Table{}, err
-	}
-	ledger, err := freezeLedger(cloned, cloned.Keys, operations)
+	ledger, err := freezeLedger(cloned, cloned.Keys, cloned.Operations)
 	if err != nil {
 		return Table{}, err
 	}
@@ -59,50 +51,6 @@ func cloneBinding(input vocabulary.BindingSpec) vocabulary.BindingSpec {
 	}
 }
 
-type frozenOperation struct {
-	handle   vocabulary.Operation
-	bindings []vocabulary.BindingSpec
-	anchor   identity.ContentID
-}
-
 func checkedHandle(what string, index int) (uint32, error) {
 	return vocabulary.CheckedStoredLength(what, index+1)
-}
-
-func freezeOperations(input operation.Core) ([]frozenOperation, error) {
-	if _, err := vocabulary.CheckedStoredLength("operation input geometry", input.SourceCount()); err != nil {
-		return nil, err
-	}
-	out := make([]frozenOperation, input.SourceCount())
-	for index := range out {
-		op, ok := input.SourceOperation(index)
-		if !ok {
-			return nil, errors.New("target/boot: missing source operation coordinate")
-		}
-		bindings := make([]vocabulary.BindingSpec, input.BindingCount(op))
-		for bindingIndex := range bindings {
-			binding, bindingOK := input.BindingAt(op, bindingIndex)
-			if !bindingOK || !vocabulary.ValidBinding(binding) {
-				return nil, errors.New("target/boot: invalid operation binding")
-			}
-			bindings[bindingIndex] = binding
-		}
-		anchor, anchorOK := input.Anchor(op)
-		if !anchorOK {
-			return nil, errors.New("target/boot: missing operation anchor")
-		}
-		out[index] = frozenOperation{handle: op, bindings: bindings, anchor: anchor}
-	}
-	return out, nil
-}
-
-func operationForBinding(operations []frozenOperation, binding vocabulary.BindingSpec) (vocabulary.Operation, bool) {
-	for _, operation := range operations {
-		for _, candidate := range operation.bindings {
-			if compareBinding(candidate, binding) == 0 {
-				return operation.handle, true
-			}
-		}
-	}
-	return 0, false
 }

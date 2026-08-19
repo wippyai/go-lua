@@ -7,6 +7,7 @@ import (
 	sealedrows "github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
+	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -60,7 +61,7 @@ type frozenLedger struct {
 	absent      vocabulary.InitialValue
 }
 
-func freezeLedger(input Input, keys exactkey.Table, operations []frozenOperation) (frozenLedger, error) {
+func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (frozenLedger, error) {
 	if len(input.InitialRoots) == 0 {
 		if len(input.InitialEntries) != 0 || len(input.InitialBindings) != 0 || len(input.InitialMetatables) != 0 {
 			return frozenLedger{}, errors.New("target/boot: initial ledger has rows without roots")
@@ -228,10 +229,14 @@ func freezeLedger(input Input, keys exactkey.Table, operations []frozenOperation
 	for index, value := range unique {
 		row := valueRow{kind: value.kind, boolean: value.boolean, integer: value.integer, floatBits: value.floatBits, string: value.string, root: value.root, operation: value.operation}
 		if value.kind == vocabulary.InitialValueOperation {
-			if value.operation == 0 || uint64(value.operation) > uint64(len(operations)) {
+			if value.operation == 0 {
 				return frozenLedger{}, errors.New("target/boot: unresolved initial operation anchor")
 			}
-			row.anchor = operations[value.operation-1].anchor
+			anchor, ok := operations.Anchor(value.operation)
+			if !ok {
+				return frozenLedger{}, errors.New("target/boot: unresolved initial operation anchor")
+			}
+			row.anchor = anchor
 		}
 		if value.kind == vocabulary.InitialValueDeniedOperation {
 			_, err := appendBindingRange(&bindRanges, &bindingKeyBuilder, &bindingSegmentBuilder, value.binding, keys)
@@ -275,7 +280,7 @@ func freezeLedger(input Input, keys exactkey.Table, operations []frozenOperation
 	}, nil
 }
 
-func freezeValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.InitialRoot, operations []frozenOperation) (valueDraft, error) {
+func freezeValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.InitialRoot, operations operation.Core) (valueDraft, error) {
 	invalidScalars := func() bool {
 		return input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !emptyBinding(input.Operation)
 	}
@@ -318,7 +323,7 @@ func freezeValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.
 		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !vocabulary.ValidBinding(input.Operation) {
 			return valueDraft{}, errors.New("target/boot: invalid operation initial value")
 		}
-		op, ok := operationForBinding(operations, input.Operation)
+		op, ok := operations.Lookup(input.Operation)
 		if !ok {
 			return valueDraft{}, errors.New("target/boot: foreign initial operation")
 		}
@@ -327,7 +332,7 @@ func freezeValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.
 		if input.Boolean || input.Integer != 0 || input.FloatBits != 0 || input.String != "" || input.Root != "" || !vocabulary.ValidBinding(input.Operation) {
 			return valueDraft{}, errors.New("target/boot: invalid denied initial operation")
 		}
-		if _, admitted := operationForBinding(operations, input.Operation); admitted {
+		if _, admitted := operations.Lookup(input.Operation); admitted {
 			return valueDraft{}, errors.New("target/boot: denied initial operation is admitted")
 		}
 		return valueDraft{kind: input.Kind, binding: cloneBinding(input.Operation)}, nil
