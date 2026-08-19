@@ -177,11 +177,25 @@ func subtractAcceptedActivations(topology *equation.Topology, values, known []eq
 	return result, true
 }
 
-// installSelectedFactorOverlay publishes one prepared selected-edge
-// delta into a settled running epoch. Every recoverable allocation and bounds
-// check occurs
-// in prepareSelectedFactorEpoch; the commit below has no fallible semantic
-// operation, only assignments, map publication, and touched-bit updates.
+// nextFactorSources is the edge-source column of the frontier this overlay
+// publishes, served from the prepared rows before any of them is assigned to
+// the runtime. A grown backing store already carries both the appended and
+// the replaced rows; an in-place frontier keeps them beside the installed
+// ones until the commit writes them.
+func (overlay *preparedSelectedFactorOverlay) nextFactorSources(runtime *solverRuntime) factorSourceColumn {
+	if overlay.grownFactorEdges != nil {
+		return installedFactorSources(overlay.grownFactorEdges)
+	}
+	return factorSourceColumn{installed: runtime.factorEdges, additions: overlay.additions, replacements: overlay.replacements}
+}
+
+// installSelectedFactorOverlay publishes one prepared selected-edge delta
+// into a settled running epoch. Every admission the installation can refuse -
+// the prepared activation epoch, the operand plane over the rows about to be
+// published, the operand epoch, and every point index it installs - completes
+// on prepared values before the first mutation; the commit below then has no
+// fallible semantic operation, only assignments, map publication, and
+// touched-bit updates.
 func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelectedFactorOverlay) bool {
 	if !epochSelectedOverlayInstallEligible(epoch, overlay) {
 		return false
@@ -194,6 +208,31 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	if overlay.execution == nil || overlay.executionDemand == nil || overlay.demandEpoch == nil || len(overlay.activePoints) != len(runtime.activePoints) {
 		return false
 	}
+	// Region ordinals are per-frontier and private, so the operand transpose
+	// over them is too. It is derived from the edge and region rows this
+	// overlay publishes rather than from the rows the runtime still holds,
+	// which is what keeps the last fallible derivation ahead of the commit,
+	// and it is published together with those rows before any reader can
+	// reach a row of one frontier through a transpose of another.
+	operands, planed := buildOperandPlane(runtime.graph, runtime.producers, runtime.environments, overlay.nextFactorSources(runtime), overlay.regions)
+	if !planed {
+		return false
+	}
+	if !epoch.operands.openable(operands) {
+		return false
+	}
+	// An in-place frontier appends into reserved capacity. prepareEdgeBacking
+	// grows the store whenever that capacity is short, so the reslice below is
+	// admitted here rather than assumed across the two calls.
+	if overlay.grownFactorEdges == nil && cap(runtime.factorEdges) < overlay.previousEdgeCount+len(overlay.additions) {
+		return false
+	}
+	for _, activation := range prepared.pointActivations {
+		if !epoch.installablePoint(activation.index) {
+			return false
+		}
+	}
+	directAt := cloneDirectCatalog(overlay.directCatalog)
 	if overlay.grownFactorEdges != nil {
 		runtime.factorEdges = overlay.grownFactorEdges
 	} else if len(overlay.additions) != 0 {
@@ -228,24 +267,12 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	runtime.regionChildren = overlay.regionChildren
 	runtime.pointRegion = overlay.pointRegion
 	runtime.activeRegions = overlay.activeRegions
-	// Region ordinals are per-frontier and private, so the operand transpose
-	// over them is too. It is re-derived from the rows just installed and
-	// published with them, before any reader can reach a row of one frontier
-	// through a transpose of another.
-	operands, planed := buildOperandPlane(runtime.graph, runtime.producers, runtime.environments, runtime.factorEdges, runtime.regions)
-	if !planed {
-		return false
-	}
 	runtime.operands = operands
-	if !epoch.operands.open(operands) {
-		return false
-	}
+	epoch.operands.openAdmitted(operands)
 	for _, activation := range prepared.pointActivations {
 		// An activation installs a point without publishing a
 		// predecessor-to-successor transition, so it issues no classification.
-		if !epoch.installPoint(activation.index, activation.state, change.Set{}) {
-			return false
-		}
+		epoch.installAdmittedPoint(activation.index, activation.state, change.Set{})
 		epoch.structuralDirty[activation.index] = true
 		epoch.structural.inputs[activation.index] = structuralInputEpoch{}
 	}
@@ -267,7 +294,7 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	for origin, index := range overlay.newOrigins {
 		runtime.overlay.originAt[origin] = index
 	}
-	runtime.overlay.directAt = cloneDirectCatalog(overlay.directCatalog)
+	runtime.overlay.directAt = directAt
 	for _, target := range overlay.targets {
 		epoch.structuralDirty[target] = true
 		epoch.structural.inputs[target] = structuralInputEpoch{}

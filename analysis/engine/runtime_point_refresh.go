@@ -16,14 +16,28 @@ import (
 // admissibility consumer refuses. Keeping the install behind one function is
 // what makes that obligation structural instead of conventional.
 func (epoch *executorEpoch) installPoint(point int, next carrier.PointState, evidence change.Set) bool {
-	if epoch == nil || point < 0 || point >= len(epoch.points) {
+	if !epoch.installablePoint(point) {
 		return false
 	}
+	epoch.installAdmittedPoint(point, next, evidence)
+	return true
+}
+
+// installablePoint is installPoint's whole fallible half: the index must
+// address this epoch's published plane. A caller that must complete every
+// admission before it begins mutating admits each index here and commits
+// with installAdmittedPoint.
+func (epoch *executorEpoch) installablePoint(point int) bool {
+	return epoch != nil && point >= 0 && point < len(epoch.points)
+}
+
+// installAdmittedPoint is installPoint's commit half; installablePoint must
+// have admitted the index.
+func (epoch *executorEpoch) installAdmittedPoint(point int, next carrier.PointState, evidence change.Set) {
 	epoch.points[point] = next
 	if epoch.diagnostics != nil {
 		epoch.diagnostics.recordPublicationEvidence(evidence)
 	}
-	return true
 }
 
 func (epoch *executorEpoch) publish(point int, current, next carrier.PointState, changes carrier.ChangeSet, order pointPublication) (bool, bool) {

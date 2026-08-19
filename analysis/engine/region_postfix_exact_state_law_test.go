@@ -26,7 +26,7 @@ func regionPostfixLawEpoch(t *testing.T) *executorEpoch {
 		environmentExternal: []int{0},
 		environmentBack:     []int{1},
 	}}
-	plane, planed := buildOperandPlane(graph, nil, environments, nil, regions)
+	plane, planed := buildOperandPlane(graph, nil, environments, factorSourceColumn{}, regions)
 	if !planed {
 		t.Fatal("region-postfix-law operand plane was not sealed")
 	}

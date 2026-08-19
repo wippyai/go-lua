@@ -79,9 +79,10 @@ func publicationPathShape(function *ast.FuncDecl) bool {
 }
 
 // pointInstallPosition returns the first install into the published point
-// plane. The install itself lives behind epoch.installPoint, so a publication
-// path is recognized by that call; a direct assignment is still recognized so
-// the law survives a path that reintroduces one.
+// plane. The install itself lives behind epoch.installPoint and its admitted
+// commit half epoch.installAdmittedPoint, so a publication path is recognized
+// by either call; a direct assignment is still recognized so the law survives
+// a path that reintroduces one.
 func pointInstallPosition(function *ast.FuncDecl) token.Pos {
 	install := token.NoPos
 	mark := func(position token.Pos) {
@@ -90,7 +91,7 @@ func pointInstallPosition(function *ast.FuncDecl) token.Pos {
 		}
 	}
 	ast.Inspect(function.Body, func(node ast.Node) bool {
-		if call, isCall := node.(*ast.CallExpr); isCall && isSelector(call.Fun, "installPoint") {
+		if call, isCall := node.(*ast.CallExpr); isCall && (isSelector(call.Fun, "installPoint") || isSelector(call.Fun, "installAdmittedPoint")) {
 			mark(call.Pos())
 			return true
 		}
@@ -110,9 +111,10 @@ func pointInstallPosition(function *ast.FuncDecl) token.Pos {
 	return install
 }
 
-// installPoint is the single cut into the published point plane. Nothing else
-// in the package may assign into it, because a second install site is a
-// second place to forget the evidence a publication owes its consumers.
+// installAdmittedPoint, the commit half of the install cut, is the single
+// writer of the published point plane. Nothing else in the package may assign
+// into it, because a second install site is a second place to forget the
+// evidence a publication owes its consumers.
 func TestOnlyInstallPointWritesThePublishedPointPlane(t *testing.T) {
 	fset := token.NewFileSet()
 	packages, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
@@ -140,8 +142,8 @@ func TestOnlyInstallPointWritesThePublishedPointPlane(t *testing.T) {
 							continue
 						}
 						installs++
-						if function.Name.Name != "installPoint" {
-							t.Errorf("%s: %s installs into the published point plane outside installPoint",
+						if function.Name.Name != "installAdmittedPoint" {
+							t.Errorf("%s: %s installs into the published point plane outside installAdmittedPoint",
 								fset.Position(index.Pos()), function.Name.Name)
 						}
 					}

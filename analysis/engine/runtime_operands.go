@@ -86,10 +86,43 @@ type operandPlane struct {
 // ingress reports whether this row is one a recurrence accumulator reads.
 func (kind operandKind) ingress() bool { return kind.external() || kind.back() }
 
+// factorSourceColumn is the only factor-edge column the operand plane reads:
+// the source Point of one edge index. An overlay serves the column of the
+// frontier it will publish, so the plane is derived from the rows before
+// they are assigned to the runtime.
+type factorSourceColumn struct {
+	installed    []runtimeFactorEdge
+	additions    []preparedFactorAddition
+	replacements []preparedFactorReplacement
+}
+
+func installedFactorSources(edges []runtimeFactorEdge) factorSourceColumn {
+	return factorSourceColumn{installed: edges}
+}
+
+func (column factorSourceColumn) source(index int) (int, bool) {
+	if index < 0 {
+		return 0, false
+	}
+	if index >= len(column.installed) {
+		addition := index - len(column.installed)
+		if addition >= len(column.additions) {
+			return 0, false
+		}
+		return column.additions[addition].edge.source, true
+	}
+	for _, replacement := range column.replacements {
+		if replacement.index == index {
+			return replacement.edge.source, true
+		}
+	}
+	return column.installed[index].source, true
+}
+
 // buildOperandPlane counts once and scatters once over the already-sealed
 // region rows. It runs exactly where those rows are built, so a rebuilt
 // activation epoch pays one extra pass over rows it is rebuilding anyway.
-func buildOperandPlane(graph *equation.Graph, producers []runtimeProducer, environments []runtimeEnvironment, factorEdges []runtimeFactorEdge, regions []runtimeRegion) (*operandPlane, bool) {
+func buildOperandPlane(graph *equation.Graph, producers []runtimeProducer, environments []runtimeEnvironment, factorEdges factorSourceColumn, regions []runtimeRegion) (*operandPlane, bool) {
 	if graph == nil || len(producers) != graph.GroupCount() {
 		return nil, false
 	}
@@ -195,11 +228,8 @@ func buildOperandPlane(graph *equation.Graph, producers []runtimeProducer, envir
 			}{{region.factorExternal, operandExternalFactor}, {region.factorBack, operandBackFactor}}
 			for _, row := range factorRows {
 				for position, edge := range row.edges {
-					if edge < 0 || edge >= len(factorEdges) {
-						return false
-					}
-					source := factorEdges[edge].source
-					if source < 0 || source >= points {
+					source, resolved := factorEdges.source(edge)
+					if !resolved || source < 0 || source >= points {
 						return false
 					}
 					if !record(source, false, uint32(plane.windows[window+int32(row.kind)])+uint32(position), window+int32(row.kind)) {
@@ -349,14 +379,27 @@ type operandEpoch struct {
 	clock uint64
 }
 
+// openable is open's whole fallible half. A caller that must complete every
+// admission before it begins mutating admits the plane here and commits it
+// with openAdmitted.
+func (state *operandEpoch) openable(plane *operandPlane) bool {
+	return state != nil && plane != nil
+}
+
 // open installs a plane over this epoch. Group input ordinals keep their
 // positions across an activation rebuild, so their accumulated ticks survive;
 // the region suffix is re-derived and starts unmarked, which is exactly the
 // state its freshly opened region episodes read it in.
 func (state *operandEpoch) open(plane *operandPlane) bool {
-	if state == nil || plane == nil {
+	if !state.openable(plane) {
 		return false
 	}
+	state.openAdmitted(plane)
+	return true
+}
+
+// openAdmitted is open's commit half; openable must have admitted the plane.
+func (state *operandEpoch) openAdmitted(plane *operandPlane) {
 	if state.clock < 1 {
 		state.clock = 1
 	}
@@ -375,7 +418,6 @@ func (state *operandEpoch) open(plane *operandPlane) bool {
 		}
 	}
 	state.plane, state.tick = plane, ticks
-	return true
 }
 
 // advance closes one reader's epoch: the returned stamp is strictly below

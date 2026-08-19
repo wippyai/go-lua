@@ -465,7 +465,7 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		observations[index] = row
 	}
 	assembled := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
-	operands, planed := buildOperandPlane(graph, producers, environments, factorEdges, regions)
+	operands, planed := buildOperandPlane(graph, producers, environments, installedFactorSources(factorEdges), regions)
 	if !planed {
 		return nil, false
 	}
