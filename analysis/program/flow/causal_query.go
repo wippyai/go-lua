@@ -137,12 +137,10 @@ func (successor Successor) SemanticID() (identity.ContentID, bool) {
 	return successor.route.SemanticID()
 }
 func (successor Successor) FromPoint() (WTOPoint, bool) {
-	point, ok := successor.route.FromPoint()
-	return publicWTOPoint(point), ok
+	return successor.route.FromPoint()
 }
 func (successor Successor) ToPoint() (WTOPoint, bool) {
-	point, ok := successor.route.ToPoint()
-	return publicWTOPoint(point), ok
+	return successor.route.ToPoint()
 }
 
 // WTORegionID returns the sole parent-issued local schedule membership for
@@ -193,19 +191,19 @@ func publicFinalRoute(result *causal.Result, successor causal.Successor) (FinalR
 	}
 	route := FinalRoute{owner: result, successor: public, fromPoint: fromPoint, toPoint: toPoint, identity: identity, semanticID: semanticID, fromPath: fromPoint.PathID(), toPath: toPoint.PathID(), guarded: successor.Decision != 0}
 	if from, ok := result.SiteForTerm(successor.From); ok {
-		route.from = publicSite(from)
+		route.from = from
 	}
 	if to, ok := result.SiteForTerm(successor.To); ok {
-		route.to = publicSite(to)
+		route.to = to
 	}
 	if successor.Decision != 0 {
 		if decision, ok := result.SiteForTerm(successor.Decision); ok {
-			route.decision = publicSite(decision)
+			route.decision = decision
 		}
 	}
 	if successor.Mu != 0 {
 		if mu, ok := result.SiteForTerm(successor.Mu); ok {
-			route.mu = publicSite(mu)
+			route.mu = mu
 		}
 	}
 	route.guard, _ = public.GuardProof()
@@ -294,19 +292,19 @@ func (route FinalRoute) ToPath() (identity.ContentID, bool) {
 }
 
 func (route FinalRoute) OwnsSite(site Site) bool {
-	return route.Available() && route.owner.OwnsSite(site.site) &&
+	return route.Available() && route.owner.OwnsSite(site) &&
 		(site == route.from || site == route.to || site == route.decision || site == route.mu)
 }
 
 func (route FinalRoute) Decision() (Site, bool) {
-	if !route.Available() || !route.decision.Available() || !route.owner.OwnsSite(route.decision.site) {
+	if !route.Available() || !route.decision.Available() || !route.owner.OwnsSite(route.decision) {
 		return Site{}, false
 	}
 	return route.decision, true
 }
 
 func (route FinalRoute) Mu() (Site, bool) {
-	if !route.Available() || !route.mu.Available() || !route.owner.OwnsSite(route.mu.site) {
+	if !route.Available() || !route.mu.Available() || !route.owner.OwnsSite(route.mu) {
 		return Site{}, false
 	}
 	return route.mu, true
@@ -347,7 +345,7 @@ func (route FinalRoute) Component() (Site, bool) {
 		return Site{}, false
 	}
 	site, ok := route.owner.SiteForTerm(term)
-	return publicSite(site), ok && route.owner.OwnsSite(site)
+	return site, ok && route.owner.OwnsSite(site)
 }
 
 func (route FinalRoute) HasMu() bool {
@@ -391,11 +389,11 @@ func (route FinalRoute) ResetAt(index int) (Site, bool) {
 		return Site{}, false
 	}
 	site, ok := route.owner.SiteForTerm(term)
-	return publicSite(site), ok && route.owner.OwnsSite(site)
+	return site, ok && route.owner.OwnsSite(site)
 }
 
 func (route FinalRoute) ResetContains(decision Site) bool {
-	if !route.Available() || !decision.Available() || !route.owner.OwnsSite(decision.site) {
+	if !route.Available() || !decision.Available() || !route.owner.OwnsSite(decision) {
 		return false
 	}
 	term, ok := decision.Term()
@@ -533,24 +531,7 @@ func (view Causal) OwnsRouteGuardProof(proof RouteGuardProof) bool {
 // existing route endpoint or sealed body-terminal Outcome coordinate.
 // ContextID is stable across equivalent seal/artifact replay, but is not a
 // portable identity across a mutated program.
-type Site struct{ site causal.Site }
-
-func publicSite(site causal.Site) Site { return Site{site: site} }
-
-// Available reports whether the handle belongs to its exact sealed quartet.
-func (site Site) Available() bool { return site.site.Available() }
-
-// Equal compares two exact-quartet-fenced endpoint handles.
-func (site Site) Equal(other Site) bool { return site.site.Equal(other.site) }
-
-// ContextID returns the contextual endpoint identity; it is not mutation portable.
-func (site Site) ContextID() identity.ContentID { return site.site.ContextID() }
-
-// PathID returns the portable structural semantic identity issued by Flow.
-func (site Site) PathID() identity.ContentID { return site.site.PathID() }
-
-// Term returns the existing causal endpoint Term represented by the site.
-func (site Site) Term() (keyspace.Term, bool) { return site.site.Term() }
+type Site = causal.Site
 
 // Sites is the allocation-free canonical causal endpoint projection.
 // Its indexes borrow the one sealed Causal owner and retain no syntax/IR copy.
@@ -559,7 +540,7 @@ type Sites struct{ result *causal.Result }
 // Owns accepts only a Site issued by this exact hot Causal owner. Unlike
 // Equal, it deliberately rejects equivalent artifact replay handles.
 func (view Sites) Owns(site Site) bool {
-	return view.result != nil && view.result.OwnsSite(site.site)
+	return view.result != nil && view.result.OwnsSite(site)
 }
 
 // Count reports the deduped route-endpoint denominator.
@@ -575,8 +556,7 @@ func (view Sites) At(index int) (Site, bool) {
 	if view.result == nil {
 		return Site{}, false
 	}
-	site, ok := view.result.SiteAt(index)
-	return publicSite(site), ok
+	return view.result.SiteAt(index)
 }
 
 // ForTerm resolves only Terms that occur as existing route endpoints or sealed
@@ -585,8 +565,7 @@ func (view Sites) ForTerm(term keyspace.Term) (Site, bool) {
 	if view.result == nil {
 		return Site{}, false
 	}
-	site, ok := view.result.SiteForTerm(term)
-	return publicSite(site), ok
+	return view.result.SiteForTerm(term)
 }
 
 // ResolveContextID performs an exact-quartet-fenced contextual lookup.
@@ -594,8 +573,7 @@ func (view Sites) ResolveContextID(id identity.ContentID) (Site, bool) {
 	if view.result == nil {
 		return Site{}, false
 	}
-	site, ok := view.result.ResolveContextID(id)
-	return publicSite(site), ok
+	return view.result.ResolveContextID(id)
 }
 
 type Edges struct{ result *causal.Result }

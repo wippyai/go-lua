@@ -455,7 +455,7 @@ func directOwner(
 		owner, _, ok := returns.Get(term)
 		return owner, ok
 	case keyspace.FamilyBreak:
-		owner, ok := breaks.Get(term)
+		owner, _, ok := breaks.Get(term)
 		return owner, ok
 	case keyspace.FamilyGoto:
 		owner, _, ok := gotos.Get(term)

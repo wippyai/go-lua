@@ -308,7 +308,7 @@ func (s *proofState) bodyOf(term keyspace.Term) (keyspace.Term, bool) {
 		owner, _, ok := s.flow.Control().Returns().Get(term)
 		return owner, ok
 	case keyspace.FamilyBreak:
-		owner, ok := s.flow.Control().Breaks().Get(term)
+		owner, _, ok := s.flow.Control().Breaks().Get(term)
 		return owner, ok
 	case keyspace.FamilyGoto:
 		owner, _, ok := s.flow.Control().Gotos().Get(term)

@@ -367,8 +367,8 @@ func TestAuthoredControlLawsQueriesCopiesAndContent(t *testing.T) {
 	if owner, values, ok := control.Returns().Get(terms.returned); !ok || owner != terms.branchTrue || values != terms.numericValues {
 		t.Fatalf("Return = %08x %08x %v", uint32(owner), uint32(values), ok)
 	}
-	if owner, ok := control.Breaks().Get(terms.broken); !ok || owner != terms.loopBody {
-		t.Fatalf("Break = %08x %v", uint32(owner), ok)
+	if owner, target, ok := control.Breaks().Get(terms.broken); !ok || owner != terms.loopBody || target != terms.numericLoop {
+		t.Fatalf("Break = %08x %08x %v", uint32(owner), uint32(target), ok)
 	}
 	if owner, ok := control.Labels().Get(terms.label); !ok || owner != terms.owner {
 		t.Fatalf("Label = %08x %v", uint32(owner), ok)
@@ -465,7 +465,7 @@ func TestAuthoredControlQueryBounds(t *testing.T) {
 	if _, ok := control.Breaks().At(control.Breaks().Count()); ok {
 		t.Fatal("Break At accepted end index")
 	}
-	if _, ok := control.Breaks().Get(terms.nil); ok {
+	if _, _, ok := control.Breaks().Get(terms.nil); ok {
 		t.Fatal("Break Get accepted wrong family")
 	}
 	if _, ok := control.Labels().At(-1); ok {

@@ -98,7 +98,7 @@ func TestFlowControlOutcomesKeepBreakAndGotoTyped(t *testing.T) {
 	if !loopOK || !breakOK || !gotoOK || !labelOK {
 		t.Fatalf("control rows loop=%v/%v break=%v/%v goto=%v/%v label=%v/%v", loop, loopOK, breakTerm, breakOK, jump, gotoOK, label, labelOK)
 	}
-	if target, ok := control.Breaks().Get(breakTerm); !ok || target != loop {
+	if _, target, ok := control.Breaks().Get(breakTerm); !ok || target != loop {
 		t.Fatalf("Break target = %v/%v, want Loop %v", target, ok, loop)
 	}
 	if _, target, ok := control.Gotos().Get(jump); !ok || target != label {

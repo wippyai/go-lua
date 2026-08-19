@@ -247,7 +247,7 @@ func authoredTermOwner(view authored.View, term keyspace.Term, counts [keyspace.
 		owner, _, ok := view.Control().Returns().Get(term)
 		return owner, ok
 	case keyspace.FamilyBreak:
-		owner, ok := view.Control().Breaks().Get(term)
+		owner, _, ok := view.Control().Breaks().Get(term)
 		return owner, ok
 	case keyspace.FamilyGoto:
 		owner, _, ok := view.Control().Gotos().Get(term)

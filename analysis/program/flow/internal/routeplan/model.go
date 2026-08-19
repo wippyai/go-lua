@@ -8,7 +8,6 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -40,7 +39,28 @@ type Origin struct {
 	carrier     RecurrenceCarrier
 	subdivision subdivisionKind
 	segment     sourcecontrol.Segment
-	resume      runtimeentry.OutcomeResumeRow
+	resume      outcomeResume
+}
+
+// outcomeResume is the resolved runtime-entry resume endpoint pair. RoutePlan
+// admits the four already-resolved values; the owner fence over the entry and
+// SourceControl relations belongs to the caller that owns both.
+type outcomeResume struct {
+	from     sourcecontrol.PhaseRef
+	to       sourcecontrol.PhaseRef
+	fromTerm keyspace.Term
+	toTerm   keyspace.Term
+}
+
+func (resume outcomeResume) Available() bool {
+	return resume.fromTerm != 0 && resume.toTerm != 0 &&
+		resume.from.Available() && resume.to.Available() &&
+		resume.from.OutcomePhase() && !resume.to.OutcomePhase() &&
+		sourcecontrol.SamePhaseOwner(resume.from, resume.to)
+}
+
+func (resume outcomeResume) MatchesRoute(from, to keyspace.Term) bool {
+	return resume.Available() && from == resume.fromTerm && to == resume.toTerm
 }
 
 type subdivisionKind uint8
@@ -136,21 +156,18 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, segment sourcecontrol.Segme
 	return origin, true
 }
 
-// OutcomeResumeSubdivision admits the exact owner-fenced normalized endpoint.
-// It is the only RoutePlan ingress for an Outcome→CSR runtime resume.
-func OutcomeResumeSubdivision(entries *runtimeentry.Result, graph *sourcecontrol.Result,
-	row runtimeentry.OutcomeResumeRow) (Origin, keyspace.Term, bool) {
-	if !row.OwnedBy(entries, graph) {
-		return Origin{}, 0, false
-	}
-	from, to, endpoints := row.Endpoints(entries, graph)
-	_, toTerm := row.RouteTerms()
-	routeOK := toTerm != 0
-	if !endpoints || !routeOK || toTerm == 0 {
+// OutcomeResumeSubdivision admits one already-resolved normalized endpoint
+// pair. It is the only RoutePlan ingress for an Outcome→CSR runtime resume;
+// the caller owns the entry and SourceControl relations the values came from
+// and has already proven the row against them.
+func OutcomeResumeSubdivision(from, to sourcecontrol.PhaseRef,
+	fromTerm, toTerm keyspace.Term) (Origin, keyspace.Term, bool) {
+	resume := outcomeResume{from: from, to: to, fromTerm: fromTerm, toTerm: toTerm}
+	if !resume.Available() {
 		return Origin{}, 0, false
 	}
 	return Origin{from: from, to: to, carrier: noRecurrenceCarrier(),
-		subdivision: subdivisionRuntimeEntry, resume: row}, toTerm, true
+		subdivision: subdivisionRuntimeEntry, resume: resume}, toTerm, true
 }
 
 func (origin Origin) valid() bool {

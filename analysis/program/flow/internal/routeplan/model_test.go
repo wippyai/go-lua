@@ -3,7 +3,6 @@ package routeplan
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/sourcecontrol"
 )
 
@@ -24,8 +23,8 @@ func TestTypedOriginsFailClosedUntilEndpointsAreIssued(t *testing.T) {
 	if _, ok := OutcomeSubdivision(nil, sourcecontrol.Segment{}); ok {
 		t.Fatal("nil SourceControl graph admitted an Outcome subdivision")
 	}
-	if _, _, ok := OutcomeResumeSubdivision(nil, nil, runtimeentry.OutcomeResumeRow{}); ok {
-		t.Fatal("nil owners admitted an Outcome resume subdivision")
+	if _, _, ok := OutcomeResumeSubdivision(sourcecontrol.PhaseRef{}, sourcecontrol.PhaseRef{}, 0, 0); ok {
+		t.Fatal("zero endpoints admitted an Outcome resume subdivision")
 	}
 }
 

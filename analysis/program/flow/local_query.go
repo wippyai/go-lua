@@ -40,12 +40,10 @@ func (region WTORegion) ID() identity.ContentID         { return region.region.I
 func (region WTORegion) ParentID() identity.ContentID   { return region.region.ParentID() }
 func (region WTORegion) Cyclic() bool                   { return region.region.Cyclic() }
 func (region WTORegion) Header() (Site, bool) {
-	site, ok := region.region.Header()
-	return publicSite(site), ok
+	return region.region.Header()
 }
 func (region WTORegion) HeaderPoint() (WTOPoint, bool) {
-	point, ok := region.region.HeaderPoint()
-	return publicWTOPoint(point), ok
+	return region.region.HeaderPoint()
 }
 func (region WTORegion) RouteCount() int { return region.region.RouteCount() }
 func (region WTORegion) RouteAt(index int) (Successor, bool) {
@@ -54,13 +52,11 @@ func (region WTORegion) RouteAt(index int) (Successor, bool) {
 }
 func (region WTORegion) SiteCount() int { return region.region.SiteCount() }
 func (region WTORegion) SiteAt(index int) (Site, bool) {
-	site, ok := region.region.SiteAt(index)
-	return publicSite(site), ok
+	return region.region.SiteAt(index)
 }
 func (region WTORegion) PointCount() int { return region.region.PointCount() }
 func (region WTORegion) PointAt(index int) (WTOPoint, bool) {
-	point, ok := region.region.PointAt(index)
-	return publicWTOPoint(point), ok
+	return region.region.PointAt(index)
 }
 
 func (wto LocalWTO) Count() int { return wto.local.Count() }
@@ -88,16 +84,7 @@ type WTOEvent struct{ event causal.WTOEvent }
 // WTOPoint is the parent-issued semantic LocalWTO vertex. A point may carry
 // zero, one, or many optional Site attachments; consumers must preserve the
 // point even when it has no Site.
-type WTOPoint struct{ point causal.WTOPoint }
-
-func publicWTOPoint(point causal.WTOPoint) WTOPoint { return WTOPoint{point: point} }
-func (point WTOPoint) Available() bool              { return point.point.Available() }
-func (point WTOPoint) PathID() identity.ContentID   { return point.point.PathID() }
-func (point WTOPoint) SiteCount() int               { return point.point.SiteCount() }
-func (point WTOPoint) SiteAt(index int) (Site, bool) {
-	site, ok := point.point.SiteAt(index)
-	return publicSite(site), ok
-}
+type WTOPoint = causal.WTOPoint
 
 func publicWTOEvent(event causal.WTOEvent) WTOEvent { return WTOEvent{event: event} }
 func (event WTOEvent) Available() bool              { return event.event.Available() }
@@ -109,12 +96,10 @@ func (event WTOEvent) Region() (WTORegion, bool) {
 	return publicWTORegion(region), ok
 }
 func (event WTOEvent) Site() (Site, bool) {
-	site, ok := event.event.Site()
-	return publicSite(site), ok
+	return event.event.Site()
 }
 func (event WTOEvent) Point() (WTOPoint, bool) {
-	point, ok := event.event.Point()
-	return publicWTOPoint(point), ok
+	return event.event.Point()
 }
 func (wto LocalWTO) EventAt(index int) (WTOEvent, bool) {
 	event, ok := wto.local.EventAt(index)

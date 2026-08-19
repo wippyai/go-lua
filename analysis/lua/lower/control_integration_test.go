@@ -350,7 +350,7 @@ func TestFlowControlRowsKeepExactOperandsAndOutcomes(t *testing.T) {
 	if !breakOK {
 		t.Fatal("missing Break")
 	}
-	if target, ok := control.Breaks().Get(breakTerm); !ok || target != loop {
+	if _, target, ok := control.Breaks().Get(breakTerm); !ok || target != loop {
 		t.Fatalf("Break target = %v/%v, want %v", target, ok, loop)
 	}
 	exit, exitOK := p.Flow().Outcomes().BreakExit(breakTerm)

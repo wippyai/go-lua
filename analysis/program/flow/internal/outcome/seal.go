@@ -248,7 +248,7 @@ func collectBreakRequests(breaks authored.Breaks, loops authored.Loops, shape *c
 	requests := make([]pathRequest, 0, breaks.Count())
 	for index := 0; index < breaks.Count(); index++ {
 		term, ok := breaks.At(index)
-		owner, rowOK := breaks.Get(term)
+		owner, _, rowOK := breaks.Get(term)
 		loop, shapeOK := shape.BreakLoop(term)
 		loopOwner, loopBody, loopKind, _, loopOK := loops.Get(loop)
 		if !ok || !rowOK || !shapeOK || !loopOK || !validTerm(owner, counts, keyspace.FamilyBody) ||
@@ -530,7 +530,7 @@ func resolveOccurrenceExits(result *Result, returns authored.Returns, breaks aut
 	}
 	for index := 0; index < breaks.Count(); index++ {
 		term, ok := breaks.At(index)
-		owner, rowOK := breaks.Get(term)
+		owner, _, rowOK := breaks.Get(term)
 		loop, shapeOK := shape.BreakLoop(term)
 		if !ok || !rowOK || !shapeOK || !validTerm(owner, counts, keyspace.FamilyBody) || !validTerm(loop, counts, keyspace.FamilyLoop) {
 			return errors.New("program/flow/outcome: invalid Break exit row")

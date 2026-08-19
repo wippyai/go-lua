@@ -515,21 +515,15 @@ func (view Breaks) At(index int) (keyspace.Term, bool) {
 	}
 	return termAt(keyspace.FamilyBreak, index, len(view.component.authoredControl.breaks))
 }
-func (view Breaks) Get(term keyspace.Term) (owner keyspace.Term, ok bool) {
-	if !view.active() || !keyspace.ValidTerm(term, keyspace.FamilyBreak, len(view.component.authoredControl.breaks)) {
-		return 0, false
-	}
-	return view.component.authoredControl.breaks[keyspace.TermOrdinal(term)-1].Owner, true
-}
 
-// Target returns the canonical Loop selected for the Break. Get remains the
-// construction-owner query used by vertical seals; the public authored Flow
-// surface exposes Target through its Breaks.Get query.
-func (view Breaks) Target(term keyspace.Term) (target keyspace.Term, ok bool) {
+// Get returns the full authored Break row: the owning Body and the canonical
+// Loop the Break selects.
+func (view Breaks) Get(term keyspace.Term) (owner, target keyspace.Term, ok bool) {
 	if !view.active() || !keyspace.ValidTerm(term, keyspace.FamilyBreak, len(view.component.authoredControl.breaks)) {
-		return 0, false
+		return 0, 0, false
 	}
-	return view.component.authoredControl.breaks[keyspace.TermOrdinal(term)-1].Target, true
+	row := view.component.authoredControl.breaks[keyspace.TermOrdinal(term)-1]
+	return row.Owner, row.Target, true
 }
 
 func (view Labels) Count() int {

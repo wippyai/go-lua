@@ -186,7 +186,7 @@ func validateRows(
 	}
 	for index := 0; index < breaks.Count(); index++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBreak, uint32(index+1))
-		owner, ok := breaks.Get(term)
+		owner, _, ok := breaks.Get(term)
 		loop, selected := bodies.NearestLoop(owner)
 		if !ok || !selected || !validTerm(loop, counts, keyspace.FamilyLoop) ||
 			!controlParent(forest, term, owner, counts) {

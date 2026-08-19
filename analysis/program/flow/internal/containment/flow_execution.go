@@ -335,7 +335,7 @@ func flowExecutionBreaks(view authored.Breaks, counts [keyspace.FamilyCount]uint
 	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyBreak]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBreak, ordinal)
 		got, ok := view.At(int(ordinal - 1))
-		owner, rowOK := view.Get(term)
+		owner, _, rowOK := view.Get(term)
 		if !ok || got != term || !rowOK || !flowExecutionTerm(counts, owner, keyspace.FamilyBody) {
 			return errors.New("program/flow/containment: invalid Break row")
 		}

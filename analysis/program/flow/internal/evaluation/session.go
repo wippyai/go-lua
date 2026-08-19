@@ -199,7 +199,7 @@ func (walker *Session) owner(term keyspace.Term) (keyspace.Term, bool, error) {
 	case keyspace.FamilyReturn:
 		owner, _, ok = walker.view.Control().Returns().Get(term)
 	case keyspace.FamilyBreak:
-		owner, ok = walker.view.Control().Breaks().Get(term)
+		owner, _, ok = walker.view.Control().Breaks().Get(term)
 	case keyspace.FamilyLabel:
 		owner, ok = walker.view.Control().Labels().Get(term)
 	case keyspace.FamilyGoto:

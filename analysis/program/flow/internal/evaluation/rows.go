@@ -385,7 +385,7 @@ func validateControl(view authored.View, counts [keyspace.FamilyCount]int, fores
 	breaks := control.Breaks()
 	for ordinal := 1; ordinal <= breaks.Count(); ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBreak, uint32(ordinal))
-		owner, ok := breaks.Get(term)
+		owner, _, ok := breaks.Get(term)
 		if !ok || !hasFamily(counts, owner, keyspace.FamilyBody) {
 			return errors.New("program/flow/evaluation: invalid Break")
 		}
