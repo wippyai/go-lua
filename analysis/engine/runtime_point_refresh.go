@@ -499,6 +499,7 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 		}
 	}
+	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-ascent-monotone")
 	if phase == phaseAscent && episode.hasExact && !epoch.work.LessOrEqPointRHS(episode.exact, exact) {
 		// An interface refresh may continue only when its complete exact RHS
 		// grows from the cached episode RHS. A decrease or incomparable result

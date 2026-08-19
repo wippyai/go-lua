@@ -2,6 +2,7 @@ package callsite
 
 import (
 	"crypto/sha256"
+	"slices"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -96,7 +97,8 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 		routes: make(map[calldomain.TargetRoleID]uint32),
 	}
 	bodies := calls.Algebra().Bodies()
-	seenTags := make(map[uint64]struct{}, bodies.Count())
+	roles := make([]calldomain.TargetRoleID, 0, bodies.Count())
+	collected := make([]bodyRoute, 0, bodies.Count())
 	for index := 0; index < bodies.Count(); index++ {
 		body, bodyOK := bodies.At(index)
 		role, roleOK := body.RoleID()
@@ -108,16 +110,20 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 		if !bodyOK || !moduleOK || !programOK || !bodyIDOK || !roleOK || role.Kind() != calldomain.TargetRoleBody || !rootOK || !indexOK || rootIndex < 0 {
 			return nil, false
 		}
-		route := bodyRoute{tag: uint64(rootIndex), root: root}
-		if _, duplicate := hot.routes[role]; duplicate || uint64(len(hot.all)) >= uint64(^uint32(0)) {
+		if _, duplicate := hot.routes[role]; duplicate {
 			return nil, false
 		}
-		if _, duplicate := seenTags[route.tag]; duplicate {
-			return nil, false
-		}
-		hot.all = append(hot.all, route)
-		hot.routes[role] = uint32(len(hot.all))
-		seenTags[route.tag] = struct{}{}
+		hot.routes[role] = 0
+		roles = append(roles, role)
+		collected = append(collected, bodyRoute{tag: uint64(rootIndex), root: root})
+	}
+	ordered, slots, orderOK := orderBodyRoutes(collected)
+	if !orderOK || len(slots) != len(roles) {
+		return nil, false
+	}
+	hot.all = ordered
+	for index, role := range roles {
+		hot.routes[role] = slots[index]
 	}
 
 	var runtimeCall engine.Read[engine.OrderedCells[calldomain.Value]]
@@ -220,8 +226,10 @@ func (rule *BodyHotRule) locate(context engine.SelectorContext, value hotBodyOpe
 	return ok
 }
 
-// routesFor projects a Call value through the one sealed role table in Call's
-// canonical target order. Seed roles are owned by Selected/Opaque and skipped.
+// routesFor projects a Call value through the one sealed role table in the
+// Selection order orderBodyRoutes fixed, so a route ordinal addresses the same
+// staged route the engine published at that ordinal. Seed roles are owned by
+// Selected/Opaque and skipped.
 func (rule *BodyHotRule) routesFor(key calldomain.Key, value calldomain.Value, visit func(int, bodyRoute) bool) (int, bool) {
 	if rule == nil || rule.calls == nil || !rule.calls.Algebra().Admits(key, value) || visit == nil {
 		return 0, false
@@ -234,7 +242,11 @@ func (rule *BodyHotRule) routesFor(key calldomain.Key, value calldomain.Value, v
 		}
 		return len(rule.all), true
 	}
-	count := 0
+	var inline [8]uint32
+	slots := inline[:0]
+	if value.KnownTargetCount() > len(inline) {
+		slots = make([]uint32, 0, value.KnownTargetCount())
+	}
 	for index := 0; index < value.KnownTargetCount(); index++ {
 		target, targetOK := value.KnownTargetAt(index)
 		role, roleOK := target.RoleID()
@@ -246,15 +258,27 @@ func (rule *BodyHotRule) routesFor(key calldomain.Key, value calldomain.Value, v
 			continue
 		case calldomain.TargetRoleBody:
 			slot, found := rule.routes[role]
-			if !found || slot == 0 || uint64(slot) > uint64(len(rule.all)) || !visit(count, rule.all[slot-1]) {
+			if !found || slot == 0 || uint64(slot) > uint64(len(rule.all)) {
 				return 0, false
 			}
-			count++
+			slots = append(slots, slot)
 		default:
 			return 0, false
 		}
 	}
-	return count, true
+	slices.Sort(slots)
+	for ordinal, slot := range slots {
+		// A Selection carries one route per exact target, so two targets that
+		// resolve to the same route have no second ordinal to address. The
+		// projection is refused rather than folded twice.
+		if ordinal > 0 && slot == slots[ordinal-1] {
+			return 0, false
+		}
+		if !visit(ordinal, rule.all[slot-1]) {
+			return 0, false
+		}
+	}
+	return len(slots), true
 }
 
 func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, hotBodyOperand], callRead engine.Read[engine.OrderedCells[calldomain.Value]], summary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]) bool {
@@ -379,8 +403,13 @@ func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectf
 }
 
 func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Value, hotBodyOperand]) (engine.RuleEvidence, bool) {
+	// A derivation read is one resolved observation, not one declared read
+	// slot. This rule resolves the exact Call read plus the Effect summary of
+	// every route its Product selected, so its read surface is bounded by the
+	// sealed route table: a call value denoting every body reaches every
+	// route, and one denoting none reaches only the Call read.
 	readCount := derivation.ReadCount()
-	if rule == nil || rule.fragment == nil || rule.fragment.core == nil || derivation.Rule() != rule.fragment.core.semantic || derivation.InputCount() != 1 || (readCount != 1 && readCount != 2) || derivation.DispositionCount() == 0 {
+	if rule == nil || rule.fragment == nil || rule.fragment.core == nil || derivation.Rule() != rule.fragment.core.semantic || derivation.InputCount() != 1 || readCount < 1 || readCount > 1+len(rule.all) || derivation.DispositionCount() == 0 {
 		return engine.RuleEvidence{}, false
 	}
 	value, operandOK := derivation.Operand()
