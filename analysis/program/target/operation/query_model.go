@@ -37,6 +37,10 @@ type QueryOperationInput struct {
 // coordinates before this boundary; Core issues the global SubedgeID and
 // retains the immutable rows.
 type SubedgeInput struct {
+	// Source is the zero-based authoring coordinate retained only long enough
+	// for Core to preserve source-referenced sibling identity while issuing
+	// canonical dense SubedgeIDs. It is never published in a query row.
+	Source           uint32
 	Role             uint32
 	Family           vocabulary.SubedgeFamily
 	Callee           vocabulary.SubedgeCalleeKind
@@ -61,8 +65,9 @@ type SubedgeArgumentOriginInput struct {
 	Source  vocabulary.InputSource
 }
 
-// SubedgeRouteInput uses a zero-based canonical sibling rank. Core converts
-// that rank to a global SubedgeID only after the owner range is sealed.
+// SubedgeRouteInput uses a zero-based source sibling rank. Core converts that
+// rank through the source-to-canonical map to a global SubedgeID only after
+// the owner range is sealed.
 type SubedgeRouteInput struct {
 	Route       vocabulary.SubedgeRoute
 	Adjustment  vocabulary.Adjustment

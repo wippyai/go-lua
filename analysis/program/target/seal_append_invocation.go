@@ -22,7 +22,7 @@ func (c *Contract) querySubedgeInputs(draft *operationDraft, callbacks []vocabul
 			return nil, nil, err
 		}
 		row := operationvalue.SubedgeInput{
-			Role: edge.role, Family: edge.family, Callee: edge.callee,
+			Source: uint32(edge.source), Role: edge.role, Family: edge.family, Callee: edge.callee,
 			Admission: edge.admission, Arguments: arguments, RuleEntry: edge.ruleEntry,
 		}
 		for terminal := range edge.outcomes {
@@ -107,10 +107,14 @@ func (c *Contract) querySubedgeRouteInput(route subedgeRouteDraft, values map[st
 			return operationvalue.SubedgeRouteInput{}, destinationErr
 		}
 	}
+	siblingRank := uint32(0)
+	if route.subedge != 0 {
+		siblingRank = uint32(route.subedge - 1)
+	}
 	return operationvalue.SubedgeRouteInput{
 		Route: route.route, Adjustment: route.adjustment, Result: result,
 		Placement: route.placement, Offset: route.offset, Outcome: route.outcome,
-		HasSibling: route.subedge != 0, SiblingRank: route.subedgeRank, Destination: destination,
+		HasSibling: route.subedge != 0, SiblingRank: siblingRank, Destination: destination,
 	}, nil
 }
 

@@ -27,10 +27,16 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 	}
 	start := len(core.query.subedges)
 	ids := make([]vocabulary.SubedgeID, len(input.Subedges))
+	sourceIDs := make([]vocabulary.SubedgeID, len(input.Subedges))
+	sourceSeen := make([]bool, len(input.Subedges))
 	for index, item := range input.Subedges {
 		if item.Role == 0 || !vocabulary.ValidSubedgeFamily(item.Family) {
 			return invalidQuery("subedge has invalid role or family")
 		}
+		if item.Source >= uint32(len(input.Subedges)) || sourceSeen[item.Source] {
+			return invalidQuery("subedge source coordinate is malformed")
+		}
+		sourceSeen[item.Source] = true
 		if index > 0 && input.Subedges[index-1].Role >= item.Role {
 			return invalidQuery("subedge rows are not strictly ordered")
 		}
@@ -39,6 +45,7 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 			return err
 		}
 		ids[index] = handle
+		sourceIDs[item.Source] = handle
 	}
 	for index, item := range input.Subedges {
 		if index > 0 && input.Subedges[index-1].Role == item.Role {
@@ -67,12 +74,12 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		}
 		row.argumentOrigins = queryRange{start: originStart, end: len(core.query.subedgeOrigins)}
 		var err error
-		row.admissionRoute, err = core.appendQuerySubedgeRoute(item.AdmissionRoute, ids, op, len(input.Subedges), operation.outcomes.len())
+		row.admissionRoute, err = core.appendQuerySubedgeRoute(item.AdmissionRoute, sourceIDs, op, len(input.Subedges), operation.outcomes.len())
 		if err != nil {
 			return err
 		}
 		for terminal, route := range item.Routes {
-			row.routes[terminal], err = core.appendQuerySubedgeRoute(route, ids, op, len(input.Subedges), operation.outcomes.len())
+			row.routes[terminal], err = core.appendQuerySubedgeRoute(route, sourceIDs, op, len(input.Subedges), operation.outcomes.len())
 			if err != nil {
 				return err
 			}
