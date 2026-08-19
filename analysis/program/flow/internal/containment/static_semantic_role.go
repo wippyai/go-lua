@@ -3,9 +3,10 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
@@ -60,7 +61,7 @@ const (
 	staticRoleAnnotationTarget
 )
 
-func sealStaticStructuralRoles(result *Result, view static.View, moduleView imports.View) error {
+func sealStaticStructuralRoles(result *Result, view staticquery.View, moduleView imports.View) error {
 	if result == nil || !result.available() || !view.Available() || view.ContentID() != result.staticID || moduleView.ContentID() != result.moduleID {
 		return errors.New("program/flow/containment: Static semantic role owner mismatch")
 	}

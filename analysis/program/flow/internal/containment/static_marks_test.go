@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/static"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
@@ -17,7 +18,7 @@ import (
 // Optional chain beneath it. The fixture is a real Static owner proof, not a
 // hand-built relation, so this law exercises the same LocalContainment
 // boundary used by emitStaticMarks.
-func buildStaticCallChain(t *testing.T, width uint32) (static.LocalContainment, [keyspace.FamilyCount]uint32) {
+func buildStaticCallChain(t *testing.T, width uint32) (staticquery.LocalContainment, [keyspace.FamilyCount]uint32) {
 	t.Helper()
 	counts := [keyspace.FamilyCount]uint32{
 		keyspace.FamilyTypePrimitive: 1,
@@ -59,7 +60,7 @@ func buildStaticCallChain(t *testing.T, width uint32) (static.LocalContainment, 
 	return local, counts
 }
 
-func runStaticCallOwnerChain(t *testing.T, local static.LocalContainment, counts [keyspace.FamilyCount]uint32) int {
+func runStaticCallOwnerChain(t *testing.T, local staticquery.LocalContainment, counts [keyspace.FamilyCount]uint32) int {
 	t.Helper()
 	marks := newStaticMarkBits(counts)
 	if err := markCallOwnedStaticTypes(local, counts, &marks); err != nil {

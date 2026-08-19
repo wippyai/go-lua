@@ -2,11 +2,12 @@ package static
 
 import (
 	"errors"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
-	"github.com/wippyai/go-lua/domain/type/authority"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 )
 
 type OperandKind uint8
@@ -146,4 +147,4 @@ func (a *Authority) addCoordinate(ref typeauthority.StaticTypeRef, namespace ide
 
 // Keep the static operand enum referenced in this file's API documentation
 // and guard accidental reintroduction of a second operand vocabulary.
-var _ = programstatic.StaticOperandKnown
+var _ = staticquery.StaticOperandKnown

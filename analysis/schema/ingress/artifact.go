@@ -9,7 +9,7 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -991,15 +991,15 @@ func (row StaticInput) OperandReferenceID() identity.ContentID { return row.oper
 func (row StaticInput) OperandSubjectID() identity.ContentID   { return row.operandSubject }
 func (row StaticInput) OperandBodyPathID() identity.ContentID  { return row.operandBody }
 func (row StaticInput) Available() bool {
-	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(programstatic.StaticOperandInvalid) {
+	if !row.id.Available() || !row.owner.Available() || !row.expression.Available() || !row.source.Available() || !row.target.Available() || !row.operand.Available() || !row.frontier.Available() || row.kind == uint8(programartifact.StaticInputInvalid) || row.operandKind == uint8(staticquery.StaticOperandInvalid) {
 		return false
 	}
-	switch programstatic.StaticOperandKind(row.operandKind) {
-	case programstatic.StaticOperandKnown:
+	switch staticquery.StaticOperandKind(row.operandKind) {
+	case staticquery.StaticOperandKnown:
 		return row.operandSubject == (identity.ContentID{}) && row.operandReference == (identity.ContentID{})
-	case programstatic.StaticOperandRuntimeSubject:
+	case staticquery.StaticOperandRuntimeSubject:
 		return row.operandSubject.Available() && row.operandBody.Available() && row.operandReference == (identity.ContentID{})
-	case programstatic.StaticOperandTypeValue:
+	case staticquery.StaticOperandTypeValue:
 		return row.operandReference.Available() && row.operandBody.Available() && row.operandSubject == (identity.ContentID{})
 	default:
 		return false

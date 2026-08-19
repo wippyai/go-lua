@@ -2,6 +2,7 @@ package static
 
 import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -44,7 +45,7 @@ func newContainment(counts [keyspace.FamilyCount]uint32, fields int) containment
 	// map keyed by whichever rows happen to emit an edge. The keyspace walk is
 	// canonical; family ownership remains with the typed role predicates.
 	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-		if !staticTypeFamily(family) {
+		if !staticquery.StaticTypeFamily(family) {
 			continue
 		}
 		if count := counts[family]; count != 0 {
@@ -106,7 +107,7 @@ func (check *containment) markDirectReturn(parent, child keyspace.Term) bool {
 // localForest collects typed containment rows from their owning verticals,
 // then validates the one combined concrete relation. No central collector
 // knows how a Type, declaration, signature, operator, or sidecar is shaped.
-func localForest(component *Component) (*localContainmentProof, bool) {
+func localForest(component *Component) (*staticquery.Proof, bool) {
 	if component == nil {
 		return nil, false
 	}
@@ -137,14 +138,11 @@ func emitOperatorsContainment(component *Component, check *containment) bool {
 // proof transfers only the immutable local parent and Field-owner rows. The
 // direct-return ledger remains construction evidence and is intentionally
 // absent from the returned proof.
-func (check *containment) proof() *localContainmentProof {
+func (check *containment) proof() *staticquery.Proof {
 	if check == nil {
 		return nil
 	}
-	return &localContainmentProof{
-		parents:     check.parents,
-		fieldOwners: check.fieldOwners,
-	}
+	return staticquery.NewProof(check.parents, check.fieldOwners)
 }
 
 // valid is linear in the emitted edge and Field-membership count. Each node

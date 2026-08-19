@@ -2,6 +2,7 @@ package static
 
 import (
 	"errors"
+	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
@@ -9,6 +10,7 @@ import (
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
@@ -127,6 +129,7 @@ func Build(input Input) (*Draft, error) {
 	return &Draft{state: &draftState{
 		component:        component,
 		localContainment: localProof,
+		live:             0,
 		phase:            draftOpen,
 	}}, nil
 }
@@ -146,16 +149,26 @@ func (draft *Draft) Finalizer() (Finalizer, error) {
 		return Finalizer{}, errors.New("program/static: draft already finalized")
 	}
 	state.phase = draftClaimed
+	atomic.StoreUint32(&state.live, 1)
 	return Finalizer{state: state}, nil
 }
 
 // View returns the immutable authored Static surface used by the coordinating
 // finalizer. It contains no mutation or publication operation.
-func (finalizer Finalizer) View() View {
+func (finalizer Finalizer) View() staticquery.View {
 	if finalizer.state == nil {
-		return View{}
+		return staticquery.View{}
 	}
-	return View{state: finalizer.state}
+	state := finalizer.state
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != draftClaimed || state.component == nil || state.localContainment == nil {
+		return staticquery.View{}
+	}
+	return staticquery.NewView(
+		state.component.querySnapshotWithProof(state.localContainment),
+		&state.live,
+	)
 }
 
 // Commit consumes the claimed finalizer exactly once. The input is checked
@@ -180,6 +193,7 @@ func (finalizer Finalizer) Commit(input CommitInput) (*Component, error) {
 	state.component = nil
 	state.localContainment = nil
 	state.phase = draftCommitted
+	atomic.StoreUint32(&state.live, 0)
 	state.mu.Unlock()
 
 	if err := validateCommitInput(component, input); err != nil {
@@ -232,6 +246,7 @@ func (finalizer Finalizer) Abort() error {
 	state.component = nil
 	state.localContainment = nil
 	state.phase = draftAborted
+	atomic.StoreUint32(&state.live, 0)
 	return nil
 }
 

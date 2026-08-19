@@ -9,6 +9,8 @@ package staticcheck
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
@@ -26,7 +28,7 @@ import (
 func Validate(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	bindings binding.Result,
 	forest *containment.Result,
@@ -80,7 +82,7 @@ func Validate(
 // canonicalInput materializes the dense static commit input from the sealed
 // view. The returned slices are fresh, so callers can hand the input to the
 // finalizer without exposing Static's internal columns.
-func canonicalInput(view static.View) (static.CommitInput, error) {
+func canonicalInput(view staticquery.View) (static.CommitInput, error) {
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
 	publications := view.Publications()
@@ -118,7 +120,7 @@ func canonicalInput(view static.View) (static.CommitInput, error) {
 
 func validateDenominators(
 	sourceView source.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	forest *containment.Result,
 	entry keyspace.Term,

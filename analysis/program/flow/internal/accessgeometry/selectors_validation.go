@@ -3,16 +3,17 @@ package accessgeometry
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	binding "github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
-func validateSelectorInputs(sourceView sourceColumns, flow authored.View, bodies *body.Result, bindings binding.Result, staticView static.View, moduleView imports.View) error {
+func validateSelectorInputs(sourceView sourceColumns, flow authored.View, bodies *body.Result, bindings binding.Result, staticView staticquery.View, moduleView imports.View) error {
 	identity := sourceView.Identity()
 	if !identity.ContentID().Available() || identity.TermCount() == 0 {
 		return errors.New("program/flow/accessgeometry: Source sourceView is unavailable")

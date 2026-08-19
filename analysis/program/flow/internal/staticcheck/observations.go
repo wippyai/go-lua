@@ -3,6 +3,8 @@ package staticcheck
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
@@ -10,13 +12,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 func validateObservations(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	forest *containment.Result,
 	proof *containment.StaticScopeProof,
@@ -60,7 +61,7 @@ func validateObservations(
 func validateObservationRows(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	forest *containment.Result,
 	proof *containment.StaticScopeProof,
@@ -382,7 +383,7 @@ func observationDescriptorFor(
 func validateScope(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	proof *containment.StaticScopeProof,
 	points *observationPoints,
@@ -506,7 +507,7 @@ func validateFunctionObservationAt(
 	return nil
 }
 
-func annotationTarget(view static.View, target keyspace.Term) bool {
+func annotationTarget(view staticquery.View, target keyspace.Term) bool {
 	family := keyspace.TermFamily(target)
 	ordinal := keyspace.TermOrdinal(target)
 	if ordinal == 0 {
@@ -537,7 +538,7 @@ func annotationTypeFamily(family keyspace.Family) bool {
 	}
 }
 
-func staticFamilyCount(view static.View, family keyspace.Family) uint32 {
+func staticFamilyCount(view staticquery.View, family keyspace.Family) uint32 {
 	var count int
 	switch family {
 	case keyspace.FamilyTypeAlias:

@@ -3,11 +3,12 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -111,7 +112,7 @@ func (proof *StaticScopeProof) record(scope keyspace.Term) (scopeRecord, bool) {
 // there is no second resolver, graph, or forwarding representation.
 func sealStaticScopeProof(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	staticID identity.ContentID,
 	moduleID identity.ContentID,

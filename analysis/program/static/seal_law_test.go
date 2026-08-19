@@ -15,6 +15,7 @@ import (
 	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
 
 	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
@@ -170,7 +171,7 @@ func TestStaticViewContentIDExpiresOnAbortCopies(t *testing.T) {
 }
 
 func TestStaticViewAvailabilityLaws(t *testing.T) {
-	if (View{}).Available() {
+	if (staticquery.View{}).Available() {
 		t.Fatal("zero View is available")
 	}
 	var nilComponent *Component
@@ -528,7 +529,7 @@ func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 	}
 	parents := make(map[keyspace.Term]keyspace.Term)
 	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-		if !staticTypeFamily(family) {
+		if !staticquery.StaticTypeFamily(family) {
 			continue
 		}
 		for ordinal := uint32(1); ordinal <= input.Counts[family]; ordinal++ {

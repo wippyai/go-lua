@@ -3,6 +3,8 @@ package staticcheck
 import (
 	"testing"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
@@ -35,7 +37,7 @@ type checkSpec struct {
 type checkFixture struct {
 	sourceView source.View
 	flowView   authored.View
-	staticView static.View
+	staticView staticquery.View
 	moduleView imports.View
 	preimage   source.Preimage
 	bodies     *body.Result

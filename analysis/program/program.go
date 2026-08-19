@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -128,9 +129,9 @@ func (program *Program) Flow() flow.View {
 }
 
 // Static returns the immutable Static owner view.
-func (program *Program) Static() static.View {
+func (program *Program) Static() staticquery.View {
 	if program == nil {
-		return static.View{}
+		return staticquery.View{}
 	}
 	return program.static.View()
 }

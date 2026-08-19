@@ -3,13 +3,14 @@ package staticcheck
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
@@ -17,7 +18,7 @@ import (
 func validatePublications(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bindings binding.Result,
 	access *accessgeometry.Result,
 	tree *contextTree,

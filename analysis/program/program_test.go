@@ -73,7 +73,7 @@ func canonicalRootIDForLaw(t testing.TB, ids [4]identity.ContentID) identity.Con
 func TestProgramNilReceiverAndNilAssemblyFailClosed(t *testing.T) {
 	var program *Program
 	if program.Source() != (source.View{}) || program.Flow() != (flow.View{}) ||
-		program.Static() != (static.View{}) || program.Module() != (imports.View{}) ||
+		program.Static().Available() || program.Module() != (imports.View{}) ||
 		program.ContentID().Available() {
 		t.Fatal("nil Program exposed owner state")
 	}

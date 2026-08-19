@@ -3,9 +3,10 @@ package staticcheck
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // contextBindRanges indexes authored Binds by Body in one dense pass. The
@@ -30,7 +31,7 @@ func contextBindRanges(view authored.View, bodyCount int) ([]int, []int, error) 
 
 // contextParamRanges indexes TypeParams by Function in one dense pass. This
 // makes header construction proportional to the parameters it owns.
-func contextParamRanges(view static.View, functionCount int) ([]int, []int, error) {
+func contextParamRanges(view staticquery.View, functionCount int) ([]int, []int, error) {
 	params := view.Declarations().TypeParams()
 	first := make([]int, functionCount+1)
 	next := make([]int, params.Count()+1)

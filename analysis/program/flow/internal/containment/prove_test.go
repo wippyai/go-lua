@@ -16,6 +16,7 @@ import (
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
@@ -32,7 +33,7 @@ type proofFixture struct {
 	flowView     authored.View
 	flowFinalize authored.Finalizer
 
-	staticView     static.View
+	staticView     staticquery.View
 	staticFinalize static.Finalizer
 
 	moduleView     imports.View
@@ -503,7 +504,7 @@ func TestProveRejectsExpiredOwners(t *testing.T) {
 		{name: "Static", expire: func(fixture *proofFixture) { _, _ = fixture.staticFinalize.Commit(static.CommitInput{}) }},
 		{name: "Module", expire: func(fixture *proofFixture) { _ = fixture.moduleFinalize.Abort() }},
 		{name: "zero Static", expire: func(fixture *proofFixture) {
-			fixture.staticView = static.View{}
+			fixture.staticView = staticquery.View{}
 		}},
 	}
 	for _, test := range tests {

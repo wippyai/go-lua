@@ -3,13 +3,14 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // emission is the private contract between owner-specific emitters and the
@@ -32,7 +33,7 @@ type emission struct {
 // one kernel input; no owner-specific graph or dense parent table survives.
 func Prove(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	bodies *body.Result,
 	bindingResult binding.Result,
@@ -117,7 +118,7 @@ func Prove(
 	return result, scopeProof, nil
 }
 
-func liveCounts(preimage source.Preimage, staticView static.View, view authored.View, moduleView imports.View) ([keyspace.FamilyCount]uint32, error) {
+func liveCounts(preimage source.Preimage, staticView staticquery.View, view authored.View, moduleView imports.View) ([keyspace.FamilyCount]uint32, error) {
 	var counts [keyspace.FamilyCount]uint32
 	identity := preimage.Identity()
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 ||
@@ -144,7 +145,7 @@ func liveCounts(preimage source.Preimage, staticView static.View, view authored.
 
 func validateOwnerCardinalities(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	bodies *body.Result,
 	bindingResult binding.Result,
@@ -290,7 +291,7 @@ func validateAuthoredDenseFamily(view authored.View, family keyspace.Family, cou
 	return nil
 }
 
-func validateStaticCardinalities(view static.View, counts [keyspace.FamilyCount]uint32) error {
+func validateStaticCardinalities(view staticquery.View, counts [keyspace.FamilyCount]uint32) error {
 	checks := [...]struct {
 		family keyspace.Family
 		count  int

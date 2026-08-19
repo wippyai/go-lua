@@ -3,6 +3,7 @@ package static
 import (
 	"testing"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -17,6 +18,23 @@ func censusLawInputs(t *testing.T) map[string]Input {
 		"fixture":     staticFixture(t),
 		"denominator": staticTypeDenominatorInput(t),
 	}
+}
+
+func staticTypeCount(component *Component) int {
+	return component.View().StaticTypes().Count()
+}
+
+func staticTypeAt(component *Component, index int) (keyspace.Term, bool) {
+	ref, ok := component.View().StaticTypes().At(index)
+	if !ok {
+		return 0, false
+	}
+	return ref.Term(), true
+}
+
+func staticTypeMember(component *Component, term keyspace.Term) bool {
+	_, ok := component.View().StaticTypes().Ref(term)
+	return ok
 }
 
 // TestCensusColumnIsTheSealedFamilyColumn proves Build retains the already
@@ -42,39 +60,39 @@ func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 		component := staticContentComponent(t, input)
 		want := 0
 		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-			if staticTypeFamily(family) {
+			if staticquery.StaticTypeFamily(family) {
 				want += int(component.census[family])
 			}
 		}
-		if got := component.StaticTypeTermCount(); got != want {
+		if got := staticTypeCount(component); got != want {
 			t.Fatalf("%s: StaticTypeTermCount = %d, want census forest sum %d", name, got, want)
 		}
 		index := 0
 		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-			if !staticTypeFamily(family) {
+			if !staticquery.StaticTypeFamily(family) {
 				continue
 			}
 			for ordinal := uint32(1); ordinal <= component.census[family]; ordinal++ {
-				term, ok := component.StaticTypeTermAt(index)
+				term, ok := staticTypeAt(component, index)
 				if !ok || term != keyspace.MakeTerm(family, ordinal) {
 					t.Fatalf("%s: StaticTypeTermAt(%d) = (%d, %v), want %v#%d",
 						name, index, term, ok, family, ordinal)
 				}
-				if !component.StaticTypeTerm(term) {
+				if !staticTypeMember(component, term) {
 					t.Fatalf("%s: enumerated term %v#%d is not a forest member", name, family, ordinal)
 				}
 				index++
 			}
 		}
-		if _, ok := component.StaticTypeTermAt(want); ok {
+		if _, ok := staticTypeAt(component, want); ok {
 			t.Fatalf("%s: StaticTypeTermAt(%d) admitted a term past the sealed forest", name, want)
 		}
 		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-			if !staticTypeFamily(family) {
+			if !staticquery.StaticTypeFamily(family) {
 				continue
 			}
 			past := keyspace.MakeTerm(family, component.census[family]+1)
-			if component.StaticTypeTerm(past) {
+			if staticTypeMember(component, past) {
 				t.Fatalf("%s: forest admitted %v ordinal %d past census %d",
 					name, family, component.census[family]+1, component.census[family])
 			}
@@ -136,7 +154,7 @@ func TestStaticCountRowsEnumeratesOwnGeneratedRelations(t *testing.T) {
 			t.Fatalf("%s count = %d/%v, want %d", id.name, got, ok, id.value)
 		}
 	}
-	if _, err := CountRows(View{}); err == nil {
+	if _, err := CountRows(staticquery.View{}); err == nil {
 		t.Fatal("CountRows accepted an unavailable View")
 	}
 }
@@ -202,12 +220,12 @@ func TestStaticCallTypeArgumentRowIsTheSealedColumnWidth(t *testing.T) {
 // predicate is exactly the role vocabulary, without maintaining another list.
 func TestStaticNodeWindowMatchesRoleVocabulary(t *testing.T) {
 	for family := keyspace.Family(0); family < keyspace.FamilyCount; family++ {
-		if staticrole.NodeFamily(family) != (staticTypeFamily(family) && !staticrole.TypeReferenceTargetFamily(family)) {
+		if staticrole.NodeFamily(family) != (staticquery.StaticTypeFamily(family) && !staticrole.TypeReferenceTargetFamily(family)) {
 			t.Fatalf("role.NodeFamily(%v) disagrees with Static type-family predicate", family)
 		}
 	}
 	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeParam; family++ {
-		if !staticTypeFamily(family) || staticrole.NodeFamily(family) {
+		if !staticquery.StaticTypeFamily(family) || staticrole.NodeFamily(family) {
 			t.Fatalf("declaration root %v has the wrong Static type-family role", family)
 		}
 	}
@@ -217,7 +235,7 @@ func TestStaticTypeEnumerationIsCompleteAndOrdered(t *testing.T) {
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
 	var wantFamilies []keyspace.Family
 	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-		if staticTypeFamily(family) {
+		if staticquery.StaticTypeFamily(family) {
 			wantFamilies = append(wantFamilies, family)
 		}
 	}
@@ -231,16 +249,16 @@ func TestStaticTypeEnumerationIsCompleteAndOrdered(t *testing.T) {
 			want = append(want, keyspace.MakeTerm(family, uint32(ordinal)))
 		}
 	}
-	if got := component.StaticTypeTermCount(); got != len(want) {
+	if got := staticTypeCount(component); got != len(want) {
 		t.Fatalf("StaticTypeTermCount = %d, want %d", got, len(want))
 	}
 	seen := make(map[keyspace.Family]int, len(wantFamilies))
 	for index, expected := range want {
-		term, ok := component.StaticTypeTermAt(index)
+		term, ok := staticTypeAt(component, index)
 		if !ok || term != expected {
 			t.Fatalf("StaticTypeTermAt(%d) = %v/%v, want %v", index, term, ok, expected)
 		}
-		if !component.StaticTypeTerm(term) {
+		if !staticTypeMember(component, term) {
 			t.Fatalf("enumerated term %v is not a static type", term)
 		}
 		seen[keyspace.TermFamily(term)]++
@@ -250,13 +268,13 @@ func TestStaticTypeEnumerationIsCompleteAndOrdered(t *testing.T) {
 			t.Fatalf("static type family %d has no enumerated row", family)
 		}
 	}
-	if _, ok := component.StaticTypeTermAt(-1); ok {
+	if _, ok := staticTypeAt(component, -1); ok {
 		t.Fatal("StaticTypeTermAt accepted a negative index")
 	}
-	if _, ok := component.StaticTypeTermAt(len(want)); ok {
+	if _, ok := staticTypeAt(component, len(want)); ok {
 		t.Fatal("StaticTypeTermAt accepted an out-of-range index")
 	}
-	if component.StaticTypeTerm(keyspace.MakeTerm(keyspace.FamilyRead, 1)) {
+	if staticTypeMember(component, keyspace.MakeTerm(keyspace.FamilyRead, 1)) {
 		t.Fatal("non-static Flow term entered the static authority")
 	}
 
@@ -266,9 +284,9 @@ func TestStaticTypeQueriesDoNotAllocate(t *testing.T) {
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
 	term := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	if allocations := testing.AllocsPerRun(1000, func() {
-		component.StaticTypeTermCount()
-		component.StaticTypeTermAt(0)
-		component.StaticTypeTerm(term)
+		staticTypeCount(component)
+		staticTypeAt(component, 0)
+		staticTypeMember(component, term)
 	}); allocations != 0 {
 		t.Fatalf("static type queries allocated %.2f times", allocations)
 	}
@@ -289,11 +307,11 @@ func TestStaticTypesViewUsesPublishedForestOrder(t *testing.T) {
 
 	var wantFamilies []keyspace.Family
 	for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
-		if staticTypeFamily(family) {
+		if staticquery.StaticTypeFamily(family) {
 			wantFamilies = append(wantFamilies, family)
 		}
 	}
-	want := make([]keyspace.Term, 0, component.StaticTypeTermCount())
+	want := make([]keyspace.Term, 0, staticTypeCount(component))
 	for _, family := range wantFamilies {
 		count := 1
 		if family == keyspace.FamilyTypePrimitive {
@@ -365,15 +383,6 @@ func TestStaticTypesRawTermsRebindLocally(t *testing.T) {
 	bound, ok := component.View().StaticTypes().Ref(raw)
 	if !ok || bound.Term() != raw {
 		t.Fatalf("raw term failed to rebind locally: %v/%v", bound.Term(), ok)
-	}
-	if foreignRef.component != foreign {
-		t.Fatal("foreign ref lost its owner component")
-	}
-	if bound.component != component {
-		t.Fatal("rebound ref did not carry the receiving owner component")
-	}
-	if bound.component == foreignRef.component {
-		t.Fatal("rebound ref retained the foreign owner component")
 	}
 }
 

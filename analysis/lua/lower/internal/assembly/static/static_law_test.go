@@ -9,11 +9,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
-func staticViews(t *testing.T, c *assembly.Collector) (programsource.View, programstatic.View) {
+func staticViews(t *testing.T, c *assembly.Collector) (programsource.View, staticquery.View) {
 	t.Helper()
 	published, err := c.Publish()
 	if err != nil {
@@ -28,7 +28,7 @@ func staticFixture(name string) (*assembly.Collector, keyspace.Term) {
 	return c, body
 }
 
-func completeStatic(t *testing.T, c *assembly.Collector, body keyspace.Term, roots ...keyspace.Term) (programsource.View, programstatic.View) {
+func completeStatic(t *testing.T, c *assembly.Collector, body keyspace.Term, roots ...keyspace.Term) (programsource.View, staticquery.View) {
 	t.Helper()
 	if body == 0 || !c.SetBody(body, roots...) || !c.SetEntry(body) {
 		t.Fatal("Source completion failed")

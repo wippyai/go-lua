@@ -3,18 +3,19 @@ package body
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
 
 // Seal proves Body structural authority over the live Source and authored
 // views. It derives only parent/root/activation/loop projections; all other
 // Flow geometry belongs to later verticals.
-func Seal(preimage source.Preimage, view authored.View, staticView static.View, entry keyspace.Term) (*Result, error) {
+func Seal(preimage source.Preimage, view authored.View, staticView staticquery.View, entry keyspace.Term) (*Result, error) {
 	if !staticView.Available() {
 		return nil, errors.New("program/flow/body: Static view expired")
 	}
@@ -249,7 +250,7 @@ func Seal(preimage source.Preimage, view authored.View, staticView static.View, 
 	}, nil
 }
 
-func liveCounts(identity source.Identity, faults source.Faults, view authored.View, staticView static.View) ([keyspace.FamilyCount]int, error) {
+func liveCounts(identity source.Identity, faults source.Faults, view authored.View, staticView staticquery.View) ([keyspace.FamilyCount]int, error) {
 	var counts [keyspace.FamilyCount]int
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 || !view.Cold().ContentID().Available() {
 		return counts, errors.New("program/flow/body: owner view expired")

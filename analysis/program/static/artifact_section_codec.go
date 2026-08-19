@@ -8,6 +8,7 @@ import (
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
@@ -46,7 +47,7 @@ var (
 // owns Writer.Reset, Header, and Finish; this function is safe to place
 // between another owner's root fields and suffix fields. It consumes the
 // direct Static View and fails closed when that view is unavailable.
-func WriteArtifactSection(writer *framing.Writer, view View) error {
+func WriteArtifactSection(writer *framing.Writer, view staticquery.View) error {
 	if writer == nil {
 		return framing.ErrNilDestination
 	}
@@ -59,28 +60,15 @@ func WriteArtifactSection(writer *framing.Writer, view View) error {
 // payload after its owner has been consumed. Published Views use their
 // immutable authored stores directly. No aggregate artifact representation is
 // constructed at this boundary.
-func writeArtifactViewContent(writer *framing.Writer, view View) error {
-	if view.state != nil {
-		state := view.state
-		state.mu.Lock()
-		defer state.mu.Unlock()
-		if state.phase != draftClaimed || state.component == nil || !state.component.contentID.Available() {
-			return errInvalidArtifactComponent
-		}
-		component := state.component
-		return writeArtifactContent(writer,
-			component.types, component.references, component.declarations,
-			component.signatures, component.contracts, component.operators,
-			component.operands, component.publications)
-	}
-	component := view.component
-	if component == nil || !component.contentID.Available() {
+
+func writeArtifactViewContent(writer *framing.Writer, view staticquery.View) error {
+	snapshot, ok := view.Snapshot()
+	if !ok {
 		return errInvalidArtifactComponent
 	}
-	return writeArtifactContent(writer,
-		component.types, component.references, component.declarations,
-		component.signatures, component.contracts, component.operators,
-		component.operands, component.publications)
+	types, references, declarations, signatures, contracts, operators, operands, publications := snapshot.Tables()
+	return writeArtifactContent(writer, types, references, declarations, signatures,
+		contracts, operators, operands, publications)
 }
 
 // writeArtifactContent is shared by the identity digest and the public

@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
 
@@ -125,7 +125,7 @@ func (compiler *compiler) typeValueCompileRow(index int) (valueSourceCompileRow,
 		return valueSourceCompileRow{}, identity.ContentID{}, identity.ContentID{}, "", false
 	}
 	ref, refOK := compiler.input.Static().StaticTypes().Ref(row.target)
-	referenceID, referenceOK := programstatic.TypeReferenceID(compiler.input.ContentID(), ref)
+	referenceID, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
 	name, nameOK := staticTypeValueName(compiler.input, row.target)
 	rootID, rootOK := staticTypeValueRootID(compiler.input.ContentID(), row.body, name)
 	if !refOK || !referenceOK || !nameOK || !rootOK {

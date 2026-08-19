@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 
@@ -342,7 +343,7 @@ func encodeStaticArtifactComponent(t *testing.T, component *Component, sentinel 
 	return encodeStaticArtifactView(t, component.View(), sentinel)
 }
 
-func encodeStaticArtifactView(t *testing.T, view View, sentinel bool) []byte {
+func encodeStaticArtifactView(t *testing.T, view staticquery.View, sentinel bool) []byte {
 	t.Helper()
 	var data bytes.Buffer
 	var writer framing.Writer

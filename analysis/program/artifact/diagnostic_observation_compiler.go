@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -218,12 +218,12 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			var rootOK bool
-			root, rootOK = programstatic.ScopeID(compiler.input.ContentID(), rootTerm)
+			root, rootOK = staticquery.ScopeID(compiler.input.ContentID(), rootTerm)
 			if !rootOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 		}
-		reference, referenceOK := programstatic.TypeReferenceID(compiler.input.ContentID(), ref)
+		reference, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
 		if !referenceOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}

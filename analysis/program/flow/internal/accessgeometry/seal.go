@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
@@ -15,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // Seal derives Flow's normalized table/access geometry.  Source and Flow are
@@ -28,7 +29,7 @@ func Seal(
 	candidateResult *candidates.Result,
 	bodies *body.Result,
 	bindings binding.Result,
-	staticView static.View,
+	staticView staticquery.View,
 	moduleView imports.View,
 ) (*Result, error) {
 	staticID := staticView.ContentID()

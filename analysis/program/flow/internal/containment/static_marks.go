@@ -3,11 +3,12 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // emitStaticMarks computes the one static-containment membership projection
@@ -30,7 +31,7 @@ import (
 // projection; they do not become traversal edges or a second graph.
 func emitStaticMarks(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	roots []keyspace.Term,
 	counts [keyspace.FamilyCount]uint32,
@@ -141,7 +142,7 @@ func (marks staticMarkBits) terms() []keyspace.Term {
 // argument relation. Ownership of the complete subtree is proved below from
 // LocalContainment; this pass does not copy the argument relation into a
 // second graph.
-func validateStaticCallArguments(staticView static.View, counts [keyspace.FamilyCount]uint32) error {
+func validateStaticCallArguments(staticView staticquery.View, counts [keyspace.FamilyCount]uint32) error {
 	calls := staticView.Contracts().Calls()
 	if calls.Count() != int(counts[keyspace.FamilyCall]) {
 		return staticMarkError("static Call cardinality mismatch")
@@ -167,7 +168,7 @@ func validateStaticCallArguments(staticView static.View, counts [keyspace.Family
 // for static type families and FieldOwner for TypeField; walking those typed
 // projections is sufficient and avoids retaining a copied owner table.
 func markCallOwnedStaticTypes(
-	local static.LocalContainment,
+	local staticquery.LocalContainment,
 	counts [keyspace.FamilyCount]uint32,
 	marks *staticMarkBits,
 ) error {
@@ -206,7 +207,7 @@ type staticMarkOwnerScratch struct {
 
 func staticMarkCallOwner(
 	start keyspace.Term,
-	local static.LocalContainment,
+	local staticquery.LocalContainment,
 	counts [keyspace.FamilyCount]uint32,
 	scratch *staticMarkOwnerScratch,
 	marks *staticMarkBits,

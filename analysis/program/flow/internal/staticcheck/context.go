@@ -3,13 +3,14 @@ package staticcheck
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // contextTree is seal-local lexical scratch. A point is one Body gap and
@@ -60,7 +61,7 @@ const (
 func buildContext(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	bindings binding.Result,
 	entry keyspace.Term,
@@ -250,7 +251,7 @@ func contextChildren(bodies *body.Result, entry keyspace.Term) ([]int, []int, er
 func buildBodyContext(
 	sourceView source.View,
 	flowView authored.View,
-	staticView static.View,
+	staticView staticquery.View,
 	bodies *body.Result,
 	bindings binding.Result,
 	tree *contextTree,

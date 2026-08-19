@@ -4,6 +4,8 @@ import (
 	"errors"
 	"math"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	binding "github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
@@ -11,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // Seal builds one shared iterative exact selector parent-chain and its three
@@ -23,7 +24,7 @@ func sealSelectors(
 	flow authored.View,
 	bodies *body.Result,
 	bindings binding.Result,
-	staticView static.View,
+	staticView staticquery.View,
 	moduleView imports.View,
 ) (*Result, error) {
 	if err := validateSelectorInputs(sourceView, flow, bodies, bindings, staticView, moduleView); err != nil {
@@ -111,7 +112,7 @@ func SealSelectors(
 	flow authored.View,
 	bodies *body.Result,
 	bindings binding.Result,
-	staticView static.View,
+	staticView staticquery.View,
 	moduleView imports.View,
 ) (*Result, error) {
 	return sealSelectors(sourceView, flow, bodies, bindings, staticView, moduleView)
@@ -496,7 +497,7 @@ func (b *selectorBuilder) exactLiteral(term keyspace.Term) (keyspace.LiteralValu
 	return keyspace.LiteralValue{}, 0, false
 }
 
-func (b *selectorBuilder) buildPublications(view static.View, slots []uint32) error {
+func (b *selectorBuilder) buildPublications(view staticquery.View, slots []uint32) error {
 	publications := view.Publications()
 	assigns := b.flow.Storage().Assigns()
 	writes := b.flow.Storage().Writes()

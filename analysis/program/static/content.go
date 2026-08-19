@@ -16,6 +16,14 @@ const contentVersion = 4
 // retains only the value observed by consumers, never the Component graph.
 type Cold struct{ contentID identity.ContentID }
 
+// ContentID returns the sealed authored Static identity.
+func (component *Component) ContentID() identity.ContentID {
+	if component == nil {
+		return identity.ContentID{}
+	}
+	return component.contentID
+}
+
 func (component *Component) Cold() Cold {
 	if component == nil {
 		return Cold{}

@@ -3,18 +3,18 @@ package program
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
 // StaticOperandAt resolves one exact authored operand from the canonical
 // Program owners. Claims are transparent, TypeValues retain their static
 // target reference, literals retain their exact payload, and fixed-cell reads
 // retain the parent-issued Cell identity.
-func (program *Program) StaticOperandAt(term keyspace.Term) (programstatic.StaticOperand, bool) {
+func (program *Program) StaticOperandAt(term keyspace.Term) (staticquery.StaticOperand, bool) {
 	if program == nil || !program.Available() || term == 0 {
-		return programstatic.StaticOperand{}, false
+		return staticquery.StaticOperand{}, false
 	}
-	return program.Static().StaticOperandAt(term, programstatic.StaticOperandResolver{
+	return program.Static().StaticOperandAt(term, staticquery.StaticOperandResolver{
 		Literal:        program.staticLiteralOperand,
 		Claim:          program.staticClaimOperand,
 		TypeValue:      program.staticTypeValueOperand,
@@ -87,7 +87,7 @@ func (program *Program) staticTypeValueOperand(term keyspace.Term) (identity.Con
 	}
 	target, targetOK := program.Static().Operands().TypeValues().Target(term)
 	ref, refOK := program.Static().StaticTypes().Ref(target)
-	id, idOK := programstatic.TypeReferenceID(program.ContentID(), ref)
+	id, idOK := staticquery.TypeReferenceID(program.ContentID(), ref)
 	if !targetOK || !refOK || ref.Term() != target || !idOK {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}

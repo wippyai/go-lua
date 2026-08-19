@@ -10,6 +10,7 @@ import (
 
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -352,45 +353,45 @@ func TestStaticIdentityCodecsAreStableAndOwnerScoped(t *testing.T) {
 	term := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	otherTerm := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 2)
 	component := staticContentComponent(t, staticTypeDenominatorInput(t))
-	ref, ok := (View{component: component}).StaticTypes().Ref(term)
+	ref, ok := component.View().StaticTypes().Ref(term)
 	if !ok {
 		t.Fatal("StaticTypes.Ref rejected the identity-law type term")
 	}
 
-	occur, occurOK := OccurrenceID(owner, 1, term)
+	occur, occurOK := staticquery.OccurrenceID(owner, 1, term)
 	if !occurOK {
 		t.Fatalf("OccurrenceID = %x/%v, want available identity", occur, occurOK)
 	}
-	if again, againOK := OccurrenceID(owner, 1, term); !againOK || again != occur {
+	if again, againOK := staticquery.OccurrenceID(owner, 1, term); !againOK || again != occur {
 		t.Fatal("OccurrenceID was not deterministic")
 	}
-	if changed, changedOK := OccurrenceID(owner, 1, otherTerm); !changedOK || changed == occur {
+	if changed, changedOK := staticquery.OccurrenceID(owner, 1, otherTerm); !changedOK || changed == occur {
 		t.Fatal("OccurrenceID ignored its authored term")
 	}
-	if changed, changedOK := OccurrenceID(otherOwner, 1, term); !changedOK || changed == occur {
+	if changed, changedOK := staticquery.OccurrenceID(otherOwner, 1, term); !changedOK || changed == occur {
 		t.Fatal("OccurrenceID ignored its owner")
 	}
 
-	typeID, typeOK := TypeReferenceID(owner, ref)
-	expressionID, expressionOK := ExpressionID(owner, ref)
-	inputID, inputOK := InputID(owner, 2, term, 3)
-	scopeID, scopeOK := ScopeID(owner, term)
+	typeID, typeOK := staticquery.TypeReferenceID(owner, ref)
+	expressionID, expressionOK := staticquery.ExpressionID(owner, ref)
+	inputID, inputOK := staticquery.InputID(owner, 2, term, 3)
+	scopeID, scopeOK := staticquery.ScopeID(owner, term)
 	if !typeOK || !expressionOK || !inputOK || !scopeOK {
 		t.Fatalf("static identity availability = type=%v expression=%v input=%v scope=%v", typeOK, expressionOK, inputOK, scopeOK)
 	}
 	if typeID == expressionID || typeID == inputID || typeID == scopeID || expressionID == inputID || expressionID == scopeID || inputID == scopeID {
 		t.Fatal("Static identity domains collided")
 	}
-	if again, againOK := TypeReferenceID(owner, ref); !againOK || again != typeID {
+	if again, againOK := staticquery.TypeReferenceID(owner, ref); !againOK || again != typeID {
 		t.Fatal("TypeReferenceID was not deterministic")
 	}
-	if again, againOK := ExpressionID(owner, ref); !againOK || again != expressionID {
+	if again, againOK := staticquery.ExpressionID(owner, ref); !againOK || again != expressionID {
 		t.Fatal("ExpressionID was not deterministic")
 	}
-	if changed, changedOK := InputID(owner, 2, term, 4); !changedOK || changed == inputID {
+	if changed, changedOK := staticquery.InputID(owner, 2, term, 4); !changedOK || changed == inputID {
 		t.Fatal("InputID ignored its dense index")
 	}
-	if changed, changedOK := ScopeID(owner, otherTerm); !changedOK || changed == scopeID {
+	if changed, changedOK := staticquery.ScopeID(owner, otherTerm); !changedOK || changed == scopeID {
 		t.Fatal("ScopeID ignored its authored scope")
 	}
 }
@@ -398,31 +399,31 @@ func TestStaticIdentityCodecsAreStableAndOwnerScoped(t *testing.T) {
 func TestStaticIdentityCodecsRejectUnavailableInputs(t *testing.T) {
 	term := keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1)
 	var zero identity.ContentID
-	if _, ok := OccurrenceID(zero, 1, term); ok {
+	if _, ok := staticquery.OccurrenceID(zero, 1, term); ok {
 		t.Fatal("OccurrenceID accepted an unavailable owner")
 	}
-	if _, ok := OccurrenceID(identity.ContentID{0: 1}, 0, term); ok {
+	if _, ok := staticquery.OccurrenceID(identity.ContentID{0: 1}, 0, term); ok {
 		t.Fatal("OccurrenceID accepted an invalid family")
 	}
-	if _, ok := OccurrenceID(identity.ContentID{0: 1}, 1, 0); ok {
+	if _, ok := staticquery.OccurrenceID(identity.ContentID{0: 1}, 1, 0); ok {
 		t.Fatal("OccurrenceID accepted an invalid term")
 	}
-	if _, ok := TypeReferenceID(identity.ContentID{0: 1}, StaticTypeRef{}); ok {
+	if _, ok := staticquery.TypeReferenceID(identity.ContentID{0: 1}, staticquery.StaticTypeRef{}); ok {
 		t.Fatal("TypeReferenceID accepted an unavailable reference")
 	}
-	if _, ok := ExpressionID(identity.ContentID{0: 1}, StaticTypeRef{}); ok {
+	if _, ok := staticquery.ExpressionID(identity.ContentID{0: 1}, staticquery.StaticTypeRef{}); ok {
 		t.Fatal("ExpressionID accepted an unavailable reference")
 	}
-	if _, ok := InputID(zero, 1, term, 0); ok {
+	if _, ok := staticquery.InputID(zero, 1, term, 0); ok {
 		t.Fatal("InputID accepted an unavailable owner")
 	}
-	if _, ok := InputID(identity.ContentID{0: 1}, 1, 0, 0); ok {
+	if _, ok := staticquery.InputID(identity.ContentID{0: 1}, 1, 0, 0); ok {
 		t.Fatal("InputID accepted an invalid source")
 	}
-	if _, ok := ScopeID(zero, term); ok {
+	if _, ok := staticquery.ScopeID(zero, term); ok {
 		t.Fatal("ScopeID accepted an unavailable owner")
 	}
-	if _, ok := ScopeID(identity.ContentID{0: 1}, 0); ok {
+	if _, ok := staticquery.ScopeID(identity.ContentID{0: 1}, 0); ok {
 		t.Fatal("ScopeID accepted an invalid scope")
 	}
 }

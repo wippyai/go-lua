@@ -3,6 +3,8 @@ package body
 import (
 	"testing"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -677,7 +679,7 @@ func TestSourceRejectsForbiddenFunctionAndLiteralDirectTerms(t *testing.T) {
 	}
 }
 
-func prepare(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInputs ...static.Input) (authored.View, static.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
+func prepare(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInputs ...static.Input) (authored.View, staticquery.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
 	staticInput := static.Input{}
 	if len(staticInputs) != 0 {
 		staticInput = staticInputs[0]
@@ -685,15 +687,15 @@ func prepare(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticI
 	return prepareWithSourceNamed(t, rows, input, staticInput, nil, "body-test.lua")
 }
 
-func prepareWithSource(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInput static.Input, faults []source.ControlFault) (authored.View, static.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
+func prepareWithSource(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInput static.Input, faults []source.ControlFault) (authored.View, staticquery.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
 	return prepareWithSourceNamed(t, rows, input, staticInput, faults, "body-test.lua")
 }
 
-func prepareNamed(t *testing.T, rows [][]keyspace.Term, input authored.Input, name string) (authored.View, static.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
+func prepareNamed(t *testing.T, rows [][]keyspace.Term, input authored.Input, name string) (authored.View, staticquery.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
 	return prepareWithSourceNamed(t, rows, input, static.Input{}, nil, name)
 }
 
-func prepareWithSourceNamed(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInput static.Input, faults []source.ControlFault, name string) (authored.View, static.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
+func prepareWithSourceNamed(t *testing.T, rows [][]keyspace.Term, input authored.Input, staticInput static.Input, faults []source.ControlFault, name string) (authored.View, staticquery.View, authored.Finalizer, static.Finalizer, source.Preimage, source.Finalizer) {
 	t.Helper()
 	bodyCount := len(rows)
 	if bodyCount == 0 {

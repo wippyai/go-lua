@@ -1,13 +1,13 @@
-package static
+package query
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// StaticOperandKind is the closed disposition vocabulary for one static operator
-// operand. It is owned by Static because the disposition is part of the
-// static-input contract; Artifact only transports the value into its row.
+// StaticOperandKind is the closed disposition vocabulary for one static
+// operator operand. The vocabulary is part of the composed Static query
+// surface; row storage remains owned by operands.
 type StaticOperandKind uint8
 
 const (
@@ -17,9 +17,8 @@ const (
 	StaticOperandTypeValue
 )
 
-// StaticOperand is the sealed scalar behind one TypeOf or annotation input. It
-// carries no authored term and no owner capability: all fields are detached
-// identities or the exact scalar literal needed by the mounted evaluator.
+// StaticOperand is the sealed scalar behind one TypeOf or annotation input.
+// It carries no authored term or owner capability.
 type StaticOperand struct {
 	kind      StaticOperandKind
 	id        identity.ContentID
@@ -38,10 +37,8 @@ func (operand StaticOperand) ReferenceID() identity.ContentID { return operand.r
 func (operand StaticOperand) SubjectID() identity.ContentID   { return operand.subject }
 func (operand StaticOperand) BodyPathID() identity.ContentID  { return operand.body }
 
-// StaticOperandResolver is a one-shot cross-owner read capability. Static owns the
-// classification and result representation; the coordinating Program lends
-// only existing canonical Source/Flow identities and relations for the leaf
-// cases. The resolver is not retained and is not a second operand schema.
+// StaticOperandResolver is a one-shot cross-owner read capability. It is not
+// retained and is not a second operand schema.
 type StaticOperandResolver struct {
 	Literal        func(keyspace.Term) (identity.ContentID, keyspace.LiteralValue, bool)
 	Claim          func(keyspace.Term) (keyspace.Term, bool)
@@ -49,10 +46,8 @@ type StaticOperandResolver struct {
 	RuntimeSubject func(keyspace.Term) (identity.ContentID, identity.ContentID, identity.ContentID, bool)
 }
 
-// StaticOperandAt resolves one exact scalar operand through the canonical owner
-// relations lent by resolver. Claim operands are transparent; the three leaf
-// callbacks are responsible only for admitting their own existing owner rows
-// and identities. A fresh seen set makes malformed claim cycles fail closed.
+// StaticOperandAt resolves one exact authored operand through the canonical
+// owner relations lent by resolver.
 func (view View) StaticOperandAt(term keyspace.Term, resolver StaticOperandResolver) (StaticOperand, bool) {
 	if !view.Available() || term == 0 || resolver.Literal == nil || resolver.Claim == nil ||
 		resolver.TypeValue == nil || resolver.RuntimeSubject == nil {

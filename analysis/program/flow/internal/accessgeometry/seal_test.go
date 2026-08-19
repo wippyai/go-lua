@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
@@ -31,7 +33,7 @@ type accessGeometryFixture struct {
 	candidates *candidates.Result
 	bodies     *flowbody.Result
 	bindings   binding.Result
-	staticView static.View
+	staticView staticquery.View
 	moduleView imports.View
 	staticID   identity.ContentID
 	moduleID   identity.ContentID

@@ -3,15 +3,15 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
-func staticNodeID(owner identity.ContentID, ref programstatic.StaticTypeRef) (id identity.ContentID, ok bool) {
+func staticNodeID(owner identity.ContentID, ref staticquery.StaticTypeRef) (id identity.ContentID, ok bool) {
 	if !owner.Available() || ref.Term() == 0 {
 		return identity.ContentID{}, false
 	}
-	return programstatic.TypeReferenceID(owner, ref)
+	return staticquery.TypeReferenceID(owner, ref)
 }
 
 func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
@@ -30,21 +30,21 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
 	compiler.staticInputs = make([]StaticInputRow, 0, typeOfs.Count())
-	operandRow := func(term keyspace.Term) (programstatic.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
+	operandRow := func(term keyspace.Term) (staticquery.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
 		operand, ok := ownerProgram.StaticOperandAt(term)
 		if !ok {
-			return programstatic.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+			return staticquery.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
-		var kind programstatic.StaticOperandKind
+		var kind staticquery.StaticOperandKind
 		switch operand.Kind() {
-		case programstatic.StaticOperandKnown:
-			kind = programstatic.StaticOperandKnown
-		case programstatic.StaticOperandRuntimeSubject:
-			kind = programstatic.StaticOperandRuntimeSubject
-		case programstatic.StaticOperandTypeValue:
-			kind = programstatic.StaticOperandTypeValue
+		case staticquery.StaticOperandKnown:
+			kind = staticquery.StaticOperandKnown
+		case staticquery.StaticOperandRuntimeSubject:
+			kind = staticquery.StaticOperandRuntimeSubject
+		case staticquery.StaticOperandTypeValue:
+			kind = staticquery.StaticOperandTypeValue
 		default:
-			return programstatic.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+			return staticquery.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
 		return kind, operand.Literal(), operand.ID(), operand.ReferenceID(), operand.SubjectID(), operand.BodyPathID(), true
 	}
@@ -55,7 +55,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
 		nodeID, nodeOK := staticNodeID(owner, ref)
-		expressionID, expressionOK := programstatic.ExpressionID(owner, ref)
+		expressionID, expressionOK := staticquery.ExpressionID(owner, ref)
 		if !nodeOK || !expressionOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
@@ -70,7 +70,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				frontierID, cursor, frontierOK := ownerProgram.StaticFrontier(sourceTerm)
 				expressionRef, expressionOK := view.StaticTypes().Ref(sourceTerm)
 				sourceID, sourceOK := staticNodeID(owner, expressionRef)
-				operandID, operandOK := programstatic.OccurrenceID(owner, 1, operandTerm)
+				operandID, operandOK := staticquery.OccurrenceID(owner, 1, operandTerm)
 				operandKind, literal, semanticOperandID, operandReference, operandSubject, operandBody, dispositionOK := operandRow(operandTerm)
 				if semanticOperandID.Available() {
 					operandID = semanticOperandID
@@ -78,7 +78,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				if !expressionOK || !sourceOK || !operandOK || !frontierOK || !dispositionOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
-				rowID, rowIDOK := programstatic.InputID(owner, 2, sourceTerm, uint32(inputIndex))
+				rowID, rowIDOK := staticquery.InputID(owner, 2, sourceTerm, uint32(inputIndex))
 				if !rowIDOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
@@ -117,18 +117,18 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		if !targetRefOK || !targetIDOK || !frontierOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, -1, CompileReasonProgramUnavailable)
 		}
-		annotationSourceID, annotationSourceOK := programstatic.OccurrenceID(owner, 5, sourceTerm)
+		annotationSourceID, annotationSourceOK := staticquery.OccurrenceID(owner, 5, sourceTerm)
 		if !annotationSourceOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, -1, CompileReasonProgramUnavailable)
 		}
 		for valueIndex := 0; valueIndex < count; valueIndex++ {
 			operandTerm, operandOK := ownerProgram.Flow().Authored().Values().Member(valuesTerm, valueIndex)
-			operandID, operandIDOK := programstatic.OccurrenceID(owner, 3, operandTerm)
+			operandID, operandIDOK := staticquery.OccurrenceID(owner, 3, operandTerm)
 			operandKind, literal, semanticOperandID, operandReference, operandSubject, operandBody, dispositionOK := operandRow(operandTerm)
 			if semanticOperandID.Available() {
 				operandID = semanticOperandID
 			}
-			rowID, rowIDOK := programstatic.InputID(owner, 5, sourceTerm, uint32(valueIndex))
+			rowID, rowIDOK := staticquery.InputID(owner, 5, sourceTerm, uint32(valueIndex))
 			if !operandOK || !operandIDOK || !rowIDOK || !dispositionOK {
 				return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, valueIndex, CompileReasonProgramUnavailable)
 			}
@@ -278,7 +278,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				row.name = nameLiteral.String
 			}
 			if declOwner != 0 {
-				row.declaration, ok = programstatic.ScopeID(ownerIDForRow, declOwner)
+				row.declaration, ok = staticquery.ScopeID(ownerIDForRow, declOwner)
 			}
 			if constraint != 0 && ok {
 				ok = appendChild(constraint)
@@ -291,7 +291,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				row.name = nameLiteral.String
 			}
 			if interfaceOwner != 0 {
-				row.declaration, ok = programstatic.ScopeID(ownerIDForRow, interfaceOwner)
+				row.declaration, ok = staticquery.ScopeID(ownerIDForRow, interfaceOwner)
 			}
 			if count, shapeOK := view.Declarations().Interfaces().ExtendCount(term); shapeOK {
 				row.segments = append(row.segments, uint32(count))
@@ -346,7 +346,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			row.kind = StaticNodeTypeFunction
 			row.flag = variadic != 0
 			row.returnsKnown = returnsKnown
-			row.scope, ok = programstatic.ScopeID(owner, scope)
+			row.scope, ok = staticquery.ScopeID(owner, scope)
 			if variadic != 0 {
 				variadicID, idOK := childID(variadic)
 				ok = idOK
@@ -409,7 +409,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			}
 		} else if _, operand, found := view.Operators().TypeOfs().Get(term); found {
 			row.kind = StaticNodeTypeOf
-			row.operand, ok = programstatic.OccurrenceID(owner, 1, operand)
+			row.operand, ok = staticquery.OccurrenceID(owner, 1, operand)
 		} else if child, found := view.Operators().KeyOfs().Get(term); found {
 			row.kind = StaticNodeKeyOf
 			ok = appendChild(child)

@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -155,7 +155,7 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	for typeIndex := 0; typeIndex < typeCount; typeIndex++ {
 		typeTerm, typeOK := contracts.TypeArgumentAt(term, typeIndex)
 		ref, refOK := staticTypes.Ref(typeTerm)
-		referenceID, referenceOK := programstatic.TypeReferenceID(compiler.input.ContentID(), ref)
+		referenceID, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
 		argumentID, argumentOK := compiler.input.CallTypeArgumentIDAt(index, typeIndex)
 		if !typeOK || !refOK || ref.Term() != typeTerm || !referenceOK || !referenceID.Available() || !argumentOK || !argumentID.Available() {
 			return callConstruction{}, false

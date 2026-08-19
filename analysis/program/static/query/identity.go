@@ -1,4 +1,4 @@
-package static
+package query
 
 import (
 	"crypto/sha256"
@@ -8,9 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// OccurrenceID is Static's identity of one authored static operand
-// occurrence. It is detached from runtime state and carries no domain
-// authority.
+// OccurrenceID is the detached identity of one authored static operand
+// occurrence. It carries no runtime or inferred authority.
 func OccurrenceID(owner identity.ContentID, family uint8, term keyspace.Term) (id identity.ContentID, ok bool) {
 	if !owner.Available() || term == 0 || family == 0 {
 		return identity.ContentID{}, false
@@ -27,8 +26,7 @@ func OccurrenceID(owner identity.ContentID, family uint8, term keyspace.Term) (i
 	return id, id.Available()
 }
 
-// TypeReferenceID is Static's detached identity for one canonical type
-// reference crossing into a reusable Artifact row.
+// TypeReferenceID is the detached identity for one canonical type reference.
 func TypeReferenceID(owner identity.ContentID, ref StaticTypeRef) (id identity.ContentID, ok bool) {
 	if !owner.Available() || ref.Term() == 0 {
 		return identity.ContentID{}, false
@@ -44,9 +42,7 @@ func TypeReferenceID(owner identity.ContentID, ref StaticTypeRef) (id identity.C
 	return id, id.Available()
 }
 
-// ExpressionID is Static's identity of one authored static expression
-// occurrence. It remains distinct from the type-node identity because Link
-// may join several qualified occurrences onto one type node.
+// ExpressionID is the identity of one authored static expression occurrence.
 func ExpressionID(owner identity.ContentID, ref StaticTypeRef) (identity.ContentID, bool) {
 	if !owner.Available() || ref.Term() == 0 {
 		return identity.ContentID{}, false
@@ -54,8 +50,7 @@ func ExpressionID(owner identity.ContentID, ref StaticTypeRef) (identity.Content
 	return staticInputDigest("program/static-expression/v1", owner, ref.Term(), 0), true
 }
 
-// InputID issues a dense, index-bearing Static input identity without
-// narrowing the index into the uint8 occurrence-family namespace.
+// InputID issues a dense, index-bearing Static input identity.
 func InputID(owner identity.ContentID, family uint8, source keyspace.Term, index uint32) (identity.ContentID, bool) {
 	if !owner.Available() || source == 0 {
 		return identity.ContentID{}, false
@@ -64,7 +59,7 @@ func InputID(owner identity.ContentID, family uint8, source keyspace.Term, index
 	return id, id.Available()
 }
 
-// ScopeID is the Static identity of one authored static scope owner.
+// ScopeID is the identity of one authored static scope owner.
 func ScopeID(owner identity.ContentID, scope keyspace.Term) (identity.ContentID, bool) {
 	if !owner.Available() || scope == 0 {
 		return identity.ContentID{}, false

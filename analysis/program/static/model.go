@@ -10,6 +10,7 @@ import (
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 	staticoperators "github.com/wippyai/go-lua/analysis/program/static/operators"
 	staticpubs "github.com/wippyai/go-lua/analysis/program/static/publications"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticsig "github.com/wippyai/go-lua/analysis/program/static/signatures"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
@@ -49,7 +50,8 @@ type Component struct {
 
 type draftState struct {
 	component        *Component
-	localContainment *localContainmentProof
+	localContainment *staticquery.Proof
+	live             uint32
 	phase            draftPhase
 	mu               sync.Mutex
 }
@@ -75,8 +77,34 @@ type Finalizer struct {
 	state *draftState
 }
 
-// View partitions this vertical by exact typed relation.
-type View struct {
-	component *Component
-	state     *draftState
+// View returns the immutable composed Static query surface. The query child
+// receives only the sealed canonical values and no root Component capability.
+func (component *Component) View() staticquery.View {
+	if component == nil {
+		return staticquery.View{}
+	}
+	return staticquery.NewView(component.querySnapshot(), nil)
+}
+
+func (component *Component) querySnapshot() staticquery.Snapshot {
+	return component.querySnapshotWithProof(nil)
+}
+
+func (component *Component) querySnapshotWithProof(proof *staticquery.Proof) staticquery.Snapshot {
+	if component == nil {
+		return staticquery.Snapshot{}
+	}
+	return staticquery.NewSnapshot(
+		component.contentID,
+		component.census,
+		component.types,
+		component.references,
+		component.declarations,
+		component.signatures,
+		component.contracts,
+		component.operators,
+		component.operands,
+		component.publications,
+		proof,
+	)
 }

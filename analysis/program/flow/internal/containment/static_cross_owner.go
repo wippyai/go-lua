@@ -3,10 +3,11 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // validateStaticCrossOwnerCardinalities closes the Static sidecars whose
@@ -14,7 +15,7 @@ import (
 // own authored input; this boundary reconciles those rows with the live Flow
 // families before any containment producer can consume them.
 func validateStaticCrossOwnerCardinalities(
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	counts [keyspace.FamilyCount]uint32,
 ) error {

@@ -3,11 +3,12 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -20,7 +21,7 @@ import (
 // projection rather than kernel roots.
 func emitStaticFallbacks(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	resolver *staticScopeResolver,
 	counts [keyspace.FamilyCount]uint32,
@@ -130,7 +131,7 @@ func emitStaticFallbacks(
 // path is entered and finalized iteratively, so a maliciously deep or cyclic
 // static scope cannot consume the Go call stack or require a depth budget.
 type staticScopeResolver struct {
-	static static.View
+	static staticquery.View
 	view   authored.View
 	counts [keyspace.FamilyCount]uint32
 	body   [keyspace.FamilyCount][]keyspace.Term
@@ -142,7 +143,7 @@ type staticScopeResolver struct {
 // newStaticScopeResolver is the sole construction boundary for the shared
 // static-scope walk.  Memo planes are allocated lazily when a family is first
 // reached; only the reusable iterative path scratch is initialized here.
-func newStaticScopeResolver(staticView static.View, view authored.View, counts [keyspace.FamilyCount]uint32) *staticScopeResolver {
+func newStaticScopeResolver(staticView staticquery.View, view authored.View, counts [keyspace.FamilyCount]uint32) *staticScopeResolver {
 	return &staticScopeResolver{
 		static: staticView,
 		view:   view,
@@ -309,7 +310,7 @@ func ownerBody(owner keyspace.Term, ok bool, counts [keyspace.FamilyCount]uint32
 
 func validateStaticFallbackInputs(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	counts [keyspace.FamilyCount]uint32,
 ) error {

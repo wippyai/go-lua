@@ -3,11 +3,12 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
@@ -19,7 +20,7 @@ import (
 // reconstructed here.
 func emitStaticContainment(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	counts [keyspace.FamilyCount]uint32,
 	result *emission,
@@ -55,7 +56,7 @@ func emitStaticContainment(
 	return resolver, nil
 }
 
-func emitStaticLocalParents(result *emission, local static.LocalContainment, counts [keyspace.FamilyCount]uint32) error {
+func emitStaticLocalParents(result *emission, local staticquery.LocalContainment, counts [keyspace.FamilyCount]uint32) error {
 	if result == nil {
 		return errors.New("program/flow/containment: nil Static emission")
 	}
@@ -84,9 +85,9 @@ func emitStaticLocalParents(result *emission, local static.LocalContainment, cou
 // or Interface source edge: Source owns those direct lexical occurrences.
 func emitStaticCrossParents(
 	result *emission,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
-	local static.LocalContainment,
+	local staticquery.LocalContainment,
 	resolver *staticScopeResolver,
 	counts [keyspace.FamilyCount]uint32,
 ) error {

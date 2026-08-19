@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
 func TestStaticCallOwnerDeepChainScales(t *testing.T) {
@@ -20,7 +20,7 @@ func TestStaticCallOwnerDeepChainScales(t *testing.T) {
 		t.Fatalf("large chain marks = %d, want %d", got, want)
 	}
 
-	measure := func(local static.LocalContainment, counts [keyspace.FamilyCount]uint32) uint64 {
+	measure := func(local staticquery.LocalContainment, counts [keyspace.FamilyCount]uint32) uint64 {
 		runtime.GC()
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)

@@ -9,6 +9,8 @@
 //
 //	types         references    declarations  signatures
 //	contracts     operators     operands      publications
+//	query          composed immutable owner view, local proof, and static
+//	              type/operand capabilities
 //
 // Their rows are built on the shared sealed-row substrate in
 // analysis/program/internal/rows, and their decoders on the shared wire
@@ -32,8 +34,9 @@
 //	the joint laws    the combined containment forest, exactly-once TypeParam
 //	                  ownership, the interface-method scope join, and the
 //	                  bound-assertion direct-return rule
-//	the lifecycle     Draft, Finalizer, View: one publication transaction,
-//	                  whose fence every owner-view accessor checks exactly once
+//	the lifecycle     Draft and Finalizer: one publication transaction. The
+//	                  Finalizer lends a lifecycle-bound static/query.View;
+//	                  Component.View returns the permanent published view.
 //	the stream        section order and record framing for the artifact
 //	                  payload, shared with the ContentID digest
 //

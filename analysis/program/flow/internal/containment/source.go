@@ -3,11 +3,12 @@ package containment
 import (
 	"errors"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
-	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // Source owns lexical provenance, not expression containment.  Only the
@@ -104,7 +105,7 @@ func validateSourceLiteralTerms(preimage source.Preimage, family keyspace.Family
 
 func emitSource(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	bodies *body.Result,
 	counts [keyspace.FamilyCount]uint32,
@@ -151,7 +152,7 @@ func emitSource(
 
 func directOwner(
 	preimage source.Preimage,
-	staticView static.View,
+	staticView staticquery.View,
 	view authored.View,
 	term keyspace.Term,
 	counts [keyspace.FamilyCount]uint32,
@@ -259,7 +260,7 @@ func authoredTermOwner(view authored.View, term keyspace.Term, counts [keyspace.
 	}
 }
 
-func staticTermOwner(view static.View, term keyspace.Term, counts [keyspace.FamilyCount]uint32) (keyspace.Term, bool) {
+func staticTermOwner(view staticquery.View, term keyspace.Term, counts [keyspace.FamilyCount]uint32) (keyspace.Term, bool) {
 	if !validTerm(term, counts) {
 		return 0, false
 	}

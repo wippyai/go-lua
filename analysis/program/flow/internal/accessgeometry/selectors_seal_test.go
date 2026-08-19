@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	flowbinding "github.com/wippyai/go-lua/analysis/program/flow/internal/binding"
@@ -396,7 +398,7 @@ func TestSealIgnoresExactLensOverScalarBase(t *testing.T) {
 	}
 }
 
-func selectorBindingProof(t *testing.T, preimage source.Preimage, flow authored.View, staticView static.View, entry keyspace.Term) flowbinding.Result {
+func selectorBindingProof(t *testing.T, preimage source.Preimage, flow authored.View, staticView staticquery.View, entry keyspace.Term) flowbinding.Result {
 	t.Helper()
 	bodyResult, err := flowbody.Seal(preimage, flow, staticView, entry)
 	if err != nil {

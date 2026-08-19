@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	programstatic "github.com/wippyai/go-lua/analysis/program/static"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -140,7 +140,7 @@ func (input *Program) declaredStaticTypeID(cell keyspace.Term) (identity.Content
 	declaration, declarationOK := static.Declarations().DeclaredTypes().ForCell(cell)
 	declaredCell, target, rowOK := static.Declarations().DeclaredTypes().Get(declaration)
 	ref, refOK := static.StaticTypes().Ref(target)
-	id, idOK := programstatic.TypeReferenceID(input.ContentID(), ref)
+	id, idOK := staticquery.TypeReferenceID(input.ContentID(), ref)
 	if !declarationOK || !rowOK || declaredCell != cell || !refOK || ref.Term() != target || !idOK {
 		return identity.ContentID{}, false
 	}
