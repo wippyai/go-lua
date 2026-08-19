@@ -53,7 +53,6 @@ type frozenLedger struct {
 	values      []valueRow
 	valueBinds  []bindingRange
 	bindingKeys sealedrows.Pool[vocabulary.ExactKey]
-	segments    sealedrows.Pool[string]
 	entries     []entryRow
 	bindings    []bindingRow
 	metatables  []metatableRow
@@ -225,7 +224,6 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 	valueRows := make([]valueRow, len(unique))
 	bindRanges := make([]bindingRange, 0)
 	var bindingKeyBuilder sealedrows.PoolBuilder[vocabulary.ExactKey]
-	var bindingSegmentBuilder sealedrows.PoolBuilder[string]
 	for index, value := range unique {
 		row := valueRow{kind: value.kind, boolean: value.boolean, integer: value.integer, floatBits: value.floatBits, string: value.string, root: value.root, operation: value.operation}
 		if value.kind == vocabulary.InitialValueOperation {
@@ -239,7 +237,7 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 			row.anchor = anchor
 		}
 		if value.kind == vocabulary.InitialValueDeniedOperation {
-			_, err := appendBindingRange(&bindRanges, &bindingKeyBuilder, &bindingSegmentBuilder, value.binding, keys)
+			_, err := appendBindingRange(&bindRanges, &bindingKeyBuilder, value.binding, keys)
 			if err != nil {
 				return frozenLedger{}, err
 			}
@@ -274,7 +272,7 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 	absentHandle, _ := valueHandle(unique, absent)
 	return frozenLedger{
 		roots: rootRows, shapes: shapeRows, values: valueRows,
-		valueBinds: bindRanges, bindingKeys: bindingKeyBuilder.Seal(), segments: bindingSegmentBuilder.Seal(),
+		valueBinds: bindRanges, bindingKeys: bindingKeyBuilder.Seal(),
 		entries: entryRows, bindings: bindingRows, metatables: metatableRows,
 		globalRoot: globalRoot, absent: absentHandle,
 	}, nil
@@ -346,30 +344,26 @@ func freezeValue(input vocabulary.InitialValueSpec, roots map[string]vocabulary.
 	}
 }
 
-func appendBindingRange(ranges *[]bindingRange, keyBuilder *sealedrows.PoolBuilder[vocabulary.ExactKey], segmentBuilder *sealedrows.PoolBuilder[string], input vocabulary.BindingSpec, keys exactkey.Table) (uint32, error) {
+func appendBindingRange(ranges *[]bindingRange, keyBuilder *sealedrows.PoolBuilder[vocabulary.ExactKey], input vocabulary.BindingSpec, keys exactkey.Table) (uint32, error) {
 	if !vocabulary.ValidBinding(input) {
 		return 0, errors.New("target/boot: invalid denied binding")
 	}
 	row := bindingRange{namespace: input.Namespace}
 	ownerKeys := make([]vocabulary.ExactKey, 0, len(input.Owner))
-	ownerSegments := make([]string, 0, len(input.Owner))
 	for _, segment := range input.Owner {
 		key, ok := keys.Handle(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
 		if !ok {
 			return 0, errors.New("target/boot: unresolved denied owner key")
 		}
 		ownerKeys = append(ownerKeys, key)
-		ownerSegments = append(ownerSegments, segment)
 	}
 	memberKeys := make([]vocabulary.ExactKey, 0, len(input.Member))
-	memberSegments := make([]string, 0, len(input.Member))
 	for _, segment := range input.Member {
 		key, ok := keys.Handle(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
 		if !ok {
 			return 0, errors.New("target/boot: unresolved denied member key")
 		}
 		memberKeys = append(memberKeys, key)
-		memberSegments = append(memberSegments, segment)
 	}
 	var ok bool
 	row.ownerKeys, ok = keyBuilder.Append(ownerKeys)
@@ -379,14 +373,6 @@ func appendBindingRange(ranges *[]bindingRange, keyBuilder *sealedrows.PoolBuild
 	row.memberKeys, ok = keyBuilder.Append(memberKeys)
 	if !ok {
 		return 0, errors.New("target/boot: denied member key pool overflow")
-	}
-	row.owner, ok = segmentBuilder.Append(ownerSegments)
-	if !ok {
-		return 0, errors.New("target/boot: denied owner segment pool overflow")
-	}
-	row.member, ok = segmentBuilder.Append(memberSegments)
-	if !ok {
-		return 0, errors.New("target/boot: denied member segment pool overflow")
 	}
 	*ranges = append(*ranges, row)
 	return uint32(len(*ranges)), nil

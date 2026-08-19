@@ -73,8 +73,6 @@ type metatableRow struct {
 // Pool.At/Count after the owner seals.
 type bindingRange struct {
 	namespace  vocabulary.BindingNamespace
-	owner      sealedrows.Span
-	member     sealedrows.Span
 	ownerKeys  sealedrows.Span
 	memberKeys sealedrows.Span
 }
@@ -86,8 +84,8 @@ type Table struct {
 	shapes      sealedrows.Rows[shapeRow]
 	values      sealedrows.Rows[valueRow]
 	valueBinds  sealedrows.Rows[bindingRange]
+	keys        exactkey.Table
 	bindingKeys sealedrows.Pool[vocabulary.ExactKey]
-	segments    sealedrows.Pool[string]
 	entries     sealedrows.Rows[entryRow]
 	bindings    sealedrows.Rows[bindingRow]
 	metatables  sealedrows.Rows[metatableRow]

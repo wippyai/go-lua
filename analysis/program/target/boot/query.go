@@ -3,6 +3,7 @@ package boot
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -185,23 +186,22 @@ func (t *Table) InitialValueDeniedOwnerCount(value vocabulary.InitialValue) int 
 	if !ok {
 		return 0
 	}
-	return row.owner.Len()
+	return row.ownerKeys.Len()
 }
 
 func (t *Table) InitialValueDeniedOwnerAt(value vocabulary.InitialValue, index int) (string, bool) {
-	row, rowOK := t.initialValueBinding(value)
-	if !rowOK {
+	if _, rowOK := t.initialValueBinding(value); !rowOK {
 		return "", false
 	}
 	key, ok := t.initialValueDeniedOwnerKeyAt(value, index)
 	if !ok || key == 0 {
 		return "", false
 	}
-	segment, segmentOK := t.segments.At(row.owner, index)
-	if !segmentOK {
+	literal, literalOK := t.keys.Value(key)
+	if !literalOK || literal.Kind != keyspace.LiteralString {
 		return "", false
 	}
-	return segment, true
+	return literal.String, true
 }
 
 func (t *Table) initialValueDeniedOwnerKeyAt(value vocabulary.InitialValue, index int) (vocabulary.ExactKey, bool) {
@@ -217,23 +217,22 @@ func (t *Table) InitialValueDeniedMemberCount(value vocabulary.InitialValue) int
 	if !ok {
 		return 0
 	}
-	return row.member.Len()
+	return row.memberKeys.Len()
 }
 
 func (t *Table) InitialValueDeniedMemberAt(value vocabulary.InitialValue, index int) (string, bool) {
-	row, rowOK := t.initialValueBinding(value)
-	if !rowOK {
+	if _, rowOK := t.initialValueBinding(value); !rowOK {
 		return "", false
 	}
 	key, ok := t.initialValueDeniedMemberKeyAt(value, index)
 	if !ok || key == 0 {
 		return "", false
 	}
-	segment, segmentOK := t.segments.At(row.member, index)
-	if !segmentOK {
+	literal, literalOK := t.keys.Value(key)
+	if !literalOK || literal.Kind != keyspace.LiteralString {
 		return "", false
 	}
-	return segment, true
+	return literal.String, true
 }
 
 func (t *Table) initialValueDeniedMemberKeyAt(value vocabulary.InitialValue, index int) (vocabulary.ExactKey, bool) {

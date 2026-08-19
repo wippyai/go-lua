@@ -15,7 +15,7 @@ func Compile(input Input) (Table, error) {
 	}
 	table := Table{
 		roots: sealedrows.NewRows(ledger.roots), shapes: sealedrows.NewRows(ledger.shapes), values: sealedrows.NewRows(ledger.values),
-		valueBinds: sealedrows.NewRows(ledger.valueBinds), bindingKeys: ledger.bindingKeys, segments: ledger.segments,
+		valueBinds: sealedrows.NewRows(ledger.valueBinds), keys: cloned.Keys, bindingKeys: ledger.bindingKeys,
 		entries: sealedrows.NewRows(ledger.entries), bindings: sealedrows.NewRows(ledger.bindings), metatables: sealedrows.NewRows(ledger.metatables),
 		globalRoot: ledger.globalRoot,
 		absent:     ledger.absent,
