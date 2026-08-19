@@ -190,9 +190,6 @@ func (r indexRange) len() int { return int(r.end - r.start) }
 type Contract struct {
 	bootvalue.Table
 	operationvalue.Core
-	// queryBuilder exists only during Seal. It is consumed before the
-	// Contract is published; the immutable Core is the sole query owner.
-	queryBuilder           *operationvalue.QueryBuilder
 	operations             []operationRow
 	outcomes               []outcomeRow
 	effects                []effectRow

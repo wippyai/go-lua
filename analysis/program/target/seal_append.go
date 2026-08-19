@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraft, keys exactkey.Table, callbackIDs []vocabulary.CallbackID) error {
+func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op vocabulary.Operation, draft *operationDraft, keys exactkey.Table, callbackIDs []vocabulary.CallbackID) error {
 	expected, err := checkedStoredHandle("operation table", len(c.operations))
 	if err != nil {
 		return err
@@ -18,7 +18,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	if op != vocabulary.Operation(expected) {
 		return errors.New("target: noncanonical operation handle")
 	}
-	typeHandle, err := c.queryBuilder.AppendQueryTypes(draft.types, draft.declarations)
+	typeHandle, err := builder.AppendQueryTypes(draft.types, draft.declarations)
 	if err != nil {
 		return err
 	}
@@ -73,14 +73,14 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	sort.Strings(valueKeys)
 	for _, key := range valueKeys {
 		declaration := queryValuesDeclaration(op, allValues[key])
-		handle, appendErr := c.queryBuilder.AppendQueryValues(declaration, typeHandle)
+		handle, appendErr := builder.AppendQueryValues(declaration, typeHandle)
 		if appendErr != nil {
 			return appendErr
 		}
 		valuesHandle[key] = handle
 	}
 	operationInput := valuesHandle[inputKey]
-	callbackIDs, _, err = c.appendCallbacks(op, draft.callbacks, valuesHandle, callbackIDs)
+	callbackIDs, _, err = c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
@@ -136,7 +136,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		return spawnErr
 	}
 	operationSpawns := spawns
-	effectRange, err := c.appendEffects(effectOwnerOperation, draft.effects)
+	effectRange, err := c.appendEffects(builder, effectOwnerOperation, draft.effects)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 			Outcomes: append([]vocabulary.TransferPossibility(nil), transfer.outcomes...),
 		})
 	}
-	if err := c.queryBuilder.AppendQueryOperation(op, query); err != nil {
+	if err := builder.AppendQueryOperation(op, query); err != nil {
 		return err
 	}
 	return nil
@@ -224,7 +224,7 @@ func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (
 	return handle, nil
 }
 
-func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
+func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque vocabulary.Operation) error {
 	if opaque == 0 || uint64(opaque) != uint64(len(c.operations)+1) {
 		return errors.New("target: noncanonical opaque operation handle")
 	}
@@ -232,7 +232,7 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		return err
 	}
 	unknownDraft := valuesDraft{tail: vocabulary.ValuesUnknown}
-	unknown, err := c.queryBuilder.AppendQueryValues(operationvalue.QueryValuesDeclaration{
+	unknown, err := builder.AppendQueryValues(operationvalue.QueryValuesDeclaration{
 		Owner: opaque, Tail: vocabulary.ValuesUnknown,
 	}, nil)
 	if err != nil {
@@ -265,7 +265,7 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		},
 	}}
 	issuedOpaque := callbackIDForOpaque(c.Core, opaque)
-	_, _, err = c.appendCallbacks(opaque, []callbackDraft{{
+	_, _, err = c.appendCallbacks(builder, opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
@@ -282,7 +282,7 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		outcomes:   outcomes,
 		effectTail: vocabulary.RowUnknownOpen,
 	})
-	return c.queryBuilder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
+	return builder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
 		Input: unknown,
 		Outcomes: []operationvalue.QueryOutcomeInput{
 			{Kind: flowkind.OutcomeNormal, Values: unknown},

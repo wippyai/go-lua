@@ -108,7 +108,7 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
-	contract := &Contract{Table: bootTable, Core: operationCore, queryBuilder: queryBuilder,
+	contract := &Contract{Table: bootTable, Core: operationCore,
 		exactKeys: exactKeys, operations: make([]operationRow, 0, operationCount), protocols: protocols}
 	for index := range drafts {
 		op, ok := operationCore.OperationAt(index)
@@ -123,7 +123,7 @@ func Seal(spec *Spec) (*Contract, error) {
 			}
 			callbackIDs[callbackIndex] = callback
 		}
-		if err := contract.appendOperation(op, &drafts[index], exactKeys, callbackIDs); err != nil {
+		if err := contract.appendOperation(queryBuilder, op, &drafts[index], exactKeys, callbackIDs); err != nil {
 			return nil, err
 		}
 	}
@@ -134,15 +134,14 @@ func Seal(spec *Spec) (*Contract, error) {
 	if !opaqueOK {
 		return nil, errors.New("target: operation core missing opaque handle")
 	}
-	if err := contract.appendOpaque(opaque); err != nil {
+	if err := contract.appendOpaque(queryBuilder, opaque); err != nil {
 		return nil, err
 	}
-	queryCore, err := contract.queryBuilder.FinishQuery()
+	queryCore, err := queryBuilder.FinishQuery()
 	if err != nil {
 		return nil, err
 	}
 	contract.Core = queryCore
-	contract.queryBuilder = nil
 	if err := contract.sealSemanticIdentities(); err != nil {
 		return nil, err
 	}

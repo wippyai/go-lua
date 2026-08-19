@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, indexRange, error) {
+func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, indexRange, error) {
 	rangeOut, err := checkedStoredRange("callback table", len(c.callbacks), len(input))
 	if err != nil {
 		return nil, indexRange{}, err
@@ -19,7 +19,7 @@ func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackD
 	ids := append([]vocabulary.CallbackID(nil), issued...)
 	for index := range input {
 		callback := &input[index]
-		effects, effectErr := c.appendEffects(effectOwnerCallback, callback.effects.effects)
+		effects, effectErr := c.appendEffects(builder, effectOwnerCallback, callback.effects.effects)
 		if effectErr != nil {
 			return nil, indexRange{}, effectErr
 		}
@@ -50,7 +50,7 @@ func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackD
 	return ids, rangeOut, nil
 }
 
-func (c *Contract) appendEffects(owner effectOwner, input []effectDraft) (indexRange, error) {
+func (c *Contract) appendEffects(builder *operationvalue.QueryBuilder, owner effectOwner, input []effectDraft) (indexRange, error) {
 	rangeOut, err := checkedStoredRange("effect table", len(c.effects), len(input))
 	if err != nil {
 		return indexRange{}, err
@@ -120,7 +120,7 @@ func (c *Contract) appendEffects(owner effectOwner, input []effectDraft) (indexR
 				Lifetime: row.publication.Lifetime(),
 			}
 		}
-		if err := c.queryBuilder.AppendQueryEffect(query); err != nil {
+		if err := builder.AppendQueryEffect(query); err != nil {
 			return indexRange{}, err
 		}
 	}
