@@ -4,12 +4,11 @@ package analysis
 // lowering, and Link-local binding. Runtime assemble lives in analyze.go.
 
 import (
-	"crypto/sha256"
-	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
+	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -34,209 +33,6 @@ import (
 )
 
 var compositionStores atomic.Uint64
-
-type artifactScalarRoleBinding struct {
-	key    schema.Key
-	scalar rows.ArtifactScalarRole
-}
-
-// artifactScalarRoleDirectory is immutable Program-template metadata. It
-// contains no Link-local capability and is shared with the template cache.
-type artifactScalarRoleDirectory struct{ rows []artifactScalarRoleBinding }
-
-func (directory *artifactScalarRoleDirectory) role(key schema.Key) (rows.ArtifactScalarRole, bool) {
-	if directory != nil && key.Available() {
-		for _, row := range directory.rows {
-			if row.key == key {
-				return row.scalar, row.scalar.Available()
-			}
-		}
-	}
-	return rows.ArtifactScalarRole{}, false
-}
-
-func artifactScalarRoleSemantic(artifact identity.ContentID, key schema.Key) identity.ContentID {
-	if !artifact.Available() || !key.Available() {
-		return identity.ContentID{}
-	}
-	input := make([]byte, 0, len("analysis/artifact-scalar-role/v1")+len(artifact)+len(key))
-	input = append(input, "analysis/artifact-scalar-role/v1"...)
-	input = append(input, artifact[:]...)
-	input = append(input, key...)
-	return identity.ContentID(sha256.Sum256(input))
-}
-
-// newEngineArtifactScalarTemplate is the sole sealed-snapshot→Engine
-// structural boundary. It runs once while publishing the content-addressed
-// cache entry.
-func newEngineArtifactScalarTemplate(snapshot *ingress.Snapshot) (*rows.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
-	if snapshot == nil || !snapshot.Available() {
-		return nil, nil, false
-	}
-	usedKeys := make(map[schema.Key]struct{})
-	for index := 0; index < snapshot.LocalTransferCount(); index++ {
-		row, ok := snapshot.LocalTransferAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.WritesCount(); inner++ {
-			write, writeOK := row.WritesAt(inner)
-			if !writeOK {
-				return nil, nil, false
-			}
-			usedKeys[write] = struct{}{}
-		}
-	}
-	for index := 0; index < snapshot.RulePlacementCount(); index++ {
-		row, ok := snapshot.RulePlacementAt(index)
-		if !ok || !row.Key().Available() {
-			return nil, nil, false
-		}
-		usedKeys[row.Key()] = struct{}{}
-	}
-	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
-	})
-	if !specOK {
-		return nil, nil, false
-	}
-	laws, lawsOK := composite.IssuanceStageLaws()
-	if !lawsOK || !spec.InstallStageLaws(laws) {
-		return nil, nil, false
-	}
-	directory := &artifactScalarRoleDirectory{rows: make([]artifactScalarRoleBinding, 0, len(usedKeys))}
-	ordered := make([]schema.Key, 0, len(usedKeys))
-	for key := range usedKeys {
-		ordered = append(ordered, key)
-	}
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
-	for _, key := range ordered {
-		scalar, scalarOK := spec.DeclareRole(artifactScalarRoleSemantic(snapshot.ArtifactID(), key))
-		if !scalarOK {
-			return nil, nil, false
-		}
-		directory.rows = append(directory.rows, artifactScalarRoleBinding{key: key, scalar: scalar})
-	}
-	for index := 0; index < snapshot.PointCount(); index++ {
-		row, ok := snapshot.PointAt(index)
-		if !ok || !row.ID().Available() {
-			return nil, nil, false
-		}
-		point, pointOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: row.ID(), Initial: row.Initial()})
-		if !pointOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.DecisionCount(); inner++ {
-			decision, decisionOK := row.DecisionAt(inner)
-			if !decisionOK || !spec.AddPointDecision(point, decision) {
-				return nil, nil, false
-			}
-		}
-	}
-	for index := 0; index < snapshot.StructuralEdgeCount(); index++ {
-		row, ok := snapshot.StructuralEdgeAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		guard, guarded := row.GuardID()
-		decision, decisionOK := row.DecisionID()
-		truth, truthOK := row.Truth()
-		mu, hasMu := row.MuPathID()
-		reset, hasReset := row.ResetDigest()
-		if guarded != decisionOK || guarded != truthOK || hasMu != hasReset {
-			return nil, nil, false
-		}
-		arm, armOK := engineStructuralArm(row.Arm())
-		if !armOK {
-			return nil, nil, false
-		}
-		edge, edgeOK := spec.AddEdge(rows.ArtifactScalarEdge{ID: row.ID(), From: row.From(), To: row.To(), Route: row.RouteID(), Guard: guard, Decision: decision, Component: row.ComponentID(), Mu: mu, Reset: reset, Arm: arm, Guarded: guarded, Truth: truth, HasReset: hasReset})
-		if !edgeOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.ResetCount(); inner++ {
-			resetPoint, resetOK := row.ResetAt(inner)
-			if !resetOK || !spec.AddEdgeReset(edge, resetPoint) {
-				return nil, nil, false
-			}
-		}
-	}
-	for index := 0; index < snapshot.LocalTransferCount(); index++ {
-		row, ok := snapshot.LocalTransferAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		transfer, transferOK := spec.AddTransfer(rows.ArtifactScalarTransfer{ID: row.ID(), From: row.From(), To: row.To(), Full: row.Full()})
-		if !transferOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.WritesCount(); inner++ {
-			write, writeOK := row.WritesAt(inner)
-			role, roleOK := directory.role(write)
-			if !writeOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
-				return nil, nil, false
-			}
-		}
-	}
-	for index := 0; index < snapshot.RegionCount(); index++ {
-		row, ok := snapshot.RegionAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: row.ID(), Head: row.Head(), Parent: row.ParentID(), Cyclic: row.Cyclic()})
-		if !regionOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.MemberCount(); inner++ {
-			member, memberOK := row.MemberAt(inner)
-			if !memberOK || !spec.AddRegionMember(region, member) {
-				return nil, nil, false
-			}
-		}
-	}
-	for index := 0; index < snapshot.EventCount(); index++ {
-		row, ok := snapshot.EventAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		kind, kindOK := engineEventKind(row.Kind())
-		if !kindOK || !spec.AddEvent(rows.ArtifactScalarEvent{Kind: kind, Region: row.RegionID(), Point: row.PointID()}) {
-			return nil, nil, false
-		}
-	}
-	for index := 0; index < snapshot.RulePlacementCount(); index++ {
-		row, ok := snapshot.RulePlacementAt(index)
-		scalarRole, scalarRoleOK := directory.role(row.Key())
-		stage, stageOK := engineArtifactRuleStage(row.Stage())
-		if !ok || !scalarRoleOK || !stageOK || !spec.AddRule(rows.ArtifactScalarRule{Role: scalarRole, Stage: stage, Point: row.PointID(), Input: row.InputPointID(), ID: row.OccurrenceID(), Route: row.PredecessorRouteID()}) {
-			return nil, nil, false
-		}
-	}
-	for index := 0; index < snapshot.BodyTransportCount(); index++ {
-		row, ok := snapshot.BodyTransportAt(index)
-		if !ok {
-			return nil, nil, false
-		}
-		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: row.BodyID()})
-		if !bodyOK {
-			return nil, nil, false
-		}
-		for inner := 0; inner < row.EntryCount(); inner++ {
-			point, pointOK := row.EntryAt(inner)
-			if !pointOK || !spec.AddBodyEntry(body, point) {
-				return nil, nil, false
-			}
-		}
-		for inner := 0; inner < row.ExitCount(); inner++ {
-			point, pointOK := row.ExitAt(inner)
-			if !pointOK || !spec.AddBodyExit(body, point) {
-				return nil, nil, false
-			}
-		}
-	}
-	template, templateOK := rows.NewArtifactScalarTemplate(spec)
-	return template, directory, templateOK
-}
 
 func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) anadiag.AnalyzeDiagnosticRule {
 	rules := binding.Rules()
@@ -263,52 +59,20 @@ func mountedCapability(binding *composite.ProgramBinding, key schema.Key) (engin
 	return capability, ok && capability.Mounted()
 }
 
-func mountedProgramRoles(directory *artifactScalarRoleDirectory, binding *composite.ProgramBinding) ([]engine.MountedProgramRole, bool) {
+func mountedProgramRoles(directory *scalarlower.RoleDirectory, binding *composite.ProgramBinding) ([]engine.MountedProgramRole, bool) {
 	if directory == nil || binding == nil {
 		return nil, false
 	}
-	roles := make([]engine.MountedProgramRole, 0, len(directory.rows))
-	for _, row := range directory.rows {
-		capability, capabilityOK := mountedCapability(binding, row.key)
-		if !capabilityOK {
+	roles := make([]engine.MountedProgramRole, 0, directory.Count())
+	for index := 0; index < directory.Count(); index++ {
+		key, scalar, rowOK := directory.At(index)
+		capability, capabilityOK := mountedCapability(binding, key)
+		if !rowOK || !capabilityOK {
 			return nil, false
 		}
-		roles = append(roles, engine.MountedProgramRole{Scalar: row.scalar, Capability: capability})
+		roles = append(roles, engine.MountedProgramRole{Scalar: scalar, Capability: capability})
 	}
 	return roles, true
-}
-
-// engineArtifactRuleStage is the sealed execution-cut bijection. The placement
-// already carries the issued stage; a scalar caller cannot retag it. The two
-// stage vocabularies are proven ordinal-for-ordinal identical by
-// TestEngineArtifactVocabularyIsTheSealedTable, so the translation is a
-// range-checked cast rather than a per-member switch.
-func engineArtifactRuleStage(stage uint8) (rows.ArtifactRuleStage, bool) {
-	converted := rows.ArtifactRuleStage(stage)
-	if !converted.Valid() {
-		return rows.ArtifactRuleStageInvalid, false
-	}
-	return converted, true
-}
-
-// engineStructuralArm is the sealed structural-arm bijection between the
-// ingress and engine spellings, proven ordinal-for-ordinal identical by
-// TestEngineArtifactVocabularyIsTheSealedTable.
-func engineStructuralArm(arm ingress.StructuralArm) (rows.ArtifactStructuralArm, bool) {
-	if !arm.Valid() {
-		return rows.ArtifactStructuralArmInvalid, false
-	}
-	return rows.ArtifactStructuralArm(arm), true
-}
-
-// engineEventKind is the sealed event-kind bijection between the ingress and
-// engine spellings, proven ordinal-for-ordinal identical by
-// TestEngineArtifactVocabularyIsTheSealedTable.
-func engineEventKind(kind ingress.EventKind) (rows.ArtifactEventKind, bool) {
-	if kind < ingress.EventEnter || kind > ingress.EventExit {
-		return rows.ArtifactEventInvalid, false
-	}
-	return rows.ArtifactEventKind(kind), true
 }
 
 func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBinding) (engine.ProgramBootstrap, bool) {
@@ -693,7 +457,7 @@ type mountedProgramArtifact struct {
 	program   cold.Program
 	snapshot  *ingress.Snapshot
 	template  *rows.ArtifactScalarTemplate
-	roles     *artifactScalarRoleDirectory
+	roles     *scalarlower.RoleDirectory
 	programID identity.ContentID
 	moduleKey identity.ContentID
 }
@@ -816,7 +580,7 @@ type artifactCacheEntry struct {
 	artifact *programartifact.Artifact
 	snapshot *ingress.Snapshot
 	template *rows.ArtifactScalarTemplate
-	roles    *artifactScalarRoleDirectory
+	roles    *scalarlower.RoleDirectory
 	complete bool
 }
 
@@ -840,7 +604,7 @@ func mountDirectoryContent(linkID identity.ContentID, mounts []mountedProgramArt
 // were projected from. No payload retains Link authority.
 var globalArtifactCache = artifactCacheState{entries: make(map[artifactCacheKey]*artifactCacheEntry)}
 
-func cachedProgramArtifact(input *program.Program, receipt composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *artifactScalarRoleDirectory, bool) {
+func cachedProgramArtifact(input *program.Program, receipt composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
 	compileKey, keyOK := composite.NewArtifactCompileKey(input, receipt)
 	programID, schemaID := input.ContentID(), receipt.Digest()
 	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !receipt.Available() || !schemaID.Available() {
@@ -857,14 +621,14 @@ func cachedProgramArtifact(input *program.Program, receipt composite.Compilation
 		artifact, compiled := composite.CompileArtifact(input, receipt)
 		var snapshot *ingress.Snapshot
 		var template *rows.ArtifactScalarTemplate
-		var roles *artifactScalarRoleDirectory
+		var roles *scalarlower.RoleDirectory
 		if compiled {
 			structural, structuralOK := composite.StructureVocabulary()
 			var lowered bool
 			snapshot, lowered = ingress.Lower(artifact, structural)
 			compiled = structuralOK && lowered
 			if compiled {
-				template, roles, compiled = newEngineArtifactScalarTemplate(snapshot)
+				template, roles, compiled = scalarlower.Lower(snapshot, structural)
 			}
 		}
 		valid := compiled && artifact != nil && artifact.Available() && artifact.CompileKey().ID() == key && artifact.CompileKey().ProgramID() == programID && artifact.CompileKey().SchemaDigest() == schemaID && snapshot != nil && snapshot.Available() && snapshot.ArtifactID() == artifact.ID() && snapshot.ProgramID() == programID && snapshot.SchemaID() == schemaID && template != nil && template.Available() && template.ArtifactID() == artifact.ID() && template.ProgramID() == programID && template.SchemaID() == schemaID && roles != nil
@@ -906,7 +670,7 @@ func compileProgramArtifacts(source *link.Link, receipt composite.Compilation) (
 		artifact *programartifact.Artifact
 		snapshot *ingress.Snapshot
 		template *rows.ArtifactScalarTemplate
-		roles    *artifactScalarRoleDirectory
+		roles    *scalarlower.RoleDirectory
 	}
 	products := make(map[identity.ContentID]cachedProduct)
 	for index := 0; index < mounts.Count(); index++ {

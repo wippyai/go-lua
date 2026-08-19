@@ -1,7 +1,6 @@
 package composite
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
@@ -100,52 +99,6 @@ func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport b
 		Transport:   transport,
 	}
 	return placement, placement.Available()
-}
-
-// IssuanceStageLaws is the sealed native-call predecessor relation projected
-// onto the engine scalar stage ordinals.
-func IssuanceStageLaws() ([]rows.ArtifactStageLaw, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
-		return nil, false
-	}
-	view, viewOK := registry.sealed.Surface(schema.SurfaceKindStructure)
-	table, tableOK := structure.NewTable(view)
-	if !viewOK || !tableOK {
-		return nil, false
-	}
-	count := table.Count(structure.CategoryIssuanceStage)
-	byKey := make(map[schema.Key]rows.ArtifactRuleStage, count)
-	for ordinal := uint16(1); int(ordinal) <= count; ordinal++ {
-		entry, ok := table.At(structure.CategoryIssuanceStage, ordinal)
-		if !ok || !entry.Key().Available() {
-			return nil, false
-		}
-		byKey[entry.Key()] = rows.ArtifactRuleStage(entry.Ordinal())
-	}
-	var laws []rows.ArtifactStageLaw
-	for ordinal := uint16(1); int(ordinal) <= count; ordinal++ {
-		entry, ok := table.At(structure.CategoryIssuanceStage, ordinal)
-		if !ok {
-			return nil, false
-		}
-		if !entry.Native() && !entry.Predecessor().Available() {
-			continue
-		}
-		law := rows.ArtifactStageLaw{Stage: rows.ArtifactRuleStage(entry.Ordinal()), Native: entry.Native()}
-		if entry.Predecessor().Available() {
-			predecessor, predecessorOK := byKey[entry.Predecessor()]
-			if !predecessorOK {
-				return nil, false
-			}
-			law.Predecessor = predecessor
-		}
-		if !law.Valid() {
-			return nil, false
-		}
-		laws = append(laws, law)
-	}
-	return laws, len(laws) > 0
 }
 
 func structureOrdinal(key schema.Key, category structure.Category) (uint16, bool) {

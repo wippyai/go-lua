@@ -65,6 +65,31 @@ func TestDeriveContentIDSeparatesDomainAndPartBoundaries(t *testing.T) {
 	}
 }
 
+func TestArtifactScalarRoleIdentityUsesVersionedCanonicalFraming(t *testing.T) {
+	artifact := ContentID{0: 0x19, 31: 0xe1}
+	key := []byte("rule/slot")
+	current, currentOK := DeriveContentID("analysis/artifact-scalar-role/v2", artifact[:], key)
+	previous, previousOK := DeriveContentID("analysis/artifact-scalar-role/v1", artifact[:], key)
+	if !currentOK || !previousOK {
+		t.Fatal("versioned artifact scalar role identity did not derive")
+	}
+	if current == previous {
+		t.Fatal("artifact scalar role identity version did not separate formulas")
+	}
+	for _, domain := range []string{"analysis/artifact-scalar-role/v1", "analysis/artifact-scalar-role/v2"} {
+		raw := append([]byte(domain), artifact[:]...)
+		raw = append(raw, key...)
+		legacy := ContentID(sha256.Sum256(raw))
+		if current == legacy {
+			t.Fatalf("artifact scalar role identity still accepts raw concatenation for %q", domain)
+		}
+	}
+	reframed, reframedOK := DeriveContentID("analysis/artifact-scalar-role/v2", artifact[:], append([]byte("rule/"), []byte("slot")...))
+	if !reframedOK || current != reframed {
+		t.Fatal("equivalent artifact scalar role payload changed identity")
+	}
+}
+
 var contentIDAvailableSink bool
 
 func BenchmarkContentIDAvailable(b *testing.B) {

@@ -3,7 +3,6 @@ package composite
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 )
 
@@ -39,39 +38,5 @@ func TestArtifactIssuanceDirectoryPlacesEveryMountedSubscription(t *testing.T) {
 		if !placementOK || !placement.Available() {
 			t.Fatalf("directory projected an unavailable placement: %+v", placement)
 		}
-	}
-}
-
-// TestIssuanceStageLawsProjectTheSealedPredecessorChain is the engine-facing
-// projection of the structure-table native/predecessor fields.
-func TestIssuanceStageLawsProjectTheSealedPredecessorChain(t *testing.T) {
-	if _, failure := Table(); failure.Available() {
-		t.Fatalf("declaration table rejected: contributor=%d law=%d", failure.Contributor, failure.Law)
-	}
-	laws, ok := IssuanceStageLaws()
-	if !ok || len(laws) != 3 {
-		t.Fatalf("issuance stage laws projected %d rows", len(laws))
-	}
-	byStage := make(map[rows.ArtifactRuleStage]rows.ArtifactStageLaw, len(laws))
-	for _, law := range laws {
-		if !law.Valid() || !law.Native {
-			t.Fatalf("projected non-native stage law: %+v", law)
-		}
-		if _, duplicate := byStage[law.Stage]; duplicate {
-			t.Fatalf("duplicate stage law for %d", law.Stage)
-		}
-		byStage[law.Stage] = law
-	}
-	dispatch, dispatchOK := byStage[rows.ArtifactRuleStageIssued3]
-	summary, summaryOK := byStage[rows.ArtifactRuleStageIssued4]
-	effect, effectOK := byStage[rows.ArtifactRuleStageIssued5]
-	if !dispatchOK || dispatch.Predecessor.Valid() {
-		t.Fatalf("call-dispatch law %+v", dispatch)
-	}
-	if !summaryOK || summary.Predecessor != rows.ArtifactRuleStageIssued3 {
-		t.Fatalf("call-summary predecessor %d", summary.Predecessor)
-	}
-	if !effectOK || effect.Predecessor != rows.ArtifactRuleStageIssued4 {
-		t.Fatalf("call-effect predecessor %d", effect.Predecessor)
 	}
 }
