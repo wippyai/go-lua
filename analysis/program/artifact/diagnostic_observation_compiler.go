@@ -97,7 +97,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, ro
 		if _, duplicate := seen[points[index]]; duplicate {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, index, CompileReasonRouteGuard)
 		}
-		if _, known := compiler.points[points[index]]; !known {
+		if point, known := compiler.pointGeometry[points[index]]; !known || !point.Available() {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, index, CompileReasonRouteGuard)
 		}
 		seen[points[index]] = struct{}{}

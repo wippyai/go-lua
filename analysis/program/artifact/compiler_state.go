@@ -14,7 +14,6 @@ type compiler struct {
 	input                      *program.Program
 	key                        CompileKey
 	counts                     denominator.CountRows
-	points                     map[identity.ContentID]struct{}
 	environment                []EnvironmentEdge
 	localTransfers             []LocalTransfer
 	regions                    []Region

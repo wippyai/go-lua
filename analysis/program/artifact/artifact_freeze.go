@@ -36,8 +36,8 @@ func (compiler *compiler) finalizeFailure() CompileFailure {
 }
 
 func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
-	pointIDs := make([]identity.ContentID, 0, len(compiler.points))
-	for id := range compiler.points {
+	pointIDs := make([]identity.ContentID, 0, len(compiler.pointGeometry))
+	for id := range compiler.pointGeometry {
 		pointIDs = append(pointIDs, id)
 	}
 	identity.SortContentIDs(pointIDs)

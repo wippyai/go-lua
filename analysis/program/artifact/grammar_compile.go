@@ -198,7 +198,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 		return nil, compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
 	transaction := compiler{
-		input: input, key: key, counts: counts, issuance: issuance, points: make(map[identity.ContentID]struct{}), pointGeometry: make(map[identity.ContentID]Point),
+		input: input, key: key, counts: counts, issuance: issuance, pointGeometry: make(map[identity.ContentID]Point),
 		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), predecessorStages: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
 		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]EnvironmentEdge), environmentRouteDuplicates: make(map[identity.ContentID]struct{}),

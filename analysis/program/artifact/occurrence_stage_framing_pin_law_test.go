@@ -36,7 +36,6 @@ func TestStagedPointIdentityIsThePinnedFramingPreimage(t *testing.T) {
 	base, occurrence := valuesLawID(41), valuesLawID(42)
 	left, right, key := valuesLawID(43), valuesLawID(44), schema.Key("value-binary-arithmetic")
 	transaction := compiler{
-		points:            map[identity.ContentID]struct{}{base: {}},
 		pointGeometry:     map[identity.ContentID]Point{base: {id: base}},
 		localStages:       make(map[identity.ContentID]identity.ContentID),
 		predecessorStages: make(map[identity.ContentID]identity.ContentID),
@@ -81,7 +80,6 @@ func TestStagedPointIdentityIsThePinnedFramingPreimage(t *testing.T) {
 func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 	entry, finish, callID := valuesLawID(51), valuesLawID(52), valuesLawID(53)
 	transaction := compiler{
-		points: map[identity.ContentID]struct{}{entry: {}, finish: {}},
 		pointGeometry: map[identity.ContentID]Point{
 			entry:  {id: entry},
 			finish: {id: finish},
@@ -114,7 +112,7 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 	summary := digest(pinnedCallSummaryStageFraming, artifactFormat, bytesField(finish))
 	effect := digest(pinnedCallEffectStageFraming, artifactFormat, bytesField(finish))
 	for _, staged := range []identity.ContentID{dispatch, summary, effect} {
-		if _, installed := transaction.points[staged]; !installed {
+		if _, installed := transaction.pointGeometry[staged]; !installed {
 			t.Fatalf("the installation pass carries no point at the pinned staged identity %v", staged)
 		}
 	}

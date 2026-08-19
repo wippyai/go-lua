@@ -92,7 +92,6 @@ return identity(true)
 func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.T) {
 	entry, finish, callID := valuesLawID(31), valuesLawID(32), valuesLawID(33)
 	transaction := compiler{
-		points: map[identity.ContentID]struct{}{entry: {}, finish: {}},
 		pointGeometry: map[identity.ContentID]Point{
 			entry:  {id: entry},
 			finish: {id: finish},

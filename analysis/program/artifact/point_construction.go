@@ -43,7 +43,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 		})
 	}
 
-	pointEvents := make(map[identity.ContentID]struct{}, len(compiler.points))
+	pointEvents := make(map[identity.ContentID]struct{}, len(compiler.pointGeometry))
 	entered := make([]bool, len(compiler.regions))
 	exited := make([]bool, len(compiler.regions))
 	type frame struct {
@@ -135,7 +135,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 			return compileFailure(CompileStageLocalWTO, CompileRowRegion, index, -1, CompileReasonRegionIncomplete)
 		}
 	}
-	for point := range compiler.points {
+	for point := range compiler.pointGeometry {
 		if _, exists := pointEvents[point]; !exists {
 			return compileFailure(CompileStageLocalWTO, CompileRowPoint, -1, -1, CompileReasonPointUnscheduled)
 		}
@@ -187,7 +187,6 @@ func (compiler *compiler) installPoint(point flow.WTOPoint) bool {
 		ordered = append(ordered, decision)
 	}
 	identity.SortContentIDs(ordered)
-	compiler.points[point.PathID()] = struct{}{}
 	compiler.pointGeometry[point.PathID()] = Point{id: point.PathID(), decisions: ordered, initial: initial}
 	return true
 }
@@ -196,6 +195,6 @@ func (compiler *compiler) containsPoint(point flow.WTOPoint) bool {
 	if !point.Available() || !point.PathID().Available() {
 		return false
 	}
-	_, exists := compiler.points[point.PathID()]
-	return exists
+	row, exists := compiler.pointGeometry[point.PathID()]
+	return exists && row.Available()
 }

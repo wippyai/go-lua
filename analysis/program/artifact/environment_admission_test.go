@@ -3,7 +3,6 @@ package artifact
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 )
@@ -24,7 +23,7 @@ return loop(2)
 	if leftErr != nil || rightErr != nil {
 		t.Fatalf("lower equivalent Programs: %v / %v", leftErr, rightErr)
 	}
-	transaction := compiler{input: left, points: make(map[identity.ContentID]struct{})}
+	transaction := compiler{input: left}
 	if failure := transaction.copyLocalWTOFailure(); failure.Available() {
 		t.Fatalf("left LocalWTO schedule unavailable: %v", failure)
 	}

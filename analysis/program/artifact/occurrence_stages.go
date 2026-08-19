@@ -306,10 +306,9 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			if !stage.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 			}
-			if _, duplicate := compiler.points[stage]; duplicate {
+			if _, duplicate := compiler.pointGeometry[stage]; duplicate {
 				return compileFailure(CompileStageOccurrences, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 			}
-			compiler.points[stage] = struct{}{}
 			compiler.pointGeometry[stage] = Point{id: stage, decisions: append([]identity.ContentID(nil), geometry.decisions...)}
 		}
 		stageFor[base] = sequence
