@@ -43,8 +43,8 @@ func TestProducedOperationUsesOneOrdinaryOperationIdentity(t *testing.T) {
 		},
 	}})
 	factory, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
-	if !ok || factory != 1 || contract.boundOperationCount() != 1 {
-		t.Fatalf("factory/bound = %d/%v/%d", factory, ok, contract.boundOperationCount())
+	if !ok || factory != 1 || contract.Core.BoundCount() != 1 {
+		t.Fatalf("factory/bound = %d/%v/%d", factory, ok, contract.Core.BoundCount())
 	}
 	first, row, ok := contract.producedForResult(factory, 0, 0)
 	if !ok || first != 2 || row != 0 {
@@ -143,11 +143,11 @@ func TestBoundOperationsStayCanonicalPrefixWithProducedChildren(t *testing.T) {
 		return copy
 	}()}})
 	for _, contract := range []*Contract{first, second} {
-		if contract.boundOperationCount() != 2 {
-			t.Fatalf("bound operation count = %d, want 2", contract.boundOperationCount())
+		if contract.Core.BoundCount() != 2 {
+			t.Fatalf("bound operation count = %d, want 2", contract.Core.BoundCount())
 		}
-		for index := 0; index < contract.boundOperationCount(); index++ {
-			op, ok := contract.boundOperationAt(index)
+		for index := 0; index < contract.Core.BoundCount(); index++ {
+			op, ok := contract.Core.OperationAt(index)
 			if !ok || op != vocabulary.Operation(index+1) {
 				t.Fatalf("BoundOperationAt(%d) = %d/%v, want %d/true", index, op, ok, index+1)
 			}
@@ -200,8 +200,8 @@ func TestDeepProducedChainSealsIteratively(t *testing.T) {
 		}
 	}
 	contract := mustSeal(t, Spec{Operations: operations})
-	if contract.OperationCount() != depth+1 || contract.boundOperationCount() != 1 {
-		t.Fatalf("deep chain operations = %d/%d", contract.OperationCount(), contract.boundOperationCount())
+	if contract.OperationCount() != depth+1 || contract.Core.BoundCount() != 1 {
+		t.Fatalf("deep chain operations = %d/%d", contract.OperationCount(), contract.Core.BoundCount())
 	}
 	current, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root"}})
 	if !ok {

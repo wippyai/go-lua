@@ -14,7 +14,7 @@ func TestOperationQueriesKeepBoundPrefixAndOpaqueLast(t *testing.T) {
 	if got := contract.OperationCount(); got != 3 {
 		t.Fatalf("OperationCount = %d, want bound operations plus opaque", got)
 	}
-	if got := contract.boundOperationCount(); got != 2 {
+	if got := contract.Core.BoundCount(); got != 2 {
 		t.Fatalf("BoundOperationCount = %d, want 2", got)
 	}
 	op, ok := contract.OperationAt(contract.OperationCount() - 1)

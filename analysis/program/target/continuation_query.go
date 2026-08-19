@@ -16,7 +16,8 @@ func (c *Contract) suspensionCount(op vocabulary.Operation) int {
 	if !ok {
 		return 0
 	}
-	if c.opaqueOperation(op) {
+	opaque, opaqueOK := c.Core.Opaque()
+	if opaqueOK && op == opaque {
 		return opaqueSuspensionCount
 	}
 	return row.suspensions.len()
@@ -30,7 +31,8 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 	if !ok || index < 0 {
 		return 0, 0, 0, 0, false
 	}
-	if c.opaqueOperation(op) {
+	opaque, opaqueOK := c.Core.Opaque()
+	if opaqueOK && op == opaque {
 		if index >= opaqueSuspensionCount {
 			return 0, 0, 0, 0, false
 		}
@@ -52,7 +54,8 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 // sealed contract admits at most one such authority globally.
 func (c *Contract) spawnCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	if !ok || c.opaqueOperation(op) {
+	opaque, opaqueOK := c.Core.Opaque()
+	if !ok || (opaqueOK && op == opaque) {
 		return 0
 	}
 	return row.spawns.len()
@@ -61,7 +64,8 @@ func (c *Contract) spawnCount(op vocabulary.Operation) int {
 // spawnIDAt returns the sealed identity of an operation-owned spawn relation.
 func (c *Contract) spawnIDAt(op vocabulary.Operation, index int) (vocabulary.SpawnID, bool) {
 	row, ok := c.operation(op)
-	if !ok || c.opaqueOperation(op) || index < 0 || index >= row.spawns.len() {
+	opaque, opaqueOK := c.Core.Opaque()
+	if !ok || (opaqueOK && op == opaque) || index < 0 || index >= row.spawns.len() {
 		return 0, false
 	}
 	spawns := row.spawns
@@ -110,7 +114,8 @@ func (c *Contract) spawnSiblingAt(id vocabulary.SpawnID, index int) (vocabulary.
 
 func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	if !ok || c.opaqueOperation(op) {
+	opaque, opaqueOK := c.Core.Opaque()
+	if !ok || (opaqueOK && op == opaque) {
 		return 0
 	}
 	return row.resumes.len()
@@ -121,7 +126,8 @@ func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 // not be retained as a Link or runtime identity.
 func (c *Contract) ResumeIDAt(op vocabulary.Operation, index int) (vocabulary.ResumeID, bool) {
 	row, ok := c.operation(op)
-	if !ok || c.opaqueOperation(op) || index < 0 || index >= row.resumes.len() {
+	opaque, opaqueOK := c.Core.Opaque()
+	if !ok || (opaqueOK && op == opaque) || index < 0 || index >= row.resumes.len() {
 		return 0, false
 	}
 	resumes := row.resumes
@@ -423,15 +429,4 @@ func (c *Contract) producedTypeValueCapture(op vocabulary.Operation, outcome, pr
 		return 0, false
 	}
 	return vocabulary.ValueFormal(capture.ordinal), true
-}
-
-// TypeDeclaration returns the complete neutral declaration retained by the
-// sealed target type row. It preserves primitive atoms and formal-scope
-// framing; domain consumers pass this value to their explicit
-// schema/typecontract semantic adapter.
-func (c *Contract) TypeDeclaration(typ vocabulary.Type) (schematype.Type, bool) {
-	if c == nil {
-		return schematype.Type{}, false
-	}
-	return c.Core.TypeDeclaration(typ)
 }

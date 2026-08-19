@@ -682,8 +682,8 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 		},
 	)}})
 	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer"}})
-	if !ok || contract.transferCount(op) != 2 {
-		t.Fatalf("transfer operation/count = %d/%v/%d", op, ok, contract.transferCount(op))
+	if !ok || contract.Core.TransferCount(op) != 2 {
+		t.Fatalf("transfer operation/count = %d/%v/%d", op, ok, contract.Core.TransferCount(op))
 	}
 	want := []struct {
 		endpoint     vocabulary.TransferEndpoint
@@ -697,27 +697,27 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 		{vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal}, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar}, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar}, vocabulary.TransferIdentityUnspecified, vocabulary.TransferCapabilitiesLoseAll, []vocabulary.TransferPossibility{vocabulary.TransferMayDeliver, vocabulary.TransferMayDeliver | vocabulary.TransferMayReject, vocabulary.TransferMayDeliver, vocabulary.TransferMayReject}},
 	}
 	for index, expected := range want {
-		id, idOK := contract.transferIDAt(op, index)
-		owner, ownerOK := contract.transferOwner(id)
-		declaredEndpoint, declaredPayload, declaredAlias, declaredIdentity, declaredCapabilities, declarationOK := contract.transferDeclaration(id)
+		id, idOK := contract.Core.TransferIDAt(op, index)
+		owner, ownerOK := contract.Core.TransferOwner(id)
+		declaredEndpoint, declaredPayload, declaredAlias, declaredIdentity, declaredCapabilities, declarationOK := contract.Core.TransferDeclaration(id)
 		if !idOK || id == 0 || !ownerOK || owner != op || !declarationOK || declaredEndpoint != expected.endpoint || declaredPayload != expected.payload || declaredAlias != expected.alias || declaredIdentity != expected.identity || declaredCapabilities != expected.capabilities {
 			t.Fatalf("sealed transfer identity %d did not preserve its exact declaration", index)
 		}
-		endpoint, endpointOK := contract.transferEndpointAt(op, index)
-		payload, payloadOK := contract.transferPayloadAt(op, index)
-		alias, aliasOK := contract.transferAliasAt(op, index)
-		identity, identityOK := contract.transferIdentityAt(op, index)
-		capabilities, capabilitiesOK := contract.transferCapabilitiesAt(op, index)
+		endpoint, endpointOK := contract.Core.TransferEndpointAt(op, index)
+		payload, payloadOK := contract.Core.TransferPayloadAt(op, index)
+		alias, aliasOK := contract.Core.TransferAliasAt(op, index)
+		identity, identityOK := contract.Core.TransferIdentityAt(op, index)
+		capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(op, index)
 		if !endpointOK || endpoint != expected.endpoint || !payloadOK || payload != expected.payload || !aliasOK || alias != expected.alias ||
 			!identityOK || identity != expected.identity || !capabilitiesOK || capabilities != expected.capabilities {
 			t.Fatalf("transfer %d = endpoint:%#v/%v payload:%#v/%v identity:%d/%v capabilities:%d/%v", index, endpoint, endpointOK, payload, payloadOK, identity, identityOK, capabilities, capabilitiesOK)
 		}
 		for outcome, mask := range expected.masks {
-			declaredOrdinal, declaredMask, declaredFound := contract.transferDeclarationOutcomeAt(id, outcome)
+			declaredOrdinal, declaredMask, declaredFound := contract.Core.TransferDeclarationOutcomeAt(id, outcome)
 			if !declaredFound || declaredOrdinal != uint32(outcome) || declaredMask != mask {
 				t.Fatalf("sealed transfer identity outcome %d/%d lost declaration", index, outcome)
 			}
-			ordinal, got, found := contract.transferOutcomeAt(op, index, outcome)
+			ordinal, got, found := contract.Core.TransferOutcomeAt(op, index, outcome)
 			if !found || ordinal != uint32(outcome) || got != mask {
 				t.Fatalf("transfer outcome %d/%d = %d/%d/%v", index, outcome, ordinal, got, found)
 			}
@@ -757,7 +757,7 @@ func TestTransferAliasIsCanonicalDeclarationAndContentAuthority(t *testing.T) {
 	if !ok {
 		t.Fatal("transfer operation")
 	}
-	alias, ok := right.transferAliasAt(op, 0)
+	alias, ok := right.Core.TransferAliasAt(op, 0)
 	if !ok || alias != other.Alias {
 		t.Fatal("transfer alias lost canonical declaration")
 	}
@@ -814,22 +814,22 @@ func TestTransferRejectsIncompleteOrInvalidAuthority(t *testing.T) {
 func TestOpaqueTransferIsMaximalAndAllocationFree(t *testing.T) {
 	contract := mustSeal(t, Spec{})
 	opaque, ok := contract.Opaque()
-	if !ok || contract.transferCount(opaque) != 1 {
-		t.Fatalf("opaque/count = %d/%v/%d", opaque, ok, contract.transferCount(opaque))
+	if !ok || contract.Core.TransferCount(opaque) != 1 {
+		t.Fatalf("opaque/count = %d/%v/%d", opaque, ok, contract.Core.TransferCount(opaque))
 	}
-	endpoint, endpointOK := contract.transferEndpointAt(opaque, 0)
-	payload, payloadOK := contract.transferPayloadAt(opaque, 0)
-	alias, aliasOK := contract.transferAliasAt(opaque, 0)
-	identity, identityOK := contract.transferIdentityAt(opaque, 0)
-	capabilities, capabilitiesOK := contract.transferCapabilitiesAt(opaque, 0)
+	endpoint, endpointOK := contract.Core.TransferEndpointAt(opaque, 0)
+	payload, payloadOK := contract.Core.TransferPayloadAt(opaque, 0)
+	alias, aliasOK := contract.Core.TransferAliasAt(opaque, 0)
+	identity, identityOK := contract.Core.TransferIdentityAt(opaque, 0)
+	capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(opaque, 0)
 	if !endpointOK || endpoint != (vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal}) || !payloadOK || payload != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) || !aliasOK || alias != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) || !identityOK || identity != vocabulary.TransferIdentityUnspecified || !capabilitiesOK || capabilities != vocabulary.TransferCapabilitiesUnspecified {
 		t.Fatalf("opaque transfer = %#v/%v %#v/%v %#v/%v %d/%v %d/%v", endpoint, endpointOK, payload, payloadOK, alias, aliasOK, identity, identityOK, capabilities, capabilitiesOK)
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, ok := contract.transferEndpointAt(opaque, 0); !ok {
+		if _, ok := contract.Core.TransferEndpointAt(opaque, 0); !ok {
 			panic("opaque transfer endpoint disappeared")
 		}
-		if _, ok := contract.transferPayloadAt(opaque, 0); !ok {
+		if _, ok := contract.Core.TransferPayloadAt(opaque, 0); !ok {
 			panic("opaque transfer payload disappeared")
 		}
 	}); allocs != 0 {
@@ -849,7 +849,7 @@ func TestTransferWideAndDeepValidationHasNoSemanticCap(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-transfer"}}}, Input: vocabulary.ValuesSpec{Fixed: fixed, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeCancel, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeYield, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Transfers: transfers, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}}})
 	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-transfer"}})
 	for index := 0; index < width; index++ {
-		endpoint, ok := contract.transferEndpointAt(op, index)
+		endpoint, ok := contract.Core.TransferEndpointAt(op, index)
 		if !ok || endpoint != (vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointInput, Input: vocabulary.ValueFormal(index)}) {
 			t.Fatalf("wide transfer %d = %#v/%v", index, endpoint, ok)
 		}

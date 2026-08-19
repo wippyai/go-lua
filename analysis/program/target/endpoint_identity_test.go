@@ -53,7 +53,7 @@ func endpointIdentityOperationAndTransfer(t testing.TB, c *Contract, name string
 	if !ok {
 		t.Fatalf("operation %q absent", name)
 	}
-	transfer, ok := c.transferIDAt(op, 0)
+	transfer, ok := c.Core.TransferIDAt(op, 0)
 	if !ok {
 		t.Fatalf("transfer %q absent", name)
 	}
@@ -268,19 +268,19 @@ func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
 	first := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
 	second := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
 	firstOperation, ok := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || first.transferCount(firstOperation) != 2 {
+	if !ok || first.Core.TransferCount(firstOperation) != 2 {
 		t.Fatal("first sealed transfer declarations unavailable")
 	}
 	secondOperation, ok := second.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || second.transferCount(secondOperation) != 2 {
+	if !ok || second.Core.TransferCount(secondOperation) != 2 {
 		t.Fatal("second sealed transfer declarations unavailable")
 	}
 	for index := 0; index < 2; index++ {
-		firstTransfer, ok := first.transferIDAt(firstOperation, index)
+		firstTransfer, ok := first.Core.TransferIDAt(firstOperation, index)
 		if !ok {
 			t.Fatalf("first transfer %d unavailable", index)
 		}
-		secondTransfer, ok := second.transferIDAt(secondOperation, index)
+		secondTransfer, ok := second.Core.TransferIDAt(secondOperation, index)
 		if !ok {
 			t.Fatalf("second transfer %d unavailable", index)
 		}
@@ -292,7 +292,7 @@ func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
 		if index == 0 {
 			continue
 		}
-		priorTransfer, ok := first.transferIDAt(firstOperation, index-1)
+		priorTransfer, ok := first.Core.TransferIDAt(firstOperation, index-1)
 		if !ok {
 			t.Fatalf("prior transfer %d unavailable", index-1)
 		}

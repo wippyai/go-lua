@@ -6,36 +6,11 @@ import (
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
-func (c *Contract) CallbackCount(op vocabulary.Operation) int {
-	if c == nil {
-		return 0
-	}
-	return c.Core.CallbackCount(op)
-}
-
-func (c *Contract) CallbackAt(op vocabulary.Operation, index int) (vocabulary.CallbackID, bool) {
-	if c == nil {
-		return 0, false
-	}
-	return c.Core.CallbackAt(op, index)
-}
-
 func (c *Contract) callback(id vocabulary.CallbackID) (callbackRow, bool) {
 	if c == nil || id == 0 || uint64(id) > uint64(len(c.callbacks)) {
 		return callbackRow{}, false
 	}
 	return c.callbacks[uint32(id)-1], true
-}
-
-// CallbackOwner returns the exact sealed operation that owns a callback
-// correspondence. The range validation keeps a malformed callback row from
-// being accepted merely because its stored owner is an otherwise valid
-// operation.
-func (c *Contract) CallbackOwner(id vocabulary.CallbackID) (vocabulary.Operation, bool) {
-	if c == nil {
-		return 0, false
-	}
-	return c.Core.CallbackOwner(id)
 }
 
 // callbackFunction returns the exact input authority that supplies a callback
@@ -281,14 +256,6 @@ func (c *Contract) subedgeRouteAt(id vocabulary.SubedgeID, kind flowkind.Outcome
 		return vocabulary.RouteInvalid, vocabulary.AdjustmentInvalid, 0, vocabulary.PlacementInvalid, 0, 0, 0, 0, false
 	}
 	return item.route, item.adjustment, item.result, item.placement, item.offset, item.outcome, item.subedge, item.destination, true
-}
-
-// CallbackLifecycle returns the complete sealed callback lifecycle relation.
-func (c *Contract) CallbackLifecycle(id vocabulary.CallbackID) (vocabulary.CallbackLifecycle, bool) {
-	if c == nil {
-		return 0, false
-	}
-	return c.Core.CallbackLifecycle(id)
 }
 
 // CallbackEffectCount returns the finite explicit occurrences in the

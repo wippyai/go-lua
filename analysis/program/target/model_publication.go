@@ -2,9 +2,6 @@ package target
 
 import (
 	"errors"
-)
-
-import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -42,6 +39,37 @@ func (d PublicationEffectDescriptor) Mutability() vocabulary.PublicationMutabili
 
 func (d PublicationEffectDescriptor) Lifetime() vocabulary.PublicationLifetimeDisposition {
 	return d.lifetime
+}
+
+func (c *Contract) effect(op vocabulary.Operation, index int) (effectRow, bool) {
+	row, ok := c.operation(op)
+	if !ok || index < 0 || index >= row.effects.len() {
+		return effectRow{}, false
+	}
+	effects := row.effects
+	return c.effects[effects.start+uint32(index)], true
+}
+
+func (c *Contract) validPublicationEffectRow(effect effectRow) bool {
+	if c == nil || !effect.hasPublication || !effect.publication.validConsequences() {
+		return false
+	}
+	target, ok := c.Core.Input(effect.target)
+	if !ok || uint64(effect.publication.subject) >= uint64(c.Core.ValuesCount(target)) {
+		return false
+	}
+	return effect.publication.destination != vocabulary.PublicationDestinationValueFormal ||
+		uint64(effect.publication.context) < uint64(c.Core.ValuesCount(target))
+}
+
+// PublicationEffectDescriptor returns the Target-owned publication semantics
+// for one exact operation effect occurrence.
+func (c *Contract) PublicationEffectDescriptor(op vocabulary.Operation, index int) (PublicationEffectDescriptor, bool) {
+	row, ok := c.effect(op, index)
+	if !ok || !c.sealed || !c.validPublicationEffectRow(row) {
+		return PublicationEffectDescriptor{}, false
+	}
+	return row.publication, true
 }
 
 // freezePublicationEffect freezes one authored publication declaration into the

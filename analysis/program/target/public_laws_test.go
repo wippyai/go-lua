@@ -121,7 +121,7 @@ func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 	if !ok {
 		t.Fatal("opaque operation missing")
 	}
-	if contract.boundOperationCount() != 0 || contract.OperationCount() != 1 {
+	if contract.Core.BoundCount() != 0 || contract.OperationCount() != 1 {
 		t.Fatal("opaque is not the sole row of an empty authored contract")
 	}
 	input, ok := contract.Input(opaque)
@@ -202,11 +202,11 @@ func assertPublicContractEqual(t *testing.T, left, right *Contract) {
 func publicContractSnapshot(t *testing.T, contract *Contract) string {
 	t.Helper()
 	var out strings.Builder
-	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.OperationCount(), contract.boundOperationCount())
+	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.OperationCount(), contract.Core.BoundCount())
 	opaque, opaqueOK := contract.Opaque()
 	fmt.Fprintf(&out, "opaque=%d/%v;", opaque, opaqueOK)
-	for index := 0; index < contract.boundOperationCount(); index++ {
-		op, ok := contract.boundOperationAt(index)
+	for index := 0; index < contract.Core.BoundCount(); index++ {
+		op, ok := contract.Core.OperationAt(index)
 		fmt.Fprintf(&out, "bound[%d]=%d/%v;", index, op, ok)
 	}
 	for index := 0; index < contract.OperationCount(); index++ {
@@ -261,7 +261,7 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 	input, inputOK := contract.Input(op)
 	fmt.Fprintf(out, "input=%d/%v:%s;", input, inputOK, publicValuesSnapshot(t, contract, input, inputOK))
 	fmt.Fprintf(out, "type-formals=%d,value-formals=%d,values-vars=%d,row-formals=%d;",
-		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.rowFormalCount(op))
+		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.Core.RowFormalCount(op))
 	for index := 0; index < contract.ValuesVarCount(op); index++ {
 		class, ok := contract.ValuesVarType(op, vocabulary.ValuesVar(index))
 		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeDigest(t, contract, class, ok))
@@ -294,15 +294,15 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			}
 		}
 	}
-	for transfer := 0; transfer < contract.transferCount(op); transfer++ {
-		endpoint, endpointOK := contract.transferEndpointAt(op, transfer)
-		payload, payloadOK := contract.transferPayloadAt(op, transfer)
-		alias, aliasOK := contract.transferAliasAt(op, transfer)
-		identity, identityOK := contract.transferIdentityAt(op, transfer)
-		capabilities, capabilitiesOK := contract.transferCapabilitiesAt(op, transfer)
+	for transfer := 0; transfer < contract.Core.TransferCount(op); transfer++ {
+		endpoint, endpointOK := contract.Core.TransferEndpointAt(op, transfer)
+		payload, payloadOK := contract.Core.TransferPayloadAt(op, transfer)
+		alias, aliasOK := contract.Core.TransferAliasAt(op, transfer)
+		identity, identityOK := contract.Core.TransferIdentityAt(op, transfer)
+		capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(op, transfer)
 		fmt.Fprintf(out, "transfer[%d]=endpoint:%d/%d/%v,payload:%d/%d/%v,alias:%d/%d/%v,identity:%d/%v,capabilities:%d/%v;", transfer, endpoint.Kind, endpoint.Input, endpointOK, payload.Kind, payload.Ordinal, payloadOK, alias.Kind, alias.Ordinal, aliasOK, identity, identityOK, capabilities, capabilitiesOK)
-		for outcome := 0; outcome < contract.transferOutcomeCount(op, transfer); outcome++ {
-			ordinal, possibility, outcomeOK := contract.transferOutcomeAt(op, transfer, outcome)
+		for outcome := 0; outcome < contract.Core.TransferOutcomeCount(op, transfer); outcome++ {
+			ordinal, possibility, outcomeOK := contract.Core.TransferOutcomeAt(op, transfer, outcome)
 			fmt.Fprintf(out, "transfer-outcome[%d]=%d/%d/%v;", outcome, ordinal, possibility, outcomeOK)
 		}
 	}
@@ -421,7 +421,7 @@ func writeEffectArguments(out *strings.Builder, contract *Contract, op vocabular
 	}
 	fmt.Fprintf(out, "rows(%d)=", contract.EffectRowArgumentCount(op, effect))
 	for index := 0; index < contract.EffectRowArgumentCount(op, effect); index++ {
-		value, ok := contract.effectRowArgumentAt(op, effect, index)
+		value, ok := contract.Core.EffectRowArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
 }
@@ -461,7 +461,7 @@ func writeBindingSnapshot(out *strings.Builder, contract *Contract, op vocabular
 		}
 		binding := vocabulary.BindingSpec{Namespace: namespace}
 		for index := 0; index < ownerCount; index++ {
-			part, ok := contract.bindingOwnerAt(op, bindingIndex, index)
+			part, ok := contract.Core.BindingOwnerAt(op, bindingIndex, index)
 			fmt.Fprintf(out, "owner[%d]=%q/%v;", index, part, ok)
 			binding.Owner = append(binding.Owner, part)
 		}

@@ -185,6 +185,27 @@ type indexRange struct{ start, end uint32 }
 
 func (r indexRange) len() int { return int(r.end - r.start) }
 
+// operation resolves one Target-owned operation row. Operation.Core owns the
+// canonical operation handle range; this row is the remaining Target relation
+// index for outcomes, subedges, continuations, and effects.
+func (c *Contract) operation(op vocabulary.Operation) (operationRow, bool) {
+	if c == nil || op == 0 || uint64(op) > uint64(len(c.operations)) {
+		return operationRow{}, false
+	}
+	if _, ok := c.Core.OperationAt(int(op) - 1); !ok {
+		return operationRow{}, false
+	}
+	return c.operations[uint32(op)-1], true
+}
+
+func (c *Contract) operationOutcomeRange(op vocabulary.Operation) (indexRange, bool) {
+	row, ok := c.operation(op)
+	if !ok {
+		return indexRange{}, false
+	}
+	return row.outcomes, true
+}
+
 // Contract is immutable after Seal. Every slice is private and every public
 // hot query returns only scalar handles or values.
 type Contract struct {

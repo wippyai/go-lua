@@ -20,9 +20,9 @@ func encodeBindingSegments(w *framing.Writer, c *Contract, op vocabulary.Operati
 		var value vocabulary.ExactKey
 		var ok bool
 		if owner {
-			value, ok = c.bindingOwnerKeyAt(op, binding, index)
+			value, ok = c.Core.BindingOwnerKeyAt(op, binding, index)
 		} else {
-			value, ok = c.bindingMemberKeyAt(op, binding, index)
+			value, ok = c.Core.BindingMemberKeyAt(op, binding, index)
 		}
 		if !ok {
 			return errors.New("target: malformed binding segment")

@@ -46,7 +46,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 		add(ids.TargetResume, contract.ResumeCount(op))
 		add(ids.TargetSpawn, contract.spawnCount(op))
 		add(ids.TargetSuspension, contract.suspensionCount(op))
-		add(ids.TargetTransfer, contract.transferCount(op))
+		add(ids.TargetTransfer, contract.Core.TransferCount(op))
 
 		for effect := 0; effect < contract.EffectCount(op); effect++ {
 			if _, found := contract.PublicationEffectDescriptor(op, effect); found {
@@ -60,8 +60,8 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 			}
 			add(ids.TargetSubedgeArgumentOrigin, contract.argumentOriginCount(edge))
 		}
-		for transfer := 0; transfer < contract.transferCount(op); transfer++ {
-			add(ids.TargetTransferOutcome, contract.transferOutcomeCount(op, transfer))
+		for transfer := 0; transfer < contract.Core.TransferCount(op); transfer++ {
+			add(ids.TargetTransferOutcome, contract.Core.TransferOutcomeCount(op, transfer))
 		}
 		for index := 0; index < contract.CallbackCount(op); index++ {
 			callback, found := contract.CallbackAt(op, index)

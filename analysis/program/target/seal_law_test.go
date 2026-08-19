@@ -424,11 +424,11 @@ func TestEffectRowsCarryTotalRowFormalSubstitutions(t *testing.T) {
 	if !targetOK || !effectTargetOK || effectTarget != target || contract.EffectRowArgumentCount(owner, 0) != 1 {
 		t.Fatalf("effect row = target:%d/%v want:%d rows:%d", effectTarget, effectTargetOK, target, contract.EffectRowArgumentCount(owner, 0))
 	}
-	row, rowOK := contract.effectRowArgumentAt(owner, 0, 0)
+	row, rowOK := contract.Core.EffectRowArgumentAt(owner, 0, 0)
 	if !rowOK || row != 0 {
 		t.Fatalf("effect row argument = %d/%v", row, rowOK)
 	}
-	if _, ok := contract.effectRowArgumentAt(owner, 0, 1); ok {
+	if _, ok := contract.Core.EffectRowArgumentAt(owner, 0, 1); ok {
 		t.Fatal("out-of-range effect row argument resolved")
 	}
 
