@@ -1044,7 +1044,6 @@ type QuerySlot[R any] struct{ slotHandle[schemaQueryDraft] }
 type schemaQueryDraft struct {
 	builder *SchemaBuilder
 	index   int
-	support bool
 	token   *schemaTokenCell
 }
 
@@ -1102,11 +1101,17 @@ func NewQuerySlot[R any](builder *SchemaBuilder, spec SchemaQuerySpec) (*QuerySl
 func SchemaQueryRead[T, R any](query *QuerySlot[R], form SchemaReadForm[T]) bool {
 	queryDraft, ok := query.queryDraft()
 	formDraft, formOK := form.draft()
-	if !ok || !formOK || queryDraft.support || !form.valid(queryDraft.builder) {
+	if !ok || !formOK || !form.valid(queryDraft.builder) {
 		return false
 	}
 	builder := queryDraft.builder
+	if builder == nil || queryDraft.index < 0 || queryDraft.index >= len(builder.candidate.Queries) {
+		return false
+	}
 	row := &builder.candidate.Queries[queryDraft.index]
+	if len(row.Projections) == 1 && row.Projections[0].Kind == coldcomposition.QuerySupport {
+		return false
+	}
 	if formDraft.formKind != SchemaFormReadExact && !summaryReadFormKind(formDraft.formKind) {
 		return false
 	}
@@ -1127,7 +1132,6 @@ func DeclareSchemaSupportQuery[R any](builder *SchemaBuilder, spec SchemaQuerySp
 		return nil, false
 	}
 	draft, _ := query.queryDraft()
-	draft.support = true
 	builder.candidate.Queries[draft.index].Projections = []coldcomposition.QueryProjection{{Kind: coldcomposition.QuerySupport}}
 	return query, true
 }
