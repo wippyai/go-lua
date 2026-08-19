@@ -12,14 +12,13 @@ import (
 )
 
 // allocationCompileRow is the short-lived construction join for one exact
-// Flow allocation. It exists only while this compiler copies the immutable
-// artifact rows; no Flow allocation or authored Term is retained by Artifact.
+// authored allocation. It exists only while this compiler copies the immutable
+// artifact rows; no Flow proof object or authored Term is retained by Artifact.
 type allocationCompileRow struct {
-	allocation flow.Allocation
 	term       keyspace.Term
-	occurrence flow.AllocationOccurrence
-	role       flow.AllocationRole
-	form       flow.AllocationForm
+	occurrence identity.ContentID
+	role       AllocationRole
+	form       AllocationForm
 	template   identity.ContentID
 	root       program.Span
 	entry      flow.Site
@@ -28,7 +27,6 @@ type allocationCompileRow struct {
 }
 
 type allocationFieldCompileRow struct {
-	field        flow.AllocationField
 	term         keyspace.Term
 	kind         flowkind.FieldKind
 	selector     keyspace.Term
@@ -53,74 +51,52 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
 	}
 	flowView := compiler.input.Flow()
-	allocations := flowView.Allocations()
-	count := allocations.Count()
-	if count < 0 {
-		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
+	authored := flowView.Authored()
+	executable := flowView.Executable()
+	count := 0
+	for index := 0; index < authored.Tables().Count(); index++ {
+		term, ok := authored.Tables().At(index)
+		if ok && executable.Contains(term) {
+			count++
+		}
+	}
+	for index := 0; index < authored.Functions().Count(); index++ {
+		term, ok := authored.Functions().At(index)
+		if ok && executable.Contains(term) {
+			count++
+		}
 	}
 	rows := make([]allocationCompileRow, 0, count)
 	heapRows := make([]HeapAllocationRow, 0, count)
 	seenTemplates := make(map[identity.ContentID]struct{}, count)
-	authored := flowView.Authored()
-	executable := flowView.Executable()
-	tableIndex, functionIndex := 0, 0
 	var failure CompileFailure
 	setFailure := func(row, field int) bool {
 		failure = compileFailure(CompileStageOccurrences, CompileRowOccurrence, row, field, CompileReasonOccurrenceAllocation)
 		return false
 	}
-	if !allocations.Visit(func(allocation flow.Allocation) bool {
+	compile := func(term keyspace.Term, role AllocationRole) bool {
 		rowIndex := len(rows)
-		if !allocation.Available() || !allocations.Owns(allocation) {
-			return setFailure(rowIndex, -1)
-		}
-		// Allocations deliberately keep their source coordinate private. Recover
-		// the canonical term from the owner column in the same order used by
-		// Allocations.Visit; this is construction-only and does not recreate an
-		// allocation identity or retain a foreign proof coordinate.
-		var term keyspace.Term
-		var termOK bool
-		switch allocation.Role() {
-		case flow.AllocationTable:
-			for tableIndex < authored.Tables().Count() {
-				candidate, candidateOK := authored.Tables().At(tableIndex)
-				tableIndex++
-				if !candidateOK {
-					break
-				}
-				if executable.Contains(candidate) {
-					term, termOK = candidate, true
-					break
-				}
-			}
-		case flow.AllocationClosure:
-			for functionIndex < authored.Functions().Count() {
-				candidate, candidateOK := authored.Functions().At(functionIndex)
-				functionIndex++
-				if !candidateOK {
-					break
-				}
-				if executable.Contains(candidate) {
-					term, termOK = candidate, true
-					break
-				}
-			}
-		}
-		occurrence := allocation.Occurrence()
-		role, form := allocation.Role(), allocation.Form()
+		occurrence, occurrenceOK := flowView.AllocationID(term)
+		form := allocationForm(flowView, term, role)
 		root, rootOK := compiler.input.Span(term)
 		entry, entryOK := root.Entry()
 		finish, finishOK := root.Finish()
-		if !termOK || !occurrence.Available() || !role.Valid() || !form.Valid() || !rootOK || !entryOK || !finishOK || !compiler.input.OwnsSpan(root) {
+		if !occurrenceOK || !role.Valid() || !form.Valid() || !rootOK || !entryOK || !finishOK || !compiler.input.OwnsSpan(root) {
 			return setFailure(rowIndex, -1)
 		}
-		fieldCount := allocation.FieldCount()
-		if fieldCount < 0 || (role == flow.AllocationClosure && fieldCount != 0) {
+		fieldCount := 0
+		if role == AllocationTable {
+			var fieldCountOK bool
+			fieldCount, fieldCountOK = authored.Tables().FieldCount(term)
+			if !fieldCountOK {
+				return setFailure(rowIndex, -1)
+			}
+		}
+		if role == AllocationClosure && fieldCount != 0 {
 			return setFailure(rowIndex, -1)
 		}
 		fields := make([]allocationFieldCompileRow, 0, fieldCount)
 		for fieldIndex := 0; fieldIndex < fieldCount; fieldIndex++ {
-			field, fieldOK := allocation.FieldAt(fieldIndex)
 			fieldTerm, fieldTermOK := authored.Tables().FieldAt(term, fieldIndex)
 			table, selector, values, kind, authoredFieldOK := authored.Fields().Get(fieldTerm)
 			resolved, finalOpen, valuesOK := authored.Fields().Values(fieldTerm)
@@ -129,9 +105,10 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 			_, valueSpanOK := valueRow.RootSpanID()
 			fieldSpan, fieldSpanOK := compiler.input.Span(fieldTerm)
 			normalized, normalizedOK := flowView.AccessGeometry().TableFields().Get(fieldTerm)
-			fieldID := allocationFieldID(compiler.input.ContentID(), field)
+			fieldProof, fieldProofOK := flowView.AllocationFieldID(term, fieldTerm)
+			fieldID := allocationFieldID(compiler.input.ContentID(), fieldProof)
 			fieldRow := allocationFieldCompileRow{
-				field: field, term: fieldTerm, kind: kind, selector: selector, values: values,
+				term: fieldTerm, kind: kind, selector: selector, values: values,
 				width: width, finalOpen: finalOpen, normalized: normalized, normalizedOK: normalizedOK,
 				valuesRow: valueRow, fieldSpan: fieldSpan, id: fieldID,
 			}
@@ -139,7 +116,7 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 				fieldRow.selectorSpan, _ = compiler.input.Span(selector)
 			}
 			fieldRow.shares = allocationSharesFirstValueCell(flowView, fieldTerm, kind, selector, values, width)
-			if !fieldOK || !allocations.OwnsField(field) || !fieldTermOK || !authoredFieldOK || table != term || selector == 0 && kind == flowkind.FieldKey || values == 0 || !valuesOK || resolved != values || !widthOK || width < 0 || !valueRowOK || !valueRow.Available() || !valueSpanOK || !fieldSpanOK || !compiler.input.OwnsSpan(fieldSpan) || !fieldID.Available() {
+			if !fieldTermOK || !authoredFieldOK || table != term || selector == 0 && kind == flowkind.FieldKey || values == 0 || !valuesOK || resolved != values || !widthOK || width < 0 || !valueRowOK || !valueRow.Available() || !valueSpanOK || !fieldSpanOK || !compiler.input.OwnsSpan(fieldSpan) || !fieldProofOK || !fieldID.Available() {
 				return setFailure(rowIndex, fieldIndex)
 			}
 			if kind == flowkind.FieldKey && (!fieldRow.selectorSpan.Available() || !compiler.input.OwnsSpan(fieldRow.selectorSpan)) {
@@ -147,7 +124,7 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 			}
 			fields = append(fields, fieldRow)
 		}
-		template := allocationTemplateID(occurrence.ID(), role, form, fields)
+		template := allocationTemplateID(occurrence, role, form, fields)
 		if !template.Available() {
 			return setFailure(rowIndex, -1)
 		}
@@ -155,13 +132,8 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 			return setFailure(rowIndex, -1)
 		}
 		seenTemplates[template] = struct{}{}
-		row := allocationCompileRow{allocation: allocation, term: term, occurrence: occurrence, role: role, form: form, template: template, root: root, entry: entry, finish: finish, fields: fields}
-		receiptRole, roleOK := receiptAllocationRole(role)
-		receiptForm, formOK := receiptAllocationForm(form)
-		if !roleOK || !formOK {
-			return setFailure(rowIndex, -1)
-		}
-		heapRow := HeapAllocationRow{id: template, role: receiptRole, form: receiptForm, rootSpan: root.ContextID(), fields: make([]HeapFieldRow, 0, len(fields))}
+		row := allocationCompileRow{term: term, occurrence: occurrence, role: role, form: form, template: template, root: root, entry: entry, finish: finish, fields: fields}
+		heapRow := HeapAllocationRow{id: template, role: role, form: form, rootSpan: root.ContextID(), fields: make([]HeapFieldRow, 0, len(fields))}
 		for fieldIndex, field := range fields {
 			valueSpan, valueSpanOK := field.valuesRow.RootSpanID()
 			heapField := HeapFieldRow{id: field.id, kind: field.kind, fieldSpan: field.fieldSpan.ContextID(), valuesSpan: valueSpan, valuesID: field.valuesRow.ID(), width: field.width, finalOpen: field.finalOpen, sharesFirstValueCell: field.shares, normalized: field.normalized, normalizedOK: field.normalizedOK}
@@ -179,11 +151,21 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 		rows = append(rows, row)
 		heapRows = append(heapRows, heapRow)
 		return true
-	}) {
-		if failure.Available() {
-			return failure
+	}
+	for index := 0; index < authored.Tables().Count(); index++ {
+		term, ok := authored.Tables().At(index)
+		if ok && executable.Contains(term) && !compile(term, AllocationTable) {
+			break
 		}
-		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, len(rows), -1, CompileReasonOccurrenceAllocation)
+	}
+	for index := 0; index < authored.Functions().Count() && !failure.Available(); index++ {
+		term, ok := authored.Functions().At(index)
+		if ok && executable.Contains(term) && !compile(term, AllocationClosure) {
+			break
+		}
+	}
+	if failure.Available() {
+		return failure
 	}
 	if failure.Available() || len(rows) != count {
 		if failure.Available() {
@@ -196,8 +178,8 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func allocationTemplateID(occurrence identity.ContentID, role flow.AllocationRole, form flow.AllocationForm, fields []allocationFieldCompileRow) identity.ContentID {
-	if !occurrence.Available() || !role.Valid() || !form.Valid() || (role == flow.AllocationClosure && len(fields) != 0) {
+func allocationTemplateID(occurrence identity.ContentID, role AllocationRole, form AllocationForm, fields []allocationFieldCompileRow) identity.ContentID {
+	if !occurrence.Available() || !role.Valid() || !form.Valid() || (role == AllocationClosure && len(fields) != 0) {
 		return identity.ContentID{}
 	}
 	hash := sha256.New()
@@ -205,7 +187,7 @@ func allocationTemplateID(occurrence identity.ContentID, role flow.AllocationRol
 	if writer.Reset(hash, "program/allocation-template", 2) != nil || writer.Record(1) != nil || writer.Bytes(occurrence[:]) != nil || writer.Uint(uint64(role)) != nil || writer.Uint(uint64(form)) != nil {
 		return identity.ContentID{}
 	}
-	if role == flow.AllocationTable {
+	if role == AllocationTable {
 		if writer.Count(uint64(len(fields))) != nil {
 			return identity.ContentID{}
 		}
@@ -229,19 +211,52 @@ func allocationTemplateID(occurrence identity.ContentID, role flow.AllocationRol
 	return id
 }
 
-func allocationFieldID(programID identity.ContentID, field flow.AllocationField) identity.ContentID {
-	if !programID.Available() || !field.Available() {
-		return identity.ContentID{}
+func allocationForm(view flow.View, term keyspace.Term, role AllocationRole) AllocationForm {
+	if !view.ContentID().Available() || !role.Valid() {
+		return AllocationFormInvalid
 	}
-	child := field.ID()
-	if !child.Available() {
+	if role == AllocationClosure {
+		return AllocationFormEmpty
+	}
+	count, ok := view.Authored().Tables().FieldCount(term)
+	if !ok {
+		return AllocationFormInvalid
+	}
+	if count == 0 {
+		return AllocationFormEmpty
+	}
+	open := false
+	for index := 0; index < count; index++ {
+		field, fieldOK := view.Authored().Tables().FieldAt(term, index)
+		table, _, values, _, rowOK := view.Authored().Fields().Get(field)
+		resolved, fieldOpen, valuesOK := view.Authored().Fields().Values(field)
+		if !fieldOK || !rowOK || table != term || !valuesOK || resolved != values {
+			return AllocationFormInvalid
+		}
+		if fieldOpen {
+			open = true
+			continue
+		}
+		width, widthOK := view.Authored().Values().Len(values)
+		if !widthOK || width != 1 {
+			return AllocationFormInvalid
+		}
+	}
+	if open {
+		return AllocationFormFinalOpen
+	}
+	return AllocationFormClosed
+}
+
+func allocationFieldID(programID, fieldProof identity.ContentID) identity.ContentID {
+	if !programID.Available() || !fieldProof.Available() {
 		return identity.ContentID{}
 	}
 	const prefix = "program-allocation-field-v1"
 	var payload [len(prefix) + sha256.Size + sha256.Size]byte
 	copy(payload[:len(prefix)], prefix)
 	copy(payload[len(prefix):len(prefix)+sha256.Size], programID[:])
-	copy(payload[len(prefix)+sha256.Size:], child[:])
+	copy(payload[len(prefix)+sha256.Size:], fieldProof[:])
 	return sha256.Sum256(payload[:])
 }
 

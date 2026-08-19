@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
@@ -26,7 +25,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	flowView := compiler.input.Flow()
 	boundaries := flowView.FunctionBoundaries()
 	for index, allocation := range compiler.allocationRows {
-		if allocation.role != flow.AllocationClosure {
+		if allocation.role != AllocationClosure {
 			continue
 		}
 		boundary, boundaryOK := boundaries.For(allocation.term)

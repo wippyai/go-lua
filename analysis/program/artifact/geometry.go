@@ -44,30 +44,6 @@ func (form CallForm) Valid() bool {
 	return form == CallFormPlain || form == CallFormMethod
 }
 
-func receiptAllocationRole(role flow.AllocationRole) (AllocationRole, bool) {
-	switch role {
-	case flow.AllocationTable:
-		return AllocationTable, true
-	case flow.AllocationClosure:
-		return AllocationClosure, true
-	default:
-		return AllocationInvalid, false
-	}
-}
-
-func receiptAllocationForm(form flow.AllocationForm) (AllocationForm, bool) {
-	switch form {
-	case flow.AllocationFormEmpty:
-		return AllocationFormEmpty, true
-	case flow.AllocationFormClosed:
-		return AllocationFormClosed, true
-	case flow.AllocationFormFinalOpen:
-		return AllocationFormFinalOpen, true
-	default:
-		return AllocationFormInvalid, false
-	}
-}
-
 func receiptCallForm(form flow.CallForm) (CallForm, bool) {
 	switch form {
 	case flow.CallFormPlain:

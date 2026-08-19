@@ -17,6 +17,74 @@ import (
 // Flow has no Body/root/containment path builder or retained path plane.
 type allocationPath struct{ id identity.ContentID }
 
+const (
+	allocationRoleTable   uint8 = 1
+	allocationRoleClosure uint8 = 2
+	allocationIDPrefix          = "program-flow-allocation-v1"
+	allocationIDPrefixLen       = len(allocationIDPrefix)
+	fieldIDPrefix               = "program-flow-allocation-field-v1"
+	fieldIDPrefixLen            = len(fieldIDPrefix)
+)
+
+// AllocationID returns the owner-issued identity for one executable table or
+// closure occurrence.  The authored term and executable denominator are the
+// canonical coordinates; Flow does not expose an Allocation proof object or
+// make callers reconstruct one from a private index.
+func (view View) AllocationID(term keyspace.Term) (identity.ContentID, bool) {
+	if !view.available() || view.component.semanticPaths == nil ||
+		!view.component.semanticPaths.Matches(view.component.provenance.Source, view.component.provenance.Flow, view.component.provenance.Static, view.component.provenance.Module) ||
+		!view.Executable().Contains(term) {
+		return identity.ContentID{}, false
+	}
+	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
+	if (family != keyspace.FamilyTable && family != keyspace.FamilyFunction) || ordinal == 0 || ordinal > uint32(len(view.component.allocationPaths[family])) {
+		return identity.ContentID{}, false
+	}
+	id := view.component.allocationPaths[family][ordinal-1].id
+	return id, id.Available()
+}
+
+// AllocationFieldID returns the owner-issued identity for one authored table
+// field.  Field membership is checked against the Tables denominator so the
+// caller consumes the existing authored relation instead of constructing a
+// second field proof or index.
+func (view View) AllocationFieldID(table, field keyspace.Term) (identity.ContentID, bool) {
+	_, ok := view.AllocationID(table)
+	if !ok || keyspace.TermFamily(table) != keyspace.FamilyTable || keyspace.TermFamily(field) != keyspace.FamilyTableField {
+		return identity.ContentID{}, false
+	}
+	count, ok := view.Authored().Tables().FieldCount(table)
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	member := false
+	for index := 0; index < count; index++ {
+		candidate, candidateOK := view.Authored().Tables().FieldAt(table, index)
+		if !candidateOK {
+			return identity.ContentID{}, false
+		}
+		if candidate == field {
+			member = true
+			break
+		}
+	}
+	if !member {
+		return identity.ContentID{}, false
+	}
+	programID := view.ContentID()
+	var allocationPayload [allocationIDPrefixLen + sha256.Size + 1 + 4]byte
+	copy(allocationPayload[:allocationIDPrefixLen], allocationIDPrefix)
+	copy(allocationPayload[allocationIDPrefixLen:allocationIDPrefixLen+sha256.Size], programID[:])
+	allocationPayload[allocationIDPrefixLen+sha256.Size] = allocationRoleTable
+	binary.BigEndian.PutUint32(allocationPayload[allocationIDPrefixLen+sha256.Size+1:], uint32(table))
+	allocationProof := sha256.Sum256(allocationPayload[:])
+	var payload [fieldIDPrefixLen + sha256.Size + 4]byte
+	copy(payload[:fieldIDPrefixLen], fieldIDPrefix)
+	copy(payload[fieldIDPrefixLen:fieldIDPrefixLen+sha256.Size], allocationProof[:])
+	binary.BigEndian.PutUint32(payload[fieldIDPrefixLen+sha256.Size:], uint32(field))
+	return sha256.Sum256(payload[:]), true
+}
+
 func (view View) BodyPath(term keyspace.Term) (identity.ContentID, bool) {
 	if !view.available() || view.component.semanticPaths == nil || keyspace.TermFamily(term) != keyspace.FamilyBody {
 		return identity.ContentID{}, false
@@ -60,40 +128,6 @@ func (view View) StorageAssignmentPath(term keyspace.Term) (identity.ContentID, 
 	}
 	id := view.component.storagePaths[keyspace.FamilyAssign][keyspace.TermOrdinal(term)-1]
 	return id, id.Available()
-}
-
-type AllocationOccurrence struct {
-	owner   *Component
-	program identity.ContentID
-	role    AllocationRole
-	id      identity.ContentID
-}
-
-func (o AllocationOccurrence) Available() bool {
-	return o.owner != nil && o.owner.semanticPaths != nil && o.owner.semanticPaths.Matches(o.owner.provenance.Source, o.owner.provenance.Flow, o.owner.provenance.Static, o.owner.provenance.Module) && o.program == o.owner.ContentID() && o.role.Valid() && o.id.Available()
-}
-func (o AllocationOccurrence) ID() identity.ContentID {
-	if !o.Available() {
-		return identity.ContentID{}
-	}
-	return o.id
-}
-func (o AllocationOccurrence) Equal(other AllocationOccurrence) bool {
-	return o.Available() && other.Available() && o.owner == other.owner && o.program == other.program && o.role == other.role && o.id == other.id
-}
-func (c *Component) allocationOccurrence(term keyspace.Term, role AllocationRole) AllocationOccurrence {
-	if c == nil || !role.Valid() {
-		return AllocationOccurrence{}
-	}
-	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) > uint64(len(c.allocationPaths[family])) {
-		return AllocationOccurrence{}
-	}
-	id := c.allocationPaths[family][ordinal-1].id
-	if !id.Available() {
-		return AllocationOccurrence{}
-	}
-	return AllocationOccurrence{owner: c, program: c.ContentID(), role: role, id: id}
 }
 
 func certificateTerm(paths *semanticpath.Certificate, sourceID, flowID, staticID, moduleID identity.ContentID, term keyspace.Term) (identity.ContentID, bool) {
@@ -217,7 +251,7 @@ func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Res
 			out[f] = make([]allocationPath, n)
 		}
 	}
-	store := func(term keyspace.Term, role AllocationRole) error {
+	store := func(term keyspace.Term, role uint8) error {
 		if !exec.Executable(term) {
 			return nil
 		}
@@ -234,7 +268,7 @@ func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Res
 		if !ok {
 			return out, errors.New("table allocation row unavailable")
 		}
-		if err := store(term, AllocationTable); err != nil {
+		if err := store(term, allocationRoleTable); err != nil {
 			return out, err
 		}
 	}
@@ -243,7 +277,7 @@ func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Res
 		if !ok {
 			return out, errors.New("closure allocation row unavailable")
 		}
-		if err := store(term, AllocationClosure); err != nil {
+		if err := store(term, allocationRoleClosure); err != nil {
 			return out, err
 		}
 	}

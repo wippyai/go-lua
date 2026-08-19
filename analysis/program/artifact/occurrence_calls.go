@@ -9,7 +9,7 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 	for index, allocation := range compiler.allocationRows {
 		entryPoints, finishPoints := compiler.pointIDs(allocation.entry), compiler.pointIDs(allocation.finish)
 		if !allocation.occurrence.Available() || !allocation.template.Available() || len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.appendOccurrence(OccurrenceAllocation, allocation.template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{allocation.template, allocation.occurrence.ID()}, uint64(allocation.form)) ||
+			!compiler.appendOccurrence(OccurrenceAllocation, allocation.template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{allocation.template, allocation.occurrence}, uint64(allocation.form)) ||
 			!compiler.recordOccurrenceSpan(OccurrenceAllocation, allocation.template, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
@@ -26,7 +26,7 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 					inputs = append(inputs, member.ID())
 				}
 			}
-			if !field.field.Available() || !values.Available() || !compiler.appendOccurrence(OccurrenceAllocationField, field.id, identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
+			if field.term == 0 || !values.Available() || !compiler.appendOccurrence(OccurrenceAllocationField, field.id, identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
 			}
 		}

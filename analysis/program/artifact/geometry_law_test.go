@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis/program/flow"
 )
 
 // TestReceiptGeometryAccessorsDoNotExportFlowTypes is the closed receipt law:
@@ -84,22 +82,4 @@ func resultTypeName(expr ast.Expr) string {
 		}
 	}
 	return ""
-}
-
-func TestReceiptGeometryPublishesFlowOrdinals(t *testing.T) {
-	role, roleOK := receiptAllocationRole(flow.AllocationTable)
-	form, formOK := receiptAllocationForm(flow.AllocationFormClosed)
-	call, callOK := receiptCallForm(flow.CallFormMethod)
-	if !roleOK || !formOK || !callOK {
-		t.Fatal("receipt geometry refused a valid Flow constructor")
-	}
-	if uint64(role) != uint64(flow.AllocationTable) || uint64(form) != uint64(flow.AllocationFormClosed) || uint64(call) != uint64(flow.CallFormMethod) {
-		t.Fatalf("receipt ordinals drifted: role=%d form=%d call=%d", role, form, call)
-	}
-	if _, ok := receiptAllocationRole(flow.AllocationInvalid); ok {
-		t.Fatal("invalid allocation role became a receipt column")
-	}
-	if _, ok := receiptCallForm(0); ok {
-		t.Fatal("invalid call form became a receipt column")
-	}
 }
