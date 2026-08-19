@@ -13,9 +13,12 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
+	typkind "github.com/wippyai/go-lua/domain/type/kind"
+	"github.com/wippyai/go-lua/domain/type/typ"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
@@ -27,6 +30,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -395,6 +399,10 @@ type compiledArtifactSet struct {
 	mounts    []mountedProgramArtifact
 	byProgram map[identity.ContentID]*programartifact.Artifact
 	sites     mounted.ObservationSites
+	// declared is the declared-type column of the sealed conformance sites.
+	// It is derived once here because this is the first place holding both the
+	// artifact type rows and the sites measured against them.
+	declared anadiag.DeclaredTypes
 }
 
 func (artifacts *compiledArtifactSet) observationCensus(coordinates []compiledValueCoordinate) ([]anadiag.Observation, bool) {
@@ -409,7 +417,115 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []compiledVa
 	for index, coordinate := range coordinates {
 		values[index] = anadiag.ValueCoordinate{Mount: coordinate.mount, ID: coordinate.id}
 	}
-	return anadiag.ProjectSites(artifacts.sites, mounts, values)
+	return anadiag.ProjectSites(artifacts.sites, mounts, values, artifacts.declared)
+}
+
+// sealDeclaredConformanceTypes publishes the declared-type column every
+// conformance site is judged against: the runtime families its declaration
+// admits and the spelling that names it.
+//
+// The projection belongs here because this is the first place that holds both
+// the sealed artifact type rows and the sites measured against them. The
+// snapshot a downstream reader holds carries a static node's kind alone, so
+// nothing downstream can decide what a record, array, optional, or union
+// declaration admits; publishing the projection here is what keeps that
+// judgment from collapsing every non-primitive declaration to the whole
+// runtime vocabulary.
+func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
+	if artifacts == nil || !artifacts.sites.Available() || len(artifacts.byProgram) == 0 {
+		return false
+	}
+	rows := make([]*programartifact.Artifact, 0, len(artifacts.byProgram))
+	for _, artifact := range artifacts.byProgram {
+		if artifact == nil || !artifact.Available() {
+			return false
+		}
+		rows = append(rows, artifact)
+	}
+	types, typesErr := typeauthority.SealArtifacts(rows)
+	if typesErr != nil || types == nil {
+		return false
+	}
+	snapshots := make(map[identity.ContentID]*ingress.Snapshot, len(artifacts.mounts))
+	for _, mount := range artifacts.mounts {
+		if !mount.valid() {
+			return false
+		}
+		snapshots[mount.moduleKey] = mount.snapshot
+	}
+	declared := make(anadiag.DeclaredTypes)
+	for index := 0; index < artifacts.sites.Count(); index++ {
+		site, siteOK := artifacts.sites.At(index)
+		if !siteOK || !site.Available() {
+			return false
+		}
+		if site.Kind != structure.DiagnosticObservationTypeConformance {
+			continue
+		}
+		snapshot, held := snapshots[site.Mount]
+		if !held || snapshot == nil {
+			return false
+		}
+		observation, observed := snapshot.DiagnosticObservationForID(site.Local)
+		if !observed {
+			return false
+		}
+		conformance, conformanceOK := observation.TypeConformance()
+		if !conformanceOK {
+			return false
+		}
+		declaredID := conformance.DeclaredStaticTypeID()
+		if !declaredID.Available() {
+			return false
+		}
+		if _, projected := declared[declaredID]; projected {
+			continue
+		}
+		row, rowOK := declaredTypeProjection(types, declaredID)
+		if !rowOK {
+			return false
+		}
+		declared[declaredID] = row
+	}
+	artifacts.declared = declared
+	return true
+}
+
+// declaredTypeProjection states one declaration in the vocabulary the
+// conformance judgment reads. The type domain owns both halves: the artifact
+// type authority resolves the declared graph, and Static projects the runtime
+// families that graph admits. A declaration the authority cannot resolve
+// admits the whole vocabulary, which is the same abstention the judgment
+// already gives an unnarrowed declaration.
+func declaredTypeProjection(types *typeauthority.ArtifactAuthority, declared identity.ContentID) (anadiag.DeclaredType, bool) {
+	value, resolved := types.Resolve(declared)
+	if !resolved || value == nil {
+		return anadiag.DeclaredType{May: runtimekind.All, Spelling: typkind.Unknown.String()}, true
+	}
+	row := anadiag.DeclaredType{May: staticdomain.MayRuntimeKinds(value), Spelling: declaredTypeSpelling(value)}
+	return row, row.Available()
+}
+
+// declaredTypeSpelling names a declaration the way a finding refers to it: by
+// the name it was declared under when it carries one, and by its structural
+// form otherwise. A report payload admits one token, so a name the payload
+// cannot render falls back to the form rather than dropping the finding.
+func declaredTypeSpelling(value typ.Type) string {
+	name := ""
+	switch named := value.(type) {
+	case *typ.Alias:
+		name = named.Name
+	case *typ.Interface:
+		name = named.Name
+	case *typ.Generic:
+		name = named.Name
+	case *typ.Recursive:
+		name = named.Name
+	}
+	if _, renderable := anadiag.NewTargetType(name); renderable {
+		return name
+	}
+	return typ.UnwrapStructuralWrappers(value).Kind().String()
 }
 
 type artifactCacheState struct {
@@ -561,6 +677,9 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		return nil, false
 	}
 	result.sites = sites
+	if !result.sealDeclaredConformanceTypes() {
+		return nil, false
+	}
 	return result, true
 }
 

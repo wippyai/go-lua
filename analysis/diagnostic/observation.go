@@ -4,10 +4,8 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
@@ -44,6 +42,28 @@ type MountedCensus struct {
 type ValueCoordinate struct {
 	Mount, ID identity.ContentID
 }
+
+// DeclaredType is one declaration as the conformance judgment needs it: the
+// runtime families the declared type admits, and the spelling a finding names
+// it by. Both are projections of the declared type graph, which this layer
+// does not hold: the owner that resolves that graph publishes them together so
+// a judgment reads one column instead of rediscovering the declaration.
+type DeclaredType struct {
+	May      runtimekind.Set
+	Spelling string
+}
+
+// Available reports a complete declaration: a may-set over the closed runtime
+// vocabulary and a spelling the report can render as the declared type.
+func (declared DeclaredType) Available() bool {
+	return declared.May.Valid() && diagnosticTemplateTokenValid(declared.Spelling)
+}
+
+// DeclaredTypes is the published declared-type column, addressed by the static
+// type node a conformance site was measured against. It carries every
+// declaration the sealed sites name; a missing entry is an incomplete
+// publication.
+type DeclaredTypes map[identity.ContentID]DeclaredType
 
 // Producer is one mounted branch execution/anchor pair.
 type Producer struct {
@@ -282,7 +302,7 @@ func (observation Observation) Available() bool {
 
 // ProjectSites materializes mounted observation rows from sealed Snapshot
 // sites. Compile-time reconstruction is not a source.
-func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordinates []ValueCoordinate) ([]Observation, bool) {
+func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordinates []ValueCoordinate, declared DeclaredTypes) ([]Observation, bool) {
 	if !sites.Available() || len(mounts) == 0 {
 		return nil, false
 	}
@@ -369,16 +389,16 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 			points, pointsOK := conformance.EvidencePoints()
 			producers, producersOK := siteProducers(site)
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
-			declaredMay, target, declaredOK := declaredMay(mount.Snapshot, conformance.DeclaredStaticTypeID())
+			declaredMay, target, declaredOK := declaredMay(declared, conformance.DeclaredStaticTypeID())
 			if !positionOK || !pointsOK || !producersOK || !valueOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
 			}
 			row.Conformance = Conformance{
-				Site: conformance.Site(),
+				Site:  conformance.Site(),
 				Owner: conformance.OwnerID(), Measured: conformance.MeasuredValueID(),
 				Declared: conformance.DeclaredStaticTypeID(), Span: conformance.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
-				Evidence: append([]identity.ContentID(nil), points...),
+				Evidence:  append([]identity.ContentID(nil), points...),
 				Producers: producers,
 			}
 		default:
@@ -412,43 +432,18 @@ func siteProducers(site mounted.ObservationSite) ([]Producer, bool) {
 	return producers, true
 }
 
-func declaredMay(snapshot *ingress.Snapshot, declared identity.ContentID) (runtimekind.Set, string, bool) {
-	if snapshot == nil || !declared.Available() {
+// declaredMay reads one declaration out of the published declared-type column.
+// The projection itself belongs to the type domain and is performed by the
+// owner that holds the whole declared graph; a site whose declaration the
+// column does not carry is a defect of that publication, not a declaration
+// this row may guess at.
+func declaredMay(declared DeclaredTypes, id identity.ContentID) (runtimekind.Set, string, bool) {
+	if !id.Available() {
 		return 0, "", false
 	}
-	node, nodeOK := snapshot.StaticTypeNodeForID(declared)
-	if !nodeOK {
+	row, published := declared[id]
+	if !published || !row.Available() {
 		return 0, "", false
 	}
-	if node.Kind() != uint8(programartifact.StaticNodePrimitive) {
-		return runtimekind.All, "", true
-	}
-	return primitiveDeclaredMay(statictypes.PrimitiveKind(node.LiteralKind()))
-}
-
-func primitiveDeclaredMay(kind statictypes.PrimitiveKind) (runtimekind.Set, string, bool) {
-	switch kind {
-	case statictypes.PrimitiveNil:
-		return runtimekind.Bit(runtimekind.Nil), "nil", true
-	case statictypes.PrimitiveBoolean:
-		return runtimekind.Bit(runtimekind.Boolean), "boolean", true
-	case statictypes.PrimitiveNumber:
-		return runtimekind.Bit(runtimekind.Number), "number", true
-	case statictypes.PrimitiveInteger:
-		return runtimekind.Bit(runtimekind.Number), "integer", true
-	case statictypes.PrimitiveString:
-		return runtimekind.Bit(runtimekind.String), "string", true
-	case statictypes.PrimitiveFunction:
-		return runtimekind.Bit(runtimekind.Function), "function", true
-	case statictypes.PrimitiveAny:
-		return runtimekind.All, "any", true
-	case statictypes.PrimitiveUnknown:
-		return runtimekind.All, "unknown", true
-	case statictypes.PrimitiveNever:
-		return 0, "never", true
-	case statictypes.PrimitiveSelf:
-		return runtimekind.All, "self", true
-	default:
-		return 0, "", false
-	}
+	return row.May, row.Spelling, true
 }

@@ -71,6 +71,18 @@ func (s *ClassSet) sealRuntimeAtomKinds() error {
 	return nil
 }
 
+// MayRuntimeKinds is the sound may-projection of one static type onto the
+// closed Lua runtime vocabulary: the families a value of that type may carry
+// at run time. It is the same projection the Class table is sealed from, so a
+// consumer that holds a type graph rather than a sealed Class reads the one
+// answer this domain gives rather than restating the fold over type shapes.
+//
+// The projection loses precision - an unmodelled or cyclic form answers the
+// whole vocabulary - but never excludes a family the type admits.
+func MayRuntimeKinds(value typ.Type) runtimekind.Set {
+	return staticTypeMayRuntimeKinds(value, make(map[typ.Type]bool))
+}
+
 // staticTypeMayRuntimeKinds computes a sound may projection during sealing.
 // It deliberately answers All for an unmodelled or cyclic structural form:
 // this projection may lose precision but must never exclude a possible Lua
