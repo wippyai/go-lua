@@ -186,14 +186,10 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 		return compileFailure(CompileStageRoutes, CompileRowEnvironment, rowIndex, -1, CompileReasonEnvironmentUnavailable)
 	}
 	compiler.environment = append(compiler.environment, row)
-	if compiler.routeOccurrences == nil {
-		compiler.routeOccurrences = make(map[identity.ContentID]identity.ContentID)
-	}
-	if prior, duplicate := compiler.routeOccurrences[row.route]; duplicate && prior != occurrenceID {
-		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
-	}
-	compiler.routeOccurrences[row.route] = occurrenceID
-	if _, exists := compiler.environmentByRoute[row.route]; exists {
+	if prior, exists := compiler.environmentByRoute[row.route]; exists {
+		if prior.id != occurrenceID {
+			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
+		}
 		compiler.environmentRouteDuplicates[row.route] = struct{}{}
 	} else {
 		compiler.environmentByRoute[row.route] = row

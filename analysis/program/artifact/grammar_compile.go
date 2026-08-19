@@ -199,7 +199,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	}
 	transaction := compiler{
 		input: input, key: key, counts: counts, issuance: issuance, points: make(map[identity.ContentID]struct{}), pointGeometry: make(map[identity.ContentID]Point),
-		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), routeOccurrences: make(map[identity.ContentID]identity.ContentID), predecessorStages: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
+		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), predecessorStages: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
 		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]EnvironmentEdge), environmentRouteDuplicates: make(map[identity.ContentID]struct{}),
 		diagnosticObservationByID: make(map[identity.ContentID]int),

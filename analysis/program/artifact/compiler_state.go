@@ -48,7 +48,6 @@ type compiler struct {
 	diagnosticObservationByID  map[identity.ContentID]int
 	pointGeometry              map[identity.ContentID]Point
 	occurrenceSpans            map[occurrenceLookup]occurrenceSpanGeometry
-	routeOccurrences           map[identity.ContentID]identity.ContentID
 	predecessorStages          map[identity.ContentID]identity.ContentID
 	localStages                map[identity.ContentID]identity.ContentID
 	computationStages          map[identity.ContentID][]computationStage
