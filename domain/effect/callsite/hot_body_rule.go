@@ -128,8 +128,7 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 
 	var runtimeCall engine.Read[engine.OrderedCells[calldomain.Value]]
 	var runtimeSummary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
-	var implementation *effectowner.RuleImplementation[hotBodyOperand]
-	bound := effectowner.BindSelectedRule(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, hotBodyOperand]{
+	implementation, bound := effectowner.BindSelectedRuleDirect(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, hotBodyOperand]{
 		OperandContent: hot.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.core.evidence, hot.check),
 		Transfer: func(access engine.Access[effectfactor.Value, hotBodyOperand]) bool {
@@ -138,27 +137,23 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 	}, func(operand hotBodyOperand) (uint64, bool) {
 		index, ok := effects.Algebra().RootIndex(operand.root)
 		return uint64(index), ok && index >= 0
-	}, func(tx *effectowner.SelectedRuleBinding[hotBodyOperand]) bool {
-		callRead, callOK := effectowner.AddExactRead(tx, fragment.core.callRead, calls.FactorRef(), func(operand hotBodyOperand) (uint64, bool) {
-			index, ok := calls.Algebra().KeyIndex(operand.key)
-			return uint64(index), ok && index >= 0
-		})
-		if !callOK {
-			return false
-		}
-		summary, summaryOK := effectowner.AddOperandSelectedRead[hotBodyOperand, effectfactor.Value, uint64](tx, fragment.effectRead, effects.FactorRef(), hot.locate)
-		if !summaryOK {
-			return false
-		}
-		hot.callRead, hot.summary = callRead, summary
-		runtimeCall, runtimeSummary = callRead, summary
-		var implementationOK bool
-		implementation, implementationOK = tx.Implementation()
-		return implementationOK && implementation != nil
 	})
 	if !bound {
 		return nil, false
 	}
+	callRead, callOK := effectowner.AddSelectedRuleDirectExactRead(implementation, fragment.core.callRead, calls.FactorRef(), func(operand hotBodyOperand) (uint64, bool) {
+		index, ok := calls.Algebra().KeyIndex(operand.key)
+		return uint64(index), ok && index >= 0
+	})
+	if !callOK {
+		return nil, false
+	}
+	summary, summaryOK := effectowner.AddSelectedRuleDirectOperandRead[hotBodyOperand, effectfactor.Value, uint64](implementation, fragment.effectRead, effects.FactorRef(), hot.locate)
+	if !summaryOK {
+		return nil, false
+	}
+	hot.callRead, hot.summary = callRead, summary
+	runtimeCall, runtimeSummary = callRead, summary
 	hot.implementation = implementation
 	if !implementation.InstallOperandResolver(hot.resolveOperand) {
 		return nil, false

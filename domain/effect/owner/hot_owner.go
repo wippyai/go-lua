@@ -70,15 +70,6 @@ func (issuer *RuleImplementation[O]) LinkCapability() (engine.RuleSlotCapability
 	return engine.LinkCapabilityForSlot(issuer.owner.binding, issuer.slot)
 }
 
-// SelectedRuleBinding is Effect's no-carry selected-read transaction. The
-// cold Rule owns its exact write and read order; this wrapper only preserves
-// Effect's output coordinate authority across the one-shot engine assembly.
-type SelectedRuleBinding[O any] struct {
-	owner  *HotOwner
-	tx     *engine.SelectedRouteRuleBindingTransaction[coordinate, factor.Value, O]
-	issuer *RuleImplementation[O]
-}
-
 // BindHot attaches Effect's already-sealed Link-local algebra to its exact
 // cold Factor slot. It never re-declares the Factor shape or retains a mutable
 // FactorImplementation.
@@ -194,44 +185,40 @@ func BindExactReadRule[O, RV any](owner *HotOwner, slot *engine.RuleSlot[factor.
 	return &RuleImplementation[O]{owner: owner, slot: slot}, read, true
 }
 
-// BindSelectedRule owns Effect's exact-write/no-carry heterogeneous selected
-// transaction. Carry-bearing Rules have a disjoint engine constructor and
-// cannot enter this owner API. bind attaches the reads and its answer
-// terminalizes the transaction.
-func BindSelectedRule[O any](owner *HotOwner, slot *engine.RuleSlot[factor.Value, O], write engine.SchemaWriteSlot[factor.Value], spec engine.HotRuleSpec[factor.Value, O], projectWrite func(O) (uint64, bool), bind func(*SelectedRuleBinding[O]) bool) bool {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil || bind == nil {
-		return false
-	}
-	return engine.BindSelectedExactRule[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite, func(tx *engine.SelectedRouteRuleBindingTransaction[coordinate, factor.Value, O]) bool {
-		return bind(&SelectedRuleBinding[O]{owner: owner, tx: tx, issuer: &RuleImplementation[O]{owner: owner, slot: slot}})
-	})
-}
-
-func (tx *SelectedRuleBinding[O]) Implementation() (*RuleImplementation[O], bool) {
-	if tx == nil || tx.owner == nil || tx.issuer == nil {
+// BindSelectedRuleDirect installs Effect's exact-write/no-carry selected Rule
+// at its declared schema ordinal. The returned issuer fills each read at its
+// own packed ordinal; no transaction, callback, or pending token crosses the
+// Effect boundary.
+func BindSelectedRuleDirect[O any](owner *HotOwner, slot *engine.RuleSlot[factor.Value, O], write engine.SchemaWriteSlot[factor.Value], spec engine.HotRuleSpec[factor.Value, O], projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], bool) {
+	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, false
 	}
-	return tx.issuer, true
+	if !engine.BindSelectedExactRuleDirect[coordinate](owner.binding, slot, write, owner.fragment.Ref(), spec, projectWrite) {
+		return nil, false
+	}
+	return &RuleImplementation[O]{owner: owner, slot: slot}, true
 }
 
-// AddExactRead appends one exact predecessor in the cold Rule's canonical
-// read order.
-func AddExactRead[O, RV any](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], source engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
-	if tx == nil || tx.owner == nil || tx.tx == nil {
+// AddSelectedRuleDirectExactRead fills one exact predecessor at the
+// SchemaReadSlot's packed ordinal. The slot, not call order, owns read
+// position.
+func AddSelectedRuleDirectExactRead[O, RV any](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], project func(O) (uint64, bool)) (engine.Read[engine.OrderedCells[RV]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.Read[engine.OrderedCells[RV]]{}, false
 	}
-	return engine.AddSelectedRouteExactRead(tx.tx, slot, source, project)
+	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
-// AddOperandSelectedRead appends one selected predecessor whose exact routes
-// are issued from the already-admitted operand receipt.
-func AddOperandSelectedRead[O, RV any, Tag interface {
+// AddSelectedRuleDirectOperandRead fills one operand-dependent selected
+// predecessor at the SchemaReadSlot's packed ordinal. The locator remains in
+// the sealed engine cell and receives the bound operand only during solving.
+func AddSelectedRuleDirectOperandRead[O, RV any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](tx *SelectedRuleBinding[O], slot engine.SchemaReadSlot[RV], source engine.FactorRef[RV], locate func(engine.SelectorContext, O) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
-	if tx == nil || tx.owner == nil || tx.tx == nil || locate == nil {
+}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], source engine.FactorRef[RV], locate func(engine.SelectorContext, O) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil || locate == nil {
 		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
 	}
-	return engine.AddSelectedRouteOperandRead[coordinate, factor.Value, O, RV, Tag](tx.tx, slot, source, locate)
+	return engine.BindSelectedRuleDirectOperandRead[coordinate, factor.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, source, locate)
 }
 
 // ResolveRuleImplementation issues the engine receipt only after the exact
