@@ -48,6 +48,8 @@ type Publication struct {
 	FunctionFormals      []FunctionFormal
 	FunctionVarargs      []FunctionVararg
 	FunctionCaptures     []FunctionCapture
+	LocalTransfers       []LocalTransfer
+	LocalTransferWrites  []LocalTransferWrite
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -91,7 +93,9 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		FunctionBoundaryFamily().Put(&builder, publication.FunctionBoundaries, catalog) &&
 		FunctionFormalFamily().Put(&builder, publication.FunctionFormals, catalog) &&
 		FunctionVarargFamily().Put(&builder, publication.FunctionVarargs, catalog) &&
-		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog)
+		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog) &&
+		LocalTransferFamily().Put(&builder, publication.LocalTransfers, catalog) &&
+		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

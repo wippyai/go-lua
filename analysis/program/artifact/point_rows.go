@@ -56,12 +56,11 @@ type EnvironmentEdge struct {
 	hasMu     bool
 }
 
-// LocalTransfer is a Program-artifact-owned acyclic stage transport. It is
-// distinct from EnvironmentEdge and therefore never owns a guard, recurrence
-// component, Mu, or reset witness. Full transports carry the complete
-// environment. Factor transports name the sealed rule keys whose factors they
-// move.
-type LocalTransfer struct {
+// localTransferDraft is compiler-only assembly state for one Program local
+// transport. The sealed Artifact does not retain this row: Freeze converts it
+// to programschema.LocalTransfer and the canonical Program publication owns
+// the resulting family.
+type localTransferDraft struct {
 	id     identity.ContentID
 	from   identity.ContentID
 	to     identity.ContentID
@@ -69,24 +68,7 @@ type LocalTransfer struct {
 	writes []schema.Key
 }
 
-func (edge LocalTransfer) ID() identity.ContentID   { return edge.id }
-func (edge LocalTransfer) From() identity.ContentID { return edge.from }
-func (edge LocalTransfer) To() identity.ContentID   { return edge.to }
-func (edge LocalTransfer) FullEnvironment() bool    { return edge.Available() && edge.full }
-
-func (edge LocalTransfer) WritesCount() int {
-	if !edge.Available() || edge.full {
-		return 0
-	}
-	return len(edge.writes)
-}
-func (edge LocalTransfer) WritesAt(index int) (schema.Key, bool) {
-	if !edge.Available() || edge.full || index < 0 || index >= len(edge.writes) {
-		return "", false
-	}
-	return edge.writes[index], true
-}
-func (edge LocalTransfer) Available() bool {
+func (edge localTransferDraft) Available() bool {
 	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || edge.from == edge.to || edge.full == (len(edge.writes) != 0) {
 		return false
 	}
@@ -281,13 +263,6 @@ func (artifact *Artifact) EnvironmentEdgeCount() int {
 	return count
 }
 
-func (artifact *Artifact) LocalTransferCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.localTransfers)
-}
-
 func (artifact *Artifact) RegionCount() int {
 	if !artifact.Available() {
 		return 0
@@ -381,13 +356,6 @@ func (artifact *Artifact) environmentEdgeRowAt(index int) (EnvironmentEdge, bool
 		row.resets = append(row.resets, witness.ID())
 	}
 	return row, row.Available()
-}
-
-func (artifact *Artifact) LocalTransferAt(index int) (LocalTransfer, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.localTransfers) {
-		return LocalTransfer{}, false
-	}
-	return artifact.localTransfers[index], true
 }
 
 func (artifact *Artifact) RegionAt(index int) (Region, bool) {

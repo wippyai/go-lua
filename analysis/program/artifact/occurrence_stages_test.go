@@ -356,10 +356,15 @@ return guard
 		t.Fatalf("local computation chain storage=%+v/%t order=%+v/%t", storageRule, storageOK, orderRule, orderRuleOK)
 	}
 
+	program := summaryProgram(t, artifact)
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !transfersPublished {
+		t.Fatal("local-transfer family is unpublished")
+	}
 	baseToStorage, storageToOrder := false, false
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		edge, ok := artifact.LocalTransferAt(index)
-		if !ok || !edge.FullEnvironment() {
+	for index := 0; index < transferCount; index++ {
+		edge, ok := program.LocalTransferAt(index)
+		if !ok || !edge.Full() {
 			continue
 		}
 		baseToStorage = baseToStorage || edge.From() == storageInput && edge.To() == storagePoint
@@ -439,10 +444,15 @@ return guard
 		equalityInput != orderPoint || equalityPoint == orderPoint || equalityRule.InputKind() != programartifact.RuleInputFinish {
 		t.Fatalf("nested computation dependency order=%+v/%t equality=%+v/%t", orderRule, orderOK, equalityRule, equalityOK)
 	}
+	program := summaryProgram(t, artifact)
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !transfersPublished {
+		t.Fatal("local-transfer family is unpublished")
+	}
 	linked := false
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		edge, ok := artifact.LocalTransferAt(index)
-		linked = linked || ok && edge.FullEnvironment() && edge.From() == orderPoint && edge.To() == equalityPoint
+	for index := 0; index < transferCount; index++ {
+		edge, ok := program.LocalTransferAt(index)
+		linked = linked || ok && edge.Full() && edge.From() == orderPoint && edge.To() == equalityPoint
 	}
 	if !linked {
 		t.Fatal("nested computation dependency lacks an exact full local transfer")

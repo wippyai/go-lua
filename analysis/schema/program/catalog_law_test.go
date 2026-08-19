@@ -191,6 +191,13 @@ func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
 		{OutcomeFamily().slot, OutcomeFamily().name},
 		{OutcomeReturnValueFamily().slot, OutcomeReturnValueFamily().name},
 		{OutcomePointFamily().slot, OutcomePointFamily().name},
+		{FunctionBoundaryFamily().slot, FunctionBoundaryFamily().name},
+		{FunctionFormalFamily().slot, FunctionFormalFamily().name},
+		{FunctionVarargFamily().slot, FunctionVarargFamily().name},
+		{FunctionCaptureFamily().slot, FunctionCaptureFamily().name},
+		{StaticInputFamily().slot, StaticInputFamily().name},
+		{LocalTransferFamily().slot, LocalTransferFamily().name},
+		{LocalTransferWriteFamily().slot, LocalTransferWriteFamily().name},
 	}
 	slots := make(map[uint32]string, len(declared))
 	names := make(map[string]uint32, len(declared))
@@ -230,5 +237,8 @@ func TestProgramPublicationSealsEveryDeclaredFamily(t *testing.T) {
 	}
 	if _, published := OutcomePointFamily().Count(&frozen, catalog); !published {
 		t.Fatal("outcome point family is not published")
+	}
+	if _, published := LocalTransferWriteFamily().Count(&frozen, catalog); !published {
+		t.Fatal("local-transfer write family is not published")
 	}
 }

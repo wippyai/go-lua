@@ -33,8 +33,8 @@ func TestPointRowsUseFlowBoundaryArmsAndKeepTransferSeparate(t *testing.T) {
 	if !point.Available() || point.DecisionCount() != 1 {
 		t.Fatal("valid point row unavailable")
 	}
-	transfer := LocalTransfer{id: valuesLawID(3), from: valuesLawID(4), to: valuesLawID(5), full: true}
-	if !transfer.Available() || !transfer.FullEnvironment() || transfer.WritesCount() != 0 {
+	transfer := localTransferDraft{id: valuesLawID(3), from: valuesLawID(4), to: valuesLawID(5), full: true}
+	if !transfer.Available() || !transfer.full || len(transfer.writes) != 0 {
 		t.Fatal("full local transfer row unavailable")
 	}
 }
@@ -61,12 +61,12 @@ func TestLocalTransferWritesAreStrictlyAscendingAndSetIdenticalEmissionsShareAnI
 	if !leftID.Available() || leftID != rightID {
 		t.Fatal("set-identical write emissions produced different transfer identities")
 	}
-	unsorted := LocalTransfer{id: leftID, from: from, to: to, writes: []schema.Key{"value-source", "pack-source"}}
+	unsorted := localTransferDraft{id: leftID, from: from, to: to, writes: []schema.Key{"value-source", "pack-source"}}
 	if unsorted.Available() {
 		t.Fatal("descending write keys were accepted")
 	}
-	sorted := LocalTransfer{id: leftID, from: from, to: to, writes: left}
-	if !sorted.Available() || sorted.WritesCount() != 4 {
+	sorted := localTransferDraft{id: leftID, from: from, to: to, writes: left}
+	if !sorted.Available() || len(sorted.writes) != 4 {
 		t.Fatal("ascending write keys were rejected")
 	}
 }

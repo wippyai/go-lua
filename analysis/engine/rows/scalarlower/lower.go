@@ -66,18 +66,24 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 	if snapshot == nil || !snapshot.Available() {
 		return nil, nil, false
 	}
+	program := snapshot.Program()
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !program.Available() || !transfersPublished {
+		return nil, nil, false
+	}
 	usedKeys := make(map[schema.Key]struct{})
-	for index := 0; index < snapshot.LocalTransferCount(); index++ {
-		transfer, transferOK := snapshot.LocalTransferAt(index)
+	for index := 0; index < transferCount; index++ {
+		transfer, transferOK := program.LocalTransferAt(index)
 		if !transferOK {
 			return nil, nil, false
 		}
 		for inner := 0; inner < transfer.WritesCount(); inner++ {
-			write, writeOK := transfer.WritesAt(inner)
-			if !writeOK || !write.Available() {
+			write, writeOK := program.LocalTransferWriteFor(index, inner)
+			key, keyOK := write.Key()
+			if !writeOK || !keyOK {
 				return nil, nil, false
 			}
-			usedKeys[write] = struct{}{}
+			usedKeys[key] = struct{}{}
 		}
 	}
 	for index := 0; index < snapshot.RulePlacementCount(); index++ {
@@ -92,7 +98,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: snapshot.LocalTransferCount(), Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
+		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: snapshot.RulePlacementCount(), Bodies: snapshot.BodyTransportCount(),
 	})
 	if !specOK || !spec.InstallStageLaws(laws) {
 		return nil, nil, false
@@ -160,8 +166,8 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			}
 		}
 	}
-	for index := 0; index < snapshot.LocalTransferCount(); index++ {
-		row, rowOK := snapshot.LocalTransferAt(index)
+	for index := 0; index < transferCount; index++ {
+		row, rowOK := program.LocalTransferAt(index)
 		if !rowOK {
 			return nil, nil, false
 		}
@@ -170,9 +176,10 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			return nil, nil, false
 		}
 		for inner := 0; inner < row.WritesCount(); inner++ {
-			write, writeOK := row.WritesAt(inner)
-			role, roleOK := directory.Role(write)
-			if !writeOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
+			write, writeOK := program.LocalTransferWriteFor(index, inner)
+			key, keyOK := write.Key()
+			role, roleOK := directory.Role(key)
+			if !writeOK || !keyOK || !roleOK || !spec.AddTransferFactor(transfer, role) {
 				return nil, nil, false
 			}
 		}

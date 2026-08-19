@@ -59,7 +59,6 @@ type Snapshot struct {
 	frozen          snapshotstore.Frozen
 	coldCatalog     identity.ContentID
 	vocabulary      structure.Table
-	transfers       []LocalTransfer
 	placements      []RulePlacement
 	bodyExits       [][]identity.ContentID
 	occurrences     []Occurrence
@@ -139,6 +138,19 @@ func (snapshot *Snapshot) Frozen() snapshotstore.Frozen {
 	}
 	return snapshot.frozen
 }
+
+// Program returns the one canonical compiled Program named by this ingress
+// publication. Families already owned by Program are consumed through this
+// value rather than copied into another ingress row vocabulary.
+func (snapshot *Snapshot) Program() programschema.Program {
+	if !snapshot.Available() {
+		return programschema.Program{}
+	}
+	return programschema.Program{
+		Frozen: snapshot.frozen, ArtifactID: snapshot.artifactID,
+		ProgramID: snapshot.programID, SchemaID: snapshot.schemaID,
+	}
+}
 func (snapshot *Snapshot) PointCount() int {
 	if !snapshot.Available() {
 		return 0
@@ -184,18 +196,6 @@ func (snapshot *Snapshot) StructuralEdgeAt(index int) (StructuralEdge, bool) {
 		return StructuralEdge{}, false
 	}
 	return StructuralEdge{row: row, view: view, arm: arm}, true
-}
-func (snapshot *Snapshot) LocalTransferCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.transfers)
-}
-func (snapshot *Snapshot) LocalTransferAt(index int) (LocalTransfer, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.transfers) {
-		return LocalTransfer{}, false
-	}
-	return snapshot.transfers[index], true
 }
 func (snapshot *Snapshot) RegionCount() int {
 	if !snapshot.Available() {
@@ -630,27 +630,6 @@ func (row StructuralEdge) ResetAt(index int) (identity.ContentID, bool) {
 		return identity.ContentID{}, false
 	}
 	return witness.ID(), true
-}
-
-type LocalTransfer struct {
-	id, from, to identity.ContentID
-	full         bool
-	writes       []schema.Key
-}
-
-func (row LocalTransfer) ID() identity.ContentID   { return row.id }
-func (row LocalTransfer) From() identity.ContentID { return row.from }
-func (row LocalTransfer) To() identity.ContentID   { return row.to }
-func (row LocalTransfer) Full() bool               { return row.full }
-func (row LocalTransfer) Available() bool {
-	return row.id.Available() && row.from.Available() && row.to.Available()
-}
-func (row LocalTransfer) WritesCount() int { return len(row.writes) }
-func (row LocalTransfer) WritesAt(index int) (schema.Key, bool) {
-	if index < 0 || index >= len(row.writes) {
-		return "", false
-	}
-	return row.writes[index], true
 }
 
 type Region struct {
@@ -1278,24 +1257,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		if _, armOK := projectArm(vocabulary, uint16(row.Arm())); !armOK {
 			return nil, false
 		}
-	}
-	snapshot.transfers = make([]LocalTransfer, 0, artifact.LocalTransferCount())
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		row, ok := artifact.LocalTransferAt(index)
-		if !ok {
-			return nil, false
-		}
-		writes := make([]schema.Key, 0, row.WritesCount())
-		for inner := 0; inner < row.WritesCount(); inner++ {
-			write, writeOK := row.WritesAt(inner)
-			if !writeOK || !write.Available() {
-				return nil, false
-			}
-			writes = append(writes, write)
-		}
-		snapshot.transfers = append(snapshot.transfers, LocalTransfer{
-			id: row.ID(), from: row.From(), to: row.To(), full: row.FullEnvironment(), writes: writes,
-		})
 	}
 	// Every published order bracket must name a member of the sealed
 	// structural vocabulary. The admission is stated once here over the

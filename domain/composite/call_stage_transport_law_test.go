@@ -7,6 +7,7 @@ import (
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 const callStageTransportSource = `
@@ -63,12 +64,18 @@ func readCallStageTransportDeclarations(t *testing.T) callStageTransportDeclarat
 // axesOf projects one transported key list onto the declared factor axes and
 // refuses a list that names one axis twice or names a key the directory never
 // declared as a transport writer.
-func (read callStageTransportDeclarations) axesOf(t *testing.T, label string, edge programartifact.LocalTransfer) map[schema.Key]struct{} {
+type callStageTransfer struct {
+	row   programschema.LocalTransfer
+	index int
+}
+
+func (read callStageTransportDeclarations) axesOf(t *testing.T, label string, program programschema.Program, edge callStageTransfer) map[schema.Key]struct{} {
 	t.Helper()
-	axes := make(map[schema.Key]struct{}, edge.WritesCount())
-	for index := 0; index < edge.WritesCount(); index++ {
-		key, keyOK := edge.WritesAt(index)
-		if !keyOK {
+	axes := make(map[schema.Key]struct{}, edge.row.WritesCount())
+	for index := 0; index < edge.row.WritesCount(); index++ {
+		write, writeOK := program.LocalTransferWriteFor(edge.index, index)
+		key, keyOK := write.Key()
+		if !writeOK || !keyOK {
 			t.Fatalf("%s transport key %d is unavailable", label, index)
 		}
 		axis, declared := read.axisOf[key]
@@ -123,6 +130,14 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile the call fixture: %s", failure.Error())
 	}
+	frozen, _, frozenOK := artifact.ColdPublication()
+	program := programschema.Program{
+		Frozen: frozen, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !frozenOK || !program.Available() {
+		t.Fatal("compiled Program publication is unavailable")
+	}
 	var dispatch, effect identity.ContentID
 	for index := 0; index < artifact.RulePlacementCount(); index++ {
 		row, rowOK := artifact.RulePlacementAt(index)
@@ -140,14 +155,18 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	if !dispatch.Available() || !effect.Available() {
 		t.Fatal("the call fixture placed no call-dispatch and call-effect stage")
 	}
-	edges := make(map[[2]identity.ContentID]programartifact.LocalTransfer, artifact.LocalTransferCount())
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !transfersPublished {
+		t.Fatal("local-transfer family is unpublished")
+	}
+	edges := make(map[[2]identity.ContentID]callStageTransfer, transferCount)
 	var base, summary identity.ContentID
-	for index := 0; index < artifact.LocalTransferCount(); index++ {
-		edge, edgeOK := artifact.LocalTransferAt(index)
+	for index := 0; index < transferCount; index++ {
+		edge, edgeOK := program.LocalTransferAt(index)
 		if !edgeOK {
 			t.Fatalf("local transfer %d is unavailable", index)
 		}
-		edges[[2]identity.ContentID{edge.From(), edge.To()}] = edge
+		edges[[2]identity.ContentID{edge.From(), edge.To()}] = callStageTransfer{row: edge, index: index}
 		if edge.To() == dispatch {
 			base = edge.From()
 		}
@@ -166,7 +185,7 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	if !entryOK || !bypassOK || !forwardSummaryOK || !fullOK || !forwardEffectOK {
 		t.Fatal("the call stage triple is not spliced by the five declared transports")
 	}
-	if !full.FullEnvironment() {
+	if !full.row.Full() {
 		t.Fatal("the base to call-effect transport is not a full environment transport")
 	}
 	effectAxes := read.byStage[programartifact.RuleStageCallEffect]
@@ -180,8 +199,8 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 			entryAxes[axis] = struct{}{}
 		}
 	}
-	assertSameAxes(t, "base to call-dispatch", read.axesOf(t, "base to call-dispatch", entry), entryAxes)
-	assertSameAxes(t, "base to call-summary", read.axesOf(t, "base to call-summary", bypass), effectAxes)
-	assertSameAxes(t, "call-dispatch to call-summary", read.axesOf(t, "call-dispatch to call-summary", forwardSummary), dispatchAxes)
-	assertSameAxes(t, "call-dispatch to call-effect", read.axesOf(t, "call-dispatch to call-effect", forwardEffect), dispatchAxes)
+	assertSameAxes(t, "base to call-dispatch", read.axesOf(t, "base to call-dispatch", program, entry), entryAxes)
+	assertSameAxes(t, "base to call-summary", read.axesOf(t, "base to call-summary", program, bypass), effectAxes)
+	assertSameAxes(t, "call-dispatch to call-summary", read.axesOf(t, "call-dispatch to call-summary", program, forwardSummary), dispatchAxes)
+	assertSameAxes(t, "call-dispatch to call-effect", read.axesOf(t, "call-dispatch to call-effect", program, forwardEffect), dispatchAxes)
 }

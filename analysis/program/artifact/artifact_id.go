@@ -536,11 +536,28 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(witness.ID()))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.localTransfers))))
-	for _, edge := range artifact.localTransfers {
-		sink.add(bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.writes))))
-		for _, write := range edge.writes {
-			sink.add(keyField(write))
+	transferCount, transfersPublished := coldCount(artifact, programschema.LocalTransferFamily())
+	if !transfersPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(transferCount)))
+	for index := 0; index < transferCount; index++ {
+		edge, held := coldRow(artifact, programschema.LocalTransferFamily(), index)
+		offset, writeCount, spanOK := edge.WriteSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(edge.ID()), bytesField(edge.From()), bytesField(edge.To()), boolField(edge.Full()), uintField(uint64(writeCount)))
+		for position := uint32(0); position < writeCount; position++ {
+			write, writeOK := coldRow(artifact, programschema.LocalTransferWriteFamily(), int(offset+position))
+			if !writeOK {
+				return identity.ContentID{}
+			}
+			key, keyOK := write.Key()
+			if !keyOK {
+				return identity.ContentID{}
+			}
+			sink.add(keyField(key))
 		}
 	}
 	sink.add(uintField(uint64(len(artifact.ruleOccurrences))))

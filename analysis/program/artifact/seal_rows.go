@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -115,21 +116,42 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			}
 		}
 	}
-	seenLocalTransfers := make(map[identity.ContentID]struct{}, len(artifact.localTransfers))
-	for index, row := range artifact.localTransfers {
-		if !row.Available() {
+	localTransferCount, localTransfersPublished := coldCount(artifact, programschema.LocalTransferFamily())
+	localTransferWriteCount, localTransferWritesPublished := coldCount(artifact, programschema.LocalTransferWriteFamily())
+	if !localTransfersPublished || !localTransferWritesPublished {
+		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
+	}
+	seenLocalTransfers := make(map[identity.ContentID]struct{}, localTransferCount)
+	consumedTransferWrites := uint32(0)
+	for index := 0; index < localTransferCount; index++ {
+		row, held := coldRow(artifact, programschema.LocalTransferFamily(), index)
+		offset, writeCount, spanOK := row.WriteSpan()
+		if !held || !spanOK || offset != consumedTransferWrites || uint64(offset)+uint64(writeCount) > uint64(localTransferWriteCount) {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 		}
-		if _, exists := state.pointRows[row.from]; !exists {
+		if _, exists := state.pointRows[row.From()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 0, CompileReasonEnvironmentEndpointUnknown)
 		}
-		if _, exists := state.pointRows[row.to]; !exists {
+		if _, exists := state.pointRows[row.To()]; !exists {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 1, CompileReasonEnvironmentEndpointUnknown)
 		}
-		if _, duplicate := seenLocalTransfers[row.id]; duplicate {
+		if _, duplicate := seenLocalTransfers[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentDuplicate)
 		}
-		seenLocalTransfers[row.id] = struct{}{}
+		seenLocalTransfers[row.ID()] = struct{}{}
+		var prior schema.Key
+		for child := uint32(0); child < writeCount; child++ {
+			write, writeHeld := coldRow(artifact, programschema.LocalTransferWriteFamily(), int(offset+child))
+			key, keyOK := write.Key()
+			if !writeHeld || !keyOK || child != 0 && prior >= key {
+				return compileFailure(CompileStageSeal, CompileRowEnvironment, index, int(child), CompileReasonEnvironmentUnavailable)
+			}
+			prior = key
+		}
+		consumedTransferWrites += writeCount
+	}
+	if uint64(consumedTransferWrites) != uint64(localTransferWriteCount) {
+		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
 	}
 	regionCount, regionsPublished := coldCount(artifact, programschema.RegionFamily())
 	if !regionsPublished {

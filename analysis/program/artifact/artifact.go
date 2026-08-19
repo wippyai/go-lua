@@ -27,7 +27,6 @@ type Artifact struct {
 	coldCatalog            identity.ContentID
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
-	localTransfers         []LocalTransfer
 	occurrences            []OccurrenceRow
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence

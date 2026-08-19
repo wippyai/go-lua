@@ -15,7 +15,7 @@ type compiler struct {
 	key                        CompileKey
 	counts                     denominator.CountRows
 	environment                []EnvironmentEdge
-	localTransfers             []LocalTransfer
+	localTransfers             []localTransferDraft
 	regions                    []Region
 	events                     []WTOEvent
 	values                     []ValuesRow

@@ -428,11 +428,16 @@ func localStageAnchors(snapshot *ingress.Snapshot) (map[identity.ContentID]ident
 	if snapshot == nil {
 		return nil, false
 	}
+	program := snapshot.Program()
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !program.Available() || !transfersPublished {
+		return nil, false
+	}
 	full := make(map[identity.ContentID]identity.ContentID)
 	partial := make(map[identity.ContentID]identity.ContentID)
 	conflicted := make(map[identity.ContentID]struct{})
-	for index := 0; index < snapshot.LocalTransferCount(); index++ {
-		edge, edgeOK := snapshot.LocalTransferAt(index)
+	for index := 0; index < transferCount; index++ {
+		edge, edgeOK := program.LocalTransferAt(index)
 		if !edgeOK || !edge.ID().Available() {
 			return nil, false
 		}

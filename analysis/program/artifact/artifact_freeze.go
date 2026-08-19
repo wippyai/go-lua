@@ -18,9 +18,9 @@ func (compiler *compiler) finalizeFailure() CompileFailure {
 			return compileFailure(CompileStageCanonicalize, CompileRowEnvironment, index, -1, CompileReasonEnvironmentDuplicate)
 		}
 	}
-	identity.SortByContentID(compiler.localTransfers, func(row LocalTransfer) identity.ContentID { return row.id })
-	identity.SortByContentID(compiler.localTransfers, func(row LocalTransfer) identity.ContentID { return row.to })
-	identity.SortByContentID(compiler.localTransfers, func(row LocalTransfer) identity.ContentID { return row.from })
+	identity.SortByContentID(compiler.localTransfers, func(row localTransferDraft) identity.ContentID { return row.id })
+	identity.SortByContentID(compiler.localTransfers, func(row localTransferDraft) identity.ContentID { return row.to })
+	identity.SortByContentID(compiler.localTransfers, func(row localTransferDraft) identity.ContentID { return row.from })
 	for index := 1; index < len(compiler.localTransfers); index++ {
 		if compiler.localTransfers[index-1].id == compiler.localTransfers[index].id {
 			return compileFailure(CompileStageCanonicalize, CompileRowEnvironment, index, -1, CompileReasonEnvironmentDuplicate)
@@ -64,7 +64,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	}
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
-		key: compiler.key, counts: compiler.counts, localTransfers: compiler.localTransfers,
+		key: compiler.key, counts: compiler.counts,
 		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes,
 	}
@@ -205,6 +205,34 @@ func coldEnvironmentPlanes(rows []EnvironmentEdge) ([]programschema.EnvironmentE
 	return edges, resets, true
 }
 
+// coldLocalTransfers copies the compiler's transient transport drafts into
+// the canonical Program family. The draft order is already the canonical
+// (From, To, ID) order established by finalizeFailure; no resort or identity
+// remint occurs at this boundary.
+func coldLocalTransfers(rows []localTransferDraft) ([]programschema.LocalTransfer, []programschema.LocalTransferWrite, bool) {
+	transfers := make([]programschema.LocalTransfer, 0, len(rows))
+	writes := make([]programschema.LocalTransferWrite, 0)
+	for _, row := range rows {
+		if !fitsUint32(len(writes)) || !fitsUint32(len(row.writes)) {
+			return nil, nil, false
+		}
+		offset := uint32(len(writes))
+		for _, key := range row.writes {
+			write, ok := programschema.NewLocalTransferWrite(key)
+			if !ok {
+				return nil, nil, false
+			}
+			writes = append(writes, write)
+		}
+		converted, ok := programschema.NewLocalTransfer(row.id, row.from, row.to, row.full, offset, uint32(len(row.writes)))
+		if !ok {
+			return nil, nil, false
+		}
+		transfers = append(transfers, converted)
+	}
+	return transfers, writes, true
+}
+
 // coldStaticPlanes copies the compiler's remaining local authored-static rows
 // into their canonical families. StaticInput rows are already canonical and
 // enter Publication directly, so they are deliberately absent here.
@@ -299,9 +327,10 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 	indexes, indexesOK := coldHeapIndexes(compiler.heapIndexes)
 	points, pointDecisions, pointsOK := coldPointPlanes(pointRows)
 	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
+	transfers, transferWrites, transfersOK := coldLocalTransfers(compiler.localTransfers)
 	typeValues, staticExpressions, staticOK := coldStaticPlanes(compiler.staticTypeValues, compiler.staticExpressions)
 	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
-	if !heapOK || !valuesOK || !indexesOK || !pointsOK || !edgesOK || !staticOK || !regionsOK {
+	if !heapOK || !valuesOK || !indexesOK || !pointsOK || !edgesOK || !transfersOK || !staticOK || !regionsOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
 	publication := programschema.Publication{
@@ -316,6 +345,8 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		PointDecisions:       pointDecisions,
 		EnvironmentEdges:     edges,
 		EnvironmentResets:    resets,
+		LocalTransfers:       transfers,
+		LocalTransferWrites:  transferWrites,
 		StaticTypeValues:     typeValues,
 		StaticExpressions:    staticExpressions,
 		StaticInputs:         compiler.staticInputs,

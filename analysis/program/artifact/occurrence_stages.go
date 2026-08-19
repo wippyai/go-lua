@@ -227,7 +227,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		for _, write := range ordered {
 			fields = append(fields, keyField(write))
 		}
-		edge := LocalTransfer{id: digest(domain, artifactFormat, fields...), from: from, to: to, full: full, writes: ordered}
+		edge := localTransferDraft{id: digest(domain, artifactFormat, fields...), from: from, to: to, full: full, writes: ordered}
 		if !edge.Available() {
 			return false
 		}

@@ -38,6 +38,11 @@ return move
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile storage fixture: %s", failure.Error())
 	}
+	program := summaryProgram(t, artifact)
+	transferCount, transfersPublished := program.LocalTransferCount()
+	if !transfersPublished {
+		t.Fatal("local-transfer family is unpublished")
+	}
 
 	required := map[programartifact.OccurrenceKind]bool{
 		programartifact.OccurrenceStorageRead:         false,
@@ -78,8 +83,8 @@ return move
 				}
 			}
 			localParent := false
-			for edgeIndex := 0; edgeIndex < artifact.LocalTransferCount(); edgeIndex++ {
-				edge, edgeOK := artifact.LocalTransferAt(edgeIndex)
+			for edgeIndex := 0; edgeIndex < transferCount; edgeIndex++ {
+				edge, edgeOK := program.LocalTransferAt(edgeIndex)
 				if !edgeOK || edge.To() != point {
 					continue
 				}

@@ -77,10 +77,7 @@ func ProgramFromSnapshot(source *ingress.Snapshot, module identity.ContentID) (P
 	}
 	row := Program{
 		ModuleKey: module,
-		Program: programschema.Program{
-			Frozen: source.Frozen(), ArtifactID: source.ArtifactID(),
-			ProgramID: source.ProgramID(), SchemaID: source.SchemaID(),
-		},
+		Program:   source.Program(),
 	}
 	return row, row.Available()
 }

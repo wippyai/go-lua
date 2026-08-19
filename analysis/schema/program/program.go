@@ -476,6 +476,57 @@ func (row Program) FunctionCaptureAt(index int) (FunctionCapture, bool) {
 	return FunctionCaptureFamily().At(&row.Frozen, catalog, index)
 }
 
+// LocalTransferCount is the sealed width of the Program's local-transfer
+// family.
+func (row Program) LocalTransferCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return LocalTransferFamily().Count(&row.Frozen, catalog)
+}
+
+// LocalTransferAt returns one local transfer by emitted ordinal.
+func (row Program) LocalTransferAt(index int) (LocalTransfer, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return LocalTransfer{}, false
+	}
+	return LocalTransferFamily().At(&row.Frozen, catalog, index)
+}
+
+// LocalTransferWriteCount is the sealed width of the local-transfer write
+// child family.
+func (row Program) LocalTransferWriteCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return LocalTransferWriteFamily().Count(&row.Frozen, catalog)
+}
+
+// LocalTransferWriteAt returns one factor key by its dense child ordinal.
+func (row Program) LocalTransferWriteAt(index int) (LocalTransferWrite, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return LocalTransferWrite{}, false
+	}
+	return LocalTransferWriteFamily().At(&row.Frozen, catalog, index)
+}
+
+// LocalTransferWriteFor resolves one factor key owned by a local transfer.
+func (row Program) LocalTransferWriteFor(transferIndex, childIndex int) (LocalTransferWrite, bool) {
+	transfer, ok := row.LocalTransferAt(transferIndex)
+	if !ok || childIndex < 0 || childIndex >= transfer.WritesCount() {
+		return LocalTransferWrite{}, false
+	}
+	offset, _, spanOK := transfer.WriteSpan()
+	if !spanOK {
+		return LocalTransferWrite{}, false
+	}
+	return row.LocalTransferWriteAt(int(offset) + childIndex)
+}
+
 func (row Program) FunctionFormalFor(boundaryIndex, childIndex int) (FunctionFormal, bool) {
 	boundary, ok := row.FunctionBoundaryAt(boundaryIndex)
 	if !ok || childIndex < 0 || childIndex >= boundary.FormalCount() {

@@ -28,7 +28,7 @@ func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	watched := map[string]bool{
-		"Snapshot": true, "Point": true, "StructuralEdge": true, "LocalTransfer": true,
+		"Snapshot": true, "Point": true, "StructuralEdge": true,
 		"Region": true, "Event": true, "RulePlacement": true, "BodyTransport": true,
 		"Call": true, "CallOperand": true, "CallTarget": true, "CallArgument": true,
 		"HeapAllocation": true, "HeapField": true, "HeapIndex": true,
