@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 type storageReadCompileRow struct {
@@ -72,17 +73,22 @@ func (compiler *compiler) storageReadAt(index int) (storageReadCompileRow, bool)
 	if _, _, _, cellOK := view.Authored().Storage().Cells().Get(source); !cellOK {
 		return storageReadCompileRow{}, false
 	}
-	bodyPath, bodyOK := view.BodyPath(owner)
+	bodyPath, bodyID, bodyOK := view.BodyContextIDs(owner)
+	readPath, readPathOK := view.SemanticTermPath(term)
 	span, spanOK := compiler.input.Span(term)
 	entry, entryOK := span.Entry()
 	finish, finishOK := span.Finish()
 	body, bodyIdentityOK := compiler.input.Body(owner)
-	if !bodyOK || !bodyPath.Available() || !spanOK || !entryOK || !finishOK || !bodyIdentityOK {
+	programID := compiler.key.ProgramID()
+	if !programID.Available() {
+		programID = compiler.input.ContentID()
+	}
+	if !bodyOK || !bodyPath.Available() || !bodyID.Available() || !readPathOK || !readPath.Available() || !spanOK || !entryOK || !finishOK || !bodyIdentityOK || body.ContextID() != bodyID {
 		return storageReadCompileRow{}, false
 	}
-	cellID, _ := artifactStorageCellID(compiler.key.ProgramID(), view, source)
-	readID, spanID, readTerm, readOK := compiler.input.StorageReadIDAt(index)
-	if !readOK || readTerm != term || !spanID.Available() {
+	cellID, _ := artifactStorageCellID(programID, view, source)
+	readID, readOK := programschema.StorageReadIdentity(programID, bodyPath, bodyID, readPath, entry.ContextID(), finish.ContextID())
+	if !readOK {
 		return storageReadCompileRow{}, false
 	}
 	row := storageReadCompileRow{term: term, source: source, body: bodyPath, context: body.ContextID(), span: span, entry: entry, finish: finish, id: readID, cell: cellID}
@@ -113,8 +119,12 @@ func (compiler *compiler) storageBindAt(index int) (storageBindCompileRow, bool)
 	if !bodyOK || !bodyPath.Available() || !spanOK || !entryOK || !finishOK || !bodyIdentityOK {
 		return storageBindCompileRow{}, false
 	}
+	programID := compiler.key.ProgramID()
+	if !programID.Available() {
+		programID = input.ContentID()
+	}
 	var rowIDOK bool
-	row.id, rowIDOK = input.StorageBindIDAt(index)
+	row.id, rowIDOK = storageBindIdentityAt(input, programID, index)
 	if !rowIDOK || !row.id.Available() {
 		return storageBindCompileRow{}, false
 	}
@@ -124,7 +134,7 @@ func (compiler *compiler) storageBindAt(index int) (storageBindCompileRow, bool)
 		if !cellOK {
 			return storageBindCompileRow{}, false
 		}
-		row.cells[position], _ = artifactStorageCellID(compiler.key.ProgramID(), view, cellTerm)
+		row.cells[position], _ = artifactStorageCellID(programID, view, cellTerm)
 		if !row.cells[position].Available() {
 			return storageBindCompileRow{}, false
 		}
@@ -137,7 +147,7 @@ func (compiler *compiler) storageBindAt(index int) (storageBindCompileRow, bool)
 		if !valueRowOK || !memberOK {
 			return storageBindCompileRow{}, false
 		}
-		transferID, transferOK := input.StorageBindTransferIDAt(index, position)
+		transferID, transferOK := programschema.StorageBindTransferIdentity(programID, row.id, position)
 		if !transferOK || !transferID.Available() {
 			return storageBindCompileRow{}, false
 		}
@@ -176,6 +186,10 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 	if !rowIDOK || !row.id.Available() {
 		return storageAssignmentCompileRow{}, false
 	}
+	programID := compiler.key.ProgramID()
+	if !programID.Available() {
+		programID = input.ContentID()
+	}
 	writes := view.Authored().Storage().Writes()
 	exact, dynamic := view.Authored().Access().Exact(), view.Authored().Access().Dynamic()
 	for position := 0; position < width; position++ {
@@ -199,18 +213,69 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 		}
 		finishTerm, finishSpanOK := view.Ports().Finish(writeTerm)
 		writeFinish, writeFinishOK := view.Causal().Sites().ForTerm(finishTerm)
-		predecessorID, route, predecessorOK := input.AssignmentPredecessorID(writeTerm)
+		predecessorID, route, predecessorOK := compiler.assignmentPredecessorIdentity(programID, writeTerm)
 		if !finishSpanOK || !writeFinishOK || !predecessorOK || !route.Available() {
 			return storageAssignmentCompileRow{}, false
 		}
-		cellID, _ := artifactStorageCellID(compiler.key.ProgramID(), view, target)
+		cellID, _ := artifactStorageCellID(programID, view, target)
 		_, _, _, _, exactOK := exact.Get(target)
 		_, _, _, dynamicOK := dynamic.Get(target)
-		writeID, writeOK := input.StorageWriteTransferIDAt(index, position)
+		writeID, writeOK := programschema.StorageWriteTransferIdentity(programID, row.id, position, writeFinish.ContextID(), predecessorID)
 		row.transfers = append(row.transfers, storageWriteCompileRow{position: position, term: writeTerm, value: member.ID(), cell: cellID, finish: writeFinish, predecessor: predecessorID, route: route, id: writeID, eligible: exactOK || dynamicOK})
 		if !cellID.Available() || !predecessorID.Available() || !writeOK || !writeID.Available() {
 			return storageAssignmentCompileRow{}, false
 		}
 	}
 	return row, true
+}
+
+// storageBindIdentityAt is the Artifact construction admission for one
+// authored Bind identity. It consumes canonical Flow/Source geometry and
+// delegates the byte-level equation to schema/program; no Program row or
+// identity method is retained.
+func storageBindIdentityAt(input *program.Program, programID identity.ContentID, index int) (identity.ContentID, bool) {
+	if input == nil || !input.Available() || !programID.Available() || index < 0 {
+		return identity.ContentID{}, false
+	}
+	view := input.Flow()
+	binds := view.Authored().Storage().Binds()
+	term, present := binds.At(index)
+	owner, values, related := binds.Get(term)
+	width, widthOK := input.Source().Binds().Len(term)
+	if !present || !related || !widthOK || width < 0 || !view.Executable().Contains(term) {
+		return identity.ContentID{}, false
+	}
+	if _, _, valuesOK := view.Authored().Values().Get(values); !valuesOK {
+		return identity.ContentID{}, false
+	}
+	bodyPath, bodyID, bodyOK := view.BodyContextIDs(owner)
+	_, entryTerm, finishTerm, spanOK := input.EvaluationSpan(term)
+	entry, entryOK := view.Causal().Sites().ForTerm(entryTerm)
+	finish, finishOK := view.Causal().Sites().ForTerm(finishTerm)
+	if !bodyOK || !bodyPath.Available() || !bodyID.Available() || !spanOK || !entryOK || !finishOK || !entry.Available() || !finish.Available() {
+		return identity.ContentID{}, false
+	}
+	return programschema.StorageBindIdentity(programID, bodyPath, width, bodyID, entry.ContextID(), finish.ContextID())
+}
+
+// assignmentPredecessorIdentity is shared by Storage's write construction and
+// the Artifact index-write construction. Finish admission is deliberately
+// independent of Entry admission for assignment writes.
+func (compiler *compiler) assignmentPredecessorIdentity(programID identity.ContentID, write keyspace.Term) (identity.ContentID, identity.ContentID, bool) {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() || !programID.Available() || write == 0 {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	view := compiler.input.Flow()
+	finishTerm, finishOK := view.Ports().Finish(write)
+	finish, finishSiteOK := view.Causal().Sites().ForTerm(finishTerm)
+	successor, successorOK := view.Causal().Successors().AssignmentPredecessor(write)
+	identityProof, identityOK := successor.Identity()
+	route, routeOK := successor.SemanticID()
+	if !finishOK || !finishSiteOK || !successorOK || !identityOK || !routeOK || !finish.Available() || !route.Available() ||
+		successor.To != finishTerm || successor.Arm != causal.BoundaryLocal || identityProof.To != finishTerm ||
+		identityProof.Arm != causal.BoundaryLocal || identityProof.Provenance() != view.Provenance() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	id, idOK := programschema.AssignmentPredecessorIdentity(programID, finish.ContextID(), route, identityProof.Digest)
+	return id, route, idOK && id.Available()
 }

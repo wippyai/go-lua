@@ -106,7 +106,11 @@ func (compiler *compiler) indexWriteAt(index int) (artifactIndexWrite, bool) {
 		row.dynamicKeySpan, _ = compiler.input.Span(keyTerm)
 	}
 	identityProof, identityOK := predecessor.Identity()
-	predecessorID, route, predecessorIDOK := compiler.input.AssignmentPredecessorID(term)
+	programID := compiler.key.ProgramID()
+	if !programID.Available() {
+		programID = compiler.input.ContentID()
+	}
+	predecessorID, route, predecessorIDOK := compiler.assignmentPredecessorIdentity(programID, term)
 	routeOK := route.Available()
 	finishTerm, finishTermOK = finish.Term()
 	portFinish, portFinishOK := compiler.input.Flow().Ports().Finish(term)

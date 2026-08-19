@@ -102,15 +102,24 @@ func (program *Program) staticTypeValueOperand(term keyspace.Term) (identity.Con
 
 func (program *Program) staticRuntimeSubjectOperand(term keyspace.Term) (identity.ContentID, identity.ContentID, identity.ContentID, bool) {
 	reads := program.Flow().Authored().Storage().Reads()
-	owner, source, _, ok := reads.Get(term)
-	if !ok || owner == 0 || source == 0 || !program.Flow().Executable().Contains(term) {
+	ordinal := keyspace.TermOrdinal(term)
+	if ordinal == 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
-	readID, _, readTerm, readOK := program.StorageReadIDAt(int(keyspace.TermOrdinal(term) - 1))
+	readTerm, present := reads.At(int(ordinal - 1))
+	owner, source, _, related := reads.Get(readTerm)
+	if !present || readTerm != term || !related || owner == 0 || source == 0 || !program.Flow().Executable().Contains(term) {
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	}
 	cellTerm, cellTermOK := program.Flow().Authored().Storage().Cells().At(int(keyspace.TermOrdinal(source) - 1))
 	cellID, cellOK := programschema.StorageCellIdentity(program.ContentID(), source)
-	bodyPath, bodyOK := program.Flow().BodyPath(owner)
-	return readID, cellID, bodyPath, readOK && readTerm == term && cellOK && cellTermOK && cellTerm == source && bodyOK
+	bodyPath, bodyID, bodyOK := program.Flow().BodyContextIDs(owner)
+	readPath, readPathOK := program.Flow().SemanticTermPath(term)
+	_, entryTerm, finishTerm, spanOK := program.EvaluationSpan(term)
+	entry, entryOK := program.Flow().Causal().Sites().ForTerm(entryTerm)
+	finish, finishOK := program.Flow().Causal().Sites().ForTerm(finishTerm)
+	readID, readOK := programschema.StorageReadIdentity(program.ContentID(), bodyPath, bodyID, readPath, entry.ContextID(), finish.ContextID())
+	return readID, cellID, bodyPath, readOK && cellOK && cellTermOK && cellTerm == source && bodyOK && bodyID.Available() && readPathOK && spanOK && entryOK && finishOK && entry.Available() && finish.Available()
 }
 
 // StaticFrontier returns Source's lexical frontier joined to Flow's stable

@@ -289,7 +289,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	}
 	reads := p.Flow().Authored().Storage().Reads()
 	for index := 0; index < reads.Count(); index++ {
-		readID, _, readTerm, ok := p.StorageReadIDAt(index)
+		readID, readTerm, ok := boundaryStorageReadIdentityAt(p, index)
 		if !ok {
 			continue
 		}
