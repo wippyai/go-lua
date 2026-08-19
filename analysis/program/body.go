@@ -11,11 +11,11 @@ import (
 
 // Body is a Program-owned view over one existing Flow Body boundary.
 // It retains no body/outcome rows and exposes only existing Causal Sites plus
-// the optional Function boundary needed for formal/capture access.
+// the optional Function boundary needed for formal/capture access. Function
+// boundaries remain owned by Flow and are resolved on demand.
 type Body struct {
 	program  *Program
 	boundary flow.BodyBoundary
-	function flow.FunctionBoundary
 }
 
 // BodyCount forwards Source's sole canonical Body denominator. It does not
@@ -37,7 +37,7 @@ func (input *Program) BodyAt(index int) (Body, bool) {
 }
 
 // Body joins an authored Body to its published boundary. Root/non-Function
-// Bodies retain an unavailable Function boundary rather than a fabricated one.
+// Bodies resolve to no Function boundary rather than a fabricated one.
 func (input *Program) Body(term keyspace.Term) (Body, bool) {
 	if !input.Available() {
 		return Body{}, false
@@ -47,8 +47,7 @@ func (input *Program) Body(term keyspace.Term) (Body, bool) {
 	if !ok {
 		return Body{}, false
 	}
-	function, _ := boundaries.ForFunctionBody(term)
-	body := Body{program: input, boundary: boundary, function: function}
+	body := Body{program: input, boundary: boundary}
 	return body, body.Available()
 }
 
@@ -79,9 +78,6 @@ func (input *Program) OwnsBody(body Body) bool {
 	boundaries := input.Flow().FunctionBoundaries()
 	if !boundaries.OwnsBody(body.boundary) {
 		return false
-	}
-	if body.function.Available() {
-		return boundaries.OwnsFunction(body.function)
 	}
 	return true
 }
@@ -124,14 +120,7 @@ func (body Body) Available() bool {
 		return false
 	}
 	want, wantOK := body.program.Flow().FunctionBoundaries().ForBody(term)
-	if !wantOK || !body.boundary.Equal(want) {
-		return false
-	}
-	function, functionOK := body.program.Flow().FunctionBoundaries().ForFunctionBody(term)
-	if functionOK {
-		return body.function.Available() && body.function.Equal(function)
-	}
-	return !body.function.Available()
+	return wantOK && body.boundary.Equal(want)
 }
 
 // Equal compares the existing exact-quartet Body boundary proof. It never
@@ -186,14 +175,18 @@ func (body Body) Executable() bool {
 	return ok && body.program.Flow().Executable().Contains(term)
 }
 
-// Function returns the existing sealed Flow boundary for this Body. It is the
-// remaining construction seam: Artifact consumes scalar callable identities
-// through Program queries and never retains this handle.
+// Function returns the existing sealed Flow boundary for this Body. Flow owns
+// that boundary; Program resolves it only while Artifact consumes scalar
+// callable identities and never retains the handle.
 func (body Body) Function() (flow.FunctionBoundary, bool) {
-	if !body.Available() || !body.function.Available() {
+	if !body.Available() {
 		return flow.FunctionBoundary{}, false
 	}
-	return body.function, true
+	term, ok := body.boundary.Body()
+	if !ok {
+		return flow.FunctionBoundary{}, false
+	}
+	return body.program.Flow().FunctionBoundaries().ForFunctionBody(term)
 }
 
 // EntrySite returns the existing Causal Site at this Body's boundary Entry.
