@@ -20,7 +20,6 @@ var (
 	fixturePartialID   = identity.ContentID{0x05, 0x55}
 	fixtureRecordID    = identity.ContentID{0x06, 0x66}
 	fixtureUnknownID   = identity.ContentID{0x07, 0x77}
-	fixtureMount       = identity.ContentID{0x08, 0x88}
 	fixtureQueryPlan   = identity.ContentID{0x09, 0x99}
 
 	// totalAxis is total over {"present", "absent"} and stores only
@@ -63,9 +62,6 @@ func newFixtureBuilder(t testing.TB) Builder {
 	}
 	if err := builder.Publish(fixtureRecordID, recordAxis.Slot); err != nil {
 		t.Fatalf("publish record axis: %v", err)
-	}
-	if err := builder.Bind(fixtureMount); err != nil {
-		t.Fatalf("bind mount: %v", err)
 	}
 	if err := builder.RegisterQuery(fixtureQueryPlan); err != nil {
 		t.Fatalf("register query: %v", err)

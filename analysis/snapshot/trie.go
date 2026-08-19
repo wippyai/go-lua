@@ -3,9 +3,9 @@ package snapshot
 import "math/bits"
 
 // The trie is the one storage shape of this package. Rows, denominator
-// members, the directory, the mount bindings and the query publication are
-// all stored in it, so there is exactly one implementation of persistence to
-// reason about and exactly one read path to keep allocation free.
+// members, the directory and the query publication are all stored in it, so
+// there is exactly one implementation of persistence to reason about and
+// exactly one read path to keep allocation free.
 //
 // # Shape
 //

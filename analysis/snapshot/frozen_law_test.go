@@ -98,7 +98,7 @@ func TestFrozenAdmitsNoDerivation(t *testing.T) {
 func TestFrozenCarriesNoMountOrQueryFacts(t *testing.T) {
 	frozenType := reflect.TypeOf(Frozen{})
 	pointer := reflect.PointerTo(frozenType)
-	for _, absent := range []string{"Mounts", "Queries", "Bind", "RegisterQuery"} {
+	for _, absent := range []string{"Queries", "Bind", "RegisterQuery"} {
 		if _, present := pointer.MethodByName(absent); present {
 			t.Errorf("Frozen exposes %s, which is a hot-publication fact", absent)
 		}

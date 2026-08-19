@@ -39,15 +39,15 @@
 // # Storage
 //
 // Every published structure -- a column's rows, a denominator's membership,
-// the directory, the mount bindings, the query publication -- is stored in
-// one persistent hash trie. The shape follows from the cost of publishing: an
-// engine publishes a new snapshot whenever a fact changes, so publication has
-// to be priced by the change set rather than by the state. A trie whose nodes
-// are shared by pointer and copied only along a changed key's path prices it
-// that way: publishing d changed rows copies the nodes on d paths, path
-// length is bounded by the hash width rather than by the row count, and every
-// untouched column, untouched denominator and untouched node is the very
-// structure the previous publication holds.
+// the directory, and the query publication -- is stored in one persistent
+// hash trie. The shape follows from the cost of publishing: an engine
+// publishes a new snapshot whenever a fact changes, so publication has to be
+// priced by the change set rather than by the state. A trie whose nodes are
+// shared by pointer and copied only along a changed key's path prices it that
+// way: publishing d changed rows copies the nodes on d paths, path length is
+// bounded by the hash width rather than by the row count, and every untouched
+// column, untouched denominator and untouched node is the very structure the
+// previous publication holds.
 //
 // The alternatives fail that price. Sharing a flat mapping publishes a
 // structure the engine can still write, and copying one prices every
@@ -74,11 +74,11 @@
 //
 // A Builder accumulates a publication and Seal consumes it. NewBuilder starts
 // from nothing. NewDelta starts from a sealed snapshot and inherits its
-// columns, directory, denominators, bindings and query publication by
-// reference, so a derived publication states its change set: SetRow publishes
-// a row, RemoveRow withdraws one, and PutColumn reseals a whole slot. A
-// derived publication must advance the generation of the store it derives
-// from, because two snapshots of one store at one generation would make one
+// columns, directory, denominators and query publication by reference, so a
+// derived publication states its change set: SetRow publishes a row,
+// RemoveRow withdraws one, and PutColumn reseals a whole slot. A derived
+// publication must advance the generation of the store it derives from,
+// because two snapshots of one store at one generation would make one
 // locator address two different contents.
 //
 // # Queries

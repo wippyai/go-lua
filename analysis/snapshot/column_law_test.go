@@ -227,18 +227,14 @@ func TestDenominatorWithoutMembersProvesNothing(t *testing.T) {
 }
 
 // TestSealedViewsAreValuesFixedAtPublication is the sealed-view law. A
-// denominator publication, a mount binding set, and a query publication are
-// values read out of a snapshot, so one held across later publications keeps
-// answering what it was published with, and a copy of one answers exactly what
-// it was copied from.
+// denominator publication and a query publication are values read out of a
+// snapshot, so one held across later publications keeps answering what it was
+// published with, and a copy of one answers exactly what it was copied from.
 func TestSealedViewsAreValuesFixedAtPublication(t *testing.T) {
 	base := armSnapshot(t, identity.Generation(1))
-	denominators, mounts, queries := base.Denominators(), base.Mounts(), base.Queries()
+	denominators, queries := base.Denominators(), base.Queries()
 
 	delta := NewDelta(base, identity.Generation(2))
-	if err := delta.Bind(identity.ContentID{0x0B}); err != nil {
-		t.Fatalf("bind: %v", err)
-	}
 	if err := delta.RegisterQuery(identity.ContentID{0x0C}); err != nil {
 		t.Fatalf("register query: %v", err)
 	}
@@ -259,21 +255,17 @@ func TestSealedViewsAreValuesFixedAtPublication(t *testing.T) {
 	if denominators.Published(identity.ContentID{0x0D}) {
 		t.Fatal("a later publication reached a held denominator view")
 	}
-	if mounts.Len() != 0 || mounts.Bound(identity.ContentID{0x0B}) {
-		t.Fatal("a later binding reached a held mount view")
-	}
 	if queries.Len() != 0 || queries.Published(identity.ContentID{0x0C}) {
 		t.Fatal("a later registration reached a held query view")
 	}
-	if sealed.Denominators().Len() != 2 || sealed.Mounts().Len() != 1 || sealed.Queries().Len() != 1 {
-		t.Fatalf("derived publication = %d denominators, %d mounts, %d queries",
-			sealed.Denominators().Len(), sealed.Mounts().Len(), sealed.Queries().Len())
+	if sealed.Denominators().Len() != 2 || sealed.Queries().Len() != 1 {
+		t.Fatalf("derived publication = %d denominators, %d queries",
+			sealed.Denominators().Len(), sealed.Queries().Len())
 	}
 
-	copiedDenominators, copiedMounts, copiedQueries := sealed.Denominators(), sealed.Mounts(), sealed.Queries()
+	copiedDenominators, copiedQueries := sealed.Denominators(), sealed.Queries()
 	if copiedDenominators.Len() != sealed.Denominators().Len() ||
 		!copiedDenominators.Proves(armDenominator, provenAxis.Slot) ||
-		!copiedMounts.Bound(identity.ContentID{0x0B}) ||
 		!copiedQueries.Published(identity.ContentID{0x0C}) {
 		t.Fatal("a copied sealed view answers less than the view it was copied from")
 	}

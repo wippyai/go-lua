@@ -2,8 +2,6 @@ package snapshot
 
 import (
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // TestReadOutcomes fixes the three read outcomes and their difference. A
@@ -196,11 +194,11 @@ func TestAxisAvailability(t *testing.T) {
 	}
 }
 
-// TestSealedSubValuesPublishTheirBindings fixes the minimal contracts the
-// sealed sub-values carry today: a denominator resolves to the column that
-// proves it, a bound mount reports as bound, and a registered plan reports as
-// published. Anything not published reports nothing.
-func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
+// TestSealedSubValuesPublishTheirFacts fixes the minimal contracts the sealed
+// sub-values carry today: a denominator resolves to the column that proves it
+// and a registered plan reports as published. Anything not published reports
+// nothing.
+func TestSealedSubValuesPublishTheirFacts(t *testing.T) {
 	sealed := newFixture(t)
 	if !sealed.Denominators().Published(fixtureDenominator) {
 		t.Fatal("published denominator does not report itself published")
@@ -217,12 +215,6 @@ func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
 	if sealed.Denominators().Len() != 1 {
 		t.Fatalf("denominators = %d, want 1", sealed.Denominators().Len())
 	}
-	if !sealed.Mounts().Bound(fixtureMount) || sealed.Mounts().Bound(identity.ContentID{0xEE}) {
-		t.Fatal("mount bindings do not report the sealed set")
-	}
-	if sealed.Mounts().Len() != 1 {
-		t.Fatalf("mounts = %d, want 1", sealed.Mounts().Len())
-	}
 	if !sealed.Queries().Published(fixtureQueryPlan) || sealed.Queries().Published(fixtureUnknownID) {
 		t.Fatal("query publication does not report the sealed set")
 	}
@@ -230,14 +222,14 @@ func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
 		t.Fatalf("queries = %d, want 1", sealed.Queries().Len())
 	}
 	zero := Snapshot{}
-	if zero.Denominators().Len() != 0 || zero.Mounts().Len() != 0 || zero.Queries().Len() != 0 {
-		t.Fatal("zero snapshot publishes bindings")
+	if zero.Denominators().Len() != 0 || zero.Queries().Len() != 0 {
+		t.Fatal("zero snapshot publishes sealed facts")
 	}
 	if zero.Denominators().Published(fixtureDenominator) || zero.Denominators().Proves(fixtureDenominator, 0) {
 		t.Fatal("zero snapshot resolves a denominator")
 	}
-	if zero.Mounts().Bound(fixtureMount) || zero.Queries().Published(fixtureQueryPlan) {
-		t.Fatal("zero snapshot reports a binding")
+	if zero.Queries().Published(fixtureQueryPlan) {
+		t.Fatal("zero snapshot reports a query publication")
 	}
 }
 

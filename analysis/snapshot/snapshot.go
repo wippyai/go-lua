@@ -68,12 +68,8 @@ func (p publication) Denominators() Denominators { return p.denominators }
 // inside an epoch. A consumer holds snapshots and never the store.
 type Snapshot struct {
 	publication
-	mounts  Mounts
 	queries Queries
 }
-
-// Mounts returns the snapshot's sealed mount bindings.
-func (s Snapshot) Mounts() Mounts { return s.mounts }
 
 // Queries returns the snapshot's sealed query publication.
 func (s Snapshot) Queries() Queries { return s.queries }
@@ -84,10 +80,10 @@ func (s Snapshot) Queries() Queries { return s.queries }
 // Frozen is a distinct type rather than a mode of Snapshot because the
 // difference is what the value admits, not what it reports. There is no
 // derivation that accepts a Frozen, so its generation is final by
-// construction; and it carries no mount bindings and no query publication,
-// because a value shared unchanged across every mount of it cannot own facts
-// that belong to one mount or one solve. Sharing a Frozen by value shares the
-// published structure and copies no rows.
+// construction; and it carries no query publication, because a value shared
+// unchanged across every mount of it cannot own facts that belong to one
+// solve. Sharing a Frozen by value shares the published structure and copies
+// no rows.
 type Frozen struct {
 	publication
 }

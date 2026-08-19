@@ -119,9 +119,6 @@ func TestConstructionRejectsSecondAuthority(t *testing.T) {
 		if err := builder.Publish(identity.ContentID{}, 0); !errors.Is(err, ErrUnavailableIdentity) {
 			t.Fatalf("directory error = %v, want %v", err, ErrUnavailableIdentity)
 		}
-		if err := builder.Bind(identity.ContentID{}); !errors.Is(err, ErrUnavailableIdentity) {
-			t.Fatalf("mount error = %v, want %v", err, ErrUnavailableIdentity)
-		}
 		if err := builder.RegisterQuery(identity.ContentID{}); !errors.Is(err, ErrUnavailableIdentity) {
 			t.Fatalf("query error = %v, want %v", err, ErrUnavailableIdentity)
 		}
@@ -136,8 +133,8 @@ func TestConstructionRejectsSecondAuthority(t *testing.T) {
 // TestSealedSnapshotIgnoresLaterConstruction proves publication detaches the
 // snapshot from the builder that produced it. Seal consumes the builder by
 // value and copies every container it publishes, so a builder that keeps
-// filling slots, publishing identities, binding mounts, and registering plans
-// after Seal changes nothing a consumer can observe.
+// filling slots, publishing identities, and registering plans after Seal
+// changes nothing a consumer can observe.
 //
 // The rest is enforced by the type system rather than by this test: a column
 // is unexported and no exported function or field anywhere in the package
@@ -159,9 +156,6 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	if err := builder.Publish(fixtureUnknownID, 3); err != nil {
 		t.Fatalf("late publish: %v", err)
 	}
-	if err := builder.Bind(identity.ContentID{0xAA}); err != nil {
-		t.Fatalf("late bind: %v", err)
-	}
 	if err := builder.RegisterQuery(identity.ContentID{0xBB}); err != nil {
 		t.Fatalf("late query: %v", err)
 	}
@@ -174,9 +168,6 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	assertInvalid(t, lateValue, lateStatus)
 	if _, resolved := Resolve(&sealed, fixtureUnknownID); resolved {
 		t.Fatal("a late directory entry reached the sealed snapshot")
-	}
-	if sealed.Mounts().Bound(identity.ContentID{0xAA}) {
-		t.Fatal("a late mount binding reached the sealed snapshot")
 	}
 	if sealed.Queries().Published(identity.ContentID{0xBB}) {
 		t.Fatal("a late query registration reached the sealed snapshot")
@@ -200,7 +191,7 @@ func TestSnapshotExposesNoMutableSurface(t *testing.T) {
 	}
 	readers := map[string]bool{
 		"Schema": true, "Store": true, "Generation": true, "Published": true,
-		"Columns": true, "Denominators": true, "Mounts": true, "Queries": true,
+		"Columns": true, "Denominators": true, "Queries": true,
 	}
 	pointer := reflect.PointerTo(snapshotType)
 	for index := 0; index < pointer.NumMethod(); index++ {
@@ -214,7 +205,6 @@ func TestSnapshotExposesNoMutableSurface(t *testing.T) {
 	}
 	for _, sealedType := range []reflect.Type{
 		reflect.TypeOf(Denominators{}),
-		reflect.TypeOf(Mounts{}),
 		reflect.TypeOf(Queries{}),
 	} {
 		for index := 0; index < sealedType.NumField(); index++ {

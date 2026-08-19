@@ -326,11 +326,10 @@ func TestKeyShapesTheScheduleRefuses(t *testing.T) {
 }
 
 // TestInternalKeyTypeIsHashableOrFatal fixes what mustPlan is for. The
-// directory, the denominator publication, the mount bindings and the query
-// publication are keyed by types this package fixes at compile time, so a type
-// that cannot be hashed is a defect in this package rather than a caller's
-// input, and it stops publication instead of producing a column that answers
-// by scanning.
+// directory, the denominator publication and the query publication are keyed
+// by types this package fixes at compile time, so a type that cannot be hashed
+// is a defect in this package rather than a caller's input, and it stops
+// publication instead of producing a column that answers by scanning.
 func TestInternalKeyTypeIsHashableOrFatal(t *testing.T) {
 	if identityPlan == nil {
 		t.Fatal("the package's own key schedules were not derived")

@@ -172,8 +172,8 @@ func hashKey[K comparable](plan *keyPlan, key K) uint64 {
 }
 
 // identityPlan is the schedule of the one identity key type this package
-// stores itself: the directory, the query publication and the mount bindings
-// are all keyed by a content identity.
+// stores itself: the directory and query publication are keyed by a content
+// identity.
 var identityPlan = mustPlan[identity.ContentID]()
 
 // mustPlan derives the schedule of a key type this package itself stores.

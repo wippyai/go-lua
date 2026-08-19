@@ -47,7 +47,6 @@ func TestSnapshotCopiesAnswerIdentically(t *testing.T) {
 				}
 			}
 			if copied.Denominators().Len() != original.Denominators().Len() ||
-				!copied.Mounts().Bound(fixtureMount) ||
 				!copied.Queries().Published(fixtureQueryPlan) {
 				t.Fatal("copy lost its sealed sub-values")
 			}

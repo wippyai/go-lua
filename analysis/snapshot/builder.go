@@ -104,8 +104,6 @@ type Builder struct {
 	// unavailable for a builder that starts from nothing. A derived
 	// publication must advance it.
 	derivedFrom identity.Generation
-	mounts      *trie[identity.ContentID, struct{}]
-	mountCount  int
 	queries     *trie[identity.ContentID, struct{}]
 	queryCount  int
 }
@@ -116,10 +114,9 @@ type Builder struct {
 // of its contract.
 //
 // What it does not have is the rest. There is no derivation entry point that
-// accepts a Frozen, no mount binding, and no query registration, so a cold
-// publication cannot advance a generation, cannot record a Link-local
-// binding, and cannot answer a runtime query. The lifecycle is enforced by
-// the type rather than by a mode a caller has to check.
+// accepts a Frozen and no query registration, so a cold publication cannot
+// advance a generation or answer a runtime query. The lifecycle is enforced
+// by the type rather than by a mode a caller has to check.
 type FrozenBuilder struct {
 	builderCore
 }
@@ -143,10 +140,10 @@ func NewFrozen(schema identity.ContentID, store identity.StoreID) FrozenBuilder 
 }
 
 // NewDelta starts the publication that follows base at generation. It
-// inherits base's columns, directory, denominators, mount bindings and query
-// publication by reference: what the change set does not touch is the very
-// same structure base holds, so an unchanged column and an unchanged
-// denominator cost a pointer rather than a copy.
+// inherits base's columns, directory, denominators and query publication by
+// reference: what the change set does not touch is the very same structure
+// base holds, so an unchanged column and an unchanged denominator cost a
+// pointer rather than a copy.
 //
 // The derived publication must advance the generation of the store that
 // published base; a builder derived from an unpublished snapshot seals
@@ -169,8 +166,6 @@ func NewDelta(base Snapshot, generation identity.Generation) Builder {
 			denominatorCount: base.denominators.count,
 		},
 		derivedFrom: base.generation,
-		mounts:      base.mounts.bound,
-		mountCount:  base.mounts.count,
 		queries:     base.queries.plans,
 		queryCount:  base.queries.count,
 	}
@@ -333,24 +328,6 @@ func (b *builderCore) Publish(id identity.ContentID, slot uint32) error {
 	return nil
 }
 
-// Bind records that the mount named by module participated in this
-// publication. A mount is named by its Link module key, which is the identity
-// the Link already derives its mount-qualified addresses from; naming it a
-// second way here would make one concept answer to two vocabularies.
-func (b *Builder) Bind(module identity.ContentID) error {
-	if !module.Available() {
-		return fmt.Errorf("%w: mount binding", ErrUnavailableIdentity)
-	}
-	var added bool
-	b.mounts, added = trieInsert(b.mounts, 0, trieEntry[identity.ContentID, struct{}]{
-		hash: hashKey(identityPlan, module), key: module,
-	})
-	if added {
-		b.mountCount++
-	}
-	return nil
-}
-
 // RegisterQuery records that the query family plan is answerable against this
 // publication.
 func (b *Builder) RegisterQuery(plan identity.ContentID) error {
@@ -383,7 +360,6 @@ func (b Builder) Seal() (Snapshot, error) {
 	}
 	return Snapshot{
 		publication: published,
-		mounts:      Mounts{bound: b.mounts, count: b.mountCount},
 		queries:     Queries{plans: b.queries, count: b.queryCount},
 	}, nil
 }
