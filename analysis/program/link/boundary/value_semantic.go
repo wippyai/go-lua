@@ -121,7 +121,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		}
 		calleeID, calleeOK := p.CallCalleeIDAt(index)
 		actualsID, actualsOK := p.CallActualsIDAt(index)
-		valuesID, valuesOK := p.CallValuesIDAt(index)
+		valuesID, valuesOK := p.Flow().CallValuesID(callTerm)
 		if !callTermOK || !callRowOK || !calleeOK || !actualsOK || !valuesOK ||
 			!callID.Available() || !calleeID.Available() || !actualsID.Available() || !valuesID.Available() {
 			return fmt.Errorf("link/boundary: malformed semantic Call row=%d term=%d authored=%t relation=%t call=%t callee=%t actuals=%t values=%t", index, callTerm, callTermOK, callRowOK, callOK, calleeOK, actualsOK, valuesOK)
@@ -149,7 +149,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		}
 		for argumentIndex := 0; argumentIndex < width; argumentIndex++ {
 			argumentTerm, argumentTermOK := p.Flow().Authored().Values().Member(actualsTerm, argumentIndex)
-			argumentID, argumentOK := p.CallArgumentIDAt(index, argumentIndex)
+			argumentID, argumentOK := p.Flow().CallArgumentID(callTerm, argumentIndex)
 			if !argumentTermOK || !argumentOK {
 				return errors.New("link/boundary: malformed semantic Call argument")
 			}
