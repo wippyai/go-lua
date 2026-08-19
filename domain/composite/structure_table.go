@@ -125,7 +125,7 @@ func occurrenceVocabulary() []structure.Spec {
 		"storage-read", "storage-bind", "storage-bind-transfer", "storage-assignment", "storage-write",
 		"index-read", "index-write", "allocation", "allocation-field", "call",
 		"call-activation", "call-boundary", "call-arm", "call-argument", "call-type-argument",
-		"body", "outcome", "return-value", "unary", "select",
+		"unary", "select",
 		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
 		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement")
 	declare(structure.CategoryIssuanceForm, "base")

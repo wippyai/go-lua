@@ -183,23 +183,6 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 	}
-	for _, body := range compiler.bodies {
-		if !compiler.appendOccurrence(OccurrenceBody, body.ID(), body.ID(), nil, nil, 0) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
-		}
-	}
-	for outcomeIndex, outcome := range compiler.outcomes {
-		if !compiler.appendOccurrence(OccurrenceOutcome, outcome.ID(), outcome.BodyID(), nil, nil, uint64(outcome.Kind())) {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, outcomeIndex, -1, CompileReasonOccurrenceUnavailable)
-		}
-		for valueIndex := 0; valueIndex < outcome.ReturnValueCount(); valueIndex++ {
-			value, ok := compiler.returnValueAt(outcome, valueIndex)
-			id := digest("analysis/program-artifact/return-value-occurrence", artifactFormat, bytesField(outcome.ID()), bytesField(value.ID()), uintField(uint64(valueIndex)))
-			if !ok || !compiler.appendOccurrence(OccurrenceReturnValue, id, outcome.BodyID(), nil, []identity.ContentID{outcome.ID(), value.ID()}, uint64(valueIndex)) {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, outcomeIndex, valueIndex, CompileReasonOccurrenceUnavailable)
-			}
-		}
-	}
 	if failure := compiler.copyPointAttachments(); failure.Available() {
 		return failure
 	}

@@ -37,9 +37,6 @@ const (
 	OccurrenceCallArm
 	OccurrenceCallArgument
 	OccurrenceCallTypeArgument
-	OccurrenceBody
-	OccurrenceOutcome
-	OccurrenceReturnValue
 	// Computation rows retain only parent-issued span identities, exact point
 	// attachments, and ordered semantic operands. Value domains interpret the
 	// closed codes; no Flow term or Program pointer crosses this boundary.

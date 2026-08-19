@@ -46,7 +46,7 @@ func TestStructureTableSeals(t *testing.T) {
 		structure.CategoryDiagnosticObservation: 4,
 		structure.CategoryDiagnosticFamily:      5,
 		structure.CategoryDiagnosticSeverity:    3,
-		structure.CategoryOccurrenceKind:        33,
+		structure.CategoryOccurrenceKind:        30,
 		structure.CategoryIssuanceForm:          5,
 		structure.CategoryIssuanceInput:         4,
 		structure.CategoryIssuanceRequirement:   2,
