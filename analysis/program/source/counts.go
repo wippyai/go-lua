@@ -10,6 +10,24 @@ import (
 
 var errSourceCounts = errors.New("program/source: invalid denominator counts")
 
+// authoredTermCount is the canonical Source family census. It deliberately
+// excludes Outcome because that family is assigned by Flow after authored
+// Source input is built and must not enter either Source's content identity
+// or its portable artifact payload.
+func authoredTermCount(counts [keyspace.FamilyCount]uint32) (uint32, bool) {
+	var total uint64
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		if family == keyspace.FamilyOutcome {
+			continue
+		}
+		total += uint64(counts[family])
+	}
+	if total == 0 || total > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(total), true
+}
+
 // CountRows derives Source's native denominator rows. Source owns the rows
 // that describe provenance, source order, keys, literals, faults, and the
 // body containment projection; no other Program owner re-walks these columns.

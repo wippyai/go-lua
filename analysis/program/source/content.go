@@ -46,7 +46,7 @@ func writeAuthoredPayload(w *framing.Writer, a *authority) error {
 	if err := w.String(a.identity.name); err != nil {
 		return err
 	}
-	termCount, ok := authoredTermCount(a)
+	termCount, ok := authoredTermCount(a.identity.counts)
 	if !ok || termCount == 0 {
 		return framing.ErrMalformed
 	}
@@ -79,26 +79,6 @@ func contentSpellings(w *framing.Writer, store *spellingStore) bool {
 		}
 	}
 	return true
-}
-
-// authoredTermCount excludes the derived Outcome family from the stored
-// denominator. The identity store's termCount includes Outcomes after Commit,
-// so recomputing this value is what keeps post-Commit artifacts authored-only.
-func authoredTermCount(a *authority) (uint32, bool) {
-	if a == nil {
-		return 0, false
-	}
-	var total uint64
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if family == keyspace.FamilyOutcome {
-			continue
-		}
-		total += uint64(a.identity.counts[family])
-	}
-	if total == 0 || total > uint64(^uint32(0)) {
-		return 0, false
-	}
-	return uint32(total), true
 }
 
 func contentKeyFault(w *framing.Writer, a *authority) bool {

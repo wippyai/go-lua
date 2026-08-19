@@ -55,11 +55,11 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 	if len(nameBytes) == 0 {
 		return Input{}, framing.ErrMalformed
 	}
-	authoredTermCount, err := reader.Count()
+	encodedTermCount, err := reader.Count()
 	if err != nil {
 		return Input{}, err
 	}
-	if authoredTermCount == 0 || authoredTermCount > uint64(^uint32(0)) {
+	if encodedTermCount == 0 || encodedTermCount > uint64(^uint32(0)) {
 		return Input{}, framing.ErrLimit
 	}
 
@@ -74,14 +74,8 @@ func ReadArtifactSection(reader *framing.Reader) (Input, error) {
 	if err := preflightSourceSpans(&probe, &counts); err != nil {
 		return Input{}, err
 	}
-	var computedTermCount uint64
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if family == keyspace.FamilyOutcome {
-			continue
-		}
-		computedTermCount += uint64(counts[family])
-	}
-	if computedTermCount == 0 || computedTermCount != authoredTermCount || computedTermCount > uint64(^uint32(0)) {
+	computedTermCount, ok := authoredTermCount(counts)
+	if !ok || uint64(computedTermCount) != encodedTermCount {
 		return Input{}, framing.ErrMalformed
 	}
 
