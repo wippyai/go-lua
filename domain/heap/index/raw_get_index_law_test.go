@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
@@ -124,13 +125,23 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	}
 
 	frontier := rawSemanticSourceFrontier{sources: make([]packdomain.SemanticSource, 0, count), coordinates: make([]valuedomain.Coordinate, 0, count), facts: make([]valuedomain.Value, 0, count)}
-	for valuesIndex := 0; valuesIndex < artifact.ValuesCount() && len(frontier.sources) < count; valuesIndex++ {
-		row, rowOK := artifact.ValuesAt(valuesIndex)
+	coldProgram := snapshottest.MustMount(t, artifact, module)
+	valuesCatalog, catalogOK := cold.CatalogID(coldProgram.SchemaID)
+	valuesCount, valuesPublished := cold.ValuesFamily().Count(&coldProgram.Frozen, valuesCatalog)
+	if !catalogOK || !valuesPublished {
+		t.Fatal("artifact Values family unavailable")
+	}
+	for valuesIndex := 0; valuesIndex < valuesCount && len(frontier.sources) < count; valuesIndex++ {
+		row, rowOK := cold.ValuesFamily().At(&coldProgram.Frozen, valuesCatalog, valuesIndex)
 		if !rowOK {
 			t.Fatal("artifact Values row")
 		}
-		for memberIndex := 0; memberIndex < row.MemberCount() && len(frontier.sources) < count; memberIndex++ {
-			member, memberOK := row.MemberAt(memberIndex)
+		offset, memberCount, spanOK := row.MemberSpan()
+		if !spanOK {
+			t.Fatal("artifact Values member span")
+		}
+		for memberIndex := 0; memberIndex < int(memberCount) && len(frontier.sources) < count; memberIndex++ {
+			member, memberOK := cold.ValuesMemberFamily().At(&coldProgram.Frozen, valuesCatalog, int(offset)+memberIndex)
 			mounted, mountedOK := packs.PayloadForMounted(module, row.ID(), memberIndex)
 			source, sourceOK := mounted.Fixed()
 			boundaryValue, boundaryOK := linked.Boundary().Values().ForMountedSemantic(module, member.ID())

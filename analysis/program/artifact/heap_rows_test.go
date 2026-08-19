@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -76,9 +77,17 @@ return run
 			if failure.Available() || artifact == nil || !artifact.Available() {
 				t.Fatalf("compile %s: %s", fixture.name, failure.Error())
 			}
+			frozen, catalog, coldPublished := artifact.ColdPublication()
+			if !coldPublished {
+				t.Fatalf("compile %s: cold publication unavailable", fixture.name)
+			}
 			reads, writes := 0, 0
-			for index := 0; index < artifact.HeapIndexCount(); index++ {
-				row, rowOK := artifact.HeapIndexAt(index)
+			indexCount, indexPublished := cold.HeapIndexFamily().Count(&frozen, catalog)
+			if !indexPublished {
+				t.Fatalf("compile %s: heap index family unavailable", fixture.name)
+			}
+			for index := 0; index < indexCount; index++ {
+				row, rowOK := cold.HeapIndexFamily().At(&frozen, catalog, index)
 				if !rowOK || !row.Available() {
 					t.Fatalf("heap index row %d unavailable", index)
 				}

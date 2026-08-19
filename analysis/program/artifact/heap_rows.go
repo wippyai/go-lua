@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // HeapFieldRow is the immutable scalar constructor geometry captured while
@@ -216,99 +215,4 @@ func (row HeapIndexRow) ValuesID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return row.valuesID
-}
-
-// HeapAllocationCount and HeapAllocationAt expose the exact reusable
-// allocation geometry for Link-local Heap substitution.
-func (artifact *Artifact) HeapAllocationCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	count, published := coldCount(artifact, cold.HeapAllocationFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-
-func (artifact *Artifact) HeapAllocationAt(index int) (HeapAllocationRow, bool) {
-	if !artifact.Available() {
-		return HeapAllocationRow{}, false
-	}
-	return artifact.heapAllocationRowAt(index)
-}
-
-// heapAllocationRowAt reads one allocation template out of the sealed
-// publication and rejoins it with the field span it names. Fields are a dense
-// plane there, so the ordered geometry a caller receives is assembled at the
-// read site rather than retained a second time beside the publication.
-func (artifact *Artifact) heapAllocationRowAt(index int) (HeapAllocationRow, bool) {
-	sealed, held := coldRow(artifact, cold.HeapAllocationFamily(), index)
-	offset, count, spanOK := sealed.FieldSpan()
-	if !held || !spanOK {
-		return HeapAllocationRow{}, false
-	}
-	row := HeapAllocationRow{
-		id: sealed.ID(), role: AllocationRole(sealed.Role()), form: AllocationForm(sealed.Form()),
-		rootSpan: sealed.RootSpan(), fields: make([]HeapFieldRow, 0, count),
-	}
-	for position := uint32(0); position < count; position++ {
-		field, fieldHeld := artifact.heapFieldRowAt(int(offset + position))
-		if !fieldHeld {
-			return HeapAllocationRow{}, false
-		}
-		row.fields = append(row.fields, field)
-	}
-	return row, row.Available()
-}
-
-func (artifact *Artifact) heapFieldRowAt(index int) (HeapFieldRow, bool) {
-	sealed, held := coldRow(artifact, cold.HeapFieldFamily(), index)
-	valuesSpan, width, finalOpen, valuesOK := sealed.Values()
-	normalized, normalizedOK := sealed.NormalizedKey()
-	if !held || !valuesOK {
-		return HeapFieldRow{}, false
-	}
-	row := HeapFieldRow{
-		id: sealed.ID(), kind: flowkind.FieldKind(sealed.Kind()), fieldSpan: sealed.FieldSpan(),
-		selectorSpan: sealed.SelectorSpan(), valuesSpan: valuesSpan, valuesID: sealed.ValuesID(),
-		width: width, finalOpen: finalOpen, sharesFirstValueCell: sealed.SharesFirstValueCell(),
-		normalized: keyspace.Key(normalized), normalizedOK: normalizedOK,
-	}
-	return row, row.Available()
-}
-
-// HeapIndexCount and HeapIndexAt expose the exact reusable access geometry
-// for Link-local Heap substitution.
-func (artifact *Artifact) HeapIndexCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	count, published := coldCount(artifact, cold.HeapIndexFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-
-func (artifact *Artifact) HeapIndexAt(index int) (HeapIndexRow, bool) {
-	if !artifact.Available() {
-		return HeapIndexRow{}, false
-	}
-	return artifact.heapIndexRowAt(index)
-}
-
-func (artifact *Artifact) heapIndexRowAt(index int) (HeapIndexRow, bool) {
-	sealed, held := coldRow(artifact, cold.HeapIndexFamily(), index)
-	if !held {
-		return HeapIndexRow{}, false
-	}
-	exactKey, _ := sealed.ExactKey()
-	valuesSpan, _, _ := sealed.Values()
-	row := HeapIndexRow{
-		id: sealed.ID(), read: sealed.Read(), baseSpan: sealed.BaseSpan(), resultSpan: sealed.ResultSpan(),
-		keySpan: sealed.DynamicKeySpan(), lensKind: sealed.LensKind(), exactKey: keyspace.Key(exactKey),
-		valuesSpan: valuesSpan, valuesID: sealed.ValuesID(), position: sealed.Position(),
-	}
-	return row, row.Available()
 }
