@@ -12,6 +12,12 @@ import (
 // Key/fault rows. Cell spellings are dense; named Call spellings are sparse.
 const contentVersion = 4
 
+// contentRecordSpellings is part of the canonical authored ContentID stream.
+// The retired artifact codec used to own the same numeric record tag; keeping
+// the value here preserves the existing authored identity bytes without
+// retaining a second codec representation.
+const contentRecordSpellings uint64 = 6
+
 // authoredContentID hashes only Source's owned authored rows. Position/root
 // indexes are Seal projections and deliberately contribute no second identity.
 func authoredContentID(a *authority) (id identity.ContentID) {
@@ -30,12 +36,10 @@ func authoredContentID(a *authority) (id identity.ContentID) {
 	return id
 }
 
-// writeAuthoredPayload is the one canonical Source-authored row writer. It is
-// shared by ContentID and artifact persistence so a child cannot accidentally
-// acquire two subtly different row orders or payload encodings. The committed
-// Outcome family, and every Source seal projection, are deliberately absent.
-// Outcome is assigned only by Flow during Source Commit; its count therefore
-// must not enter either the authored identity or the portable Source section.
+// writeAuthoredPayload is the one canonical Source-authored row writer for
+// ContentID. The committed Outcome family, and every Source seal projection,
+// are deliberately absent. Outcome is assigned only by Flow during Source
+// Commit and therefore does not enter authored identity.
 func writeAuthoredPayload(w *framing.Writer, a *authority) error {
 	if w == nil || a == nil || a.identity.name == "" {
 		return framing.ErrMalformed
@@ -61,7 +65,7 @@ func writeAuthoredPayload(w *framing.Writer, a *authority) error {
 }
 
 func contentSpellings(w *framing.Writer, store *spellingStore) bool {
-	if w == nil || store == nil || w.Record(sourceArtifactRecordSpellings) != nil ||
+	if w == nil || store == nil || w.Record(contentRecordSpellings) != nil ||
 		w.Count(uint64(len(store.cells))) != nil {
 		return false
 	}
