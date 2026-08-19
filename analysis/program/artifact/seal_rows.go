@@ -65,10 +65,15 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomePropagation)
 		}
 	}
-	state.environmentByRoute = make(map[identity.ContentID]EnvironmentEdge, len(artifact.environment))
+	edgeCount, edgesPublished := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	if !edgesPublished {
+		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
+	}
+	state.environmentByRoute = make(map[identity.ContentID]EnvironmentEdge, edgeCount)
 	state.environmentRouteDuplicates = make(map[identity.ContentID]struct{})
-	for index, row := range artifact.environment {
-		if !row.Available() {
+	for index := 0; index < edgeCount; index++ {
+		row, held := artifact.environmentEdgeRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 		}
 		if _, exists := state.environmentByRoute[row.route]; exists {
@@ -107,9 +112,14 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		seenLocalTransfers[row.id] = struct{}{}
 	}
-	regionRows := make(map[identity.ContentID]struct{}, len(artifact.regions))
-	for index, row := range artifact.regions {
-		if !row.id.Available() || len(row.members) == 0 {
+	regionCount, regionsPublished := coldCount(artifact, cold.RegionFamily())
+	if !regionsPublished {
+		return compileFailure(CompileStageSeal, CompileRowRegion, -1, -1, CompileReasonRegionUnavailable)
+	}
+	regionRows := make(map[identity.ContentID]struct{}, regionCount)
+	for index := 0; index < regionCount; index++ {
+		row, held := artifact.regionRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
 		}
 		if _, exists := regionRows[row.id]; exists {
@@ -125,15 +135,24 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			}
 		}
 	}
-	for index, row := range artifact.regions {
+	for index := 0; index < regionCount; index++ {
+		row, held := artifact.regionRowAt(index)
+		if !held {
+			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
+		}
 		if row.parent.Available() {
 			if _, exists := regionRows[row.parent]; !exists {
 				return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionReference)
 			}
 		}
 	}
-	for index, event := range artifact.events {
-		if !event.Available() {
+	eventCount, eventsPublished := coldCount(artifact, cold.WTOEventFamily())
+	if !eventsPublished {
+		return compileFailure(CompileStageSeal, CompileRowWTOEvent, -1, -1, CompileReasonEventUnavailable)
+	}
+	for index := 0; index < eventCount; index++ {
+		event, held := artifact.wtoEventRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowWTOEvent, index, -1, CompileReasonEventUnavailable)
 		}
 		if event.kind == WTOEventPoint {

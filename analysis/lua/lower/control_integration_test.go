@@ -25,7 +25,7 @@ if first() then second() end
 while third() do fourth() end
 return fifth()
 `)
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing Source entry Body")
 	}
@@ -92,7 +92,7 @@ return finish()
 
 func TestFlowCausalEdgeQueriesDoNotAllocate(t *testing.T) {
 	p := parseBindLower(t, `while test() do tick() end`)
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing Source entry Body")
 	}
@@ -114,7 +114,7 @@ func TestFlowCausalEdgeQueriesDoNotAllocate(t *testing.T) {
 
 func entrySource(t *testing.T, p *program.Program, index int) keyspace.Term {
 	t.Helper()
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Program has no Source entry")
 	}
@@ -293,7 +293,7 @@ func TestSourceControlExactWitnesses(t *testing.T) {
 	} {
 		t.Run(sample.name, func(t *testing.T) {
 			p := parseBindLower(t, sample.input)
-			entry, ok := p.Source().Index().Entry()
+			entry, ok := p.Flow().Body().Entry()
 			if !ok {
 				t.Fatal("missing Source entry")
 			}
@@ -335,7 +335,7 @@ func TestSourceControlExactWitnesses(t *testing.T) {
 
 func TestFlowControlRowsKeepExactOperandsAndOutcomes(t *testing.T) {
 	p := parseBindLower(t, "while condition() do break end\nreturn 1")
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing entry")
 	}
@@ -395,12 +395,12 @@ goto outer
 local outer = 2
 ::outer::
 outer = outer`)
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Entry is absent")
 	}
 	innerBody := controlSourceAt(t, p, entry, 0)
-	if parent, ok := p.Source().Index().BodyParent(innerBody); !ok || parent != entry {
+	if parent, ok := p.Flow().Body().Parent(innerBody); !ok || parent != entry {
 		t.Fatalf("inner Body parent = %v/%v, want %v", parent, ok, entry)
 	}
 	assertEnteredLocalFault(t, p, innerBody, 0)
@@ -432,7 +432,7 @@ func assertEnteredLocalFault(t *testing.T, p *program.Program, body keyspace.Ter
 
 func TestSourceBodiesKeepOrderAndParents(t *testing.T) {
 	p := parseBindLower(t, "\ndo\n  local normal = 1\n  do local nested = 2 end\nend\ndo return 3 end\nreturn 4\n")
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing Source entry")
 	}
@@ -442,12 +442,12 @@ func TestSourceBodiesKeepOrderAndParents(t *testing.T) {
 	normal := controlSourceAt(t, p, entry, 0)
 	terminal := controlSourceAt(t, p, entry, 1)
 	for _, body := range []keyspace.Term{normal, terminal} {
-		if parent, ok := p.Source().Index().BodyParent(body); !ok || parent != entry {
+		if parent, ok := p.Flow().Body().Parent(body); !ok || parent != entry {
 			t.Fatalf("Body parent = %v/%v, want %v", parent, ok, entry)
 		}
 	}
 	nested := controlSourceAt(t, p, normal, 1)
-	if parent, ok := p.Source().Index().BodyParent(nested); !ok || parent != normal {
+	if parent, ok := p.Flow().Body().Parent(nested); !ok || parent != normal {
 		t.Fatalf("nested Body parent = %v/%v, want %v", parent, ok, normal)
 	}
 	if body, offset, _, ok := p.Source().Index().Position(nested); !ok || body != normal || offset != 1 {

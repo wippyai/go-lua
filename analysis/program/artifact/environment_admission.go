@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -76,7 +76,7 @@ func (compiler *compiler) emitRoutesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowIndex int) CompileFailure {
+func (compiler *compiler) admitEnvironmentFailure(route causal.FinalRoute, rowIndex int) CompileFailure {
 	if compiler == nil || !compiler.input.Available() || !route.Available() || !compiler.input.Flow().Causal().OwnsFinalRoute(route) {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteForeign)
 	}
@@ -92,7 +92,7 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 	if !routeOK {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
 	}
-	if !armOK || arm < flow.BoundaryLocal || arm > flow.BoundaryCancel {
+	if !armOK || arm < causal.BoundaryLocal || arm > causal.BoundaryCancel {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteArm)
 	}
 	occurrenceID := environmentRouteOccurrenceID(compiler.input.ContentID(), routeID, arm)
@@ -120,7 +120,7 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 		if !identityOK {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
 		}
-		conditionID = compiler.conditionValueSpanID(identityValue.Decision())
+		conditionID = compiler.conditionValueSpanID(identityValue.Decision)
 	}
 
 	component, resetDigest := identity.ContentID{}, identity.ContentID{}
@@ -201,7 +201,7 @@ func (compiler *compiler) admitEnvironmentFailure(route flow.FinalRoute, rowInde
 // for one emitted environment row. It preserves the established route
 // occurrence equation while consuming only the sealed route digest and arm
 // supplied by Flow.
-func environmentRouteOccurrenceID(programID, routeID identity.ContentID, arm flow.BoundaryArmKind) identity.ContentID {
+func environmentRouteOccurrenceID(programID, routeID identity.ContentID, arm causal.BoundaryArmKind) identity.ContentID {
 	if !programID.Available() || !routeID.Available() {
 		return identity.ContentID{}
 	}

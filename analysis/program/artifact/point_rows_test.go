@@ -5,25 +5,25 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
 func TestPointRowsUseFlowBoundaryArmsAndKeepTransferSeparate(t *testing.T) {
-	if flow.BoundaryLocal != 1 || flow.BoundaryCancel != 8 {
-		t.Fatalf("Flow boundary arm ordinals changed: local=%d cancel=%d", flow.BoundaryLocal, flow.BoundaryCancel)
+	if causal.BoundaryLocal != 1 || causal.BoundaryCancel != 8 {
+		t.Fatalf("Flow boundary arm ordinals changed: local=%d cancel=%d", causal.BoundaryLocal, causal.BoundaryCancel)
 	}
 	edge := EnvironmentEdge{
 		id: valuesLawID(3), from: valuesLawID(4), to: valuesLawID(5), route: valuesLawID(6),
-		arm: flow.BoundaryLocal,
+		arm: causal.BoundaryLocal,
 	}
-	for arm := flow.BoundaryLocal; arm <= flow.BoundaryCancel; arm++ {
+	for arm := causal.BoundaryLocal; arm <= causal.BoundaryCancel; arm++ {
 		edge.arm = arm
 		if !edge.Available() || edge.Arm() != arm {
 			t.Fatalf("Flow boundary arm %d is not accepted by EnvironmentEdge", arm)
 		}
 	}
-	for _, arm := range []flow.BoundaryArmKind{flow.BoundaryLocal - 1, flow.BoundaryCancel + 1} {
+	for _, arm := range []causal.BoundaryArmKind{causal.BoundaryLocal - 1, causal.BoundaryCancel + 1} {
 		edge.arm = arm
 		if edge.Available() {
 			t.Fatalf("out-of-range Flow boundary arm %d was accepted", arm)

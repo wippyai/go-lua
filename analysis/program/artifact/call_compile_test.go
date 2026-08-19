@@ -76,13 +76,18 @@ return identity(true)
 		if row.OperandCount() != 2 || row.ArgumentCount() != 1 || row.TypeArgumentCount() != 0 {
 			t.Fatalf("call %d child counts operands=%d arguments=%d types=%d, want 2/1/0", index, row.OperandCount(), row.ArgumentCount(), row.TypeArgumentCount())
 		}
-		for childIndex := 0; childIndex < row.OperandCount(); childIndex++ {
-			operand := transaction.callOperands[int(row.operandStart)+childIndex]
+		operandOffset, operandWidth, operandSpanOK := row.OperandSpan()
+		argumentOffset, argumentWidth, argumentSpanOK := row.ArgumentSpan()
+		if !operandSpanOK || !argumentSpanOK || int(operandWidth) != row.OperandCount() || int(argumentWidth) != row.ArgumentCount() {
+			t.Fatalf("call %d published invalid child spans", index)
+		}
+		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
+			operand := transaction.callOperands[int(operandOffset+childIndex)]
 			if !operand.Available() || operand.CallID() != row.ID() || !operand.SpanID().Available() {
 				t.Fatalf("call %d operand %d is not a closed artifact child", index, childIndex)
 			}
 		}
-		argument := transaction.callArguments[row.argumentStart]
+		argument := transaction.callArguments[argumentOffset]
 		if !argument.Available() || argument.CallID() != row.ID() || argument.ValuesID() != row.ValuesID() || argument.Index() != 0 {
 			t.Fatalf("call %d argument is not joined to its artifact call/value parent", index)
 		}

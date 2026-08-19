@@ -10,66 +10,77 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 	if artifact == nil || state == nil {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	// Calls and their ordered child columns are a single Artifact-owned plane.
-	// Validate contiguous ranges and owner joins here.
-	seenCalls := make(map[identity.ContentID]struct{}, len(artifact.calls))
-	seenCallOperands := make(map[identity.ContentID]struct{}, len(artifact.callOperands))
-	seenCallArguments := make(map[identity.ContentID]struct{}, len(artifact.callArguments))
-	seenCallTypeArguments := make(map[identity.ContentID]struct{}, len(artifact.callTypeArguments))
+	// Calls and their ordered child columns are one sealed cold publication.
+	// Validate contiguous ranges and owner joins at the publication boundary.
+	callCount, callsPublished := coldCount(artifact, cold.CallFamily())
+	operandCount, operandsPublished := coldCount(artifact, cold.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(artifact, cold.CallArgumentFamily())
+	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, cold.CallTypeArgumentFamily())
+	if !callsPublished || !operandsPublished || !argumentsPublished || !typeArgumentsPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
+	seenCalls := make(map[identity.ContentID]struct{}, callCount)
+	seenCallOperands := make(map[identity.ContentID]struct{}, operandCount)
+	seenCallArguments := make(map[identity.ContentID]struct{}, argumentCount)
+	seenCallTypeArguments := make(map[identity.ContentID]struct{}, typeArgumentCount)
 	operandCursor, argumentCursor, typeArgumentCursor := 0, 0, 0
-	for index, row := range artifact.calls {
-		if !row.Available() || uint64(row.operandStart) != uint64(operandCursor) || uint64(row.argumentStart) != uint64(argumentCursor) || uint64(row.typeArgumentStart) != uint64(typeArgumentCursor) || uint64(row.operandEnd) > uint64(len(artifact.callOperands)) || uint64(row.argumentEnd) > uint64(len(artifact.callArguments)) || uint64(row.typeArgumentEnd) > uint64(len(artifact.callTypeArguments)) {
+	for index := 0; index < callCount; index++ {
+		row, held := coldRow(artifact, cold.CallFamily(), index)
+		operandStart, operandWidth, operandSpanOK := row.OperandSpan()
+		argumentStart, argumentWidth, argumentSpanOK := row.ArgumentSpan()
+		typeArgumentStart, typeArgumentWidth, typeArgumentSpanOK := row.TypeArgumentSpan()
+		if !held || !row.Available() || !operandSpanOK || !argumentSpanOK || !typeArgumentSpanOK || uint64(operandStart) != uint64(operandCursor) || uint64(argumentStart) != uint64(argumentCursor) || uint64(typeArgumentStart) != uint64(typeArgumentCursor) || uint64(operandStart)+uint64(operandWidth) > uint64(operandCount) || uint64(argumentStart)+uint64(argumentWidth) > uint64(argumentCount) || uint64(typeArgumentStart)+uint64(typeArgumentWidth) > uint64(typeArgumentCount) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		if _, duplicate := seenCalls[row.id]; duplicate {
+		if _, duplicate := seenCalls[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		if _, bodyOK := state.bodyRows[row.body]; !bodyOK {
+		if _, bodyOK := state.bodyRows[row.BodyID()]; !bodyOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		if _, valuesOK := state.valueRows[row.valuesRoot]; !valuesOK {
+		if _, valuesOK := state.valueRows[row.ValuesRootID()]; !valuesOK {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		occurrenceIndex, occurrenceOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceCall, id: row.id}]
+		occurrenceIndex, occurrenceOK := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceCall, id: row.ID()}]
 		if !occurrenceOK || uint64(occurrenceIndex) >= uint64(len(artifact.occurrences)) || !artifact.occurrences[occurrenceIndex].Available() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		for childIndex := int(row.operandStart); childIndex < int(row.operandEnd); childIndex++ {
-			child := artifact.callOperands[childIndex]
-			if !child.Available() || child.call != row.id {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex-int(row.operandStart), CompileReasonOccurrenceCall)
+		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
+			child, childHeld := coldRow(artifact, cold.CallOperandFamily(), int(operandStart+childIndex))
+			if !childHeld || !child.Available() || child.CallID() != row.ID() {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(childIndex), CompileReasonOccurrenceCall)
 			}
-			if _, duplicate := seenCallOperands[child.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex-int(row.operandStart), CompileReasonOccurrenceCall)
+			if _, duplicate := seenCallOperands[child.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(childIndex), CompileReasonOccurrenceCall)
 			}
-			seenCallOperands[child.id] = struct{}{}
+			seenCallOperands[child.ID()] = struct{}{}
 		}
-		for childIndex := int(row.argumentStart); childIndex < int(row.argumentEnd); childIndex++ {
-			child := artifact.callArguments[childIndex]
-			position := childIndex - int(row.argumentStart)
-			if !child.Available() || child.call != row.id || child.values != row.values || child.position != uint32(position) {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+		for childIndex := uint32(0); childIndex < argumentWidth; childIndex++ {
+			child, childHeld := coldRow(artifact, cold.CallArgumentFamily(), int(argumentStart+childIndex))
+			position := childIndex
+			if !childHeld || !child.Available() || child.CallID() != row.ID() || child.ValuesID() != row.ValuesID() || child.Index() != position {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
 			}
-			if _, duplicate := seenCallArguments[child.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			if _, duplicate := seenCallArguments[child.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
 			}
-			seenCallArguments[child.id] = struct{}{}
+			seenCallArguments[child.ID()] = struct{}{}
 		}
-		for childIndex := int(row.typeArgumentStart); childIndex < int(row.typeArgumentEnd); childIndex++ {
-			child := artifact.callTypeArguments[childIndex]
-			position := childIndex - int(row.typeArgumentStart)
-			if !child.Available() || child.call != row.id || child.types != row.types || child.position != uint32(position) {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+		for childIndex := uint32(0); childIndex < typeArgumentWidth; childIndex++ {
+			child, childHeld := coldRow(artifact, cold.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
+			position := childIndex
+			if !childHeld || !child.Available() || child.CallID() != row.ID() || child.TypesID() != row.TypeArgumentsID() || child.Index() != position {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
 			}
-			if _, duplicate := seenCallTypeArguments[child.id]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, position, CompileReasonOccurrenceCall)
+			if _, duplicate := seenCallTypeArguments[child.ID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(position), CompileReasonOccurrenceCall)
 			}
-			seenCallTypeArguments[child.id] = struct{}{}
+			seenCallTypeArguments[child.ID()] = struct{}{}
 		}
-		seenCalls[row.id] = struct{}{}
-		operandCursor, argumentCursor, typeArgumentCursor = int(row.operandEnd), int(row.argumentEnd), int(row.typeArgumentEnd)
+		seenCalls[row.ID()] = struct{}{}
+		operandCursor, argumentCursor, typeArgumentCursor = int(operandStart+operandWidth), int(argumentStart+argumentWidth), int(typeArgumentStart+typeArgumentWidth)
 	}
-	if operandCursor != len(artifact.callOperands) || argumentCursor != len(artifact.callArguments) || typeArgumentCursor != len(artifact.callTypeArguments) {
+	if operandCursor != operandCount || argumentCursor != argumentCount || typeArgumentCursor != typeArgumentCount {
 		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
 	if len(artifact.functionBoundaries) != state.callableBodies {
@@ -163,9 +174,14 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowValues, index, -1, CompileReasonValuesBody)
 		}
 	}
-	seenStaticValues := make(map[identity.ContentID]struct{}, len(artifact.staticTypeValues))
-	for index, row := range artifact.staticTypeValues {
-		if !row.Available() {
+	typeValueCount, typeValuesPublished := coldCount(artifact, cold.StaticTypeValueFamily())
+	if !typeValuesPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	seenStaticValues := make(map[identity.ContentID]struct{}, typeValueCount)
+	for index := 0; index < typeValueCount; index++ {
+		row, held := artifact.staticTypeValueRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		if _, duplicate := seenStaticValues[row.id]; duplicate {
@@ -212,9 +228,14 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	seenStaticExpressions := make(map[identity.ContentID]struct{}, len(artifact.staticExpressions))
-	for index, row := range artifact.staticExpressions {
-		if !row.Available() {
+	expressionCount, expressionsPublished := coldCount(artifact, cold.StaticExpressionFamily())
+	if !expressionsPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	seenStaticExpressions := make(map[identity.ContentID]struct{}, expressionCount)
+	for index := 0; index < expressionCount; index++ {
+		row, held := artifact.staticExpressionRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		if _, duplicate := seenStaticExpressions[row.id]; duplicate {

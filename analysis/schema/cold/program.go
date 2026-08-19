@@ -65,6 +65,129 @@ func (row Program) CallTargetAt(index int) (CallTarget, bool) {
 	return CallTargetFamily().At(&row.Frozen, catalog, index)
 }
 
+// CallCount is the sealed width of the authored-call family.
+func (row Program) CallCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallFamily().Count(&row.Frozen, catalog)
+}
+
+// CallAt returns one authored-call row by emitted ordinal.
+func (row Program) CallAt(index int) (Call, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return Call{}, false
+	}
+	return CallFamily().At(&row.Frozen, catalog, index)
+}
+
+// CallOperandFor resolves one operand in a call's published child range.
+func (row Program) CallOperandFor(callIndex, childIndex int) (CallOperand, bool) {
+	call, ok := row.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.OperandCount() {
+		return CallOperand{}, false
+	}
+	offset, _, spanOK := call.OperandSpan()
+	if !spanOK {
+		return CallOperand{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallOperand{}, false
+	}
+	return CallOperandFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+}
+
+// CallArgumentFor resolves one actual argument in a call's published child range.
+func (row Program) CallArgumentFor(callIndex, childIndex int) (CallArgument, bool) {
+	call, ok := row.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.ArgumentCount() {
+		return CallArgument{}, false
+	}
+	offset, _, spanOK := call.ArgumentSpan()
+	if !spanOK {
+		return CallArgument{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallArgument{}, false
+	}
+	return CallArgumentFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+}
+
+// CallTypeArgumentFor resolves one static type argument in a call's published child range.
+func (row Program) CallTypeArgumentFor(callIndex, childIndex int) (CallTypeArgument, bool) {
+	call, ok := row.CallAt(callIndex)
+	if !ok || childIndex < 0 || childIndex >= call.TypeArgumentCount() {
+		return CallTypeArgument{}, false
+	}
+	offset, _, spanOK := call.TypeArgumentSpan()
+	if !spanOK {
+		return CallTypeArgument{}, false
+	}
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallTypeArgument{}, false
+	}
+	return CallTypeArgumentFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+}
+
+// CallOperandCount is the sealed width of the call-operand family.
+func (row Program) CallOperandCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallOperandFamily().Count(&row.Frozen, catalog)
+}
+
+// CallOperandAt returns one call operand by emitted ordinal.
+func (row Program) CallOperandAt(index int) (CallOperand, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallOperand{}, false
+	}
+	return CallOperandFamily().At(&row.Frozen, catalog, index)
+}
+
+// CallArgumentCount is the sealed width of the call-argument family.
+func (row Program) CallArgumentCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallArgumentFamily().Count(&row.Frozen, catalog)
+}
+
+// CallArgumentAt returns one actual argument by emitted ordinal.
+func (row Program) CallArgumentAt(index int) (CallArgument, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallArgument{}, false
+	}
+	return CallArgumentFamily().At(&row.Frozen, catalog, index)
+}
+
+// CallTypeArgumentCount is the sealed width of the call type-argument family.
+func (row Program) CallTypeArgumentCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallTypeArgumentFamily().Count(&row.Frozen, catalog)
+}
+
+// CallTypeArgumentAt returns one static type argument by emitted ordinal.
+func (row Program) CallTypeArgumentAt(index int) (CallTypeArgument, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallTypeArgument{}, false
+	}
+	return CallTypeArgumentFamily().At(&row.Frozen, catalog, index)
+}
+
 // ExactScalarSummaryCount is the sealed width of this program's exact scalar
 // summary family.
 func (row Program) ExactScalarSummaryCount() (int, bool) {

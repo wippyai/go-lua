@@ -7,7 +7,7 @@ func TestSealValidationOrdersContentIDsStrictly(t *testing.T) {
 	if !contentIDBefore(left, right) || contentIDBefore(right, left) || contentIDBefore(left, left) {
 		t.Fatal("content identity ordering is not strict")
 	}
-	if sortedPoints([]Point{{id: right}, {id: left}}) {
+	if pointsOrdered(Point{id: right}, Point{id: left}, false) {
 		t.Fatal("seal accepted unsorted point rows")
 	}
 }

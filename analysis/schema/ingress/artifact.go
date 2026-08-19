@@ -54,33 +54,21 @@ const (
 // once from a ProgramArtifact. Accessors read these columns; they never hold
 // or reopen the owner.
 type Snapshot struct {
-	artifactID          identity.ContentID
-	programID           identity.ContentID
-	schemaID            identity.ContentID
-	frozen              snapshotstore.Frozen
-	coldCatalog         identity.ContentID
-	vocabulary          structure.Table
-	points              []Point
-	edges               []StructuralEdge
-	transfers           []LocalTransfer
-	regions             []Region
-	events              []Event
-	placements          []RulePlacement
-	bodies              []BodyTransport
-	boundaries          []FunctionBoundary
-	calls               []Call
-	arguments           []CallArgument
-	allocations         []HeapAllocation
-	values              []Values
-	occurrences         []Occurrence
-	indexes             []HeapIndex
-	observations        []DiagnosticObservation
-	outcomes            []Outcome
-	staticTypeValues    []StaticTypeValue
-	staticTypeNodes     []StaticTypeNode
-	staticTypeArguments []StaticTypeArgument
-	staticExpressions   []StaticExpression
-	staticInputs        []StaticInput
+	artifactID      identity.ContentID
+	programID       identity.ContentID
+	schemaID        identity.ContentID
+	frozen          snapshotstore.Frozen
+	coldCatalog     identity.ContentID
+	vocabulary      structure.Table
+	transfers       []LocalTransfer
+	placements      []RulePlacement
+	bodies          []BodyTransport
+	boundaries      []FunctionBoundary
+	occurrences     []Occurrence
+	observations    []DiagnosticObservation
+	outcomes        []Outcome
+	staticTypeNodes []StaticTypeNode
+	staticInputs    []StaticInput
 }
 
 func (snapshot *Snapshot) Available() bool {
@@ -91,6 +79,36 @@ func vocabularyAuthority(vocabulary structure.Table) bool {
 	return vocabulary.Count(structure.CategoryArm) != 0 &&
 		vocabulary.Count(structure.CategoryEvent) != 0 &&
 		vocabulary.Count(structure.CategoryOutcome) != 0
+}
+
+// coldView is the address a snapshot reads its cold families at. It travels
+// inside the rows that name a child span, so a span is rejoined where it is
+// read and the snapshot never holds a second copy of a published plane.
+type coldView struct {
+	frozen  *snapshotstore.Frozen
+	catalog identity.ContentID
+}
+
+func (snapshot *Snapshot) coldView() coldView {
+	if snapshot == nil {
+		return coldView{}
+	}
+	return coldView{frozen: &snapshot.frozen, catalog: snapshot.coldCatalog}
+}
+
+func coldCount[V cold.Row](view coldView, family cold.Family[V]) (int, bool) {
+	if view.frozen == nil {
+		return 0, false
+	}
+	return family.Count(view.frozen, view.catalog)
+}
+
+func coldRow[V cold.Row](view coldView, family cold.Family[V], index int) (V, bool) {
+	var absent V
+	if view.frozen == nil {
+		return absent, false
+	}
+	return family.At(view.frozen, view.catalog, index)
 }
 
 func artifactAuthority(artifact *programartifact.Artifact) bool {
@@ -133,25 +151,47 @@ func (snapshot *Snapshot) PointCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.points)
+	count, published := coldCount(snapshot.coldView(), cold.PointFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) PointAt(index int) (Point, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.points) {
+	if !snapshot.Available() {
 		return Point{}, false
 	}
-	return snapshot.points[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.PointFamily(), index)
+	if !held {
+		return Point{}, false
+	}
+	return Point{row: row, view: view}, true
 }
 func (snapshot *Snapshot) StructuralEdgeCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.edges)
+	count, published := coldCount(snapshot.coldView(), cold.EnvironmentEdgeFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) StructuralEdgeAt(index int) (StructuralEdge, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.edges) {
+	if !snapshot.Available() {
 		return StructuralEdge{}, false
 	}
-	return snapshot.edges[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.EnvironmentEdgeFamily(), index)
+	if !held {
+		return StructuralEdge{}, false
+	}
+	arm, armOK := projectArm(snapshot.vocabulary, uint16(row.Arm()))
+	if !armOK {
+		return StructuralEdge{}, false
+	}
+	return StructuralEdge{row: row, view: view, arm: arm}, true
 }
 func (snapshot *Snapshot) LocalTransferCount() int {
 	if !snapshot.Available() {
@@ -169,25 +209,46 @@ func (snapshot *Snapshot) RegionCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.regions)
+	count, published := coldCount(snapshot.coldView(), cold.RegionFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) RegionAt(index int) (Region, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.regions) {
+	if !snapshot.Available() {
 		return Region{}, false
 	}
-	return snapshot.regions[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.RegionFamily(), index)
+	if !held {
+		return Region{}, false
+	}
+	return Region{row: row, view: view}, true
 }
 func (snapshot *Snapshot) EventCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.events)
+	count, published := coldCount(snapshot.coldView(), cold.WTOEventFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.events) {
+	if !snapshot.Available() {
 		return Event{}, false
 	}
-	return snapshot.events[index], true
+	row, held := coldRow(snapshot.coldView(), cold.WTOEventFamily(), index)
+	if !held {
+		return Event{}, false
+	}
+	kind, kindOK := projectEvent(snapshot.vocabulary, uint16(row.Kind()))
+	if !kindOK {
+		return Event{}, false
+	}
+	return Event{row: row, kind: kind}, true
 }
 func (snapshot *Snapshot) RulePlacementCount() int {
 	if !snapshot.Available() {
@@ -229,20 +290,29 @@ func (snapshot *Snapshot) CallArgumentCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.arguments)
+	count, published := coldCount(snapshot.coldView(), cold.CallArgumentFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) CallArgumentAt(index int) (CallArgument, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.arguments) {
+	if !snapshot.Available() {
 		return CallArgument{}, false
 	}
-	return snapshot.arguments[index], true
+	row, held := coldRow(snapshot.coldView(), cold.CallArgumentFamily(), index)
+	if !held {
+		return CallArgument{}, false
+	}
+	return CallArgument{row: row}, true
 }
 func (snapshot *Snapshot) CallArgumentForID(id identity.ContentID) (CallArgument, bool) {
 	if !snapshot.Available() || !id.Available() {
 		return CallArgument{}, false
 	}
-	for _, row := range snapshot.arguments {
-		if row.ID() == id {
+	for index := 0; index < snapshot.CallArgumentCount(); index++ {
+		row, held := snapshot.CallArgumentAt(index)
+		if held && row.ID() == id {
 			return row, row.Available()
 		}
 	}
@@ -252,13 +322,22 @@ func (snapshot *Snapshot) CallCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.calls)
+	count, published := coldCount(snapshot.coldView(), cold.CallFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) CallAt(index int) (Call, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.calls) {
+	if !snapshot.Available() {
 		return Call{}, false
 	}
-	return snapshot.calls[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.CallFamily(), index)
+	if !held {
+		return Call{}, false
+	}
+	return Call{row: row, view: view}, true
 }
 
 // CallForID resolves one parent-issued Call identity through the sealed
@@ -270,8 +349,9 @@ func (snapshot *Snapshot) CallForID(id identity.ContentID) (Call, bool) {
 	}
 	var found Call
 	foundOne := false
-	for _, row := range snapshot.calls {
-		if row.ID() != id {
+	for index := 0; index < snapshot.CallCount(); index++ {
+		row, held := snapshot.CallAt(index)
+		if !held || row.ID() != id {
 			continue
 		}
 		if foundOne {
@@ -285,31 +365,52 @@ func (snapshot *Snapshot) HeapAllocationCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.allocations)
+	count, published := coldCount(snapshot.coldView(), cold.HeapAllocationFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) HeapAllocationAt(index int) (HeapAllocation, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.allocations) {
+	if !snapshot.Available() {
 		return HeapAllocation{}, false
 	}
-	return snapshot.allocations[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.HeapAllocationFamily(), index)
+	if !held {
+		return HeapAllocation{}, false
+	}
+	return HeapAllocation{row: row, view: view}, true
 }
 func (snapshot *Snapshot) ValuesCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.values)
+	count, published := coldCount(snapshot.coldView(), cold.ValuesFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) StaticTypeValueCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.staticTypeValues)
+	count, published := coldCount(snapshot.coldView(), cold.StaticTypeValueFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) StaticTypeValueAt(index int) (StaticTypeValue, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeValues) {
+	if !snapshot.Available() {
 		return StaticTypeValue{}, false
 	}
-	return snapshot.staticTypeValues[index], true
+	row, held := coldRow(snapshot.coldView(), cold.StaticTypeValueFamily(), index)
+	if !held {
+		return StaticTypeValue{}, false
+	}
+	return StaticTypeValue{row: row}, true
 }
 func (snapshot *Snapshot) StaticTypeNodeCount() int {
 	if !snapshot.Available() {
@@ -338,25 +439,41 @@ func (snapshot *Snapshot) StaticTypeArgumentCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.staticTypeArguments)
+	count, published := coldCount(snapshot.coldView(), cold.CallTypeArgumentFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) StaticTypeArgumentAt(index int) (StaticTypeArgument, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeArguments) {
+	if !snapshot.Available() {
 		return StaticTypeArgument{}, false
 	}
-	return snapshot.staticTypeArguments[index], true
+	row, held := coldRow(snapshot.coldView(), cold.CallTypeArgumentFamily(), index)
+	if !held {
+		return StaticTypeArgument{}, false
+	}
+	return StaticTypeArgument{row: row}, true
 }
 func (snapshot *Snapshot) StaticExpressionCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.staticExpressions)
+	count, published := coldCount(snapshot.coldView(), cold.StaticExpressionFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) StaticExpressionAt(index int) (StaticExpression, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticExpressions) {
+	if !snapshot.Available() {
 		return StaticExpression{}, false
 	}
-	return snapshot.staticExpressions[index], true
+	row, held := coldRow(snapshot.coldView(), cold.StaticExpressionFamily(), index)
+	if !held {
+		return StaticExpression{}, false
+	}
+	return StaticExpression{row: row}, true
 }
 func (snapshot *Snapshot) StaticInputCount() int {
 	if !snapshot.Available() {
@@ -371,10 +488,15 @@ func (snapshot *Snapshot) StaticInputAt(index int) (StaticInput, bool) {
 	return snapshot.staticInputs[index], true
 }
 func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.values) {
+	if !snapshot.Available() {
 		return Values{}, false
 	}
-	return snapshot.values[index], true
+	view := snapshot.coldView()
+	row, held := coldRow(view, cold.ValuesFamily(), index)
+	if !held {
+		return Values{}, false
+	}
+	return Values{row: row, view: view}, true
 }
 func (snapshot *Snapshot) OutcomeCount() int {
 	if !snapshot.Available() {
@@ -393,7 +515,7 @@ func (snapshot *Snapshot) OutcomeReturnValueAt(outcomeIndex, valueIndex int) (Va
 	if !ok || valueIndex < 0 || valueIndex >= len(row.returns) {
 		return ValuesMember{}, false
 	}
-	return ValuesMember{id: row.returns[valueIndex]}, true
+	return newValuesMember(row.returns[valueIndex])
 }
 func (snapshot *Snapshot) DiagnosticObservationCount() int {
 	if !snapshot.Available() {
@@ -422,13 +544,21 @@ func (snapshot *Snapshot) HeapIndexCount() int {
 	if !snapshot.Available() {
 		return 0
 	}
-	return len(snapshot.indexes)
+	count, published := coldCount(snapshot.coldView(), cold.HeapIndexFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (snapshot *Snapshot) HeapIndexAt(index int) (HeapIndex, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.indexes) {
+	if !snapshot.Available() {
 		return HeapIndex{}, false
 	}
-	return snapshot.indexes[index], true
+	row, held := coldRow(snapshot.coldView(), cold.HeapIndexFamily(), index)
+	if !held {
+		return HeapIndex{}, false
+	}
+	return HeapIndex{row: row}, true
 }
 func (snapshot *Snapshot) OccurrenceCount() int {
 	if !snapshot.Available() {
@@ -498,58 +628,65 @@ func (snapshot *Snapshot) OccurrenceForID(kind uint8, id identity.ContentID) (Oc
 }
 
 type Point struct {
-	id        identity.ContentID
-	initial   bool
-	decisions []identity.ContentID
+	row  cold.Point
+	view coldView
 }
 
-func (row Point) ID() identity.ContentID { return row.id }
-func (row Point) Initial() bool          { return row.initial && row.id.Available() }
-func (row Point) DecisionCount() int     { return len(row.decisions) }
+func (row Point) ID() identity.ContentID { return row.row.ID() }
+func (row Point) Initial() bool          { return row.row.Initial() }
+func (row Point) DecisionCount() int     { return row.row.DecisionCount() }
 func (row Point) DecisionAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.decisions) {
+	offset, count, spanOK := row.row.DecisionSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	return row.decisions[index], true
+	decision, held := coldRow(row.view, cold.PointDecisionFamily(), int(offset)+index)
+	if !held {
+		return identity.ContentID{}, false
+	}
+	return decision.ID(), true
 }
 
 type StructuralEdge struct {
-	id, from, to, route  identity.ContentID
-	guard, decision      identity.ContentID
-	component, mu, reset identity.ContentID
-	arm                  StructuralArm
-	guarded, truth       bool
-	hasReset             bool
-	resets               []identity.ContentID
+	row  cold.EnvironmentEdge
+	view coldView
+	arm  StructuralArm
 }
 
-func (row StructuralEdge) ID() identity.ContentID          { return row.id }
-func (row StructuralEdge) From() identity.ContentID        { return row.from }
-func (row StructuralEdge) To() identity.ContentID          { return row.to }
-func (row StructuralEdge) RouteID() identity.ContentID     { return row.route }
-func (row StructuralEdge) ComponentID() identity.ContentID { return row.component }
+func (row StructuralEdge) ID() identity.ContentID          { return row.row.ID() }
+func (row StructuralEdge) From() identity.ContentID        { return row.row.From() }
+func (row StructuralEdge) To() identity.ContentID          { return row.row.To() }
+func (row StructuralEdge) RouteID() identity.ContentID     { return row.row.RouteID() }
+func (row StructuralEdge) ComponentID() identity.ContentID { return row.row.ComponentID() }
 func (row StructuralEdge) Arm() StructuralArm              { return row.arm }
 func (row StructuralEdge) GuardID() (identity.ContentID, bool) {
-	return row.guard, row.guarded && row.guard.Available()
+	guard, guarded := row.row.GuardID()
+	return guard, guarded && guard.Available()
 }
 func (row StructuralEdge) DecisionID() (identity.ContentID, bool) {
-	return row.decision, row.guarded && row.decision.Available()
+	decision, guarded := row.row.DecisionID()
+	return decision, guarded && decision.Available()
 }
-func (row StructuralEdge) Truth() (bool, bool) {
-	return row.truth, row.guarded
-}
+func (row StructuralEdge) Truth() (bool, bool) { return row.row.Truth() }
 func (row StructuralEdge) MuPathID() (identity.ContentID, bool) {
-	return row.mu, row.mu.Available()
+	mu, _ := row.row.MuPathID()
+	return mu, mu.Available()
 }
 func (row StructuralEdge) ResetDigest() (identity.ContentID, bool) {
-	return row.reset, row.hasReset && row.reset.Available()
+	reset, hasReset := row.row.ResetDigest()
+	return reset, hasReset && reset.Available()
 }
-func (row StructuralEdge) ResetCount() int { return len(row.resets) }
+func (row StructuralEdge) ResetCount() int { return row.row.ResetCount() }
 func (row StructuralEdge) ResetAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.resets) {
+	offset, count, spanOK := row.row.ResetSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	return row.resets[index], true
+	witness, held := coldRow(row.view, cold.EnvironmentResetFamily(), int(offset)+index)
+	if !held {
+		return identity.ContentID{}, false
+	}
+	return witness.ID(), true
 }
 
 type LocalTransfer struct {
@@ -574,32 +711,43 @@ func (row LocalTransfer) WritesAt(index int) (schema.Key, bool) {
 }
 
 type Region struct {
-	id, head, parent identity.ContentID
-	cyclic           bool
-	members          []identity.ContentID
+	row  cold.Region
+	view coldView
 }
 
-func (row Region) ID() identity.ContentID       { return row.id }
-func (row Region) Head() identity.ContentID     { return row.head }
-func (row Region) ParentID() identity.ContentID { return row.parent }
-func (row Region) Cyclic() bool                 { return row.cyclic }
-func (row Region) MemberCount() int             { return len(row.members) }
+func (row Region) ID() identity.ContentID { return row.row.ID() }
+func (row Region) Head() identity.ContentID {
+	head, held := row.MemberAt(0)
+	if !held {
+		return identity.ContentID{}
+	}
+	return head
+}
+func (row Region) ParentID() identity.ContentID { return row.row.ParentID() }
+func (row Region) Cyclic() bool                 { return row.row.Cyclic() }
+func (row Region) MemberCount() int             { return row.row.MemberCount() }
 func (row Region) MemberAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.members) {
+	offset, count, spanOK := row.row.MemberSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return identity.ContentID{}, false
 	}
-	return row.members[index], true
+	member, held := coldRow(row.view, cold.RegionMemberFamily(), int(offset)+index)
+	if !held {
+		return identity.ContentID{}, false
+	}
+	return member.ID(), true
 }
 
+// Event is one order bracket read out of the published plane. Its kind is the
+// sealed structural vocabulary's member, projected at the read site.
 type Event struct {
-	kind   EventKind
-	region identity.ContentID
-	point  identity.ContentID
+	row  cold.WTOEvent
+	kind EventKind
 }
 
 func (row Event) Kind() EventKind              { return row.kind }
-func (row Event) RegionID() identity.ContentID { return row.region }
-func (row Event) PointID() identity.ContentID  { return row.point }
+func (row Event) RegionID() identity.ContentID { return row.row.RegionID() }
+func (row Event) PointID() identity.ContentID  { return row.row.PointID() }
 
 type RulePlacement struct {
 	key         schema.Key
@@ -755,75 +903,66 @@ func (row FunctionBoundary) Available() bool {
 	return true
 }
 
-type CallOperand struct {
-	id, call, value, span identity.ContentID
-	callee                bool
-}
+type CallOperand struct{ row cold.CallOperand }
 
-func (row CallOperand) ID() identity.ContentID      { return row.id }
-func (row CallOperand) CallID() identity.ContentID  { return row.call }
-func (row CallOperand) ValueID() identity.ContentID { return row.value }
-func (row CallOperand) SpanID() identity.ContentID  { return row.span }
-func (row CallOperand) Callee() bool                { return row.callee }
+func (row CallOperand) ID() identity.ContentID      { return row.row.ID() }
+func (row CallOperand) CallID() identity.ContentID  { return row.row.CallID() }
+func (row CallOperand) ValueID() identity.ContentID { return row.row.ValueID() }
+func (row CallOperand) SpanID() identity.ContentID  { return row.row.SpanID() }
+func (row CallOperand) Callee() bool                { return row.row.Kind() == cold.CallOperandCallee }
 
-type CallArgument struct {
-	id, call, values, member, span identity.ContentID
-	position                       uint32
-}
+type CallArgument struct{ row cold.CallArgument }
 
-func (row CallArgument) Available() bool {
-	return row.id.Available() && row.call.Available() && row.values.Available() && row.member.Available() && row.span.Available()
-}
-func (row CallArgument) ID() identity.ContentID       { return row.id }
-func (row CallArgument) CallID() identity.ContentID   { return row.call }
-func (row CallArgument) ValuesID() identity.ContentID { return row.values }
-func (row CallArgument) MemberID() identity.ContentID { return row.member }
-func (row CallArgument) ValueID() identity.ContentID  { return row.member }
-func (row CallArgument) SpanID() identity.ContentID   { return row.span }
-func (row CallArgument) Index() uint32                { return row.position }
+func (row CallArgument) Available() bool              { return row.row.Available() }
+func (row CallArgument) ID() identity.ContentID       { return row.row.ID() }
+func (row CallArgument) CallID() identity.ContentID   { return row.row.CallID() }
+func (row CallArgument) ValuesID() identity.ContentID { return row.row.ValuesID() }
+func (row CallArgument) MemberID() identity.ContentID { return row.row.MemberID() }
+func (row CallArgument) ValueID() identity.ContentID  { return row.row.MemberID() }
+func (row CallArgument) SpanID() identity.ContentID   { return row.row.SpanID() }
+func (row CallArgument) Index() uint32                { return row.row.Index() }
 
 type Call struct {
-	id, body, span, callee, formal, values, types identity.ContentID
-	target                                        identity.ContentID
-	form                                          uint8
-	receiver                                      identity.ContentID
-	hasReceiver                                   bool
-	tail                                          identity.ContentID
-	hasTail                                       bool
-	operands                                      []CallOperand
-	arguments                                     []CallArgument
+	row  cold.Call
+	view coldView
 }
 
-func (row Call) ID() identity.ContentID              { return row.id }
-func (row Call) BodyID() identity.ContentID          { return row.body }
-func (row Call) SpanID() identity.ContentID          { return row.span }
-func (row Call) CalleeID() identity.ContentID        { return row.callee }
-func (row Call) FormalID() identity.ContentID        { return row.formal }
-func (row Call) ValuesID() identity.ContentID        { return row.values }
-func (row Call) TypeArgumentsID() identity.ContentID { return row.types }
-func (row Call) Form() uint8                         { return row.form }
+func (row Call) ID() identity.ContentID              { return row.row.ID() }
+func (row Call) BodyID() identity.ContentID          { return row.row.BodyID() }
+func (row Call) SpanID() identity.ContentID          { return row.row.SpanID() }
+func (row Call) CalleeID() identity.ContentID        { return row.row.CalleeID() }
+func (row Call) FormalID() identity.ContentID        { return row.row.FormalID() }
+func (row Call) ValuesID() identity.ContentID        { return row.row.ValuesID() }
+func (row Call) TypeArgumentsID() identity.ContentID { return row.row.TypeArgumentsID() }
+func (row Call) Form() uint8                         { return uint8(row.row.Form()) }
 func (row Call) DirectTargetBody() (identity.ContentID, bool) {
-	return row.target, row.target.Available()
+	return row.row.DirectTargetBody()
 }
-func (row Call) ReceiverID() (identity.ContentID, bool) {
-	return row.receiver, row.hasReceiver && row.receiver.Available()
-}
-func (row Call) TailID() (identity.ContentID, bool) {
-	return row.tail, row.hasTail && row.tail.Available()
-}
-func (row Call) OperandCount() int  { return len(row.operands) }
-func (row Call) ArgumentCount() int { return len(row.arguments) }
+func (row Call) ReceiverID() (identity.ContentID, bool) { return row.row.ReceiverID() }
+func (row Call) TailID() (identity.ContentID, bool)     { return row.row.TailID() }
+func (row Call) OperandCount() int                      { return row.row.OperandCount() }
+func (row Call) ArgumentCount() int                     { return row.row.ArgumentCount() }
 func (row Call) OperandAt(index int) (CallOperand, bool) {
-	if index < 0 || index >= len(row.operands) {
+	offset, count, spanOK := row.row.OperandSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return CallOperand{}, false
 	}
-	return row.operands[index], true
+	operand, held := coldRow(row.view, cold.CallOperandFamily(), int(offset)+index)
+	if !held {
+		return CallOperand{}, false
+	}
+	return CallOperand{row: operand}, true
 }
 func (row Call) ArgumentAt(index int) (CallArgument, bool) {
-	if index < 0 || index >= len(row.arguments) {
+	offset, count, spanOK := row.row.ArgumentSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return CallArgument{}, false
 	}
-	return row.arguments[index], true
+	argument, held := coldRow(row.view, cold.CallArgumentFamily(), int(offset)+index)
+	if !held {
+		return CallArgument{}, false
+	}
+	return CallArgument{row: argument}, true
 }
 func (snapshot *Snapshot) CallArgumentFor(callIndex, childIndex int) (CallArgument, bool) {
 	call, ok := snapshot.CallAt(callIndex)
@@ -833,100 +972,96 @@ func (snapshot *Snapshot) CallArgumentFor(callIndex, childIndex int) (CallArgume
 	return call.ArgumentAt(childIndex)
 }
 
-type HeapField struct {
-	id, selector, valuesID, valuesSpan identity.ContentID
-	kind                               uint8
-	width                              int
-	finalOpen                          bool
-	sharesFirst                        bool
-	normalized                         uint64
-	normalizedOK                       bool
-}
+// HeapField, HeapAllocation, Values, ValuesMember, ValuesTail and HeapIndex
+// are views over cold families the compiled program already publishes. A row
+// here is the sealed cold row plus the address it was read at, so a field or
+// member span is rejoined at the read site and the plane is declared once.
 
-func (row HeapField) Available() bool              { return row.id.Available() && row.valuesID.Available() }
-func (row HeapField) ID() identity.ContentID       { return row.id }
-func (row HeapField) ValuesID() identity.ContentID { return row.valuesID }
-func (row HeapField) Kind() uint8                  { return row.kind }
-func (row HeapField) SharesFirstValueCell() bool   { return row.Available() && row.sharesFirst }
-func (row HeapField) SelectorSpan() identity.ContentID {
-	return row.selector
-}
+type HeapField struct{ row cold.HeapField }
+
+func (row HeapField) Available() bool                  { return row.row.Available() }
+func (row HeapField) ID() identity.ContentID           { return row.row.ID() }
+func (row HeapField) ValuesID() identity.ContentID     { return row.row.ValuesID() }
+func (row HeapField) Kind() uint8                      { return row.row.Kind() }
+func (row HeapField) SharesFirstValueCell() bool       { return row.row.SharesFirstValueCell() }
+func (row HeapField) SelectorSpan() identity.ContentID { return row.row.SelectorSpan() }
 func (row HeapField) Values() (identity.ContentID, int, bool, bool) {
-	if !row.Available() {
-		return identity.ContentID{}, 0, false, false
-	}
-	return row.valuesSpan, row.width, row.finalOpen, true
+	return row.row.Values()
 }
-func (row HeapField) NormalizedKey() (uint64, bool) {
-	return row.normalized, row.normalizedOK
-}
+func (row HeapField) NormalizedKey() (uint64, bool) { return row.row.NormalizedKey() }
 
 type HeapAllocation struct {
-	id, root   identity.ContentID
-	role, form uint8
-	fields     []HeapField
+	row  cold.HeapAllocation
+	view coldView
 }
 
-func (row HeapAllocation) Available() bool        { return row.id.Available() && row.root.Available() }
-func (row HeapAllocation) ID() identity.ContentID { return row.id }
-func (row HeapAllocation) Role() uint8            { return row.role }
-func (row HeapAllocation) Form() uint8            { return row.form }
-func (row HeapAllocation) RootSpan() identity.ContentID {
-	return row.root
-}
-func (row HeapAllocation) FieldCount() int { return len(row.fields) }
+func (row HeapAllocation) Available() bool              { return row.row.Available() }
+func (row HeapAllocation) ID() identity.ContentID       { return row.row.ID() }
+func (row HeapAllocation) Role() uint8                  { return row.row.Role() }
+func (row HeapAllocation) Form() uint8                  { return row.row.Form() }
+func (row HeapAllocation) RootSpan() identity.ContentID { return row.row.RootSpan() }
+func (row HeapAllocation) FieldCount() int              { return row.row.FieldCount() }
 func (row HeapAllocation) FieldAt(index int) (HeapField, bool) {
-	if index < 0 || index >= len(row.fields) {
+	offset, count, spanOK := row.row.FieldSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
 		return HeapField{}, false
 	}
-	return row.fields[index], true
+	field, held := coldRow(row.view, cold.HeapFieldFamily(), int(offset)+index)
+	if !held {
+		return HeapField{}, false
+	}
+	return HeapField{row: field}, true
 }
 
-type ValuesMember struct{ id identity.ContentID }
+type ValuesMember struct{ row cold.ValuesMember }
 
-func (row ValuesMember) ID() identity.ContentID { return row.id }
-
-type ValuesTail struct {
-	id      identity.ContentID
-	kind    uint8
-	present bool
-}
-
-func (row ValuesTail) Present() bool          { return row.present && row.id.Available() }
-func (row ValuesTail) ID() identity.ContentID { return row.id }
-func (row ValuesTail) Kind() uint8            { return row.kind }
-
-type Values struct {
-	id      identity.ContentID
-	members []ValuesMember
-	tail    ValuesTail
-}
-
-func (row Values) ID() identity.ContentID { return row.id }
-func (row Values) MemberCount() int       { return len(row.members) }
-func (row Values) MemberAt(index int) (ValuesMember, bool) {
-	if index < 0 || index >= len(row.members) {
+func newValuesMember(id identity.ContentID) (ValuesMember, bool) {
+	row, ok := cold.NewValuesMember(id)
+	if !ok {
 		return ValuesMember{}, false
 	}
-	return row.members[index], true
+	return ValuesMember{row: row}, true
+}
+
+func (row ValuesMember) ID() identity.ContentID { return row.row.ID() }
+
+type ValuesTail struct{ row cold.ValuesTail }
+
+func (row ValuesTail) Present() bool          { return row.row.Present() }
+func (row ValuesTail) ID() identity.ContentID { return row.row.ID() }
+func (row ValuesTail) Kind() uint8            { return uint8(row.row.Kind()) }
+
+type Values struct {
+	row  cold.Values
+	view coldView
+}
+
+func (row Values) ID() identity.ContentID { return row.row.ID() }
+func (row Values) MemberCount() int       { return row.row.MemberCount() }
+func (row Values) MemberAt(index int) (ValuesMember, bool) {
+	offset, count, spanOK := row.row.MemberSpan()
+	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
+		return ValuesMember{}, false
+	}
+	member, held := coldRow(row.view, cold.ValuesMemberFamily(), int(offset)+index)
+	if !held {
+		return ValuesMember{}, false
+	}
+	return ValuesMember{row: member}, true
 }
 func (row Values) Tail() (ValuesTail, bool) {
-	return row.tail, row.tail.Present()
+	tail, present := row.row.Tail()
+	return ValuesTail{row: tail}, present
 }
 
-type StaticTypeValue struct {
-	id, body, reference, root identity.ContentID
-	name                      string
-}
+type StaticTypeValue struct{ row cold.StaticTypeValue }
 
-func (row StaticTypeValue) ID() identity.ContentID          { return row.id }
-func (row StaticTypeValue) BodyPathID() identity.ContentID  { return row.body }
-func (row StaticTypeValue) ReferenceID() identity.ContentID { return row.reference }
-func (row StaticTypeValue) RootID() identity.ContentID      { return row.root }
-func (row StaticTypeValue) Name() string                    { return row.name }
-func (row StaticTypeValue) Available() bool {
-	return row.id.Available() && row.body.Available() && row.reference.Available() && row.root.Available() && row.name != ""
-}
+func (row StaticTypeValue) ID() identity.ContentID          { return row.row.ID() }
+func (row StaticTypeValue) BodyPathID() identity.ContentID  { return row.row.BodyPathID() }
+func (row StaticTypeValue) ReferenceID() identity.ContentID { return row.row.ReferenceID() }
+func (row StaticTypeValue) RootID() identity.ContentID      { return row.row.RootID() }
+func (row StaticTypeValue) Name() string                    { return row.row.Name() }
+func (row StaticTypeValue) Available() bool                 { return row.row.Available() }
 
 type StaticTypeNode struct {
 	id      identity.ContentID
@@ -943,30 +1078,21 @@ func (row StaticTypeNode) Available() bool {
 	return row.id.Available() && row.owner.Available()
 }
 
-type StaticTypeArgument struct {
-	id, call, types, reference identity.ContentID
-	index                      uint32
-}
+type StaticTypeArgument struct{ row cold.CallTypeArgument }
 
-func (row StaticTypeArgument) ID() identity.ContentID          { return row.id }
-func (row StaticTypeArgument) CallID() identity.ContentID      { return row.call }
-func (row StaticTypeArgument) TypesID() identity.ContentID     { return row.types }
-func (row StaticTypeArgument) ReferenceID() identity.ContentID { return row.reference }
-func (row StaticTypeArgument) Index() uint32                   { return row.index }
-func (row StaticTypeArgument) Available() bool {
-	return row.id.Available() && row.call.Available() && row.types.Available() && row.reference.Available()
-}
+func (row StaticTypeArgument) ID() identity.ContentID          { return row.row.ID() }
+func (row StaticTypeArgument) CallID() identity.ContentID      { return row.row.CallID() }
+func (row StaticTypeArgument) TypesID() identity.ContentID     { return row.row.TypesID() }
+func (row StaticTypeArgument) ReferenceID() identity.ContentID { return row.row.ReferenceID() }
+func (row StaticTypeArgument) Index() uint32                   { return row.row.Index() }
+func (row StaticTypeArgument) Available() bool                 { return row.row.Available() }
 
-type StaticExpression struct {
-	id, reference, owner identity.ContentID
-}
+type StaticExpression struct{ row cold.StaticExpression }
 
-func (row StaticExpression) ID() identity.ContentID          { return row.id }
-func (row StaticExpression) ReferenceID() identity.ContentID { return row.reference }
-func (row StaticExpression) Owner() identity.ContentID       { return row.owner }
-func (row StaticExpression) Available() bool {
-	return row.id.Available() && row.reference.Available() && row.owner.Available()
-}
+func (row StaticExpression) ID() identity.ContentID          { return row.row.ID() }
+func (row StaticExpression) ReferenceID() identity.ContentID { return row.row.ReferenceID() }
+func (row StaticExpression) Owner() identity.ContentID       { return row.row.Owner() }
+func (row StaticExpression) Available() bool                 { return row.row.Available() }
 
 type StaticInput struct {
 	id, owner, expression, source, target, operand, frontier identity.ContentID
@@ -1079,37 +1205,18 @@ func (row Occurrence) OperationPredicateRefinement() (identity.ContentID, identi
 	return row.inputs[0], row.inputs[1], row.inputs[2], row.inputs[3], uint8(row.code & 0xff), row.code&(1<<8) != 0, true
 }
 
-type HeapIndex struct {
-	id, base, result, key, valuesSpan, valuesID identity.ContentID
-	read                                        bool
-	lens                                        uint8
-	exact                                       uint64
-	position                                    int
-}
+type HeapIndex struct{ row cold.HeapIndex }
 
-func (row HeapIndex) Available() bool {
-	return row.id.Available() && row.base.Available()
-}
-func (row HeapIndex) ID() identity.ContentID       { return row.id }
-func (row HeapIndex) BaseSpan() identity.ContentID { return row.base }
-func (row HeapIndex) ResultSpan() identity.ContentID {
-	return row.result
-}
-func (row HeapIndex) DynamicKeySpan() identity.ContentID {
-	return row.key
-}
-func (row HeapIndex) ExactKey() (uint64, bool) {
-	return row.exact, row.lens == 1 && row.exact != 0
-}
-func (row HeapIndex) Read() bool { return row.read }
-func (row HeapIndex) ValuesID() identity.ContentID {
-	return row.valuesID
-}
+func (row HeapIndex) Available() bool                    { return row.row.Available() }
+func (row HeapIndex) ID() identity.ContentID             { return row.row.ID() }
+func (row HeapIndex) BaseSpan() identity.ContentID       { return row.row.BaseSpan() }
+func (row HeapIndex) ResultSpan() identity.ContentID     { return row.row.ResultSpan() }
+func (row HeapIndex) DynamicKeySpan() identity.ContentID { return row.row.DynamicKeySpan() }
+func (row HeapIndex) ExactKey() (uint64, bool)           { return row.row.ExactKey() }
+func (row HeapIndex) Read() bool                         { return row.row.Read() }
+func (row HeapIndex) ValuesID() identity.ContentID       { return row.row.ValuesID() }
 func (row HeapIndex) Values() (identity.ContentID, int, bool) {
-	if row.read {
-		return identity.ContentID{}, 0, false
-	}
-	return row.valuesSpan, row.position, true
+	return row.row.Values()
 }
 
 type diagnosticBranch struct {
@@ -1375,46 +1482,21 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		coldCatalog: coldCatalog,
 		vocabulary:  vocabulary,
 	}
-	snapshot.points = make([]Point, 0, artifact.PointCount())
-	for index := 0; index < artifact.PointCount(); index++ {
-		row, ok := artifact.PointAt(index)
-		if !ok || !row.ID().Available() {
-			return nil, false
-		}
-		initial, initialOK := row.Initial()
-		decisions, decisionsOK := copyIDs(row.DecisionCount(), row.DecisionAt)
-		if !initialOK || !decisionsOK {
-			return nil, false
-		}
-		snapshot.points = append(snapshot.points, Point{id: row.ID(), initial: initial, decisions: decisions})
+	// Every published route arm must name a member of the sealed structural
+	// vocabulary. The admission is stated once here over the published plane;
+	// the arm each reader receives is projected at the read site.
+	edgeCount, edgesPublished := coldCount(snapshot.coldView(), cold.EnvironmentEdgeFamily())
+	if !edgesPublished {
+		return nil, false
 	}
-	snapshot.edges = make([]StructuralEdge, 0, artifact.EnvironmentEdgeCount())
-	for index := 0; index < artifact.EnvironmentEdgeCount(); index++ {
-		row, ok := artifact.EnvironmentEdgeAt(index)
-		if !ok {
+	for index := 0; index < edgeCount; index++ {
+		row, held := coldRow(snapshot.coldView(), cold.EnvironmentEdgeFamily(), index)
+		if !held {
 			return nil, false
 		}
-		arm, armOK := projectArm(vocabulary, uint16(row.Arm()))
-		if !armOK {
+		if _, armOK := projectArm(vocabulary, uint16(row.Arm())); !armOK {
 			return nil, false
 		}
-		guard, guarded := row.GuardID()
-		decision, decisionOK := row.DecisionID()
-		truth, truthOK := row.Truth()
-		mu, hasMu := row.MuPathID()
-		reset, hasReset := row.ResetDigest()
-		if guarded != decisionOK || guarded != truthOK || hasMu != hasReset {
-			return nil, false
-		}
-		resets, resetsOK := copyIDs(row.ResetCount(), row.ResetAt)
-		if !resetsOK {
-			return nil, false
-		}
-		snapshot.edges = append(snapshot.edges, StructuralEdge{
-			id: row.ID(), from: row.From(), to: row.To(), route: row.RouteID(),
-			guard: guard, decision: decision, component: row.ComponentID(), mu: mu, reset: reset,
-			arm: arm, guarded: guarded, truth: truth, hasReset: hasReset, resets: resets,
-		})
 	}
 	snapshot.transfers = make([]LocalTransfer, 0, artifact.LocalTransferCount())
 	for index := 0; index < artifact.LocalTransferCount(); index++ {
@@ -1434,31 +1516,22 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			id: row.ID(), from: row.From(), to: row.To(), full: row.FullEnvironment(), writes: writes,
 		})
 	}
-	snapshot.regions = make([]Region, 0, artifact.RegionCount())
-	for index := 0; index < artifact.RegionCount(); index++ {
-		row, ok := artifact.RegionAt(index)
-		if !ok {
-			return nil, false
-		}
-		members, membersOK := copyIDs(row.MemberCount(), row.MemberAt)
-		if !membersOK {
-			return nil, false
-		}
-		snapshot.regions = append(snapshot.regions, Region{
-			id: row.ID(), head: row.Head(), parent: row.ParentID(), cyclic: row.Cyclic(), members: members,
-		})
+	// Every published order bracket must name a member of the sealed
+	// structural vocabulary. The admission is stated once here over the
+	// published plane; the kind each reader receives is projected at the read
+	// site.
+	eventCount, eventsPublished := coldCount(snapshot.coldView(), cold.WTOEventFamily())
+	if !eventsPublished {
+		return nil, false
 	}
-	snapshot.events = make([]Event, 0, artifact.WTOEventCount())
-	for index := 0; index < artifact.WTOEventCount(); index++ {
-		row, ok := artifact.WTOEventAt(index)
-		if !ok {
+	for index := 0; index < eventCount; index++ {
+		row, held := coldRow(snapshot.coldView(), cold.WTOEventFamily(), index)
+		if !held {
 			return nil, false
 		}
-		kind, kindOK := projectEvent(vocabulary, uint16(row.Kind()))
-		if !kindOK {
+		if _, kindOK := projectEvent(vocabulary, uint16(row.Kind())); !kindOK {
 			return nil, false
 		}
-		snapshot.events = append(snapshot.events, Event{kind: kind, region: row.RegionID(), point: row.PointID()})
 	}
 	snapshot.placements = make([]RulePlacement, 0, artifact.RulePlacementCount())
 	for index := 0; index < artifact.RulePlacementCount(); index++ {
@@ -1555,103 +1628,31 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			vararg: copiedVararg, hasVararg: hasVararg, captures: captures, outcomes: outcomes,
 		})
 	}
-	snapshot.calls = make([]Call, 0, artifact.CallCount())
-	for index := 0; index < artifact.CallCount(); index++ {
-		row, ok := artifact.CallAt(index)
-		if !ok || !row.ID().Available() {
-			return nil, false
-		}
-		operands := make([]CallOperand, 0, row.OperandCount())
-		for child := 0; child < row.OperandCount(); child++ {
-			operand, operandOK := artifact.CallOperandFor(index, child)
-			if !operandOK || !operand.ID().Available() {
-				return nil, false
-			}
-			operands = append(operands, CallOperand{
-				id: operand.ID(), call: operand.CallID(), value: operand.ValueID(),
-				span: operand.SpanID(), callee: operand.Kind() == programartifact.CallOperandCallee,
-			})
-		}
-		arguments := make([]CallArgument, 0, row.ArgumentCount())
-		for child := 0; child < row.ArgumentCount(); child++ {
-			argument, argumentOK := artifact.CallArgumentFor(index, child)
-			if !argumentOK || !argument.Available() {
-				return nil, false
-			}
-			arguments = append(arguments, CallArgument{
-				id: argument.ID(), call: argument.CallID(), values: argument.ValuesID(),
-				member: argument.MemberID(), span: argument.SpanID(), position: argument.Index(),
-			})
-		}
-		receiver, hasReceiver := row.ReceiverID()
-		tail, hasTail := row.TailID()
-		target, _ := row.DirectTargetBody()
-		snapshot.calls = append(snapshot.calls, Call{
-			id: row.ID(), body: row.BodyID(), span: row.SpanID(), callee: row.CalleeID(), formal: row.FormalID(),
-			values: row.ValuesID(), types: row.TypeArgumentsID(), target: target, form: uint8(row.Form()),
-			receiver: receiver, hasReceiver: hasReceiver, tail: tail, hasTail: hasTail,
-			operands: operands, arguments: arguments,
-		})
+	// Every published call must name operand and argument spans the two child
+	// planes actually hold. The admission is stated once here over the
+	// published planes; each child row is rejoined at the read site.
+	callView := snapshot.coldView()
+	callCount, callsPublished := coldCount(callView, cold.CallFamily())
+	operandCount, operandsPublished := coldCount(callView, cold.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(callView, cold.CallArgumentFamily())
+	if !callsPublished || !operandsPublished || !argumentsPublished {
+		return nil, false
 	}
-	snapshot.arguments = make([]CallArgument, 0, artifact.CallArgumentCount())
-	for index := 0; index < artifact.CallArgumentCount(); index++ {
-		row, ok := artifact.CallArgumentAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.arguments = append(snapshot.arguments, CallArgument{
-			id: row.ID(), call: row.CallID(), values: row.ValuesID(),
-			member: row.MemberID(), span: row.SpanID(), position: row.Index(),
-		})
+	if _, typeArgumentsPublished := coldCount(callView, cold.CallTypeArgumentFamily()); !typeArgumentsPublished {
+		return nil, false
 	}
-	snapshot.allocations = make([]HeapAllocation, 0, artifact.HeapAllocationCount())
-	for index := 0; index < artifact.HeapAllocationCount(); index++ {
-		row, ok := artifact.HeapAllocationAt(index)
-		if !ok || !row.Available() {
+	for index := 0; index < callCount; index++ {
+		row, held := coldRow(callView, cold.CallFamily(), index)
+		if !held {
 			return nil, false
 		}
-		fields := make([]HeapField, 0, row.FieldCount())
-		for fieldIndex := 0; fieldIndex < row.FieldCount(); fieldIndex++ {
-			field, fieldOK := row.FieldAt(fieldIndex)
-			if !fieldOK || !field.Available() {
-				return nil, false
-			}
-			valuesSpan, width, finalOpen, valuesOK := field.Values()
-			if !valuesOK {
-				return nil, false
-			}
-			normalized, normalizedOK := field.NormalizedKey()
-			fields = append(fields, HeapField{
-				id: field.ID(), selector: field.SelectorSpan(), valuesID: field.ValuesID(),
-				valuesSpan: valuesSpan, kind: uint8(field.Kind()), width: width, finalOpen: finalOpen,
-				sharesFirst: field.SharesFirstValueCell(),
-				normalized:  uint64(normalized), normalizedOK: normalizedOK,
-			})
-		}
-		snapshot.allocations = append(snapshot.allocations, HeapAllocation{
-			id: row.ID(), root: row.RootSpan(), role: uint8(row.Role()), form: uint8(row.Form()), fields: fields,
-		})
-	}
-	snapshot.values = make([]Values, 0, artifact.ValuesCount())
-	for index := 0; index < artifact.ValuesCount(); index++ {
-		row, ok := artifact.ValuesAt(index)
-		if !ok || !row.ID().Available() {
+		operandOffset, operandWidth, operandSpanOK := row.OperandSpan()
+		argumentOffset, argumentWidth, argumentSpanOK := row.ArgumentSpan()
+		if !operandSpanOK || !argumentSpanOK ||
+			uint64(operandOffset)+uint64(operandWidth) > uint64(operandCount) ||
+			uint64(argumentOffset)+uint64(argumentWidth) > uint64(argumentCount) {
 			return nil, false
 		}
-		members := make([]ValuesMember, 0, row.MemberCount())
-		for memberIndex := 0; memberIndex < row.MemberCount(); memberIndex++ {
-			member, memberOK := row.MemberAt(memberIndex)
-			if !memberOK {
-				return nil, false
-			}
-			members = append(members, ValuesMember{id: member.ID()})
-		}
-		tail, hasTail := row.Tail()
-		copiedTail := ValuesTail{}
-		if hasTail {
-			copiedTail = ValuesTail{id: tail.ID(), kind: uint8(tail.Kind()), present: true}
-		}
-		snapshot.values = append(snapshot.values, Values{id: row.ID(), members: members, tail: copiedTail})
 	}
 	snapshot.occurrences = make([]Occurrence, 0, artifact.OccurrenceCount())
 	for index := 0; index < artifact.OccurrenceCount(); index++ {
@@ -1671,16 +1672,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			family: family, literal: literal, hasLit: hasLit,
 		})
 	}
-	snapshot.staticTypeValues = make([]StaticTypeValue, 0, artifact.StaticTypeValueCount())
-	for index := 0; index < artifact.StaticTypeValueCount(); index++ {
-		row, ok := artifact.StaticTypeValueAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.staticTypeValues = append(snapshot.staticTypeValues, StaticTypeValue{
-			id: row.ID(), body: row.BodyPathID(), reference: row.ReferenceID(), root: row.RootID(), name: row.Name(),
-		})
-	}
 	snapshot.staticTypeNodes = make([]StaticTypeNode, 0, artifact.StaticTypeNodeCount())
 	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
 		row, ok := artifact.StaticTypeNodeAt(index)
@@ -1689,26 +1680,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		}
 		snapshot.staticTypeNodes = append(snapshot.staticTypeNodes, StaticTypeNode{
 			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
-		})
-	}
-	snapshot.staticTypeArguments = make([]StaticTypeArgument, 0, artifact.CallTypeArgumentCount())
-	for index := 0; index < artifact.CallTypeArgumentCount(); index++ {
-		row, ok := artifact.CallTypeArgumentAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.staticTypeArguments = append(snapshot.staticTypeArguments, StaticTypeArgument{
-			id: row.ID(), call: row.CallID(), types: row.TypesID(), reference: row.ReferenceID(), index: row.Index(),
-		})
-	}
-	snapshot.staticExpressions = make([]StaticExpression, 0, artifact.StaticExpressionCount())
-	for index := 0; index < artifact.StaticExpressionCount(); index++ {
-		row, ok := artifact.StaticExpressionAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.staticExpressions = append(snapshot.staticExpressions, StaticExpression{
-			id: row.ID(), reference: row.ReferenceID(), owner: row.Owner(),
 		})
 	}
 	snapshot.staticInputs = make([]StaticInput, 0, artifact.StaticInputCount())
@@ -1752,21 +1723,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			return nil, false
 		}
 		snapshot.observations = append(snapshot.observations, lowered)
-	}
-	snapshot.indexes = make([]HeapIndex, 0, artifact.HeapIndexCount())
-	for index := 0; index < artifact.HeapIndexCount(); index++ {
-		row, ok := artifact.HeapIndexAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		exact, _ := row.ExactKey()
-		valuesSpan, position, _ := row.Values()
-		snapshot.indexes = append(snapshot.indexes, HeapIndex{
-			id: row.ID(), base: row.BaseSpan(), result: row.ResultSpan(), key: row.DynamicKeySpan(),
-			valuesSpan: valuesSpan, valuesID: row.ValuesID(), read: row.Read(),
-			lens:  map[bool]uint8{true: 2, false: 1}[row.DynamicKeySpan().Available()],
-			exact: uint64(exact), position: position,
-		})
 	}
 	return snapshot, snapshot.Available()
 }

@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // IssuanceForm is the placement form one occurrence subscription takes.
@@ -340,7 +341,7 @@ func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row
 		}
 		_, hasReceiver := call.ReceiverID()
 		_, hasTail := call.TailID()
-		return call.Form() == CallFormPlain && call.ArgumentCount() == 1 && !hasReceiver && !hasTail, true
+		return call.Form() == cold.CallFormPlain && call.ArgumentCount() == 1 && !hasReceiver && !hasTail, true
 	default:
 		return false, false
 	}
@@ -349,12 +350,12 @@ func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row
 // callForID resolves one authored call row by the parent-issued identity an
 // occurrence row carries. The inverse is built once for the whole occurrence
 // walk, so deciding a requirement stays constant-time per row.
-func (compiler *compiler) callForID(id identity.ContentID) (CallRow, bool) {
+func (compiler *compiler) callForID(id identity.ContentID) (cold.Call, bool) {
 	if !id.Available() {
-		return CallRow{}, false
+		return cold.Call{}, false
 	}
 	if compiler.callsByID == nil {
-		compiler.callsByID = make(map[identity.ContentID]CallRow, len(compiler.calls))
+		compiler.callsByID = make(map[identity.ContentID]cold.Call, len(compiler.calls))
 		for _, row := range compiler.calls {
 			if row.Available() {
 				compiler.callsByID[row.ID()] = row

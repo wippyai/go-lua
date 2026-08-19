@@ -152,3 +152,74 @@ func TestColdAxisOfAnotherCatalogReadsNothing(t *testing.T) {
 		t.Fatal("a foreign catalog reported a family width")
 	}
 }
+
+// Every declared family owns a slot and a name no other family owns. A slot
+// is half of the address every consumer holds, so two families sharing one
+// slot would make the second column unpublishable and the first
+// unaddressable. The catalog states the law over the whole declaration set
+// rather than trusting each family's own arithmetic.
+func TestColdFamilySlotsAndNamesAreDistinct(t *testing.T) {
+	declared := []struct {
+		slot uint32
+		name string
+	}{
+		{CallTargetFamily().slot, CallTargetFamily().name},
+		{HeapAllocationFamily().slot, HeapAllocationFamily().name},
+		{HeapFieldFamily().slot, HeapFieldFamily().name},
+		{ValuesFamily().slot, ValuesFamily().name},
+		{ValuesMemberFamily().slot, ValuesMemberFamily().name},
+		{HeapIndexFamily().slot, HeapIndexFamily().name},
+		{ExactScalarSummaryFamily().slot, ExactScalarSummaryFamily().name},
+		{ArithmeticSummaryFamily().slot, ArithmeticSummaryFamily().name},
+		{UnarySummaryFamily().slot, UnarySummaryFamily().name},
+		{PointFamily().slot, PointFamily().name},
+		{PointDecisionFamily().slot, PointDecisionFamily().name},
+		{CallFamily().slot, CallFamily().name},
+		{CallOperandFamily().slot, CallOperandFamily().name},
+		{CallArgumentFamily().slot, CallArgumentFamily().name},
+		{CallTypeArgumentFamily().slot, CallTypeArgumentFamily().name},
+		{EnvironmentEdgeFamily().slot, EnvironmentEdgeFamily().name},
+		{EnvironmentResetFamily().slot, EnvironmentResetFamily().name},
+		{StaticTypeValueFamily().slot, StaticTypeValueFamily().name},
+		{StaticExpressionFamily().slot, StaticExpressionFamily().name},
+		{RegionFamily().slot, RegionFamily().name},
+		{RegionMemberFamily().slot, RegionMemberFamily().name},
+		{WTOEventFamily().slot, WTOEventFamily().name},
+	}
+	slots := make(map[uint32]string, len(declared))
+	names := make(map[string]uint32, len(declared))
+	for _, family := range declared {
+		if family.name == "" {
+			t.Fatalf("slot %d is declared without a name", family.slot)
+		}
+		if held, taken := slots[family.slot]; taken {
+			t.Fatalf("%s and %s both claim slot %d", held, family.name, family.slot)
+		}
+		if held, taken := names[family.name]; taken {
+			t.Fatalf("%s is declared at slots %d and %d", family.name, held, family.slot)
+		}
+		slots[family.slot] = family.name
+		names[family.name] = family.slot
+	}
+}
+
+// The publication is total over the catalog: sealing every declared family,
+// including the empty ones, publishes one column per declaration. A family
+// whose slot collided with another's would fail here rather than at the first
+// program that emitted rows into both.
+func TestColdPublicationSealsEveryDeclaredFamily(t *testing.T) {
+	catalog, derived := CatalogID(coldLawSchema(t))
+	if !derived {
+		t.Fatal("catalog identity")
+	}
+	frozen, sealed := Publication{}.Seal(catalog, identity.StoreID(1))
+	if !sealed {
+		t.Fatal("the empty publication did not seal every declared family")
+	}
+	if _, published := PointFamily().Count(&frozen, catalog); !published {
+		t.Fatal("point family is not published")
+	}
+	if _, published := WTOEventFamily().Count(&frozen, catalog); !published {
+		t.Fatal("event family is not published")
+	}
+}

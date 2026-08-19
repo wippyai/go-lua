@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 )
 
 // TestArtifactRejectsForeignFinalRoute uses an equivalent replay: IDs may
@@ -28,7 +28,7 @@ return loop(2)
 		t.Fatalf("left LocalWTO schedule unavailable: %v", failure)
 	}
 	foreignRoutes := right.Flow().Causal().Successors()
-	var foreign flow.FinalRoute
+	var foreign causal.FinalRoute
 	for index := 0; index < foreignRoutes.TotalCount(); index++ {
 		candidate, candidateOK := foreignRoutes.FinalAt(index)
 		if candidateOK {

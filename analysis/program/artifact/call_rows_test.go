@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 func TestCallRowsExposeOnlyAvailableChildRanges(t *testing.T) {
@@ -24,12 +25,29 @@ return identity(1)
 		t.Fatal("valid grammar identity was rejected")
 	}
 	artifact, failure := programartifact.CompileDetailed(published, grammar, programartifact.IssuanceDirectory{})
-	if failure.Available() || artifact == nil || !artifact.Available() || artifact.CallCount() == 0 {
+	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
 	}
+	artifactID := artifact.ID()
+	module, moduleOK := identity.DeriveContentID("call-rows-module", artifactID[:])
+	if !moduleOK {
+		t.Fatal("call rows module identity")
+	}
+	frozen, catalog, coldPublished := artifact.ColdPublication()
+	program := cold.Program{
+		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(),
+		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !coldPublished || !catalog.Available() || !program.Available() {
+		t.Fatal("call rows cold program")
+	}
+	callCount, callsOK := program.CallCount()
+	if !callsOK || callCount == 0 {
+		t.Fatal("call fixture published no call family")
+	}
 	publishedDirect := false
-	for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
-		row, rowOK := artifact.CallAt(callIndex)
+	for callIndex := 0; callIndex < callCount; callIndex++ {
+		row, rowOK := program.CallAt(callIndex)
 		if !rowOK {
 			t.Fatalf("CallAt(%d) unavailable", callIndex)
 		}
@@ -51,36 +69,36 @@ return identity(1)
 	if !publishedDirect {
 		t.Fatal("direct identity(1) call published no target body")
 	}
-	for callIndex := 0; callIndex < artifact.CallCount(); callIndex++ {
-		row, rowOK := artifact.CallAt(callIndex)
+	for callIndex := 0; callIndex < callCount; callIndex++ {
+		row, rowOK := program.CallAt(callIndex)
 		if !rowOK {
 			t.Fatalf("CallAt(%d) unavailable", callIndex)
 		}
 		for childIndex := 0; childIndex < row.OperandCount(); childIndex++ {
-			child, childOK := artifact.CallOperandFor(callIndex, childIndex)
+			child, childOK := program.CallOperandFor(callIndex, childIndex)
 			if !childOK || !child.Available() || child.CallID() != row.ID() {
 				t.Fatalf("CallOperandFor(%d,%d) escaped its parent range", callIndex, childIndex)
 			}
 		}
 		for childIndex := 0; childIndex < row.ArgumentCount(); childIndex++ {
-			child, childOK := artifact.CallArgumentFor(callIndex, childIndex)
+			child, childOK := program.CallArgumentFor(callIndex, childIndex)
 			if !childOK || !child.Available() || child.CallID() != row.ID() {
 				t.Fatalf("CallArgumentFor(%d,%d) escaped its parent range", callIndex, childIndex)
 			}
 		}
 		for childIndex := 0; childIndex < row.TypeArgumentCount(); childIndex++ {
-			child, childOK := artifact.CallTypeArgumentFor(callIndex, childIndex)
+			child, childOK := program.CallTypeArgumentFor(callIndex, childIndex)
 			if !childOK || !child.Available() || child.CallID() != row.ID() {
 				t.Fatalf("CallTypeArgumentFor(%d,%d) escaped its parent range", callIndex, childIndex)
 			}
 		}
-		if _, childOK := artifact.CallOperandFor(callIndex, row.OperandCount()); childOK {
+		if _, childOK := program.CallOperandFor(callIndex, row.OperandCount()); childOK {
 			t.Fatal("CallOperandFor exposed a child beyond the sealed range")
 		}
-		if _, childOK := artifact.CallArgumentFor(callIndex, row.ArgumentCount()); childOK {
+		if _, childOK := program.CallArgumentFor(callIndex, row.ArgumentCount()); childOK {
 			t.Fatal("CallArgumentFor exposed a child beyond the sealed range")
 		}
-		if _, childOK := artifact.CallTypeArgumentFor(callIndex, row.TypeArgumentCount()); childOK {
+		if _, childOK := program.CallTypeArgumentFor(callIndex, row.TypeArgumentCount()); childOK {
 			t.Fatal("CallTypeArgumentFor exposed a child beyond the sealed range")
 		}
 	}

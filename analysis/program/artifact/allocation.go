@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -21,8 +22,8 @@ type allocationCompileRow struct {
 	form       AllocationForm
 	template   identity.ContentID
 	root       program.Span
-	entry      flow.Site
-	finish     flow.Site
+	entry      causal.Site
+	finish     causal.Site
 	fields     []allocationFieldCompileRow
 }
 

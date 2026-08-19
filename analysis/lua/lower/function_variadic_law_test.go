@@ -207,7 +207,7 @@ func TestSourceVarargCaptureBoundaryLaw(t *testing.T) {
 	if cellKind, cellBody, _, ok := p.Flow().Authored().Storage().Cells().Get(capture); !ok || cellKind != authored.CellLocal || cellBody != child {
 		t.Fatalf("closure capture Cell = kind %v body %v ok %v, want local child Cell", cellKind, cellBody, ok)
 	}
-	if parent, ok := p.Source().Index().BodyParent(child); !ok || parent != body {
+	if parent, ok := p.Flow().Body().Parent(child); !ok || parent != body {
 		t.Fatalf("closure Body parent = %v/%v, want lexical function Body %v", parent, ok, body)
 	}
 }
@@ -218,7 +218,7 @@ func TestSourceVarargNestedOrdinaryBodyLaws(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		entry, ok := p.Source().Index().Entry()
+		entry, ok := p.Flow().Body().Entry()
 		if !ok || entry == 0 {
 			t.Fatal("missing chunk entry Body")
 		}
@@ -226,7 +226,7 @@ func TestSourceVarargNestedOrdinaryBodyLaws(t *testing.T) {
 		if !ok || nested == 0 {
 			t.Fatal("missing nested ordinary Body")
 		}
-		if parent, ok := p.Source().Index().BodyParent(nested); !ok || parent != entry {
+		if parent, ok := p.Flow().Body().Parent(nested); !ok || parent != entry {
 			t.Fatalf("nested Body parent = %v/%v, want entry %v", parent, ok, entry)
 		}
 		returned := contextBodySource(t, p, nested, 0)
@@ -250,7 +250,7 @@ func TestSourceVarargNestedOrdinaryBodyLaws(t *testing.T) {
 		if !ok || nested == 0 {
 			t.Fatal("missing nested function Body")
 		}
-		if parent, ok := p.Source().Index().BodyParent(nested); !ok || parent != functionBody {
+		if parent, ok := p.Flow().Body().Parent(nested); !ok || parent != functionBody {
 			t.Fatalf("nested function Body parent = %v/%v, want function Body %v", parent, ok, functionBody)
 		}
 		returned := contextBodySource(t, p, nested, 0)

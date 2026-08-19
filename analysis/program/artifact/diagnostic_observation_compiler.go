@@ -3,7 +3,9 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
@@ -48,7 +50,7 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 // admitDiagnosticBranchFailure copies one eligible Branch route. A guarded
 // route from another decision family, or a Branch whose arm rewrite is not
 // scope-preserving, intentionally emits no diagnostic row.
-func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, rowIndex int) CompileFailure {
+func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, rowIndex int) CompileFailure {
 	if !route.Available() {
 		return CompileFailure{}
 	}
@@ -66,7 +68,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route flow.FinalRoute, ro
 	if !identityOK {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
 	}
-	decisionTerm := identityValue.Decision()
+	decisionTerm := identityValue.Decision
 	termOK := decisionTerm != 0
 	if !termOK || keyspace.TermFamily(decisionTerm) != keyspace.FamilyBranch {
 		return CompileFailure{}
@@ -122,8 +124,8 @@ func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFals
 		return false
 	}
 	arm := func(owner keyspace.Term) bool { return owner == whenTrue || owner == whenFalse }
-	authored := input.Flow().Authored()
-	cells := authored.Storage().Cells()
+	authoredView := input.Flow().Authored()
+	cells := authoredView.Storage().Cells()
 	for index := 0; index < cells.Count(); index++ {
 		term, termOK := cells.At(index)
 		kind, body, key, rowOK := cells.Get(term)
@@ -131,14 +133,14 @@ func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFals
 			return false
 		}
 		switch kind {
-		case flow.CellLocal:
+		case authored.CellLocal:
 			if key != 0 || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 {
 				return false
 			}
 			if arm(body) {
 				return false
 			}
-		case flow.CellGlobal:
+		case authored.CellGlobal:
 			if body != 0 || key == 0 {
 				return false
 			}
@@ -146,7 +148,7 @@ func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFals
 			return false
 		}
 	}
-	labels := authored.Control().Labels()
+	labels := authoredView.Control().Labels()
 	for index := 0; index < labels.Count(); index++ {
 		term, termOK := labels.At(index)
 		owner, rowOK := labels.Get(term)
@@ -254,7 +256,7 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		location, locationOK := compiler.input.Source().Identity().Span(term)
 		if !termOK || !relationOK || !implicit || owner == 0 || ordinal == 0 || !readOK ||
 			!read.id.Available() || !read.cell.Available() ||
-			!cellRelationOK || kind != flow.CellGlobal || body != 0 || key == 0 ||
+			!cellRelationOK || kind != authored.CellGlobal || body != 0 || key == 0 ||
 			!literalOK || literal.Kind != keyspace.LiteralString || literal.String == "" ||
 			!locationOK || !validDiagnosticSpan(location) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
@@ -273,7 +275,7 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 
 // copyTypeConformanceObservationsFailure issues one TypeConformance row per
 // selected direct-call argument whose formal declares a static type. Selection
-// is the sealed DirectFunctions join already stored on CallRow: uncalled
+// is the sealed DirectFunctions join already stored on the cold Call row: uncalled
 // interiors do not emit. Method, tail, generic, and vararg calls stay silent.
 func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
@@ -304,7 +306,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 		if _, ownerSelected := selected[call.bodyPath]; !ownerSelected {
 			continue
 		}
-		if call.form != flow.CallFormPlain || call.tail.Available() || len(call.typeArguments) != 0 {
+		if call.form != accessgeometry.CallFormPlain || call.tail.Available() || len(call.typeArguments) != 0 {
 			continue
 		}
 		boundary, boundaryOK := boundaries[call.targetBody]

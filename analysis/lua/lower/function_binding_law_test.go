@@ -656,7 +656,7 @@ func bindingFunction(t *testing.T, p *program.Program, function keyspace.Term, l
 
 func bindingEntry(t *testing.T, p *program.Program) keyspace.Term {
 	t.Helper()
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Program has no entry Body")
 	}

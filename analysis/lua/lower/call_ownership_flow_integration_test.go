@@ -20,7 +20,7 @@ end
 	if got, want := p.Flow().Outcomes().Count(), 4*p.Source().Identity().FamilyCount(keyspace.FamilyBody); got != want {
 		t.Fatalf("OutcomeCount = %d, want exactly four shared outcomes per Body (%d)", got, want)
 	}
-	entry, _ := p.Source().Index().Entry()
+	entry, _ := p.Flow().Body().Entry()
 	outer, _ := p.Source().Order().BodyAt(entry, 0)
 	inner, _ := p.Source().Order().BodyAt(outer, 0)
 	call, ok := p.Flow().Authored().Calls().At(0)
@@ -123,7 +123,7 @@ func TestSourceApplicationGenericForOpenHeaderHasNoPhantomCall(t *testing.T) {
 	if p.Flow().Authored().Calls().Count() != 1 {
 		t.Fatalf("CallCount = %d, want only authored factory Call", p.Flow().Authored().Calls().Count())
 	}
-	entry, _ := p.Source().Index().Entry()
+	entry, _ := p.Flow().Body().Entry()
 	loop, ok := p.Source().Order().BodyAt(entry, 0)
 	if !ok {
 		t.Fatal("missing generic Loop")

@@ -81,7 +81,7 @@ func TestSourceNestedBranchesKeepSourceParents(t *testing.T) {
 	for _, depth := range []int{0, 1, 2, 37} {
 		t.Run("depth_"+strconv.Itoa(depth), func(t *testing.T) {
 			p := parseBindLower(t, nestedBranchSource(depth))
-			entry, ok := p.Source().Index().Entry()
+			entry, ok := p.Flow().Body().Entry()
 			if !ok {
 				t.Fatal("missing entry Body")
 			}
@@ -95,10 +95,10 @@ func TestSourceNestedBranchesKeepSourceParents(t *testing.T) {
 				if !branchOK || owner != body || condition == 0 || whenTrue == 0 || whenFalse == 0 {
 					t.Fatalf("Branch depth %d = owner %v condition %v true %v false %v ok %v", level, owner, condition, whenTrue, whenFalse, branchOK)
 				}
-				if parent, ok := p.Source().Index().BodyParent(whenTrue); !ok || parent != body {
+				if parent, ok := p.Flow().Body().Parent(whenTrue); !ok || parent != body {
 					t.Fatalf("truthy Body parent at depth %d = %v/%v, want %v", level, parent, ok, body)
 				}
-				if parent, ok := p.Source().Index().BodyParent(whenFalse); !ok || parent != body {
+				if parent, ok := p.Flow().Body().Parent(whenFalse); !ok || parent != body {
 					t.Fatalf("false Body parent at depth %d = %v/%v, want %v", level, parent, ok, body)
 				}
 				body = whenTrue

@@ -1,6 +1,9 @@
 package artifact
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
+)
 
 // StaticTypeValueRow is the closed Program row for one executable
 // TypeValue source. Its BodyPath and occurrence identity are sufficient for
@@ -77,13 +80,29 @@ func (artifact *Artifact) StaticTypeValueCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.staticTypeValues)
+	count, published := coldCount(artifact, cold.StaticTypeValueFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (artifact *Artifact) StaticTypeValueAt(index int) (StaticTypeValueRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeValues) {
+	if !artifact.Available() {
 		return StaticTypeValueRow{}, false
 	}
-	return artifact.staticTypeValues[index], true
+	return artifact.staticTypeValueRowAt(index)
+}
+
+// staticTypeValueRowAt reads one authored type-value binding out of the
+// sealed publication. The row is flat there, so the read is a change of
+// vocabulary and no plane is retained beside the publication.
+func (artifact *Artifact) staticTypeValueRowAt(index int) (StaticTypeValueRow, bool) {
+	sealed, held := coldRow(artifact, cold.StaticTypeValueFamily(), index)
+	if !held {
+		return StaticTypeValueRow{}, false
+	}
+	row := StaticTypeValueRow{id: sealed.ID(), body: sealed.BodyPathID(), reference: sealed.ReferenceID(), root: sealed.RootID(), name: sealed.Name()}
+	return row, row.Available()
 }
 
 func (artifact *Artifact) StaticTypeNodeCount() int {
@@ -102,21 +121,42 @@ func (artifact *Artifact) StaticExpressionCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.staticExpressions)
+	count, published := coldCount(artifact, cold.StaticExpressionFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 func (artifact *Artifact) StaticExpressionAt(index int) (StaticExpressionRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.staticExpressions) {
+	if !artifact.Available() {
 		return StaticExpressionRow{}, false
 	}
-	return artifact.staticExpressions[index], true
+	return artifact.staticExpressionRowAt(index)
+}
+
+// staticExpressionRowAt reads one authored type expression out of the sealed
+// publication. The row is flat there, so the read is a change of vocabulary
+// and no plane is retained beside the publication.
+func (artifact *Artifact) staticExpressionRowAt(index int) (StaticExpressionRow, bool) {
+	sealed, held := coldRow(artifact, cold.StaticExpressionFamily(), index)
+	if !held {
+		return StaticExpressionRow{}, false
+	}
+	row := StaticExpressionRow{id: sealed.ID(), reference: sealed.ReferenceID(), owner: sealed.Owner()}
+	return row, row.Available()
 }
 
 func (artifact *Artifact) StaticExpressionByID(id identity.ContentID) (StaticExpressionRow, bool) {
 	if artifact == nil || !id.Available() {
 		return StaticExpressionRow{}, false
 	}
-	for _, row := range artifact.staticExpressions {
-		if row.id == id {
+	count, published := coldCount(artifact, cold.StaticExpressionFamily())
+	if !published {
+		return StaticExpressionRow{}, false
+	}
+	for index := 0; index < count; index++ {
+		row, held := artifact.staticExpressionRowAt(index)
+		if held && row.id == id {
 			return row, true
 		}
 	}

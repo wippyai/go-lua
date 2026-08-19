@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -34,8 +34,8 @@ type artifactIndexWrite struct {
 	dynamicKeySpan           program.Span
 	exactKey                 keyspace.Key
 	exact                    bool
-	finish                   flow.Site
-	predecessor              flow.Successor
+	finish                   causal.Site
+	predecessor              causal.Successor
 	route                    identity.ContentID
 	id, baseID, lensID       identity.ContentID
 	valuesID, predecessorID  identity.ContentID
@@ -112,8 +112,8 @@ func (compiler *compiler) indexWriteAt(index int) (artifactIndexWrite, bool) {
 	portFinish, portFinishOK := compiler.input.Flow().Ports().Finish(term)
 	provenance := compiler.input.Flow().Provenance()
 	predecessorOK = predecessorOK && finishOK && identityOK && routeOK && predecessorIDOK && finishTermOK && portFinishOK &&
-		portFinish == finishTerm && predecessor.To == finishTerm && predecessor.Arm == flow.BoundaryLocal &&
-		identityProof.To() == finishTerm && identityProof.Arm() == flow.BoundaryLocal && identityProof.Provenance() == provenance
+		portFinish == finishTerm && predecessor.To == finishTerm && predecessor.Arm == causal.BoundaryLocal &&
+		identityProof.To == finishTerm && identityProof.Arm == causal.BoundaryLocal && identityProof.Provenance() == provenance
 	row.route = route
 	row.id = accessRoleID("program/transformer/index-write", compiler.input, term)
 	row.baseID = accessSubroleID("program/transformer/index-base", compiler.input, term, base)

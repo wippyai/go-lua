@@ -24,6 +24,19 @@ type Publication struct {
 	ExactScalarSummaries []ExactScalarSummary
 	ArithmeticSummaries  []ArithmeticSummary
 	UnarySummaries       []UnarySummary
+	Points               []Point
+	PointDecisions       []PointDecision
+	Calls                []Call
+	CallOperands         []CallOperand
+	CallArguments        []CallArgument
+	CallTypeArguments    []CallTypeArgument
+	EnvironmentEdges     []EnvironmentEdge
+	EnvironmentResets    []EnvironmentReset
+	StaticTypeValues     []StaticTypeValue
+	StaticExpressions    []StaticExpression
+	Regions              []Region
+	RegionMembers        []RegionMember
+	WTOEvents            []WTOEvent
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -43,7 +56,20 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		HeapIndexFamily().Put(&builder, publication.HeapIndexes, catalog) &&
 		ExactScalarSummaryFamily().Put(&builder, publication.ExactScalarSummaries, catalog) &&
 		ArithmeticSummaryFamily().Put(&builder, publication.ArithmeticSummaries, catalog) &&
-		UnarySummaryFamily().Put(&builder, publication.UnarySummaries, catalog)
+		UnarySummaryFamily().Put(&builder, publication.UnarySummaries, catalog) &&
+		PointFamily().Put(&builder, publication.Points, catalog) &&
+		PointDecisionFamily().Put(&builder, publication.PointDecisions, catalog) &&
+		CallFamily().Put(&builder, publication.Calls, catalog) &&
+		CallOperandFamily().Put(&builder, publication.CallOperands, catalog) &&
+		CallArgumentFamily().Put(&builder, publication.CallArguments, catalog) &&
+		CallTypeArgumentFamily().Put(&builder, publication.CallTypeArguments, catalog) &&
+		EnvironmentEdgeFamily().Put(&builder, publication.EnvironmentEdges, catalog) &&
+		EnvironmentResetFamily().Put(&builder, publication.EnvironmentResets, catalog) &&
+		StaticTypeValueFamily().Put(&builder, publication.StaticTypeValues, catalog) &&
+		StaticExpressionFamily().Put(&builder, publication.StaticExpressions, catalog) &&
+		RegionFamily().Put(&builder, publication.Regions, catalog) &&
+		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
+		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

@@ -83,7 +83,7 @@ extends = 9;
 
 func TestSourceValuesLiteralOccurrencesRemainDistinct(t *testing.T) {
 	p := parseBindLower(t, `return nil, false, true, 42, 1.5, "value", 42`)
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
@@ -125,7 +125,7 @@ func TestSourceValuesDotLensHasNoKeyEvaluation(t *testing.T) {
 	if !ok {
 		t.Fatal("dot source has no LensExact")
 	}
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}
@@ -226,7 +226,7 @@ func TestSourceValuesRawKeyFailuresRemainSeparate(t *testing.T) {
 
 func valuesLawReturnedTable(t *testing.T, p *program.Program) keyspace.Term {
 	t.Helper()
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("Program has no Entry")
 	}

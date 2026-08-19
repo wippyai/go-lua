@@ -40,14 +40,21 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	if artifact == nil || state == nil || !artifact.key.Available() || !artifact.id.Available() || !artifact.counts.Available() || artifact.sealed.Available() {
 		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
-	if !sortedPoints(artifact.points) {
-		return compileFailure(CompileStageSeal, CompileRowPoint, -1, -1, CompileReasonPointOrder)
+	pointCount, pointsPublished := coldCount(artifact, cold.PointFamily())
+	if !pointsPublished {
+		return compileFailure(CompileStageSeal, CompileRowPoint, -1, -1, CompileReasonPointUnavailable)
 	}
-	state.pointRows = make(map[identity.ContentID]struct{}, len(artifact.points))
-	for index, row := range artifact.points {
-		if !row.Available() {
+	state.pointRows = make(map[identity.ContentID]struct{}, pointCount)
+	previous := Point{}
+	for index := 0; index < pointCount; index++ {
+		row, held := artifact.pointRowAt(index)
+		if !held {
 			return compileFailure(CompileStageSeal, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 		}
+		if !pointsOrdered(previous, row, index == 0) {
+			return compileFailure(CompileStageSeal, CompileRowPoint, -1, -1, CompileReasonPointOrder)
+		}
+		previous = row
 		for decisionIndex, decision := range row.decisions {
 			if !decision.Available() || decisionIndex > 0 && !contentIDBefore(row.decisions[decisionIndex-1], decision) {
 				return compileFailure(CompileStageSeal, CompileRowPoint, index, decisionIndex, CompileReasonPointUnavailable)
@@ -222,13 +229,11 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 	return CompileFailure{}
 }
 
-func sortedPoints(rows []Point) bool {
-	for index := 1; index < len(rows); index++ {
-		if !contentIDBefore(rows[index-1].id, rows[index].id) {
-			return false
-		}
-	}
-	return true
+// pointsOrdered states the point plane's order law over the adjacent pair the
+// seal holds. The plane is read one row at a time out of the publication, so
+// the law is stated over successive rows rather than over a retained slice.
+func pointsOrdered(previous, current Point, first bool) bool {
+	return first || contentIDBefore(previous.id, current.id)
 }
 
 func contentIDBefore(left, right identity.ContentID) bool {

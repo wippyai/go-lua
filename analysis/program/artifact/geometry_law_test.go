@@ -10,7 +10,7 @@ import (
 )
 
 // TestReceiptGeometryAccessorsDoNotExportFlowTypes is the closed receipt law:
-// HeapAllocationRow.Role/Form and CallRow.Form are artifact columns.
+// HeapAllocationRow.Role/Form is an artifact column.
 func TestReceiptGeometryAccessorsDoNotExportFlowTypes(t *testing.T) {
 	_, current, _, ok := runtime.Caller(0)
 	if !ok {
@@ -25,7 +25,6 @@ func TestReceiptGeometryAccessorsDoNotExportFlowTypes(t *testing.T) {
 	want := map[string]string{
 		"HeapAllocationRow.Role": "AllocationRole",
 		"HeapAllocationRow.Form": "AllocationForm",
-		"CallRow.Form":           "CallForm",
 	}
 	found := make(map[string]string)
 	for _, pkg := range pkgs {
@@ -39,7 +38,7 @@ func TestReceiptGeometryAccessorsDoNotExportFlowTypes(t *testing.T) {
 					continue
 				}
 				recv := receiverTypeName(fn)
-				if recv != "HeapAllocationRow" && recv != "CallRow" {
+				if recv != "HeapAllocationRow" {
 					continue
 				}
 				if fn.Name.Name != "Role" && fn.Name.Name != "Form" {

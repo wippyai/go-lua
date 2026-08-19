@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // occurrenceCausalIndex is the one Program-owned neutral join used by the
@@ -46,7 +47,7 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 		if !call.Available() {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
-		if call.Form() != CallFormPlain || call.ArgumentCount() != 1 {
+		if call.Form() != cold.CallFormPlain || call.ArgumentCount() != 1 {
 			continue
 		}
 		if _, hasReceiver := call.ReceiverID(); hasReceiver {
@@ -55,14 +56,15 @@ func (compiler *compiler) occurrenceCausalIndexFailure() (occurrenceCausalIndex,
 		if _, hasTail := call.TailID(); hasTail {
 			continue
 		}
-		if uint64(call.argumentStart) >= uint64(len(compiler.callArguments)) {
+		argumentOffset, argumentCount, argumentSpanOK := call.ArgumentSpan()
+		if !argumentSpanOK || argumentCount != 1 || uint64(argumentOffset) >= uint64(len(compiler.callArguments)) {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
-		argument := compiler.callArguments[call.argumentStart]
-		if !argument.Available() || argument.call != call.id || argument.position != 0 {
+		argument := compiler.callArguments[argumentOffset]
+		if !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, 0, CompileReasonOccurrenceCall)
 		}
-		candidate := strictRuntimeCall{id: call.id, span: call.span, subject: argument.member}
+		candidate := strictRuntimeCall{id: call.ID(), span: call.SpanID(), subject: argument.MemberID()}
 		if prior, duplicate := index.callBySpan[candidate.span]; duplicate && prior != candidate {
 			return occurrenceCausalIndex{}, compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}

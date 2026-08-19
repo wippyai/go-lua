@@ -7,7 +7,8 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -15,7 +16,7 @@ type storageReadCompileRow struct {
 	term, source  keyspace.Term
 	body, context identity.ContentID
 	span          program.Span
-	entry, finish flow.Site
+	entry, finish causal.Site
 	id, cell      identity.ContentID
 }
 
@@ -23,7 +24,7 @@ type storageBindCompileRow struct {
 	term, values  keyspace.Term
 	body, context identity.ContentID
 	span          program.Span
-	entry, finish flow.Site
+	entry, finish causal.Site
 	width         int
 	id            identity.ContentID
 	cells         []identity.ContentID
@@ -40,7 +41,7 @@ type storageAssignmentCompileRow struct {
 	term, values  keyspace.Term
 	body, context identity.ContentID
 	span          program.Span
-	entry, finish flow.Site
+	entry, finish causal.Site
 	width         int
 	id            identity.ContentID
 	transfers     []storageWriteCompileRow
@@ -50,7 +51,7 @@ type storageWriteCompileRow struct {
 	position    int
 	term        keyspace.Term
 	value, cell identity.ContentID
-	finish      flow.Site
+	finish      causal.Site
 	predecessor identity.ContentID
 	route       identity.ContentID
 	id          identity.ContentID
@@ -185,7 +186,7 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 			continue
 		}
 		cellKind, cellBody, cellKey, cellOK := view.Authored().Storage().Cells().Get(target)
-		if !cellOK || (cellKind == flow.CellLocal && cellBody == 0 && cellKey == 0) {
+		if !cellOK || (cellKind == authored.CellLocal && cellBody == 0 && cellKey == 0) {
 			// Index writes share the authored assignment width but are owned by
 			// the index-access column. Storage's transfer lane retains only
 			// writes whose target is an existing storage Cell.

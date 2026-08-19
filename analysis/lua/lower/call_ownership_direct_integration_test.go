@@ -88,7 +88,7 @@ func TestExecutableDistinguishesSourceReachabilityFromDynamicDispatch(t *testing
 	if flow.Executable().Contains(0) {
 		t.Fatal("zero Term became executable")
 	}
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok || !flow.Executable().Contains(entry) {
 		t.Fatal("Entry Body lost its executable proof")
 	}

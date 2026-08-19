@@ -20,7 +20,7 @@ func controlSourceAt(t *testing.T, p *program.Program, body keyspace.Term, index
 
 func TestSourceControlKeepsBranchBodiesInSourceAndFlowOwners(t *testing.T) {
 	p := parseBindLower(t, "\nif first() then\n  return 1\nelseif second() then\n  return 2\nelse\n  return 3\nend\n")
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing Source entry")
 	}
@@ -30,7 +30,7 @@ func TestSourceControlKeepsBranchBodiesInSourceAndFlowOwners(t *testing.T) {
 	if !branchOK || owner != entry || condition == 0 || whenTrue == 0 || whenFalse == 0 {
 		t.Fatalf("Branch = owner %v condition %v true %v false %v ok %v", owner, condition, whenTrue, whenFalse, branchOK)
 	}
-	if parent, ok := p.Source().Index().BodyParent(whenTrue); !ok || parent != entry {
+	if parent, ok := p.Flow().Body().Parent(whenTrue); !ok || parent != entry {
 		t.Fatalf("truthy Body parent = %v/%v, want %v", parent, ok, entry)
 	}
 	inner := controlSourceAt(t, p, whenFalse, 0)
@@ -38,7 +38,7 @@ func TestSourceControlKeepsBranchBodiesInSourceAndFlowOwners(t *testing.T) {
 	if !innerOK || innerOwner != whenFalse || innerCondition == 0 || innerTrue == 0 || innerFalse == 0 {
 		t.Fatalf("elseif Branch = owner %v condition %v true %v false %v ok %v", innerOwner, innerCondition, innerTrue, innerFalse, innerOK)
 	}
-	if parent, ok := p.Source().Index().BodyParent(innerTrue); !ok || parent != whenFalse {
+	if parent, ok := p.Flow().Body().Parent(innerTrue); !ok || parent != whenFalse {
 		t.Fatalf("elseif truthy Body parent = %v/%v, want %v", parent, ok, whenFalse)
 	}
 }
@@ -138,7 +138,7 @@ func TestFlowDirectFunctionsFilterDeadCallsWithoutRootDecisionPlane(t *testing.T
 
 func TestSourceControlFaultsStaySourceOwnedStaticEvidence(t *testing.T) {
 	p := parseBindLower(t, "type Snapshot = typeof(function() goto missing end)")
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing static function Body")
 	}

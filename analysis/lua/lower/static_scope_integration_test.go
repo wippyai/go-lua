@@ -154,7 +154,7 @@ func assertStaticDeclarationRef(t *testing.T, p *program.Program, ref, want keys
 
 func TestStaticAliasesResolveNearestVisibleBareName(t *testing.T) {
 	p := parseBindLower(t, "type T = number\ndo\n  type T = string\n  type Inner = T\nend\ntype Outer = T")
-	entry, ok := p.Source().Index().Entry()
+	entry, ok := p.Flow().Body().Entry()
 	if !ok {
 		t.Fatal("missing Source entry")
 	}

@@ -2,10 +2,10 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 )
 
-func (compiler *compiler) pointIDs(site flow.Site) []identity.ContentID {
+func (compiler *compiler) pointIDs(site causal.Site) []identity.ContentID {
 	if compiler == nil || !site.Available() || !compiler.input.OwnsSite(site) || compiler.pointIDsBySite == nil {
 		return nil
 	}
@@ -30,7 +30,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	for site := range compiler.pointIDsBySite {
 		delete(compiler.pointIDsBySite, site)
 	}
-	wto := compiler.input.Flow().Local().WTO()
+	wto := compiler.input.Flow().LocalWTO()
 	seenPoints := make(map[identity.ContentID]struct{})
 	seenAttachments := make(map[struct {
 		site  identity.ContentID
@@ -41,7 +41,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 		if !eventOK || !event.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, -1, CompileReasonOccurrenceAttachment)
 		}
-		if event.Kind() != flow.WTOEventPoint {
+		if event.Kind() != causal.WTOEventPoint {
 			continue
 		}
 		point, pointOK := event.Point()

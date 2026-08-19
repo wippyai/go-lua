@@ -4,9 +4,11 @@ import (
 	"crypto/sha256"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -31,17 +33,17 @@ type callConstruction struct {
 	typeArguments []callTypeArgumentConstruction
 	tail          identity.ContentID
 	targetBody    identity.ContentID
-	form          flow.CallForm
+	form          accessgeometry.CallForm
 	executable    bool
 	boundary      callBoundaryConstruction
-	entry         flow.Site
-	finish        flow.Site
+	entry         causal.Site
+	finish        causal.Site
 }
 
 type callOperandConstruction struct {
 	id   identity.ContentID
 	span identity.ContentID
-	kind CallOperandKind
+	kind cold.CallOperandKind
 	term keyspace.Term
 }
 
@@ -64,7 +66,7 @@ type callBoundaryConstruction struct {
 
 type callArmConstruction struct {
 	id     identity.ContentID
-	kind   flow.BoundaryArmKind
+	kind   causal.BoundaryArmKind
 	route  identity.ContentID
 	target identity.ContentID
 	points []identity.ContentID
@@ -104,17 +106,17 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	if !spanOK {
 		return callConstruction{}, false
 	}
-	form := flow.CallFormPlain
+	form := accessgeometry.CallFormPlain
 	if receiverTerm != 0 {
-		form = flow.CallFormMethod
+		form = accessgeometry.CallFormMethod
 	}
-	callee, calleeOK := compiler.callOperand(index, term, calleeTerm, CallOperandCallee)
+	callee, calleeOK := compiler.callOperand(index, term, calleeTerm, cold.CallOperandCallee)
 	receiver := callOperandConstruction{}
 	receiverOK := true
 	if receiverTerm != 0 {
-		receiver, receiverOK = compiler.callOperand(index, term, receiverTerm, CallOperandReceiver)
+		receiver, receiverOK = compiler.callOperand(index, term, receiverTerm, cold.CallOperandReceiver)
 	}
-	actuals, actualsOK := compiler.callOperand(index, term, actualsTerm, CallOperandActuals)
+	actuals, actualsOK := compiler.callOperand(index, term, actualsTerm, cold.CallOperandActuals)
 	if !calleeOK || !receiverOK || !actualsOK {
 		return callConstruction{}, false
 	}
@@ -189,30 +191,30 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 	return result, true
 }
 
-func (compiler *compiler) callOperand(index int, call, term keyspace.Term, kind CallOperandKind) (callOperandConstruction, bool) {
+func (compiler *compiler) callOperand(index int, call, term keyspace.Term, kind cold.CallOperandKind) (callOperandConstruction, bool) {
 	span, _, _, spanOK := compiler.input.EvaluationSpan(term)
 	id := identity.ContentID{}
 	var idOK bool
 	switch kind {
-	case CallOperandCallee:
+	case cold.CallOperandCallee:
 		id, idOK = compiler.input.CallCalleeIDAt(index)
-	case CallOperandReceiver:
+	case cold.CallOperandReceiver:
 		id, idOK = compiler.input.CallReceiverIDAt(index)
-	case CallOperandActuals:
+	case cold.CallOperandActuals:
 		id, idOK = compiler.input.CallActualsIDAt(index)
 	}
 	operand := callOperandConstruction{id: id, span: span, kind: kind, term: term}
-	return operand, spanOK && idOK && id.Available() && kind.valid()
+	return operand, spanOK && idOK && id.Available() && kind.Valid()
 }
 
-func (compiler *compiler) callSpan(term keyspace.Term) (flow.Site, flow.Site, identity.ContentID, bool) {
+func (compiler *compiler) callSpan(term keyspace.Term) (causal.Site, causal.Site, identity.ContentID, bool) {
 	flowView := compiler.input.Flow()
 	spanID, entryTerm, finishTerm, spanOK := compiler.input.EvaluationSpan(term)
 	sites := flowView.Causal().Sites()
 	entry, entrySiteOK := sites.ForTerm(entryTerm)
 	finish, finishSiteOK := sites.ForTerm(finishTerm)
 	if !spanOK || !entrySiteOK || !finishSiteOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
-		return flow.Site{}, flow.Site{}, identity.ContentID{}, false
+		return causal.Site{}, causal.Site{}, identity.ContentID{}, false
 	}
 	return entry, finish, spanID, spanID.Available()
 }
@@ -254,16 +256,16 @@ func (compiler *compiler) callBoundary(term keyspace.Term, spanID identity.Conte
 		return callBoundaryConstruction{}
 	}
 	var arms []callArmConstruction
-	for _, armKind := range [...]flow.BoundaryArmKind{flow.BoundaryResume, flow.BoundarySelectTrue, flow.BoundarySelectFalse, flow.BoundaryTail, flow.BoundaryThrow, flow.BoundaryYield, flow.BoundaryCancel} {
+	for _, armKind := range [...]causal.BoundaryArmKind{causal.BoundaryResume, causal.BoundarySelectTrue, causal.BoundarySelectFalse, causal.BoundaryTail, causal.BoundaryThrow, causal.BoundaryYield, causal.BoundaryCancel} {
 		successor, armOK := flowView.Causal().Boundaries().Arm(term, armKind)
 		if !armOK || successor.From != term || successor.Arm != armKind {
 			continue
 		}
 		routeIdentity, routeOK := successor.Identity()
 		target, targetOK := flowView.Causal().Sites().ForTerm(successor.To)
-		routeDigest := routeIdentity.Digest()
+		routeDigest := routeIdentity.Digest
 		targetID := target.ContextID()
-		if !routeOK || !targetOK || !routeIdentity.Available() || routeIdentity.Provenance() != flowView.Provenance() || !compiler.input.OwnsSite(target) || !routeDigest.Available() || !targetID.Available() {
+		if !routeOK || !targetOK || !routeIdentity.Issued() || routeIdentity.Provenance() != flowView.Provenance() || !compiler.input.OwnsSite(target) || !routeDigest.Available() || !targetID.Available() {
 			return callBoundaryConstruction{}
 		}
 		points := compiler.pointIDs(target)

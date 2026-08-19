@@ -3,6 +3,8 @@ package value
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
+	"os"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -208,6 +210,7 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 			}
 			position := uint32(row.Code())
 			if kind != storageTransferBind && position != 0 {
+				fmt.Fprintf(os.Stderr, "ZZPROBE site=position kind=%d position=%d inputs=%d rowkind=%d\n", kind, position, row.InputCount(), row.Kind())
 				return SealFailureStorageTransferAddInput
 			}
 			var fromID, toID identity.ContentID
@@ -221,6 +224,7 @@ func (schema *valueBuilder) sealStorageTransfersWithFailure() SealFailure {
 				toID, _ = row.InputAt(2)
 			}
 			if failure := schema.addArtifactStorageTransfer(module, kind, row.ID(), position, fromID, toID); failure != SealFailureNone {
+					fmt.Fprintf(os.Stderr, "ZZPROBE site=add failure=%v kind=%d position=%d inputs=%d fromOK=%t toOK=%t\n", failure, kind, position, row.InputCount(), fromID.Available(), toID.Available())
 				return failure
 			}
 		}

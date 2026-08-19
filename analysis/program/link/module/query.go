@@ -232,7 +232,11 @@ func (c Generations) Entry(g ModuleInitGeneration) (ModuleCacheEntry, ModuleCoor
 	if !ok || p == nil {
 		return ModuleCacheEntry{}, ModuleCoordinate{}, linkproject.Shard{}, 0, false
 	}
-	term, ok := p.Source().Index().Entry()
+	bodies := p.Flow().Body()
+	if bodies == nil {
+		return ModuleCacheEntry{}, ModuleCoordinate{}, linkproject.Shard{}, 0, false
+	}
+	term, ok := bodies.Entry()
 	if !ok {
 		return ModuleCacheEntry{}, ModuleCoordinate{}, linkproject.Shard{}, 0, false
 	}

@@ -4,8 +4,9 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 // Point is an exact parent-issued LocalWTO phase vertex path. Its ordered
@@ -47,7 +48,7 @@ type EnvironmentEdge struct {
 	reset     identity.ContentID
 	resets    []identity.ContentID
 	component identity.ContentID
-	arm       flow.BoundaryArmKind
+	arm       causal.BoundaryArmKind
 	guarded   bool
 	truth     bool
 	hasReset  bool
@@ -118,7 +119,7 @@ func (edge EnvironmentEdge) ID() identity.ContentID      { return edge.id }
 func (edge EnvironmentEdge) From() identity.ContentID    { return edge.from }
 func (edge EnvironmentEdge) To() identity.ContentID      { return edge.to }
 func (edge EnvironmentEdge) RouteID() identity.ContentID { return edge.route }
-func (edge EnvironmentEdge) Arm() flow.BoundaryArmKind   { return edge.arm }
+func (edge EnvironmentEdge) Arm() causal.BoundaryArmKind { return edge.arm }
 
 // DecisionID is the parent-issued decision Site identity for a guarded
 // route. It is distinct from GuardID: GuardID authenticates the guard proof,
@@ -177,7 +178,7 @@ func (edge EnvironmentEdge) MuPathID() (identity.ContentID, bool) {
 }
 
 func (edge EnvironmentEdge) Available() bool {
-	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || !edge.route.Available() || edge.arm < flow.BoundaryLocal || edge.arm > flow.BoundaryCancel {
+	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || !edge.route.Available() || edge.arm < causal.BoundaryLocal || edge.arm > causal.BoundaryCancel {
 		return false
 	}
 	if edge.guarded {
@@ -262,14 +263,22 @@ func (artifact *Artifact) PointCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.points)
+	count, published := coldCount(artifact, cold.PointFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 
 func (artifact *Artifact) EnvironmentEdgeCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.environment)
+	count, published := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 
 func (artifact *Artifact) LocalTransferCount() int {
@@ -283,28 +292,95 @@ func (artifact *Artifact) RegionCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.regions)
+	count, published := coldCount(artifact, cold.RegionFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 
 func (artifact *Artifact) WTOEventCount() int {
 	if !artifact.Available() {
 		return 0
 	}
-	return len(artifact.events)
+	count, published := coldCount(artifact, cold.WTOEventFamily())
+	if !published {
+		return 0
+	}
+	return count
 }
 
 func (artifact *Artifact) PointAt(index int) (Point, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.points) {
+	if !artifact.Available() {
 		return Point{}, false
 	}
-	return artifact.points[index], true
+	return artifact.pointRowAt(index)
+}
+
+// pointRowAt reads one point out of the sealed publication and rejoins it
+// with the decision span it names. Decisions are a dense plane there, so the
+// ordered geometry a caller receives is assembled at the read site rather
+// than retained a second time beside the publication.
+func (artifact *Artifact) pointRowAt(index int) (Point, bool) {
+	sealed, held := coldRow(artifact, cold.PointFamily(), index)
+	offset, count, spanOK := sealed.DecisionSpan()
+	if !held || !spanOK {
+		return Point{}, false
+	}
+	row := Point{id: sealed.ID(), initial: sealed.Initial()}
+	if count != 0 {
+		row.decisions = make([]identity.ContentID, 0, count)
+	}
+	for position := uint32(0); position < count; position++ {
+		decision, decisionHeld := coldRow(artifact, cold.PointDecisionFamily(), int(offset+position))
+		if !decisionHeld {
+			return Point{}, false
+		}
+		row.decisions = append(row.decisions, decision.ID())
+	}
+	return row, row.Available()
 }
 
 func (artifact *Artifact) EnvironmentEdgeAt(index int) (EnvironmentEdge, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.environment) {
+	if !artifact.Available() {
 		return EnvironmentEdge{}, false
 	}
-	return artifact.environment[index], true
+	return artifact.environmentEdgeRowAt(index)
+}
+
+// environmentEdgeRowAt reads one final route out of the sealed publication and
+// rejoins it with the reset span it names. Witnesses are a dense plane there,
+// so the ordered geometry a caller receives is assembled at the read site
+// rather than retained a second time beside the publication.
+func (artifact *Artifact) environmentEdgeRowAt(index int) (EnvironmentEdge, bool) {
+	sealed, held := coldRow(artifact, cold.EnvironmentEdgeFamily(), index)
+	offset, count, spanOK := sealed.ResetSpan()
+	if !held || !spanOK {
+		return EnvironmentEdge{}, false
+	}
+	guard, guarded := sealed.GuardID()
+	decision, _ := sealed.DecisionID()
+	condition, _ := sealed.ConditionValueSpanID()
+	truth, _ := sealed.Truth()
+	mu, hasMu := sealed.MuPathID()
+	reset, hasReset := sealed.ResetDigest()
+	row := EnvironmentEdge{
+		id: sealed.ID(), from: sealed.From(), to: sealed.To(), route: sealed.RouteID(),
+		guard: guard, decision: decision, condition: condition, reset: reset,
+		component: sealed.ComponentID(), arm: causal.BoundaryArmKind(sealed.Arm()),
+		guarded: guarded, truth: truth, hasReset: hasReset, mu: mu, hasMu: hasMu,
+	}
+	if count != 0 {
+		row.resets = make([]identity.ContentID, 0, count)
+	}
+	for position := uint32(0); position < count; position++ {
+		witness, witnessHeld := coldRow(artifact, cold.EnvironmentResetFamily(), int(offset+position))
+		if !witnessHeld {
+			return EnvironmentEdge{}, false
+		}
+		row.resets = append(row.resets, witness.ID())
+	}
+	return row, row.Available()
 }
 
 func (artifact *Artifact) LocalTransferAt(index int) (LocalTransfer, bool) {
@@ -315,17 +391,50 @@ func (artifact *Artifact) LocalTransferAt(index int) (LocalTransfer, bool) {
 }
 
 func (artifact *Artifact) RegionAt(index int) (Region, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.regions) {
+	if !artifact.Available() {
 		return Region{}, false
 	}
-	return artifact.regions[index], true
+	return artifact.regionRowAt(index)
+}
+
+// regionRowAt reads one region out of the sealed publication and rejoins it
+// with the member span it names. Members are a dense plane there, so the
+// ordered geometry a caller receives is assembled at the read site rather
+// than retained a second time beside the publication.
+func (artifact *Artifact) regionRowAt(index int) (Region, bool) {
+	sealed, held := coldRow(artifact, cold.RegionFamily(), index)
+	offset, count, spanOK := sealed.MemberSpan()
+	if !held || !spanOK {
+		return Region{}, false
+	}
+	row := Region{id: sealed.ID(), parent: sealed.ParentID(), cyclic: sealed.Cyclic(), members: make([]identity.ContentID, 0, count)}
+	for position := uint32(0); position < count; position++ {
+		member, memberHeld := coldRow(artifact, cold.RegionMemberFamily(), int(offset+position))
+		if !memberHeld {
+			return Region{}, false
+		}
+		row.members = append(row.members, member.ID())
+	}
+	return row, sealed.Available()
 }
 
 func (artifact *Artifact) WTOEventAt(index int) (WTOEvent, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.events) {
+	if !artifact.Available() {
 		return WTOEvent{}, false
 	}
-	return artifact.events[index], true
+	return artifact.wtoEventRowAt(index)
+}
+
+// wtoEventRowAt reads one order bracket out of the sealed publication. The
+// row is flat there, so the read is a change of vocabulary and no plane is
+// retained beside the publication.
+func (artifact *Artifact) wtoEventRowAt(index int) (WTOEvent, bool) {
+	sealed, held := coldRow(artifact, cold.WTOEventFamily(), index)
+	if !held {
+		return WTOEvent{}, false
+	}
+	row := WTOEvent{kind: WTOEventKind(sealed.Kind()), region: sealed.RegionID(), point: sealed.PointID()}
+	return row, row.Available()
 }
 
 // Artifact is immutable after Compile succeeds. The sealed scalar is written

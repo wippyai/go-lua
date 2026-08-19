@@ -1,0 +1,191 @@
+package cold
+
+import "github.com/wippyai/go-lua/analysis/identity"
+
+// The append-only slots this family occupies. They are derived from the last
+// slot declared before them so a family added later cannot reuse a slot a
+// consumer already addresses.
+const (
+	slotEnvironmentEdge  = slotCallTypeArgument + 1
+	slotEnvironmentReset = slotEnvironmentEdge + 1
+)
+
+var (
+	environmentEdgeFamily  = Family[EnvironmentEdge]{slot: slotEnvironmentEdge, name: "environment-edge"}
+	environmentResetFamily = Family[EnvironmentReset]{slot: slotEnvironmentReset, name: "environment-reset"}
+)
+
+func EnvironmentEdgeFamily() Family[EnvironmentEdge] { return environmentEdgeFamily }
+
+func EnvironmentResetFamily() Family[EnvironmentReset] { return environmentResetFamily }
+
+// Environment arm ordinals retain the historical Flow boundary-arm ordinals.
+// They are kept as plain bytes: the cold column preserves the value and shape
+// but does not import or reinterpret the Program vocabulary.
+const (
+	EnvironmentArmLocal  uint8 = 1
+	EnvironmentArmCancel uint8 = 8
+)
+
+// EnvironmentReset is one reset witness member. Its position is its ordinal
+// in EnvironmentResetFamily and the parent edge names the half-open span it
+// owns, so no edge retains a slice header.
+type EnvironmentReset struct{ id identity.ContentID }
+
+// NewEnvironmentReset copies one canonical reset witness identity.
+func NewEnvironmentReset(id identity.ContentID) (EnvironmentReset, bool) {
+	row := EnvironmentReset{id: id}
+	return row, row.Available()
+}
+
+func (row EnvironmentReset) Available() bool { return row.id.Available() }
+
+func (row EnvironmentReset) ID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.id
+}
+
+// EnvironmentEdge is one canonical final route. Its reset witnesses are a
+// span in EnvironmentResetFamily, preserving the canonical witness order
+// while making this row flat and copy-safe.
+type EnvironmentEdge struct {
+	id          identity.ContentID
+	from        identity.ContentID
+	to          identity.ContentID
+	route       identity.ContentID
+	guard       identity.ContentID
+	decision    identity.ContentID
+	condition   identity.ContentID
+	reset       identity.ContentID
+	component   identity.ContentID
+	mu          identity.ContentID
+	resetOffset uint32
+	resetCount  uint32
+	arm         uint8
+	guarded     bool
+	truth       bool
+	hasReset    bool
+	hasMu       bool
+}
+
+// NewEnvironmentEdge copies one canonical EnvironmentEdge row and replaces
+// its nested reset slice with a dense EnvironmentResetFamily span.
+func NewEnvironmentEdge(
+	id, from, to, route, guard, decision, condition, reset, component, mu identity.ContentID,
+	resetOffset, resetCount uint32, arm uint8, guarded, truth, hasReset, hasMu bool,
+) (EnvironmentEdge, bool) {
+	row := EnvironmentEdge{
+		id: id, from: from, to: to, route: route, guard: guard, decision: decision,
+		condition: condition, reset: reset, component: component, mu: mu,
+		resetOffset: resetOffset, resetCount: resetCount, arm: arm,
+		guarded: guarded, truth: truth, hasReset: hasReset, hasMu: hasMu,
+	}
+	return row, row.Available()
+}
+
+func (row EnvironmentEdge) Available() bool {
+	if !row.id.Available() || !row.from.Available() || !row.to.Available() || !row.route.Available() ||
+		row.arm < EnvironmentArmLocal || row.arm > EnvironmentArmCancel ||
+		uint64(row.resetOffset)+uint64(row.resetCount) > uint64(^uint32(0)) {
+		return false
+	}
+	if row.guarded {
+		if !row.guard.Available() {
+			return false
+		}
+	} else if row.guard.Available() || row.truth {
+		return false
+	}
+	if row.condition.Available() && !row.guarded {
+		return false
+	}
+	if row.hasMu != row.mu.Available() || row.hasReset != row.reset.Available() || row.hasMu != row.hasReset {
+		return false
+	}
+	if !row.component.Available() {
+		return !row.hasMu && !row.hasReset && row.resetCount == 0
+	}
+	if !row.hasMu {
+		return !row.hasReset && row.resetCount == 0
+	}
+	return row.hasReset
+}
+
+func (row EnvironmentEdge) ID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.id
+}
+
+func (row EnvironmentEdge) From() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.from
+}
+
+func (row EnvironmentEdge) To() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.to
+}
+
+func (row EnvironmentEdge) RouteID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.route
+}
+
+func (row EnvironmentEdge) Arm() uint8 {
+	if !row.Available() {
+		return 0
+	}
+	return row.arm
+}
+
+func (row EnvironmentEdge) GuardID() (identity.ContentID, bool) {
+	return row.guard, row.Available() && row.guarded
+}
+
+func (row EnvironmentEdge) DecisionID() (identity.ContentID, bool) {
+	return row.decision, row.Available() && row.guarded
+}
+
+func (row EnvironmentEdge) ConditionValueSpanID() (identity.ContentID, bool) {
+	return row.condition, row.Available() && row.guarded && row.condition.Available()
+}
+
+func (row EnvironmentEdge) Truth() (bool, bool) {
+	return row.truth, row.Available() && row.guarded
+}
+
+func (row EnvironmentEdge) ResetDigest() (identity.ContentID, bool) {
+	return row.reset, row.Available() && row.hasReset
+}
+
+func (row EnvironmentEdge) MuPathID() (identity.ContentID, bool) {
+	return row.mu, row.Available() && row.hasMu
+}
+
+func (row EnvironmentEdge) ComponentID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.component
+}
+
+func (row EnvironmentEdge) ResetSpan() (offset, count uint32, ok bool) {
+	return row.resetOffset, row.resetCount, row.Available()
+}
+
+func (row EnvironmentEdge) ResetCount() int {
+	if !row.Available() {
+		return 0
+	}
+	return int(row.resetCount)
+}

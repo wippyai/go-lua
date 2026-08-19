@@ -19,11 +19,11 @@ type compiler struct {
 	regions                    []Region
 	events                     []WTOEvent
 	values                     []ValuesRow
-	calls                      []CallRow
-	callOperands               []CallOperandRow
-	callArguments              []CallArgumentRow
-	callTypeArguments          []CallTypeArgumentRow
-	callsByID                  map[identity.ContentID]CallRow
+	calls                      []cold.Call
+	callOperands               []cold.CallOperand
+	callArguments              []cold.CallArgument
+	callTypeArguments          []cold.CallTypeArgument
+	callsByID                  map[identity.ContentID]cold.Call
 	bodies                     []BodyRow
 	functionBoundaries         []FunctionBoundaryRow
 	callTargets                []cold.CallTarget

@@ -45,7 +45,7 @@ var generatedRelationEntries = []*RelationEntry{
 	{key: schema.Key("ProgramFlowOutcome@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOutcome@-")), owner: RelationOwnerProgramFlow, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowCall@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowControl@-"))}},
 	{key: schema.Key("ProgramFlowTransfer@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowTransfer@-")), owner: RelationOwnerProgramFlow, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowCall@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOutcome@-"))}},
 	{key: schema.Key("ProgramFlowBody@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowBody@-")), owner: RelationOwnerProgramSource, form: RelationFormAuthored},
-	{key: schema.Key("ProgramFlowBody@ProgramFlowBodyRoots"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowBody@ProgramFlowBodyRoots")), owner: RelationOwnerProgramSource, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowBody@-"))}},
+	{key: schema.Key("ProgramFlowBody@ProgramFlowBodyRoots"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowBody@ProgramFlowBodyRoots")), owner: RelationOwnerProgramFlow, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowBody@-"))}},
 	{key: schema.Key("ProgramStatic@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-")), owner: RelationOwnerProgramStatic, form: RelationFormAuthored},
 	{key: schema.Key("ProgramStatic@ProgramStaticFunctionContract"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticFunctionContract")), owner: RelationOwnerProgramStatic, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowFunction@-"))}},
 	{key: schema.Key("ProgramStatic@ProgramStaticCallTypeArguments"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@ProgramStaticCallTypeArguments")), owner: RelationOwnerProgramStatic, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramStatic@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowCall@-"))}},
@@ -375,7 +375,6 @@ type GeneratedProgramSourceRelationIDs struct {
 	ProgramSourceControlFault schema.EntryID
 	ProgramFlowLiterals       schema.EntryID
 	ProgramFlowBody           schema.EntryID
-	ProgramFlowBodyRoots      schema.EntryID
 }
 
 func GeneratedProgramSourceIDs() GeneratedProgramSourceRelationIDs {
@@ -387,7 +386,6 @@ func GeneratedProgramSourceIDs() GeneratedProgramSourceRelationIDs {
 		ProgramSourceControlFault: generatedRelationEntries[4].ID(),
 		ProgramFlowLiterals:       generatedRelationEntries[5].ID(),
 		ProgramFlowBody:           generatedRelationEntries[39].ID(),
-		ProgramFlowBodyRoots:      generatedRelationEntries[40].ID(),
 	}
 }
 
@@ -399,7 +397,6 @@ var generatedProgramSourceOwnerIDs = []schema.EntryID{
 	generatedRelationEntries[4].ID(),
 	generatedRelationEntries[5].ID(),
 	generatedRelationEntries[39].ID(),
-	generatedRelationEntries[40].ID(),
 }
 
 // GeneratedProgramSourceOwnerIDs is the immutable catalog-order totality of ProgramSource relation identities.
@@ -442,6 +439,7 @@ type GeneratedProgramFlowRelationIDs struct {
 	ProgramFlowTypeValue         schema.EntryID
 	ProgramFlowOutcome           schema.EntryID
 	ProgramFlowTransfer          schema.EntryID
+	ProgramFlowBodyRoots         schema.EntryID
 }
 
 func GeneratedProgramFlowIDs() GeneratedProgramFlowRelationIDs {
@@ -479,6 +477,7 @@ func GeneratedProgramFlowIDs() GeneratedProgramFlowRelationIDs {
 		ProgramFlowTypeValue:         generatedRelationEntries[36].ID(),
 		ProgramFlowOutcome:           generatedRelationEntries[37].ID(),
 		ProgramFlowTransfer:          generatedRelationEntries[38].ID(),
+		ProgramFlowBodyRoots:         generatedRelationEntries[40].ID(),
 	}
 }
 
@@ -516,6 +515,7 @@ var generatedProgramFlowOwnerIDs = []schema.EntryID{
 	generatedRelationEntries[36].ID(),
 	generatedRelationEntries[37].ID(),
 	generatedRelationEntries[38].ID(),
+	generatedRelationEntries[40].ID(),
 }
 
 // GeneratedProgramFlowOwnerIDs is the immutable catalog-order totality of ProgramFlow relation identities.

@@ -2,11 +2,11 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 )
 
 func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
-	wto := compiler.input.Flow().Local().WTO()
+	wto := compiler.input.Flow().LocalWTO()
 	regions := make(map[identity.ContentID]int, wto.Count())
 	for index := 0; index < wto.Count(); index++ {
 		parent, ok := wto.At(index)
@@ -58,7 +58,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 		}
 		event := WTOEvent{}
 		switch parent.Kind() {
-		case flow.WTOEventEnter:
+		case causal.WTOEventEnter:
 			region, regionOK := parent.Region()
 			if !regionOK || !region.Available() {
 				return compileFailure(CompileStageLocalWTO, CompileRowWTOEvent, index, -1, CompileReasonEventRegionUnavailable)
@@ -84,7 +84,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 			entered[regionIndex] = true
 			stack = append(stack, frame{region: regionIndex})
 			event.kind, event.region = WTOEventEnter, region.ID()
-		case flow.WTOEventPoint:
+		case causal.WTOEventPoint:
 			point, pointOK := parent.Point()
 			// Parent LocalWTO may schedule an acyclic phase vertex outside every
 			// cyclic Region.  It is still a total parent-issued point and must be
@@ -107,7 +107,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 			}
 			pointEvents[id] = struct{}{}
 			event.kind, event.point = WTOEventPoint, id
-		case flow.WTOEventExit:
+		case causal.WTOEventExit:
 			region, regionOK := parent.Region()
 			if !regionOK || !region.Available() || len(stack) == 0 {
 				return compileFailure(CompileStageLocalWTO, CompileRowWTOEvent, index, -1, CompileReasonEventExitUnavailable)
@@ -143,7 +143,7 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func (compiler *compiler) installPoint(point flow.WTOPoint) bool {
+func (compiler *compiler) installPoint(point causal.WTOPoint) bool {
 	if !point.Available() || !point.PathID().Available() {
 		return false
 	}
@@ -191,7 +191,7 @@ func (compiler *compiler) installPoint(point flow.WTOPoint) bool {
 	return true
 }
 
-func (compiler *compiler) containsPoint(point flow.WTOPoint) bool {
+func (compiler *compiler) containsPoint(point causal.WTOPoint) bool {
 	if !point.Available() || !point.PathID().Available() {
 		return false
 	}

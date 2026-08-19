@@ -27,15 +27,7 @@ type Artifact struct {
 	coldCatalog            identity.ContentID
 	sealed                 identity.ContentID
 	counts                 denominator.CountRows
-	points                 []Point
-	environment            []EnvironmentEdge
 	localTransfers         []LocalTransfer
-	regions                []Region
-	events                 []WTOEvent
-	calls                  []CallRow
-	callOperands           []CallOperandRow
-	callArguments          []CallArgumentRow
-	callTypeArguments      []CallTypeArgumentRow
 	bodies                 []BodyRow
 	functionBoundaries     []FunctionBoundaryRow
 	outcomes               []OutcomeRow
@@ -44,9 +36,7 @@ type Artifact struct {
 	occurrenceByID         map[occurrenceLookup]uint32
 	ruleOccurrences        []RuleOccurrence
 	diagnosticObservations []DiagnosticObservationRow
-	staticTypeValues       []StaticTypeValueRow
 	staticTypeNodes        []StaticTypeNodeRow
-	staticExpressions      []StaticExpressionRow
 	staticInputs           []StaticInputRow
 	occurrenceByKind       map[OccurrenceKind][]uint32
 	functionBoundaryByBody map[identity.ContentID]uint32

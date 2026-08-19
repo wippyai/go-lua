@@ -20,11 +20,27 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	}
 	sink.add(uintField(pointGeometryLawVersion))
 	sink.add(uintField(pointAttachmentLawVersion))
-	sink.add(uintField(uint64(len(artifact.points))))
-	for _, point := range artifact.points {
-		sink.add(bytesField(point.id), boolField(point.initial), uintField(uint64(len(point.decisions))))
-		for _, decision := range point.decisions {
-			sink.add(bytesField(decision))
+	// Points and their decision plane are read out of the sealed cold
+	// publication. The decision span preserves the emitted order, so the
+	// preimage is the same sequence the identity has always committed to.
+	pointCount, pointsPublished := coldCount(artifact, cold.PointFamily())
+	if !pointsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(pointCount)))
+	for index := 0; index < pointCount; index++ {
+		point, held := coldRow(artifact, cold.PointFamily(), index)
+		offset, decisions, spanOK := point.DecisionSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(point.ID()), boolField(point.Initial()), uintField(uint64(decisions)))
+		for position := uint32(0); position < decisions; position++ {
+			decision, decisionHeld := coldRow(artifact, cold.PointDecisionFamily(), int(offset+position))
+			if !decisionHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(decision.ID()))
 		}
 	}
 	// Values and its member plane are read out of the sealed cold publication.
@@ -52,29 +68,58 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		tail, present := row.Tail()
 		sink.add(boolField(present), uintField(uint64(tail.Kind())), bytesField(tail.ID()))
 	}
-	// Calls are an Artifact-owned source column. Keep
-	// every scalar and ordered child identity in the artifact seal so replay,
-	// mutation, and mounted joins authenticate the direct plane exactly.
-	sink.add(uintField(callRowsLawVersion), uintField(uint64(len(artifact.calls))))
-	for _, row := range artifact.calls {
+	// Calls are read from their sealed cold families. Keep every scalar and
+	// ordered child identity in the artifact seal so replay, mutation, and
+	// mounted joins authenticate the direct plane exactly.
+	callCount, callsPublished := coldCount(artifact, cold.CallFamily())
+	operandCount, operandsPublished := coldCount(artifact, cold.CallOperandFamily())
+	argumentCount, argumentsPublished := coldCount(artifact, cold.CallArgumentFamily())
+	typeArgumentCount, typeArgumentsPublished := coldCount(artifact, cold.CallTypeArgumentFamily())
+	if !callsPublished || !operandsPublished || !argumentsPublished || !typeArgumentsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(callRowsLawVersion), uintField(uint64(callCount)))
+	for index := 0; index < callCount; index++ {
+		row, held := coldRow(artifact, cold.CallFamily(), index)
+		operandStart, operandWidth, operandSpanOK := row.OperandSpan()
+		argumentStart, argumentWidth, argumentSpanOK := row.ArgumentSpan()
+		typeArgumentStart, typeArgumentWidth, typeArgumentSpanOK := row.TypeArgumentSpan()
+		if !held || !row.Available() || !operandSpanOK || !argumentSpanOK || !typeArgumentSpanOK ||
+			uint64(operandStart)+uint64(operandWidth) > uint64(operandCount) ||
+			uint64(argumentStart)+uint64(argumentWidth) > uint64(argumentCount) ||
+			uint64(typeArgumentStart)+uint64(typeArgumentWidth) > uint64(typeArgumentCount) {
+			return identity.ContentID{}
+		}
+		receiver, hasReceiver := row.ReceiverID()
+		tail, hasTail := row.TailID()
+		target, _ := row.DirectTargetBody()
 		sink.add(
-			bytesField(row.id), bytesField(row.body), bytesField(row.span), bytesField(row.formal),
-			bytesField(row.values), bytesField(row.valuesRoot), bytesField(row.types), bytesField(row.callee), bytesField(row.actuals),
-			bytesField(row.target),
-			uintField(uint64(row.form)), boolField(row.hasReceiver), bytesField(row.receiver), boolField(row.hasTail), bytesField(row.tail),
-			uintField(uint64(row.OperandCount())), uintField(uint64(row.ArgumentCount())), uintField(uint64(row.TypeArgumentCount())),
+			bytesField(row.ID()), bytesField(row.BodyID()), bytesField(row.SpanID()), bytesField(row.FormalID()),
+			bytesField(row.ValuesID()), bytesField(row.ValuesRootID()), bytesField(row.TypeArgumentsID()), bytesField(row.CalleeID()), bytesField(row.ActualsID()),
+			bytesField(target),
+			uintField(uint64(row.Form())), boolField(hasReceiver), bytesField(receiver), boolField(hasTail), bytesField(tail),
+			uintField(uint64(operandWidth)), uintField(uint64(argumentWidth)), uintField(uint64(typeArgumentWidth)),
 		)
-		for index := int(row.operandStart); index < int(row.operandEnd); index++ {
-			operand := artifact.callOperands[index]
-			sink.add(bytesField(operand.id), bytesField(operand.call), bytesField(operand.value), bytesField(operand.span), uintField(uint64(operand.kind)))
+		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
+			operand, childHeld := coldRow(artifact, cold.CallOperandFamily(), int(operandStart+childIndex))
+			if !childHeld || !operand.Available() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(operand.ID()), bytesField(operand.CallID()), bytesField(operand.ValueID()), bytesField(operand.SpanID()), uintField(uint64(operand.Kind())))
 		}
-		for index := int(row.argumentStart); index < int(row.argumentEnd); index++ {
-			argument := artifact.callArguments[index]
-			sink.add(bytesField(argument.id), bytesField(argument.call), bytesField(argument.values), bytesField(argument.member), bytesField(argument.span), uintField(uint64(argument.position)))
+		for childIndex := uint32(0); childIndex < argumentWidth; childIndex++ {
+			argument, childHeld := coldRow(artifact, cold.CallArgumentFamily(), int(argumentStart+childIndex))
+			if !childHeld || !argument.Available() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.ValuesID()), bytesField(argument.MemberID()), bytesField(argument.SpanID()), uintField(uint64(argument.Index())))
 		}
-		for index := int(row.typeArgumentStart); index < int(row.typeArgumentEnd); index++ {
-			argument := artifact.callTypeArguments[index]
-			sink.add(bytesField(argument.id), bytesField(argument.call), bytesField(argument.types), bytesField(argument.reference), uintField(uint64(argument.position)))
+		for childIndex := uint32(0); childIndex < typeArgumentWidth; childIndex++ {
+			argument, childHeld := coldRow(artifact, cold.CallTypeArgumentFamily(), int(typeArgumentStart+childIndex))
+			if !childHeld || !argument.Available() {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.TypesID()), bytesField(argument.ReferenceID()), uintField(uint64(argument.Index())))
 		}
 	}
 	sink.add(uintField(uint64(len(artifact.bodies))))
@@ -261,9 +306,20 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			return identity.ContentID{}
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.staticTypeValues))))
-	for _, row := range artifact.staticTypeValues {
-		sink.add(bytesField(row.id), bytesField(row.body), bytesField(row.reference), bytesField(row.root), field{bytes: []byte(row.name), kind: fieldBytes})
+	// The authored type-value plane is read out of the sealed cold publication
+	// in its emitted order, which is the order the identity has always
+	// committed to.
+	typeValueCount, typeValuesPublished := coldCount(artifact, cold.StaticTypeValueFamily())
+	if !typeValuesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(typeValueCount)))
+	for index := 0; index < typeValueCount; index++ {
+		row, held := coldRow(artifact, cold.StaticTypeValueFamily(), index)
+		if !held {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.ID()), bytesField(row.BodyPathID()), bytesField(row.ReferenceID()), bytesField(row.RootID()), field{bytes: []byte(row.Name()), kind: fieldBytes})
 	}
 	sink.add(uintField(uint64(len(artifact.staticTypeNodes))))
 	for _, row := range artifact.staticTypeNodes {
@@ -334,25 +390,55 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(child))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.staticExpressions))))
-	for _, row := range artifact.staticExpressions {
-		sink.add(bytesField(row.id), bytesField(row.reference), bytesField(row.owner))
+	expressionCount, expressionsPublished := coldCount(artifact, cold.StaticExpressionFamily())
+	if !expressionsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(expressionCount)))
+	for index := 0; index < expressionCount; index++ {
+		row, held := coldRow(artifact, cold.StaticExpressionFamily(), index)
+		if !held {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.ID()), bytesField(row.ReferenceID()), bytesField(row.Owner()))
 	}
 	sink.add(uintField(uint64(len(artifact.staticInputs))))
 	for _, row := range artifact.staticInputs {
 		exact := row.literal
 		sink.add(bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), uintField(uint64(row.operandKind)), bytesField(row.expression), bytesField(row.source), bytesField(row.target), bytesField(row.operand), bytesField(row.frontier), bytesField(row.operandReference), bytesField(row.operandSubject), bytesField(row.operandBody), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, uintField(uint64(row.cursor)))
 	}
-	sink.add(uintField(uint64(len(artifact.environment))))
-	for _, edge := range artifact.environment {
+	// The environment plane and its reset witnesses are read out of the sealed
+	// cold publication. The witness span preserves the emitted order, so the
+	// preimage is the same sequence the identity has always committed to.
+	edgeCount, edgesPublished := coldCount(artifact, cold.EnvironmentEdgeFamily())
+	if !edgesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(edgeCount)))
+	for index := 0; index < edgeCount; index++ {
+		edge, held := coldRow(artifact, cold.EnvironmentEdgeFamily(), index)
+		offset, resets, spanOK := edge.ResetSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
+		}
+		guard, _ := edge.GuardID()
+		decision, _ := edge.DecisionID()
+		condition, _ := edge.ConditionValueSpanID()
+		truth, guarded := edge.Truth()
+		mu, hasMu := edge.MuPathID()
+		reset, hasReset := edge.ResetDigest()
 		sink.add(
-			bytesField(edge.id), bytesField(edge.from), bytesField(edge.to), bytesField(edge.route),
-			uintField(uint64(edge.arm)), bytesField(edge.guard), bytesField(edge.decision), bytesField(edge.condition), boolField(edge.guarded), boolField(edge.truth),
-			bytesField(edge.component), bytesField(edge.mu), boolField(edge.hasMu),
-			bytesField(edge.reset), boolField(edge.hasReset), uintField(uint64(len(edge.resets))),
+			bytesField(edge.ID()), bytesField(edge.From()), bytesField(edge.To()), bytesField(edge.RouteID()),
+			uintField(uint64(edge.Arm())), bytesField(guard), bytesField(decision), bytesField(condition), boolField(guarded), boolField(truth),
+			bytesField(edge.ComponentID()), bytesField(mu), boolField(hasMu),
+			bytesField(reset), boolField(hasReset), uintField(uint64(resets)),
 		)
-		for _, reset := range edge.resets {
-			sink.add(bytesField(reset))
+		for position := uint32(0); position < resets; position++ {
+			witness, witnessHeld := coldRow(artifact, cold.EnvironmentResetFamily(), int(offset+position))
+			if !witnessHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(witness.ID()))
 		}
 	}
 	sink.add(uintField(uint64(len(artifact.localTransfers))))
@@ -369,19 +455,44 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			uintField(uint64(row.stage)), uintField(uint64(row.inputKind)), bytesField(row.route),
 		)
 	}
-	sink.add(uintField(uint64(len(artifact.regions))))
-	for _, region := range artifact.regions {
+	// The region plane, its member plane and the event bracket sequence are
+	// read out of the sealed cold publication. The member span preserves the
+	// emitted order, so the preimage is the same sequence the identity has
+	// always committed to.
+	regionCount, regionsPublished := coldCount(artifact, cold.RegionFamily())
+	if !regionsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(regionCount)))
+	for index := 0; index < regionCount; index++ {
+		region, held := coldRow(artifact, cold.RegionFamily(), index)
+		offset, members, spanOK := region.MemberSpan()
+		if !held || !spanOK {
+			return identity.ContentID{}
+		}
 		sink.add(
-			bytesField(region.id), bytesField(region.parent), boolField(region.cyclic),
-			uintField(uint64(len(region.members))),
+			bytesField(region.ID()), bytesField(region.ParentID()), boolField(region.Cyclic()),
+			uintField(uint64(members)),
 		)
-		for _, member := range region.members {
-			sink.add(bytesField(member))
+		for position := uint32(0); position < members; position++ {
+			member, memberHeld := coldRow(artifact, cold.RegionMemberFamily(), int(offset+position))
+			if !memberHeld {
+				return identity.ContentID{}
+			}
+			sink.add(bytesField(member.ID()))
 		}
 	}
-	sink.add(uintField(uint64(len(artifact.events))))
-	for _, event := range artifact.events {
-		sink.add(uintField(uint64(event.kind)), bytesField(event.region), bytesField(event.point))
+	eventCount, eventsPublished := coldCount(artifact, cold.WTOEventFamily())
+	if !eventsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(eventCount)))
+	for index := 0; index < eventCount; index++ {
+		event, held := coldRow(artifact, cold.WTOEventFamily(), index)
+		if !held {
+			return identity.ContentID{}
+		}
+		sink.add(uintField(uint64(event.Kind())), bytesField(event.RegionID()), bytesField(event.PointID()))
 	}
 	return sink.sum()
 }

@@ -11,7 +11,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
@@ -22,7 +22,7 @@ type valueSourceCompileRow struct {
 	term, target      keyspace.Term
 	body, bodyContext identity.ContentID
 	spanID            identity.ContentID
-	finish            flow.Site
+	finish            causal.Site
 	id                identity.ContentID
 	literalFamily     keyspace.Family
 	literal           keyspace.LiteralValue
