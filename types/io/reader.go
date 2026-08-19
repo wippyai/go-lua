@@ -13,8 +13,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-const maxTypeDepth = 32
-const maxTypeNodes = 1024
+const maxTypeDepth = 256
+const maxTypeNodes = 1 << 20
+const maxCollectionLen = 1 << 20
+const maxStringLen = 16 << 20
 
 type typeReader struct {
 	r   *bytes.Reader
@@ -71,7 +73,7 @@ func (r *typeReader) readString() string {
 		return ""
 	}
 
-	if length > maxSliceLen {
+	if length > maxStringLen || uint64(length) > uint64(r.r.Len()) {
 		r.err = ErrCorruptedData
 		return ""
 	}
@@ -87,7 +89,7 @@ func (r *typeReader) readBool() bool {
 }
 
 func (r *typeReader) checkSliceLen(n uint32) bool {
-	if n > maxSliceLen {
+	if n > maxCollectionLen || uint64(n) > uint64(r.r.Len()) {
 		r.err = ErrCorruptedData
 		return false
 	}

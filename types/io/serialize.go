@@ -42,8 +42,6 @@ var (
 	ErrCorruptedData = errors.New("corrupted type data")
 )
 
-const maxSliceLen = 64
-
 const (
 	annotationArgNil byte = iota
 	annotationArgString

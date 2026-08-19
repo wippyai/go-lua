@@ -772,6 +772,9 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 
 	// Types
 	count := r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Types[name] = r.readType()
@@ -779,6 +782,9 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 
 	// Summaries
 	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Summaries[name] = r.readSummary()
@@ -786,6 +792,9 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 
 	// Globals
 	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Globals[name] = r.readType()

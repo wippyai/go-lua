@@ -1397,6 +1397,17 @@ func TestDecode_ReadString_Empty(t *testing.T) {
 	}
 }
 
+func TestDecode_ReadString_RejectsLengthBeyondInput(t *testing.T) {
+	var buf bytes.Buffer
+	tw := &typeWriter{w: &buf}
+	tw.writeUint32(1024)
+
+	r := &typeReader{r: bytes.NewReader(buf.Bytes())}
+	if got := r.readString(); got != "" || !errors.Is(r.err, ErrCorruptedData) {
+		t.Fatalf("readString() = %q, err=%v", got, r.err)
+	}
+}
+
 func TestDecode_Literal_UnknownBase(t *testing.T) {
 	// kind.Literal is 23 (0x17)
 	var buf bytes.Buffer
