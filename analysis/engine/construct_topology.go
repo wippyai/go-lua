@@ -262,7 +262,6 @@ type constructedPointPlane struct {
 	idBySite          map[equation.Site]identity.ContentID
 	decisions         map[identity.ContentID][]constructedDecision
 	idByMounted       map[artifactMountedPoint]identity.ContentID
-	order             []identity.ContentID
 	bootstrapSemantic identity.ContentID
 	bootstrapRef      equation.PointRef
 }
@@ -288,7 +287,6 @@ type constructedMemberPlane struct {
 	specs        []equation.RuleInstance
 	groups       []equation.Group
 	refByID      map[identity.ContentID]equation.RuleRef
-	idByRef      map[equation.RuleRef]identity.ContentID
 	activations  map[identity.ContentID]equation.RuleRef
 	activationAt map[equation.RuleRef]identity.ContentID
 	// applicationAt is the declared application of each activation trigger.
@@ -590,7 +588,6 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 				return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, pointIndex)
 			}
 			plane.idByMounted[handle] = id
-			plane.order = append(plane.order, id)
 			decisions := make([]constructedDecision, len(row.Decisions))
 			for index, semanticID := range row.Decisions {
 				key := mountedArtifactID("analysis/engine/artifact-decision/v1", mount.module, artifactID, semanticID)
@@ -603,9 +600,10 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 			plane.decisions[id] = decisions
 		}
 	}
+	mountedPointCount := len(plane.specs)
 	semantic := linkBootstrapPointSemanticID(mounts.owner, mounts.point.PointID)
 	if !place(semantic, declaration.sites.bootstrap) {
-		return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, len(plane.order))
+		return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointRow, mountedPointCount)
 	}
 	plane.bootstrapSemantic, plane.bootstrapRef = semantic, plane.refByID[semantic]
 
@@ -639,7 +637,7 @@ func constructPointPlane(declaration topologyDeclaration, source constructedSour
 			return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointOrder, template.EventCount())
 		}
 	}
-	if rank != len(plane.order) {
+	if rank != mountedPointCount {
 		return constructedPointPlane{}, refuseAdmission(topologyConstructionStepPointOrder, rank)
 	}
 	ranks[int(uint64(plane.bootstrapRef))-1] = 0
@@ -907,7 +905,6 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		specs:         make([]equation.RuleInstance, 0, len(declaration.members)),
 		groups:        make([]equation.Group, 0, len(declaration.members)),
 		refByID:       make(map[identity.ContentID]equation.RuleRef, len(declaration.members)),
-		idByRef:       make(map[equation.RuleRef]identity.ContentID, len(declaration.members)),
 		activations:   make(map[identity.ContentID]equation.RuleRef),
 		activationAt:  make(map[equation.RuleRef]identity.ContentID),
 		applicationAt: make(map[equation.RuleRef]composition.Key),
@@ -933,7 +930,6 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 			return constructedMemberPlane{}, refusal
 		}
 		plane.refByID[coordinates.member] = ref
-		plane.idByRef[ref] = coordinates.member
 		plane.bindings = append(plane.bindings, programMemberBinding{
 			member: coordinates.member, activation: coordinates.activation,
 			activated: member.Activation, coords: member.Coords, binder: member.Bind,
