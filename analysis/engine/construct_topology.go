@@ -55,22 +55,21 @@ const (
 // declaredMemberRow is one rule row of the declaration. Row is the sealed
 // equation instance the owner's operand sealing produced; every other field is
 // a coordinate resolved against the sealed planes.
-//
-// Admission of a mounted row is decided from the sealed template facts the
-// owner operand sealing reads: the presence of the exact
-// role+mount+point+occurrence rule row and the sites its points were admitted
-// under. Step 1 of this migration publishes that admissibility as a declared
-// column on the rule program; when it lands, this resolution consumes the
-// declared requirement instead of re-deriving it from the template.
 type declaredMemberRow struct {
-	Plane            declaredMemberPlane
-	ID               identity.ContentID
-	ActivationID     identity.ContentID
-	Role             RuleSlotCapability
-	Mount            identity.ContentID
-	Point            identity.ContentID
-	Occurrence       identity.ContentID
-	Row              equation.RuleInstance
+	Plane        declaredMemberPlane
+	ID           identity.ContentID
+	ActivationID identity.ContentID
+	Role         RuleSlotCapability
+	Mount        identity.ContentID
+	Point        identity.ContentID
+	Occurrence   identity.ContentID
+	Row          equation.RuleInstance
+	// Bind is the sealed cell that mints this row's runtime member, and
+	// Coords the neutral coordinates it resolves its operand from. The
+	// declaration states both; the committed program binds them at every
+	// seal and the geometry reads neither.
+	Bind             programMemberBinder
+	Coords           OperandCoords
 	Activation       bool
 	EnvironmentInput equation.Input
 }
@@ -84,6 +83,8 @@ type declaredQueryRow struct {
 	Mount identity.ContentID
 	Point identity.ContentID
 	Row   equation.QueryInstance
+	// Admit is the sealed query cell that mints this row's runtime query.
+	Admit programQueryAdmit
 }
 
 // constructedSitePlane is the admitted source plane of one construction: the
@@ -148,20 +149,20 @@ const (
 )
 
 // topologyConstructionRefusal is the closed refusal of one construction. It
-// projects onto the published ProgramConstructionStage vocabulary: input and
+// projects onto the published ProgramSealStage vocabulary: input and
 // declaration boundaries refuse at Admission, the geometry commit itself
 // refuses at TopologySeal.
 type topologyConstructionRefusal struct {
-	stage   ProgramConstructionStage
+	stage   ProgramSealStage
 	step    topologyConstructionStep
 	ordinal uint32
 }
 
 func (refusal topologyConstructionRefusal) Available() bool {
-	return refusal.stage != ProgramConstructionStageNone
+	return refusal.stage != ProgramSealStageNone
 }
 
-func (refusal topologyConstructionRefusal) Stage() ProgramConstructionStage { return refusal.stage }
+func (refusal topologyConstructionRefusal) Stage() ProgramSealStage { return refusal.stage }
 
 func (refusal topologyConstructionRefusal) Step() topologyConstructionStep { return refusal.step }
 
@@ -171,17 +172,17 @@ func (refusal topologyConstructionRefusal) Failure() SolveFailure {
 	if !refusal.Available() {
 		return SolveFailure{}
 	}
-	return ProgramConstructionFailure(refusal.stage)
+	return ProgramStageFailure(refusal.stage)
 }
 
 // refuseAdmission closes one declaration-boundary refusal.
 func refuseAdmission(step topologyConstructionStep, ordinal int) topologyConstructionRefusal {
-	return topologyConstructionRefusal{stage: ProgramConstructionStageAdmission, step: step, ordinal: constructionOrdinal(ordinal)}
+	return topologyConstructionRefusal{stage: ProgramSealStageAdmission, step: step, ordinal: constructionOrdinal(ordinal)}
 }
 
 // refuseTopologySeal closes one geometry-commit refusal.
 func refuseTopologySeal(step topologyConstructionStep, ordinal int) topologyConstructionRefusal {
-	return topologyConstructionRefusal{stage: ProgramConstructionStageTopologySeal, step: step, ordinal: constructionOrdinal(ordinal)}
+	return topologyConstructionRefusal{stage: ProgramSealStageTopologySeal, step: step, ordinal: constructionOrdinal(ordinal)}
 }
 
 func constructionOrdinal(ordinal int) uint32 {
@@ -191,16 +192,15 @@ func constructionOrdinal(ordinal int) uint32 {
 	return uint32(ordinal)
 }
 
-// constructedTopology is the committed geometry: the sealed BindingTopology
-// and the initial Graph published against it.
+// constructedTopology is the committed geometry: the committed program and
+// the point plane its declaration folded into.
 type constructedTopology struct {
-	topology *BindingTopology
-	graph    *equation.Graph
-	points   constructedPointPlane
+	program *CommittedProgram
+	points  constructedPointPlane
 }
 
 func (constructed constructedTopology) Available() bool {
-	return constructed.topology != nil && constructed.graph != nil && constructed.topology.valid()
+	return constructed.program.valid()
 }
 
 // constructedSourcePlane is the sealed source authority a construction reads.
@@ -280,6 +280,7 @@ type constructedEdgePlane struct {
 // constructedMemberPlane is the finished member geometry: the dense rule rows,
 // one Group per row, and the published member and activation addresses.
 type constructedMemberPlane struct {
+	bindings     []programMemberBinding
 	specs        []equation.RuleInstance
 	groups       []equation.Group
 	refByID      map[identity.ContentID]equation.RuleRef
@@ -505,7 +506,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				continue
 			}
 			// The native stage inverse is the one row-shaped value a committed
-			// BindingTopology retains, so it is derived here rather than read
+			// program retains, so it is derived here rather than read
 			// back from the template at solve time.
 			stageKey := artifactMountedRuleOccurrence{role: capability, mount: mount.module, occurrence: rule.ID}
 			if _, duplicate := plane.stages[stageKey]; duplicate {
@@ -897,6 +898,7 @@ func constructedTransportFactor(source constructedSourcePlane, role RuleSlotCapa
 // point plane and its Inputs derived from the declaring plane's coordinates.
 func constructMemberPlane(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane) (constructedMemberPlane, topologyConstructionRefusal) {
 	plane := constructedMemberPlane{
+		bindings:     make([]programMemberBinding, 0, len(declaration.members)),
 		specs:        make([]equation.RuleInstance, 0, len(declaration.members)),
 		groups:       make([]equation.Group, 0, len(declaration.members)),
 		refByID:      make(map[identity.ContentID]equation.RuleRef, len(declaration.members)),
@@ -926,6 +928,10 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		}
 		plane.refByID[coordinates.member] = ref
 		plane.idByRef[ref] = coordinates.member
+		plane.bindings = append(plane.bindings, programMemberBinding{
+			member: coordinates.member, activation: coordinates.activation,
+			activated: member.Activation, coords: member.Coords, binder: member.Bind,
+		})
 		plane.specs = append(plane.specs, row)
 		plane.groups = append(plane.groups, group)
 		if !member.Activation {
@@ -1374,11 +1380,12 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 	if !stagesOK {
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
 	}
-	committed := &BindingTopology{
-		topology: topology, state: source.state, authority: source.authority,
-		factors: source.factors, directory: directory,
-		carrier:          bindingTopologyCarrier{batch: source.batch, sourceKey: source.key, spec: spec},
-		nativeCallStages: stages, artifactBacked: declaration.mounted(),
+	committed := &CommittedProgram{
+		graph: graph, topology: topology, state: source.state, authority: source.authority,
+		directory: directory, nativeCallStages: stages,
+		members: members.bindings, queries: declaredQueryBindings(declaration.queries),
+		carrier:        &committedSourceCarrier{batch: source.batch, sourceKey: source.key, spec: spec},
+		artifactBacked: declaration.mounted(),
 	}
 	committed.self = committed
 	if declaration.mounted() {
@@ -1386,10 +1393,12 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		committed.bootstrapPoint = mounts.point.PointID
 		committed.bootstrapSemantic = points.bootstrapSemantic
 	}
-	if !committed.valid() {
+	addressed, addressedOK := committed.publishedQueryKeys()
+	if !committed.valid() || !addressedOK {
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
 	}
-	return constructedTopology{topology: committed, graph: graph}, topologyConstructionRefusal{}
+	committed.addressed = addressed
+	return constructedTopology{program: committed}, topologyConstructionRefusal{}
 }
 
 // constructedNativeStageDirectory retains the compact native-stage inverse a

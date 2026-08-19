@@ -376,12 +376,12 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 	return memberResult{activations: selected, reads: reads, boundary: phase, valid: ok}
 }
 
-// bindActivationMemberReceipt attaches one graph-owned activation Member to a
+// bindActivationMember attaches one graph-owned activation Member to a
 // receipt-native activation implementation. The receipt compiler performs
 // the exact Schema/family/trigger checks; this adapter adds only the Member
 // anchor and returns the same runtime member consumed by the existing epoch
 // executor.
-func bindActivationMemberReceipt(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
+func bindActivationMember(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
 	if implementation == nil || !implementation.binding.valid() || !member.Key().Available() || topology == nil || graph == nil ||
 		!topology.OwnsComposition(implementation.binding.proof.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
 		!trigger.Available() || trigger != member.Key() || member.Rule() != implementation.binding.proof.semantic ||

@@ -36,6 +36,11 @@ type pendingRuleIssuance struct {
 	candidates   []MountedActivationCandidate
 	application  identity.SemanticKey
 	issuer       *MountedActivationCandidateIssuer
+	// binder is the sealed cell that mints this issuance's runtime row, and
+	// coords the neutral coordinates it resolves its operand from. Both are
+	// stated here and bound by the committed program, never by this pass.
+	binder programMemberBinder
+	coords OperandCoords
 }
 
 // declaredActivationCandidate is one body route a mounted activation trigger
@@ -74,24 +79,24 @@ func declaredRoleOwnsRuleSchema(state *schemaBindingState, role RuleSlotCapabili
 // declaration. Source capabilities are minted in inventory order - Link rows,
 // mounted rows, activation rows - the Batch is sealed once, and every equation
 // row is resolved against those sealed identities afterwards.
-func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgramMount, bootstrap LinkBootstrapWitness, admission MountedProgramAdmission) (topologyDeclaration, receiptSealFailure, ProgramAdmissionStage, bool) {
-	if builder == nil || builder.binding == nil || builder.inner == nil || builder.mountedRows == nil || builder.inner.state == nil || builder.inner.state.schema == nil {
-		return topologyDeclaration{}, artifactRowFailure(receiptArtifactRowFailureOwner, 0), ProgramAdmissionNone, false
+func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMount, bootstrap LinkBootstrapWitness, admission MountedProgramAdmission) (topologyDeclaration, programSealFailure, ProgramAdmissionStage, bool) {
+	if rowsWorkspace == nil || rowsWorkspace.binding == nil || rowsWorkspace.mountedRows == nil || rowsWorkspace.state == nil || rowsWorkspace.state.schema == nil {
+		return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailureOwner, 0), ProgramAdmissionNone, false
 	}
-	rows := builder.mountedRows
-	state := builder.inner.state
-	authority := builder.inner.authority
+	rows := rowsWorkspace.mountedRows
+	state := rowsWorkspace.state
+	authority := rowsWorkspace.authority
 	if rows.bootstrap == nil {
-		return topologyDeclaration{}, artifactRowFailure(receiptArtifactRowFailureBootstrap, 0), ProgramAdmissionNone, false
+		return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailureBootstrap, 0), ProgramAdmissionNone, false
 	}
 
 	pending := make([]pendingRuleIssuance, 0, len(admission.Link)+len(admission.Mounted)+len(admission.Activation))
 	anchored := make(map[equation.Surface]struct{})
 	claimedLink := make(map[identity.ContentID]RuleSlotCapability, len(admission.Link))
 	for _, row := range admission.Link {
-		issuance, ok := admitLinkRuleIssuance(builder, rows, state, row, claimedLink)
+		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, row, claimedLink)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, receiptSealFailure{}, ProgramAdmissionLink, false
+			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionLink, false
 		}
 		pending = append(pending, issuance)
 	}
@@ -100,16 +105,16 @@ func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgr
 	// owner seals an operand for it, and an owner that cannot refuses the
 	// whole assemble rather than being silently skipped here.
 	for _, row := range admission.Mounted {
-		issuance, ok := admitMountedRuleIssuance(builder, rows, state, row)
+		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, receiptSealFailure{}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionMounted, false
 		}
 		pending = append(pending, issuance)
 	}
 	for _, row := range admission.Activation {
-		issuance, admitted, ok := admitActivationRuleIssuance(builder, rows, state, row)
+		issuance, admitted, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, receiptSealFailure{}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionMounted, false
 		}
 		if !admitted {
 			continue
@@ -117,13 +122,13 @@ func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgr
 		pending = append(pending, issuance)
 	}
 
-	if failure := builder.sealSources(); failure.Available() {
-		return topologyDeclaration{}, receiptSealFailure{phase: receiptSealFailureSources, source: failure}, ProgramAdmissionSeal, false
+	if failure := rowsWorkspace.seal(); failure.Available() {
+		return topologyDeclaration{}, programSealFailure{phase: programSealFailureSources, source: failure}, ProgramAdmissionSeal, false
 	}
 
 	declaration := topologyDeclaration{
-		binding:   builder.binding,
-		batch:     builder.inner.batch,
+		binding:   rowsWorkspace.binding,
+		batch:     rowsWorkspace.batch,
 		mounts:    mounts,
 		bootstrap: bootstrap,
 		sites:     constructedSitePlane{mounted: rows.mounted, bootstrap: rows.bootstrap.site},
@@ -132,8 +137,8 @@ func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgr
 	for ordinal, issuance := range pending {
 		member, summaries, ok := resolveDeclaredMemberRow(state, authority, issuance, declaration.summaries)
 		if !ok {
-			return topologyDeclaration{}, receiptSealFailure{
-				phase: receiptSealFailureRuleRow, ordinal: uint32(ordinal),
+			return topologyDeclaration{}, programSealFailure{
+				phase: programSealFailureRuleRow, ordinal: uint32(ordinal),
 				mounted: mountedIssuanceRole(issuance), link: linkIssuanceRole(issuance),
 			}, ProgramAdmissionSeal, false
 		}
@@ -141,8 +146,8 @@ func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgr
 		declaration.members = append(declaration.members, member)
 		candidates, candidatesOK := declareActivationCandidates(state.schema, issuance)
 		if !candidatesOK {
-			return topologyDeclaration{}, receiptSealFailure{
-				phase: receiptSealFailureRuleRow, ordinal: uint32(ordinal), mounted: issuance.role,
+			return topologyDeclaration{}, programSealFailure{
+				phase: programSealFailureRuleRow, ordinal: uint32(ordinal), mounted: issuance.role,
 			}, ProgramAdmissionSeal, false
 		}
 		declaration.candidates = append(declaration.candidates, candidates...)
@@ -151,28 +156,29 @@ func declareMountedProgram(builder *BindingTopologyBuilder, mounts []sealedProgr
 	declaration.queries = make([]declaredQueryRow, 0, len(admission.Queries))
 	for ordinal, row := range admission.Queries {
 		if row.admit == nil || !rows.hasMountedSite(row.Mount, row.Point) {
-			return topologyDeclaration{}, artifactRowFailure(receiptArtifactRowFailurePoint, uint32(ordinal)), ProgramAdmissionQuery, false
+			return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailurePoint, uint32(ordinal)), ProgramAdmissionQuery, false
 		}
 		query, summary, ok := row.admit.declareMountedQuery(state, authority, row.ID, row.Mount, row.Point)
 		if !ok {
-			return topologyDeclaration{}, receiptSealFailure{phase: receiptSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 		}
 		if summary != nil {
 			summaries, appended := appendDeclaredSummary(declaration.summaries, summary, state, authority)
 			if !appended {
-				return topologyDeclaration{}, receiptSealFailure{phase: receiptSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
+				return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 			}
 			declaration.summaries = summaries
 		}
+		query.Admit = row.admit
 		declaration.queries = append(declaration.queries, query)
 	}
-	return declaration, receiptSealFailure{}, ProgramAdmissionNone, true
+	return declaration, programSealFailure{}, ProgramAdmissionNone, true
 }
 
 // artifactRowFailure closes one artifact-row boundary a declaration could not
 // be addressed through.
-func artifactRowFailure(failure receiptArtifactRowFailure, ordinal uint32) receiptSealFailure {
-	return receiptSealFailure{phase: receiptSealFailureArtifactRows, ordinal: ordinal, artifact: failure}
+func artifactRowFailure(failure programArtifactRowFailure, ordinal uint32) programSealFailure {
+	return programSealFailure{phase: programSealFailureArtifactRows, ordinal: ordinal, artifact: failure}
 }
 
 func mountedIssuanceRole(issuance pendingRuleIssuance) RuleSlotCapability {
@@ -218,8 +224,8 @@ func claimAnchoredSurfaces(claimed map[equation.Surface]struct{}, surfaces decla
 // its declaration for the operand and surfaces. The member identity is
 // mount+point+occurrence qualified, so equal reusable artifacts and same IDs
 // on different mounts cannot alias.
-func admitMountedRuleIssuance(builder *BindingTopologyBuilder, rows *mountedArtifactRows, state *schemaBindingState, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
-	if row.Attach == nil || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
+func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
+	if row.Declaration == nil || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
 	if !rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence) {
@@ -240,16 +246,17 @@ func admitMountedRuleIssuance(builder *BindingTopologyBuilder, rows *mountedArti
 		plane: declaredMemberMount, role: row.Capability,
 		mount: row.Mount, point: row.Point, occurrence: row.Occurrence,
 		member: member, activationID: activation,
+		binder: row.Declaration, coords: coords,
 	}
-	return declareIssuanceSurfaces(builder, state, row.Attach, coords, site, entity, issuance)
+	return declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, coords, site, entity, issuance)
 }
 
 // admitLinkRuleIssuance mints one Link-global issuance from the sealed
 // bootstrap catalog. It has no mount and cannot address an arbitrary site or
 // occurrence: the witness assigned the role, and each occurrence is claimed
 // once.
-func admitLinkRuleIssuance(builder *BindingTopologyBuilder, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
-	if row.Attach == nil || !row.Capability.link() || !row.Occurrence.Available() {
+func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
+	if row.Declaration == nil || !row.Capability.link() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
 	assigned, found := rows.bootstrap.roles[row.Occurrence]
@@ -268,31 +275,32 @@ func admitLinkRuleIssuance(builder *BindingTopologyBuilder, rows *mountedArtifac
 	issuance := pendingRuleIssuance{
 		plane: declaredMemberLink, role: row.Capability,
 		occurrence: row.Occurrence, member: member,
+		binder: row.Declaration, coords: OperandCoords{Occurrence: row.Occurrence},
 	}
 	// The bootstrap Site is deliberately admitted into the still-open source
 	// Batch. Site.Available requires a sealed Batch and therefore cannot be
 	// used at this pre-seal boundary; admitFrom authenticates the open-batch
 	// capability and preserves the same fence as mounted rows.
-	return declareIssuanceSurfaces(builder, state, row.Attach, OperandCoords{Occurrence: row.Occurrence}, rows.bootstrap.site, entity, issuance)
+	return declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, OperandCoords{Occurrence: row.Occurrence}, rows.bootstrap.site, entity, issuance)
 }
 
 // declareIssuanceSurfaces is the shared half of every rule issuance: mint the
 // Occurrence and Operand, then read the declaration's two pure projections
 // against that anchor.
-func declareIssuanceSurfaces(builder *BindingTopologyBuilder, state *schemaBindingState, attach RuleProgramAttach, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
-	semantic, family, semanticOK := attach.declaredRuleSchema()
+func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration RuleProgramDeclaration, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
+	semantic, family, semanticOK := declaration.declaredRuleSchema()
 	if !semanticOK || !declaredRoleOwnsRuleSchema(state, issuance.role, semantic) {
 		return pendingRuleIssuance{}, false
 	}
-	operand, operandOK := attach.declareRuleOperand(coords)
+	operand, operandOK := declaration.declareRuleOperand(coords)
 	if !operandOK || !operand.Available() {
 		return pendingRuleIssuance{}, false
 	}
-	anchor, anchorOK := admitRuleSurfaceAnchor(builder, site, entity, operand.digest)
+	anchor, anchorOK := admitRuleSurfaceAnchor(rowsWorkspace, site, entity, operand.digest)
 	if !anchorOK {
 		return pendingRuleIssuance{}, false
 	}
-	surfaces, surfacesOK := attach.declareRuleSurfaces(operand, anchor)
+	surfaces, surfacesOK := declaration.declareRuleSurfaces(operand, anchor)
 	if !surfacesOK {
 		return pendingRuleIssuance{}, false
 	}
@@ -302,8 +310,8 @@ func declareIssuanceSurfaces(builder *BindingTopologyBuilder, state *schemaBindi
 
 // admitRuleSurfaceAnchor mints one issuance's Occurrence and Operand into the
 // still-open source Batch.
-func admitRuleSurfaceAnchor(builder *BindingTopologyBuilder, site equation.Site, entity composition.Key, digest [32]byte) (ruleSurfaceAnchor, bool) {
-	occurrence, occurrenceOK := builder.admitFrom(site, entity)
+func admitRuleSurfaceAnchor(rowsWorkspace *programRows, site equation.Site, entity composition.Key, digest [32]byte) (ruleSurfaceAnchor, bool) {
+	occurrence, occurrenceOK := rowsWorkspace.admitFrom(site, entity)
 	if !occurrenceOK {
 		return ruleSurfaceAnchor{}, false
 	}
@@ -311,7 +319,7 @@ func admitRuleSurfaceAnchor(builder *BindingTopologyBuilder, site equation.Site,
 	if !operandEntityOK {
 		return ruleSurfaceAnchor{}, false
 	}
-	operand, operandOK := builder.admitOperand(occurrence, operandEntity)
+	operand, operandOK := rowsWorkspace.admitOperand(occurrence, operandEntity)
 	if !operandOK {
 		return ruleSurfaceAnchor{}, false
 	}
@@ -321,7 +329,7 @@ func admitRuleSurfaceAnchor(builder *BindingTopologyBuilder, site equation.Site,
 // admitActivationRuleIssuance mints one mounted activation issuance. An
 // occurrence whose owner bound no transport vector declares no trigger row,
 // which is the lawful no-op for an activation with nothing to instantiate.
-func admitActivationRuleIssuance(builder *BindingTopologyBuilder, rows *mountedArtifactRows, state *schemaBindingState, admit MountedActivationAdmit) (pendingRuleIssuance, bool, bool) {
+func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, admit MountedActivationAdmit) (pendingRuleIssuance, bool, bool) {
 	if admit.Implementation == nil || !admit.Capability.mounted() ||
 		!admit.Mount.Available() || !admit.Point.Available() || !admit.Occurrence.Available() {
 		return pendingRuleIssuance{}, false, false
@@ -345,7 +353,7 @@ func admitActivationRuleIssuance(builder *BindingTopologyBuilder, rows *mountedA
 		!declaredActivationTransport(state, admit.Transport, admit.Capability, semantic) {
 		return pendingRuleIssuance{}, false, false
 	}
-	anchor, anchorOK := admitRuleSurfaceAnchor(builder, site, entity, [32]byte(admit.Occurrence))
+	anchor, anchorOK := admitRuleSurfaceAnchor(rowsWorkspace, site, entity, [32]byte(admit.Occurrence))
 	if !anchorOK {
 		return pendingRuleIssuance{}, false, false
 	}
@@ -353,6 +361,7 @@ func admitActivationRuleIssuance(builder *BindingTopologyBuilder, rows *mountedA
 		plane: declaredMemberMount, role: admit.Capability,
 		mount: admit.Mount, point: admit.Point, occurrence: admit.Occurrence,
 		member: member, activationID: activation, activation: true,
+		binder:   admit.Implementation,
 		semantic: semantic, family: family, anchor: anchor,
 		surfaces:    declaredActivationSurfaces(admit.Read),
 		candidates:  admit.Candidates,
@@ -404,7 +413,7 @@ func resolveDeclaredMemberRow(state *schemaBindingState, authority *schemaBindin
 	member := declaredMemberRow{
 		Plane: issuance.plane, ID: issuance.member, Role: issuance.role,
 		Mount: issuance.mount, Point: issuance.point, Occurrence: issuance.occurrence,
-		Row: row,
+		Row: row, Bind: issuance.binder, Coords: issuance.coords,
 	}
 	if issuance.activation {
 		member.Activation, member.ActivationID = true, issuance.activationID
@@ -445,8 +454,8 @@ func declareActivationCandidates(schema *Schema, issuance pendingRuleIssuance) (
 // appendDeclaredSummary folds one declared summary surface into the program's
 // summary plane. A surface declared twice must carry the same key vector.
 func appendDeclaredSummary(summaries []equation.SummaryMapping, mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) ([]equation.SummaryMapping, bool) {
-	if mapping == nil || mapping.receipt == nil || len(mapping.keys) == 0 ||
-		!validateSummarySurfaceReceipt(mapping.receipt, state, authority, mapping.surface) {
+	if mapping == nil || mapping.binding == nil || len(mapping.keys) == 0 ||
+		!validateSummarySurface(mapping.binding, state, authority, mapping.surface) {
 		return nil, false
 	}
 	for _, existing := range summaries {

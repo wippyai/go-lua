@@ -121,26 +121,3 @@ func bindQueries(binding *engine.SchemaBinding, fragments queryCells, bound axis
 	}
 	return true
 }
-
-// queryReceipts runs the table's sealed query pass: every declared family
-// recovers the implementation its answers are materialized and read through. An
-// implementation exists only once the binding seals, so this is a pass of its
-// own rather than the tail of the bind pass.
-func queryReceipts(binding *engine.SchemaBinding, fragments queryCells) (queryCells, bool) {
-	sealRegistry()
-	if registry.sealed == nil || !fragments.available(registry.queries) {
-		return nil, false
-	}
-	if len(registry.queryContributors) != len(registry.queries) {
-		return nil, false
-	}
-	cells := newQueryCells(registry.queries)
-	for position, contributor := range registry.queryContributors {
-		receipt, ok := contributor.recover(binding, fragments[position])
-		if !ok {
-			return cells, false
-		}
-		cells[position] = receipt
-	}
-	return cells, cells.available(registry.queries)
-}

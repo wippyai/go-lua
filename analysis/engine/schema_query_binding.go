@@ -448,7 +448,7 @@ type SummaryQueryImplementation[V, R any] struct {
 // authority needed to admit a graph summary mapping. The query carries no
 // caller-owned coordinate vector. The Factor owner issues its closed key plane
 // once during binding; topologySummaryMapping only borrows that sealed plane.
-func (implementation *SummaryQueryImplementation[V, R]) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
+func (implementation *SummaryQueryImplementation[V, R]) boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
 	if implementation == nil || !implementation.binding.valid() {
 		return nil, nil, composition.Key{}, composition.Key{}, false
 	}

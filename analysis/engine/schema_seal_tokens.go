@@ -241,7 +241,7 @@ func (receipt summarySurface[K, V]) valid(state *schemaBindingState, authority *
 	return receipt.receipt.valid() && receipt.receipt.state == state && receipt.receipt.authority == authority && receipt.formSchema == state.schema && receipt.form.kind == SchemaFormReadSummary && receipt.form.ordinal < uint64(len(receipt.receipt.forms)) && receipt.receipt.forms[receipt.form.ordinal] == receipt.form
 }
 
-func (receipt summarySurface[K, V]) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
+func (receipt summarySurface[K, V]) boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
 	if receipt.formSchema == nil || !receipt.valid(receipt.receipt.state, receipt.receipt.authority) {
 		return nil, nil, composition.Key{}, composition.Key{}, false
 	}

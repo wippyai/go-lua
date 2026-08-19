@@ -349,6 +349,6 @@ func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[hotOperan
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 }

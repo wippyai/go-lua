@@ -318,19 +318,21 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, bool) {
 	return state.ordinary, state.ordinaryOK
 }
 
-// Runtime attach phases run in this order against one program construction.
-// The ordinal names the phase inside the engine's compile-family site
-// identity, so an incomplete runtime binding reports which phase rejected.
+// Runtime seal phases run in this order against one committed program. The
+// ordinal names the phase inside the engine's compile-family site identity, so
+// an incomplete runtime binding reports which phase rejected.
 const (
-	runtimeAttachPhaseWitness uint64 = iota + 1
-	runtimeAttachPhaseBootstrapMembers
-	runtimeAttachPhaseArtifactRuleMembers
-	runtimeAttachPhaseQueryMembers
+	runtimeSealPhaseWitness uint64 = iota + 1
+	runtimeSealPhasePublications
 )
 
 // buildRuntimeSolver is the sole runtime binding path. Ordinary solves retain
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
 // afresh because their observation inventory is explicitly flag-controlled.
+//
+// The committed program carries every member and query row its construction
+// declared, so the only inventory this pass states is the observation set the
+// policy selected; the seal binds the whole runtime from both.
 func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy) (*engine.Solver, []composite.QueryPublication, engine.SolveFailure, bool) {
 	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed.program == nil || len(state.querySites) == 0 || state.artifacts == nil {
 		return nil, nil, engine.SolveFailure{}, false
@@ -342,37 +344,22 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	binding := state.binding
 	_, witnessOK := linkBootstrapWitness(state, binding)
 	if !witnessOK {
-		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseWitness), false
+		return nil, nil, engine.ProgramSealFailure(runtimeSealPhaseWitness), false
 	}
-	compilation, compiled := state.beginRuntimeConstruction()
-	if !compiled || compilation == nil {
-		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
+	publications, published := binding.QueryPublications(state.committed.program, state.querySites)
+	if !published || len(publications) != len(state.querySites) {
+		return nil, nil, engine.ProgramSealFailure(runtimeSealPhasePublications), false
 	}
-	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
-	rules := binding.Rules()
-	if !sealedOK || rules == nil || !rules.AttachLinkMembers(compilation) {
-		compilation.Close()
-		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseBootstrapMembers), false
-	}
-	if !rules.AttachMountedMembers(compilation, sealed) {
-		compilation.Close()
-		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseArtifactRuleMembers), false
-	}
-	publications, queriesAttached := binding.AttachQueries(compilation, state.querySites)
-	if !queriesAttached {
-		compilation.Close()
-		return nil, nil, engine.ProgramAttachFailure(runtimeAttachPhaseQueryMembers), false
-	}
-	observationFailure, observed := anadiag.AttachBranchValues(compilation, binding, geometry.BranchObservations)
+	observations, observationFailure, observed := anadiag.BranchValueObservations(state.committed.program, binding, geometry.BranchObservations)
 	if !observed {
 		return nil, nil, observationFailure, false
 	}
-	solver, constructionFailure, constructed := compilation.Seal()
-	if !constructed || solver == nil {
-		// The construction reports which stage refused. Only fall back to the
+	solver, sealFailure, sealed := state.committed.program.Seal(observations)
+	if !sealed || solver == nil {
+		// The seal reports which stage refused. Only fall back to the
 		// observation boundary when it named none.
-		if constructionFailure.Available() {
-			return nil, nil, constructionFailure, false
+		if sealFailure.Available() {
+			return nil, nil, sealFailure, false
 		}
 		return nil, nil, observationFailure, false
 	}
@@ -469,7 +456,7 @@ func (state *compiledState) release() {
 func resultMounts(mounts []mountedProgramArtifact) []result.Mount {
 	out := make([]result.Mount, len(mounts))
 	for index, mount := range mounts {
-		out[index] = result.Mount{Snapshot: mount.snapshot, ModuleKey: mount.moduleKey}
+		out[index] = result.Mount{Snapshot: mount.snapshot, ModuleKey: mount.moduleKey, Program: mount.program}
 	}
 	return out
 }
@@ -541,13 +528,6 @@ type committedProgramGraph struct {
 	program *engine.CommittedProgram
 }
 
-func (state *compiledState) beginRuntimeConstruction() (*engine.ProgramConstruction, bool) {
-	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed.program == nil {
-		return nil, false
-	}
-	return engine.BeginProgramConstruction(state.binding.SchemaBinding(), state.committed.program)
-}
-
 type assembleDiagnostic struct {
 	stage      anadiag.AnalyzeDiagnosticAssembleStage
 	rule       anadiag.AnalyzeDiagnosticRule
@@ -614,7 +594,12 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 		Activation: activations,
 		Queries:    queries,
 	}
-	program, refusal, committed := engine.AssembleMountedProgram(binding.SchemaBinding(), inputs, admission, witness)
+	program, refusal, committed := engine.ConstructProgram(engine.ProgramDeclaration{
+		Binding:   binding.SchemaBinding(),
+		Mounts:    inputs,
+		Bootstrap: witness,
+		Admission: admission,
+	})
 	if !committed {
 		if refusal.Lowered() {
 			return nil, nil, assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageLowering, lowering: refusal.LoweringFailure()}, false
@@ -665,11 +650,6 @@ func (state *compiledState) buildRuntimeTopologyWithDiagnostic() (assembleDiagno
 	}
 	state.committed.program = program
 	state.querySites = sites
-	if !program.ReleaseArtifact() {
-		state.committed = committedProgramGraph{}
-		state.querySites = nil
-		return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, false
-	}
 	return assembleDiagnostic{stage: anadiag.AnalyzeDiagnosticAssembleStageCommit}, true
 }
 

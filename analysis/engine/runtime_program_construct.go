@@ -2,12 +2,12 @@
 // Solver constructor: the two published-table invariants a sealed program
 // depends on, and the one mint of a Solver.
 //
-// The first-construction ledger lives in runtime_program_construction.go.
-// What lives here is the part already free of the committed graph handle:
-// given the addresses the sealed semantic directory published and the rows
-// the bind produced, decide whether the published tables are total, then mint
-// the Solver and the store its addresses are named in. Everything here takes
-// runtime values, never the directory or the transaction.
+// The committed program is sealed before this file runs. What lives here is
+// the part free of the construction workspace: given the addresses the sealed
+// semantic directory published and the rows the bind produced, decide whether
+// the published tables are total, then mint the Solver and the store its
+// addresses are named in. Everything here takes runtime values, never a
+// mutable construction handle.
 
 package engine
 
@@ -66,7 +66,7 @@ func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, b
 }
 
 // bindProgramObservationTable seals the published observation table. The
-// attach ordinal an issued observation handle carries is its position in this
+// observation ordinal an issued observation handle carries is its position in this
 // table, so the table and the issued ordinals are one sequence. published is how
 // many distinct identities the construction admitted; requiring one row per
 // admitted identity is what makes every issued ordinal address a row of the
@@ -92,12 +92,12 @@ func bindProgramObservationTable(bound []runtimeObservation, published int) ([]r
 // rather than aliasing a live store.
 func mintProgramSolver(runtime *solverRuntime) (*Solver, SolveFailure, bool) {
 	if runtime == nil || runtime.topology == nil {
-		return nil, ProgramConstructionFailure(ProgramConstructionStageSolverMint), false
+		return nil, ProgramStageFailure(ProgramSealStageSolverMint), false
 	}
 	relation, relationOK := runtime.topology.InitialRelation()
 	store, storeOK := solverStores.issue()
 	if !relationOK || !storeOK {
-		return nil, ProgramConstructionFailure(ProgramConstructionStageSolverMint), false
+		return nil, ProgramStageFailure(ProgramSealStageSolverMint), false
 	}
 	return &Solver{runtime: runtime, store: store, relation: relation}, SolveFailure{}, true
 }

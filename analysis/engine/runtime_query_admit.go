@@ -13,16 +13,19 @@ func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(stat
 	return declareMountedQueryRow[V, R](state, authority, implementation, id, mount, point, composition.QueryFactorSummary)
 }
 
-func (implementation *SummaryQueryImplementation[V, R]) bindConstruction(construction *ProgramConstruction, id identity.ContentID) bool {
-	return AttachSummaryQuery(construction, implementation, id)
+// bindProgramQuery mints the runtime row of one published query against a
+// bound plane. The plane is the sealed Factor universe of the committed graph,
+// so a query row never names a second Factor authority.
+func (implementation *SummaryQueryImplementation[V, R]) bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool) {
+	return bindReceiptSummaryQueryRuntime[V, R](plane, implementation, query)
 }
 
 func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool) {
 	return declareMountedQueryRow[V, R](state, authority, implementation, id, mount, point, composition.QueryFactorExact)
 }
 
-func (implementation *ExactQueryImplementation[V, R]) bindConstruction(construction *ProgramConstruction, id identity.ContentID) bool {
-	return AttachExactQuery(construction, implementation, id)
+func (implementation *ExactQueryImplementation[V, R]) bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool) {
+	return bindReceiptExactQueryRuntime[V, R](plane, implementation, query)
 }
 
 func declareMountedQueryRow[V, R any](state *schemaBindingState, authority *schemaBindingAuthority, implementation bindingQueryReceipt, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) (declaredQueryRow, *ruleSummaryMapping, bool) {
@@ -51,7 +54,7 @@ func declareMountedQueryRow[V, R any](state *schemaBindingState, authority *sche
 		if !mappingOK {
 			return declaredQueryRow{}, nil, false
 		}
-		summary = &ruleSummaryMapping{receipt: summaryImplementation, surface: mapping.Surface, keys: mapping.Keys}
+		summary = &ruleSummaryMapping{binding: summaryImplementation, surface: mapping.Surface, keys: mapping.Keys}
 	}
 	return declaredQueryRow{
 		ID: id, Mount: mount, Point: reusable,

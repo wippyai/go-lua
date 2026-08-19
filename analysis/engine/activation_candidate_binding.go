@@ -34,7 +34,7 @@ type directActivationTransportSetKey struct {
 // engine admits any arity the Schema's own declared Factors cover, and each
 // reference must name a distinct bound Factor of this Binding's Schema. The
 // issuer becomes usable only after the activation row itself is admitted to a
-// BindingTopologyBuilder.
+// the private program row workspace.
 func BindMountedActivationCandidateIssuer(binding *SchemaBinding, slot *SchemaActivationRuleSlot, imports []AnyFactorRef, export AnyFactorRef) (*MountedActivationCandidateIssuer, bool) {
 	state := bindingState(binding)
 	if state == nil || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || len(imports) == 0 {

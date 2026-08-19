@@ -114,7 +114,7 @@
 //
 // # Failure vocabulary
 //
-// One leaf shared by the solve loop, activation and receipt compilation: the
+// One leaf shared by the solve loop and activation: the
 // reason a solve refused, the boundary that named it, and the published report.
 // It belongs to no plane because it declares nothing about any plane's
 // machinery. Advisory tiers are config-gated, never removed.
@@ -124,8 +124,8 @@
 //
 // # Compile plane
 //
-// Construction lives on BindingTopologyBuilder and AssembleMountedProgram.
-// Solved results are read from Snapshot.Query by family and stable row identity.
+// Construction is a direct sealed declaration fold. Solved results are read
+// from Snapshot.Query by family and stable row identity.
 //
 // # Subpackages
 //

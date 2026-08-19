@@ -38,7 +38,7 @@ func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Acces
 	return rule.implementation, ok
 }
 
-func (rule *RawSetHotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *RawSetHotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
 }
 

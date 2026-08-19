@@ -184,7 +184,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	return hot, true
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
 }
 

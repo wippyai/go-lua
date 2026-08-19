@@ -85,7 +85,7 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[Root], bool
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 

@@ -61,53 +61,62 @@ func QuerySummaries(queries []composite.QueryPublication) ([]QuerySummaryKey, bo
 	return summaries, true
 }
 
-// AttachBranchValues creates the one solve-local Value read shared by native
-// publication and optional diagnostics. Static observations never enter this
-// function. Diagnostic flags control only report collectors; they cannot create
-// a second observation authority or alter native facts.
-func AttachBranchValues(compilation *engine.ProgramConstruction, binding *composite.ProgramBinding, branches []Observation) (engine.SolveFailure, bool) {
-	if compilation == nil || binding == nil || binding.ValueQuery() == nil {
-		return engine.ObservationAttachArguments(), false
+// BranchValueObservations states the one solve-local Value read shared by
+// native publication and optional diagnostics, as the observation inventory a
+// seal binds. Static observations never enter this function. Diagnostic flags
+// control only report collectors; they cannot create a second observation
+// authority or alter native facts.
+//
+// One evidence point declares one row. A second producer naming the same
+// execution point reauthenticates its own coordinates against the committed
+// program and adds no row, so the inventory holds exactly one observation per
+// published address.
+func BranchValueObservations(committed *engine.CommittedProgram, binding *composite.ProgramBinding, branches []Observation) ([]engine.ProgramObservationAdmission, engine.SolveFailure, bool) {
+	if committed == nil || binding == nil || binding.ValueQuery() == nil {
+		return nil, engine.ObservationSealArguments(), false
 	}
 	family, familyOK := composite.ObservationProducerForPopulationKind(structure.DiagnosticObservationBranchCondition.Key())
 	if !familyOK {
-		return engine.ObservationAttachArguments(), false
+		return nil, engine.ObservationSealArguments(), false
 	}
 	rules := binding.Rules()
 	if rules == nil {
-		return engine.ObservationAttachArguments(), false
+		return nil, engine.ObservationSealArguments(), false
 	}
+	declared := make([]engine.ProgramObservationAdmission, 0)
 	seen := make(map[pointKey]publication.BranchValueObservationAttachment)
 	for _, observation := range branches {
 		if observation.Kind != structure.DiagnosticObservationBranchCondition || !observation.Mount.Available() || len(observation.Points) == 0 || len(observation.Producers) == 0 {
-			return engine.ObservationAttachArguments(), false
+			return nil, engine.ObservationSealArguments(), false
 		}
 		for _, producer := range observation.Producers {
 			execution := pointKey{mount: observation.Mount, point: producer.Point}
 			if !execution.mount.Available() || !execution.point.Available() || !producer.Anchor.Available() {
-				return engine.ObservationAttachArguments(), false
+				return nil, engine.ObservationSealArguments(), false
 			}
 			role, roleOK := rules.CapabilityByKey(producer.Key)
 			if !roleOK || !role.Mounted() {
-				return engine.ObservationAttachPoint(), false
+				return nil, engine.ObservationSealPoint(), false
 			}
-			if attached, duplicate := seen[execution]; duplicate {
-				if !attached.MemberAdmitted(compilation, role, producer.Occurrence) {
-					return engine.ObservationAttachPoint(), false
+			if _, duplicate := seen[execution]; duplicate {
+				if !publication.MemberPublished(committed, role, execution.mount, producer.Point, producer.Occurrence) {
+					return nil, engine.ObservationSealPoint(), false
 				}
 				continue
 			}
-			attachment, failure, attached := publication.AttachBranchValueObservation(compilation, binding.ValueQuery(), role, family, execution.mount, producer.Point, producer.Occurrence)
-			if !attached {
-				return failure, false
+			attachment, failure, stated := publication.DeclareBranchValueObservation(committed, binding.ValueQuery(), role, family, execution.mount, producer.Point, producer.Occurrence)
+			if !stated {
+				return nil, failure, false
 			}
-			if _, keyed := attachment.ContentID(); !keyed {
-				return engine.ObservationAttachPoint(), false
+			row, rowOK := attachment.Observation()
+			if _, keyed := attachment.ContentID(); !keyed || !rowOK {
+				return nil, engine.ObservationSealPoint(), false
 			}
 			seen[execution] = attachment
+			declared = append(declared, row)
 		}
 	}
-	return engine.SolveFailure{}, true
+	return declared, engine.SolveFailure{}, true
 }
 
 // BindConditionCoordinates validates the Value-schema coordinate already

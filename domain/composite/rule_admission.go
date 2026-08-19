@@ -37,12 +37,12 @@ func (rules *RuleBinding) LinkAdmissions() ([]engine.LinkRuleAdmission, bool) {
 	}
 	rows := make([]engine.LinkRuleAdmission, 0)
 	ok := walkLinkCatalogs(rules, func(key schema.Key, id identity.ContentID) bool {
-		attach, attachOK := rules.ProgramAttachByKey(key)
+		declaration, declarationOK := rules.ProgramDeclarationByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !attachOK || !capabilityOK || !capability.Link() {
+		if !declarationOK || !capabilityOK || !capability.Link() {
 			return false
 		}
-		rows = append(rows, engine.LinkRuleAdmission{Attach: attach, Capability: capability, Occurrence: id})
+		rows = append(rows, engine.LinkRuleAdmission{Declaration: declaration, Capability: capability, Occurrence: id})
 		return true
 	})
 	if !ok {
@@ -88,41 +88,18 @@ func (rules *RuleBinding) MountedAdmissions(mounts []axis.MountedArtifact) ([]en
 			activations = append(activations, admit)
 			return true
 		}
-		attach, attachOK := rules.ProgramAttachByKey(key)
+		declaration, declarationOK := rules.ProgramDeclarationByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !attachOK || !capabilityOK || !capability.Mounted() {
+		if !declarationOK || !capabilityOK || !capability.Mounted() {
 			return false
 		}
-		mounted = append(mounted, engine.MountedRuleAdmission{Attach: attach, Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
+		mounted = append(mounted, engine.MountedRuleAdmission{Declaration: declaration, Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
 		return true
 	})
 	if !ok {
 		return nil, nil, DiagnosticRuleForKey(key), false
 	}
 	return mounted, activations, DiagnosticRuleUnknown, true
-}
-
-// AttachMountedMembers binds every sealed mounted placement to one committed
-// topology compilation.
-func (rules *RuleBinding) AttachMountedMembers(compilation *engine.ProgramConstruction, mounts []axis.MountedArtifact) bool {
-	if rules == nil || compilation == nil {
-		return false
-	}
-	_, ok := WalkSealedPlacements(mounts, func(key schema.Key, mount, point, occurrence identity.ContentID) bool {
-		return rules.AttachMemberByKey(key, compilation, mount, point, occurrence)
-	})
-	return ok
-}
-
-// AttachLinkMembers binds every sealed Link occurrence to one committed
-// topology compilation.
-func (rules *RuleBinding) AttachLinkMembers(compilation *engine.ProgramConstruction) bool {
-	if rules == nil || compilation == nil {
-		return false
-	}
-	return walkLinkCatalogs(rules, func(key schema.Key, id identity.ContentID) bool {
-		return rules.AttachLinkMemberByKey(key, compilation, id)
-	})
 }
 
 func walkLinkCatalogs(rules *RuleBinding, admit func(schema.Key, identity.ContentID) bool) bool {

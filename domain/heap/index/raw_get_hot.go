@@ -34,7 +34,7 @@ func (rule *RawGetHotRule) Implementation() (*valueowner.RuleImplementation[Acce
 	return rule.implementation, ok
 }
 
-func (rule *RawGetHotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *RawGetHotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
 }
 

@@ -9,13 +9,13 @@ import (
 )
 
 // BranchValueObservationAttachment is the bridge from one mounted branch
-// evidence point to Value's summary surface. The Engine observation handle is
+// evidence point to Value's summary surface. The declared observation row is
 // intentionally private: a caller cannot hand a shaped ValueSummaryObservation
-// to this path, and cannot substitute a handle that this attachment's identity
+// to this path, and cannot substitute a row that this attachment's identity
 // did not authorize. One evidence point carries one attachment, shared by every
 // later reader of that point.
 type BranchValueObservationAttachment struct {
-	observation engine.ProgramObservation[valuedomain.ValueSummaryObservation]
+	observation engine.ProgramObservationAdmission
 	id          identity.ContentID
 	mount       identity.ContentID
 	point       identity.ContentID
@@ -38,7 +38,7 @@ func branchValueObservationAttachmentID(mount, point identity.ContentID, produce
 
 func (attachment BranchValueObservationAttachment) valid() bool {
 	want, ok := branchValueObservationAttachmentID(attachment.mount, attachment.point, attachment.producer)
-	return ok && attachment.id == want && attachment.observation.SealedAs(attachment.id)
+	return ok && attachment.id == want && attachment.observation.Available() && attachment.observation.ID == attachment.id
 }
 
 func (attachment BranchValueObservationAttachment) Valid() bool { return attachment.valid() }
@@ -47,48 +47,60 @@ func (attachment BranchValueObservationAttachment) ContentID() (identity.Content
 	return attachment.id, attachment.valid()
 }
 
-// AttachBranchValueObservation attaches one Value summary root to the exact
+// DeclareBranchValueObservation states one Value summary root over the exact
 // mounted rule member that produces this evidence point. It precedes solving
 // and reads no solved state: the caller names the member by role capability and
-// authored coordinates, and the construction, not this relation, decides
+// authored coordinates, and the committed program, not this relation, decides
 // whether that member exists.
 //
-// The failure is the Engine attach classification, so a caller that binds a
-// whole receipt of evidence points reports which coordinate rejected the
-// binding rather than a single opaque refusal.
-func AttachBranchValueObservation(
-	compilation *engine.ProgramConstruction,
+// The failure is the Engine observation classification, so a caller that
+// declares a whole receipt of evidence points reports which coordinate
+// rejected the row rather than a single opaque refusal.
+func DeclareBranchValueObservation(
+	committed *engine.CommittedProgram,
 	query *engine.SummaryQueryImplementation[valuedomain.Value, valuedomain.ValueSummaryObservation],
 	role engine.RuleSlotCapability,
 	producer schema.Key,
 	mount, point, occurrence identity.ContentID,
 ) (BranchValueObservationAttachment, engine.SolveFailure, bool) {
-	if compilation == nil || query == nil {
-		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
+	if committed == nil || query == nil {
+		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
 	id, idOK := branchValueObservationAttachmentID(mount, point, producer)
 	if !idOK {
-		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
+		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
-	observation, failure := engine.AttachMountedSummary[valuedomain.Value, valuedomain.ValueSummaryObservation](compilation, query, id, role, mount, point, occurrence)
-	if failure.Available() || !observation.Available() {
-		return BranchValueObservationAttachment{}, failure, false
+	if !MemberPublished(committed, role, mount, point, occurrence) {
+		return BranchValueObservationAttachment{}, engine.ObservationSealPoint(), false
+	}
+	observation, declared := engine.NewSummaryObservationAdmission[valuedomain.Value, valuedomain.ValueSummaryObservation](query, id, role, mount, point, occurrence)
+	if !declared {
+		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
 	attachment := BranchValueObservationAttachment{observation: observation, id: id, mount: mount, point: point, producer: producer}
 	if !attachment.valid() {
-		return BranchValueObservationAttachment{}, engine.ObservationAttachArguments(), false
+		return BranchValueObservationAttachment{}, engine.ObservationSealArguments(), false
 	}
 	return attachment, engine.SolveFailure{}, true
 }
 
-// MemberAdmitted asks the construction whether the named role and occurrence
-// still resolve to an admitted member at this attachment's own evidence point. A
-// caller whose receipt names the same point from a second producer holds one
-// attachment for it and reauthenticates the additional coordinates here, so a
-// producer that names no admitted member is rejected rather than silently
-// folded into an attachment it never authorized.
-func (attachment BranchValueObservationAttachment) MemberAdmitted(compilation *engine.ProgramConstruction, role engine.RuleSlotCapability, occurrence identity.ContentID) bool {
-	return compilation != nil && attachment.valid() && compilation.HasMountedRuleMember(role, attachment.mount, attachment.point, occurrence)
+// Observation is the declared observation row this attachment answers on. The
+// seal that mints the Solver binds it; nothing else can.
+func (attachment BranchValueObservationAttachment) Observation() (engine.ProgramObservationAdmission, bool) {
+	return attachment.observation, attachment.valid()
+}
+
+// MemberPublished reports whether the committed program publishes a member at
+// these exact coordinates. A receipt that names one evidence point from a
+// second producer holds one attachment for it and reauthenticates the
+// additional coordinates here, so a producer that names no published member is
+// rejected rather than silently folded into an attachment it never authorized.
+func MemberPublished(committed *engine.CommittedProgram, role engine.RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
+	if committed == nil {
+		return false
+	}
+	_, published := committed.MountedRuleMember(role, mount, point, occurrence)
+	return published
 }
 
 // Observe reads this evidence point from the completed Snapshot. It reports

@@ -440,6 +440,6 @@ func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[hotBo
 	return rule.implementation, ok
 }
 
-func (rule *BodyHotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *BodyHotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 }

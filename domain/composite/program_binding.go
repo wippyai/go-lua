@@ -91,28 +91,36 @@ func (bound *ProgramBinding) Query(family schema.Key) (query.Cell, bool) {
 	return cell, cell.Available()
 }
 
-// ValueQuery is the receipt-native implementation of the value-summary family.
-// It recovers the family's own cell at the type its contributor declared, so
-// the accessor names the family and never a fold of its own.
+// ValueQuery is the sealed implementation of the value-summary family. The
+// fragment remains the canonical row; the implementation is projected from
+// that row against this exact sealed binding.
 func (bound *ProgramBinding) ValueQuery() *valueowner.SummaryQueryImplementation {
 	cell, ok := bound.Query(QueryFamilyValueSummary)
 	if !ok {
 		return nil
 	}
-	implementation, recovered := query.Payload[*valueowner.SummaryQueryImplementation](cell)
+	fragment, present := query.Payload[*valueowner.SummaryQueryFragment](cell)
+	if !present {
+		return nil
+	}
+	implementation, recovered := valueowner.RecoverQuery(bound.binding, query.Sealed[*valueowner.SummaryQueryFragment]{Fragment: fragment})
 	if !recovered {
 		return nil
 	}
 	return implementation
 }
 
-// EffectQuery is the receipt-native implementation of the effect-exact family.
+// EffectQuery is the sealed implementation of the effect-exact family.
 func (bound *ProgramBinding) EffectQuery() *effectowner.ExactQueryImplementation {
 	cell, ok := bound.Query(QueryFamilyEffectExact)
 	if !ok {
 		return nil
 	}
-	implementation, recovered := query.Payload[*effectowner.ExactQueryImplementation](cell)
+	fragment, present := query.Payload[*effectowner.ExactQueryFragment](cell)
+	if !present {
+		return nil
+	}
+	implementation, recovered := effectowner.RecoverQuery(bound.binding, query.Sealed[*effectowner.ExactQueryFragment]{Fragment: fragment})
 	if !recovered {
 		return nil
 	}
@@ -134,25 +142,6 @@ func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID,
 	default:
 		return engine.ProgramQueryAdmission{}, false
 	}
-}
-
-// AttachQuery binds one selected-point query through the open construction
-// and returns the publication key Result reads Snapshot by.
-func (bound *ProgramBinding) AttachQuery(compilation *engine.ProgramConstruction, id identity.ContentID, projection schema.Key) (identity.ContentID, bool) {
-	if bound == nil || compilation == nil {
-		return identity.ContentID{}, false
-	}
-	var ok bool
-	switch projection {
-	case query.ProjectionSummary:
-		ok = engine.AttachSummaryQuery(compilation, bound.ValueQuery(), id)
-	case query.ProjectionExact:
-		ok = engine.AttachExactQuery(compilation, bound.EffectQuery(), id)
-	}
-	if !ok {
-		return identity.ContentID{}, false
-	}
-	return compilation.QueryPublicationKey(id)
 }
 
 // RuntimeContexts is the cold authority pair a runtime joins to open allocation

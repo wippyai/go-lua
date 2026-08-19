@@ -9,13 +9,13 @@ import (
 // Solver-side binding-surface value constructors; the placement envelope that
 // accumulates these surfaces lives in runtime_rule_admit.go.
 
-type bindingSummarySurfaceReceipt interface {
-	boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
+type summarySurfaceBinding interface {
+	boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
 }
 
-func validateSummarySurfaceReceipt(receipt bindingSummarySurfaceReceipt, state *schemaBindingState, authority *schemaBindingAuthority, surface equation.Surface) bool {
-	receiptState, receiptAuthority, factor, normalizer, ok := receipt.boundTopologySummarySurfaceReceipt()
-	return ok && receiptState == state && receiptAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
+func validateSummarySurface(binding summarySurfaceBinding, state *schemaBindingState, authority *schemaBindingAuthority, surface equation.Surface) bool {
+	bindingState, bindingAuthority, factor, normalizer, ok := binding.boundTopologySummarySurface()
+	return ok && bindingState == state && bindingAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
 }
 
 // RuleReadSurface and RuleWriteSurface are owner-issued exact coordinate
@@ -33,7 +33,7 @@ type RuleReadSurface struct {
 }
 
 type ruleSummaryMapping struct {
-	receipt bindingSummarySurfaceReceipt
+	binding summarySurfaceBinding
 	surface equation.Surface
 	keys    []uint64
 }
@@ -76,7 +76,7 @@ func SummaryReadSurface[K ~uint32 | ~uint64](receipt schemaSummaryRead, refs *Cl
 		value:     surface,
 		authority: refs.receipt.authority,
 		summary: &ruleSummaryMapping{
-			receipt: receipt,
+			binding: receipt,
 			surface: surface,
 			keys: func() []uint64 {
 				keys := make([]uint64, len(refs.refs))

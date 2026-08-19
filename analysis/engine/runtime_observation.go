@@ -10,14 +10,14 @@ import (
 // Solver-side observation runtime; the construction attach surface lives in
 // runtime_program_observation.go.
 
-type receiptObservationOwner struct {
+type observationOwner struct {
 	state     *schemaBindingState
 	authority *schemaBindingAuthority
 	schema    *Schema
 	query     uint64
 }
 
-func (owner *receiptObservationOwner) valid(runtime *solverRuntime) bool {
+func (owner *observationOwner) valid(runtime *solverRuntime) bool {
 	return owner != nil && runtime != nil && runtime.graph != nil && owner.state != nil && owner.authority != nil && owner.schema != nil &&
 		owner.state.schema == owner.schema && owner.state.phase == schemaBindingSealed && owner.state.authority == owner.authority &&
 		runtime.bindingState == owner.state && runtime.bindingAuthority == owner.authority &&
@@ -26,20 +26,20 @@ func (owner *receiptObservationOwner) valid(runtime *solverRuntime) bool {
 
 type runtimeObservation interface {
 	observationID() identity.ContentID
-	observationOwner() *receiptObservationOwner
+	observationOwner() *observationOwner
 	observationPoint() equation.Point
 	materializeObservation(*carrier.Work, carrier.State) (*observationResult, solveBoundary, bool)
 }
 
 type observationResult struct {
-	owner *receiptObservationOwner
+	owner *observationOwner
 	id    identity.ContentID
 	value frozenValue
 }
 
-type receiptSummaryObservationRuntime[V, R any] struct {
+type summaryObservationRuntime[V, R any] struct {
 	id       identity.ContentID
-	owner    *receiptObservationOwner
+	owner    *observationOwner
 	point    equation.Point
 	factor   receiptQueryFactor[V]
 	unit     carrier.Unit
@@ -51,13 +51,13 @@ type receiptSummaryObservationRuntime[V, R any] struct {
 	result   FrozenResult[R]
 }
 
-// receiptExactObservationRuntime is the exact-surface counterpart to the
+// exactObservationRuntime is the exact-surface counterpart to the
 // summary observation runtime. It is deliberately separate because an exact
 // factor read has no normalizer: the sealed ExactQueryImplementation is the
 // only authority for its factor, freezer, and projection callbacks.
-type receiptExactObservationRuntime[V, R any] struct {
+type exactObservationRuntime[V, R any] struct {
 	id       identity.ContentID
-	owner    *receiptObservationOwner
+	owner    *observationOwner
 	point    equation.Point
 	factor   receiptQueryFactor[V]
 	unit     carrier.Unit
@@ -92,28 +92,28 @@ func exactObservationReadSurface(member exactObservationWriteMember, factor comp
 	return read, read.Available()
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) observationID() identity.ContentID {
+func (runtime *exactObservationRuntime[V, R]) observationID() identity.ContentID {
 	if runtime == nil {
 		return identity.ContentID{}
 	}
 	return runtime.id
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) observationOwner() *receiptObservationOwner {
+func (runtime *exactObservationRuntime[V, R]) observationOwner() *observationOwner {
 	if runtime == nil {
 		return nil
 	}
 	return runtime.owner
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) observationPoint() equation.Point {
+func (runtime *exactObservationRuntime[V, R]) observationPoint() equation.Point {
 	if runtime == nil {
 		return equation.Point{}
 	}
 	return runtime.point
 }
 
-func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
+func (runtime *exactObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
@@ -124,28 +124,28 @@ func (runtime *receiptExactObservationRuntime[V, R]) materializeObservation(work
 	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, boundaryNone, true
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) observationID() identity.ContentID {
+func (runtime *summaryObservationRuntime[V, R]) observationID() identity.ContentID {
 	if runtime == nil {
 		return identity.ContentID{}
 	}
 	return runtime.id
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) observationOwner() *receiptObservationOwner {
+func (runtime *summaryObservationRuntime[V, R]) observationOwner() *observationOwner {
 	if runtime == nil {
 		return nil
 	}
 	return runtime.owner
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) observationPoint() equation.Point {
+func (runtime *summaryObservationRuntime[V, R]) observationPoint() equation.Point {
 	if runtime == nil {
 		return equation.Point{}
 	}
 	return runtime.point
 }
 
-func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
+func (runtime *summaryObservationRuntime[V, R]) materializeObservation(work *carrier.Work, state carrier.State) (*observationResult, solveBoundary, bool) {
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
@@ -156,10 +156,29 @@ func (runtime *receiptSummaryObservationRuntime[V, R]) materializeObservation(wo
 	return &observationResult{owner: runtime.owner, id: runtime.id, value: value}, boundaryNone, true
 }
 
-// indexReceiptObservationPoints is constructed lazily only when optional
+// observationOwner is the sealed query authority one optional observation
+// answers under. It is derived from the query cell alone, so an inventory can
+// name coordinates but never a second query authority.
+func (implementation *SummaryQueryImplementation[V, R]) observationOwner() (*observationOwner, bool) {
+	state, authority, family, ordinal, ok := implementation.boundTopologyQueryReceipt()
+	if !ok || state == nil || !family.Available() {
+		return nil, false
+	}
+	return &observationOwner{state: state, authority: authority, schema: state.schema, query: ordinal}, true
+}
+
+func (implementation *ExactQueryImplementation[V, R]) observationOwner() (*observationOwner, bool) {
+	state, authority, family, ordinal, ok := implementation.boundTopologyQueryReceipt()
+	if !ok || state == nil || !family.Available() {
+		return nil, false
+	}
+	return &observationOwner{state: state, authority: authority, schema: state.schema, query: ordinal}, true
+}
+
+// indexObservationPoints is constructed lazily only when optional
 // observations are requested. It is linear in the committed member plane and
 // gives O(1) output lookup for every subsequent selected occurrence.
-func indexReceiptObservationPoints(graph *equation.Graph) (map[composition.Key]equation.Point, bool) {
+func indexObservationPoints(graph *equation.Graph) (map[composition.Key]equation.Point, bool) {
 	if graph == nil || graph.GroupCount() == 0 {
 		return nil, false
 	}
@@ -183,11 +202,11 @@ func indexReceiptObservationPoints(graph *equation.Graph) (map[composition.Key]e
 	return result, len(result) != 0
 }
 
-// bindReceiptSummaryObservationRuntime binds one optional observation against a
+// bindSummaryObservationRuntime binds one optional observation against a
 // sealed factor plane. It is the observation counterpart of the member and
 // query binds an activation revision replays.
-func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+func bindSummaryObservationRuntime[V, R any](compilation *programPlane, implementation *SummaryQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, owner *observationOwner) (runtimeObservation, bool) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) || !compilation.runtime.graph.OwnsPoint(point) {
 		return nil, false
 	}
 	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
@@ -196,17 +215,6 @@ func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, i
 	}
 	projection, projectionOK := state.schema.queryProjectionShapeAt(queryOrdinal, 0)
 	if !projectionOK || projection.Kind != composition.QueryFactorSummary || !projection.Factor.Available() || !projection.Normalizer.Available() {
-		return nil, false
-	}
-	if compilation.observationPoints == nil {
-		var indexed bool
-		compilation.observationPoints, indexed = indexReceiptObservationPoints(compilation.runtime.graph)
-		if !indexed {
-			return nil, false
-		}
-	}
-	point, resolved := compilation.observationPoints[member.Key()]
-	if !resolved || !compilation.runtime.graph.OwnsPoint(point) {
 		return nil, false
 	}
 	surface := equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadSummary, Semantic: projection.Normalizer, Normalizer: projection.Normalizer, Local: 1}
@@ -224,14 +232,14 @@ func bindReceiptSummaryObservationRuntime[V, R any](compilation *programPlane, i
 	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
 		return nil, false
 	}
-	return &receiptSummaryObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
+	return &summaryObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }
 
-// bindReceiptExactObservationRuntime rebuilds an exact rule observation for a
+// bindExactObservationRuntime rebuilds an exact rule observation for a
 // later activation revision using the same committed member locator and
 // sealed query implementation. It admits no caller-supplied point or factor.
-func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, owner *receiptObservationOwner) (runtimeObservation, bool) {
-	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) {
+func bindExactObservationRuntime[V, R any](compilation *programPlane, implementation *ExactQueryImplementation[V, R], id identity.ContentID, member equation.RuleMember, point equation.Point, owner *observationOwner) (runtimeObservation, bool) {
+	if compilation == nil || !compilation.frozen || compilation.runtime == nil || implementation == nil || owner == nil || !id.Available() || !compilation.runtime.graph.OwnsMember(member) || !compilation.runtime.graph.OwnsPoint(point) {
 		return nil, false
 	}
 	state, authority, family, queryOrdinal, receiptOK := implementation.boundTopologyQueryReceipt()
@@ -240,17 +248,6 @@ func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, imp
 	}
 	projection, projectionOK := state.schema.queryProjectionShapeAt(queryOrdinal, 0)
 	if !projectionOK || projection.Kind != composition.QueryFactorExact || !projection.Factor.Available() || projection.Normalizer.Available() {
-		return nil, false
-	}
-	if compilation.observationPoints == nil {
-		var indexed bool
-		compilation.observationPoints, indexed = indexReceiptObservationPoints(compilation.runtime.graph)
-		if !indexed {
-			return nil, false
-		}
-	}
-	point, resolved := compilation.observationPoints[member.Key()]
-	if !resolved || !compilation.runtime.graph.OwnsPoint(point) {
 		return nil, false
 	}
 	surface, surfaceOK := exactObservationReadSurface(member, projection.Factor)
@@ -268,5 +265,5 @@ func bindReceiptExactObservationRuntime[V, R any](compilation *programPlane, imp
 	if !unitOK || project == nil && !hasAccumulator || project != nil && hasAccumulator {
 		return nil, false
 	}
-	return &receiptExactObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
+	return &exactObservationRuntime[V, R]{id: id, owner: owner, point: point, factor: factor, unit: unit, project: project, begin: begin, accum: accum, borrow: borrow, transfer: transfer, result: implementation.binding.cell.result}, true
 }

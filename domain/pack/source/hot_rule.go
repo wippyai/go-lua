@@ -77,7 +77,7 @@ func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.
 	return rule.implementation, true
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return packowner.ResolveRuleImplementation(rule.implementation)
 }
 

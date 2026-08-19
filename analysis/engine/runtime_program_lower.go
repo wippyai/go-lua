@@ -26,7 +26,7 @@ const (
 // declaration pass reads: the Site each mounted point was admitted under and
 // the set of template rule rows an issuance may be declared at. It carries no
 // geometry and no dense address - both are derived from the sealed templates
-// by constructTopology - and it is released when the declaration ends.
+// by constructTopology - and never escapes the declaration fold.
 type mountedArtifactRows struct {
 	points    []identity.ContentID
 	pointMeta map[identity.ContentID]artifactPointMetadata
@@ -50,7 +50,7 @@ type artifactMountedPoint struct {
 
 // artifactMountedBody is the immutable parent-issued body transport anchor.
 // Point IDs remain reusable artifact IDs here; every later use must resolve
-// them through the same mount-qualified point receipt.
+// them through the same mount-qualified point row.
 type artifactMountedBody struct {
 	mount identity.ContentID
 	body  identity.ContentID
@@ -88,54 +88,53 @@ type artifactPointMetadata struct {
 	initial   bool
 }
 
-// mountedCallStage is a cold, graph-owned proof that one exact
+// programCallRow is a graph-owned handle for one exact
 // mounted Call occurrence was attached at its ProgramArtifact-issued native
 // stage. It is issued by occurrence alone: callers never submit a reusable
 // point to this lookup and therefore cannot splice another artifact point.
-type mountedCallStage struct {
-	graph    *equation.Graph
-	topology *BindingTopology
-	key      artifactMountedRuleOccurrence
-	stage    artifactNativeCallStage
+type programCallRow struct {
+	program *CommittedProgram
+	key     artifactMountedRuleOccurrence
+	stage   artifactNativeCallStage
 }
 
-func (receipt mountedCallStage) row() (artifactNativeCallStage, bool) {
-	if receipt.graph == nil || receipt.topology == nil || !receipt.topology.valid() || receipt.topology.nativeCallStages == nil || !receipt.topology.topology.OwnsGraph(receipt.graph) {
+func (handle programCallRow) resolve() (artifactNativeCallStage, bool) {
+	if !handle.program.valid() || handle.program.nativeCallStages == nil {
 		return artifactNativeCallStage{}, false
 	}
-	row, ok := receipt.topology.nativeCallStages[receipt.key]
-	return row, ok && row == receipt.stage && row.stage.NativeCall() && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
+	row, ok := handle.program.nativeCallStages[handle.key]
+	return row, ok && row == handle.stage && row.stage.NativeCall() && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
 }
 
-func (receipt mountedCallStage) Available() bool { _, ok := receipt.row(); return ok }
-func (receipt mountedCallStage) Stage() rows.ArtifactRuleStage {
-	row, ok := receipt.row()
+func (handle programCallRow) Available() bool { _, ok := handle.resolve(); return ok }
+func (handle programCallRow) Stage() rows.ArtifactRuleStage {
+	row, ok := handle.resolve()
 	if !ok {
 		return rows.ArtifactRuleStageInvalid
 	}
 	return row.stage
 }
-func (receipt mountedCallStage) MountID() identity.ContentID {
-	if _, ok := receipt.row(); !ok {
+func (handle programCallRow) MountID() identity.ContentID {
+	if _, ok := handle.resolve(); !ok {
 		return identity.ContentID{}
 	}
-	return receipt.key.mount
+	return handle.key.mount
 }
-func (receipt mountedCallStage) OccurrenceID() identity.ContentID {
-	if _, ok := receipt.row(); !ok {
+func (handle programCallRow) OccurrenceID() identity.ContentID {
+	if _, ok := handle.resolve(); !ok {
 		return identity.ContentID{}
 	}
-	return receipt.key.occurrence
+	return handle.key.occurrence
 }
-func (receipt mountedCallStage) ReusablePointID() identity.ContentID {
-	row, ok := receipt.row()
+func (handle programCallRow) ReusablePointID() identity.ContentID {
+	row, ok := handle.resolve()
 	if !ok {
 		return identity.ContentID{}
 	}
 	return row.point
 }
-func (receipt mountedCallStage) ReusableInputPointID() identity.ContentID {
-	row, ok := receipt.row()
+func (handle programCallRow) ReusableInputPointID() identity.ContentID {
+	row, ok := handle.resolve()
 	if !ok {
 		return identity.ContentID{}
 	}
@@ -144,118 +143,103 @@ func (receipt mountedCallStage) ReusableInputPointID() identity.ContentID {
 
 // RuleMember resolves the already-attached member authenticated by this
 // stage proof. The caller cannot substitute another point or occurrence.
-func (receipt mountedCallStage) RuleMember() (ProgramMember, bool) {
-	row, ok := receipt.row()
+func (handle programCallRow) RuleMember() (ProgramMember, bool) {
+	row, ok := handle.resolve()
 	if !ok {
 		return ProgramMember{}, false
 	}
-	if receipt.topology == nil || receipt.topology.directory == nil {
-		return ProgramMember{}, false
-	}
-	locator, found := receipt.topology.directory.member(mountedRuleMemberID(receipt.key.role, receipt.key.mount, row.point, receipt.key.occurrence))
+	locator, found := handle.program.directory.member(mountedRuleMemberID(handle.key.role, handle.key.mount, row.point, handle.key.occurrence))
 	if !found {
 		return ProgramMember{}, false
 	}
-	member, ok := locator.Resolve(receipt.graph)
-	if !ok || !receipt.graph.OwnsMember(member) {
+	member, ok := locator.Resolve(handle.program.graph)
+	if !ok || !handle.program.graph.OwnsMember(member) {
 		return ProgramMember{}, false
 	}
-	return ProgramMember{graph: receipt.graph, topology: receipt.topology, member: member, locator: locator}, true
+	return ProgramMember{program: handle.program, member: member, locator: locator}, true
 }
 
 // assembleSealedProgramMounts folds one mounted program. Source admission runs
-// through the Binding's row transaction; the geometry those sealed rows fold
-// into is derived by the pure constructor, which owns the schedule gate, the
-// duplicate-identity refusal and the published directory.
-func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramMount, admission MountedProgramAdmission, bootstrap LinkBootstrapWitness) (*equation.Graph, *BindingTopology, receiptSealFailure, ProgramAdmissionStage, receiptAssemblyFailure, topologyConstructionRefusal, bool) {
-	builder, lowering, assembled := beginMountedProgramAssembly(binding, mounts, bootstrap)
-	if !assembled || builder == nil {
-		return nil, nil, receiptSealFailure{}, ProgramAdmissionNone, lowering, topologyConstructionRefusal{}, false
+// through the constructor's private row workspace; the geometry those sealed
+// rows fold into is derived by the pure constructor, which owns the schedule
+// gate, the duplicate-identity refusal and the published directory.
+func assembleSealedProgramMounts(binding *SchemaBinding, mounts []sealedProgramMount, admission MountedProgramAdmission, bootstrap LinkBootstrapWitness) (*CommittedProgram, programSealFailure, ProgramAdmissionStage, programAssemblyFailure, topologyConstructionRefusal, bool) {
+	rowsWorkspace, lowering, assembled := assembleProgramRows(binding, mounts, bootstrap)
+	if !assembled || rowsWorkspace == nil {
+		return nil, programSealFailure{}, ProgramAdmissionNone, lowering, topologyConstructionRefusal{}, false
 	}
 	// A mounted program publishes its result through queries; an inventory
 	// with none states no observable program at all.
 	if len(admission.Queries) == 0 {
-		builder.abort()
-		return nil, nil, receiptSealFailure{}, ProgramAdmissionQuery, receiptAssemblyFailureNone, topologyConstructionRefusal{}, false
+		return nil, programSealFailure{}, ProgramAdmissionQuery, programAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
-	declaration, seal, stage, declared := declareMountedProgram(builder, mounts, bootstrap, admission)
+	declaration, seal, stage, declared := declareMountedProgram(rowsWorkspace, mounts, bootstrap, admission)
 	if !declared {
-		builder.abort()
-		return nil, nil, seal, stage, receiptAssemblyFailureNone, topologyConstructionRefusal{}, false
+		return nil, seal, stage, programAssemblyFailureNone, topologyConstructionRefusal{}, false
 	}
 	constructed, refusal := constructTopology(declaration)
-	builder.abort()
 	if refusal.Available() || !constructed.Available() {
 		if !refusal.Available() {
 			refusal = refuseTopologySeal(topologyConstructionStepTopologySeal, 0)
 		}
-		return nil, nil, seal, stage, receiptAssemblyFailureNone, refusal, false
+		return nil, seal, stage, programAssemblyFailureNone, refusal, false
 	}
-	return constructed.graph, constructed.topology, receiptSealFailure{}, ProgramAdmissionNone, receiptAssemblyFailureNone, topologyConstructionRefusal{}, true
+	return constructed.program, programSealFailure{}, ProgramAdmissionNone, programAssemblyFailureNone, topologyConstructionRefusal{}, true
 }
 
-type receiptAssemblyFailure uint8
+type programAssemblyFailure uint8
 
 const (
-	receiptAssemblyFailureNone receiptAssemblyFailure = iota
-	receiptAssemblyFailureInput
-	receiptAssemblyFailureSchema
-	receiptAssemblyFailureSnapshot
-	receiptAssemblyFailureTransaction
-	receiptAssemblyFailureStructuralRows
+	programAssemblyFailureNone programAssemblyFailure = iota
+	programAssemblyFailureInput
+	programAssemblyFailureSchema
+	programAssemblyFailureSnapshot
+	programAssemblyFailureRows
+	programAssemblyFailureStructuralRows
 	// Snapshot sub-stages preserve the owner boundary that rejected an
 	// otherwise immutable artifact. They are diagnostics only: no partial
-	// receipt escapes the assembly.
-	receiptAssemblyFailureSnapshotBootstrap
-	receiptAssemblyFailureSnapshotMount
-	receiptAssemblyFailureSnapshotArtifact
-	receiptAssemblyFailureSnapshotNamespace
-	receiptAssemblyFailureSnapshotTopology
-	receiptAssemblyFailureSnapshotTopologyMount
-	receiptAssemblyFailureSnapshotTopologyPoint
-	receiptAssemblyFailureSnapshotTopologyBootstrap
-	receiptAssemblyFailureSnapshotTopologyRule
+	// no partial row escapes the assembly.
+	programAssemblyFailureSnapshotTransport
+	programAssemblyFailureSnapshotMount
+	programAssemblyFailureSnapshotArtifact
+	programAssemblyFailureSnapshotNamespace
+	programAssemblyFailureSnapshotTopology
+	programAssemblyFailureSnapshotTopologyMount
+	programAssemblyFailureSnapshotTopologyPoint
+	programAssemblyFailureSnapshotBootstrap
+	programAssemblyFailureSnapshotTopologyRule
 )
 
 // Failure projects one lowering boundary onto the engine's public failure
 // vocabulary. The ordinal enters the site preimage and never leaves this
 // package.
-func (failure receiptAssemblyFailure) Failure() SolveFailure {
-	if failure == receiptAssemblyFailureNone {
+func (failure programAssemblyFailure) Failure() SolveFailure {
+	if failure == programAssemblyFailureNone {
 		return SolveFailure{}
 	}
-	return receiptFailure(SolveFailureFamilyCompile, "receipt-assembly", uint64(failure))
+	return boundaryFailure(SolveFailureFamilyCompile, "program-assembly", uint64(failure))
 }
 
-func beginMountedProgramMounts(binding *SchemaBinding, mounts []MountedProgramArtifact, bootstrap LinkBootstrapWitness) (*BindingTopologyBuilder, receiptAssemblyFailure, bool) {
-	sealed, ok := sealMountedProgramArtifacts(mounts)
-	if !ok {
-		return nil, receiptAssemblyFailureInput, false
-	}
-	return beginMountedProgramAssembly(binding, sealed, bootstrap)
-}
-
-func beginMountedProgramAssembly(binding *SchemaBinding, mounts []sealedProgramMount, bootstrap LinkBootstrapWitness) (*BindingTopologyBuilder, receiptAssemblyFailure, bool) {
+func assembleProgramRows(binding *SchemaBinding, mounts []sealedProgramMount, bootstrap LinkBootstrapWitness) (*programRows, programAssemblyFailure, bool) {
 	if binding == nil || !binding.Sealed() || len(mounts) == 0 || !bootstrap.Available() {
-		return nil, receiptAssemblyFailureInput, false
+		return nil, programAssemblyFailureInput, false
 	}
 	schema := binding.Schema()
 	if schema == nil || !schema.Available() {
-		return nil, receiptAssemblyFailureSchema, false
+		return nil, programAssemblyFailureSchema, false
 	}
 	rows, snapshotFailure := buildMountedArtifactRows(mounts, identity.ContentID(schema.ID().Digest()), bootstrap, binding.state)
-	if snapshotFailure != receiptAssemblyFailureNone {
+	if snapshotFailure != programAssemblyFailureNone {
 		return nil, snapshotFailure, false
 	}
-	builder, ok := binding.beginBindingTopologyBuilder()
+	rowsWorkspace, ok := newProgramRows(binding)
 	if !ok {
-		return nil, receiptAssemblyFailureTransaction, false
+		return nil, programAssemblyFailureRows, false
 	}
-	if !admitMountedArtifactSites(builder, rows) {
-		builder.abort()
-		return nil, receiptAssemblyFailureStructuralRows, false
+	if !admitMountedArtifactSites(rowsWorkspace, rows) {
+		return nil, programAssemblyFailureStructuralRows, false
 	}
-	return builder, receiptAssemblyFailureNone, true
+	return rowsWorkspace, programAssemblyFailureNone, true
 }
 
 // artifactSourceDomain pairs one cold source namespace with its semantic
@@ -285,8 +269,8 @@ func artifactSourceKey(domain artifactSourceDomain, id identity.ContentID) (comp
 	})
 }
 
-func admitMountedArtifactSites(builder *BindingTopologyBuilder, rows *mountedArtifactRows) bool {
-	if builder == nil || rows == nil {
+func admitMountedArtifactSites(rowsWorkspace *programRows, rows *mountedArtifactRows) bool {
+	if rowsWorkspace == nil || rows == nil {
 		return false
 	}
 	sites := make(map[identity.ContentID]equation.Site, len(rows.points))
@@ -315,7 +299,7 @@ func admitMountedArtifactSites(builder *BindingTopologyBuilder, rows *mountedArt
 			init = equation.TrueExpr()
 			disposition = equation.InitPresent
 		}
-		site, siteOK := builder.admitSite(source, scope, init, disposition)
+		site, siteOK := rowsWorkspace.admitSite(source, scope, init, disposition)
 		if !sourceOK || !siteOK {
 			return false
 		}
@@ -343,7 +327,7 @@ func admitMountedArtifactSites(builder *BindingTopologyBuilder, rows *mountedArt
 		if !sourceOK || !scopeOK {
 			return false
 		}
-		site, siteOK := builder.admitSite(source, scope, init, disposition)
+		site, siteOK := rowsWorkspace.admitSite(source, scope, init, disposition)
 		if !siteOK {
 			return false
 		}
@@ -363,17 +347,10 @@ func admitMountedArtifactSites(builder *BindingTopologyBuilder, rows *mountedArt
 		}
 		rows.mounted[key] = site
 	}
-	inner, locked := builder.lockSourcesOpen()
-	if !locked || builder.mountedRows != nil {
-		if locked {
-			inner.failLocked()
-			inner.mu.Unlock()
-		}
+	if rowsWorkspace.mountedRows != nil || rowsWorkspace.batch == nil || rowsWorkspace.batch.Sealed() {
 		return false
 	}
-	builder.mountedRows = rows
-	inner.mu.Unlock()
-	return true
+	return rowsWorkspace.setMountedRows(rows)
 }
 
 // mustArtifactSourceKey returns the unavailable key for an unnameable source
@@ -387,15 +364,15 @@ func mustArtifactSourceKey(domain artifactSourceDomain, id identity.ContentID) c
 	return key
 }
 
-// receiptArtifactRowFailure names the artifact-row boundary a declaration
+// programArtifactRowFailure names the artifact-row boundary a declaration
 // could not be addressed through.
-type receiptArtifactRowFailure uint8
+type programArtifactRowFailure uint8
 
 const (
-	receiptArtifactRowFailureNone receiptArtifactRowFailure = iota
-	receiptArtifactRowFailureOwner
-	receiptArtifactRowFailurePoint
-	receiptArtifactRowFailureBootstrap
+	programArtifactRowFailureNone programArtifactRowFailure = iota
+	programArtifactRowFailureOwner
+	programArtifactRowFailurePoint
+	programArtifactRowFailureBootstrap
 )
 
 func linkBootstrapTransportKey(owner identity.ContentID, target artifactPointMetadata, factor composition.Key) (composition.Key, bool) {
@@ -428,19 +405,19 @@ func linkBootstrapPointSemanticID(owner, point identity.ContentID) identity.Cont
 	return mountedArtifactID("analysis/engine/link-bootstrap-point/v1", owner, owner, point)
 }
 
-func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.ContentID, bootstrap LinkBootstrapWitness, bindingState *schemaBindingState) (*mountedArtifactRows, receiptAssemblyFailure) {
+func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.ContentID, bootstrap LinkBootstrapWitness, bindingState *schemaBindingState) (*mountedArtifactRows, programAssemblyFailure) {
 	if len(mounts) == 0 || !schemaID.Available() || !bootstrap.Available() || bindingState == nil {
-		return nil, receiptAssemblyFailureSnapshotBootstrap
+		return nil, programAssemblyFailureSnapshotBootstrap
 	}
 	bootstrapPoint, pointOK := bootstrap.Point()
 	if !pointOK {
-		return nil, receiptAssemblyFailureSnapshotBootstrap
+		return nil, programAssemblyFailureSnapshotBootstrap
 	}
 	occurrences := make(map[identity.ContentID]struct{}, bootstrap.OccurrenceCount())
 	for index := 0; index < bootstrap.OccurrenceCount(); index++ {
 		id, idOK := bootstrap.OccurrenceAt(index)
 		if !idOK {
-			return nil, receiptAssemblyFailureSnapshotBootstrap
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
 		occurrences[id] = struct{}{}
 	}
@@ -448,7 +425,7 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 	for id := range occurrences {
 		capability, capabilityOK := bootstrap.capabilityFor(id)
 		if !capabilityOK || !capability.link() || capability.state != bindingState || capability.authority != bindingState.authority {
-			return nil, receiptAssemblyFailureSnapshotBootstrap
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
 		roles[id] = capability
 	}
@@ -456,23 +433,23 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 	seenTransportCapabilities := make(map[RuleSlotCapability]struct{}, transports)
 	seenTransportFactors := make(map[composition.Key]struct{}, transports)
 	if transports != 0 && transports != 2 {
-		return nil, receiptAssemblyFailureSnapshotBootstrap
+		return nil, programAssemblyFailureSnapshotBootstrap
 	}
 	authorizedTransports, transportsAuthorized := sealedLinkBootstrapTransportPair(bindingState)
 	if (transports == 0 && transportsAuthorized) || (transports != 0 && !transportsAuthorized) {
-		return nil, receiptAssemblyFailureSnapshotBootstrap
+		return nil, programAssemblyFailureSnapshotBootstrap
 	}
 	for index := 0; index < transports; index++ {
 		capability, capabilityOK := bootstrap.transportCapabilityAt(index)
 		factor, factorOK := linkTransportFactorSemantic(bindingState, capability)
 		if !capabilityOK || !factorOK || capability != authorizedTransports[index] {
-			return nil, receiptAssemblyFailureSnapshotBootstrap
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
 		if _, duplicate := seenTransportCapabilities[capability]; duplicate {
-			return nil, receiptAssemblyFailureSnapshotBootstrap
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
 		if _, duplicate := seenTransportFactors[factor]; duplicate {
-			return nil, receiptAssemblyFailureSnapshotBootstrap
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
 		seenTransportCapabilities[capability] = struct{}{}
 		seenTransportFactors[factor] = struct{}{}
@@ -481,53 +458,53 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.template == nil || !mount.template.Available() || !mount.module.Available() || mount.template.SchemaID() != schemaID {
-			return nil, receiptAssemblyFailureSnapshotMount
+			return nil, programAssemblyFailureSnapshotMount
 		}
 		template := mount.template
 		initialCount := 0
 		for index := 0; index < template.PointCount(); index++ {
 			point, pointOK := template.PointAt(index)
 			if !pointOK {
-				return nil, receiptAssemblyFailureSnapshotTopologyPoint
+				return nil, programAssemblyFailureSnapshotTopologyPoint
 			}
 			if point.Initial {
 				initialCount++
 			}
 		}
 		if initialCount != 1 {
-			return nil, receiptAssemblyFailureSnapshotTopologyPoint
+			return nil, programAssemblyFailureSnapshotTopologyPoint
 		}
 		if _, duplicate := seenMounts[mount.module]; duplicate {
-			return nil, receiptAssemblyFailureSnapshotMount
+			return nil, programAssemblyFailureSnapshotMount
 		}
 		seenMounts[mount.module] = struct{}{}
 		for index := 0; index < template.RuleCount(); index++ {
 			rule, ruleOK := template.RuleAt(index)
 			if !ruleOK {
-				return nil, receiptAssemblyFailureSnapshotNamespace
+				return nil, programAssemblyFailureSnapshotNamespace
 			}
 			capability, capabilityOK := sealedRoleCapability(mount.capabilities, rule.Role)
 			if !capabilityOK || capability.state != bindingState || capability.authority != bindingState.authority {
-				return nil, receiptAssemblyFailureSnapshotNamespace
+				return nil, programAssemblyFailureSnapshotNamespace
 			}
 		}
 		for index := 0; index < template.TransferCount(); index++ {
 			transfer, transferOK := template.TransferAt(index)
 			if !transferOK {
-				return nil, receiptAssemblyFailureSnapshotNamespace
+				return nil, programAssemblyFailureSnapshotNamespace
 			}
 			for _, role := range transfer.Factors {
 				capability, capabilityOK := sealedRoleCapability(mount.capabilities, role)
 				if !capabilityOK || capability.state != bindingState || capability.authority != bindingState.authority {
-					return nil, receiptAssemblyFailureSnapshotNamespace
+					return nil, programAssemblyFailureSnapshotNamespace
 				}
 			}
 		}
 		if !appendMountedProgramMount(result, mount.module, template, mount.capabilities) {
-			return nil, receiptAssemblyFailureSnapshotNamespace
+			return nil, programAssemblyFailureSnapshotNamespace
 		}
 	}
-	return result, receiptAssemblyFailureNone
+	return result, programAssemblyFailureNone
 }
 
 func linkTransportFactorSemantic(state *schemaBindingState, capability RuleSlotCapability) (composition.Key, bool) {

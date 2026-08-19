@@ -402,12 +402,12 @@ func (stage RuleBindStage) String() string {
 
 // RuleBinding is the Link-local hot projection of the rule table. Every hot
 // rule is reachable by its role and stays inside its cell: consumers drive
-// attachment and classification through the table, never through a domain
-// type.
+// sealed row admission and classification through the table, never through a
+// domain type.
 type RuleBinding struct {
-	binding   *engine.SchemaBinding
-	hot       ruleCells
-	attachers map[schema.Key]engine.RuleProgramAttach
+	binding      *engine.SchemaBinding
+	hot          ruleCells
+	declarations map[schema.Key]engine.RuleProgramDeclaration
 }
 
 func (rules *RuleBinding) cellByKey(key schema.Key) (rule.Cell, bool) {
@@ -466,60 +466,19 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
-// mountedOccurrenceAttach is the owner-held post-commit attach for the
-// activation lane. Operand and Link rules publish RuleProgramAttach instead.
-type mountedOccurrenceAttach interface {
-	AttachMountedReceiptMember(*engine.ProgramConstruction, identity.ContentID, identity.ContentID, identity.ContentID) bool
-}
-
-// AttachMemberByKey binds one already-admitted occurrence to a committed
-// topology. The construction owns the graph row; activation keeps its own
-// member bridge.
-func (rules *RuleBinding) AttachMemberByKey(key schema.Key, compilation *engine.ProgramConstruction, mount, point, occurrence identity.ContentID) bool {
-	entry, entryOK := templateForKey(key)
-	if !entryOK || compilation == nil {
-		return false
-	}
-	capability, capabilityOK := rules.CapabilityByKey(key)
-	if !capabilityOK || !capability.Mounted() {
-		return false
-	}
-	if entry.Lane() == rule.LaneActivation {
-		hot, hotOK := rules.cellByKey(key)
-		attach, attachOK := rule.Payload[mountedOccurrenceAttach](hot)
-		return hotOK && attachOK && attach.AttachMountedReceiptMember(compilation, mount, point, occurrence)
-	}
-	attach, attachOK := rules.programAttach(key)
-	if !attachOK {
-		return false
-	}
-	if !attach.AdmitsMounted(mount, point, occurrence) {
-		return true
-	}
-	return attach.AttachMountedMember(compilation, capability, mount, point, occurrence)
-}
-
-// AttachLinkMemberByKey binds one admitted Link occurrence to a committed
-// topology.
-func (rules *RuleBinding) AttachLinkMemberByKey(key schema.Key, compilation *engine.ProgramConstruction, occurrence identity.ContentID) bool {
-	attach, attachOK := rules.programAttach(key)
-	capability, capabilityOK := rules.CapabilityByKey(key)
-	return attachOK && capabilityOK && capability.Link() && attach.AttachLinkMember(compilation, capability, occurrence)
-}
-
-func (rules *RuleBinding) programAttach(key schema.Key) (engine.RuleProgramAttach, bool) {
-	if rules == nil || rules.attachers == nil || !key.Available() {
+func (rules *RuleBinding) programDeclaration(key schema.Key) (engine.RuleProgramDeclaration, bool) {
+	if rules == nil || rules.declarations == nil || !key.Available() {
 		return nil, false
 	}
-	attach, ok := rules.attachers[key]
-	return attach, ok && attach != nil
+	declaration, ok := rules.declarations[key]
+	return declaration, ok && declaration != nil
 }
 
-// ProgramAttachByKey is the sealed construction join for one declared rule.
-// Mounted operand and Link rules publish exactly one attach; activation
+// ProgramDeclarationByKey is the sealed construction join for one declared rule.
+// Mounted operand and Link rules publish exactly one declaration; activation
 // publishes none.
-func (rules *RuleBinding) ProgramAttachByKey(key schema.Key) (engine.RuleProgramAttach, bool) {
-	return rules.programAttach(key)
+func (rules *RuleBinding) ProgramDeclarationByKey(key schema.Key) (engine.RuleProgramDeclaration, bool) {
+	return rules.programDeclaration(key)
 }
 
 func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
@@ -558,7 +517,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 	if registry.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(registry.templates)+1 || len(registry.ruleContributors) != len(registry.templates) {
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
-	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), attachers: make(map[schema.Key]engine.RuleProgramAttach, len(registry.templates))}
+	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), declarations: make(map[schema.Key]engine.RuleProgramDeclaration, len(registry.templates))}
 	for position, entry := range registry.templates {
 		slot := position + 1
 		if !set.writes(entry.Writes()) || !set.writes(entry.Owner()) {
@@ -630,8 +589,8 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 			return nil, DiagnosticRule(slot), RuleBindStageFinalize
 		}
 	}
-	// Operand and Link rules publish one cell-owned program attach. Activation
-	// keeps its own member bridge. Missing or duplicate attachers leave the
+	// Operand and Link rules publish one cell-owned program declaration. Activation
+	// keeps its own member bridge. Missing or duplicate declarations leave the
 	// binding unusable rather than half constructed.
 	for position, entry := range registry.templates {
 		slot := position + 1
@@ -639,14 +598,14 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 			continue
 		}
 		source, sourceOK := rule.Payload[engine.RuleProgramSource](rules.hot[slot])
-		attach, attachOK := source.ProgramAttach()
-		if !sourceOK || !attachOK || attach == nil {
+		declaration, declarationOK := source.ProgramDeclaration()
+		if !sourceOK || !declarationOK || declaration == nil {
 			return nil, DiagnosticRule(slot), RuleBindStageProgram
 		}
-		if _, duplicate := rules.attachers[entry.Key()]; duplicate {
+		if _, duplicate := rules.declarations[entry.Key()]; duplicate {
 			return nil, DiagnosticRule(slot), RuleBindStageProgram
 		}
-		rules.attachers[entry.Key()] = attach
+		rules.declarations[entry.Key()] = declaration
 	}
 	return rules, DiagnosticRuleUnknown, RuleBindStageNone
 }

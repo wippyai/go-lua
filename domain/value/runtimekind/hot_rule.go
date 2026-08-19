@@ -152,7 +152,7 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[valuedomai
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
 }
 

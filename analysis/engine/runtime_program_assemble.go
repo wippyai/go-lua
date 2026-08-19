@@ -22,8 +22,8 @@ type MountedProgramArtifact struct {
 	Module   identity.ContentID
 }
 
-// ProgramAdmissionStage names which admission pass refused. The assembly
-// handle stays inside AssembleMountedProgram.
+// ProgramAdmissionStage names which admission pass refused. The declaration
+// handle stays inside ConstructProgram.
 type ProgramAdmissionStage uint8
 
 const (
@@ -36,18 +36,18 @@ const (
 
 // LinkRuleAdmission is one Link-global occurrence to admit.
 type LinkRuleAdmission struct {
-	Attach     RuleProgramAttach
-	Capability RuleSlotCapability
-	Occurrence identity.ContentID
+	Declaration RuleProgramDeclaration
+	Capability  RuleSlotCapability
+	Occurrence  identity.ContentID
 }
 
 // MountedRuleAdmission is one mounted occurrence to admit.
 type MountedRuleAdmission struct {
-	Attach     RuleProgramAttach
-	Capability RuleSlotCapability
-	Mount      identity.ContentID
-	Point      identity.ContentID
-	Occurrence identity.ContentID
+	Declaration RuleProgramDeclaration
+	Capability  RuleSlotCapability
+	Mount       identity.ContentID
+	Point       identity.ContentID
+	Occurrence  identity.ContentID
 }
 
 // programQueryAdmit is the erased mounted query row. Implementations live on
@@ -55,7 +55,7 @@ type MountedRuleAdmission struct {
 // constructor resolves the Point it is anchored at.
 type programQueryAdmit interface {
 	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool)
-	bindConstruction(*ProgramConstruction, identity.ContentID) bool
+	bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool)
 }
 
 // ProgramQueryAdmission is one mounted query row to admit.
@@ -98,40 +98,52 @@ type sealedProgramMount struct {
 	module       identity.ContentID
 }
 
-// CommittedProgram is the assemble-owned committed handle. Construction
-// opens against the sealed equation graph and binding topology.
+// CommittedProgram is the committed program one construction published: the
+// sealed equation Topology and its initial Graph, the directory addressing
+// both, and the declared rows a seal binds a runtime from. It is finished at
+// construction and never mutated; sealing reads it and mints a Solver.
 type CommittedProgram struct {
-	graph     *equation.Graph
-	topology  *BindingTopology
-	state     *schemaBindingState
-	authority *schemaBindingAuthority
-}
-
-func newCommittedProgram(graph *equation.Graph, topology *BindingTopology, state *schemaBindingState, authority *schemaBindingAuthority) *CommittedProgram {
-	committed := &CommittedProgram{graph: graph, topology: topology, state: state, authority: authority}
-	if !committed.valid() {
-		return nil
-	}
-	return committed
+	self              *CommittedProgram
+	graph             *equation.Graph
+	topology          *equation.Topology
+	state             *schemaBindingState
+	authority         *schemaBindingAuthority
+	directory         *semanticDirectory
+	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
+	carrier           *committedSourceCarrier
+	members           []programMemberBinding
+	queries           []programQueryBinding
+	addressed         []composition.Key
+	artifactBacked    bool
+	bootstrapOwner    identity.ContentID
+	bootstrapPoint    identity.ContentID
+	bootstrapSemantic identity.ContentID
 }
 
 func (committed *CommittedProgram) valid() bool {
-	return committed != nil && committed.graph != nil && committed.topology != nil && committed.topology.valid() && committed.state != nil && committed.authority != nil && committed.state == committed.topology.state && committed.authority == committed.topology.authority && committed.state.schema != nil && committed.graph.OwnsComposition(committed.state.schema.cold) && committed.topology.topology.OwnsGraph(committed.graph)
-}
-
-// ReleaseArtifact drops the sealed declaration a committed topology was sealed
-// from - its source Batch and topology spec - once the runtime is bound. The
-// sealed equation Topology and the published directory remain the structural
-// authority and stay addressable.
-func (committed *CommittedProgram) ReleaseArtifact() bool {
-	return committed.valid() && committed.topology.releaseArtifact()
+	if committed == nil || committed.self != committed || committed.graph == nil || committed.topology == nil || committed.state == nil || committed.authority == nil || committed.directory == nil ||
+		!committed.directory.ownedBy(committed.topology, committed.state, committed.authority) ||
+		committed.state.phase != schemaBindingSealed || committed.state.authority != committed.authority || committed.state.schema == nil ||
+		!committed.topology.OwnsComposition(committed.state.schema.cold) || !committed.graph.OwnsComposition(committed.state.schema.cold) ||
+		!committed.topology.OwnsGraph(committed.graph) || !committed.carrier.valid() {
+		return false
+	}
+	ownerAvailable, pointAvailable, semanticAvailable := committed.bootstrapOwner.Available(), committed.bootstrapPoint.Available(), committed.bootstrapSemantic.Available()
+	if !committed.artifactBacked {
+		return !ownerAvailable && !pointAvailable && !semanticAvailable
+	}
+	if !ownerAvailable || !pointAvailable || !semanticAvailable || linkBootstrapPointSemanticID(committed.bootstrapOwner, committed.bootstrapPoint) != committed.bootstrapSemantic {
+		return false
+	}
+	_, found := committed.directory.point(committed.bootstrapSemantic)
+	return found
 }
 
 func (committed *CommittedProgram) lookupPoint(id identity.ContentID) (equation.Point, bool) {
-	if !committed.valid() || !id.Available() || committed.topology.directory == nil {
+	if !committed.valid() || !id.Available() || committed.directory == nil {
 		return equation.Point{}, false
 	}
-	locator, found := committed.topology.directory.point(id)
+	locator, found := committed.directory.point(id)
 	if !found {
 		return equation.Point{}, false
 	}
@@ -144,8 +156,7 @@ func (committed *CommittedProgram) lookupPoint(id identity.ContentID) (equation.
 
 // ProgramQuery is the committed graph-owned Query handle.
 type ProgramQuery struct {
-	graph    *equation.Graph
-	topology *BindingTopology
+	program  *CommittedProgram
 	identity equation.Query
 	locator  equation.QueryRowLocator
 	key      identity.ContentID
@@ -158,21 +169,20 @@ func (query ProgramQuery) PublicationKey() (identity.ContentID, bool) {
 
 // ProgramMember is the committed graph-owned rule member handle.
 type ProgramMember struct {
-	graph    *equation.Graph
-	topology *BindingTopology
-	member   equation.RuleMember
-	locator  equation.RuleMemberRowLocator
+	program *CommittedProgram
+	member  equation.RuleMember
+	locator equation.RuleMemberRowLocator
 }
 
-func (member ProgramMember) ownedBy(graph *equation.Graph, topology *BindingTopology) bool {
-	return member.graph != nil && member.topology != nil && graph != nil && topology != nil && member.graph == graph && member.topology == topology
+func (member ProgramMember) ownedBy(committed *CommittedProgram) bool {
+	return member.program != nil && committed != nil && member.program == committed
 }
 
 func (committed *CommittedProgram) Query(id identity.ContentID) (ProgramQuery, bool) {
-	if !committed.valid() || !id.Available() || committed.topology.directory == nil {
+	if !committed.valid() || !id.Available() || committed.directory == nil {
 		return ProgramQuery{}, false
 	}
-	locator, found := committed.topology.directory.query(id)
+	locator, found := committed.directory.query(id)
 	if !found {
 		return ProgramQuery{}, false
 	}
@@ -184,14 +194,14 @@ func (committed *CommittedProgram) Query(id identity.ContentID) (ProgramQuery, b
 	if !key.Available() {
 		return ProgramQuery{}, false
 	}
-	return ProgramQuery{graph: committed.graph, topology: committed.topology, identity: query, locator: locator, key: key}, true
+	return ProgramQuery{program: committed, identity: query, locator: locator, key: key}, true
 }
 
 func (committed *CommittedProgram) lookupRuleMember(id identity.ContentID) (ProgramMember, bool) {
-	if !committed.valid() || !id.Available() || committed.topology.directory == nil {
+	if !committed.valid() || !id.Available() || committed.directory == nil {
 		return ProgramMember{}, false
 	}
-	locator, found := committed.topology.directory.member(id)
+	locator, found := committed.directory.member(id)
 	if !found {
 		return ProgramMember{}, false
 	}
@@ -199,7 +209,7 @@ func (committed *CommittedProgram) lookupRuleMember(id identity.ContentID) (Prog
 	if !ok || !committed.graph.OwnsMember(member) {
 		return ProgramMember{}, false
 	}
-	return ProgramMember{graph: committed.graph, topology: committed.topology, member: member, locator: locator}, true
+	return ProgramMember{program: committed, member: member, locator: locator}, true
 }
 
 func (committed *CommittedProgram) RuleMember(id identity.ContentID) (ProgramMember, bool) {
@@ -214,19 +224,19 @@ func (committed *CommittedProgram) MountedRuleMember(role RuleSlotCapability, mo
 }
 
 func (committed *CommittedProgram) LinkRuleMember(role RuleSlotCapability, occurrence identity.ContentID) (ProgramMember, bool) {
-	if !role.link() || !committed.valid() || role.state != committed.state || role.authority != committed.authority || !committed.topology.bootstrapOwner.Available() || !committed.topology.bootstrapPoint.Available() {
+	if !role.link() || !committed.valid() || role.state != committed.state || role.authority != committed.authority || !committed.bootstrapOwner.Available() || !committed.bootstrapPoint.Available() {
 		return ProgramMember{}, false
 	}
-	return committed.lookupRuleMember(linkRuleMemberID(role, committed.topology.bootstrapOwner, committed.topology.bootstrapPoint, occurrence))
+	return committed.lookupRuleMember(linkRuleMemberID(role, committed.bootstrapOwner, committed.bootstrapPoint, occurrence))
 }
 
 func (committed *CommittedProgram) MountedNativeCallStage(role RuleSlotCapability, mount, occurrence identity.ContentID) (ProgramCallStage, bool) {
-	if !committed.valid() || !role.mounted() || role.state != committed.state || role.authority != committed.authority || !mount.Available() || !occurrence.Available() || committed.topology.nativeCallStages == nil {
+	if !committed.valid() || !role.mounted() || role.state != committed.state || role.authority != committed.authority || !mount.Available() || !occurrence.Available() || committed.nativeCallStages == nil {
 		return ProgramCallStage{}, false
 	}
 	key := artifactMountedRuleOccurrence{role: role, mount: mount, occurrence: occurrence}
-	stage, ok := committed.topology.nativeCallStages[key]
-	result := ProgramCallStage{receipt: mountedCallStage{graph: committed.graph, topology: committed.topology, key: key, stage: stage}}
+	stage, ok := committed.nativeCallStages[key]
+	result := ProgramCallStage{handle: programCallRow{program: committed, key: key, stage: stage}}
 	return result, ok && result.Available()
 }
 
@@ -234,17 +244,16 @@ func (committed *CommittedProgram) MountedNativeCallStage(role RuleSlotCapabilit
 // It is distinct from ProgramMember because activation compilation needs the
 // activation-row locator as well as the graph member.
 type ActivationMember struct {
-	graph    *equation.Graph
-	topology *BindingTopology
-	member   equation.RuleMember
-	locator  equation.ActivationMemberRowLocator
+	program *CommittedProgram
+	member  equation.RuleMember
+	locator equation.ActivationMemberRowLocator
 }
 
 func (committed *CommittedProgram) lookupActivationMember(id identity.ContentID) (ActivationMember, bool) {
-	if !committed.valid() || !id.Available() || committed.topology.directory == nil {
+	if !committed.valid() || !id.Available() || committed.directory == nil {
 		return ActivationMember{}, false
 	}
-	locator, found := committed.topology.directory.activation(id)
+	locator, found := committed.directory.activation(id)
 	if !found {
 		return ActivationMember{}, false
 	}
@@ -252,7 +261,7 @@ func (committed *CommittedProgram) lookupActivationMember(id identity.ContentID)
 	if !ok || !committed.graph.OwnsMember(member) {
 		return ActivationMember{}, false
 	}
-	return ActivationMember{graph: committed.graph, topology: committed.topology, member: member, locator: locator}, true
+	return ActivationMember{program: committed, member: member, locator: locator}, true
 }
 
 func (committed *CommittedProgram) ActivationMember(id identity.ContentID) (ActivationMember, bool) {
@@ -267,10 +276,10 @@ func (committed *CommittedProgram) MountedActivationMember(role RuleSlotCapabili
 }
 
 func (committed *CommittedProgram) publishedQueryKeys() ([]composition.Key, bool) {
-	if !committed.valid() || committed.topology.directory == nil {
+	if !committed.valid() || committed.directory == nil {
 		return nil, false
 	}
-	directory := committed.topology.directory
+	directory := committed.directory
 	addressed := make([]composition.Key, 0, len(directory.queryOrder))
 	for ordinal, id := range directory.queryOrder {
 		entry, found := directory.resolve(id)
@@ -284,19 +293,19 @@ func (committed *CommittedProgram) publishedQueryKeys() ([]composition.Key, bool
 	return addressed, true
 }
 
-// ProgramAssembleRefusal is the closed assemble refusal. Receipt failure
+// ProgramAssembleRefusal is the closed assemble refusal. Internal failure
 // types stay inside the engine; callers read stage and SolveFailure only.
 type ProgramAssembleRefusal struct {
 	stage        ProgramAdmissionStage
-	lowering     receiptAssemblyFailure
+	lowering     programAssemblyFailure
 	construction topologyConstructionRefusal
-	seal         receiptSealFailure
+	seal         programSealFailure
 }
 
 func (refusal ProgramAssembleRefusal) Stage() ProgramAdmissionStage { return refusal.stage }
 
 func (refusal ProgramAssembleRefusal) Lowered() bool {
-	return refusal.lowering != receiptAssemblyFailureNone
+	return refusal.lowering != programAssemblyFailureNone
 }
 
 func (refusal ProgramAssembleRefusal) LoweringFailure() SolveFailure {
@@ -306,7 +315,7 @@ func (refusal ProgramAssembleRefusal) LoweringFailure() SolveFailure {
 func (refusal ProgramAssembleRefusal) Seal() SolveFailure { return refusal.seal.Failure() }
 
 func (refusal ProgramAssembleRefusal) ArtifactRowOrdinal() (uint32, bool) {
-	if refusal.seal.Phase() != receiptSealFailureArtifactRows {
+	if refusal.seal.Phase() != programSealFailureArtifactRows {
 		return 0, false
 	}
 	return refusal.seal.Ordinal(), true
@@ -334,18 +343,18 @@ func (refusal ProgramAssembleRefusal) ScheduleRow() uint32 {
 	return refusal.construction.Ordinal()
 }
 
-// ObservationAttachArguments is the closed observation-attach input refusal.
-func ObservationAttachArguments() SolveFailure {
-	return receiptObservationAttachFailureArguments.Failure()
+// ObservationSealArguments is the closed observation input refusal.
+func ObservationSealArguments() SolveFailure {
+	return observationSealFailureArguments.Failure()
 }
 
-// ObservationAttachPoint is the closed observation-attach point refusal.
-func ObservationAttachPoint() SolveFailure {
-	return receiptObservationAttachFailurePoint.Failure()
+// ObservationSealPoint is the closed observation point refusal.
+func ObservationSealPoint() SolveFailure {
+	return observationSealFailurePoint.Failure()
 }
 
 // ProgramBootstrap is the Link-lane witness assemble consumes. Callers supply
-// owner, point, and capability catalogs; they never name the receipt witness.
+// owner, point, and capability catalogs; they never name internal witness state.
 type ProgramBootstrap struct {
 	witness LinkBootstrapWitness
 }
@@ -379,38 +388,33 @@ func NewProgramBootstrap(owner, pointID identity.ContentID, catalogs ...ProgramB
 	return ProgramBootstrap{witness: witness}, true
 }
 
-// BeginMountedProgram opens one sealed-template construction transaction.
-// Production assemble commits this same builder; tests that place owner-issued
-// seed rows hold the open handle until Seal/Commit.
-func BeginMountedProgram(binding *SchemaBinding, mounts []MountedProgramArtifact, bootstrap ProgramBootstrap) (*BindingTopologyBuilder, ProgramAssembleRefusal, bool) {
-	if !bootstrap.witness.Available() {
-		return nil, ProgramAssembleRefusal{lowering: receiptAssemblyFailureInput}, false
-	}
-	builder, lowering, ok := beginMountedProgramMounts(binding, mounts, bootstrap.witness)
-	if !ok {
-		return nil, ProgramAssembleRefusal{lowering: lowering}, false
-	}
-	return builder, ProgramAssembleRefusal{}, true
+// ProgramDeclaration is the sealed construction input: one sealed Binding, the
+// artifact templates this Link mounts with their role capabilities, the Link
+// bootstrap witness, and the admission inventory the owners sealed. Every
+// field is finished before the construction reads it, and the construction
+// retains none of them.
+type ProgramDeclaration struct {
+	Binding   *SchemaBinding
+	Mounts    []MountedProgramArtifact
+	Bootstrap ProgramBootstrap
+	Admission MountedProgramAdmission
 }
 
-// AssembleMountedProgram snapshots sealed templates into one binding topology
-// and commits the equation graph. Callers supply templates and role
-// capabilities; they never mint a receipt row.
-func AssembleMountedProgram(binding *SchemaBinding, mounts []MountedProgramArtifact, admission MountedProgramAdmission, bootstrap ProgramBootstrap) (*CommittedProgram, ProgramAssembleRefusal, bool) {
-	if binding == nil || !binding.Sealed() {
-		return nil, ProgramAssembleRefusal{lowering: receiptAssemblyFailureInput}, false
+// ConstructProgram folds one sealed declaration into the committed program:
+// the sealed equation Topology, its initial Graph, the directory addressing
+// both, and the rows a seal binds a runtime from. It is the sole entry from a
+// declaration to a program; callers never mint a construction row.
+func ConstructProgram(declaration ProgramDeclaration) (*CommittedProgram, ProgramAssembleRefusal, bool) {
+	if declaration.Binding == nil || !declaration.Binding.Sealed() {
+		return nil, ProgramAssembleRefusal{lowering: programAssemblyFailureInput}, false
 	}
-	sealed, sealedOK := sealMountedProgramArtifacts(mounts)
+	sealed, sealedOK := sealMountedProgramArtifacts(declaration.Mounts)
 	if !sealedOK {
-		return nil, ProgramAssembleRefusal{lowering: receiptAssemblyFailureInput}, false
+		return nil, ProgramAssembleRefusal{lowering: programAssemblyFailureInput}, false
 	}
-	graph, topology, seal, stage, lowering, construction, committed := assembleSealedProgramMounts(binding, sealed, admission, bootstrap.witness)
-	if !committed {
+	program, seal, stage, lowering, construction, committed := assembleSealedProgramMounts(declaration.Binding, sealed, declaration.Admission, declaration.Bootstrap.witness)
+	if !committed || program == nil {
 		return nil, ProgramAssembleRefusal{stage: stage, lowering: lowering, construction: construction, seal: seal}, false
-	}
-	program := newCommittedProgram(graph, topology, binding.state, binding.state.authority)
-	if program == nil {
-		return nil, ProgramAssembleRefusal{stage: stage, construction: construction, seal: seal}, false
 	}
 	return program, ProgramAssembleRefusal{}, true
 }

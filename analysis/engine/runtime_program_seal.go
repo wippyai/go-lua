@@ -1,0 +1,230 @@
+// runtime_program_seal.go mints the Solver of one committed program. A
+// committed program carries the rows its declaration stated - one member row
+// per published member, one query row per published query - and sealing binds
+// them against a freshly bound Factor plane, folds the published tables, and
+// mints the Solver.
+//
+// Nothing is accumulated here and nothing is retained: the committed program
+// is a finished value, so a second seal binds another plane from the same
+// sealed rows. That is what lets one committed program answer several
+// observation inventories without a second construction.
+
+package engine
+
+import (
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/identity"
+)
+
+// programMemberBinder mints one declared member's runtime row against a bound
+// plane. The typed operand never leaves the sealed cell: the binder resolves
+// it from the neutral coordinates the declaration published, exactly as the
+// declaration pass did when it stated the row.
+type programMemberBinder interface {
+	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool)
+}
+
+// programMemberBinding is one member row of a committed program: the identity
+// the graph publishes it under and the sealed cell that mints its runtime row.
+type programMemberBinding struct {
+	member     identity.ContentID
+	activation identity.ContentID
+	coords     OperandCoords
+	binder     programMemberBinder
+	activated  bool
+}
+
+// programQueryBinding is one query row of a committed program: the identity
+// the graph publishes it under and the sealed query cell that mints it.
+type programQueryBinding struct {
+	id    identity.ContentID
+	admit programQueryAdmit
+}
+
+// declaredQueryBindings states the query rows of one declaration as the
+// committed program's own binding rows, in declaration order.
+func declaredQueryBindings(queries []declaredQueryRow) []programQueryBinding {
+	bindings := make([]programQueryBinding, 0, len(queries))
+	for _, query := range queries {
+		bindings = append(bindings, programQueryBinding{id: query.ID, admit: query.Admit})
+	}
+	return bindings
+}
+
+// Seal mints the Solver of this committed program under one observation
+// inventory. It binds a Factor plane for the committed graph, mints one
+// runtime row per declared member and query, folds the published query and
+// observation tables, and mints the Solver from the assembled runtime.
+//
+// The committed program is unchanged by a seal: an inventory that binds is one
+// Solver, and a later inventory over the same program binds its own plane.
+func (committed *CommittedProgram) Seal(observations []ProgramObservationAdmission) (*Solver, SolveFailure, bool) {
+	if !committed.valid() {
+		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
+	}
+	plane, planeOK := bindProgramPlane(committed.state, committed.graph)
+	if !planeOK || plane == nil || plane.carrier == nil || plane.byKey == nil {
+		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
+	}
+	drafts, draftsOK := committed.bindMemberRows(plane)
+	if !draftsOK {
+		return nil, ProgramStageFailure(ProgramSealStageMemberBind), false
+	}
+	bound, boundOK := committed.bindQueryRows(plane)
+	queries, queriesOK := bindProgramQueryTable(committed.addressed, committed.graph, bound)
+	if !boundOK || !queriesOK {
+		return nil, ProgramStageFailure(ProgramSealStageQueryAddress), false
+	}
+	observed, observationFailure := committed.bindObservationRows(plane, observations)
+	if observationFailure != observationSealFailureNone {
+		return nil, observationFailure.Failure(), false
+	}
+	runtime, assembled := assembleProgramRuntime(committed.state, committed.authority, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed)
+	if !assembled || runtime == nil {
+		return nil, ProgramStageFailure(ProgramSealStageProgramSeal), false
+	}
+	runtime.topology = committed.topology
+	if !plane.releaseColdFactorBindings() {
+		return nil, ProgramStageFailure(ProgramSealStageFactorBind), false
+	}
+	solver, failure, minted := mintProgramSolver(runtime)
+	if !minted {
+		if failure.Available() {
+			return nil, failure, false
+		}
+		return nil, ProgramStageFailure(ProgramSealStageSolverMint), false
+	}
+	return solver, SolveFailure{}, true
+}
+
+// bindMemberRows mints one runtime member per declared member row. Each row is
+// resolved against the published directory, so a bind addresses exactly the
+// member the geometry published it under.
+func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtimeMember, bool) {
+	drafts := make([]runtimeMember, 0, len(committed.members))
+	bound := make(map[composition.Key]struct{}, len(committed.members))
+	for _, declared := range committed.members {
+		if declared.binder == nil {
+			return nil, false
+		}
+		member, resolved := committed.declaredMember(declared)
+		if !resolved || !member.Key().Available() {
+			return nil, false
+		}
+		if _, duplicate := bound[member.Key()]; duplicate {
+			return nil, false
+		}
+		row, ok := declared.binder.bindProgramMember(plane, committed.topology, member, declared.coords)
+		if !ok || row == nil || row.member().Key() != member.Key() {
+			return nil, false
+		}
+		bound[member.Key()] = struct{}{}
+		drafts = append(drafts, row)
+	}
+	return drafts, true
+}
+
+// declaredMember resolves one declared row to its published graph member. An
+// activation row is addressed through its activation identity, which is the
+// identity its trigger was published under.
+func (committed *CommittedProgram) declaredMember(declared programMemberBinding) (equation.RuleMember, bool) {
+	if declared.activated {
+		member, ok := committed.lookupActivationMember(declared.activation)
+		return member.member, ok
+	}
+	member, ok := committed.lookupRuleMember(declared.member)
+	return member.member, ok
+}
+
+// bindQueryRows mints one runtime query per declared query row, keyed by the
+// canonical query key the published table is addressed by.
+func (committed *CommittedProgram) bindQueryRows(plane *programPlane) (map[composition.Key]runtimeQuery, bool) {
+	bound := make(map[composition.Key]runtimeQuery, len(committed.queries))
+	for _, declared := range committed.queries {
+		if declared.admit == nil {
+			return nil, false
+		}
+		query, resolved := committed.Query(declared.id)
+		if !resolved || !query.identity.Key().Available() {
+			return nil, false
+		}
+		if _, duplicate := bound[query.identity.Key()]; duplicate {
+			return nil, false
+		}
+		row, ok := declared.admit.bindProgramQuery(plane, query.identity)
+		if !ok || row == nil || row.query().Key() != query.identity.Key() {
+			return nil, false
+		}
+		bound[query.identity.Key()] = row
+	}
+	return bound, true
+}
+
+// bindObservationRows mints the optional observation rows of one inventory, in
+// inventory order: the ordinal an observation answers on is its position here.
+// The member-output point index is built once and only when an inventory asks
+// for it.
+func (committed *CommittedProgram) bindObservationRows(plane *programPlane, observations []ProgramObservationAdmission) ([]runtimeObservation, observationSealFailure) {
+	if len(observations) == 0 {
+		return nil, observationSealFailureNone
+	}
+	points, indexed := indexObservationPoints(committed.graph)
+	if !indexed {
+		return nil, observationSealFailurePoint
+	}
+	rows := make([]runtimeObservation, 0, len(observations))
+	admitted := make(map[identity.ContentID]struct{}, len(observations))
+	for _, declared := range observations {
+		if declared.admit == nil || !declared.ID.Available() {
+			return nil, observationSealFailureArguments
+		}
+		member, resolved := committed.MountedRuleMember(declared.Role, declared.Mount, declared.Point, declared.Occurrence)
+		if !resolved {
+			return nil, observationSealFailurePoint
+		}
+		point, located := points[member.member.Key()]
+		if !located || !committed.graph.OwnsPoint(point) {
+			return nil, observationSealFailurePoint
+		}
+		if _, duplicate := admitted[declared.ID]; duplicate {
+			return nil, observationSealFailureDuplicate
+		}
+		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point)
+		if !ok || row == nil {
+			return nil, observationSealFailureFactor
+		}
+		admitted[declared.ID] = struct{}{}
+		rows = append(rows, row)
+	}
+	return rows, observationSealFailureNone
+}
+
+// bindProgramMember mints one rule member's runtime row. The operand is
+// resolved from the neutral coordinates the declaration published; a rule
+// whose owner cannot seal an operand for them binds nothing.
+func (implementation *RuleImplementation[K, V, O]) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool) {
+	if implementation == nil || topology == nil || plane == nil || plane.runtime == nil || !topology.OwnsGraph(plane.runtime.graph) {
+		return nil, false
+	}
+	operand, resolved := implementation.resolveOperand(coords)
+	if !resolved {
+		return nil, false
+	}
+	return bindProgramRuleMember(plane, implementation, member, operand)
+}
+
+// bindProgramMember mints one activation trigger's runtime row. An activation
+// carries no operand: its row is compiled from the trigger member the geometry
+// published and the sealed Factor plane.
+func (implementation *ActivationRuleImplementation) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, _ OperandCoords) (runtimeMember, bool) {
+	if implementation == nil || plane == nil || !plane.frozen || plane.runtime == nil || plane.byKey == nil ||
+		implementation.binding.state != plane.runtime.state || implementation.binding.authority != plane.runtime.authority {
+		return nil, false
+	}
+	row, ok := bindActivationMember(member, implementation, topology, member.Key(), plane.runtime.graph, plane.byKey)
+	if !ok || row == nil {
+		return nil, false
+	}
+	return row, true
+}

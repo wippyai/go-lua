@@ -23,7 +23,6 @@ const (
 	BindStagePublication
 	BindStageSeal
 	BindStageAllocations
-	BindStageQueryReceipt
 	BindStageRuntimeContexts
 )
 
@@ -51,8 +50,6 @@ func (stage BindStage) String() string {
 		return "seal"
 	case BindStageAllocations:
 		return "allocations"
-	case BindStageQueryReceipt:
-		return "query-receipt"
 	case BindStageRuntimeContexts:
 		return "runtime-contexts"
 	default:
@@ -187,14 +184,10 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	if allocationFailure = allocations.SealSummaryReceiptsWithFailure(); allocationFailure != allocationcatalog.SealFailureNone {
 		return catalogBinding{}, BindFailure{Stage: BindStageAllocations, Allocation: allocationFailure}
 	}
-	// A family's implementation is recoverable only from the sealed binding, so
-	// the receipt pass follows the seal and every declared family is recovered
-	// or the transaction fails.
-	receipts, receiptsOK := queryReceipts(binding, fragments)
-	if !receiptsOK {
-		return catalogBinding{}, BindFailure{Stage: BindStageQueryReceipt}
-	}
-	bound := catalogBinding{binding: binding, rules: rules, allocations: allocations, value: value, queries: receipts}
+	// The sealed query fragments are the canonical query rows. Their typed
+	// implementations remain owned by the same sealed binding; no second
+	// post-seal receipt table is recovered or retained.
+	bound := catalogBinding{binding: binding, rules: rules, allocations: allocations, value: value, queries: fragments}
 	if !bound.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 	}

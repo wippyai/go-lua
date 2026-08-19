@@ -200,11 +200,11 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 // program. It is total over the graph: every Group's members become rows, so
 // the sealed program describes the whole compiled program and a later demand
 // revision selects from it rather than rebuilding it.
-func bindRuntimeProgram(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*runtimeProgram, []memberFold, bool) {
-	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
+func bindRuntimeProgram(bindingState *schemaBindingState, bindingAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*runtimeProgram, []memberFold, bool) {
+	if bindingState == nil || bindingAuthority == nil || bindingState.phase != schemaBindingSealed || bindingState.authority != bindingAuthority || bindingState.schema == nil || !bindingState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
 		return nil, nil, false
 	}
-	if graph.CompositionID() != receiptState.schema.coldID() {
+	if graph.CompositionID() != bindingState.schema.coldID() {
 		return nil, nil, false
 	}
 	records, owners, factorsOK := bindProgramFactorTable(runtime, factors)

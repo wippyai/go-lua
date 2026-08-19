@@ -314,7 +314,7 @@ type schemaSummaryRead struct {
 // boundTopologySummarySurfaceReceipt exposes only the sealed Factor/form
 // fence needed by topology catalog admission. The raw ClosedRefs vector stays
 // private to the RuleReadSurface issued below.
-func (receipt schemaSummaryRead) boundTopologySummarySurfaceReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
+func (receipt schemaSummaryRead) boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
 	if !receipt.Valid() || receipt.fence.schema == nil {
 		return nil, nil, composition.Key{}, composition.Key{}, false
 	}

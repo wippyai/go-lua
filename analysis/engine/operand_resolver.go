@@ -2,6 +2,7 @@ package engine
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -42,14 +43,14 @@ func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
 	return implementation.binding.cell.impl.operandResolver != nil
 }
 
-// RuleProgramAttach is the erased construction join for one sealed rule cell.
+// RuleProgramDeclaration is the erased declaration of one sealed rule cell.
 // The engine enumerates neutral member coordinates and this handle declares
 // the row it issues at each of them; the typed operand never leaves the cell.
 //
-// The declaration half is unexported, so the engine is the only package that
-// can publish one: a Link hands the assemble inventory the handle its sealed
-// cell issued and never a join of its own.
-type RuleProgramAttach interface {
+// Every method is unexported, so the engine is the only package that can
+// publish one: a Link hands the construction inventory the handle its sealed
+// cell issued and never a declaration of its own.
+type RuleProgramDeclaration interface {
 	// declaredRuleSchema names the cold rule this handle issues rows for.
 	declaredRuleSchema() (semantic, family composition.Key, ok bool)
 	// declareRuleOperand resolves one issuance's canonical operand.
@@ -57,11 +58,8 @@ type RuleProgramAttach interface {
 	// declareRuleSurfaces places the cold shape's surfaces over that operand
 	// at the sealed anchor the engine minted.
 	declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool)
-	// AdmitsMounted is the sealed owner predicate over one placement. It
-	// reads only the owner's operand directory and does not mutate topology.
-	AdmitsMounted(mount, point, occurrence identity.ContentID) bool
-	AttachMountedMember(construction *ProgramConstruction, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool
-	AttachLinkMember(construction *ProgramConstruction, role RuleSlotCapability, occurrence identity.ContentID) bool
+	// bindProgramMember mints the runtime row of one published member.
+	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool)
 }
 
 func (implementation *RuleImplementation[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
@@ -81,18 +79,10 @@ func (implementation *ActivationRuleImplementation) declaredRuleSchema() (compos
 }
 
 // RuleProgramSource is the hot-cell surface that publishes the one program
-// attach for a mounted or Link rule. The composition recovers it from the
+// declaration for a mounted or Link rule. The composition recovers it from the
 // opaque cell; the engine never switches on a domain type.
 type RuleProgramSource interface {
-	ProgramAttach() (RuleProgramAttach, bool)
-}
-
-func (implementation *RuleImplementation[K, V, O]) AttachMountedMember(construction *ProgramConstruction, role RuleSlotCapability, mount, point, occurrence identity.ContentID) bool {
-	return AttachMountedRuleMember(construction, implementation, role, mount, point, occurrence)
-}
-
-func (implementation *RuleImplementation[K, V, O]) AttachLinkMember(construction *ProgramConstruction, role RuleSlotCapability, occurrence identity.ContentID) bool {
-	return AttachLinkRuleMember(construction, implementation, role, occurrence)
+	ProgramDeclaration() (RuleProgramDeclaration, bool)
 }
 
 func (implementation *RuleImplementation[K, V, O]) resolveOperand(coords OperandCoords) (O, bool) {

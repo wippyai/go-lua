@@ -107,7 +107,7 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Bina
 	return rule.implementation, ok
 }
 
-func (rule *HotRule) ProgramAttach() (engine.RuleProgramAttach, bool) {
+func (rule *HotRule) ProgramDeclaration() (engine.RuleProgramDeclaration, bool) {
 	return valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
 }
 

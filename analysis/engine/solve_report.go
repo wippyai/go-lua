@@ -146,11 +146,11 @@ func (boundary solveBoundary) failure() SolveFailure {
 	return SolveFailure{Family: boundary.family, Disposition: boundary.disposition, Site: site}
 }
 
-// receiptFailure mints one receipt-side boundary onto the same public
+// boundaryFailure mints one internal boundary onto the same public
 // vocabulary. The authority names the engine table an ordinal belongs to and
 // the ordinals are that table's own; both stay inside this package, so a
 // caller distinguishes two boundaries by their digests alone.
-func receiptFailure(family SolveFailureFamily, authority string, ordinals ...uint64) SolveFailure {
+func boundaryFailure(family SolveFailureFamily, authority string, ordinals ...uint64) SolveFailure {
 	site := framedContentID(solveFailureSiteDomain, solveFailureSiteVersion, func(writer *canonical.DigestWriter) bool {
 		if writer.Uint(uint64(family)) != nil || writer.Bytes([]byte(authority)) != nil || writer.Count(uint64(len(ordinals))) != nil {
 			return false
@@ -165,91 +165,83 @@ func receiptFailure(family SolveFailureFamily, authority string, ordinals ...uin
 	return SolveFailure{Family: family, Disposition: schema.DispositionMalformed, Site: site}
 }
 
-// receiptCompilationAttachFailure mints the compile-family boundary for one
-// ordered runtime attach phase of a receipt compilation. The phase ordinal is
-// the caller's own attach order and enters the site preimage, so two phases
-// never share an identity while the public vocabulary stays the family.
-func receiptCompilationAttachFailure(phase uint64) SolveFailure {
-	return receiptFailure(SolveFailureFamilyCompile, "receipt-compilation-attach", phase)
+// compilationSealFailure mints the compile-family boundary for one ordered
+// runtime seal phase. The phase ordinal enters the site preimage.
+func compilationSealFailure(phase uint64) SolveFailure {
+	return boundaryFailure(SolveFailureFamilyCompile, "program-seal", phase)
 }
 
-// ProgramAttachFailure is the construction-plane mint for one first-
-// construction attach phase. The site identity is the compile-family attach
-// boundary; callers do not name the receipt factory.
-func ProgramAttachFailure(phase uint64) SolveFailure {
-	return receiptCompilationAttachFailure(phase)
+// ProgramSealFailure is the construction-plane mint for one first seal phase.
+func ProgramSealFailure(phase uint64) SolveFailure {
+	return compilationSealFailure(phase)
 }
 
-// ProgramConstructionStage names one refusal boundary of the program
-// constructor: the pass that takes a committed topology plus the rows a bind
-// produced and mints the sealed program and its Solver. The stages are the
-// boundaries that pass actually has, so a caller localizes a construction
-// refusal without the engine publishing the pass's own tables.
-type ProgramConstructionStage uint8
+// ProgramSealStage names one refusal boundary of the program seal: the pass
+// that binds the committed geometry and its declared rows into a Solver.
+type ProgramSealStage uint8
 
 const (
-	ProgramConstructionStageNone ProgramConstructionStage = iota
-	// ProgramConstructionStageAdmission is the constructor's own input fence:
+	ProgramSealStageNone ProgramSealStage = iota
+	// ProgramSealStageAdmission is the program's input fence:
 	// the construction handle, the committed topology it is bound against, and
 	// the sealed directory that topology published. The mounted artifact
 	// schedule gate runs at the topology's commit against artifact rows that are
 	// released before construction, so a schedule verdict reaches the
 	// constructor as a refused admission of the committed topology.
-	ProgramConstructionStageAdmission
-	// ProgramConstructionStageTopologySeal is the topology commit itself: the
+	ProgramSealStageAdmission
+	// ProgramSealStageTopologySeal is the topology commit itself: the
 	// mounted artifact schedule gate, the graph materialization, and the
 	// directory publication that the admission fence later re-checks.
-	ProgramConstructionStageTopologySeal
-	// ProgramConstructionStageQueryAddress is the published query address table:
+	ProgramSealStageTopologySeal
+	// ProgramSealStageQueryAddress is the published query address table:
 	// one canonical key per directory ordinal, resolved against the graph's own
 	// queries so no ordinal publishes a foreign or duplicate query and no solved
 	// query lacks a column to answer on.
-	ProgramConstructionStageQueryAddress
-	// ProgramConstructionStageObservationAddress is the published observation
-	// address table: one row per admitted attach identity, so every issued
-	// attach ordinal addresses a sealed row rather than a position past its end.
-	ProgramConstructionStageObservationAddress
-	// ProgramConstructionStageFactorBind is the bound Factor table: the dense
+	ProgramSealStageQueryAddress
+	// ProgramSealStageObservationAddress is the published observation
+	// address table: one row per admitted observation identity, so every issued
+	// observation ordinal addresses a sealed row rather than a position past its end.
+	ProgramSealStageObservationAddress
+	// ProgramSealStageFactorBind is the bound Factor table: the dense
 	// owner index and the runtime slot each bound Factor occupies.
-	ProgramConstructionStageFactorBind
-	// ProgramConstructionStageMemberBind is the member bind: the per-Group fold
+	ProgramSealStageFactorBind
+	// ProgramSealStageMemberBind is the member bind: the per-Group fold
 	// of the cold draft answers and the hot rows minted from those drafts.
-	ProgramConstructionStageMemberBind
-	// ProgramConstructionStageProgramSeal is the seal of the row-model program
+	ProgramSealStageMemberBind
+	// ProgramSealStageProgramSeal is the seal of the row-model program
 	// and the runtime assembled from it.
-	ProgramConstructionStageProgramSeal
-	// ProgramConstructionStageSolverMint is the Solver mint: the initial
+	ProgramSealStageProgramSeal
+	// ProgramSealStageSolverMint is the Solver mint: the initial
 	// relation and the one store issuance this Solver's addresses are named in.
-	ProgramConstructionStageSolverMint
-	// programConstructionStageCount bounds the closed stage set. Nothing is
+	ProgramSealStageSolverMint
+	// programSealStageCount bounds the closed stage set. Nothing is
 	// declared past it.
-	programConstructionStageCount
+	programSealStageCount
 )
 
-// programConstructionAuthority is the engine table the construction stage
+// programSealAuthority is the engine table the seal stages
 // ordinals belong to. It stays inside this package; a caller separates two
 // stages by their site digests alone.
-const programConstructionAuthority = "program-construction"
+const programSealAuthority = "program-seal"
 
-// ProgramConstructionFailure mints the compile-family boundary for one program
-// construction stage. The stage ordinal enters the site preimage, so two stages
-// never share an identity while the published vocabulary stays the family.
-func ProgramConstructionFailure(stage ProgramConstructionStage) SolveFailure {
-	if stage <= ProgramConstructionStageNone || stage >= programConstructionStageCount {
+// ProgramStageFailure mints the compile-family boundary for one program seal
+// stage. The stage ordinal enters the site preimage.
+func ProgramStageFailure(stage ProgramSealStage) SolveFailure {
+	if stage <= ProgramSealStageNone || stage >= programSealStageCount {
 		return SolveFailure{}
 	}
-	return receiptFailure(SolveFailureFamilyCompile, programConstructionAuthority, uint64(stage))
+	return boundaryFailure(SolveFailureFamilyCompile, programSealAuthority, uint64(stage))
 }
 
-// programConstructionSites is every stage's site digest, minted once. The
-// digest is the only construction coordinate that leaves the engine, so
+// programSealStages is every stage's site digest, minted once. The
+// digest is the only seal coordinate that leaves the engine, so
 // recovering the stage is a lookup on it rather than a second published field.
 // An unencodable preimage yields the unavailable identity, which no stage may
 // occupy: one such entry would make every unavailable site classify as it.
-var programConstructionSites = func() map[identity.ContentID]ProgramConstructionStage {
-	sites := make(map[identity.ContentID]ProgramConstructionStage, programConstructionStageCount)
-	for stage := ProgramConstructionStageAdmission; stage < programConstructionStageCount; stage++ {
-		site := ProgramConstructionFailure(stage).Site
+var programSealStages = func() map[identity.ContentID]ProgramSealStage {
+	sites := make(map[identity.ContentID]ProgramSealStage, programSealStageCount)
+	for stage := ProgramSealStageAdmission; stage < programSealStageCount; stage++ {
+		site := ProgramStageFailure(stage).Site
 		if !site.Available() {
 			continue
 		}
@@ -258,15 +250,13 @@ var programConstructionSites = func() map[identity.ContentID]ProgramConstruction
 	return sites
 }()
 
-// ProgramConstructionStageOf recovers the construction stage one failure names.
-// It reports false for every boundary raised outside the program constructor,
-// so a caller routes a construction refusal without classifying the rest of the
-// compile family.
-func ProgramConstructionStageOf(failure SolveFailure) (ProgramConstructionStage, bool) {
+// ProgramSealStageOf recovers the seal stage one failure names.
+// It reports false for every boundary raised outside the program seal.
+func ProgramSealStageOf(failure SolveFailure) (ProgramSealStage, bool) {
 	if failure.Family != SolveFailureFamilyCompile || !failure.Site.Available() {
-		return ProgramConstructionStageNone, false
+		return ProgramSealStageNone, false
 	}
-	stage, named := programConstructionSites[failure.Site]
+	stage, named := programSealStages[failure.Site]
 	return stage, named
 }
 

@@ -18,18 +18,14 @@ import (
 )
 
 // programPlane is the bound Factor universe of one graph. Its fields are the
-// four coordinates a bind reads - the graph-owned binding, the dense Factor
-// vector, the canonical Factor index and the attached carrier - plus the point
-// index an observation needs.
+// four coordinates a bind reads: the graph-owned binding, the dense Factor
+// vector, the canonical Factor index and the attached carrier.
 type programPlane struct {
 	runtime *runtimeBinding
 	factors []runtimeFactor
 	byKey   map[composition.Key]runtimeFactor
 	carrier *carrier.Composition
 	ordered []runtimeFactor
-	// observationPoints is this graph's member -> output point index. It is
-	// derived on first use because only an attached observation reads it.
-	observationPoints map[composition.Key]equation.Point
 	// frozen records that the cold binding catalog was released while this plane
 	// was minted. A plane that never reached that cut binds nothing.
 	frozen bool
