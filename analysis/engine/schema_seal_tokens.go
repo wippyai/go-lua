@@ -225,25 +225,3 @@ func validReadDependencies(schema *Schema, rule, read, count uint64) bool {
 func (descriptor factorRuntimeDescriptor) valid() bool {
 	return descriptor.schema != nil && descriptor.schema.Available() && descriptor.semantic.Available() && descriptor.algebra != nil && descriptor.algebra.KeyEnd() == descriptor.keyEnd && (descriptor.state == nil || descriptor.state.schema == descriptor.schema && descriptor.state.phase == schemaBindingSealed && descriptor.state.authority != nil)
 }
-
-// Solver-side summary surface receipt; validation lives with RuleReadSurface.
-
-// summarySurface is an opaque Factor/form authority for one summary
-// surface. The graph-local Surface.Local is supplied by the topology builder;
-// the Factor and normalizer identity come only from this receipt.
-type summarySurface[K ~uint32 | ~uint64, V any] struct {
-	receipt    factorRuntimeBinding
-	form       factorFormReceipt
-	formSchema *Schema
-}
-
-func (receipt summarySurface[K, V]) valid(state *schemaBindingState, authority *schemaBindingAuthority) bool {
-	return receipt.receipt.valid() && receipt.receipt.state == state && receipt.receipt.authority == authority && receipt.formSchema == state.schema && receipt.form.kind == SchemaFormReadSummary && receipt.form.ordinal < uint64(len(receipt.receipt.forms)) && receipt.receipt.forms[receipt.form.ordinal] == receipt.form
-}
-
-func (receipt summarySurface[K, V]) boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool) {
-	if receipt.formSchema == nil || !receipt.valid(receipt.receipt.state, receipt.receipt.authority) {
-		return nil, nil, composition.Key{}, composition.Key{}, false
-	}
-	return receipt.receipt.state, receipt.receipt.authority, receipt.receipt.semantic, receipt.form.semantic, true
-}

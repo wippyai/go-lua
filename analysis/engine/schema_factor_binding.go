@@ -59,7 +59,6 @@ func schemaFactorCount(schema *Schema) int {
 }
 
 type schemaFactorBinding interface {
-	boundTopologyFactorReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, bool)
 	schemaFactorOrdinal() uint64
 	schemaFactorSchema() *Schema
 	schemaFactorComplete() bool
@@ -154,22 +153,6 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorBindingState() *schemaBin
 		return nil
 	}
 	return cell.impl.state
-}
-
-func (cell *schemaFactorBindingCell[K, V]) boundTopologyFactorReceipt() (*schemaBindingState, *schemaBindingAuthority, composition.Key, bool) {
-	if cell == nil || cell.impl == nil || cell.impl.state == nil {
-		return nil, nil, composition.Key{}, false
-	}
-	state := cell.impl.state
-	authority := state.authority
-	if authority == nil || state.phase != schemaBindingSealed || state.schema != cell.schema || cell.ordinal >= uint64(len(state.factors)) || state.factors[cell.ordinal] != cell || cell.impl.algebra == nil {
-		return nil, nil, composition.Key{}, false
-	}
-	semantic := state.schema.factorSemanticAt(cell.ordinal)
-	if !semantic.Available() {
-		return nil, nil, composition.Key{}, false
-	}
-	return state, authority, semantic, true
 }
 
 func (cell *schemaFactorBindingCell[K, V]) schemaFactorRuntimeBinding(runtime *runtimeBinding) (runtimeFactor, bool) {

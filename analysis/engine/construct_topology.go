@@ -886,11 +886,10 @@ func constructedTransportFactor(source constructedSourcePlane, role RuleSlotCapa
 	if factor == nil {
 		return composition.Key{}, false
 	}
-	state, authority, semantic, receiptOK := factor.boundTopologyFactorReceipt()
-	if !receiptOK || state != source.state || authority != source.authority || semantic != shape.Output {
+	if factor.schemaFactorOrdinal() != factorOrdinal || factor.schemaFactorSchema() != source.schema {
 		return composition.Key{}, false
 	}
-	return semantic, true
+	return shape.Output, true
 }
 
 // constructMemberPlane derives the member geometry: one dense rule row and one

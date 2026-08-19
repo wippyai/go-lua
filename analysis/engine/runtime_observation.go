@@ -117,7 +117,7 @@ func (runtime *exactObservationRuntime[V, R]) materializeObservation(work *carri
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
 	if !ok || value == nil {
 		return nil, boundary, false
 	}
@@ -149,7 +149,7 @@ func (runtime *summaryObservationRuntime[V, R]) materializeObservation(work *car
 	if runtime == nil || runtime.owner == nil || !runtime.id.Available() || !runtime.point.Available() || runtime.factor == nil {
 		return nil, refused(SolveFailureFamilyObservation, "preflight"), false
 	}
-	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.owner.state, runtime.owner.authority, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
+	value, boundary, ok := materializeReceiptProjectionWithFailure(work, state, runtime.factor, runtime.unit, runtime.project, runtime.begin, runtime.accum, runtime.borrow, runtime.transfer, runtime.result)
 	if !ok || value == nil {
 		return nil, boundary, false
 	}
@@ -221,9 +221,8 @@ func bindSummaryObservationRuntime[V, R any](compilation *programPlane, implemen
 	if _, mappingOK := implementation.topologySummaryMapping(surface); !mappingOK {
 		return nil, false
 	}
-	factorRuntime, factorOK := compilation.byKey[projection.Factor]
-	factor, typed := factorRuntime.(receiptQueryFactor[V])
-	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.binding.factorOrdinal, projection.Factor) {
+	factor, factorOK := planeQueryFactor[V](compilation, implementation.binding.factorOrdinal)
+	if !factorOK {
 		return nil, false
 	}
 	unit, unitOK := factor.readUnit(surface)
@@ -254,9 +253,8 @@ func bindExactObservationRuntime[V, R any](compilation *programPlane, implementa
 	if !surfaceOK {
 		return nil, false
 	}
-	factorRuntime, factorOK := compilation.byKey[projection.Factor]
-	factor, typed := factorRuntime.(receiptQueryFactor[V])
-	if !factorOK || !typed || factor == nil || !factor.receiptMatches(state, authority, implementation.binding.factorOrdinal, projection.Factor) {
+	factor, factorOK := planeQueryFactor[V](compilation, implementation.binding.factorOrdinal)
+	if !factorOK {
 		return nil, false
 	}
 	unit, unitOK := factor.readUnit(surface)

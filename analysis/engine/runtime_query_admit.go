@@ -17,7 +17,7 @@ func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(stat
 // bound plane. The plane is the sealed Factor universe of the committed graph,
 // so a query row never names a second Factor authority.
 func (implementation *SummaryQueryImplementation[V, R]) bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool) {
-	return bindReceiptSummaryQueryRuntime[V, R](plane, implementation, query)
+	return bindReceiptSummaryQuery[V, R](plane, implementation, query)
 }
 
 func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool) {
@@ -25,7 +25,7 @@ func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state 
 }
 
 func (implementation *ExactQueryImplementation[V, R]) bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool) {
-	return bindReceiptExactQueryRuntime[V, R](plane, implementation, query)
+	return bindReceiptExactQuery[V, R](plane, implementation, query)
 }
 
 func declareMountedQueryRow[V, R any](state *schemaBindingState, authority *schemaBindingAuthority, implementation bindingQueryReceipt, id, mount, reusable identity.ContentID, kind composition.QueryProjectionKind) (declaredQueryRow, *ruleSummaryMapping, bool) {

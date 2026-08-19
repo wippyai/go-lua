@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
@@ -544,38 +543,4 @@ func (implementation *ExactQueryImplementation[V, R]) accumulator() (func() R, f
 		return nil, nil, false, false, false
 	}
 	return implementation.binding.cell.begin, implementation.binding.cell.accumulate, implementation.binding.cell.borrowIssued, implementation.binding.cell.transferResult, true
-}
-
-// receiptExactQueryRuntime is the compiler-side query evidence. It is built
-// only from an issued Query receipt, the graph-owned equation Query, and the
-// already-bound Factor runtime. In particular it never consults a declaration schema or
-// reconstructs a declaration row.
-type receiptExactQueryRuntime[V, R any] struct {
-	identity equation.Query
-	receipt  exactQueryRuntimeBinding[V, R]
-	factor   receiptQueryFactor[V]
-	surface  equation.Surface
-	unit     carrier.Unit
-}
-
-func (runtime *receiptExactQueryRuntime[V, R]) query() equation.Query {
-	if runtime == nil {
-		return equation.Query{}
-	}
-	return runtime.identity
-}
-
-type receiptSummaryQueryRuntime[V, R any] struct {
-	identity equation.Query
-	receipt  summaryQueryRuntimeBinding[V, R]
-	factor   receiptQueryFactor[V]
-	surface  equation.Surface
-	unit     carrier.Unit
-}
-
-func (runtime *receiptSummaryQueryRuntime[V, R]) query() equation.Query {
-	if runtime == nil {
-		return equation.Query{}
-	}
-	return runtime.identity
 }
