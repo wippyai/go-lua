@@ -198,10 +198,12 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 	if projectionErr != nil {
 		return Core{}, projectionErr
 	}
-	// Produced rows are construction-only input to anchor derivation. Target
-	// retains the richer produced relation in its own sealed table, so do not
-	// carry this duplicate pool into the published operation owner.
+	// Produced rows and outcome selector bytes are construction-only inputs to
+	// anchor derivation. Target retains the richer produced relation in its own
+	// sealed table, and no published Core query reads selector bytes, so do not
+	// carry either duplicate pool into the operation owner.
 	geometry.produced = rows.Pool[producedRow]{}
+	geometry.anchors = rows.Pool[byte]{}
 	return Core{
 		geometry: geometry, anchors: rows.NewRows(anchors), bindingKeys: bindingKeys,
 		bindingKeyRows: bindingKeyRows, bindingRanges: bindingRanges,
