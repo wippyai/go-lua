@@ -274,7 +274,6 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 		// predecessor-to-successor transition, so it issues no classification.
 		epoch.installAdmittedPoint(activation.index, activation.state, change.Set{})
 		epoch.structuralDirty[activation.index] = true
-		epoch.structural.inputs[activation.index] = structuralInputEpoch{}
 	}
 	for _, activation := range prepared.producerActivations {
 		epoch.producers[activation.index] = activation.state
@@ -297,7 +296,6 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	runtime.overlay.directAt = directAt
 	for _, target := range overlay.targets {
 		epoch.structuralDirty[target] = true
-		epoch.structural.inputs[target] = structuralInputEpoch{}
 	}
 	for _, point := range prepared.wakePoints {
 		epoch.postfixDirty[point] = true
@@ -354,7 +352,7 @@ type preparedProducerActivation struct {
 }
 
 func (epoch *executorEpoch) prepareSelectedFactorEpoch(overlay *preparedSelectedFactorOverlay) (preparedSelectedFactorEpoch, bool) {
-	if epoch == nil || overlay == nil || epoch.runtime == nil || epoch.work == nil || epoch.demand == nil || !epoch.demand.Live() || len(epoch.structural.inputs) != len(epoch.points) || len(epoch.structuralDirty) != len(epoch.points) || len(epoch.postfixDirty) != len(epoch.points) || len(epoch.queue.ready) != len(epoch.points) || epoch.postfixHead != len(epoch.postfixPending) || epoch.queue.count != 0 || len(overlay.activePoints) != len(epoch.points) || len(epoch.runtime.activePoints) != len(epoch.points) || len(overlay.selectedPoints) == 0 {
+	if epoch == nil || overlay == nil || epoch.runtime == nil || epoch.work == nil || epoch.demand == nil || !epoch.demand.Live() || len(epoch.structural.pointDescent) != len(epoch.points) || len(epoch.structuralDirty) != len(epoch.points) || len(epoch.postfixDirty) != len(epoch.points) || len(epoch.queue.ready) != len(epoch.points) || epoch.postfixHead != len(epoch.postfixPending) || epoch.queue.count != 0 || len(overlay.activePoints) != len(epoch.points) || len(epoch.runtime.activePoints) != len(epoch.points) || len(overlay.selectedPoints) == 0 {
 		return preparedSelectedFactorEpoch{}, false
 	}
 	pointActivations := make([]preparedPointActivation, 0)

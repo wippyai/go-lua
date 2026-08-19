@@ -61,6 +61,9 @@ func (epoch *executorEpoch) advanceNarrow() (advanced, ok bool) {
 			// A narrow episode descends. Its retained ascent accumulator is no
 			// longer an under-approximation of the recurrence row, so it is
 			// dropped at the phase cut rather than guarded at every reader.
+			if episode.hasAccumulator {
+				dbgEngine.DropNarrowPhase++
+			}
 			episode.accumulator, episode.hasAccumulator = carrier.PointRHS{}, false
 			if !epoch.markPostfixDirty(region.head) || !epoch.enqueuePoint(region.head) {
 				return false, false

@@ -350,69 +350,6 @@ func (epoch *executorEpoch) takePoint(point int) bool {
 	return epoch.updateNested(point, -1) && epoch.queue.take(point)
 }
 
-func (epoch *executorEpoch) structuralInputDescent(pointIndex int, selfDescent uint64) (uint64, bool) {
-	if epoch == nil || pointIndex < 0 || pointIndex >= len(epoch.runtime.environmentIncoming) || pointIndex >= len(epoch.runtime.factorIncoming) || pointIndex >= len(epoch.structural.inputs) {
-		return 0, false
-	}
-	newest := uint64(0)
-	consider := func(source int) bool {
-		if source < 0 || source >= len(epoch.structural.pointDescent) {
-			return false
-		}
-		descent := epoch.structural.pointDescent[source]
-		if source == pointIndex {
-			descent = selfDescent
-		}
-		if descent > newest {
-			newest = descent
-		}
-		return true
-	}
-	for _, edge := range epoch.runtime.environmentIncoming[pointIndex] {
-		if edge < 0 || edge >= len(epoch.runtime.environments) || !consider(epoch.runtime.environments[edge].source) {
-			return 0, false
-		}
-	}
-	for _, edge := range epoch.runtime.factorIncoming[pointIndex] {
-		if edge < 0 || edge >= len(epoch.runtime.factorEdges) || !consider(epoch.runtime.factorEdges[edge].source) {
-			return 0, false
-		}
-	}
-	return newest, true
-}
-
-func (epoch *executorEpoch) rememberStructuralInputs(pointIndex int, selfDescent uint64) bool {
-	newest, ok := epoch.structuralInputDescent(pointIndex, selfDescent)
-	if !ok {
-		return false
-	}
-	epoch.structural.inputs[pointIndex] = structuralInputEpoch{descent: newest, seeded: true}
-	return true
-}
-
-func (epoch *executorEpoch) invalidateStructuralInputs(pointIndex int) bool {
-	if epoch == nil || pointIndex < 0 || pointIndex >= len(epoch.structural.inputs) {
-		return false
-	}
-	epoch.structural.inputs[pointIndex] = structuralInputEpoch{}
-	return true
-}
-
-// structuralInputsAscending is the cheap executor certificate for one exact
-// acyclic refold. Global descent generations increase strictly, so equality
-// with the stored maximum proves that no incoming source descended.
-func (epoch *executorEpoch) structuralInputsAscending(pointIndex int) (bool, bool) {
-	if epoch == nil || pointIndex < 0 || pointIndex >= len(epoch.structural.inputs) {
-		return false, false
-	}
-	snapshot := epoch.structural.inputs[pointIndex]
-	newest, ok := epoch.structuralInputDescent(pointIndex, epoch.structural.pointDescent[pointIndex])
-	if !ok || snapshot.seeded && newest < snapshot.descent {
-		return false, false
-	}
-	return !snapshot.seeded || newest == snapshot.descent, true
-}
-
 // invalidatePostfixAncestors keeps a recurrence-head proof tied to the Point
 // versions it summarizes. A Point publication can change the exact RHS of
 // every enclosing head even before the head itself publishes again.

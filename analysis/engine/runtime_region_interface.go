@@ -40,6 +40,7 @@ func (epoch *executorEpoch) regionRHS(point equation.Point, pointIndex, regionIn
 	// the narrow order laws demand the exact one.
 	episode.accumulator, episode.hasAccumulator = exact, episode.phase == phaseAscent
 	if !episode.hasAccumulator {
+		dbgEngine.DropNarrowFold++
 		episode.accumulator = carrier.PointRHS{}
 	}
 	return exact, changes, true
@@ -282,6 +283,9 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 		}
 		epoch.regions[index].exact = carrier.PointRHS{}
 		epoch.regions[index].hasExact = false
+		if epoch.regions[index].hasAccumulator {
+			dbgEngine.DropRestart++
+		}
 		epoch.regions[index].accumulator = carrier.PointRHS{}
 		epoch.regions[index].hasAccumulator = false
 		epoch.regions[index].postfixAt = 0
@@ -334,9 +338,6 @@ func (epoch *executorEpoch) restartRegion(region int, callSite solveDiagnosticRe
 			}
 		}
 		if _, publishedOK := epoch.publish(pointIndex, current, reset, changes, publicationMayDescend); !publishedOK || epoch.canceled() {
-			return false
-		}
-		if !epoch.invalidateStructuralInputs(pointIndex) {
 			return false
 		}
 		if !epoch.markPostfixDirty(pointIndex) {

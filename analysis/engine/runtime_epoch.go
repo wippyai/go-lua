@@ -98,17 +98,11 @@ const (
 	publicationMayDescend
 )
 
-// structuralInputEpoch records the newest global descent generation among the
-// structural sources incorporated by one point's exact fold.
-type structuralInputEpoch struct {
-	descent uint64
-	seeded  bool
-}
-
+// structuralEpoch stamps every point that published below its predecessor with
+// a strictly increasing global descent generation.
 type structuralEpoch struct {
 	descent      uint64
 	pointDescent []uint64
-	inputs       []structuralInputEpoch
 }
 
 const (
@@ -372,7 +366,6 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		structuralDirty:   make([]bool, runtime.graph.PointCount()),
 		structural: structuralEpoch{
 			pointDescent: make([]uint64, runtime.graph.PointCount()),
-			inputs:       make([]structuralInputEpoch, runtime.graph.PointCount()),
 		},
 		postfixDirty:   make([]bool, runtime.graph.PointCount()),
 		postfixPending: make([]int, 0, runtime.graph.PointCount()),

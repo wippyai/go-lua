@@ -184,6 +184,18 @@ func (epoch *executorEpoch) publishAcyclicExact(point int, current, next carrier
 	return true, true
 }
 
+// acyclicPublicationOrder classifies one acyclic refold publication. The
+// direction belongs to the value published, so the carrier order proof against
+// the state being replaced is the whole derivation. A fold descends on its own
+// account whenever a candidate is replaced non-additively or its base shrinks,
+// and no ledger over this point's incoming sources observes that movement.
+func (epoch *executorEpoch) acyclicPublicationOrder(current carrier.PointState, rhs carrier.PointRHS) pointPublication {
+	if epoch.work.LessOrEqPointStateRHS(current, rhs) {
+		return publicationAscending
+	}
+	return publicationMayDescend
+}
+
 // refreshPoint performs the only candidate replacement and sole Point
 // publication. A region is admitted only for its head; nonheads exact-replace
 // their complete RHS even while enclosed by the same WTO region.
@@ -438,11 +450,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		evidence := appendEvidence
 		order := publicationAscending
 		if structuralChanged || candidateRequiresCanonicalFold {
-			refreshBoundary = stalled(SolveFailureFamilyRefresh, "acyclic-structural-inputs")
-			ascending, valid := epoch.structuralInputsAscending(pointIndex)
-			if !valid {
-				return false, false
-			}
 			refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-point-base")
 			base, ok := epoch.pointBase(point, pointIndex)
 			if !ok {
@@ -460,21 +467,15 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			// its own ChangeSet is exactly this publication's evidence and
 			// replaces whatever the abandoned append accumulated.
 			evidence = foldChanges.Evidence()
-			if !ascending && !epoch.work.LessOrEqPointStateRHS(current, rhs) {
-				order = publicationMayDescend
-			}
+			order = epoch.acyclicPublicationOrder(current, rhs)
 		}
 		refreshBoundary = refused(SolveFailureFamilyRefresh, "acyclic-publication")
-		selfDescent := epoch.structural.pointDescent[pointIndex]
 		published, ok := epoch.work.PublishPointRHS(rhs)
 		if !ok || epoch.canceled() {
 			return false, false
 		}
 		changed, publishedOK := epoch.publishAcyclicExact(pointIndex, current, published, order, evidence)
 		if !publishedOK || !epoch.settlePostfix(pointIndex) {
-			return false, false
-		}
-		if structuralChanged && !epoch.rememberStructuralInputs(pointIndex, selfDescent) {
 			return false, false
 		}
 		epoch.structuralDirty[pointIndex] = false
@@ -525,7 +526,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	var exact, selected carrier.PointRHS
 	var exactChanges carrier.ChangeSet
 	var exactOK bool
-	structuralFolded := false
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-rhs")
 	if phase == phaseAscent && episode.hasExact {
 		// A changed Region rebuilds its E+B carrier in canonical input order.
@@ -534,7 +534,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// accumulated evidence admits reuse; every other case rebuilds the
 		// complete row from Init. regionRHS owns that choice.
 		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, regionIndex, region, current)
-		structuralFolded = exactOK
 		if exactOK {
 			if refreshPending {
 				// The carrier law for an ascending cached exact proves
@@ -552,7 +551,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		exact, selected, exactOK = episode.exact, episode.exact, true
 	} else {
 		exact, exactChanges, exactOK = epoch.regionRHS(point, pointIndex, regionIndex, region, current)
-		structuralFolded = exactOK
 	}
 	if !exactOK || epoch.canceled() {
 		return false, false
@@ -656,7 +654,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 	if phase == phaseNarrow {
 		order = publicationMayDescend
 	}
-	selfDescent := epoch.structural.pointDescent[pointIndex]
 	changed, publishedOK = epoch.publish(pointIndex, current, published, changes, order)
 	if !publishedOK || epoch.canceled() {
 		return false, false
@@ -670,9 +667,6 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 		// A refresh is complete only after the new head publication and its
 		// authoritative interface/version snapshot both succeed.
 		epoch.diagnostics.recordInterfaceRefreshOutcome(epoch, regionIndex, refreshOldExact, exact, true, false)
-	}
-	if structuralFolded && !epoch.rememberStructuralInputs(pointIndex, selfDescent) {
-		return false, false
 	}
 	epoch.structuralDirty[pointIndex] = false
 	if phase == phaseNarrow && changed && !epoch.enqueuePoint(pointIndex) {

@@ -25,6 +25,11 @@ type DbgEngineCounters struct {
 	RefusePendingDescend uint64
 	RefuseNotOwned       uint64
 	RefuseChangedRow     uint64
+	RefuseColdEpisode    uint64
+	RefuseDroppedAccum   uint64
+	DropNarrowPhase      uint64
+	DropRestart          uint64
+	DropNarrowFold       uint64
 	RefuseReasons        [8]uint64
 	RefuseDirection      [8]uint64
 }
@@ -58,6 +63,11 @@ func dbgRegionReuseRefusal(epoch *executorEpoch, episode *regionEpoch) {
 		dbgEngine.RefuseNotAscent++
 	case !episode.hasAccumulator:
 		dbgEngine.RefuseNoAccumulator++
+		if episode.hasExact {
+			dbgEngine.RefuseDroppedAccum++
+		} else {
+			dbgEngine.RefuseColdEpisode++
+		}
 	case episode.pending.Unknown():
 		dbgEngine.RefusePendingUnknown++
 	case !episode.pending.Admits():
