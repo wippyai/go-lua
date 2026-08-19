@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/link"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
@@ -25,7 +25,7 @@ import (
 func TestPostMountDerivationRunsOnlyOverAMountedRecord(t *testing.T) {
 	unmounted := LinkInputs{
 		Source:          &link.Link{},
-		Artifacts:       []axis.MountedArtifact{{}},
+		Artifacts:       []programmount.MountedArtifact{{}},
 		StaticAuthority: &staticdomain.Authority{},
 	}.neutral()
 	derived, failure := unmounted.derive()

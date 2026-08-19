@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -64,7 +65,7 @@ func TestMountPhaseWalksAxesInDependencyOrder(t *testing.T) {
 // absent and is rejected by that axis's own seal.
 func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 	inputs := LinkInputs{
-		Artifacts:       []axis.MountedArtifact{{}},
+		Artifacts:       []programmount.MountedArtifact{{}},
 		StaticAuthority: &staticdomain.Authority{},
 		ValueSchema:     &valuedomain.Schema{},
 		PackSchema:      &packdomain.Schema{},
@@ -89,7 +90,7 @@ func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 // is part of the phase's own admission: it is owned by no axis, so no axis can
 // seal it, and a record without it is rejected before any mount opens.
 func TestMountPhaseRejectsAnAbsentStaticInventory(t *testing.T) {
-	inputs := LinkInputs{Artifacts: []axis.MountedArtifact{{}}}
+	inputs := LinkInputs{Artifacts: []programmount.MountedArtifact{{}}}
 	if inputs.mountable() {
 		t.Fatalf("the mount phase admitted a record with no static inventory")
 	}

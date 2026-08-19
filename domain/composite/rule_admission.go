@@ -4,11 +4,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
 // WalkSealedPlacements enumerates sealed ingress placements in issuance order.
-func WalkSealedPlacements(mounts []axis.MountedArtifact, visit func(key schema.Key, mount, point, occurrence identity.ContentID) bool) (schema.Key, bool) {
+func WalkSealedPlacements(mounts []programmount.MountedArtifact, visit func(key schema.Key, mount, point, occurrence identity.ContentID) bool) (schema.Key, bool) {
 	if len(mounts) == 0 {
 		return "", false
 	}
@@ -72,7 +72,7 @@ func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog,
 // MountedAdmissions walks sealed ingress placements into engine admission rows.
 // Activation and ordinary mounted rules stay on separate inventories because
 // the engine admits them through different construction-plane requests.
-func (rules *RuleBinding) MountedAdmissions(mounts []axis.MountedArtifact) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, DiagnosticRule, bool) {
+func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifact) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, DiagnosticRule, bool) {
 	if rules == nil {
 		return nil, nil, DiagnosticRuleUnknown, false
 	}

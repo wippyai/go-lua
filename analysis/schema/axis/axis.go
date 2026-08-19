@@ -36,8 +36,6 @@ package axis
 import (
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/cold"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -308,24 +306,6 @@ func carrierKey[K ~uint32 | ~uint64](key, keyEnd uint64) (K, bool) {
 // identity it is on record as consuming.
 type Declaration struct {
 	Roles vocabulary.Roles
-}
-
-// MountedArtifact is one Link mount: the mount directory row that names the
-// program's cold publication, and the ingress view that still carries the
-// families which have not moved onto it yet. Contributors receive no
-// ProgramArtifact through either.
-//
-// The directory row is embedded rather than held beside a second copy of the
-// module and program identities, so there is one authority for where this
-// mount is and what it mounts.
-type MountedArtifact struct {
-	cold.Program
-	Snapshot *ingress.Snapshot
-}
-
-func (row MountedArtifact) Available() bool {
-	return row.Program.Available() && row.Snapshot != nil && row.Snapshot.Available() &&
-		row.Snapshot.ProgramID() == row.ProgramID && row.Snapshot.ArtifactID() == row.ArtifactID
 }
 
 // Mounting is the Link context an axis's Mount hook receives. Inputs is the

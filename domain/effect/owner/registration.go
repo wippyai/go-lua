@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/effect/factor"
@@ -53,7 +54,7 @@ func (rejection MountRejection) String() string {
 type axisInputs interface {
 	LinkSource() *link.Link
 	MountedArtifactCount() int
-	MountedArtifactAt(index int) (axis.MountedArtifact, bool)
+	MountedArtifactAt(index int) (programmount.MountedArtifact, bool)
 	PackInput() *pack.Schema
 	EffectInput() *factor.Algebra
 }

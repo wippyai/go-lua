@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -247,7 +248,7 @@ func TestL12ZeroEditWalk(t *testing.T) {
 		// without an engine binding, so the walk runs it: the probe seals its own
 		// Link authority from the neutral artifact view, and rejects with its own
 		// evidence when that view is empty.
-		authority, _, mounted := inventory.probeAxis.Mount(LinkInputs{Artifacts: make([]axis.MountedArtifact, 2)})
+		authority, _, mounted := inventory.probeAxis.Mount(LinkInputs{Artifacts: make([]programmount.MountedArtifact, 2)})
 		sealedAuthority, authorityOK := axis.Payload[probe.MountAuthority](authority)
 		if !mounted || !authorityOK || sealedAuthority.Artifacts != 2 {
 			t.Fatalf("the probe's mount sealed %v over two mounted artifacts", sealedAuthority)

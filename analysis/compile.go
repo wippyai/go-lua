@@ -24,7 +24,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
@@ -276,16 +275,16 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 // linkArtifactRows projects the Link's private mount records onto the neutral
 // artifact view the mount phase consumes. Each row carries the compile-time
 // snapshot pointer.
-func linkArtifactRows(mounts []mountedProgramArtifact) ([]axis.MountedArtifact, bool) {
+func linkArtifactRows(mounts []mountedProgramArtifact) ([]programmount.MountedArtifact, bool) {
 	if len(mounts) == 0 {
 		return nil, false
 	}
-	rows := make([]axis.MountedArtifact, len(mounts))
+	rows := make([]programmount.MountedArtifact, len(mounts))
 	for index, mounted := range mounts {
 		if !mounted.valid() {
 			return nil, false
 		}
-		row := axis.MountedArtifact{Program: mounted.program, Snapshot: mounted.snapshot}
+		row := programmount.MountedArtifact{Program: mounted.program, Snapshot: mounted.snapshot}
 		if !row.Available() {
 			return nil, false
 		}

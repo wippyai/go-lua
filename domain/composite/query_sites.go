@@ -4,7 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
 
@@ -32,7 +32,7 @@ type QueryPublication struct {
 // occurrences in selected sealed bodies. Non-callable roots are always
 // selected. A callable body is selected only when a sealed DirectFunctions
 // join from an already-selected body names it.
-func SelectedQuerySites(mounts []axis.MountedArtifact) ([]QuerySite, bool) {
+func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, bool) {
 	families, familiesOK := selectedPointQueryIssuance()
 	if !familiesOK || len(mounts) == 0 {
 		return nil, false

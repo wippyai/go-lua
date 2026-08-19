@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/call"
 )
 
@@ -13,7 +14,7 @@ import (
 // own admission without a composition present.
 type stubInputs struct {
 	source *link.Link
-	rows   []axis.MountedArtifact
+	rows   []programmount.MountedArtifact
 	calls  *call.Algebra
 }
 
@@ -21,9 +22,9 @@ func (inputs stubInputs) LinkSource() *link.Link { return inputs.source }
 
 func (inputs stubInputs) MountedArtifactCount() int { return len(inputs.rows) }
 
-func (inputs stubInputs) MountedArtifactAt(index int) (axis.MountedArtifact, bool) {
+func (inputs stubInputs) MountedArtifactAt(index int) (programmount.MountedArtifact, bool) {
 	if index < 0 || index >= len(inputs.rows) {
-		return axis.MountedArtifact{}, false
+		return programmount.MountedArtifact{}, false
 	}
 	row := inputs.rows[index]
 	return row, row.Available()
@@ -49,7 +50,7 @@ func TestCallMountRejectsAnAbsentArtifactView(t *testing.T) {
 // checked at this domain's own boundary: a row that carries no artifact never
 // reaches the seal.
 func TestCallMountRejectsAnUnavailableArtifactRow(t *testing.T) {
-	inputs := stubInputs{rows: []axis.MountedArtifact{{}}}
+	inputs := stubInputs{rows: []programmount.MountedArtifact{{}}}
 	algebra, rejection, ok := mountCallAlgebra[stubInputs](inputs)
 	if ok || algebra != nil {
 		t.Fatalf("call mount sealed an algebra from an unavailable artifact row")

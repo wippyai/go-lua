@@ -2,8 +2,6 @@ package axis
 
 import (
 	"bytes"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -558,20 +556,5 @@ func TestTableDigestCoversSemanticIdentity(t *testing.T) {
 	}
 	if declared.Digest() == shifted.Digest() {
 		t.Fatal("an axis's selected semantic role left the table digest unchanged")
-	}
-}
-
-// TestMountedArtifactDoesNotCarryProgramArtifact states the mount-phase
-// fence: contributors receive the sealed ingress snapshot, not the owner.
-func TestMountedArtifactDoesNotCarryProgramArtifact(t *testing.T) {
-	row := reflect.TypeOf(MountedArtifact{})
-	for index := 0; index < row.NumField(); index++ {
-		field := row.Field(index)
-		if strings.Contains(field.Type.String(), "programartifact") {
-			t.Fatalf("MountedArtifact.%s is %s", field.Name, field.Type)
-		}
-	}
-	if _, ok := row.FieldByName("Snapshot"); !ok {
-		t.Fatal("MountedArtifact has no Snapshot")
 	}
 }

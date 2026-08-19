@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/pack"
 	"github.com/wippyai/go-lua/domain/static"
 )
@@ -14,7 +15,7 @@ import (
 // own admission without a composition present.
 type stubInputs struct {
 	source  *link.Link
-	rows    []axis.MountedArtifact
+	rows    []programmount.MountedArtifact
 	statics *static.Authority
 	packs   *pack.Schema
 }
@@ -23,9 +24,9 @@ func (inputs stubInputs) LinkSource() *link.Link { return inputs.source }
 
 func (inputs stubInputs) MountedArtifactCount() int { return len(inputs.rows) }
 
-func (inputs stubInputs) MountedArtifactAt(index int) (axis.MountedArtifact, bool) {
+func (inputs stubInputs) MountedArtifactAt(index int) (programmount.MountedArtifact, bool) {
 	if index < 0 || index >= len(inputs.rows) {
-		return axis.MountedArtifact{}, false
+		return programmount.MountedArtifact{}, false
 	}
 	row := inputs.rows[index]
 	return row, row.Available()
@@ -53,7 +54,7 @@ func TestPackMountRejectsAnAbsentArtifactView(t *testing.T) {
 // is one of this mount's own inputs: the pack seal reads its mounted value
 // substitutions from it, so a record without it never opens the seal.
 func TestPackMountRejectsAnAbsentStaticAuthority(t *testing.T) {
-	inputs := stubInputs{rows: []axis.MountedArtifact{{}}}
+	inputs := stubInputs{rows: []programmount.MountedArtifact{{}}}
 	schema, rejection, ok := mountPackSchema[stubInputs](inputs)
 	if ok || schema != nil {
 		t.Fatalf("pack mount sealed a schema with no static authority")

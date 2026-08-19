@@ -3,7 +3,7 @@ package composite
 import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
@@ -152,7 +152,7 @@ type LinkInputs struct {
 	Source *link.Link
 	// Artifacts is the neutral sealed artifact view, one row per Link mount, in
 	// the Link's own mount order.
-	Artifacts []axis.MountedArtifact
+	Artifacts []programmount.MountedArtifact
 	// StaticAuthority is the Link's sealed static inventory. It is a factor of
 	// no axis, so it enters the phase as a neutral input rather than as a
 	// mounted authority, and a mounting axis that seals over it names it in its
@@ -216,9 +216,9 @@ func (inputs LinkInputs) LinkSource() *link.Link { return inputs.Source }
 
 func (inputs LinkInputs) MountedArtifactCount() int { return len(inputs.Artifacts) }
 
-func (inputs LinkInputs) MountedArtifactAt(index int) (axis.MountedArtifact, bool) {
+func (inputs LinkInputs) MountedArtifactAt(index int) (programmount.MountedArtifact, bool) {
 	if index < 0 || index >= len(inputs.Artifacts) {
-		return axis.MountedArtifact{}, false
+		return programmount.MountedArtifact{}, false
 	}
 	row := inputs.Artifacts[index]
 	return row, row.Available()

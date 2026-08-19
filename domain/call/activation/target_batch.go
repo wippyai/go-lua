@@ -2,8 +2,8 @@ package activation
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 )
 
@@ -136,7 +136,7 @@ func NewTargetBatchCatalog(mounts []MountedTargetBatch) (*TargetBatchCatalog, bo
 // It lives with the catalog it produces: the derivation reads one factor's
 // sealed authority plus the artifacts it was sealed from, so no composition
 // root needs to enumerate Call target rows on this package's behalf.
-func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifact) (*TargetBatchCatalog, bool) {
+func SealMountedBatches(algebra *calldomain.Algebra, mounts []programmount.MountedArtifact) (*TargetBatchCatalog, bool) {
 	if len(mounts) == 0 || algebra == nil || !algebra.Valid() {
 		return nil, false
 	}
@@ -163,7 +163,7 @@ func SealMountedBatches(algebra *calldomain.Algebra, mounts []axis.MountedArtifa
 // algebra's sealed body capabilities. The artifact supplies the target rows and
 // the algebra supplies every selector; a row whose body path or program does
 // not match the artifact it was read from is rejected.
-func mountedTargetBatchRows(mount axis.MountedArtifact, algebra *calldomain.Algebra) ([]TargetBatchRow, bool) {
+func mountedTargetBatchRows(mount programmount.MountedArtifact, algebra *calldomain.Algebra) ([]TargetBatchRow, bool) {
 	if algebra == nil || !mount.Program.Available() {
 		return nil, false
 	}

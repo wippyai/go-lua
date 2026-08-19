@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/pack"
 )
@@ -14,7 +15,7 @@ import (
 // own admission without a composition present.
 type stubInputs struct {
 	source  *link.Link
-	rows    []axis.MountedArtifact
+	rows    []programmount.MountedArtifact
 	packs   *pack.Schema
 	effects *factor.Algebra
 }
@@ -23,9 +24,9 @@ func (inputs stubInputs) LinkSource() *link.Link { return inputs.source }
 
 func (inputs stubInputs) MountedArtifactCount() int { return len(inputs.rows) }
 
-func (inputs stubInputs) MountedArtifactAt(index int) (axis.MountedArtifact, bool) {
+func (inputs stubInputs) MountedArtifactAt(index int) (programmount.MountedArtifact, bool) {
 	if index < 0 || index >= len(inputs.rows) {
-		return axis.MountedArtifact{}, false
+		return programmount.MountedArtifact{}, false
 	}
 	row := inputs.rows[index]
 	return row, row.Available()
@@ -54,7 +55,7 @@ func TestEffectMountRejectsAnAbsentArtifactView(t *testing.T) {
 // a record whose pack authority is absent never opens the seal. The mount phase
 // supplies that authority only because this axis declared the edge.
 func TestEffectMountRejectsAnAbsentPackAuthority(t *testing.T) {
-	inputs := stubInputs{rows: []axis.MountedArtifact{{}}}
+	inputs := stubInputs{rows: []programmount.MountedArtifact{{}}}
 	algebra, rejection, ok := mountEffectAlgebra[stubInputs](inputs)
 	if ok || algebra != nil {
 		t.Fatalf("effect mount sealed an algebra with no pack authority")

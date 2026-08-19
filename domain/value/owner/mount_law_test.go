@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/value"
@@ -15,7 +16,7 @@ import (
 // own admission without a composition present.
 type stubInputs struct {
 	source *link.Link
-	rows   []axis.MountedArtifact
+	rows   []programmount.MountedArtifact
 	heaps  heap.Schema
 	values *value.Schema
 }
@@ -24,9 +25,9 @@ func (inputs stubInputs) LinkSource() *link.Link { return inputs.source }
 
 func (inputs stubInputs) MountedArtifactCount() int { return len(inputs.rows) }
 
-func (inputs stubInputs) MountedArtifactAt(index int) (axis.MountedArtifact, bool) {
+func (inputs stubInputs) MountedArtifactAt(index int) (programmount.MountedArtifact, bool) {
 	if index < 0 || index >= len(inputs.rows) {
-		return axis.MountedArtifact{}, false
+		return programmount.MountedArtifact{}, false
 	}
 	row := inputs.rows[index]
 	return row, row.Available()
@@ -56,7 +57,7 @@ func TestValueMountRejectsAnAbsentArtifactView(t *testing.T) {
 // checked at this domain's own boundary: a row that carries no artifact never
 // reaches the seal.
 func TestValueMountRejectsAnUnavailableArtifactRow(t *testing.T) {
-	inputs := stubInputs{rows: []axis.MountedArtifact{{}}}
+	inputs := stubInputs{rows: []programmount.MountedArtifact{{}}}
 	schema, failure, ok := mountValueSchema[stubInputs](inputs)
 	if ok || schema != nil {
 		t.Fatalf("value mount sealed a schema from an unavailable artifact row")

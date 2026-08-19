@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -56,6 +57,24 @@ type (
 	SchemaFragment struct{}
 	HotAxis        struct{}
 )
+
+// MountedArtifact is one Link mount: the mount directory row that names the
+// program's cold publication, and the ingress view that still carries the
+// families which have not moved onto it yet. Contributors receive no
+// ProgramArtifact through either.
+//
+// The directory row is embedded rather than held beside a second copy of the
+// module and program identities, so there is one authority for where this
+// mount is and what it mounts.
+type MountedArtifact struct {
+	cold.Program
+	Snapshot *ingress.Snapshot
+}
+
+func (row MountedArtifact) Available() bool {
+	return row.Program.Available() && row.Snapshot != nil && row.Snapshot.Available() &&
+		row.Snapshot.ProgramID() == row.ProgramID && row.Snapshot.ArtifactID() == row.ArtifactID
+}
 
 // AxisEntry is this package's axis declaration. A is the composition's own
 // Link input record: this axis names nothing in it, because it mounts no

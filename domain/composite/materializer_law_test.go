@@ -12,9 +12,9 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -63,7 +63,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	}
 	mounts := linked.Project().Mounts()
 	artifacts := make([]*programartifact.Artifact, mounts.Count())
-	rows := make([]axis.MountedArtifact, mounts.Count())
+	rows := make([]programmount.MountedArtifact, mounts.Count())
 	statics := make([]staticdomain.MountedArtifact, mounts.Count())
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
@@ -94,7 +94,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		if !program.Available() {
 			t.Fatalf("mount row %d unavailable", index)
 		}
-		rows[index] = axis.MountedArtifact{Program: program, Snapshot: snapshot}
+		rows[index] = programmount.MountedArtifact{Program: program, Snapshot: snapshot}
 		statics[index] = staticdomain.MountedArtifact{Artifact: artifact, ModuleID: module, ProgramID: programID, NamespaceID: module}
 	}
 	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
