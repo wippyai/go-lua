@@ -250,8 +250,8 @@ func (schema Schema) VisitRawAccess(key Key, fact Value, role materialization.Ro
 			if !presentOK {
 				return false
 			}
-			single := CellState{owner: schema.owner, raw: RawPresent, presents: []Present{present}}
-			if !single.valid() || !emit(single) {
+			single, singleOK := canonicalCellState(schema.owner, RawPresent, []Present{present})
+			if !singleOK || !emit(single) {
 				return false
 			}
 		}

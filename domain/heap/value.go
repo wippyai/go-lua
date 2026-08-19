@@ -114,16 +114,36 @@ type CellState struct {
 	presents []Present
 }
 
+// valid is the constant-time residue of the construction proof: owner
+// fencing and the raw/presents representation correlation. Present validity
+// and strict ascending order are proved once by canonicalCellState over a
+// presents image that is never mutated in place after it becomes a
+// CellState, so no algebra entry re-derives them.
 func (state CellState) valid() bool {
-	if state.owner == nil || !state.raw.valid() || state.raw.has(RawPresent) != (len(state.presents) != 0) {
-		return false
+	return state.owner != nil && state.raw.valid() && state.raw.has(RawPresent) == (len(state.presents) != 0)
+}
+
+// samePresents recognizes one shared immutable presents image. A CellState's
+// presents slice is written only before construction and never mutated in
+// place afterward, so a shared backing array with the same length already is
+// the same normalized set.
+func samePresents(left, right []Present) bool {
+	return len(left) == len(right) && (len(left) == 0 || &left[0] == &right[0])
+}
+
+// canonicalCellState is the single construction gate for a fresh CellState
+// presents image. It is the one place ownership, individual Present
+// validity, and strict Present ordering are proved.
+func canonicalCellState(owner *schema, raw RawPresence, presents []Present) (CellState, bool) {
+	if owner == nil || !raw.valid() || raw.has(RawPresent) != (len(presents) != 0) {
+		return CellState{}, false
 	}
-	for index, present := range state.presents {
-		if !present.valid() || present.owner != state.owner || index != 0 && comparePresent(state.presents[index-1], present) >= 0 {
-			return false
+	for index, present := range presents {
+		if !present.valid() || present.owner != owner || index != 0 && comparePresent(presents[index-1], present) >= 0 {
+			return CellState{}, false
 		}
 	}
-	return true
+	return CellState{owner: owner, raw: raw, presents: presents}, true
 }
 
 func (state CellState) Valid() bool { return state.valid() }
@@ -159,10 +179,7 @@ func (schema Schema) CellPresent(slot Slot, payload Payload, valueChild, keyChil
 		return CellState{}, false
 	}
 	present := Present{owner: schema.owner, slotID: slot.id, payloadID: payload.id, valueContainment: valueChild, keyContainment: keyChild}
-	if !present.valid() {
-		return CellState{}, false
-	}
-	return CellState{owner: schema.owner, raw: RawPresent, presents: []Present{present}}, true
+	return canonicalCellState(schema.owner, RawPresent, []Present{present})
 }
 
 // CellAbsent creates the one raw-absence state. It intentionally has no
@@ -171,7 +188,7 @@ func (schema Schema) CellAbsent() (CellState, bool) {
 	if !schema.valid() {
 		return CellState{}, false
 	}
-	return CellState{owner: schema.owner, raw: RawAbsent}, true
+	return canonicalCellState(schema.owner, RawAbsent, nil)
 }
 
 // CellUnion is the exact pointwise least upper bound of two complete cell
@@ -922,14 +939,6 @@ func compareContainment(left, right Containment) int {
 	return 0
 }
 
-func normalizePresents(presents []Present) []Present {
-	if len(presents) == 0 {
-		return nil
-	}
-	items := append([]Present(nil), presents...)
-	return normalizePresentsOwned(items)
-}
-
 // normalizePresentsOwned canonicalizes a caller-owned slice in place.  It is
 // used by copy-on-write transforms so one changed CellState needs exactly one
 // slice image, never a defensive copy of its fresh image.
@@ -955,17 +964,61 @@ func mergeCellStates(left, right CellState) (CellState, bool) {
 	return mergeCellStatesAdmitted(left, right)
 }
 
+// mergeCellStatesAdmitted is the exact pointwise LUB of two owned cell
+// states. left and right each already carry a proven sorted, deduped
+// presents image, so their OR'd raw mask automatically carries RawPresent
+// whenever the merged presents are non-empty and neither operand needs a
+// second proof pass when one side contributes nothing new.
 func mergeCellStatesAdmitted(left, right CellState) (CellState, bool) {
 	if left.owner == nil || left.owner != right.owner {
 		return CellState{}, false
 	}
-	presents := normalizePresents(append(append([]Present(nil), left.presents...), right.presents...))
-	raw := left.raw | right.raw
-	if len(presents) != 0 {
-		raw |= RawPresent
+	if len(left.presents) == 0 {
+		return CellState{owner: left.owner, raw: left.raw | right.raw, presents: right.presents}, true
 	}
-	state := CellState{owner: left.owner, raw: raw, presents: presents}
-	return state, true
+	if len(right.presents) == 0 {
+		return CellState{owner: left.owner, raw: left.raw | right.raw, presents: left.presents}, true
+	}
+	if samePresents(left.presents, right.presents) {
+		return CellState{owner: left.owner, raw: left.raw | right.raw, presents: left.presents}, true
+	}
+	// One operand already contains the other's raw mask and complete present
+	// set exactly when it is the pointwise LUB, so reuse it unchanged rather
+	// than rebuilding an image cellStateLessOrEqAdmitted already proves is
+	// redundant.
+	if cellStateLessOrEqAdmitted(left, right) {
+		return right, true
+	}
+	if cellStateLessOrEqAdmitted(right, left) {
+		return left, true
+	}
+	return canonicalCellState(left.owner, left.raw|right.raw, mergePresentsSorted(left.presents, right.presents))
+}
+
+// mergePresentsSorted is the linear pointwise union of two already sorted,
+// deduped Present sequences. Each input is itself a proven CellState image,
+// so one ascending merge pass reaches the union in final sorted form without
+// a discarded concatenation or a generic sort.
+func mergePresentsSorted(left, right []Present) []Present {
+	result := make([]Present, 0, len(left)+len(right))
+	leftAt, rightAt := 0, 0
+	for leftAt < len(left) && rightAt < len(right) {
+		switch compared := comparePresent(left[leftAt], right[rightAt]); {
+		case compared < 0:
+			result = append(result, left[leftAt])
+			leftAt++
+		case compared > 0:
+			result = append(result, right[rightAt])
+			rightAt++
+		default:
+			result = append(result, left[leftAt])
+			leftAt++
+			rightAt++
+		}
+	}
+	result = append(result, left[leftAt:]...)
+	result = append(result, right[rightAt:]...)
+	return result
 }
 
 func equalCellState(left, right CellState) bool {
@@ -977,7 +1030,10 @@ func cellStateLessOrEq(left, right CellState) bool {
 }
 
 func cellStateLessOrEqAdmitted(left, right CellState) bool {
-	return left.owner == right.owner && left.raw&^right.raw == 0 && presentSetSubset(left.presents, right.presents)
+	if left.owner != right.owner || left.raw&^right.raw != 0 {
+		return false
+	}
+	return samePresents(left.presents, right.presents) || presentSetSubset(left.presents, right.presents)
 }
 
 func compareCellState(left, right CellState) int {
@@ -986,6 +1042,9 @@ func compareCellState(left, right CellState) int {
 	}
 	if left.raw > right.raw {
 		return 1
+	}
+	if samePresents(left.presents, right.presents) {
+		return 0
 	}
 	for index := 0; index < len(left.presents) && index < len(right.presents); index++ {
 		if compared := comparePresent(left.presents[index], right.presents[index]); compared != 0 {
