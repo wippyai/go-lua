@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/compose"
 	"github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -34,7 +33,7 @@ var registry struct {
 	sealed           *schema.Schema
 	failure          schema.SealFailure
 	templates        []*rule.Template
-	ruleContributors []compose.RuleContributor[principals, authorities]
+	ruleContributors []RuleContributor[principals, authorities]
 	axes             []*axisTemplate
 	axisContributors []axisContributor
 	// queries is the admitted query inventory, in catalog order. The sealed
@@ -88,7 +87,7 @@ func sealRegistry() {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
 		}
-		templates, ruleContributors, ok := compose.RuleTemplates[principals, authorities]()
+		templates, ruleContributors, ok := RuleTemplates[principals, authorities]()
 		if !ok {
 			registry.failure = schema.SealFailure{Contributor: schema.SurfaceKindRule, Law: schema.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 			return
@@ -409,7 +408,7 @@ type RuleBinding struct {
 	binding    *engine.SchemaBinding
 	hot        ruleCells
 	programs   []engine.ProgramRule
-	activation compose.ActivationRule
+	activation ActivationRule
 }
 
 func (rules *RuleBinding) cellByKey(key schema.Key) (rule.Cell, bool) {
@@ -496,17 +495,17 @@ func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bo
 	return contributor.LinkCatalog(hot)
 }
 
-func ruleContributorFor(key schema.Key) (compose.RuleContributor[principals, authorities], bool) {
+func ruleContributorFor(key schema.Key) (RuleContributor[principals, authorities], bool) {
 	sealRegistry()
 	if len(registry.ruleContributors) != len(registry.templates) {
-		return compose.RuleContributor[principals, authorities]{}, false
+		return RuleContributor[principals, authorities]{}, false
 	}
 	for index, entry := range registry.templates {
 		if entry != nil && entry.Key() == key {
 			return registry.ruleContributors[index], true
 		}
 	}
-	return compose.RuleContributor[principals, authorities]{}, false
+	return RuleContributor[principals, authorities]{}, false
 }
 
 // bindRules drives the whole rule table in one transaction: bind every hot
@@ -524,7 +523,7 @@ func bindRules(binding *engine.SchemaBinding, fragments ruleCells, set authoriti
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
 	rules := &RuleBinding{binding: binding, hot: newRuleCells(registry.templates), programs: make([]engine.ProgramRule, len(registry.templates)+1)}
-	programIssuers := make([]compose.ProgramIssuer, len(registry.templates)+1)
+	programIssuers := make([]ProgramIssuer, len(registry.templates)+1)
 	for position, entry := range registry.templates {
 		slot := position + 1
 		if !set.writes(entry.Writes()) || !set.writes(entry.Owner()) {

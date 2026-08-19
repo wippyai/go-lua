@@ -1,4 +1,4 @@
-package compose
+package composite
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema/rule"

@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/compose"
 	schemacomposite "github.com/wippyai/go-lua/analysis/schema/composite"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
@@ -98,7 +97,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*schema.Schema, schema.Sea
 	if !probeAxisOK {
 		t.Fatal("W3: the probe's axis was not admitted")
 	}
-	rules, _, rulesOK := compose.RuleTemplates[principals, authorities]()
+	rules, _, rulesOK := RuleTemplates[principals, authorities]()
 	if !rulesOK {
 		t.Fatal("analyzer rule inventory rejected at construction")
 	}
