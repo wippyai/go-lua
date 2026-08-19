@@ -111,18 +111,18 @@ func TestFrozenCarriesNoMountOrQueryFacts(t *testing.T) {
 	}
 }
 
-// One frozen value mounted twice is one value. Two distinct MountIDs name the
+// One frozen value mounted twice is one value. Two distinct module keys name
 // same published content, the reads agree, and carrying the value costs no
 // copy of any row.
 func TestFrozenSharedAcrossMountsIsOneValue(t *testing.T) {
 	frozen := sealFrozenLaw(t, identity.StoreID(42))
 	axis := frozenLawAxis(t)
 
-	first, second := identity.MountID{1}, identity.MountID{2}
+	first, second := identity.ContentID{1}, identity.ContentID{2}
 	if first == second {
 		t.Fatal("law needs two distinct mounts")
 	}
-	mounted := map[identity.MountID]Frozen{first: frozen, second: frozen}
+	mounted := map[identity.ContentID]Frozen{first: frozen, second: frozen}
 
 	for mount, held := range mounted {
 		value, status := ReadFrozen(&held, axis, uint64(1))

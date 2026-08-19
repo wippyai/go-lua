@@ -119,7 +119,7 @@ func TestConstructionRejectsSecondAuthority(t *testing.T) {
 		if err := builder.Publish(identity.ContentID{}, 0); !errors.Is(err, ErrUnavailableIdentity) {
 			t.Fatalf("directory error = %v, want %v", err, ErrUnavailableIdentity)
 		}
-		if err := builder.Bind(identity.MountID{}); !errors.Is(err, ErrUnavailableIdentity) {
+		if err := builder.Bind(identity.ContentID{}); !errors.Is(err, ErrUnavailableIdentity) {
 			t.Fatalf("mount error = %v, want %v", err, ErrUnavailableIdentity)
 		}
 		if err := builder.RegisterQuery(identity.ContentID{}); !errors.Is(err, ErrUnavailableIdentity) {
@@ -159,7 +159,7 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	if err := builder.Publish(fixtureUnknownID, 3); err != nil {
 		t.Fatalf("late publish: %v", err)
 	}
-	if err := builder.Bind(identity.MountID{0xAA}); err != nil {
+	if err := builder.Bind(identity.ContentID{0xAA}); err != nil {
 		t.Fatalf("late bind: %v", err)
 	}
 	if err := builder.RegisterQuery(identity.ContentID{0xBB}); err != nil {
@@ -175,7 +175,7 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	if _, resolved := Resolve(&sealed, fixtureUnknownID); resolved {
 		t.Fatal("a late directory entry reached the sealed snapshot")
 	}
-	if sealed.Mounts().Bound(identity.MountID{0xAA}) {
+	if sealed.Mounts().Bound(identity.ContentID{0xAA}) {
 		t.Fatal("a late mount binding reached the sealed snapshot")
 	}
 	if sealed.Queries().Published(identity.ContentID{0xBB}) {

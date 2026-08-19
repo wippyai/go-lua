@@ -20,13 +20,21 @@ func (program *Program) CountRows() denominator.CountRows {
 
 func combineProgramCountRows(sourceRows, flowRows, staticRows, moduleRows denominator.CountRows) (denominator.CountRows, error) {
 	rows, ok := denominator.MergeCountRows(sourceRows, flowRows, staticRows, moduleRows)
-	if !ok || !denominator.GeneratedCountRowsCompleteForOwners(rows,
-		denominator.RelationOwnerProgramSource,
-		denominator.RelationOwnerProgramFlow,
-		denominator.RelationOwnerProgramStatic,
-		denominator.RelationOwnerProgramModule,
-	) {
+	if !ok || !denominator.GeneratedCountRowsCompleteForOwners(rows, programOwners()...) {
 		return denominator.CountRows{}, errCountRows
 	}
 	return rows, nil
+}
+
+// programOwners is the owner-group membership the four Program-interior
+// rows are combined and validated over, read off RelationOwner.Program
+// rather than restated as a second list.
+func programOwners() []denominator.RelationOwner {
+	var owners []denominator.RelationOwner
+	for owner := denominator.RelationOwnerProgramSource; owner.Available(); owner++ {
+		if owner.Program() {
+			owners = append(owners, owner)
+		}
+	}
+	return owners
 }

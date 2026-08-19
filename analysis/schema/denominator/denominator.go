@@ -184,6 +184,13 @@ func (owner RelationOwner) Available() bool {
 	return owner >= RelationOwnerProgramSource && owner <= RelationOwnerLinkHost
 }
 
+// Program reports whether owner is one of the four Program-interior owners:
+// the group a cold Program component's own denominator rows are drawn from,
+// as opposed to Target or a Link boundary owner.
+func (owner RelationOwner) Program() bool {
+	return owner >= RelationOwnerProgramSource && owner <= RelationOwnerProgramModule
+}
+
 // RelationForm states how one relation family exists at publication. The
 // form is declaration data and is deliberately not an executable hook.
 type RelationForm uint8

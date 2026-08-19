@@ -32,7 +32,7 @@ func derive(entries []*denominator.RelationEntry) (Evidence, error) {
 	rows := make([]Row, 0, len(entries))
 	seen := make(map[schema.EntryID]bool)
 	for _, relation := range entries {
-		if relation == nil || relation.Owner() < denominator.RelationOwnerProgramSource || relation.Owner() > denominator.RelationOwnerProgramModule {
+		if relation == nil || !relation.Owner().Program() {
 			continue
 		}
 		if !relation.ID().Available() || seen[relation.ID()] {
@@ -92,7 +92,7 @@ func expectedRows(entries []*denominator.RelationEntry) (map[schema.EntryID]deno
 	}
 	expected := make(map[schema.EntryID]denominator.RelationOwner)
 	for _, relation := range entries {
-		if relation == nil || relation.Owner() < denominator.RelationOwnerProgramSource || relation.Owner() > denominator.RelationOwnerProgramModule {
+		if relation == nil || !relation.Owner().Program() {
 			continue
 		}
 		if _, duplicate := expected[relation.ID()]; duplicate {

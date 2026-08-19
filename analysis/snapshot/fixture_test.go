@@ -20,7 +20,7 @@ var (
 	fixturePartialID   = identity.ContentID{0x05, 0x55}
 	fixtureRecordID    = identity.ContentID{0x06, 0x66}
 	fixtureUnknownID   = identity.ContentID{0x07, 0x77}
-	fixtureMount       = identity.MountID{0x08, 0x88}
+	fixtureMount       = identity.ContentID{0x08, 0x88}
 	fixtureQueryPlan   = identity.ContentID{0x09, 0x99}
 
 	// totalAxis is total over {"present", "absent"} and stores only

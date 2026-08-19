@@ -171,13 +171,10 @@ func hashKey[K comparable](plan *keyPlan, key K) uint64 {
 	return digest.Sum64()
 }
 
-// identityPlan and mountPlan are the schedules of the two identity key types
-// this package stores itself: the directory and the query publication are
-// keyed by a content identity, the mount bindings by a mount identity.
-var (
-	identityPlan = mustPlan[identity.ContentID]()
-	mountPlan    = mustPlan[identity.MountID]()
-)
+// identityPlan is the schedule of the one identity key type this package
+// stores itself: the directory, the query publication and the mount bindings
+// are all keyed by a content identity.
+var identityPlan = mustPlan[identity.ContentID]()
 
 // mustPlan derives the schedule of a key type this package itself stores.
 // Those types are fixed at compile time, so a failure is a programming error

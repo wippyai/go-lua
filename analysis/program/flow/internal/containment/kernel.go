@@ -129,7 +129,7 @@ func kernelParents(
 		}
 	}
 	for _, edge := range edges {
-		if !kernelValidTerm(edge.child, counts) || !kernelValidTerm(edge.parent, counts) || edge.child == edge.parent {
+		if !validTerm(edge.child, counts) || !validTerm(edge.parent, counts) || edge.child == edge.parent {
 			return parents, errors.New("program/flow/containment: invalid containment edge")
 		}
 		family := keyspace.TermFamily(edge.child)
@@ -158,7 +158,7 @@ func kernelRoots(
 	// or cycle plane would overlap the final parent proof for no benefit.
 	allowed := make([]uint8, int(total))
 	for _, root := range rootTerms {
-		if !kernelValidTerm(root, counts) {
+		if !validTerm(root, counts) {
 			return allowed, errors.New("program/flow/containment: invalid containment root")
 		}
 		index, ok := kernelIndex(root, counts, offsets, total)
@@ -196,7 +196,7 @@ func kernelFallbackParents(
 		return nil
 	}
 	for _, edge := range edges {
-		if !kernelValidTerm(edge.child, counts) || !kernelValidTerm(edge.parent, counts) || edge.child == edge.parent {
+		if !validTerm(edge.child, counts) || !validTerm(edge.parent, counts) || edge.child == edge.parent {
 			return errors.New("program/flow/containment: invalid fallback containment edge")
 		}
 		childIndex, childOK := kernelIndex(edge.child, counts, offsets, total)
@@ -417,7 +417,7 @@ func kernelIntervals(
 func kernelStatic(counts [keyspace.FamilyCount]uint32, marks []keyspace.Term) ([keyspace.FamilyCount][]uint64, error) {
 	var static [keyspace.FamilyCount][]uint64
 	for _, term := range marks {
-		if !kernelValidTerm(term, counts) {
+		if !validTerm(term, counts) {
 			return static, errors.New("program/flow/containment: invalid static containment mark")
 		}
 		family := keyspace.TermFamily(term)
@@ -429,13 +429,6 @@ func kernelStatic(counts [keyspace.FamilyCount]uint32, marks []keyspace.Term) ([
 		static[family][(ordinal-1)>>6] |= uint64(1) << ((ordinal - 1) & 63)
 	}
 	return static, nil
-}
-
-func kernelValidTerm(term keyspace.Term, counts [keyspace.FamilyCount]uint32) bool {
-	family := keyspace.TermFamily(term)
-	ordinal := keyspace.TermOrdinal(term)
-	return family > keyspace.FamilyInvalid && family < keyspace.FamilyCount &&
-		ordinal != 0 && ordinal <= counts[family]
 }
 
 func kernelIndex(

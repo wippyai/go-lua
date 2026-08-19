@@ -48,7 +48,6 @@ func TestKeyHashIsDerivedFromTheKeyAlone(t *testing.T) {
 		owner := &seal{rows: []int{1, 2}}
 		assertSchedulesAgree(t, "sealed key", sealedKey{owner: owner, index: 3})
 		assertSchedulesAgree(t, "identity", identity.ContentID{0x11, 0x22})
-		assertSchedulesAgree(t, "mount", identity.MountID{0x33})
 		assertSchedulesAgree(t, "string", "materialized")
 		assertSchedulesAgree(t, "int64", int64(-9007199254740993))
 		assertSchedulesAgree(t, "record", record{Weight: 3, Reach: 4, Marked: true})
@@ -176,7 +175,6 @@ func TestKeyHashCoversEveryKeyShape(t *testing.T) {
 	assertKeyHashLaw(t, "int array", [2]int{5, 6}, [2]int{5, 6}, [2]int{6, 5})
 	assertKeyHashLaw(t, "string array", [2]string{"a", "b"}, [2]string{"a", string([]byte("b"))}, [2]string{"a", "c"})
 	assertKeyHashLaw(t, "content identity", identity.ContentID{0x01, 0x02}, identity.ContentID{0x01, 0x02}, identity.ContentID{0x01, 0x03})
-	assertKeyHashLaw(t, "mount identity", identity.MountID{0x01}, identity.MountID{0x01}, identity.MountID{0x02})
 	assertKeyHashLaw(t, "padded record", record{Weight: 1, Marked: true}, record{Weight: 1, Marked: true}, record{Weight: 1})
 	assertKeyHashLaw(t, "sealed key", sealedKey{owner: owner, index: 2}, sealedKey{owner: owner, index: 2}, sealedKey{owner: owner, index: 3})
 	assertKeyHashLaw(t, "nested struct", boxedKey{padding: 1, key: sealedKey{owner: owner, index: 2}},
@@ -334,7 +332,7 @@ func TestKeyShapesTheScheduleRefuses(t *testing.T) {
 // input, and it stops publication instead of producing a column that answers
 // by scanning.
 func TestInternalKeyTypeIsHashableOrFatal(t *testing.T) {
-	if identityPlan == nil || mountPlan == nil {
+	if identityPlan == nil {
 		t.Fatal("the package's own key schedules were not derived")
 	}
 	defer func() {

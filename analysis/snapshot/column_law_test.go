@@ -236,7 +236,7 @@ func TestSealedViewsAreValuesFixedAtPublication(t *testing.T) {
 	denominators, mounts, queries := base.Denominators(), base.Mounts(), base.Queries()
 
 	delta := NewDelta(base, identity.Generation(2))
-	if err := delta.Bind(identity.MountID{0x0B}); err != nil {
+	if err := delta.Bind(identity.ContentID{0x0B}); err != nil {
 		t.Fatalf("bind: %v", err)
 	}
 	if err := delta.RegisterQuery(identity.ContentID{0x0C}); err != nil {
@@ -259,7 +259,7 @@ func TestSealedViewsAreValuesFixedAtPublication(t *testing.T) {
 	if denominators.Published(identity.ContentID{0x0D}) {
 		t.Fatal("a later publication reached a held denominator view")
 	}
-	if mounts.Len() != 0 || mounts.Bound(identity.MountID{0x0B}) {
+	if mounts.Len() != 0 || mounts.Bound(identity.ContentID{0x0B}) {
 		t.Fatal("a later binding reached a held mount view")
 	}
 	if queries.Len() != 0 || queries.Published(identity.ContentID{0x0C}) {
@@ -273,7 +273,7 @@ func TestSealedViewsAreValuesFixedAtPublication(t *testing.T) {
 	copiedDenominators, copiedMounts, copiedQueries := sealed.Denominators(), sealed.Mounts(), sealed.Queries()
 	if copiedDenominators.Len() != sealed.Denominators().Len() ||
 		!copiedDenominators.Proves(armDenominator, provenAxis.Slot) ||
-		!copiedMounts.Bound(identity.MountID{0x0B}) ||
+		!copiedMounts.Bound(identity.ContentID{0x0B}) ||
 		!copiedQueries.Published(identity.ContentID{0x0C}) {
 		t.Fatal("a copied sealed view answers less than the view it was copied from")
 	}

@@ -64,21 +64,21 @@ func (d Denominators) Size(id identity.ContentID) (int, bool) {
 func (d Denominators) Len() int { return d.count }
 
 // Mounts is the snapshot's sealed mount binding set: the mounts whose facts
-// this snapshot's columns were written under. A Cross-Link key names these
-// bindings, so a consumer can ask whether a binding participated without
-// reaching into the engine.
+// this snapshot's columns were written under, each named by its Link module
+// key. A Cross-Link key names these bindings, so a consumer can ask whether a
+// binding participated without reaching into the engine.
 //
 // Its contract is deliberately narrow for now. Later moves add the ordered
 // binding evidence a Cross-Link key carries and the structural verification
 // that a digest collision demands.
 type Mounts struct {
-	bound *trie[identity.MountID, struct{}]
+	bound *trie[identity.ContentID, struct{}]
 	count int
 }
 
 // Bound reports whether mount participated in this snapshot.
-func (m Mounts) Bound(mount identity.MountID) bool {
-	_, participated := trieLookup(m.bound, hashKey(mountPlan, mount), mount)
+func (m Mounts) Bound(module identity.ContentID) bool {
+	_, participated := trieLookup(m.bound, hashKey(identityPlan, module), module)
 	return participated
 }
 

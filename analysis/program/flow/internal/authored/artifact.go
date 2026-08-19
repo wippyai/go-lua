@@ -140,6 +140,14 @@ func (decoder *artifactDecoder) key() (keyspace.Key, error) {
 	return keyspace.Key(value), nil
 }
 
+// Each scanX method below re-walks its section using only the shared
+// artifactDecoder validation calls (count, term, value, rangeFor, key,
+// Bool) and allocates no row backing storage. A section's row Count can
+// pass its own bounds check while a later row's content is still
+// malformed, so the matching decodeX method's make([]T, count) must not
+// run until every row in the section is proven well-formed. This bounds
+// allocation on hostile input; the property is named by
+// TestArtifactSectionPreflightsMalformedFirstAndLastWithoutRowAllocation.
 func (decoder *artifactDecoder) values() (ValuesInput, error) {
 	probeReader := *decoder.reader
 	probe := artifactDecoder{reader: &probeReader}

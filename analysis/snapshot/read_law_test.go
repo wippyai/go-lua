@@ -217,7 +217,7 @@ func TestSealedSubValuesPublishTheirBindings(t *testing.T) {
 	if sealed.Denominators().Len() != 1 {
 		t.Fatalf("denominators = %d, want 1", sealed.Denominators().Len())
 	}
-	if !sealed.Mounts().Bound(fixtureMount) || sealed.Mounts().Bound(identity.MountID{0xEE}) {
+	if !sealed.Mounts().Bound(fixtureMount) || sealed.Mounts().Bound(identity.ContentID{0xEE}) {
 		t.Fatal("mount bindings do not report the sealed set")
 	}
 	if sealed.Mounts().Len() != 1 {

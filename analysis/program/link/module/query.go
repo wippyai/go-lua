@@ -22,17 +22,15 @@ type Cache struct{ component *Component }
 type Coordinates struct{ component *Component }
 type Generations struct{ component *Component }
 type Outcomes struct{ component *Component }
-type ReadySubjects struct{ component *Component }
 type Terminals struct{ component *Component }
 
-func (c *Component) Actors() Actors               { return Actors{c} }
-func (c *Component) Roots() Roots                 { return Roots{c} }
-func (c *Component) Cache() Cache                 { return Cache{c} }
-func (c *Component) Coordinates() Coordinates     { return Coordinates{c} }
-func (c *Component) Generations() Generations     { return Generations{c} }
-func (c *Component) Outcomes() Outcomes           { return Outcomes{c} }
-func (c *Component) ReadySubjects() ReadySubjects { return ReadySubjects{c} }
-func (c *Component) Terminals() Terminals         { return Terminals{c} }
+func (c *Component) Actors() Actors           { return Actors{c} }
+func (c *Component) Roots() Roots             { return Roots{c} }
+func (c *Component) Cache() Cache             { return Cache{c} }
+func (c *Component) Coordinates() Coordinates { return Coordinates{c} }
+func (c *Component) Generations() Generations { return Generations{c} }
+func (c *Component) Outcomes() Outcomes       { return Outcomes{c} }
+func (c *Component) Terminals() Terminals     { return Terminals{c} }
 
 // MatchesProject and MatchesBoundary are exact prerequisite fences for later
 // owners.  Content equality is deliberately insufficient for hot wiring.

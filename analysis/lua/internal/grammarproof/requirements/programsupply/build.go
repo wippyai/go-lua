@@ -109,7 +109,7 @@ func Closure(entries []*denominator.RelationEntry, terminals []schema.EntryID) (
 		if !ok {
 			return nil, fmt.Errorf("program supply: unknown terminal ID")
 		}
-		if owner := entry.Owner(); owner < denominator.RelationOwnerProgramSource || owner > denominator.RelationOwnerProgramModule {
+		if owner := entry.Owner(); !owner.Program() {
 			return nil, fmt.Errorf("program supply: terminal closure escaped Program ownership")
 		}
 		seen[id] = true

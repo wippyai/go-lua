@@ -104,7 +104,7 @@ type Builder struct {
 	// unavailable for a builder that starts from nothing. A derived
 	// publication must advance it.
 	derivedFrom identity.Generation
-	mounts      *trie[identity.MountID, struct{}]
+	mounts      *trie[identity.ContentID, struct{}]
 	mountCount  int
 	queries     *trie[identity.ContentID, struct{}]
 	queryCount  int
@@ -333,14 +333,17 @@ func (b *builderCore) Publish(id identity.ContentID, slot uint32) error {
 	return nil
 }
 
-// Bind records that mount participated in this publication.
-func (b *Builder) Bind(mount identity.MountID) error {
-	if !mount.Available() {
+// Bind records that the mount named by module participated in this
+// publication. A mount is named by its Link module key, which is the identity
+// the Link already derives its mount-qualified addresses from; naming it a
+// second way here would make one concept answer to two vocabularies.
+func (b *Builder) Bind(module identity.ContentID) error {
+	if !module.Available() {
 		return fmt.Errorf("%w: mount binding", ErrUnavailableIdentity)
 	}
 	var added bool
-	b.mounts, added = trieInsert(b.mounts, 0, trieEntry[identity.MountID, struct{}]{
-		hash: hashKey(mountPlan, mount), key: mount,
+	b.mounts, added = trieInsert(b.mounts, 0, trieEntry[identity.ContentID, struct{}]{
+		hash: hashKey(identityPlan, module), key: module,
 	})
 	if added {
 		b.mountCount++

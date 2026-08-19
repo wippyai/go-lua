@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -41,7 +40,7 @@ func emitStaticMarks(
 	stack := make([]keyspace.Term, 0)
 
 	for _, root := range roots {
-		if !flowrole.ValueOccurrence(counts, root) && !staticMarkFamily(counts, root, keyspace.FamilyValues) {
+		if !flowrole.ValueOccurrence(counts, root) && !termInFamily(root, keyspace.FamilyValues, counts) {
 			return nil, staticMarkError("invalid static reference root")
 		}
 		stack = append(stack, root)
@@ -258,7 +257,7 @@ func staticMarkCallOwner(
 
 		if family == keyspace.FamilyTypeField {
 			parent, ok := local.FieldOwner(current)
-			if !ok || !staticMarkValid(counts, parent) {
+			if !ok || !validTerm(parent, counts) {
 				return false, staticMarkError("invalid TypeField owner")
 			}
 			current = parent
@@ -271,7 +270,7 @@ func staticMarkCallOwner(
 			current = 0
 			continue
 		}
-		if !staticMarkValid(counts, parent) {
+		if !validTerm(parent, counts) {
 			return false, staticMarkError("invalid Static parent")
 		}
 		current = parent
@@ -297,7 +296,7 @@ func visitStaticExpression(
 	stack *[]keyspace.Term,
 ) error {
 	push := func(child keyspace.Term) error {
-		if !staticMarkValid(counts, child) {
+		if !validTerm(child, counts) {
 			return staticMarkError("invalid static expression child")
 		}
 		*stack = append(*stack, child)
@@ -316,7 +315,7 @@ func visitStaticExpression(
 		}
 		for index := 0; index < length; index++ {
 			child, ok := preimage.Order().BodyAt(term, index)
-			if !ok || !staticMarkValid(counts, child) {
+			if !ok || !validTerm(child, counts) {
 				return staticMarkError("invalid static Body source term")
 			}
 			if staticMarkStatementRoot(keyspace.TermFamily(child)) {
@@ -337,7 +336,7 @@ func visitStaticExpression(
 	case keyspace.FamilyValues:
 		values := view.Values()
 		owner, tail, ok := values.Get(term)
-		if !ok || !staticMarkBody(counts, owner) {
+		if !ok || !bodyTerm(owner, counts) {
 			return staticMarkError("invalid static Values owner")
 		}
 		length, ok := values.Len(term)
@@ -363,7 +362,7 @@ func visitStaticExpression(
 		}
 	case keyspace.FamilyRead:
 		owner, source, _, ok := view.Storage().Reads().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkValid(counts, source) {
+		if !ok || !bodyTerm(owner, counts) || !validTerm(source, counts) {
 			return staticMarkError("invalid static Read")
 		}
 		switch keyspace.TermFamily(source) {
@@ -377,14 +376,14 @@ func visitStaticExpression(
 		}
 	case keyspace.FamilyVararg:
 		owner, cell, ok := view.Storage().Varargs().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, cell, keyspace.FamilyCell) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(cell, keyspace.FamilyCell, counts) {
 			return staticMarkError("invalid static Vararg")
 		}
 		// Vararg's Cell is a reusable storage identity and is not followed.
 	case keyspace.FamilyLensExact:
 		owner, base, source, _, ok := view.Access().Exact().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, base) ||
-			!staticMarkValid(counts, source) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, base) ||
+			!validTerm(source, counts) {
 			return staticMarkError("invalid static exact Lens")
 		}
 		if err := push(base); err != nil {
@@ -393,7 +392,7 @@ func visitStaticExpression(
 		return push(source)
 	case keyspace.FamilyLensKey:
 		owner, base, key, ok := view.Access().Dynamic().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, base) || !flowrole.ValueOccurrence(counts, key) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, base) || !flowrole.ValueOccurrence(counts, key) {
 			return staticMarkError("invalid static dynamic Lens")
 		}
 		if err := push(base); err != nil {
@@ -402,13 +401,13 @@ func visitStaticExpression(
 		return push(key)
 	case keyspace.FamilyUnary:
 		owner, _, operand, ok := view.Operators().Unaries().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, operand) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, operand) {
 			return staticMarkError("invalid static Unary")
 		}
 		return push(operand)
 	case keyspace.FamilyBinary:
 		owner, _, left, right, ok := view.Operators().Binaries().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) {
 			return staticMarkError("invalid static Binary")
 		}
 		if err := push(left); err != nil {
@@ -417,7 +416,7 @@ func visitStaticExpression(
 		return push(right)
 	case keyspace.FamilySelect:
 		owner, _, left, right, ok := view.Operators().Selects().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, left) || !flowrole.ValueOccurrence(counts, right) {
 			return staticMarkError("invalid static Select")
 		}
 		if err := push(left); err != nil {
@@ -426,7 +425,7 @@ func visitStaticExpression(
 		return push(right)
 	case keyspace.FamilyValueClaim:
 		owner, operand, _, ok := view.Claims().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, operand) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, operand) {
 			return staticMarkError("invalid static ValueClaim")
 		}
 		// The optional static target belongs to the Static type forest and
@@ -434,14 +433,14 @@ func visitStaticExpression(
 		return push(operand)
 	case keyspace.FamilyTypeValue:
 		owner, ok := view.TypeValues().Get(term)
-		if !ok || !staticMarkBody(counts, owner) {
+		if !ok || !bodyTerm(owner, counts) {
 			return staticMarkError("invalid static TypeValue")
 		}
 	case keyspace.FamilyCall:
 		owner, callee, receiver, actuals, ok := view.Calls().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, callee) ||
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, callee) ||
 			(receiver != 0 && !flowrole.ValueOccurrence(counts, receiver)) ||
-			!staticMarkFamily(counts, actuals, keyspace.FamilyValues) {
+			!termInFamily(actuals, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static Call")
 		}
 		if err := push(callee); err != nil {
@@ -453,13 +452,13 @@ func visitStaticExpression(
 		return push(actuals)
 	case keyspace.FamilyReturn:
 		owner, values, ok := view.Control().Returns().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, values, keyspace.FamilyValues) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(values, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static Return")
 		}
 		return push(values)
 	case keyspace.FamilyBind:
 		owner, values, ok := view.Storage().Binds().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, values, keyspace.FamilyValues) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(values, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static Bind")
 		}
 		// Bind Cell identities are reusable storage references; Values is the
@@ -467,7 +466,7 @@ func visitStaticExpression(
 		return push(values)
 	case keyspace.FamilyAssign:
 		owner, values, ok := view.Storage().Assigns().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, values, keyspace.FamilyValues) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(values, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static Assign")
 		}
 		assigns := view.Storage().Assigns()
@@ -478,7 +477,7 @@ func visitStaticExpression(
 		}
 		for index := 0; index < writeCount; index++ {
 			write, ok := assigns.WriteAt(term, index)
-			if !ok || !staticMarkFamily(counts, write, keyspace.FamilyWrite) {
+			if !ok || !termInFamily(write, keyspace.FamilyWrite, counts) {
 				return staticMarkError("invalid static Assign Write")
 			}
 			writeAssign, target, ok := writes.Get(write)
@@ -494,8 +493,8 @@ func visitStaticExpression(
 		return push(values)
 	case keyspace.FamilyFunction:
 		owner, body, vararg, ok := view.Functions().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, body, keyspace.FamilyBody) ||
-			(vararg != 0 && !staticMarkFamily(counts, vararg, keyspace.FamilyCell)) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(body, keyspace.FamilyBody, counts) ||
+			(vararg != 0 && !termInFamily(vararg, keyspace.FamilyCell, counts)) {
 			return staticMarkError("invalid static Function")
 		}
 		captureCount, ok := view.Functions().CaptureCount(term)
@@ -504,7 +503,7 @@ func visitStaticExpression(
 		}
 		for index := 0; index < captureCount; index++ {
 			inner, outer, ok := view.Functions().CaptureAt(term, index)
-			if !ok || !staticMarkFamily(counts, inner, keyspace.FamilyCell) || !staticMarkFamily(counts, outer, keyspace.FamilyCell) {
+			if !ok || !termInFamily(inner, keyspace.FamilyCell, counts) || !termInFamily(outer, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Function capture")
 			}
 		}
@@ -515,8 +514,8 @@ func visitStaticExpression(
 		return push(body)
 	case keyspace.FamilyBranch:
 		owner, condition, whenTrue, whenFalse, ok := view.Control().Branches().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !flowrole.ValueOccurrence(counts, condition) ||
-			!staticMarkFamily(counts, whenTrue, keyspace.FamilyBody) || !staticMarkFamily(counts, whenFalse, keyspace.FamilyBody) {
+		if !ok || !bodyTerm(owner, counts) || !flowrole.ValueOccurrence(counts, condition) ||
+			!termInFamily(whenTrue, keyspace.FamilyBody, counts) || !termInFamily(whenFalse, keyspace.FamilyBody, counts) {
 			return staticMarkError("invalid static Branch")
 		}
 		if err := push(condition); err != nil {
@@ -528,8 +527,8 @@ func visitStaticExpression(
 		return push(whenFalse)
 	case keyspace.FamilyLoop:
 		owner, body, _, control, ok := view.Control().Loops().Get(term)
-		if !ok || !staticMarkBody(counts, owner) || !staticMarkFamily(counts, body, keyspace.FamilyBody) ||
-			!staticMarkFamily(counts, control, keyspace.FamilyValues) {
+		if !ok || !bodyTerm(owner, counts) || !termInFamily(body, keyspace.FamilyBody, counts) ||
+			!termInFamily(control, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static Loop")
 		}
 		cells := view.Control().Loops()
@@ -539,7 +538,7 @@ func visitStaticExpression(
 		}
 		for index := 0; index < cellCount; index++ {
 			cell, ok := cells.CellAt(term, index)
-			if !ok || !staticMarkFamily(counts, cell, keyspace.FamilyCell) {
+			if !ok || !termInFamily(cell, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Loop Cell")
 			}
 		}
@@ -549,7 +548,7 @@ func visitStaticExpression(
 		return push(body)
 	case keyspace.FamilyTable:
 		owner, ok := view.Tables().Get(term)
-		if !ok || !staticMarkBody(counts, owner) {
+		if !ok || !bodyTerm(owner, counts) {
 			return staticMarkError("invalid static Table")
 		}
 		tables, fields := view.Tables(), view.Fields()
@@ -559,12 +558,12 @@ func visitStaticExpression(
 		}
 		for index := 0; index < fieldCount; index++ {
 			field, ok := tables.FieldAt(term, index)
-			if !ok || !staticMarkFamily(counts, field, keyspace.FamilyTableField) {
+			if !ok || !termInFamily(field, keyspace.FamilyTableField, counts) {
 				return staticMarkError("invalid static TableField")
 			}
 			fieldTable, key, values, fieldKind, ok := fields.Get(field)
-			if !ok || fieldTable != term || !staticMarkFieldKey(view, counts, key, fieldKind) ||
-				!staticMarkFamily(counts, values, keyspace.FamilyValues) {
+			if !ok || fieldTable != term || !fieldKeyTerm(view, key, fieldKind, counts) ||
+				!termInFamily(values, keyspace.FamilyValues, counts) {
 				return staticMarkError("invalid static TableField foreign key")
 			}
 			if err := push(key); err != nil {
@@ -579,8 +578,8 @@ func visitStaticExpression(
 		// Table normally consumes fields directly. This case keeps the closed
 		// expression vocabulary fail-closed if a future owner pushes one.
 		table, key, values, fieldKind, ok := view.Fields().Get(term)
-		if !ok || !staticMarkFamily(counts, table, keyspace.FamilyTable) ||
-			!staticMarkFieldKey(view, counts, key, fieldKind) || !staticMarkFamily(counts, values, keyspace.FamilyValues) {
+		if !ok || !termInFamily(table, keyspace.FamilyTable, counts) ||
+			!fieldKeyTerm(view, key, fieldKind, counts) || !termInFamily(values, keyspace.FamilyValues, counts) {
 			return staticMarkError("invalid static TableField")
 		}
 		if err := push(key); err != nil {
@@ -589,7 +588,7 @@ func visitStaticExpression(
 		return push(values)
 	case keyspace.FamilyWrite:
 		assign, target, ok := view.Storage().Writes().Get(term)
-		if !ok || !staticMarkFamily(counts, assign, keyspace.FamilyAssign) || !flowrole.Addressable(counts, target) {
+		if !ok || !termInFamily(assign, keyspace.FamilyAssign, counts) || !flowrole.Addressable(counts, target) {
 			return staticMarkError("invalid static Write")
 		}
 		return nil
@@ -630,7 +629,7 @@ func markStaticSourceMetadata(
 	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyLabel]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyLabel, ordinal)
 		owner, ok := labels.Get(term)
-		if !ok || !staticMarkBody(counts, owner) {
+		if !ok || !bodyTerm(owner, counts) {
 			return staticMarkError("invalid Label owner")
 		}
 		if marks.has(owner) {
@@ -644,7 +643,7 @@ func markStaticSourceMetadata(
 	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyControlFault]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyControlFault, ordinal)
 		row, ok := faults.At(term)
-		if !ok || !staticMarkBody(counts, row.Owner) {
+		if !ok || !bodyTerm(row.Owner, counts) {
 			return staticMarkError("invalid ControlFault owner")
 		}
 		if marks.has(row.Owner) {
@@ -674,7 +673,7 @@ func markStaticCells(
 		}
 		for index := 0; index < length; index++ {
 			cell, ok := binds.At(bind, index)
-			if !ok || !staticMarkFamily(counts, cell, keyspace.FamilyCell) {
+			if !ok || !termInFamily(cell, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Bind cell")
 			}
 			if marks.has(bind) {
@@ -691,8 +690,8 @@ func markStaticCells(
 			continue
 		}
 		_, body, vararg, ok := functions.Get(function)
-		if !ok || !staticMarkFamily(counts, body, keyspace.FamilyBody) ||
-			(vararg != 0 && !staticMarkFamily(counts, vararg, keyspace.FamilyCell)) {
+		if !ok || !termInFamily(body, keyspace.FamilyBody, counts) ||
+			(vararg != 0 && !termInFamily(vararg, keyspace.FamilyCell, counts)) {
 			return staticMarkError("invalid static Function storage")
 		}
 		if vararg != 0 {
@@ -704,7 +703,7 @@ func markStaticCells(
 		}
 		for index := 0; index < formalCount; index++ {
 			formal, ok := formals.At(function, index)
-			if !ok || !staticMarkFamily(counts, formal, keyspace.FamilyCell) {
+			if !ok || !termInFamily(formal, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Function formal")
 			}
 			marks.mark(formal)
@@ -715,8 +714,8 @@ func markStaticCells(
 		}
 		for index := 0; index < captureCount; index++ {
 			inner, outer, ok := functions.CaptureAt(function, index)
-			if !ok || !staticMarkFamily(counts, inner, keyspace.FamilyCell) ||
-				!staticMarkFamily(counts, outer, keyspace.FamilyCell) {
+			if !ok || !termInFamily(inner, keyspace.FamilyCell, counts) ||
+				!termInFamily(outer, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Function capture")
 			}
 			marks.mark(inner)
@@ -735,7 +734,7 @@ func markStaticCells(
 		}
 		for index := 0; index < cellCount; index++ {
 			cell, ok := loops.CellAt(loop, index)
-			if !ok || !staticMarkFamily(counts, cell, keyspace.FamilyCell) {
+			if !ok || !termInFamily(cell, keyspace.FamilyCell, counts) {
 				return staticMarkError("invalid static Loop cell")
 			}
 			marks.mark(cell)
@@ -748,24 +747,12 @@ func staticMarkError(detail string) error {
 	return errors.New("program/flow/containment: " + detail)
 }
 
-func staticMarkValid(counts [keyspace.FamilyCount]uint32, term keyspace.Term) bool {
-	return validTerm(term, counts)
-}
-
-func staticMarkFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 && keyspace.TermOrdinal(term) <= counts[family]
-}
-
-func staticMarkBody(counts [keyspace.FamilyCount]uint32, term keyspace.Term) bool {
-	return staticMarkFamily(counts, term, keyspace.FamilyBody)
-}
-
 func staticMarkStaticType(counts [keyspace.FamilyCount]uint32, term keyspace.Term) bool {
-	return staticMarkStaticTypeFamily(keyspace.TermFamily(term)) && staticMarkValid(counts, term)
+	return staticMarkStaticTypeFamily(keyspace.TermFamily(term)) && validTerm(term, counts)
 }
 
 func staticMarkStaticTypeOrField(counts [keyspace.FamilyCount]uint32, term keyspace.Term) bool {
-	return keyspace.TermFamily(term) == keyspace.FamilyTypeField && staticMarkValid(counts, term) || staticMarkStaticType(counts, term)
+	return keyspace.TermFamily(term) == keyspace.FamilyTypeField && validTerm(term, counts) || staticMarkStaticType(counts, term)
 }
 
 func staticMarkStaticTypeFamily(family keyspace.Family) bool {
@@ -778,38 +765,6 @@ func staticMarkStaticTypeFamily(family keyspace.Family) bool {
 		keyspace.FamilyTypeOf, keyspace.FamilyTypeKeyOf, keyspace.FamilyTypeIndexAccess,
 		keyspace.FamilyTypeConditional:
 		return true
-	default:
-		return false
-	}
-}
-
-func staticMarkFieldKey(
-	view authored.View,
-	counts [keyspace.FamilyCount]uint32,
-	term keyspace.Term,
-	fieldKind kind.FieldKind,
-) bool {
-	switch fieldKind {
-	case kind.FieldList, kind.FieldName:
-		return staticMarkFamily(counts, term, keyspace.FamilyKey)
-	case kind.FieldExact:
-		if !staticMarkValid(counts, term) {
-			return false
-		}
-		switch keyspace.TermFamily(term) {
-		case keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
-			keyspace.FamilyFloat, keyspace.FamilyString:
-			return true
-		case keyspace.FamilyUnary:
-			_, op, operand, ok := view.Operators().Unaries().Get(term)
-			return ok && op == kind.UnaryNeg &&
-				(staticMarkFamily(counts, operand, keyspace.FamilyInteger) ||
-					staticMarkFamily(counts, operand, keyspace.FamilyFloat))
-		default:
-			return false
-		}
-	case kind.FieldKey:
-		return flowrole.ValueOccurrence(counts, term)
 	default:
 		return false
 	}

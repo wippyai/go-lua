@@ -277,58 +277,36 @@ func mountedProgramRoles(directory *artifactScalarRoleDirectory, binding *compos
 }
 
 // engineArtifactRuleStage is the sealed execution-cut bijection. The placement
-// already carries the issued stage; a scalar caller cannot retag it.
+// already carries the issued stage; a scalar caller cannot retag it. The two
+// stage vocabularies are proven ordinal-for-ordinal identical by
+// TestEngineArtifactVocabularyIsTheSealedTable, so the translation is a
+// range-checked cast rather than a per-member switch.
 func engineArtifactRuleStage(stage uint8) (rows.ArtifactRuleStage, bool) {
-	switch stage {
-	case uint8(rows.ArtifactRuleStageBase):
-		return rows.ArtifactRuleStageBase, true
-	case uint8(rows.ArtifactRuleStageLocal):
-		return rows.ArtifactRuleStageLocal, true
-	case uint8(rows.ArtifactRuleStageIssued3):
-		return rows.ArtifactRuleStageIssued3, true
-	case uint8(rows.ArtifactRuleStageIssued4):
-		return rows.ArtifactRuleStageIssued4, true
-	case uint8(rows.ArtifactRuleStageIssued5):
-		return rows.ArtifactRuleStageIssued5, true
-	default:
+	converted := rows.ArtifactRuleStage(stage)
+	if !converted.Valid() {
 		return rows.ArtifactRuleStageInvalid, false
 	}
+	return converted, true
 }
 
+// engineStructuralArm is the sealed structural-arm bijection between the
+// ingress and engine spellings, proven ordinal-for-ordinal identical by
+// TestEngineArtifactVocabularyIsTheSealedTable.
 func engineStructuralArm(arm ingress.StructuralArm) (rows.ArtifactStructuralArm, bool) {
-	switch arm {
-	case ingress.StructuralArmLocal:
-		return rows.ArtifactStructuralArmLocal, true
-	case ingress.StructuralArmResume:
-		return rows.ArtifactStructuralArmResume, true
-	case ingress.StructuralArmTrue:
-		return rows.ArtifactStructuralArmTrue, true
-	case ingress.StructuralArmFalse:
-		return rows.ArtifactStructuralArmFalse, true
-	case ingress.StructuralArmTail:
-		return rows.ArtifactStructuralArmTail, true
-	case ingress.StructuralArmThrow:
-		return rows.ArtifactStructuralArmThrow, true
-	case ingress.StructuralArmYield:
-		return rows.ArtifactStructuralArmYield, true
-	case ingress.StructuralArmCancel:
-		return rows.ArtifactStructuralArmCancel, true
-	default:
+	if !arm.Valid() {
 		return rows.ArtifactStructuralArmInvalid, false
 	}
+	return rows.ArtifactStructuralArm(arm), true
 }
 
+// engineEventKind is the sealed event-kind bijection between the ingress and
+// engine spellings, proven ordinal-for-ordinal identical by
+// TestEngineArtifactVocabularyIsTheSealedTable.
 func engineEventKind(kind ingress.EventKind) (rows.ArtifactEventKind, bool) {
-	switch kind {
-	case ingress.EventEnter:
-		return rows.ArtifactEventEnter, true
-	case ingress.EventPoint:
-		return rows.ArtifactEventPoint, true
-	case ingress.EventExit:
-		return rows.ArtifactEventExit, true
-	default:
+	if kind < ingress.EventEnter || kind > ingress.EventExit {
 		return rows.ArtifactEventInvalid, false
 	}
+	return rows.ArtifactEventKind(kind), true
 }
 
 func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBinding) (engine.ProgramBootstrap, bool) {

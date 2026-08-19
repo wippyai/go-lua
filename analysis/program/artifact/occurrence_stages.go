@@ -197,6 +197,14 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		bases = append(bases, base)
 	}
 	identity.SortContentIDs(bases)
+	var callTransport callStageTransport
+	if len(compiler.callStages) != 0 {
+		plan, planOK := compiler.issuance.callStageTransport()
+		if !planOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		}
+		callTransport = plan
+	}
 	stageFor := make(map[identity.ContentID][]identity.ContentID, len(bases))
 	stageExit := make(map[identity.ContentID]identity.ContentID, len(bases))
 	computationInput := make(map[identity.ContentID]identity.ContentID)
@@ -274,16 +282,12 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		callBase := predecessor
 		if stages := compiler.callStages[base]; stages.available(base) {
-			plan, planOK := compiler.issuance.callStageTransport()
-			if !planOK {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-			}
 			sequence = append(sequence, stages.dispatch, stages.summary, stages.effect)
-			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, plan.dispatchEntry...) ||
-				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, plan.effectBypass...) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, plan.dispatchForward...) ||
+			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, callTransport.dispatchEntry...) ||
+				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, callTransport.effectBypass...) ||
+				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, callTransport.dispatchForward...) ||
 				!appendTransfer("analysis/program-artifact/call-base-effect-transfer", callBase, stages.effect, true) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, plan.dispatchForward...) {
+				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, callTransport.dispatchForward...) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			callInput[stages.dispatch] = callBase
