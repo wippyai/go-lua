@@ -403,26 +403,3 @@ func callbackIDForOpaque(core operationvalue.Core, opaque vocabulary.Operation) 
 	}
 	return callback
 }
-
-func (c *Contract) buildLookup() error {
-	c.lookup = make([]bindingIndexRow, 0, c.operationCore.BindingTotal())
-	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
-		op := vocabulary.Operation(operationIndex + 1)
-		row, ok := c.operation(op)
-		if !ok || row.bindings.end > uint32(len(c.bindings)) {
-			return errors.New("target: malformed binding range")
-		}
-		for index := row.bindings.start; index < row.bindings.end; index++ {
-			c.lookup = append(c.lookup, bindingIndexRow{binding: index - row.bindings.start, operation: op})
-		}
-	}
-	sort.Slice(c.lookup, func(left, right int) bool {
-		return c.compareBindingRows(c.lookup[left], c.lookup[right]) < 0
-	})
-	for index := 1; index < len(c.lookup); index++ {
-		if c.compareBindingRows(c.lookup[index-1], c.lookup[index]) == 0 {
-			return errors.New("target: duplicate sealed binding")
-		}
-	}
-	return nil
-}

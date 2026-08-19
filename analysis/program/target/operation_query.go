@@ -596,43 +596,13 @@ func (c *Contract) bindingMemberKeyAt(op vocabulary.Operation, binding, index in
 }
 
 // Lookup finds an exact binding without joining, hashing, parser fallback, or
-// allocation. It binary-searches the sealed canonical segment index; returned
-// Operation is the same dense handle exposed by OperationAt.
+// allocation. The operation owner binary-searches its sealed canonical segment
+// index; returned Operation is the same dense handle exposed by OperationAt.
 func (c *Contract) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation, bool) {
-	if c == nil || !vocabulary.ValidBinding(binding) {
+	if c == nil {
 		return 0, false
 	}
-	left, right := 0, len(c.lookup)
-	for left < right {
-		middle := left + (right-left)/2
-		row := c.lookup[middle]
-		order, ok := c.compareBindingSpec(row, binding)
-		if !ok {
-			return 0, false
-		}
-		if order < 0 {
-			left = middle + 1
-		} else {
-			right = middle
-		}
-	}
-	if left >= len(c.lookup) {
-		return 0, false
-	}
-	row := c.lookup[left]
-	order, ok := c.compareBindingSpec(row, binding)
-	if !ok || order != 0 {
-		return 0, false
-	}
-	return row.operation, true
-}
-
-func (c *Contract) compareBindingSpec(index bindingIndexRow, right vocabulary.BindingSpec) (int, bool) {
-	return c.operationCore.CompareBinding(index.operation, int(index.binding), right)
-}
-
-func (c *Contract) compareBindingIndices(left, right bindingIndexRow) (int, bool) {
-	return c.operationCore.CompareBindings(left.operation, int(left.binding), right.operation, int(right.binding))
+	return c.operationCore.Lookup(binding)
 }
 
 // PublicationEffectDescriptor returns the immutable Target-owned publication

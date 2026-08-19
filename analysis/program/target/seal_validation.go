@@ -4,29 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
-func (c *Contract) compareBindingRows(left, right bindingIndexRow) int {
-	order, ok := c.compareBindingIndices(left, right)
-	if !ok {
-		return 0
-	}
-	if order != 0 {
-		return order
-	}
-	if left.operation != right.operation {
-		if left.operation < right.operation {
-			return -1
-		}
-		return 1
-	}
-	if left.binding < right.binding {
-		return -1
-	}
-	if left.binding > right.binding {
-		return 1
-	}
-	return 0
-}
-
 func compareEffect(left, right effectDraft) int {
 	if left.target < right.target {
 		return -1

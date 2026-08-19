@@ -102,6 +102,11 @@ type producedRow struct {
 
 type sourceRow struct{ operation vocabulary.Operation }
 
+type bindingIndexRow struct {
+	binding   uint32
+	operation vocabulary.Operation
+}
+
 // Geometry is the first immutable operation value. It owns canonical
 // operation/callback coordinates and all anchor-neutral geometry, but not the
 // exact-key-dependent binding/produced semantic anchors.
@@ -114,6 +119,7 @@ type Geometry struct {
 	callbacks  rows.Rows[callbackRow]
 	produced   rows.Pool[producedRow]
 	sources    rows.Rows[sourceRow]
+	lookup     rows.Rows[bindingIndexRow]
 	sourceN    int
 	boundN     int
 }

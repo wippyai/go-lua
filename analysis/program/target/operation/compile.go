@@ -188,11 +188,17 @@ func CompileGeometry(input Input) (Geometry, error) {
 	}
 	operations[len(input.Operations)] = operationRow{outcomes: unknownRange, callbacks: opaqueCallbackRange}
 
-	return Geometry{
+	geometry := Geometry{
 		operations: rows.NewRows(operations), bindings: bindingRows.Seal(), segments: segmentPool.Seal(),
 		outcomes: outcomeRows.Seal(), anchors: anchorPool.Seal(), callbacks: rows.NewRows(callbackRows),
 		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations), boundN: boundCount(input.Operations),
-	}, nil
+	}
+	lookup, lookupErr := compileBindingLookup(geometry)
+	if lookupErr != nil {
+		return Geometry{}, lookupErr
+	}
+	geometry.lookup = lookup
+	return geometry, nil
 }
 
 func boundCount(operations []OperationInput) int {

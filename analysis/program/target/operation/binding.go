@@ -2,7 +2,9 @@ package operation
 
 import (
 	"errors"
+	"sort"
 
+	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
@@ -14,17 +16,6 @@ func (core Core) BindingCount(op vocabulary.Operation) int {
 		return 0
 	}
 	return core.geometry.bindings.Count(row.bindings)
-}
-
-// BindingTotal returns the number of binding rows owned by Core across the
-// canonical operation catalogue. It is a cold aggregate count; callers that
-// need one operation use BindingCount for an O(1) span query.
-func (core Core) BindingTotal() int {
-	total := 0
-	for operation := 1; operation <= core.OperationCount(); operation++ {
-		total += core.BindingCount(vocabulary.Operation(operation))
-	}
-	return total
 }
 
 func (core Core) binding(op vocabulary.Operation, index int) (bindingRow, bool) {
@@ -75,10 +66,10 @@ func (core Core) BindingMemberAt(op vocabulary.Operation, binding, index int) (s
 	return core.geometry.segments.At(row.member, index)
 }
 
-// CompareBinding compares one owner-issued binding row with a neutral spec
-// without materializing Owner or Member slices. It is used by Target's sealed
-// lookup index and therefore must remain allocation-free.
-func (core Core) CompareBinding(op vocabulary.Operation, index int, right vocabulary.BindingSpec) (int, bool) {
+// compareBindingSpec compares one owner-issued binding row with a neutral
+// spec without materializing Owner or Member slices. It is used while sealing
+// and querying the operation-owned lookup index.
+func (core Core) compareBindingSpec(op vocabulary.Operation, index int, right vocabulary.BindingSpec) (int, bool) {
 	leftNamespace, ok := core.BindingNamespaceAt(op, index)
 	if !ok {
 		return 0, false
@@ -95,9 +86,9 @@ func (core Core) CompareBinding(op vocabulary.Operation, index int, right vocabu
 	return core.compareBindingSpecSegments(op, index, false, right.Member)
 }
 
-// CompareBindings compares two owner-issued rows directly from Core's sealed
-// segment pools. The fallback bool reports malformed coordinates.
-func (core Core) CompareBindings(leftOp vocabulary.Operation, leftIndex int, rightOp vocabulary.Operation, rightIndex int) (int, bool) {
+// compareBindingRows compares two owner-issued rows directly from Core's
+// sealed segment pools. The fallback bool reports malformed coordinates.
+func (core Core) compareBindingRows(leftOp vocabulary.Operation, leftIndex int, rightOp vocabulary.Operation, rightIndex int) (int, bool) {
 	leftNamespace, leftOK := core.BindingNamespaceAt(leftOp, leftIndex)
 	rightNamespace, rightOK := core.BindingNamespaceAt(rightOp, rightIndex)
 	if !leftOK || !rightOK {
@@ -113,6 +104,96 @@ func (core Core) CompareBindings(leftOp vocabulary.Operation, leftIndex int, rig
 		return order, ok
 	}
 	return core.compareBindingRowSegments(leftOp, leftIndex, rightOp, rightIndex, false)
+}
+
+func (core Core) compareBindingIndex(left, right bindingIndexRow) (int, bool) {
+	order, ok := core.compareBindingRows(left.operation, int(left.binding), right.operation, int(right.binding))
+	if !ok || order != 0 {
+		return order, ok
+	}
+	if left.operation < right.operation {
+		return -1, true
+	}
+	if left.operation > right.operation {
+		return 1, true
+	}
+	if left.binding < right.binding {
+		return -1, true
+	}
+	if left.binding > right.binding {
+		return 1, true
+	}
+	return 0, true
+}
+
+func compileBindingLookup(geometry Geometry) (rows.Rows[bindingIndexRow], error) {
+	core := Core{geometry: geometry}
+	lookup := make([]bindingIndexRow, 0, geometry.bindings.Len())
+	for operationIndex := 0; operationIndex+1 < geometry.operations.Count(); operationIndex++ {
+		operation := vocabulary.Operation(operationIndex + 1)
+		row, ok := geometry.operations.At(operationIndex)
+		if !ok {
+			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: malformed binding geometry")
+		}
+		count := geometry.bindings.Count(row.bindings)
+		if count != row.bindings.Len() {
+			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: malformed binding geometry")
+		}
+		for index := 0; index < count; index++ {
+			lookup = append(lookup, bindingIndexRow{binding: uint32(index), operation: operation})
+		}
+	}
+	sort.Slice(lookup, func(left, right int) bool {
+		order, ok := core.compareBindingIndex(lookup[left], lookup[right])
+		return ok && order < 0
+	})
+	for index := 1; index < len(lookup); index++ {
+		order, ok := core.compareBindingIndex(lookup[index-1], lookup[index])
+		if !ok {
+			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: malformed binding geometry")
+		}
+		if order == 0 {
+			return rows.Rows[bindingIndexRow]{}, errors.New("target/operation: duplicate sealed binding")
+		}
+	}
+	return rows.NewRows(lookup), nil
+}
+
+// Lookup finds an exact binding in the operation owner's sealed index without
+// joining, hashing, parser fallback, or allocation.
+func (core Core) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation, bool) {
+	if !vocabulary.ValidBinding(binding) {
+		return 0, false
+	}
+	left, right := 0, core.geometry.lookup.Count()
+	for left < right {
+		middle := left + (right-left)/2
+		row, ok := core.geometry.lookup.At(middle)
+		if !ok {
+			return 0, false
+		}
+		order, ok := core.compareBindingSpec(row.operation, int(row.binding), binding)
+		if !ok {
+			return 0, false
+		}
+		if order < 0 {
+			left = middle + 1
+		} else {
+			right = middle
+		}
+	}
+	if left >= core.geometry.lookup.Count() {
+		return 0, false
+	}
+	row, ok := core.geometry.lookup.At(left)
+	if !ok {
+		return 0, false
+	}
+	order, ok := core.compareBindingSpec(row.operation, int(row.binding), binding)
+	if !ok || order != 0 {
+		return 0, false
+	}
+	return row.operation, true
 }
 
 func (core Core) compareBindingSpecSegments(op vocabulary.Operation, index int, owner bool, right []string) (int, bool) {

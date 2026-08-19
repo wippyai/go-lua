@@ -237,11 +237,6 @@ type indexRange struct{ start, end uint32 }
 
 func (r indexRange) len() int { return int(r.end - r.start) }
 
-type bindingIndexRow struct {
-	binding   uint32
-	operation vocabulary.Operation
-}
-
 // Contract is immutable after Seal. Every slice is private and every public
 // hot query returns only scalar handles or values.
 type Contract struct {
@@ -280,7 +275,6 @@ type Contract struct {
 	fresh                  []freshResultRow
 	captures               []captureRow
 	bindingKeys            []vocabulary.ExactKey
-	lookup                 []bindingIndexRow
 	exactKeys              exactkey.Table
 	counts                 denominator.CountRows
 	// identityColumns carries the identity plane's own columns. The layout is

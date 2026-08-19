@@ -133,9 +133,6 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err := contract.appendOpaque(opaque); err != nil {
 		return nil, err
 	}
-	if err := contract.buildLookup(); err != nil {
-		return nil, err
-	}
 	if err := contract.sealSemanticIdentities(); err != nil {
 		return nil, err
 	}
