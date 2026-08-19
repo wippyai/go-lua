@@ -390,7 +390,15 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	if state.artifacts == nil {
 		return false
 	}
-	directory, directoryOK := mountDirectoryContent(state.sourceID, state.artifacts.mounts)
+	denominator, denominatorOK := programmount.DenominatorID(state.sourceID)
+	if !denominatorOK {
+		return false
+	}
+	directoryRows := make([]cold.Program, len(state.artifacts.mounts))
+	for index, mount := range state.artifacts.mounts {
+		directoryRows[index] = mount.program
+	}
+	directory, directoryOK := programmount.Content(directoryRows, denominator)
 	if !directoryOK {
 		return false
 	}
@@ -582,21 +590,6 @@ type artifactCacheEntry struct {
 	template *rows.ArtifactScalarTemplate
 	roles    *scalarlower.RoleDirectory
 	complete bool
-}
-
-// mountDirectoryContent projects the Link's mount records onto the directory
-// column's payload. Every mount contributes exactly one row, so the column is
-// total over the Link's module directory by construction.
-func mountDirectoryContent(linkID identity.ContentID, mounts []mountedProgramArtifact) (snapshot.Content[identity.ContentID, cold.Program], bool) {
-	denominator, derived := programmount.DenominatorID(linkID)
-	if !derived {
-		return snapshot.Content[identity.ContentID, cold.Program]{}, false
-	}
-	directory := make([]cold.Program, 0, len(mounts))
-	for _, mount := range mounts {
-		directory = append(directory, mount.program)
-	}
-	return programmount.Content(directory, denominator)
 }
 
 // globalArtifactCache owns the reusable sealed ProgramArtifact together with
