@@ -21,7 +21,12 @@ type Value struct {
 	top    bool
 }
 
+// valid is the constant-time residue of the construction proof: schema
+// fencing, the Top representation and stride alignment. Canonical order is
+// proved once, by canonical, over an image that is immutable from the moment
+// it becomes a Value, so no algebra entry re-derives it.
 func (value Value) valid() bool {
+	dbgValue.Valid++
 	if value.schema == nil || value.schema.potential == 0 {
 		return false
 	}
@@ -29,18 +34,15 @@ func (value Value) valid() bool {
 		return len(value.image) == 0
 	}
 	stride := value.schema.stride()
-	if stride == 0 || len(value.image)%stride != 0 {
-		return false
-	}
-	var previous uint64
-	for offset := 0; offset < len(value.image); offset += stride {
-		atom := value.image[offset]
-		if atom == 0 || atom > uint64(len(value.schema.atoms)) || offset != 0 && previous >= atom {
-			return false
-		}
-		previous = atom
-	}
-	return true
+	return stride != 0 && len(value.image)%stride == 0
+}
+
+// sameImage recognizes one shared immutable image. A Value image is written
+// only before construction, so a shared backing array with the same length is
+// the same relation, and a shorter shared prefix is a relation this one
+// includes.
+func sameImage(left, right Value) bool {
+	return left.top == right.top && len(left.image) == len(right.image) && (len(left.image) == 0 || &left.image[0] == &right.image[0])
 }
 
 // IsBottom and IsTop expose only the two owner-fenced lattice extremes.
@@ -144,8 +146,12 @@ func (schema *Schema) SourceValueID(subject identity.ContentID) (Value, bool) {
 // Equal is exact owner-local relation equality.  Equal and all other algebra
 // entry points reject another Link/Schema rather than treating it as bottom.
 func (schema *Schema) Equal(left, right Value) bool {
+	dbgValue.Equal++
 	if !schema.owns(left) || !schema.owns(right) || left.top != right.top || len(left.image) != len(right.image) {
 		return false
+	}
+	if sameImage(left, right) {
+		return true
 	}
 	for index := range left.image {
 		if left.image[index] != right.image[index] {
@@ -161,13 +167,11 @@ func (schema *Schema) Same(left, right Value) bool {
 	if !schema.owns(left) || !schema.owns(right) {
 		return false
 	}
-	if left.top || right.top || len(left.image) == 0 || len(right.image) == 0 {
-		return schema.Equal(left, right)
-	}
-	return &left.image[0] == &right.image[0] || schema.Equal(left, right)
+	return sameImage(left, right) || schema.Equal(left, right)
 }
 
 func (schema *Schema) owns(value Value) bool {
+	dbgValue.Owns++
 	return schema != nil && value.schema == schema && value.valid()
 }
 
@@ -175,6 +179,7 @@ func (schema *Schema) owns(value Value) bool {
 // capability attached to that atom on the left must occur on the right.  This
 // is the capability non-smearing law in the partial order itself.
 func (schema *Schema) LessOrEq(left, right Value) bool {
+	dbgValue.LessOrEq++
 	if !schema.owns(left) || !schema.owns(right) {
 		return false
 	}
@@ -192,6 +197,11 @@ func (schema *Schema) LessOrEq(left, right Value) bool {
 	}
 	if len(right.image) == 0 {
 		return false
+	}
+	// One shared image whose left range is a prefix of the right range carries
+	// every left row, with its exact capability words, inside right.
+	if &left.image[0] == &right.image[0] && len(left.image) <= len(right.image) {
+		return true
 	}
 	stride := schema.stride()
 	for leftAt, rightAt := 0, 0; leftAt < len(left.image); leftAt += stride {
@@ -222,6 +232,7 @@ func (schema *Schema) capabilitySubset(left, right []uint64) bool {
 // when one input already covers the other; only a real relation expansion
 // allocates one new compact immutable image.
 func (schema *Schema) Join(left, right Value) (Value, bool) {
+	dbgValue.Join++
 	if !schema.owns(left) || !schema.owns(right) {
 		return Value{}, false
 	}
@@ -234,12 +245,19 @@ func (schema *Schema) Join(left, right Value) (Value, bool) {
 	if len(right.image) == 0 {
 		return left, true
 	}
+	if &left.image[0] == &right.image[0] {
+		if len(left.image) >= len(right.image) {
+			return left, true
+		}
+		return right, true
+	}
 	if schema.LessOrEq(left, right) {
 		return right, true
 	}
 	if schema.LessOrEq(right, left) {
 		return left, true
 	}
+	dbgValue.JoinBuild++
 	stride := schema.stride()
 	result := make([]uint64, 0, len(left.image)+len(right.image))
 	leftAt, rightAt := 0, 0
@@ -342,12 +360,34 @@ func (schema *Schema) occupancy(value Value) uint64 {
 	return occupied
 }
 
+// canonical is the single construction gate for a freshly built image. It is
+// the one place the atom column is proved sealed and strictly ascending, and
+// it folds that proof into the occupancy pass the Top collapse already needs.
 func (schema *Schema) canonical(image []uint64) Value {
-	value := Value{schema: schema, image: image}
-	if schema.occupancy(value) == schema.potential {
+	if schema == nil || schema.potential == 0 {
+		return Value{}
+	}
+	stride := schema.stride()
+	if stride == 0 || len(image)%stride != 0 {
+		return Value{}
+	}
+	occupied, previous := uint64(0), uint64(0)
+	for offset := 0; offset < len(image); offset += stride {
+		dbgValue.ValidRows++
+		atom := image[offset]
+		if atom == 0 || atom > uint64(len(schema.atoms)) || offset != 0 && previous >= atom {
+			return Value{}
+		}
+		previous = atom
+		occupied++
+		for word := 1; word < stride; word++ {
+			occupied += uint64(bits.OnesCount64(image[offset+word]))
+		}
+	}
+	if occupied == schema.potential {
 		return schema.Top()
 	}
-	return value
+	return Value{schema: schema, image: image}
 }
 
 // Fingerprint is a stable local image hash.  Schema fencing happens before
