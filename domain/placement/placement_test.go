@@ -63,3 +63,29 @@ func TestPlacementOrderJoinMeetAndWiden(t *testing.T) {
 		t.Fatalf("expected total order bottom < stack < owned-heap < shared-heap < unknown")
 	}
 }
+
+// TestPlacementCoversIsStrictAnalysisBoundary separates the partial semantic
+// placement order from Lattice's conservative totalization. Runtime/JIT
+// realizations and invalid values are not analysis placement evidence.
+func TestPlacementCoversIsStrictAnalysisBoundary(t *testing.T) {
+	analysis := []Placement{Bottom, Stack, OwnedHeap, SharedHeap, Unknown}
+	for _, covering := range analysis {
+		for _, covered := range analysis {
+			if got, want := covering.Covers(covered), LessOrEq(covered, covering); got != want {
+				t.Fatalf("%v covers %v = %t, want analysis order %t", covering, covered, got, want)
+			}
+		}
+	}
+
+	outside := []Placement{Interpreter, Register, Placement(255)}
+	for _, value := range outside {
+		for _, analysisValue := range analysis {
+			if value.Covers(analysisValue) || analysisValue.Covers(value) {
+				t.Fatalf("out-of-domain placement %v entered the analysis order with %v", value, analysisValue)
+			}
+		}
+		if value.Covers(value) {
+			t.Fatalf("out-of-domain placement %v covers itself", value)
+		}
+	}
+}
