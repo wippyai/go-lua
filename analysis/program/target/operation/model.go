@@ -56,7 +56,6 @@ type ProducedInput struct {
 }
 
 type operationRow struct {
-	source    int
 	bindings  rows.Span
 	outcomes  rows.Span
 	callbacks callbackRange

@@ -128,7 +128,7 @@ func CompileGeometry(input Input) (Geometry, error) {
 			return Geometry{}, errors.New("target/operation: operation callback range overflow")
 		}
 		operations[index] = operationRow{
-			source: item.Source, bindings: bindingRange, outcomes: outcomeRange, callbacks: callbackRange,
+			bindings: bindingRange, outcomes: outcomeRange, callbacks: callbackRange,
 			input: uint32(item.InputFormalCount), valuesVar: item.ValuesVars,
 		}
 		producedInputs[index] = append([]ProducedInput(nil), item.Produced...)
