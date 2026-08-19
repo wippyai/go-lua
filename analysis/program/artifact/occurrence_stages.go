@@ -215,7 +215,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		callTransport = plan
 	}
 	stageFor := make(map[identity.ContentID][]identity.ContentID, len(bases))
-	stageExit := make(map[identity.ContentID]identity.ContentID, len(bases))
 	computationInput := make(map[identity.ContentID]identity.ContentID)
 	callInput := make(map[identity.ContentID]identity.ContentID)
 	localPredecessorInput := make(map[identity.ContentID]identity.ContentID)
@@ -263,7 +262,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			predecessor = stage
-			stageExit[base] = stage
 		}
 		if local := compiler.localStages[base]; local.Available() {
 			sequence = append(sequence, local)
@@ -274,7 +272,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				localPredecessorInput[local] = predecessor
 			}
 			predecessor = local
-			stageExit[base] = local
 		}
 		computations, computationsOK := compiler.orderedLocalComputations(base)
 		if !computationsOK {
@@ -287,7 +284,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			}
 			computationInput[computation.point] = predecessor
 			predecessor = computation.point
-			stageExit[base] = computation.point
 		}
 		callBase := predecessor
 		if stages := compiler.callStages[base]; stages.available(base) {
@@ -300,7 +296,6 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			callInput[stages.dispatch] = callBase
-			stageExit[base] = stages.effect
 		}
 		for _, stage := range sequence {
 			if !stage.Available() {
@@ -328,7 +323,9 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		if edge.from == edge.to && !edge.hasMu && !edge.hasReset {
 			continue
 		}
-		if exit := stageExit[edge.from]; exit.Available() {
+		stages := stageFor[edge.from]
+		if len(stages) != 0 {
+			exit := stages[len(stages)-1]
 			edge.from = exit
 			if !edge.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
@@ -392,10 +389,11 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		// exists. Every other consumer of the staged base reads the terminal
 		// stage, so no Entry/Finish rule can bypass a prior strong write.
 		base := compiler.ruleOccurrences[index].input
-		exit := stageExit[base]
-		if !exit.Available() {
+		stages := stageFor[base]
+		if len(stages) == 0 {
 			continue
 		}
+		exit := stages[len(stages)-1]
 		local := compiler.localStages[base]
 		if local.Available() && compiler.ruleOccurrences[index].point == local {
 			continue
