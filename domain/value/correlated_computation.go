@@ -307,21 +307,6 @@ func (schema *valueBuilder) sealComputationRows() bool {
 		if artifact == nil {
 			return false
 		}
-		sourceSpans := make(map[identity.ContentID]struct{})
-		for sourceIndex := 0; sourceIndex < artifact.OccurrenceCount(); sourceIndex++ {
-			sourceRow, sourceOK := artifact.OccurrenceAt(sourceIndex)
-			if !sourceOK {
-				return false
-			}
-			if programartifact.OccurrenceKind(sourceRow.Kind()) != programartifact.OccurrenceValueSource {
-				continue
-			}
-			span, spanOK := sourceRow.ValueSourceSpanID()
-			if !spanOK {
-				return false
-			}
-			sourceSpans[span] = struct{}{}
-		}
 		for index := 0; index < artifact.OccurrenceCount(); index++ {
 			row, ok := artifact.OccurrenceAt(index)
 			if !ok {
@@ -459,10 +444,12 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				}
 				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, call.SpanID())
 				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
-				comparison, comparisonOK := schema.sealBoundary().Values().ForMountedSemantic(module, operandID)
-				if _, isSourceSpan := sourceSpans[operandID]; isSourceSpan {
-					comparison, comparisonOK = schema.sealBoundary().Values().ForMountedSpan(module, operandID)
-				}
+				// Program issues the compared operand as a value-subject span
+				// identity, the same identity the BinaryEquality row carries,
+				// so Boundary's mounted span directory is its total inverse.
+				// The semantic directory keys parent-issued occurrence IDs and
+				// names an operand span only when another row published it.
+				comparison, comparisonOK := schema.sealBoundary().Values().ForMountedSpan(module, operandID)
 				rc, rcOK := schema.coordinateForCold(result)
 				ic, icOK := schema.coordinateForCold(input)
 				pc, pcOK := schema.coordinateForCold(comparison)
