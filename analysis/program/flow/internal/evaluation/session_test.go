@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -29,7 +30,7 @@ func mustView(t *testing.T, input authored.Input) authored.View {
 }
 
 func term(family keyspace.Family, ordinal uint32) keyspace.Term {
-	return keyspace.MakeTerm(family, ordinal)
+	return flowtest.Term(family, ordinal)
 }
 
 func events(t *testing.T, session *Session, roots ...keyspace.Term) []keyspace.Term {

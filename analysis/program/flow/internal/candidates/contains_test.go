@@ -3,15 +3,16 @@ package candidates
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func TestCandidateQueriesAreAllocationFree(t *testing.T) {
 	result := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets:  bucketStore{unaryNumeric: []keyspace.Term{term(keyspace.FamilyUnary, 1)}},
 		classes:  classStore{unaryClass: []uint8{unaryNumericCandidate}},
 	}

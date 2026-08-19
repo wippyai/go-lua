@@ -6,33 +6,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
-
-func testSourceID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 1
-	return id
-}
-
-func testFlowID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 2
-	return id
-}
-
-func testStaticID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 3
-	return id
-}
-
-func testModuleID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 4
-	return id
-}
 
 func TestResultDenominatorStaticAndFailClosedLaws(t *testing.T) {
 	var counts [keyspace.FamilyCount]uint32
@@ -42,7 +19,7 @@ func TestResultDenominatorStaticAndFailClosedLaws(t *testing.T) {
 	counts[keyspace.FamilyKey] = 100_000
 	counts[keyspace.FamilyControlFault] = 100_000
 	counts[keyspace.FamilyOutcome] = 7
-	r := newResult(counts, testSourceID(), testFlowID(), testStaticID(), testModuleID())
+	r := newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4))
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	cell := keyspace.MakeTerm(keyspace.FamilyCell, 2)
 	if !r.mark(body) || !r.mark(cell) {
@@ -94,7 +71,7 @@ func TestResultPermutationAndRootlessCellLaws(t *testing.T) {
 		keyspace.MakeTerm(keyspace.FamilyValues, 1),
 		keyspace.MakeTerm(keyspace.FamilyCell, 2),
 	}
-	left, right := newResult(counts, testSourceID(), testFlowID(), testStaticID(), testModuleID()), newResult(counts, testSourceID(), testFlowID(), testStaticID(), testModuleID())
+	left, right := newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)), newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4))
 	for _, term := range terms {
 		left.mark(term)
 	}
@@ -117,7 +94,7 @@ func TestResultPermutationAndRootlessCellLaws(t *testing.T) {
 func TestExecutableQueryIsAllocationFree(t *testing.T) {
 	var counts [keyspace.FamilyCount]uint32
 	counts[keyspace.FamilyBody] = 1
-	r := newResult(counts, testSourceID(), testFlowID(), testStaticID(), testModuleID())
+	r := newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4))
 	r.mark(keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	term := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	if allocations := testing.AllocsPerRun(1000, func() {
@@ -130,35 +107,35 @@ func TestExecutableQueryIsAllocationFree(t *testing.T) {
 	if unsafe.Sizeof(r.sourceID) != unsafe.Sizeof(identity.ContentID{}) {
 		t.Fatal("provenance is not a fixed-width Source identity")
 	}
-	if unsafe.Sizeof(r.flowID) != unsafe.Sizeof(identity.ContentID{}) || !Matches(r, testSourceID(), testFlowID(), testStaticID(), testModuleID()) {
+	if unsafe.Sizeof(r.flowID) != unsafe.Sizeof(identity.ContentID{}) || !Matches(r, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) {
 		t.Fatal("authored Flow provenance was not retained as the narrow value fence")
 	}
-	foreignSource := testSourceID()
+	foreignSource := flowtest.ContentIDAt(1)
 	foreignSource[0] ^= 0xff
-	foreignFlowID := testFlowID()
+	foreignFlowID := flowtest.ContentIDAt(2)
 	foreignFlowID[0] ^= 0xff
-	foreignStatic := testStaticID()
+	foreignStatic := flowtest.ContentIDAt(3)
 	foreignStatic[0] ^= 0xff
-	foreignModule := testModuleID()
+	foreignModule := flowtest.ContentIDAt(4)
 	foreignModule[0] ^= 0xff
-	if Matches(r, foreignSource, testFlowID(), testStaticID(), testModuleID()) ||
-		Matches(r, testSourceID(), foreignFlowID, testStaticID(), testModuleID()) ||
-		Matches(r, testSourceID(), testFlowID(), foreignStatic, testModuleID()) ||
-		Matches(r, testSourceID(), testFlowID(), testStaticID(), foreignModule) {
+	if Matches(r, foreignSource, flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) ||
+		Matches(r, flowtest.ContentIDAt(1), foreignFlowID, flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) ||
+		Matches(r, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), foreignStatic, flowtest.ContentIDAt(4)) ||
+		Matches(r, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), foreignModule) {
 		t.Fatal("Result accepted a foreign owner identity")
 	}
-	foreignFlow := newResult(counts, testSourceID(), identity.ContentID{}, testStaticID(), testModuleID())
-	if foreignFlow.Executable(term) || foreignFlow.Count() != 0 || Matches(foreignFlow, testSourceID(), testFlowID(), testStaticID(), testModuleID()) {
+	foreignFlow := newResult(counts, flowtest.ContentIDAt(1), identity.ContentID{}, flowtest.ContentIDAt(3), flowtest.ContentIDAt(4))
+	if foreignFlow.Executable(term) || foreignFlow.Count() != 0 || Matches(foreignFlow, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) {
 		t.Fatal("missing authored Flow provenance did not fail closed")
 	}
 	for name, malformed := range map[string]*Result{
-		"source": newResult(counts, identity.ContentID{}, testFlowID(), testStaticID(), testModuleID()),
+		"source": newResult(counts, identity.ContentID{}, flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)),
 		"flow":   foreignFlow,
-		"static": newResult(counts, testSourceID(), testFlowID(), identity.ContentID{}, testModuleID()),
-		"module": newResult(counts, testSourceID(), testFlowID(), testStaticID(), identity.ContentID{}),
+		"static": newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), identity.ContentID{}, flowtest.ContentIDAt(4)),
+		"module": newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), identity.ContentID{}),
 	} {
 		if malformed.Count() != 0 || malformed.Executable(term) || malformed.FamilyCount(keyspace.FamilyBody) != 0 ||
-			Matches(malformed, testSourceID(), testFlowID(), testStaticID(), testModuleID()) {
+			Matches(malformed, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) {
 			t.Fatalf("%s-unavailable Result was queryable or matched owners", name)
 		}
 	}
@@ -168,7 +145,7 @@ func TestDeepClosureUsesIterativeWorklist(t *testing.T) {
 	const depth = 50_000
 	var counts [keyspace.FamilyCount]uint32
 	counts[keyspace.FamilyBody] = depth
-	result := newResult(counts, testSourceID(), testFlowID(), testStaticID(), testModuleID())
+	result := newResult(counts, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4))
 	work := make([]keyspace.Term, 0, depth)
 	for ordinal := uint32(1); ordinal <= depth; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBody, ordinal)

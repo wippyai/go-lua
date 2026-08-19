@@ -3,7 +3,7 @@ package runtimeentry
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -12,7 +12,7 @@ func TestResultAndResumeRowsRequireTheirExactSealedParents(t *testing.T) {
 	if entry, ok := result.Entry(keyspace.MakeTerm(keyspace.FamilyBody, 1)); ok || entry != 0 {
 		t.Fatal("zero runtime-entry result resolved a Body")
 	}
-	if Matches(&result, testRuntimeEntryOwner(1), testRuntimeEntryOwner(2), testRuntimeEntryOwner(3), testRuntimeEntryOwner(4)) {
+	if Matches(&result, flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)) {
 		t.Fatal("zero runtime-entry result matched plausible owners")
 	}
 	if OwnsParents(&result, nil, nil, nil) {
@@ -25,9 +25,4 @@ func TestResultAndResumeRowsRequireTheirExactSealedParents(t *testing.T) {
 	if from, to, ok := row.Endpoints(&result, nil); ok || from != (row.from) || to != (row.to) {
 		t.Fatal("foreign Outcome resume row exposed endpoints")
 	}
-}
-
-func testRuntimeEntryOwner(value byte) (id identity.ContentID) {
-	id[0] = value
-	return id
 }

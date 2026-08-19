@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
@@ -464,7 +465,7 @@ func pendingSourceInput(
 }
 
 func pendingTerm(family keyspace.Family, ordinal uint32) keyspace.Term {
-	return keyspace.MakeTerm(family, ordinal)
+	return flowtest.Term(family, ordinal)
 }
 
 // pendingRuntimeMatrixCounts deliberately gives each candidate family room

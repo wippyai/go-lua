@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
@@ -608,70 +609,70 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticFinalize.View(), entry)
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalize, err := moduleDraft.Finalizer()
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	forest, _, err := containment.Prove(preimage, staticFinalize.View(), flowView, bodies, bindingResult, moduleFinalize.View(), entry)
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeDirectFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
-		closeDirectFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	controlResult, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeDirectFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.Cold().ContentID(), staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeDirectFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, controlResult,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID(), paths)
 	if err != nil {
-		closeDirectFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	result, err := Seal(
@@ -679,7 +680,7 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID(),
 	)
 	if err != nil {
-		closeDirectFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("directfunction.Seal: %v", err)
 	}
 
@@ -690,16 +691,9 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 		moduleFinalize: moduleFinalize,
 	}
 	t.Cleanup(func() {
-		closeDirectFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
 	})
 	return fixture
-}
-
-func closeDirectFinalizers(sourceFinalize source.Finalizer, staticFinalize static.Finalizer, flowFinalize authored.Finalizer, moduleFinalize imports.Finalizer) {
-	_ = moduleFinalize.Abort()
-	_ = flowFinalize.Abort()
-	_ = staticFinalize.Abort()
-	_ = sourceFinalize.Abort()
 }
 
 func directSourceInput(spec directSpec) source.Input {
@@ -708,14 +702,7 @@ func directSourceInput(spec directSpec) source.Input {
 		name = "directfunction-law.lua"
 	}
 	input := source.Input{Name: name}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, spec.counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: input.Name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Families = flowtest.FamilySpans(input.Name, spec.counts)
 	input.Bodies = make([]source.BodySource, len(spec.rows))
 	for index, rows := range spec.rows {
 		input.Bodies[index] = source.BodySource{
@@ -736,18 +723,11 @@ func directSourceInput(spec directSpec) source.Input {
 			input.Functions[index].Formals = append([]keyspace.Term(nil), spec.forms[index].Formals...)
 		}
 	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyNil]; ordinal++ {
-		owner := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.nilOwners) {
-			owner = spec.nilOwners[ordinal-1]
-		}
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: owner})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyBool]; ordinal++ {
-		input.Bool = append(input.Bool, source.BoolLiteral{
-			Owner: keyspace.MakeTerm(keyspace.FamilyBody, 1),
-			Value: ordinal%2 == 1,
-		})
-	}
+	input.Nil = flowtest.LiteralRows(spec.counts[keyspace.FamilyNil], spec.nilOwners, keyspace.MakeTerm(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
+	input.Bool = flowtest.LiteralRows(spec.counts[keyspace.FamilyBool], nil, keyspace.MakeTerm(keyspace.FamilyBody, 1), func(owner keyspace.Term, ordinal uint32) source.BoolLiteral {
+		return source.BoolLiteral{Owner: owner, Value: ordinal%2 == 1}
+	})
 	return input
 }

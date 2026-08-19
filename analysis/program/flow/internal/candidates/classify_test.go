@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -81,10 +82,10 @@ func TestCandidateDispositionMatrix(t *testing.T) {
 
 func TestCandidatePartitionLensAndExclusionLaws(t *testing.T) {
 	result := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets: bucketStore{
 			unaryNumeric: []keyspace.Term{term(keyspace.FamilyUnary, 1), term(keyspace.FamilyUnary, 4)},
 			length:       []keyspace.Term{term(keyspace.FamilyUnary, 3)},
@@ -216,18 +217,18 @@ func TestCandidatePartitionLensAndExclusionLaws(t *testing.T) {
 
 func TestCandidatePermutationAndCapacityLaws(t *testing.T) {
 	left := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets:  bucketStore{unaryNumeric: []keyspace.Term{term(keyspace.FamilyUnary, 1)}},
 		classes:  classStore{unaryClass: []uint8{unaryNumericCandidate}},
 	}
 	right := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets:  bucketStore{unaryNumeric: append([]keyspace.Term(nil), left.buckets.unaryNumeric...)},
 		classes:  classStore{unaryClass: append([]uint8(nil), left.classes.unaryClass...)},
 	}
@@ -237,7 +238,7 @@ func TestCandidatePermutationAndCapacityLaws(t *testing.T) {
 	}
 
 	const members = 10_000
-	scaled := Result{sourceID: candidateValidID(1), flowID: candidateValidID(2), staticID: candidateValidID(3), moduleID: candidateValidID(4)}
+	scaled := Result{sourceID: flowtest.ContentIDAt(1), flowID: flowtest.ContentIDAt(2), staticID: flowtest.ContentIDAt(3), moduleID: flowtest.ContentIDAt(4)}
 	for ordinal := 1; ordinal <= members; ordinal++ {
 		scaled.buckets.arithmetic = append(scaled.buckets.arithmetic, term(keyspace.FamilyBinary, uint32(ordinal)))
 	}
@@ -254,10 +255,10 @@ func TestCandidateNegativeExactKeyStaticIsExcluded(t *testing.T) {
 	// authored Unary used only to spell a negative exact key is static, so its
 	// zero membership code must not leak into UnaryNumeric.
 	static := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		classes:  classStore{unaryClass: []uint8{unaryNoCandidate}},
 	}
 	if static.UnaryNumeric().Contains(term(keyspace.FamilyUnary, 1)) {
@@ -270,8 +271,8 @@ func TestCandidateQueriesFailClosedForUnavailableAndMalformedStorage(t *testing.
 		return &Result{
 			sourceID: sourceID,
 			flowID:   flowID,
-			staticID: candidateValidID(3),
-			moduleID: candidateValidID(4),
+			staticID: flowtest.ContentIDAt(3),
+			moduleID: flowtest.ContentIDAt(4),
 			buckets: bucketStore{
 				unaryNumeric: []keyspace.Term{term(keyspace.FamilyUnary, 1)},
 				length:       []keyspace.Term{term(keyspace.FamilyUnary, 2)},
@@ -325,8 +326,8 @@ func TestCandidateQueriesFailClosedForUnavailableAndMalformedStorage(t *testing.
 	}{
 		{name: "nil", result: nil},
 		{name: "zero", result: newProjection(identity.ContentID{}, identity.ContentID{})},
-		{name: "zero-source", result: newProjection(identity.ContentID{}, candidateValidID(2))},
-		{name: "zero-flow", result: newProjection(candidateValidID(1), identity.ContentID{})},
+		{name: "zero-source", result: newProjection(identity.ContentID{}, flowtest.ContentIDAt(2))},
+		{name: "zero-flow", result: newProjection(flowtest.ContentIDAt(1), identity.ContentID{})},
 	} {
 		t.Run(owner.name, func(t *testing.T) {
 			for _, query := range queries(owner.result) {
@@ -345,7 +346,7 @@ func TestCandidateQueriesFailClosedForUnavailableAndMalformedStorage(t *testing.
 		})
 	}
 
-	malformed := newProjection(candidateValidID(1), candidateValidID(2))
+	malformed := newProjection(flowtest.ContentIDAt(1), flowtest.ContentIDAt(2))
 	// A bucket row without a corresponding dense class row is not a lawful
 	// internal projection row and must not become query-visible.
 	malformed.classes = classStore{}
@@ -360,7 +361,7 @@ func TestCandidateQueriesFailClosedForUnavailableAndMalformedStorage(t *testing.
 		})
 	}
 
-	valid := newProjection(candidateValidID(1), candidateValidID(2))
+	valid := newProjection(flowtest.ContentIDAt(1), flowtest.ContentIDAt(2))
 	for _, query := range queries(valid) {
 		if query.contains(0) || query.contains(keyspace.MakeTerm(keyspace.FamilyLoop, keyspace.MaxTermOrdinal)) {
 			t.Fatalf("%s.Contains accepted a malformed/out-of-range Term", query.name)
@@ -392,13 +393,7 @@ func TestCandidateSealRejectsZeroForeignAndExpiredAuthority(t *testing.T) {
 }
 
 func term(family keyspace.Family, ordinal uint32) keyspace.Term {
-	return keyspace.MakeTerm(family, ordinal)
-}
-
-func candidateValidID(seed byte) identity.ContentID {
-	var id identity.ContentID
-	id[0] = seed
-	return id
+	return flowtest.Term(family, ordinal)
 }
 
 func minimalOwners(t *testing.T) (source.Identity, authored.View, func()) {

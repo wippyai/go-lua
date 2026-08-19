@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -95,42 +96,42 @@ func openPositionFixture(t *testing.T, spec positionSpec) *positionFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
 	moduleDraft, err := imports.Build(spec.module)
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalize, err := moduleDraft.Finalizer()
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinalize.View()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 
@@ -139,15 +140,8 @@ func openPositionFixture(t *testing.T, spec positionSpec) *positionFixture {
 		sourceFinalize: sourceFinalize, staticFinalize: staticFinalize,
 		flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
 	}
-	t.Cleanup(func() { closePositionFixture(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize) })
+	t.Cleanup(func() { flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize) })
 	return fixture
-}
-
-func closePositionFixture(sourceFinalize source.Finalizer, staticFinalize static.Finalizer, flowFinalize authored.Finalizer, moduleFinalize imports.Finalizer) {
-	_ = moduleFinalize.Abort()
-	_ = flowFinalize.Abort()
-	_ = staticFinalize.Abort()
-	_ = sourceFinalize.Abort()
 }
 
 func sealPositionFixture(fixture *positionFixture) (source.IndexInput, error) {
@@ -158,14 +152,7 @@ func sealPositionFixture(fixture *positionFixture) (source.IndexInput, error) {
 func sourceInputForPosition(counts [keyspace.FamilyCount]uint32, rows [][]keyspace.Term, ints []source.IntegerLiteral, faults []source.ControlFault, exactAtoms []keyspace.LiteralValue, nilOwners []keyspace.Term) source.Input {
 	input := source.Input{Name: "position-law.lua"}
 	input.ExactAtoms = append([]keyspace.LiteralValue(nil), exactAtoms...)
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: input.Name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Families = flowtest.FamilySpans(input.Name, counts)
 	input.Bodies = make([]source.BodySource, counts[keyspace.FamilyBody])
 	for index := range input.Bodies {
 		if index < len(rows) {
@@ -183,13 +170,9 @@ func sourceInputForPosition(counts [keyspace.FamilyCount]uint32, rows [][]keyspa
 	}
 	input.Integer = append([]source.IntegerLiteral(nil), ints...)
 	input.Faults = append([]source.ControlFault(nil), faults...)
-	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyNil]; ordinal++ {
-		owner := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(nilOwners) {
-			owner = nilOwners[ordinal-1]
-		}
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: owner})
-	}
+	input.Nil = flowtest.LiteralRows(counts[keyspace.FamilyNil], nilOwners, keyspace.MakeTerm(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
 	return input
 }
 

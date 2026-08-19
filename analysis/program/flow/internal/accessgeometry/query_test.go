@@ -3,22 +3,16 @@ package accessgeometry
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func accessGeometryTestID(value byte) identity.ContentID {
-	var id identity.ContentID
-	id[0] = value
-	return id
-}
-
 func accessGeometryTestResult() *Result {
 	return &Result{
-		sourceID:      accessGeometryTestID(1),
-		flowID:        accessGeometryTestID(2),
-		staticID:      accessGeometryTestID(3),
-		moduleID:      accessGeometryTestID(4),
+		sourceID:      flowtest.ContentIDAt(1),
+		flowID:        flowtest.ContentIDAt(2),
+		staticID:      flowtest.ContentIDAt(3),
+		moduleID:      flowtest.ContentIDAt(4),
 		tableFields:   tableFieldProjection{keys: []keyspace.Key{0, 7, 0}},
 		exactLenses:   exactLensProjection{keys: []keyspace.Key{0, 8}},
 		dynamicLenses: dynamicLensProjection{keys: []keyspace.Key{0, 0}},
@@ -156,10 +150,10 @@ func TestAccessGeometryQueriesFailClosedForMalformedPlanes(t *testing.T) {
 func TestAccessGeometryQueriesScaleWithDensePlanes(t *testing.T) {
 	const members = 10000
 	result := &Result{
-		sourceID:      accessGeometryTestID(1),
-		flowID:        accessGeometryTestID(2),
-		staticID:      accessGeometryTestID(3),
-		moduleID:      accessGeometryTestID(4),
+		sourceID:      flowtest.ContentIDAt(1),
+		flowID:        flowtest.ContentIDAt(2),
+		staticID:      flowtest.ContentIDAt(3),
+		moduleID:      flowtest.ContentIDAt(4),
 		tableFields:   tableFieldProjection{keys: make([]keyspace.Key, members+1)},
 		exactLenses:   exactLensProjection{keys: make([]keyspace.Key, members+1)},
 		dynamicLenses: dynamicLensProjection{keys: make([]keyspace.Key, members+1)},

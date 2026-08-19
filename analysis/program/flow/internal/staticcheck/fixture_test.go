@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -100,57 +101,57 @@ func newCheckFixture(t *testing.T, spec checkSpec) *checkFixture {
 	preimage := sourceFinal.Preimage()
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindings, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
 	moduleDraft, err := imports.Build(spec.module)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinal, err := moduleDraft.Finalizer()
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinal.View()
 	forest, proof, err := containment.Prove(preimage, staticView, flowView, bodies, bindings, moduleView, entry)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()
 	shape, err := control.Seal(preimage, flowView, bodies, bindings, forest, staticID, moduleID)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticID, moduleID)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	index, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry, staticID, moduleID)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinal.Commit(index)
 	if err != nil {
-		cleanupCheckFixture(sourceFinal, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	access, err := accessgeometry.SealSelectors(sourceView, flowView, bodies, bindings, staticView, moduleView)
 	if err != nil {
-		cleanupCheckFixture(source.Finalizer{}, flowFinal, staticFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("accessgeometry.Seal: %v", err)
 	}
 	fixture := &checkFixture{
@@ -166,27 +167,13 @@ func newCheckFixture(t *testing.T, spec checkSpec) *checkFixture {
 	return fixture
 }
 
-func cleanupCheckFixture(sourceFinal source.Finalizer, flowFinal authored.Finalizer, staticFinal static.Finalizer, moduleFinal imports.Finalizer) {
-	_ = sourceFinal.Abort()
-	_ = flowFinal.Abort()
-	_ = staticFinal.Abort()
-	_ = moduleFinal.Abort()
-}
-
 func checkSourceInput(spec checkSpec) source.Input {
 	input := source.Input{Name: spec.name, ExactAtoms: append([]keyspace.LiteralValue(nil), spec.exacts...), Keys: append([]source.KeyInput(nil), spec.keys...)}
 	literalOwner := spec.literalOwner
 	if literalOwner == 0 {
 		literalOwner = keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, spec.counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: spec.name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Families = flowtest.FamilySpans(spec.name, spec.counts)
 	input.Bodies = make([]source.BodySource, spec.counts[keyspace.FamilyBody])
 	for ordinal := range input.Bodies {
 		if ordinal < len(spec.rows) {
@@ -208,21 +195,21 @@ func checkSourceInput(spec checkSpec) source.Input {
 			input.Functions[ordinal].Formals = append([]keyspace.Term(nil), spec.formals[ordinal].Formals...)
 		}
 	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyNil]; ordinal++ {
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: literalOwner})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyBool]; ordinal++ {
-		input.Bool = append(input.Bool, source.BoolLiteral{Owner: literalOwner, Value: ordinal%2 == 1})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyInteger]; ordinal++ {
-		input.Integer = append(input.Integer, source.IntegerLiteral{Owner: literalOwner, Value: int64(ordinal)})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyFloat]; ordinal++ {
-		input.Float = append(input.Float, source.FloatLiteral{Owner: literalOwner, Bits: uint64(ordinal)})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyString]; ordinal++ {
-		input.String = append(input.String, source.StringLiteral{Owner: literalOwner, Value: "literal"})
-	}
+	input.Nil = flowtest.LiteralRows(spec.counts[keyspace.FamilyNil], nil, literalOwner, func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
+	input.Bool = flowtest.LiteralRows(spec.counts[keyspace.FamilyBool], nil, literalOwner, func(owner keyspace.Term, ordinal uint32) source.BoolLiteral {
+		return source.BoolLiteral{Owner: owner, Value: ordinal%2 == 1}
+	})
+	input.Integer = flowtest.LiteralRows(spec.counts[keyspace.FamilyInteger], nil, literalOwner, func(owner keyspace.Term, ordinal uint32) source.IntegerLiteral {
+		return source.IntegerLiteral{Owner: owner, Value: int64(ordinal)}
+	})
+	input.Float = flowtest.LiteralRows(spec.counts[keyspace.FamilyFloat], nil, literalOwner, func(owner keyspace.Term, ordinal uint32) source.FloatLiteral {
+		return source.FloatLiteral{Owner: owner, Bits: uint64(ordinal)}
+	})
+	input.String = flowtest.LiteralRows(spec.counts[keyspace.FamilyString], nil, literalOwner, func(owner keyspace.Term, _ uint32) source.StringLiteral {
+		return source.StringLiteral{Owner: owner, Value: "literal"}
+	})
 	return input
 }
 

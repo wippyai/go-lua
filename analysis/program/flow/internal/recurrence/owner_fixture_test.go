@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
@@ -104,12 +105,12 @@ func openOwnerFixture(t *testing.T, spec ownerSpec) *ownerFixture {
 	flowInput.Counts = spec.counts
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -117,75 +118,75 @@ func openOwnerFixture(t *testing.T, spec ownerSpec) *ownerFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticFinalize.View(), entry)
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalize, err := moduleDraft.Finalizer()
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	forest, _, err := containment.Prove(preimage, staticFinalize.View(), flowView, bodies, bindingResult, moduleFinalize.View(), entry)
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeOwnerFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, issuance, err := sourceFinalize.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
-		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	graph, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry,
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	cellRoles := sourceView.CellRoles()
 	if !cellRoles.Matches(sourceView) {
-		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, err := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.Cold().ContentID(), staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
-		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(),
 		staticFinalize.View().ContentID(), moduleFinalize.View().ContentID())
 	vertexLease, err := graph.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || err != nil || vertexLease == nil {
-		closeOwnerFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	fixture := &ownerFixture{
@@ -201,16 +202,9 @@ func openOwnerFixture(t *testing.T, spec ownerSpec) *ownerFixture {
 	}
 	t.Cleanup(func() {
 		fixture.graph.ReleaseVertexCatalog(fixture.graphLease)
-		closeOwnerFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
 	})
 	return fixture
-}
-
-func closeOwnerFinalizers(sourceFinalize source.Finalizer, staticFinalize static.Finalizer, flowFinalize authored.Finalizer, moduleFinalize imports.Finalizer) {
-	_ = moduleFinalize.Abort()
-	_ = flowFinalize.Abort()
-	_ = staticFinalize.Abort()
-	_ = sourceFinalize.Abort()
 }
 
 func ownerSourceInput(spec ownerSpec) source.Input {
@@ -219,14 +213,7 @@ func ownerSourceInput(spec ownerSpec) source.Input {
 		name = "recurrence-owner.lua"
 	}
 	input := source.Input{Name: name}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, spec.counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: input.Name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Families = flowtest.FamilySpans(input.Name, spec.counts)
 	input.Bodies = make([]source.BodySource, len(spec.rows))
 	for index, rows := range spec.rows {
 		input.Bodies[index] = source.BodySource{Body: term(keyspace.FamilyBody, uint32(index+1)), Terms: append([]keyspace.Term(nil), rows...)}
@@ -245,32 +232,20 @@ func ownerSourceInput(spec ownerSpec) source.Input {
 			input.Functions[index].Formals = append([]keyspace.Term(nil), spec.forms[index].Formals...)
 		}
 	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyNil]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.nilOwners) {
-			owner = spec.nilOwners[ordinal-1]
-		}
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: owner})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyBool]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.boolOwners) {
-			owner = spec.boolOwners[ordinal-1]
-		}
-		input.Bool = append(input.Bool, source.BoolLiteral{Owner: owner, Value: ordinal&1 == 1})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyInteger]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.intOwners) {
-			owner = spec.intOwners[ordinal-1]
-		}
-		input.Integer = append(input.Integer, source.IntegerLiteral{Owner: owner, Value: int64(ordinal)})
-	}
+	input.Nil = flowtest.LiteralRows(spec.counts[keyspace.FamilyNil], spec.nilOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
+	input.Bool = flowtest.LiteralRows(spec.counts[keyspace.FamilyBool], spec.boolOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, ordinal uint32) source.BoolLiteral {
+		return source.BoolLiteral{Owner: owner, Value: ordinal&1 == 1}
+	})
+	input.Integer = flowtest.LiteralRows(spec.counts[keyspace.FamilyInteger], spec.intOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, ordinal uint32) source.IntegerLiteral {
+		return source.IntegerLiteral{Owner: owner, Value: int64(ordinal)}
+	})
 	return input
 }
 
 func term(family keyspace.Family, ordinal uint32) keyspace.Term {
-	return keyspace.MakeTerm(family, ordinal)
+	return flowtest.Term(family, ordinal)
 }
 
 type ownerFamilyCount struct {

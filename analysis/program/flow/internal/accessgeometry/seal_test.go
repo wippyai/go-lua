@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/semanticpath"
@@ -86,12 +87,12 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 
 	flowDraft, err := authored.Build(input)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinal, err := flowDraft.Finalizer()
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinal.View()
@@ -99,23 +100,23 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 	entry := body
 	bodies, err := flowbody.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinal, err := moduleDraft.Finalizer()
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinal.View()
@@ -123,49 +124,49 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry, staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, issuance, err := sourceFinal.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
-		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	controlProof, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry, staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(issuance, sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.Cold().ContentID(), staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	proof, err := executable.Seal(sourceView, flowView, forest, controlProof, staticID, moduleID, paths)
 	if err != nil {
-		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, proof, staticID, moduleID)
 	if err != nil {
-		closeAccessGeometryFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("candidates.Seal: %v", err)
 	}
 	fixture := &accessGeometryFixture{
@@ -184,16 +185,9 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		moduleFinal: moduleFinal,
 	}
 	t.Cleanup(func() {
-		closeAccessGeometryFinalizers(fixture.sourceFinal, fixture.staticFinal, fixture.flowFinal, fixture.moduleFinal)
+		flowtest.CloseFinalizers(fixture.sourceFinal, fixture.staticFinal, fixture.flowFinal, fixture.moduleFinal)
 	})
 	return fixture
-}
-
-func closeAccessGeometryFinalizers(sourceFinal source.Finalizer, staticFinal static.Finalizer, flowFinal authored.Finalizer, moduleFinal imports.Finalizer) {
-	_ = moduleFinal.Abort()
-	_ = flowFinal.Abort()
-	_ = staticFinal.Abort()
-	_ = sourceFinal.Abort()
 }
 
 func accessTerm(family keyspace.Family, ordinal uint32) keyspace.Term {
@@ -276,17 +270,10 @@ func accessSourceInput(counts [keyspace.FamilyCount]uint32, body keyspace.Term, 
 		Bool:   []source.BoolLiteral{{Owner: body, Value: true}},
 		String: []source.StringLiteral{{Owner: body, Value: "direct"}},
 	}
-	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyNil]; ordinal++ {
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: body})
-	}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, counts[family])
-		for index := range spans {
-			line := uint32(index + 1)
-			spans[index] = source.Span{File: input.Name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Nil = flowtest.LiteralRows(counts[keyspace.FamilyNil], nil, body, func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
+	input.Families = flowtest.FamilySpans(input.Name, counts)
 	return input
 }
 

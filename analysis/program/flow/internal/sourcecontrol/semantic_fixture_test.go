@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/imports"
@@ -97,12 +98,12 @@ func openSemanticFixture(t *testing.T, spec semanticSpec) *semanticFixture {
 	flowInput.Counts = spec.counts
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -110,53 +111,53 @@ func openSemanticFixture(t *testing.T, spec semanticSpec) *semanticFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinalize, err := moduleDraft.Finalizer()
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinalize.View()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
 		staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
 		staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry,
 		staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
-		closeSemanticFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinalize.Commit(indexInput)
 	if err != nil {
-		closeSemanticFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
@@ -164,7 +165,7 @@ func openSemanticFixture(t *testing.T, spec semanticSpec) *semanticFixture {
 	result, err := Seal(sourceView, flowView, bodies, forest, shape, entry,
 		staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
-		closeSemanticFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinalize, flowFinalize, moduleFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	fixture := &semanticFixture{
@@ -179,16 +180,9 @@ func openSemanticFixture(t *testing.T, spec semanticSpec) *semanticFixture {
 		moduleFinalize: moduleFinalize,
 	}
 	t.Cleanup(func() {
-		closeSemanticFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.staticFinalize, fixture.flowFinalize, fixture.moduleFinalize)
 	})
 	return fixture
-}
-
-func closeSemanticFinalizers(sourceFinalize source.Finalizer, staticFinalize static.Finalizer, flowFinalize authored.Finalizer, moduleFinalize imports.Finalizer) {
-	_ = moduleFinalize.Abort()
-	_ = flowFinalize.Abort()
-	_ = staticFinalize.Abort()
-	_ = sourceFinalize.Abort()
 }
 
 func semanticSourceInput(spec semanticSpec) source.Input {
@@ -199,14 +193,7 @@ func semanticSourceInput(spec semanticSpec) source.Input {
 	input := source.Input{Name: name}
 	input.ExactAtoms = append([]keyspace.LiteralValue(nil), spec.exactAtoms...)
 	input.Keys = append([]source.KeyInput(nil), spec.keys...)
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, spec.counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: input.Name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		input.Families = append(input.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	input.Families = flowtest.FamilySpans(input.Name, spec.counts)
 	input.Bodies = make([]source.BodySource, len(spec.rows))
 	for index, terms := range spec.rows {
 		input.Bodies[index] = source.BodySource{Body: term(keyspace.FamilyBody, uint32(index+1)), Terms: append([]keyspace.Term(nil), terms...)}
@@ -225,27 +212,15 @@ func semanticSourceInput(spec semanticSpec) source.Input {
 			input.Functions[index].Formals = append([]keyspace.Term(nil), spec.forms[index].Formals...)
 		}
 	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyNil]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.nilOwners) {
-			owner = spec.nilOwners[ordinal-1]
-		}
-		input.Nil = append(input.Nil, source.NilLiteral{Owner: owner})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyBool]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.boolOwners) {
-			owner = spec.boolOwners[ordinal-1]
-		}
-		input.Bool = append(input.Bool, source.BoolLiteral{Owner: owner, Value: ordinal&1 == 1})
-	}
-	for ordinal := uint32(1); ordinal <= spec.counts[keyspace.FamilyInteger]; ordinal++ {
-		owner := term(keyspace.FamilyBody, 1)
-		if int(ordinal) <= len(spec.intOwners) {
-			owner = spec.intOwners[ordinal-1]
-		}
-		input.Integer = append(input.Integer, source.IntegerLiteral{Owner: owner, Value: int64(ordinal)})
-	}
+	input.Nil = flowtest.LiteralRows(spec.counts[keyspace.FamilyNil], spec.nilOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.NilLiteral {
+		return source.NilLiteral{Owner: owner}
+	})
+	input.Bool = flowtest.LiteralRows(spec.counts[keyspace.FamilyBool], spec.boolOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, ordinal uint32) source.BoolLiteral {
+		return source.BoolLiteral{Owner: owner, Value: ordinal&1 == 1}
+	})
+	input.Integer = flowtest.LiteralRows(spec.counts[keyspace.FamilyInteger], spec.intOwners, term(keyspace.FamilyBody, 1), func(owner keyspace.Term, ordinal uint32) source.IntegerLiteral {
+		return source.IntegerLiteral{Owner: owner, Value: int64(ordinal)}
+	})
 	return input
 }
 

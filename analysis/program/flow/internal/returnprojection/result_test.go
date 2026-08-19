@@ -4,11 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func returnProjectionOwners() (identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID) {
-	return identity.ContentID{1}, identity.ContentID{2}, identity.ContentID{3}, identity.ContentID{4}
+	return flowtest.ContentIDAt(1), flowtest.ContentIDAt(2), flowtest.ContentIDAt(3), flowtest.ContentIDAt(4)
 }
 
 func TestResultQueriesUseExactOwnerFenceAndOrderedValues(t *testing.T) {

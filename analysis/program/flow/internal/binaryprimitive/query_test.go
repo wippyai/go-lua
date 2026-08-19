@@ -4,23 +4,18 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
-
-func binaryPrimitiveTestID(value byte) identity.ContentID {
-	var id identity.ContentID
-	id[0] = value
-	return id
-}
 
 func binaryPrimitiveTestResult() *Result {
 	add := keyspace.MakeTerm(keyspace.FamilyBinary, 1)
 	equal := keyspace.MakeTerm(keyspace.FamilyBinary, 2)
 	greater := keyspace.MakeTerm(keyspace.FamilyBinary, 3)
 	return &Result{
-		sourceID: binaryPrimitiveTestID(1), flowID: binaryPrimitiveTestID(2),
-		staticID: binaryPrimitiveTestID(3), moduleID: binaryPrimitiveTestID(4),
+		sourceID: flowtest.ContentIDAt(1), flowID: flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3), moduleID: flowtest.ContentIDAt(4),
 		slots: []uint32{0, 1, 2, 3},
 		primitives: []primitiveRow{
 			{source: add, operation: Operation{Owner: keyspace.MakeTerm(keyspace.FamilyBody, 1), Op: kind.BinaryAdd, Left: keyspace.MakeTerm(keyspace.FamilyInteger, 1), Right: keyspace.MakeTerm(keyspace.FamilyInteger, 2)}},
@@ -219,8 +214,8 @@ func TestPrimitiveQueriesFailClosedAndDoNotAllocate(t *testing.T) {
 func TestPrimitiveQueriesScaleWithDenseBuckets(t *testing.T) {
 	const members = 10000
 	result := &Result{
-		sourceID: binaryPrimitiveTestID(1), flowID: binaryPrimitiveTestID(2),
-		staticID: binaryPrimitiveTestID(3), moduleID: binaryPrimitiveTestID(4),
+		sourceID: flowtest.ContentIDAt(1), flowID: flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3), moduleID: flowtest.ContentIDAt(4),
 		slots:      make([]uint32, members+1),
 		primitives: make([]primitiveRow, members),
 		buckets: bucketStore{

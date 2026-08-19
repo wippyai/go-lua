@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -69,10 +70,10 @@ func TestCandidateGenericLoopRejectsOpenTailOtherFormsAndDeadRows(t *testing.T) 
 func TestCandidateGenericLoopQueriesAreAllocationFree(t *testing.T) {
 	loop := candidateTerm(keyspace.FamilyLoop, 1)
 	result := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets:  bucketStore{genericLoop: []keyspace.Term{loop}},
 		classes:  classStore{loopClass: []uint8{genericLoopCandidate}},
 	}
@@ -91,10 +92,10 @@ func TestCandidateGenericLoopPermutationCapacityAndAPILaws(t *testing.T) {
 	first := candidateTerm(keyspace.FamilyLoop, 1)
 	second := candidateTerm(keyspace.FamilyLoop, 2)
 	result := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		buckets:  bucketStore{genericLoop: []keyspace.Term{second, first}},
 		classes:  classStore{loopClass: []uint8{genericLoopCandidate, genericLoopCandidate}},
 	}
@@ -127,10 +128,10 @@ func TestCandidateGenericLoopPermutationCapacityAndAPILaws(t *testing.T) {
 
 	const members = 10_000
 	scaled := &Result{
-		sourceID: candidateValidID(1),
-		flowID:   candidateValidID(2),
-		staticID: candidateValidID(3),
-		moduleID: candidateValidID(4),
+		sourceID: flowtest.ContentIDAt(1),
+		flowID:   flowtest.ContentIDAt(2),
+		staticID: flowtest.ContentIDAt(3),
+		moduleID: flowtest.ContentIDAt(4),
 		classes:  classStore{loopClass: make([]uint8, members)},
 	}
 	for ordinal := 1; ordinal <= members; ordinal++ {

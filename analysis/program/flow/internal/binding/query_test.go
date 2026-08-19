@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -33,7 +34,7 @@ func TestResultQueriesFailClosedForZeroForeignAndMalformedTerms(t *testing.T) {
 
 	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	malformed := Result{
-		sourceID: bindingTestSourceID(), flowID: bindingTestFlowID(),
+		sourceID: flowtest.ContentIDAt(0x11), flowID: flowtest.ContentIDAt(0x22),
 		roles: []kind.CellRole{0, kind.CellGlobal}, hosts: []keyspace.Term{0}, chunk: cell,
 	}
 	if role, ok := malformed.Role(cell); ok || role != 0 {

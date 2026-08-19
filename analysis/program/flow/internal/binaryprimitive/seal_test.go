@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/evaluation"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/executable"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/outcome"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/runtimeentry"
@@ -61,14 +62,7 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 
 	name := "binaryprimitive-real.lua"
 	sourceInput := source.Input{Name: name}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		spans := make([]source.Span, counts[family])
-		for ordinal := range spans {
-			line := uint32(ordinal + 1)
-			spans[ordinal] = source.Span{File: name, StartLine: line, StartCol: 1, EndLine: line, EndCol: 1}
-		}
-		sourceInput.Families = append(sourceInput.Families, source.FamilySpans{Family: family, Spans: spans})
-	}
+	sourceInput.Families = flowtest.FamilySpans(name, counts)
 	sourceInput.Nil = make([]source.NilLiteral, nilCount)
 	for index := range sourceInput.Nil {
 		sourceInput.Nil[index] = source.NilLiteral{Owner: body}
@@ -142,134 +136,127 @@ func openBinaryPrimitiveFixture(t *testing.T, comparisonOp flowkind.BinaryOp) *b
 	}
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinal, err := flowDraft.Finalizer()
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, authored.Finalizer{}, imports.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinal.View()
 
 	bodies, err := flowbody.Seal(preimage, flowView, staticView, body)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, body)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("binding.Seal: %v", err)
 	}
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Build: %v", err)
 	}
 	moduleFinal, err := moduleDraft.Finalizer()
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, imports.Finalizer{})
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 	moduleView := moduleFinal.View()
 	staticID, moduleID := staticView.ContentID(), moduleView.ContentID()
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, body)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	ports, err := evaluation.SealPorts(preimage.Identity(), flowView, forest, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("evaluation.SealPorts: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, body, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, issuance, err := sourceFinal.CommitWithSemanticPathIssuance(indexInput)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	graph, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, body, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	cellRoles := sourceView.CellRoles()
 	if !cellRoles.Matches(sourceView) {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, certificateErr := semanticpath.Seal(issuance, cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
 	if certificateErr != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
 	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
 	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || vertexErr != nil || vertexLease == nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	defer graph.ReleaseVertexCatalog(vertexLease)
 	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
 	outcomePhases, outcomeErr := graph.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
 	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, forest, graph, staticID, moduleID, certificate)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	entries, err := runtimeentry.Seal(sourceView, flowView, graph, ports, executableResult, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("runtimeentry.Seal: %v", err)
 	}
 	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
 	if !pathsOK {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatal("semanticpath.Causal: view unavailable")
 	}
 	preparation, err := causal.PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, executableResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("causal.PrepareRoutePlan: %v", err)
 	}
 	causalResult, err := preparation.Seal()
 	if err != nil {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, staticFinal, flowFinal, moduleFinal)
 		t.Fatalf("causal.Preparation.Seal: %v", err)
 	}
 	fixture := &binaryPrimitiveFixture{sourceView: sourceView, flow: flowView, executable: executableResult, causal: causalResult, staticID: staticID, moduleID: moduleID, staticFinal: staticFinal, flowFinal: flowFinal, moduleFinal: moduleFinal}
 	t.Cleanup(func() {
-		closeBinaryPrimitiveFinalizers(source.Finalizer{}, fixture.staticFinal, fixture.flowFinal, fixture.moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.staticFinal, fixture.flowFinal, fixture.moduleFinal)
 	})
 	return fixture
-}
-
-func closeBinaryPrimitiveFinalizers(sourceFinal source.Finalizer, staticFinal static.Finalizer, flowFinal authored.Finalizer, moduleFinal imports.Finalizer) {
-	_ = moduleFinal.Abort()
-	_ = flowFinal.Abort()
-	_ = staticFinal.Abort()
-	_ = sourceFinal.Abort()
 }
 
 func TestBinaryPrimitiveSealAllExplicitCategoriesAndRealComparison(t *testing.T) {

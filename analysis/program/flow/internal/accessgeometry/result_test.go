@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 )
 
 func TestAccessGeometryProvenanceFenceAndDenominators(t *testing.T) {
@@ -13,7 +14,7 @@ func TestAccessGeometryProvenanceFenceAndDenominators(t *testing.T) {
 		t.Fatal("matching owner quartet was rejected")
 	}
 	if Matches(result, sourceID, flowID, staticID, identity.ContentID{}) ||
-		Matches(result, sourceID, flowID, staticID, accessGeometryTestID(9)) {
+		Matches(result, sourceID, flowID, staticID, flowtest.ContentIDAt(9)) {
 		t.Fatal("foreign or unavailable provenance matched")
 	}
 	if result.TableFields().Count() != 2 || result.ExactLenses().Count() != 1 || result.DynamicLenses().Count() != 1 {

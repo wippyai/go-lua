@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -110,7 +111,7 @@ func TestSealRejectsEmptyBindAndNonStringGlobal(t *testing.T) {
 
 func TestResultQueriesAllocateNothing(t *testing.T) {
 	result := Result{
-		sourceID: bindingTestSourceID(), flowID: bindingTestFlowID(),
+		sourceID: flowtest.ContentIDAt(0x11), flowID: flowtest.ContentIDAt(0x22),
 		roles: []kind.CellRole{0, kind.CellChunkVararg}, hosts: []keyspace.Term{0, 1},
 		chunk: keyspace.MakeTerm(keyspace.FamilyCell, 1),
 	}
@@ -564,8 +565,8 @@ func TestFunctionCellQueryAllocatesNothing(t *testing.T) {
 	function := keyspace.MakeTerm(keyspace.FamilyFunction, 1)
 	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
 	result := Result{
-		sourceID:      bindingTestSourceID(),
-		flowID:        bindingTestFlowID(),
+		sourceID:      flowtest.ContentIDAt(0x11),
+		flowID:        flowtest.ContentIDAt(0x22),
 		roles:         []kind.CellRole{0, kind.CellLocal},
 		hosts:         []keyspace.Term{0, keyspace.MakeTerm(keyspace.FamilyBind, 1)},
 		functionCells: []keyspace.Term{0, cell},

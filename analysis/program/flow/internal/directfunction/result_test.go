@@ -4,32 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
-
-func directTestSourceID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 1
-	return id
-}
-
-func directTestFlowID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 2
-	return id
-}
-
-func directTestStaticID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 3
-	return id
-}
-
-func directTestModuleID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 4
-	return id
-}
 
 func TestResultQueriesRetainOnlyExactDensePlanes(t *testing.T) {
 	function := keyspace.MakeTerm(keyspace.FamilyFunction, 1)
@@ -37,10 +14,10 @@ func TestResultQueriesRetainOnlyExactDensePlanes(t *testing.T) {
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
 	result := &Result{
-		sourceID:      directTestSourceID(),
-		flowID:        directTestFlowID(),
-		staticID:      directTestStaticID(),
-		moduleID:      directTestModuleID(),
+		sourceID:      flowtest.ContentIDAt(1),
+		flowID:        flowtest.ContentIDAt(2),
+		staticID:      flowtest.ContentIDAt(3),
+		moduleID:      flowtest.ContentIDAt(4),
 		readFunctions: []keyspace.Term{0, function},
 		callFunctions: []keyspace.Term{0, function},
 		loopFunctions: []keyspace.Term{0, function},
@@ -85,10 +62,10 @@ func TestResultQueriesAllocateNothing(t *testing.T) {
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	loop := keyspace.MakeTerm(keyspace.FamilyLoop, 1)
 	result := &Result{
-		sourceID:      directTestSourceID(),
-		flowID:        directTestFlowID(),
-		staticID:      directTestStaticID(),
-		moduleID:      directTestModuleID(),
+		sourceID:      flowtest.ContentIDAt(1),
+		flowID:        flowtest.ContentIDAt(2),
+		staticID:      flowtest.ContentIDAt(3),
+		moduleID:      flowtest.ContentIDAt(4),
 		readFunctions: []keyspace.Term{0, function},
 		callFunctions: []keyspace.Term{0, function},
 		loopFunctions: []keyspace.Term{0, function},

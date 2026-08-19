@@ -7,23 +7,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/body"
+	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 )
-
-func bindingTestSourceID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 0x11
-	return id
-}
-
-func bindingTestFlowID() identity.ContentID {
-	var id identity.ContentID
-	id[0] = 0x22
-	return id
-}
 
 type bindingOwnerFixture struct {
 	preimage source.Preimage
@@ -174,7 +163,7 @@ func TestBindingResultQueriesFailClosedWithoutOwnerIDs(t *testing.T) {
 		hosts: []keyspace.Term{0, keyspace.MakeTerm(keyspace.FamilyBind, 1)},
 		chunk: cell,
 	}
-	if Matches(&zero, bindingTestSourceID(), bindingTestFlowID()) || zero.CellCount() != 0 {
+	if Matches(&zero, flowtest.ContentIDAt(0x11), flowtest.ContentIDAt(0x22)) || zero.CellCount() != 0 {
 		t.Fatal("zero-ID Binding result bypassed provenance fail-closed law")
 	}
 	if role, ok := zero.Role(cell); ok || role != 0 {
