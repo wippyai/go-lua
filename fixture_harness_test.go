@@ -277,7 +277,7 @@ func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile stri
 	expFile := exp.File
 	// Match diagnostic file: d.Position.File is set by the checker (e.g. "test.lua" or module name)
 	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
-		!(expFile == entryFile && d.Position.File == "test.lua") {
+		(expFile != entryFile || d.Position.File != "test.lua") {
 		return false
 	}
 	if d.Position.Line != exp.Line {

@@ -98,16 +98,6 @@ func putExpandMemo(m map[typ.Type]typ.Type) {
 	expandMemoPool.Put(m)
 }
 
-func expandInstantiatedWithDepth(t typ.Type, maxDepth int) typ.Type {
-	if t == nil || !expandInstantiatedCanDescend(t) {
-		return t
-	}
-	memo := getExpandMemo()
-	defer putExpandMemo(memo)
-	guard := typ.GuardForDepth(maxDepth)
-	return expandInstantiatedGuard(t, guard, memo)
-}
-
 func expandInstantiatedGuard(t typ.Type, guard internal.RecursionGuard, memo map[typ.Type]typ.Type) typ.Type {
 	if t == nil || !expandInstantiatedCanDescend(t) {
 		return t

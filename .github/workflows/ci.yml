@@ -17,9 +17,6 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -32,6 +29,9 @@ jobs:
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9.2.0
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
         with:
           version: v2.8.0
           only-new-issues: false
@@ -45,8 +45,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -58,14 +56,14 @@ jobs:
           cache: true
 
       - name: Run tests
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: go test -timeout 120s ./...
 
   race:
     name: Race Tests
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -78,6 +76,7 @@ jobs:
 
       - name: Run race tests
         env:
+          GOCACHE: ${{ runner.temp }}/go-build
           GORACE: "halt_on_error=1"
         run: go test -race -timeout 120s ./...
 
@@ -85,8 +84,6 @@ jobs:
     name: Fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -98,20 +95,24 @@ jobs:
           cache: true
 
       - name: Fuzz type decode
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: go test -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua source types
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: go test -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua with manifest
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: go test -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
 
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -123,6 +124,8 @@ jobs:
           cache: true
 
       - name: Run benchmarks
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
         run: go test -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
 
       - name: Upload benchmark results
