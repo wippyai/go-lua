@@ -466,15 +466,11 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 		if !held || snapshot == nil {
 			return false
 		}
-		observation, observed := snapshot.DiagnosticObservationForID(site.Local)
-		if !observed {
+		observation, observed := snapshot.Program().DiagnosticObservationForID(site.Local)
+		if !observed || observation.Kind() != structure.DiagnosticObservationTypeConformance {
 			return false
 		}
-		conformance, conformanceOK := observation.TypeConformance()
-		if !conformanceOK {
-			return false
-		}
-		declaredID := conformance.DeclaredStaticTypeID()
+		declaredID := observation.DeclaredStaticTypeID()
 		if !declaredID.Available() {
 			return false
 		}

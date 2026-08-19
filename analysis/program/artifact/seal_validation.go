@@ -3,7 +3,6 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/program"
-	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
 // sealValidationState carries the indexes built during the immutable seal
@@ -62,30 +61,69 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) Com
 		}
 		state.pointRows[row.id] = struct{}{}
 	}
-	seenDiagnosticObservations := make(map[identity.ContentID]struct{}, len(artifact.diagnosticObservations))
-	for index, row := range artifact.diagnosticObservations {
-		if !row.Available() {
+	diagnosticCount, diagnosticsPublished := coldCount(artifact, programschema.DiagnosticObservationFamily())
+	evidenceCount, evidencePublished := coldCount(artifact, programschema.DiagnosticEvidenceFamily())
+	pathCount, pathsPublished := coldCount(artifact, programschema.DiagnosticPathFamily())
+	if !diagnosticsPublished || !evidencePublished || !pathsPublished {
+		return compileFailure(CompileStageSeal, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
+	}
+	seenDiagnosticObservations := make(map[identity.ContentID]struct{}, diagnosticCount)
+	usedEvidence := make([]bool, evidenceCount)
+	usedPaths := make([]bool, pathCount)
+	for index := 0; index < diagnosticCount; index++ {
+		row, held := coldRow(artifact, programschema.DiagnosticObservationFamily(), index)
+		evidenceOffset, evidenceWidth, evidenceSpanOK := row.EvidenceSpan()
+		pathOffset, pathWidth, pathSpanOK := row.PathSpan()
+		if !held || !row.Available() || !evidenceSpanOK || !pathSpanOK ||
+			uint64(evidenceOffset)+uint64(evidenceWidth) > uint64(evidenceCount) || uint64(pathOffset)+uint64(pathWidth) > uint64(pathCount) {
 			return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
 		}
-		if row.Kind() == structure.DiagnosticObservationBranchCondition {
-			branch, branchOK := row.BranchCondition()
-			if !branchOK {
+		if _, duplicate := seenDiagnosticObservations[row.ID()]; duplicate || index > 0 {
+			if index > 0 {
+				prior, priorHeld := coldRow(artifact, programschema.DiagnosticObservationFamily(), index-1)
+				if !priorHeld || !contentIDBefore(prior.ID(), row.ID()) {
+					return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
+				}
+			}
+			if duplicate {
 				return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
 			}
-			for pointIndex := 0; pointIndex < branch.EvidencePointCount(); pointIndex++ {
-				point, pointOK := branch.EvidencePointAt(pointIndex)
-				if !pointOK || !point.Available() {
-					return compileFailure(CompileStageSeal, CompileRowRoute, index, pointIndex, CompileReasonRouteEndpoints)
-				}
-				if _, exists := state.pointRows[point]; !exists {
-					return compileFailure(CompileStageSeal, CompileRowRoute, index, pointIndex, CompileReasonRouteEndpoints)
-				}
+		}
+		seenDiagnosticObservations[row.ID()] = struct{}{}
+		seenEvidencePoints := make(map[identity.ContentID]struct{}, evidenceWidth)
+		for pointIndex := uint32(0); pointIndex < evidenceWidth; pointIndex++ {
+			ordinal := int(evidenceOffset + pointIndex)
+			point, pointOK := coldRow(artifact, programschema.DiagnosticEvidenceFamily(), ordinal)
+			if !pointOK || !point.Available() || usedEvidence[ordinal] {
+				return compileFailure(CompileStageSeal, CompileRowRoute, index, int(pointIndex), CompileReasonRouteEndpoints)
+			}
+			if _, duplicate := seenEvidencePoints[point.PointID()]; duplicate {
+				return compileFailure(CompileStageSeal, CompileRowRoute, index, int(pointIndex), CompileReasonRouteEndpoints)
+			}
+			seenEvidencePoints[point.PointID()] = struct{}{}
+			usedEvidence[ordinal] = true
+			if _, exists := state.pointRows[point.PointID()]; !exists {
+				return compileFailure(CompileStageSeal, CompileRowRoute, index, int(pointIndex), CompileReasonRouteEndpoints)
 			}
 		}
-		if _, duplicate := seenDiagnosticObservations[row.id]; duplicate || index > 0 && !contentIDBefore(artifact.diagnosticObservations[index-1].id, row.id) {
+		for pathIndex := uint32(0); pathIndex < pathWidth; pathIndex++ {
+			ordinal := int(pathOffset + pathIndex)
+			path, pathOK := coldRow(artifact, programschema.DiagnosticPathFamily(), ordinal)
+			if !pathOK || !path.Available() || usedPaths[ordinal] {
+				return compileFailure(CompileStageSeal, CompileRowRoute, index, int(pathIndex), CompileReasonRouteGuard)
+			}
+			usedPaths[ordinal] = true
+		}
+	}
+	for index := range usedEvidence {
+		if !usedEvidence[index] {
 			return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
 		}
-		seenDiagnosticObservations[row.id] = struct{}{}
+	}
+	for index := range usedPaths {
+		if !usedPaths[index] {
+			return compileFailure(CompileStageSeal, CompileRowRoute, index, -1, CompileReasonRouteGuard)
+		}
 	}
 	valuesCount, valuesPublished := coldCount(artifact, programschema.ValuesFamily())
 	if !valuesPublished {

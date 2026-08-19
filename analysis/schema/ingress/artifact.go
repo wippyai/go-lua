@@ -6,8 +6,6 @@ package ingress
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	programsource "github.com/wippyai/go-lua/analysis/program/source"
-	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
@@ -57,7 +55,6 @@ type Snapshot struct {
 	coldCatalog     identity.ContentID
 	vocabulary      structure.Table
 	bodyExits       [][]identity.ContentID
-	observations    []DiagnosticObservation
 	staticTypeNodes []StaticTypeNode
 }
 
@@ -458,29 +455,6 @@ func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
 	}
 	return Values{row: row, view: view}, true
 }
-func (snapshot *Snapshot) DiagnosticObservationCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.observations)
-}
-func (snapshot *Snapshot) DiagnosticObservationAt(index int) (DiagnosticObservation, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.observations) {
-		return DiagnosticObservation{}, false
-	}
-	return snapshot.observations[index], true
-}
-func (snapshot *Snapshot) DiagnosticObservationForID(id identity.ContentID) (DiagnosticObservation, bool) {
-	if !snapshot.Available() || !id.Available() {
-		return DiagnosticObservation{}, false
-	}
-	for _, row := range snapshot.observations {
-		if row.ID() == id {
-			return row, row.Available()
-		}
-	}
-	return DiagnosticObservation{}, false
-}
 func (snapshot *Snapshot) HeapIndexCount() int {
 	if !snapshot.Available() {
 		return 0
@@ -840,146 +814,6 @@ func (row HeapIndex) Values() (identity.ContentID, int, bool) {
 	return row.row.Values()
 }
 
-type diagnosticBranch struct {
-	decision, value identity.ContentID
-	points          []identity.ContentID
-}
-
-func (payload diagnosticBranch) DecisionPathID() identity.ContentID { return payload.decision }
-func (payload diagnosticBranch) ValueSpanID() identity.ContentID    { return payload.value }
-func (payload diagnosticBranch) EvidencePoints() ([]identity.ContentID, bool) {
-	if len(payload.points) == 0 {
-		return nil, false
-	}
-	return append([]identity.ContentID(nil), payload.points...), true
-}
-
-type diagnosticUnresolvedType struct {
-	reference, root identity.ContentID
-	path            []string
-	name            string
-}
-
-func (payload diagnosticUnresolvedType) StaticReferenceID() identity.ContentID {
-	return payload.reference
-}
-func (payload diagnosticUnresolvedType) RootID() identity.ContentID { return payload.root }
-func (payload diagnosticUnresolvedType) Path() ([]string, bool) {
-	if len(payload.path) == 0 {
-		return nil, false
-	}
-	return append([]string(nil), payload.path...), true
-}
-func (payload diagnosticUnresolvedType) Name() (string, bool) {
-	return payload.name, payload.name != ""
-}
-
-type diagnosticUnresolvedValue struct {
-	read, cell identity.ContentID
-	name       string
-}
-
-func (payload diagnosticUnresolvedValue) ReadID() identity.ContentID { return payload.read }
-func (payload diagnosticUnresolvedValue) CellID() identity.ContentID { return payload.cell }
-func (payload diagnosticUnresolvedValue) Name() (string, bool) {
-	return payload.name, payload.name != ""
-}
-
-type diagnosticConformance struct {
-	owner, value, declared, span identity.ContentID
-	site                         schemadiag.Site
-	position                     uint32
-	points                       []identity.ContentID
-}
-
-// OwnerID is the statement that owns the measured site and MeasuredValueID the
-// semantic occurrence of the value it measures. Both populations of this row -
-// a direct-call actual and an initializer - carry the same pair.
-func (payload diagnosticConformance) OwnerID() identity.ContentID { return payload.owner }
-func (payload diagnosticConformance) MeasuredValueID() identity.ContentID {
-	return payload.value
-}
-func (payload diagnosticConformance) DeclaredStaticTypeID() identity.ContentID {
-	return payload.declared
-}
-func (payload diagnosticConformance) SpanID() identity.ContentID { return payload.span }
-func (payload diagnosticConformance) Site() schemadiag.Site      { return payload.site }
-func (payload diagnosticConformance) Position() (uint32, bool) {
-	return payload.position, payload.owner.Available()
-}
-func (payload diagnosticConformance) EvidencePoints() ([]identity.ContentID, bool) {
-	if len(payload.points) == 0 {
-		return nil, false
-	}
-	return append([]identity.ContentID(nil), payload.points...), true
-}
-
-type DiagnosticObservation struct {
-	id         identity.ContentID
-	kind       structure.DiagnosticObservationKind
-	location   programsource.Span
-	branch     diagnosticBranch
-	unresolved diagnosticUnresolvedType
-	value      diagnosticUnresolvedValue
-	conform    diagnosticConformance
-}
-
-func (row DiagnosticObservation) ID() identity.ContentID { return row.id }
-func (row DiagnosticObservation) Kind() structure.DiagnosticObservationKind {
-	return row.kind
-}
-func (row DiagnosticObservation) Location() (programsource.Span, bool) {
-	if row.location.File == "" || row.location.StartLine == 0 || row.location.StartCol == 0 {
-		return programsource.Span{}, false
-	}
-	return row.location, true
-}
-func (row DiagnosticObservation) Available() bool {
-	if !row.id.Available() || !row.kind.Available() {
-		return false
-	}
-	if _, ok := row.Location(); !ok {
-		return false
-	}
-	switch row.kind {
-	case structure.DiagnosticObservationBranchCondition:
-		return row.branch.decision.Available() && row.branch.value.Available() && len(row.branch.points) != 0
-	case structure.DiagnosticObservationTypeReferenceUnresolved:
-		return row.unresolved.reference.Available() && len(row.unresolved.path) != 0
-	case structure.DiagnosticObservationValueReferenceUnresolved:
-		return row.value.read.Available() && row.value.cell.Available() && row.value.name != ""
-	case structure.DiagnosticObservationTypeConformance:
-		return row.conform.owner.Available() && row.conform.value.Available() &&
-			row.conform.declared.Available() && row.conform.span.Available() && len(row.conform.points) != 0
-	default:
-		return false
-	}
-}
-func (row DiagnosticObservation) BranchCondition() (diagnosticBranch, bool) {
-	if !row.Available() || row.kind != structure.DiagnosticObservationBranchCondition {
-		return diagnosticBranch{}, false
-	}
-	return row.branch, true
-}
-func (row DiagnosticObservation) UnresolvedTypeReference() (diagnosticUnresolvedType, bool) {
-	if !row.Available() || row.kind != structure.DiagnosticObservationTypeReferenceUnresolved {
-		return diagnosticUnresolvedType{}, false
-	}
-	return row.unresolved, true
-}
-func (row DiagnosticObservation) UnresolvedValueReference() (diagnosticUnresolvedValue, bool) {
-	if !row.Available() || row.kind != structure.DiagnosticObservationValueReferenceUnresolved {
-		return diagnosticUnresolvedValue{}, false
-	}
-	return row.value, true
-}
-func (row DiagnosticObservation) TypeConformance() (diagnosticConformance, bool) {
-	if !row.Available() || row.kind != structure.DiagnosticObservationTypeConformance {
-		return diagnosticConformance{}, false
-	}
-	return row.conform, true
-}
-
 func copyIDs(count int, at func(int) (identity.ContentID, bool)) ([]identity.ContentID, bool) {
 	if count < 0 {
 		return nil, false
@@ -1188,70 +1022,5 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
 		})
 	}
-	snapshot.observations = make([]DiagnosticObservation, 0, artifact.DiagnosticObservationCount())
-	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
-		row, ok := artifact.DiagnosticObservationAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		lowered, loweredOK := lowerDiagnosticObservation(row)
-		if !loweredOK {
-			return nil, false
-		}
-		snapshot.observations = append(snapshot.observations, lowered)
-	}
 	return snapshot, snapshot.Available()
-}
-
-func lowerDiagnosticObservation(row programartifact.DiagnosticObservationRow) (DiagnosticObservation, bool) {
-	if !row.Available() {
-		return DiagnosticObservation{}, false
-	}
-	location, locationOK := row.Location()
-	if !locationOK {
-		return DiagnosticObservation{}, false
-	}
-	observation := DiagnosticObservation{id: row.ID(), kind: row.Kind(), location: location}
-	switch row.Kind() {
-	case structure.DiagnosticObservationBranchCondition:
-		branch, branchOK := row.BranchCondition()
-		points, pointsOK := branch.EvidencePoints()
-		if !branchOK || !pointsOK {
-			return DiagnosticObservation{}, false
-		}
-		observation.branch = diagnosticBranch{decision: branch.DecisionPathID(), value: branch.ValueSpanID(), points: append([]identity.ContentID(nil), points...)}
-	case structure.DiagnosticObservationTypeReferenceUnresolved:
-		unresolved, unresolvedOK := row.UnresolvedTypeReference()
-		path, pathOK := unresolved.Path()
-		name, nameOK := unresolved.Name()
-		if !unresolvedOK || !pathOK || !nameOK {
-			return DiagnosticObservation{}, false
-		}
-		observation.unresolved = diagnosticUnresolvedType{reference: unresolved.StaticReferenceID(), root: unresolved.RootID(), path: append([]string(nil), path...), name: name}
-	case structure.DiagnosticObservationValueReferenceUnresolved:
-		unresolved, unresolvedOK := row.UnresolvedValueReference()
-		name, nameOK := unresolved.Name()
-		if !unresolvedOK || !nameOK {
-			return DiagnosticObservation{}, false
-		}
-		observation.value = diagnosticUnresolvedValue{read: unresolved.ReadID(), cell: unresolved.CellID(), name: name}
-	case structure.DiagnosticObservationTypeConformance:
-		conformance, conformanceOK := row.TypeConformance()
-		if !conformanceOK {
-			return DiagnosticObservation{}, false
-		}
-		points, pointsOK := conformance.EvidencePoints()
-		position, positionOK := conformance.Position()
-		if !pointsOK || !positionOK {
-			return DiagnosticObservation{}, false
-		}
-		observation.conform = diagnosticConformance{
-			owner: conformance.OwnerID(), value: conformance.MeasuredValueID(),
-			declared: conformance.DeclaredStaticTypeID(), span: conformance.SpanID(),
-			site: conformance.Site(), position: position, points: append([]identity.ContentID(nil), points...),
-		}
-	default:
-		return DiagnosticObservation{}, false
-	}
-	return observation, observation.Available()
 }

@@ -47,7 +47,9 @@ type compiler struct {
 	unarySummaries             []programschema.UnarySummary
 	ruleOccurrences            []programschema.RuleOccurrence
 	issuance                   IssuanceDirectory
-	diagnosticObservations     []DiagnosticObservationRow
+	diagnosticObservations     []programschema.DiagnosticObservation
+	diagnosticEvidence         []programschema.DiagnosticEvidence
+	diagnosticPaths            []programschema.DiagnosticPath
 	staticTypeValues           []StaticTypeValueRow
 	staticTypeNodes            []StaticTypeNodeRow
 	staticExpressions          []StaticExpressionRow

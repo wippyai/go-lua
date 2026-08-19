@@ -4,22 +4,38 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
+
+func diagnosticProgram(t *testing.T, artifact *programartifact.Artifact) programschema.Program {
+	t.Helper()
+	program := artifact.Program()
+	if !program.Available() {
+		t.Fatal("diagnostic program unavailable")
+	}
+	return program
+}
 
 func TestProgramArtifactDiagnosticCompilerKeepsBranchObservationIDsStable(t *testing.T) {
 	left := compileStaticReferenceLeafArtifact(t, "diagnostic-compiler.lua", "local flag = true\nif flag then flag = false end\nreturn flag\n")
 	right := compileStaticReferenceLeafArtifact(t, "diagnostic-compiler.lua", "local flag = true\nif flag then flag = false end\nreturn flag\n")
+	leftProgram, rightProgram := diagnosticProgram(t, left), diagnosticProgram(t, right)
 	leftIDs, rightIDs := make(map[identity.ContentID]struct{}), make(map[identity.ContentID]struct{})
-	for index := 0; index < left.DiagnosticObservationCount(); index++ {
-		row, ok := left.DiagnosticObservationAt(index)
+	leftCount, leftPublished := leftProgram.DiagnosticObservationCount()
+	rightCount, rightPublished := rightProgram.DiagnosticObservationCount()
+	if !leftPublished || !rightPublished {
+		t.Fatal("diagnostic observation family unavailable")
+	}
+	for index := 0; index < leftCount; index++ {
+		row, ok := leftProgram.DiagnosticObservationAt(index)
 		if ok && row.Kind() == structure.DiagnosticObservationBranchCondition {
 			leftIDs[row.ID()] = struct{}{}
 		}
 	}
-	for index := 0; index < right.DiagnosticObservationCount(); index++ {
-		row, ok := right.DiagnosticObservationAt(index)
+	for index := 0; index < rightCount; index++ {
+		row, ok := rightProgram.DiagnosticObservationAt(index)
 		if ok && row.Kind() == structure.DiagnosticObservationBranchCondition {
 			rightIDs[row.ID()] = struct{}{}
 		}
@@ -58,16 +74,21 @@ func TestProgramArtifactBranchDiagnosticRequiresScopePreservingRewrite(t *testin
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			artifact := compileStaticReferenceLeafArtifact(t, "branch-diagnostic-scope-artifact.lua", test.source)
+			program := diagnosticProgram(t, artifact)
+			count, published := program.DiagnosticObservationCount()
+			if !published {
+				t.Fatal("diagnostic observation family unavailable")
+			}
 			unique := make(map[identity.ContentID]struct{})
-			for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
-				row, rowOK := artifact.DiagnosticObservationAt(index)
+			for index := 0; index < count; index++ {
+				row, rowOK := program.DiagnosticObservationAt(index)
 				if !rowOK {
 					t.Fatalf("DiagnosticObservationAt(%d)", index)
 				}
 				if row.Kind() != structure.DiagnosticObservationBranchCondition {
 					continue
 				}
-				if _, payloadOK := row.BranchCondition(); !payloadOK || !row.ID().Available() {
+				if !row.DecisionPathID().Available() || !row.ValueSpanID().Available() || !row.ID().Available() {
 					t.Fatal("issued branch diagnostic row is malformed")
 				}
 				unique[row.ID()] = struct{}{}
@@ -82,22 +103,27 @@ func TestProgramArtifactBranchDiagnosticRequiresScopePreservingRewrite(t *testin
 func TestProgramArtifactUnresolvedTypeObservationCarriesExactStaticProof(t *testing.T) {
 	left := compileStaticReferenceLeafArtifact(t, "diagnostic-observation-artifact.lua", "type MissingAlias = Missing\n")
 	right := compileStaticReferenceLeafArtifact(t, "diagnostic-observation-artifact.lua", "type MissingAlias = Missing\n")
+	leftProgram, rightProgram := diagnosticProgram(t, left), diagnosticProgram(t, right)
 	var leftID, rightID identity.ContentID
-	for index := 0; index < left.DiagnosticObservationCount(); index++ {
-		row, rowOK := left.DiagnosticObservationAt(index)
+	leftCount, leftPublished := leftProgram.DiagnosticObservationCount()
+	rightCount, rightPublished := rightProgram.DiagnosticObservationCount()
+	if !leftPublished || !rightPublished {
+		t.Fatal("diagnostic observation family unavailable")
+	}
+	for index := 0; index < leftCount; index++ {
+		row, rowOK := leftProgram.DiagnosticObservationAt(index)
 		if !rowOK || row.Kind() != structure.DiagnosticObservationTypeReferenceUnresolved {
 			continue
 		}
-		payload, payloadOK := row.UnresolvedTypeReference()
-		path, pathOK := payload.Path()
+		path, pathOK := diagnosticPath(leftProgram, index)
 		location, locationOK := row.Location()
-		if !payloadOK || !pathOK || len(path) != 1 || path[0] != "Missing" || !locationOK || location.File != "diagnostic-observation-artifact.lua" {
-			t.Fatalf("unresolved payload = %#v/%v path=%v/%v location=%#v/%v", payload, payloadOK, path, pathOK, location, locationOK)
+		if !pathOK || len(path) != 1 || path[0] != "Missing" || !locationOK || location.File != "diagnostic-observation-artifact.lua" {
+			t.Fatalf("unresolved payload path=%v/%v location=%#v/%v", path, pathOK, location, locationOK)
 		}
 		leftID = row.ID()
 	}
-	for index := 0; index < right.DiagnosticObservationCount(); index++ {
-		row, rowOK := right.DiagnosticObservationAt(index)
+	for index := 0; index < rightCount; index++ {
+		row, rowOK := rightProgram.DiagnosticObservationAt(index)
 		if rowOK && row.Kind() == structure.DiagnosticObservationTypeReferenceUnresolved {
 			rightID = row.ID()
 		}
@@ -109,17 +135,21 @@ func TestProgramArtifactUnresolvedTypeObservationCarriesExactStaticProof(t *test
 
 func TestProgramArtifactQualifiedUnresolvedTypeObservationCarriesRootProof(t *testing.T) {
 	artifact := compileStaticReferenceLeafArtifact(t, "qualified-diagnostic-observation-artifact.lua", "type MissingAlias = Missing.Namespace\n")
-	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
-		row, rowOK := artifact.DiagnosticObservationAt(index)
+	program := diagnosticProgram(t, artifact)
+	count, published := program.DiagnosticObservationCount()
+	if !published {
+		t.Fatal("diagnostic observation family unavailable")
+	}
+	for index := 0; index < count; index++ {
+		row, rowOK := program.DiagnosticObservationAt(index)
 		if !rowOK || row.Kind() != structure.DiagnosticObservationTypeReferenceUnresolved {
 			continue
 		}
-		payload, payloadOK := row.UnresolvedTypeReference()
-		path, pathOK := payload.Path()
-		if payloadOK && pathOK && len(path) == 2 && path[0] == "Missing" && path[1] == "Namespace" && payload.RootID().Available() {
+		path, pathOK := diagnosticPath(program, index)
+		if pathOK && len(path) == 2 && path[0] == "Missing" && path[1] == "Namespace" && row.RootID().Available() {
 			return
 		}
-		t.Fatalf("qualified unresolved type row = payload:%v/%v path:%v/%v root:%v", payload, payloadOK, path, pathOK, payload.RootID())
+		t.Fatalf("qualified unresolved type row = path:%v/%v root:%v", path, pathOK, row.RootID())
 	}
 	t.Fatal("qualified unresolved type reference was not issued")
 }
@@ -133,27 +163,28 @@ return total
 local total = missing_count + 1
 return total
 `)
-	if left.DiagnosticObservationCount() != 1 || right.DiagnosticObservationCount() != 1 {
-		t.Fatalf("diagnostic observation count = %d/%d, want 1/1", left.DiagnosticObservationCount(), right.DiagnosticObservationCount())
+	leftProgram, rightProgram := diagnosticProgram(t, left), diagnosticProgram(t, right)
+	leftCount, leftPublished := leftProgram.DiagnosticObservationCount()
+	rightCount, rightPublished := rightProgram.DiagnosticObservationCount()
+	if !leftPublished || !rightPublished || leftCount != 1 || rightCount != 1 {
+		t.Fatalf("diagnostic observation count = %d/%d, want 1/1", leftCount, rightCount)
 	}
-	row, rowOK := left.DiagnosticObservationAt(0)
-	replayed, replayedOK := right.DiagnosticObservationAt(0)
-	payload, payloadOK := row.UnresolvedValueReference()
-	replayedPayload, replayedPayloadOK := replayed.UnresolvedValueReference()
-	name, nameOK := payload.Name()
-	replayedName, replayedNameOK := replayedPayload.Name()
+	row, rowOK := leftProgram.DiagnosticObservationAt(0)
+	replayed, replayedOK := rightProgram.DiagnosticObservationAt(0)
+	name, nameOK := row.Name(), row.Name() != ""
+	replayedName, replayedNameOK := replayed.Name(), replayed.Name() != ""
 	location, locationOK := row.Location()
 	if !rowOK || !replayedOK || row.Kind() != structure.DiagnosticObservationValueReferenceUnresolved || replayed.Kind() != row.Kind() ||
-		!payloadOK || !replayedPayloadOK || !nameOK || !replayedNameOK || name != "missing_count" || replayedName != name ||
-		!payload.ReadID().Available() || !payload.CellID().Available() || payload.ReadID() == payload.CellID() ||
-		payload.ReadID() != replayedPayload.ReadID() || payload.CellID() != replayedPayload.CellID() || row.ID() != replayed.ID() ||
+		!nameOK || !replayedNameOK || name != "missing_count" || replayedName != name ||
+		!row.ReadID().Available() || !row.CellID().Available() || row.ReadID() == row.CellID() ||
+		row.ReadID() != replayed.ReadID() || row.CellID() != replayed.CellID() || row.ID() != replayed.ID() ||
 		!locationOK || location.File != "unresolved-value-artifact.lua" || location.StartLine != 2 || location.StartCol != 15 {
-		t.Fatalf("unresolved value artifact row = row:%v/%v kind:%d/%d payload:%v/%v name:%q/%q location:%+v/%v", rowOK, replayedOK, row.Kind(), replayed.Kind(), payloadOK, replayedPayloadOK, name, replayedName, location, locationOK)
+		t.Fatalf("unresolved value artifact row = row:%v/%v kind:%d/%d name:%q/%q location:%+v/%v", rowOK, replayedOK, row.Kind(), replayed.Kind(), name, replayedName, location, locationOK)
 	}
-	if _, ok := left.DiagnosticObservationAt(-1); ok {
+	if _, ok := leftProgram.DiagnosticObservationAt(-1); ok {
 		t.Fatal("DiagnosticObservationAt accepted a negative index")
 	}
-	if _, ok := left.DiagnosticObservationAt(left.DiagnosticObservationCount()); ok {
+	if _, ok := leftProgram.DiagnosticObservationAt(leftCount); ok {
 		t.Fatal("DiagnosticObservationAt accepted its denominator")
 	}
 }
@@ -168,9 +199,14 @@ local function identity(value: number)
 end
 return identity(1)
 `)
+	program := diagnosticProgram(t, artifact)
+	count, published := program.DiagnosticObservationCount()
+	if !published {
+		t.Fatal("diagnostic observation family unavailable")
+	}
 	var rows int
-	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
-		row, rowOK := artifact.DiagnosticObservationAt(index)
+	for index := 0; index < count; index++ {
+		row, rowOK := program.DiagnosticObservationAt(index)
 		if !rowOK {
 			t.Fatalf("DiagnosticObservationAt(%d)", index)
 		}
@@ -178,13 +214,12 @@ return identity(1)
 			continue
 		}
 		rows++
-		payload, payloadOK := row.TypeConformance()
 		location, locationOK := row.Location()
-		position, positionOK := payload.Position()
-		if !payloadOK || !locationOK || !positionOK || position != 0 ||
-			!payload.OwnerID().Available() || !payload.MeasuredValueID().Available() ||
-			!payload.DeclaredStaticTypeID().Available() || location.File != "conformance-call.lua" {
-			t.Fatalf("selected call-argument observation is incomplete: payload=%v location=%+v", payloadOK, location)
+		position, positionOK := row.Position()
+		if !locationOK || !positionOK || position != 0 ||
+			!row.OwnerID().Available() || !row.MeasuredValueID().Available() ||
+			!row.DeclaredStaticTypeID().Available() || location.File != "conformance-call.lua" {
+			t.Fatalf("selected call-argument observation is incomplete: location=%+v", location)
 		}
 	}
 	if rows != 1 {
@@ -205,27 +240,51 @@ local inferred = 3
 inferred = 4
 return declared + inferred
 `)
+	program := diagnosticProgram(t, artifact)
+	count, published := program.DiagnosticObservationCount()
+	if !published {
+		t.Fatal("diagnostic observation family unavailable")
+	}
 	sites := make(map[uint32]int)
-	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
-		row, rowOK := artifact.DiagnosticObservationAt(index)
+	for index := 0; index < count; index++ {
+		row, rowOK := program.DiagnosticObservationAt(index)
 		if !rowOK {
 			t.Fatalf("DiagnosticObservationAt(%d)", index)
 		}
 		if row.Kind() != structure.DiagnosticObservationTypeConformance {
 			continue
 		}
-		payload, payloadOK := row.TypeConformance()
 		location, locationOK := row.Location()
-		if !payloadOK || !locationOK || location.File != "conformance-assign.lua" ||
-			!payload.OwnerID().Available() || !payload.MeasuredValueID().Available() || !payload.DeclaredStaticTypeID().Available() {
-			t.Fatalf("assignment observation is incomplete: payload=%v location=%+v", payloadOK, location)
+		if !locationOK || location.File != "conformance-assign.lua" ||
+			!row.OwnerID().Available() || !row.MeasuredValueID().Available() || !row.DeclaredStaticTypeID().Available() {
+			t.Fatalf("assignment observation is incomplete: location=%+v", location)
 		}
-		if payload.Site() != schemadiag.SiteAssignment {
-			t.Fatalf("observation at %d:%d carries site %v", location.StartLine, location.StartCol, payload.Site())
+		if row.Site() != programschema.DiagnosticObservationSiteAssignment {
+			t.Fatalf("observation at %d:%d carries site %v", location.StartLine, location.StartCol, row.Site())
 		}
 		sites[location.StartLine]++
 	}
 	if len(sites) != 2 || sites[2] != 1 || sites[3] != 1 {
 		t.Fatalf("assignment conformance rows by line = %v, want one at the declared bind and one at its write", sites)
 	}
+}
+
+func diagnosticPath(program programschema.Program, index int) ([]string, bool) {
+	row, held := program.DiagnosticObservationAt(index)
+	if !held {
+		return nil, false
+	}
+	offset, count, spanOK := row.PathSpan()
+	if !spanOK || count == 0 {
+		return nil, false
+	}
+	path := make([]string, count)
+	for childIndex := uint32(0); childIndex < count; childIndex++ {
+		child, childOK := program.DiagnosticPathAt(int(offset + childIndex))
+		if !childOK {
+			return nil, false
+		}
+		path[childIndex] = child.Component()
+	}
+	return path, true
 }

@@ -15,45 +15,48 @@ import (
 // declaration with no field here would seal nothing, so the catalog and the
 // publication cannot drift apart.
 type Publication struct {
-	CallTargets          []CallTarget
-	HeapAllocations      []HeapAllocation
-	HeapFields           []HeapField
-	Values               []Values
-	ValuesMembers        []ValuesMember
-	HeapIndexes          []HeapIndex
-	Occurrences          []Occurrence
-	OccurrencePoints     []OccurrencePoint
-	OccurrenceInputs     []OccurrenceInput
-	RuleOccurrences      []RuleOccurrence
-	ExactScalarSummaries []ExactScalarSummary
-	ArithmeticSummaries  []ArithmeticSummary
-	UnarySummaries       []UnarySummary
-	Points               []Point
-	PointDecisions       []PointDecision
-	Calls                []Call
-	CallOperands         []CallOperand
-	CallArguments        []CallArgument
-	CallTypeArguments    []CallTypeArgument
-	EnvironmentEdges     []EnvironmentEdge
-	EnvironmentResets    []EnvironmentReset
-	StaticTypeValues     []StaticTypeValue
-	StaticExpressions    []StaticExpression
-	StaticInputs         []StaticInput
-	Regions              []Region
-	RegionMembers        []RegionMember
-	WTOEvents            []WTOEvent
-	Bodies               []Body
-	BodyEntries          []BodyEntry
-	BodyRoots            []BodyRoot
-	Outcomes             []Outcome
-	OutcomeReturnValues  []OutcomeReturnValue
-	OutcomePoints        []OutcomePoint
-	FunctionBoundaries   []FunctionBoundary
-	FunctionFormals      []FunctionFormal
-	FunctionVarargs      []FunctionVararg
-	FunctionCaptures     []FunctionCapture
-	LocalTransfers       []LocalTransfer
-	LocalTransferWrites  []LocalTransferWrite
+	CallTargets            []CallTarget
+	HeapAllocations        []HeapAllocation
+	HeapFields             []HeapField
+	Values                 []Values
+	ValuesMembers          []ValuesMember
+	HeapIndexes            []HeapIndex
+	Occurrences            []Occurrence
+	OccurrencePoints       []OccurrencePoint
+	OccurrenceInputs       []OccurrenceInput
+	RuleOccurrences        []RuleOccurrence
+	ExactScalarSummaries   []ExactScalarSummary
+	ArithmeticSummaries    []ArithmeticSummary
+	UnarySummaries         []UnarySummary
+	Points                 []Point
+	PointDecisions         []PointDecision
+	Calls                  []Call
+	CallOperands           []CallOperand
+	CallArguments          []CallArgument
+	CallTypeArguments      []CallTypeArgument
+	EnvironmentEdges       []EnvironmentEdge
+	EnvironmentResets      []EnvironmentReset
+	StaticTypeValues       []StaticTypeValue
+	StaticExpressions      []StaticExpression
+	StaticInputs           []StaticInput
+	Regions                []Region
+	RegionMembers          []RegionMember
+	WTOEvents              []WTOEvent
+	Bodies                 []Body
+	BodyEntries            []BodyEntry
+	BodyRoots              []BodyRoot
+	Outcomes               []Outcome
+	OutcomeReturnValues    []OutcomeReturnValue
+	OutcomePoints          []OutcomePoint
+	FunctionBoundaries     []FunctionBoundary
+	FunctionFormals        []FunctionFormal
+	FunctionVarargs        []FunctionVararg
+	FunctionCaptures       []FunctionCapture
+	LocalTransfers         []LocalTransfer
+	LocalTransferWrites    []LocalTransferWrite
+	DiagnosticObservations []DiagnosticObservation
+	DiagnosticEvidence     []DiagnosticEvidence
+	DiagnosticPaths        []DiagnosticPath
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -103,7 +106,10 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		FunctionVarargFamily().Put(&builder, publication.FunctionVarargs, catalog) &&
 		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog) &&
 		LocalTransferFamily().Put(&builder, publication.LocalTransfers, catalog) &&
-		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog)
+		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog) &&
+		DiagnosticObservationFamily().Put(&builder, publication.DiagnosticObservations, catalog) &&
+		DiagnosticEvidenceFamily().Put(&builder, publication.DiagnosticEvidence, catalog) &&
+		DiagnosticPathFamily().Put(&builder, publication.DiagnosticPaths, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

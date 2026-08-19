@@ -9,6 +9,42 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// These payloads are compiler-only drafts used while the source/Flow proofs
+// are live. They are converted immediately into the canonical Program parent
+// and dense child families; no draft is retained by Artifact or ingress.
+type diagnosticBranchConditionRow struct {
+	decision identity.ContentID
+	value    identity.ContentID
+	points   []identity.ContentID
+}
+
+type diagnosticUnresolvedTypeReferenceRow struct {
+	reference identity.ContentID
+	root      identity.ContentID
+	path      []string
+}
+
+type diagnosticUnresolvedValueReferenceRow struct {
+	read identity.ContentID
+	cell identity.ContentID
+	name string
+}
+
+const (
+	diagnosticTypeConformanceSiteCallArgument uint8 = 1
+	diagnosticTypeConformanceSiteAssignment   uint8 = 2
+)
+
+type diagnosticTypeConformanceRow struct {
+	site     uint8
+	owner    identity.ContentID
+	value    identity.ContentID
+	declared identity.ContentID
+	span     identity.ContentID
+	position uint32
+	points   []identity.ContentID
+}
+
 // validDiagnosticSpan is the artifact admission/seal predicate for the
 // owner-issued Source span. Source owns coordinate ordering; this lane adds
 // the diagnostic requirement that file and start coordinates are present.
@@ -67,24 +103,6 @@ func (payload diagnosticTypeConformanceRow) empty() bool {
 		!payload.declared.Available() && !payload.span.Available() && payload.position == 0 && len(payload.points) == 0
 }
 
-func (row DiagnosticObservationRow) Available() bool {
-	if !row.id.Available() || !row.kind.Available() || !validDiagnosticSpan(row.location) {
-		return false
-	}
-	switch row.kind {
-	case structure.DiagnosticObservationBranchCondition:
-		return row.branch.available() && row.unresolved.empty() && row.value.empty() && row.conformance.empty()
-	case structure.DiagnosticObservationTypeReferenceUnresolved:
-		return row.unresolved.available() && row.branch.empty() && row.value.empty() && row.conformance.empty()
-	case structure.DiagnosticObservationValueReferenceUnresolved:
-		return row.value.available() && row.branch.empty() && row.unresolved.empty() && row.conformance.empty()
-	case structure.DiagnosticObservationTypeConformance:
-		return row.conformance.available() && row.branch.empty() && row.unresolved.empty() && row.value.empty()
-	default:
-		return false
-	}
-}
-
 func validDiagnosticEvidencePoints(points []identity.ContentID) bool {
 	if len(points) == 0 {
 		return false
@@ -100,52 +118,6 @@ func validDiagnosticEvidencePoints(points []identity.ContentID) bool {
 		seen[point] = struct{}{}
 	}
 	return true
-}
-
-func equalDiagnosticObservationRows(left, right DiagnosticObservationRow) bool {
-	if left.id != right.id || left.kind != right.kind || left.location != right.location {
-		return false
-	}
-	switch left.kind {
-	case structure.DiagnosticObservationBranchCondition:
-		if left.branch.decision != right.branch.decision || left.branch.value != right.branch.value || len(left.branch.points) != len(right.branch.points) {
-			return false
-		}
-		for index := range left.branch.points {
-			if left.branch.points[index] != right.branch.points[index] {
-				return false
-			}
-		}
-		return true
-	case structure.DiagnosticObservationTypeReferenceUnresolved:
-		if left.unresolved.reference != right.unresolved.reference || left.unresolved.root != right.unresolved.root ||
-			len(left.unresolved.path) != len(right.unresolved.path) {
-			return false
-		}
-		for index := range left.unresolved.path {
-			if left.unresolved.path[index] != right.unresolved.path[index] {
-				return false
-			}
-		}
-		return true
-	case structure.DiagnosticObservationValueReferenceUnresolved:
-		return left.value == right.value
-	case structure.DiagnosticObservationTypeConformance:
-		if left.conformance.site != right.conformance.site || left.conformance.owner != right.conformance.owner ||
-			left.conformance.value != right.conformance.value || left.conformance.declared != right.conformance.declared ||
-			left.conformance.span != right.conformance.span || left.conformance.position != right.conformance.position ||
-			len(left.conformance.points) != len(right.conformance.points) {
-			return false
-		}
-		for index := range left.conformance.points {
-			if left.conformance.points[index] != right.conformance.points[index] {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
 }
 
 func diagnosticObservationID(owner identity.ContentID, kind structure.DiagnosticObservationKind, location programsource.Span, branch diagnosticBranchConditionRow, unresolved diagnosticUnresolvedTypeReferenceRow, value diagnosticUnresolvedValueReferenceRow, conformance diagnosticTypeConformanceRow) identity.ContentID {

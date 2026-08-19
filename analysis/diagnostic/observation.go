@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -341,7 +342,10 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 		if !mountOK {
 			return nil, false
 		}
-		observation, observationOK := mount.Snapshot.DiagnosticObservationForID(site.Local)
+		program := mount.Snapshot.Program()
+		observationIndex, observationOK := diagnosticObservationIndex(program, site.Local)
+		observation, observationHeld := program.DiagnosticObservationAt(observationIndex)
+		observationOK = observationOK && observationHeld
 		if !observationOK || observation.Kind() != site.Kind {
 			return nil, false
 		}
@@ -357,46 +361,42 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 		switch site.Kind {
 		case structure.DiagnosticObservationBranchCondition:
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
-			branch, branchOK := observation.BranchCondition()
-			points, pointsOK := branch.EvidencePoints()
+			points, pointsOK := programDiagnosticEvidence(program, observationIndex)
 			producers, producersOK := siteProducers(site)
-			if !valueOK || !branchOK || !pointsOK || !producersOK || uint64(valueIndex) >= uint64(len(coordinates)) {
+			if !valueOK || !pointsOK || !producersOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
 			}
 			row.Branch = Branch{Points: append([]identity.ContentID(nil), points...), Producers: producers, ValueIndex: valueIndex}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			unresolved, unresolvedOK := observation.UnresolvedTypeReference()
-			path, pathOK := unresolved.Path()
-			name, nameOK := unresolved.Name()
-			if !unresolvedOK || !pathOK || !nameOK || !unresolved.StaticReferenceID().Available() {
+			path, pathOK := programDiagnosticPath(program, observationIndex)
+			name, nameOK := program.DiagnosticPathName(observationIndex)
+			if !pathOK || !nameOK || !observation.StaticReferenceID().Available() {
 				return nil, false
 			}
-			row.UnresolvedType = UnresolvedType{Reference: unresolved.StaticReferenceID(), Root: unresolved.RootID(), Path: path, Name: name}
+			row.UnresolvedType = UnresolvedType{Reference: observation.StaticReferenceID(), Root: observation.RootID(), Path: path, Name: name}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
-			unresolved, unresolvedOK := observation.UnresolvedValueReference()
-			name, nameOK := unresolved.Name()
-			if !unresolvedOK || !nameOK || !unresolved.ReadID().Available() || !unresolved.CellID().Available() {
+			name := observation.Name()
+			if name == "" || !observation.ReadID().Available() || !observation.CellID().Available() {
 				return nil, false
 			}
-			row.UnresolvedValue = UnresolvedValue{Read: unresolved.ReadID(), Cell: unresolved.CellID(), Name: name}
+			row.UnresolvedValue = UnresolvedValue{Read: observation.ReadID(), Cell: observation.CellID(), Name: name}
 		case structure.DiagnosticObservationTypeConformance:
-			conformance, conformanceOK := observation.TypeConformance()
-			if !conformanceOK || !conformance.OwnerID().Available() || !conformance.MeasuredValueID().Available() ||
-				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
+			if !observation.OwnerID().Available() || !observation.MeasuredValueID().Available() ||
+				!observation.DeclaredStaticTypeID().Available() || !observation.SpanID().Available() {
 				return nil, false
 			}
-			position, positionOK := conformance.Position()
-			points, pointsOK := conformance.EvidencePoints()
+			position, positionOK := observation.Position()
+			points, pointsOK := programDiagnosticEvidence(program, observationIndex)
 			producers, producersOK := siteProducers(site)
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
-			declaredMay, target, declaredOK := declaredMay(declared, conformance.DeclaredStaticTypeID())
+			declaredMay, target, declaredOK := declaredMay(declared, observation.DeclaredStaticTypeID())
 			if !positionOK || !pointsOK || !producersOK || !valueOK || !declaredOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
 			}
 			row.Conformance = Conformance{
-				Site:  conformance.Site(),
-				Owner: conformance.OwnerID(), Measured: conformance.MeasuredValueID(),
-				Declared: conformance.DeclaredStaticTypeID(), Span: conformance.SpanID(), Position: position,
+				Site:  diagnosticObservationSite(observation.Site()),
+				Owner: observation.OwnerID(), Measured: observation.MeasuredValueID(),
+				Declared: observation.DeclaredStaticTypeID(), Span: observation.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
 				Evidence:  append([]identity.ContentID(nil), points...),
 				Producers: producers,
@@ -430,6 +430,74 @@ func siteProducers(site mounted.ObservationSite) ([]Producer, bool) {
 		})
 	}
 	return producers, true
+}
+
+func diagnosticObservationIndex(program programschema.Program, id identity.ContentID) (int, bool) {
+	if !program.Available() || !id.Available() {
+		return 0, false
+	}
+	count, published := program.DiagnosticObservationCount()
+	if !published {
+		return 0, false
+	}
+	for index := 0; index < count; index++ {
+		row, held := program.DiagnosticObservationAt(index)
+		if held && row.ID() == id {
+			return index, true
+		}
+	}
+	return 0, false
+}
+
+func programDiagnosticEvidence(program programschema.Program, observationIndex int) ([]identity.ContentID, bool) {
+	row, held := program.DiagnosticObservationAt(observationIndex)
+	if !held {
+		return nil, false
+	}
+	offset, count, spanOK := row.EvidenceSpan()
+	if !spanOK || count == 0 {
+		return nil, false
+	}
+	points := make([]identity.ContentID, count)
+	for index := uint32(0); index < count; index++ {
+		child, childOK := program.DiagnosticEvidenceAt(int(offset + index))
+		if !childOK || !child.Available() {
+			return nil, false
+		}
+		points[index] = child.PointID()
+	}
+	return points, true
+}
+
+func programDiagnosticPath(program programschema.Program, observationIndex int) ([]string, bool) {
+	row, held := program.DiagnosticObservationAt(observationIndex)
+	if !held {
+		return nil, false
+	}
+	offset, count, spanOK := row.PathSpan()
+	if !spanOK || count == 0 {
+		return nil, false
+	}
+	path := make([]string, count)
+	for index := uint32(0); index < count; index++ {
+		child, childOK := program.DiagnosticPathAt(int(offset + index))
+		if !childOK || !child.Available() {
+			return nil, false
+		}
+		path[index] = child.Component()
+	}
+	return path, true
+}
+
+func diagnosticObservationSite(site programschema.DiagnosticObservationSite) schemadiag.Site {
+	switch site {
+	case programschema.DiagnosticObservationSiteCallArgument:
+		return schemadiag.SiteCallArgument
+	case programschema.DiagnosticObservationSiteAssignment:
+		return schemadiag.SiteAssignment
+	default:
+		return schemadiag.SiteNone
+	}
 }
 
 // declaredMay reads one declaration out of the published declared-type column.

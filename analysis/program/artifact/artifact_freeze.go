@@ -26,9 +26,9 @@ func (compiler *compiler) finalizeFailure() CompileFailure {
 			return compileFailure(CompileStageCanonicalize, CompileRowEnvironment, index, -1, CompileReasonEnvironmentDuplicate)
 		}
 	}
-	identity.SortByContentID(compiler.diagnosticObservations, func(row DiagnosticObservationRow) identity.ContentID { return row.id })
+	identity.SortByContentID(compiler.diagnosticObservations, func(row programschema.DiagnosticObservation) identity.ContentID { return row.ID() })
 	for index := 1; index < len(compiler.diagnosticObservations); index++ {
-		if compiler.diagnosticObservations[index-1].id == compiler.diagnosticObservations[index].id {
+		if compiler.diagnosticObservations[index-1].ID() == compiler.diagnosticObservations[index].ID() {
 			return compileFailure(CompileStageCanonicalize, CompileRowRoute, index, -1, CompileReasonRouteGuard)
 		}
 	}
@@ -56,7 +56,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 	artifact := &Artifact{
 		frozen: frozen, coldCatalog: catalog,
 		key: compiler.key, counts: compiler.counts,
-		diagnosticObservations: compiler.diagnosticObservations, staticTypeNodes: compiler.staticTypeNodes,
+		staticTypeNodes: compiler.staticTypeNodes,
 	}
 	artifact.id = artifactID(artifact)
 	if failure := artifact.validUnsealedFailure(); failure.Available() {
@@ -340,40 +340,43 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		CallTargets:     compiler.callTargets,
 		HeapAllocations: allocations, HeapFields: allocationFields,
 		Values: values, ValuesMembers: valuesMembers,
-		HeapIndexes:          indexes,
-		ExactScalarSummaries: compiler.exactScalarSummaries,
-		ArithmeticSummaries:  compiler.arithmeticSummaries,
-		UnarySummaries:       compiler.unarySummaries,
-		Points:               points,
-		PointDecisions:       pointDecisions,
-		EnvironmentEdges:     edges,
-		EnvironmentResets:    resets,
-		LocalTransfers:       transfers,
-		LocalTransferWrites:  transferWrites,
-		Occurrences:          compiler.occurrences,
-		OccurrencePoints:     compiler.occurrencePoints,
-		OccurrenceInputs:     compiler.occurrenceInputs,
-		RuleOccurrences:      compiler.ruleOccurrences,
-		StaticTypeValues:     typeValues,
-		StaticExpressions:    staticExpressions,
-		StaticInputs:         compiler.staticInputs,
-		Regions:              regions,
-		RegionMembers:        regionMembers,
-		WTOEvents:            events,
-		Calls:                compiler.calls,
-		CallOperands:         compiler.callOperands,
-		CallArguments:        compiler.callArguments,
-		CallTypeArguments:    compiler.callTypeArguments,
-		Bodies:               compiler.bodies,
-		BodyEntries:          compiler.bodyEntries,
-		BodyRoots:            compiler.bodyRoots,
-		Outcomes:             compiler.outcomes,
-		OutcomeReturnValues:  compiler.outcomeReturnValues,
-		OutcomePoints:        compiler.outcomePoints,
-		FunctionBoundaries:   compiler.functionBoundaries,
-		FunctionFormals:      compiler.functionFormals,
-		FunctionVarargs:      compiler.functionVarargs,
-		FunctionCaptures:     compiler.functionCaptures,
+		HeapIndexes:            indexes,
+		ExactScalarSummaries:   compiler.exactScalarSummaries,
+		ArithmeticSummaries:    compiler.arithmeticSummaries,
+		UnarySummaries:         compiler.unarySummaries,
+		Points:                 points,
+		PointDecisions:         pointDecisions,
+		EnvironmentEdges:       edges,
+		EnvironmentResets:      resets,
+		LocalTransfers:         transfers,
+		LocalTransferWrites:    transferWrites,
+		DiagnosticObservations: compiler.diagnosticObservations,
+		DiagnosticEvidence:     compiler.diagnosticEvidence,
+		DiagnosticPaths:        compiler.diagnosticPaths,
+		Occurrences:            compiler.occurrences,
+		OccurrencePoints:       compiler.occurrencePoints,
+		OccurrenceInputs:       compiler.occurrenceInputs,
+		RuleOccurrences:        compiler.ruleOccurrences,
+		StaticTypeValues:       typeValues,
+		StaticExpressions:      staticExpressions,
+		StaticInputs:           compiler.staticInputs,
+		Regions:                regions,
+		RegionMembers:          regionMembers,
+		WTOEvents:              events,
+		Calls:                  compiler.calls,
+		CallOperands:           compiler.callOperands,
+		CallArguments:          compiler.callArguments,
+		CallTypeArguments:      compiler.callTypeArguments,
+		Bodies:                 compiler.bodies,
+		BodyEntries:            compiler.bodyEntries,
+		BodyRoots:              compiler.bodyRoots,
+		Outcomes:               compiler.outcomes,
+		OutcomeReturnValues:    compiler.outcomeReturnValues,
+		OutcomePoints:          compiler.outcomePoints,
+		FunctionBoundaries:     compiler.functionBoundaries,
+		FunctionFormals:        compiler.functionFormals,
+		FunctionVarargs:        compiler.functionVarargs,
+		FunctionCaptures:       compiler.functionCaptures,
 	}
 	frozen, sealed := publication.Seal(catalog, identity.StoreID(coldStores.Add(1)))
 	if !sealed {

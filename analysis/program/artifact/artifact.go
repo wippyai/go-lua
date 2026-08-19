@@ -24,11 +24,10 @@ type Artifact struct {
 	// is derived from the declaration catalog this artifact was compiled
 	// against, so a cold column cannot be addressed by an axis of another
 	// catalog and cannot be addressed against a runtime snapshot at all.
-	coldCatalog            identity.ContentID
-	sealed                 identity.ContentID
-	counts                 denominator.CountRows
-	diagnosticObservations []DiagnosticObservationRow
-	staticTypeNodes        []StaticTypeNodeRow
+	coldCatalog     identity.ContentID
+	sealed          identity.ContentID
+	counts          denominator.CountRows
+	staticTypeNodes []StaticTypeNodeRow
 }
 
 func (artifact *Artifact) Available() bool {

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -20,6 +21,8 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	compiler.diagnosticObservations = compiler.diagnosticObservations[:0]
+	compiler.diagnosticEvidence = compiler.diagnosticEvidence[:0]
+	compiler.diagnosticPaths = compiler.diagnosticPaths[:0]
 	if compiler.diagnosticObservationByID == nil {
 		compiler.diagnosticObservationByID = make(map[identity.ContentID]int)
 	} else {
@@ -111,11 +114,11 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 		seen[points[index]] = struct{}{}
 	}
 	branch := diagnosticBranchConditionRow{decision: decisionPath, value: span.ContextID(), points: points}
-	row := DiagnosticObservationRow{
-		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
-		kind: structure.DiagnosticObservationBranchCondition, location: location, branch: branch,
-	}
-	if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
+	row, rowOK := programschema.NewDiagnosticObservationBranchCondition(
+		diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationBranchCondition, location, branch, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
+		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)), branch.decision, branch.value,
+	)
+	if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 		return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
 	}
 	return CompileFailure{}
@@ -236,11 +239,11 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() CompileFailure
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		payload := diagnosticUnresolvedTypeReferenceRow{reference: reference, root: root, path: path}
-		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
-			kind: structure.DiagnosticObservationTypeReferenceUnresolved, location: location, unresolved: payload,
-		}
-		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
+		row, rowOK := programschema.NewDiagnosticObservationTypeReferenceUnresolved(
+			diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeReferenceUnresolved, location, diagnosticBranchConditionRow{}, payload, diagnosticUnresolvedValueReferenceRow{}, diagnosticTypeConformanceRow{}),
+			location, uint32(len(compiler.diagnosticPaths)), uint32(len(path)), payload.reference, payload.root,
+		)
+		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, path) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
@@ -268,11 +271,11 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
 		payload := diagnosticUnresolvedValueReferenceRow{read: read.id, cell: read.cell, name: literal.String}
-		row := DiagnosticObservationRow{
-			id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload, diagnosticTypeConformanceRow{}),
-			kind: structure.DiagnosticObservationValueReferenceUnresolved, location: location, value: payload,
-		}
-		if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
+		row, rowOK := programschema.NewDiagnosticObservationValueReferenceUnresolved(
+			diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload, diagnosticTypeConformanceRow{}),
+			location, payload.read, payload.cell, payload.name,
+		)
+		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, nil) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
 	}
@@ -350,11 +353,12 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 				position: uint32(argumentIndex),
 				points:   append([]identity.ContentID(nil), points...),
 			}
-			row := DiagnosticObservationRow{
-				id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
-				kind: structure.DiagnosticObservationTypeConformance, location: location, conformance: payload,
-			}
-			if !row.Available() || !compiler.admitDiagnosticObservationRow(row) {
+			row, rowOK := programschema.NewDiagnosticObservationTypeConformance(
+				diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
+				location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
+				programschema.DiagnosticObservationSiteCallArgument, payload.owner, payload.value, payload.declared, payload.span, payload.position,
+			)
+			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
 		}
@@ -404,19 +408,103 @@ func (compiler *compiler) selectedDirectCalleeBodies() (map[identity.ContentID]s
 	return selected, true
 }
 
-func (compiler *compiler) admitDiagnosticObservationRow(row DiagnosticObservationRow) bool {
-	if compiler == nil || !row.Available() {
+func (compiler *compiler) admitDiagnosticObservation(
+	row programschema.DiagnosticObservation,
+	evidence []identity.ContentID,
+	path []string,
+) bool {
+	if compiler == nil || !row.Available() || len(evidence) > int(^uint32(0)) || len(path) > int(^uint32(0)) || len(compiler.diagnosticEvidence) > int(^uint32(0)) || len(compiler.diagnosticPaths) > int(^uint32(0)) {
+		return false
+	}
+	evidenceOffset, evidenceCount, evidenceSpanOK := row.EvidenceSpan()
+	pathOffset, pathCount, pathSpanOK := row.PathSpan()
+	if !evidenceSpanOK || !pathSpanOK || evidenceCount != uint32(len(evidence)) || pathCount != uint32(len(path)) ||
+		(evidenceCount > 0 && evidenceOffset != uint32(len(compiler.diagnosticEvidence))) ||
+		(pathCount > 0 && pathOffset != uint32(len(compiler.diagnosticPaths))) {
 		return false
 	}
 	if compiler.diagnosticObservationByID == nil {
 		compiler.diagnosticObservationByID = make(map[identity.ContentID]int)
 	}
-	if index, exists := compiler.diagnosticObservationByID[row.id]; exists {
-		return index >= 0 && index < len(compiler.diagnosticObservations) && equalDiagnosticObservationRows(compiler.diagnosticObservations[index], row)
+	id := row.ID()
+	if index, exists := compiler.diagnosticObservationByID[id]; exists {
+		if index < 0 || index >= len(compiler.diagnosticObservations) {
+			return false
+		}
+		prior := compiler.diagnosticObservations[index]
+		if !equalDiagnosticObservationCanonical(prior, row, compiler.diagnosticEvidence, compiler.diagnosticPaths, evidence, path) {
+			return false
+		}
+		return true
 	}
-	compiler.diagnosticObservationByID[row.id] = len(compiler.diagnosticObservations)
+	seenEvidence := make(map[identity.ContentID]struct{}, len(evidence))
+	for _, point := range evidence {
+		if !point.Available() {
+			return false
+		}
+		if _, duplicate := seenEvidence[point]; duplicate {
+			return false
+		}
+		seenEvidence[point] = struct{}{}
+	}
+	for _, component := range path {
+		if component == "" {
+			return false
+		}
+	}
+	for _, point := range evidence {
+		child, childOK := programschema.NewDiagnosticEvidence(point)
+		if !childOK {
+			return false
+		}
+		compiler.diagnosticEvidence = append(compiler.diagnosticEvidence, child)
+	}
+	for _, component := range path {
+		child, childOK := programschema.NewDiagnosticPath(component)
+		if !childOK {
+			return false
+		}
+		compiler.diagnosticPaths = append(compiler.diagnosticPaths, child)
+	}
+	compiler.diagnosticObservationByID[id] = len(compiler.diagnosticObservations)
 	compiler.diagnosticObservations = append(compiler.diagnosticObservations, row)
 	return true
+}
+
+func equalDiagnosticObservationCanonical(left, right programschema.DiagnosticObservation, evidence []programschema.DiagnosticEvidence, paths []programschema.DiagnosticPath, wantEvidence []identity.ContentID, wantPath []string) bool {
+	if left.ID() != right.ID() || left.Kind() != right.Kind() {
+		return false
+	}
+	leftLocation, leftLocationOK := left.Location()
+	rightLocation, rightLocationOK := right.Location()
+	if !leftLocationOK || !rightLocationOK || leftLocation != rightLocation {
+		return false
+	}
+	leftOffset, leftCount, leftSpanOK := left.EvidenceSpan()
+	_, rightCount, rightSpanOK := right.EvidenceSpan()
+	if !leftSpanOK || !rightSpanOK || leftCount != rightCount || int(leftCount) != len(wantEvidence) || uint64(leftOffset)+uint64(leftCount) > uint64(len(evidence)) {
+		return false
+	}
+	for index, point := range wantEvidence {
+		if evidence[int(leftOffset)+index].PointID() != point {
+			return false
+		}
+	}
+	leftOffset, leftCount, leftSpanOK = left.PathSpan()
+	_, rightCount, rightSpanOK = right.PathSpan()
+	if !leftSpanOK || !rightSpanOK || leftCount != rightCount || int(leftCount) != len(wantPath) || uint64(leftOffset)+uint64(leftCount) > uint64(len(paths)) {
+		return false
+	}
+	for index, component := range wantPath {
+		if paths[int(leftOffset)+index].Component() != component {
+			return false
+		}
+	}
+	return left.DecisionPathID() == right.DecisionPathID() && left.ValueSpanID() == right.ValueSpanID() &&
+		left.StaticReferenceID() == right.StaticReferenceID() && left.RootID() == right.RootID() &&
+		left.ReadID() == right.ReadID() && left.CellID() == right.CellID() && left.Name() == right.Name() &&
+		left.Site() == right.Site() && left.OwnerID() == right.OwnerID() && left.MeasuredValueID() == right.MeasuredValueID() &&
+		left.DeclaredStaticTypeID() == right.DeclaredStaticTypeID() && left.SpanID() == right.SpanID()
 }
 
 // copyWriteConformanceObservationsFailure is the reassignment half of the same
@@ -498,11 +586,12 @@ func (compiler *compiler) admitConformanceObservation(site uint8, owner, value, 
 		span: span.ContextID(), position: position,
 		points: append([]identity.ContentID(nil), points...),
 	}
-	row := DiagnosticObservationRow{
-		id:   diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
-		kind: structure.DiagnosticObservationTypeConformance, location: location, conformance: payload,
-	}
-	return row.Available() && compiler.admitDiagnosticObservationRow(row)
+	row, rowOK := programschema.NewDiagnosticObservationTypeConformance(
+		diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationTypeConformance, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, diagnosticUnresolvedValueReferenceRow{}, payload),
+		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
+		programschema.DiagnosticObservationSite(payload.site), payload.owner, payload.value, payload.declared, payload.span, payload.position,
+	)
+	return rowOK && compiler.admitDiagnosticObservation(row, points, nil)
 }
 
 // copyAssignmentConformanceObservationsFailure issues one TypeConformance row

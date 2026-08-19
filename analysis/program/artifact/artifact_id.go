@@ -379,34 +379,62 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		valuesSpan, _, _ := access.Values()
 		sink.add(bytesField(access.ID()), boolField(access.Read()), bytesField(access.BaseSpan()), bytesField(access.ResultSpan()), bytesField(access.DynamicKeySpan()), uintField(uint64(access.LensKind())), uintField(exactKey), bytesField(valuesSpan), bytesField(access.ValuesID()), uintField(uint64(access.Position()+1)))
 	}
-	sink.add(uintField(diagnosticLawVersion), uintField(uint64(len(artifact.diagnosticObservations))))
-	for _, row := range artifact.diagnosticObservations {
+	diagnosticCount, diagnosticsPublished := coldCount(artifact, programschema.DiagnosticObservationFamily())
+	evidenceCount, evidencePublished := coldCount(artifact, programschema.DiagnosticEvidenceFamily())
+	pathCount, pathsPublished := coldCount(artifact, programschema.DiagnosticPathFamily())
+	if !diagnosticsPublished || !evidencePublished || !pathsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(diagnosticLawVersion), uintField(uint64(diagnosticCount)))
+	for index := 0; index < diagnosticCount; index++ {
+		row, held := coldRow(artifact, programschema.DiagnosticObservationFamily(), index)
+		location, locationOK := row.Location()
+		evidenceOffset, evidenceWidth, evidenceSpanOK := row.EvidenceSpan()
+		pathOffset, pathWidth, pathSpanOK := row.PathSpan()
+		position, positionOK := row.Position()
+		if !held || !row.Available() || !locationOK || !evidenceSpanOK || !pathSpanOK ||
+			!positionOK && row.Kind() == structure.DiagnosticObservationTypeConformance ||
+			uint64(evidenceOffset)+uint64(evidenceWidth) > uint64(evidenceCount) || uint64(pathOffset)+uint64(pathWidth) > uint64(pathCount) {
+			return identity.ContentID{}
+		}
 		sink.add(
-			bytesField(row.id), uintField(uint64(row.kind)),
-			field{bytes: []byte(row.location.File), kind: fieldBytes}, uintField(uint64(row.location.StartLine)),
-			uintField(uint64(row.location.StartCol)), uintField(uint64(row.location.EndLine)), uintField(uint64(row.location.EndCol)),
+			bytesField(row.ID()), uintField(uint64(row.Kind())),
+			field{bytes: []byte(location.File), kind: fieldBytes}, uintField(uint64(location.StartLine)),
+			uintField(uint64(location.StartCol)), uintField(uint64(location.EndLine)), uintField(uint64(location.EndCol)),
 		)
-		switch row.kind {
+		switch row.Kind() {
 		case structure.DiagnosticObservationBranchCondition:
-			sink.add(bytesField(row.branch.decision), bytesField(row.branch.value), uintField(uint64(len(row.branch.points))))
-			for _, point := range row.branch.points {
-				sink.add(bytesField(point))
+			sink.add(bytesField(row.DecisionPathID()), bytesField(row.ValueSpanID()), uintField(uint64(evidenceWidth)))
+			for position := uint32(0); position < evidenceWidth; position++ {
+				point, pointHeld := coldRow(artifact, programschema.DiagnosticEvidenceFamily(), int(evidenceOffset+position))
+				if !pointHeld || !point.Available() {
+					return identity.ContentID{}
+				}
+				sink.add(bytesField(point.PointID()))
 			}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			sink.add(bytesField(row.unresolved.reference), bytesField(row.unresolved.root), uintField(uint64(len(row.unresolved.path))))
-			for _, component := range row.unresolved.path {
-				sink.add(field{bytes: []byte(component), kind: fieldBytes})
+			sink.add(bytesField(row.StaticReferenceID()), bytesField(row.RootID()), uintField(uint64(pathWidth)))
+			for position := uint32(0); position < pathWidth; position++ {
+				component, componentHeld := coldRow(artifact, programschema.DiagnosticPathFamily(), int(pathOffset+position))
+				if !componentHeld || !component.Available() {
+					return identity.ContentID{}
+				}
+				sink.add(field{bytes: []byte(component.Component()), kind: fieldBytes})
 			}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
-			sink.add(bytesField(row.value.read), bytesField(row.value.cell), field{bytes: []byte(row.value.name), kind: fieldBytes})
+			sink.add(bytesField(row.ReadID()), bytesField(row.CellID()), field{bytes: []byte(row.Name()), kind: fieldBytes})
 		case structure.DiagnosticObservationTypeConformance:
 			sink.add(
-				uintField(uint64(row.conformance.site)), bytesField(row.conformance.owner), bytesField(row.conformance.value),
-				bytesField(row.conformance.declared), bytesField(row.conformance.span), uintField(uint64(row.conformance.position)),
-				uintField(uint64(len(row.conformance.points))),
+				uintField(uint64(row.Site())), bytesField(row.OwnerID()), bytesField(row.MeasuredValueID()),
+				bytesField(row.DeclaredStaticTypeID()), bytesField(row.SpanID()), uintField(uint64(position)),
+				uintField(uint64(evidenceWidth)),
 			)
-			for _, point := range row.conformance.points {
-				sink.add(bytesField(point))
+			for position := uint32(0); position < evidenceWidth; position++ {
+				point, pointHeld := coldRow(artifact, programschema.DiagnosticEvidenceFamily(), int(evidenceOffset+position))
+				if !pointHeld || !point.Available() {
+					return identity.ContentID{}
+				}
+				sink.add(bytesField(point.PointID()))
 			}
 		default:
 			// An observation kind this walk does not carry would contribute

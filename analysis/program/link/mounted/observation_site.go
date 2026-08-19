@@ -199,8 +199,13 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 	var producersByValue map[identity.ContentID][]BranchProducer
 	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)
-	for index := 0; index < mount.Snapshot.DiagnosticObservationCount(); index++ {
-		observation, observationOK := mount.Snapshot.DiagnosticObservationAt(index)
+	program := mount.Snapshot.Program()
+	observationCount, observationsPublished := program.DiagnosticObservationCount()
+	if !program.Available() || !observationsPublished {
+		return nil, false
+	}
+	for index := 0; index < observationCount; index++ {
+		observation, observationOK := program.DiagnosticObservationAt(index)
 		if !observationOK || !observation.Available() {
 			return nil, false
 		}
@@ -218,7 +223,11 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 					return nil, false
 				}
 			}
-			producers, evidence, valueID, resolvedOK := branchProducers(values, producersByValue, mount, observation)
+			evidence, evidenceOK := diagnosticEvidencePoints(program, index)
+			if !evidenceOK {
+				return nil, false
+			}
+			producers, evidence, valueID, resolvedOK := branchProducers(values, producersByValue, mount, observation, evidence)
 			if !resolvedOK {
 				return nil, false
 			}
@@ -242,15 +251,13 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 			site.ValueID = valueID
 			site.producers = producers
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			unresolved, unresolvedOK := observation.UnresolvedTypeReference()
-			path, pathOK := unresolved.Path()
-			if !unresolvedOK || !pathOK || len(path) == 0 || !unresolved.StaticReferenceID().Available() {
+			path, pathOK := diagnosticPathComponents(program, index)
+			if !pathOK || len(path) == 0 || !observation.StaticReferenceID().Available() {
 				return nil, false
 			}
 		case structure.DiagnosticObservationValueReferenceUnresolved:
-			unresolved, unresolvedOK := observation.UnresolvedValueReference()
-			name, nameOK := unresolved.Name()
-			if !unresolvedOK || !nameOK || name == "" || !unresolved.ReadID().Available() || !unresolved.CellID().Available() {
+			name := observation.Name()
+			if name == "" || !observation.ReadID().Available() || !observation.CellID().Available() {
 				return nil, false
 			}
 			// The program proves a binder-implicit global candidate; the Link
@@ -260,13 +267,12 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 				continue
 			}
 		case structure.DiagnosticObservationTypeConformance:
-			conformance, conformanceOK := observation.TypeConformance()
-			if !conformanceOK || !conformance.OwnerID().Available() || !conformance.MeasuredValueID().Available() ||
-				!conformance.DeclaredStaticTypeID().Available() || !conformance.SpanID().Available() {
+			if !observation.OwnerID().Available() || !observation.MeasuredValueID().Available() ||
+				!observation.DeclaredStaticTypeID().Available() || !observation.SpanID().Available() {
 				return nil, false
 			}
-			valueID, valueOK := conformanceValueID(values, mount, conformance.MeasuredValueID(), conformance.SpanID())
-			evidence, evidenceOK := conformance.EvidencePoints()
+			valueID, valueOK := conformanceValueID(values, mount, observation.MeasuredValueID(), observation.SpanID())
+			evidence, evidenceOK := diagnosticEvidencePoints(program, index)
 			if !valueOK || !evidenceOK || len(evidence) == 0 {
 				return nil, false
 			}
@@ -307,6 +313,46 @@ func mountObservationSites(values linkboundary.Values, contract *target.Contract
 	return rows, true
 }
 
+func diagnosticEvidencePoints(program programschema.Program, observationIndex int) ([]identity.ContentID, bool) {
+	observation, ok := program.DiagnosticObservationAt(observationIndex)
+	if !ok {
+		return nil, false
+	}
+	offset, count, spanOK := observation.EvidenceSpan()
+	if !spanOK || count == 0 {
+		return nil, false
+	}
+	points := make([]identity.ContentID, count)
+	for index := uint32(0); index < count; index++ {
+		child, childOK := program.DiagnosticEvidenceAt(int(offset + index))
+		if !childOK || !child.Available() {
+			return nil, false
+		}
+		points[index] = child.PointID()
+	}
+	return points, true
+}
+
+func diagnosticPathComponents(program programschema.Program, observationIndex int) ([]string, bool) {
+	observation, ok := program.DiagnosticObservationAt(observationIndex)
+	if !ok {
+		return nil, false
+	}
+	offset, count, spanOK := observation.PathSpan()
+	if !spanOK || count == 0 {
+		return nil, false
+	}
+	path := make([]string, count)
+	for index := uint32(0); index < count; index++ {
+		child, childOK := program.DiagnosticPathAt(int(offset + index))
+		if !childOK || !child.Available() {
+			return nil, false
+		}
+		path[index] = child.Component()
+	}
+	return path, true
+}
+
 // branchProducers resolves one branch observation's execution producers and the
 // base evidence points they must anchor to. An empty producer set is a valid
 // answer: the branch's value has no producing rule role at this target.
@@ -314,16 +360,15 @@ func branchProducers(
 	values linkboundary.Values,
 	producersByValue map[identity.ContentID][]BranchProducer,
 	mount Mount,
-	observation ingress.DiagnosticObservation,
+	observation programschema.DiagnosticObservation,
+	evidence []identity.ContentID,
 ) ([]BranchProducer, []identity.ContentID, identity.ContentID, bool) {
-	branch, branchOK := observation.BranchCondition()
-	if !branchOK {
+	if !observation.Available() || observation.Kind() != structure.DiagnosticObservationBranchCondition {
 		return nil, nil, identity.ContentID{}, false
 	}
-	value, valueOK := values.ForMountedSpan(mount.ModuleKey, branch.ValueSpanID())
+	value, valueOK := values.ForMountedSpan(mount.ModuleKey, observation.ValueSpanID())
 	valueID, valueIDOK := values.ID(value)
-	evidence, evidenceOK := branch.EvidencePoints()
-	if !valueOK || !valueIDOK || !evidenceOK || len(evidence) == 0 {
+	if !valueOK || !valueIDOK || len(evidence) == 0 {
 		return nil, nil, identity.ContentID{}, false
 	}
 	producers := append([]BranchProducer(nil), producersByValue[valueID]...)
