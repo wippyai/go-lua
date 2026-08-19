@@ -13,7 +13,7 @@ import (
 )
 
 // relationLawTopology seals one topology carrying a single admissible
-// activation receipt, so its publications can be advanced.
+// activation binding, so its publications can be advanced.
 func relationLawTopology(t testing.TB) (*Topology, AcceptedMember) {
 	t.Helper()
 	fixture := newTemplateMaterializationFixture(t)
@@ -30,14 +30,18 @@ func relationLawTopology(t testing.TB) (*Topology, AcceptedMember) {
 	if !sealed || topology == nil {
 		t.Fatal("relation law topology seal")
 	}
-	key := boundaryKey(91)
-	receipt := activationReceipt{key: key, family: boundaryKey(92), trigger: boundaryKey(93), application: boundaryKey(94), target: boundaryKey(95), endpoint: boundaryKey(96)}
-	topology.receipts = []activationReceipt{receipt}
-	topology.receiptAt = map[composition.Key]int{key: 0}
-	topology.receiptByTrigger = map[composition.Key][]int{receipt.trigger: {0}}
-	member, memberOK := topology.SelectReceiptMember(receipt.trigger, PairLocator{Application: receipt.application, Target: receipt.target, Endpoint: receipt.endpoint})
+	origin := MaterializationOrigin{Family: boundaryKey(92), Application: boundaryKey(94), Target: boundaryKey(95), Endpoint: boundaryKey(96), TriggerOrdinal: 0}
+	materialized, materializedOK = materialized.WithOrigin(origin)
+	if !materializedOK {
+		t.Fatal("relation law origin")
+	}
+	trigger := boundaryKey(93)
+	topology.materializations = []TemplateMaterialization{materialized}
+	topology.instanceKeys = []composition.Key{trigger}
+	topology.triggers[trigger] = activationTriggerBinding{family: origin.Family, application: origin.Application}
+	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: origin.Application, Target: origin.Target, Endpoint: origin.Endpoint})
 	if !memberOK {
-		t.Fatal("relation law receipt member")
+		t.Fatal("relation law binding member")
 	}
 	accepted, acceptedOK := topology.Accept(member, TrueExpr())
 	if !acceptedOK {

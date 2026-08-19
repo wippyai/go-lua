@@ -28,7 +28,7 @@ func (edge SelectedStructuralFactorEdge) Target() Point           { return edge.
 func (edge SelectedStructuralFactorEdge) Input() Input            { return edge.input }
 func (edge SelectedStructuralFactorEdge) Factor() composition.Key { return edge.factor }
 
-// SelectedStructuralFactorEdges lowers only the direct transport receipts
+// SelectedStructuralFactorEdges lowers only the direct transport bindings
 // owned by accepted Members. It does not enumerate inactive candidates, and
 // it attaches each member's exact premise at an endpoint scope before the
 // runtime overlay observes the edge.
@@ -42,21 +42,17 @@ func (topology *Topology) SelectedStructuralFactorEdges(base *Graph, accepted []
 		if !topology.ownsMember(member) {
 			return nil, false
 		}
-		index, found := topology.receiptAt[member.Binding()]
-		if !found || index < 0 || index >= len(topology.receipts) {
-			return nil, false
-		}
-		receipt := topology.receipts[index]
-		if !receipt.direct.Available() {
+		candidate, found := topology.directCandidate(member.Binding())
+		if !found || !candidate.Available() {
 			// Materialized candidates already belong to the base graph.
 			continue
 		}
-		for transportIndex := 0; transportIndex < receipt.direct.TransportCount(); transportIndex++ {
-			transport, transportOK := receipt.direct.TransportAt(transportIndex)
+		for transportIndex := 0; transportIndex < candidate.TransportCount(); transportIndex++ {
+			transport, transportOK := candidate.TransportAt(transportIndex)
 			if !transportOK {
 				return nil, false
 			}
-			edge, edgeOK := topology.selectedDirectActivationEdge(base, receipt, acceptedMember.Premise(), transport)
+			edge, edgeOK := topology.selectedDirectActivationEdge(base, member.Binding(), acceptedMember.Premise(), transport)
 			if !edgeOK {
 				return nil, false
 			}
@@ -183,8 +179,8 @@ func cloneIntRows(rows [][]int) [][]int {
 	return result
 }
 
-func (topology *Topology) selectedDirectActivationEdge(base *Graph, receipt activationReceipt, premise Expr, transport DirectActivationTransport) (SelectedStructuralFactorEdge, bool) {
-	if topology == nil || base == nil || !premise.Available() || !receipt.key.Available() || !transport.Factor.Available() || transport.Source == 0 || transport.Target == 0 {
+func (topology *Topology) selectedDirectActivationEdge(base *Graph, binding composition.Key, premise Expr, transport DirectActivationTransport) (SelectedStructuralFactorEdge, bool) {
+	if topology == nil || base == nil || !premise.Available() || !binding.Available() || !transport.Factor.Available() || transport.Source == 0 || transport.Target == 0 {
 		return SelectedStructuralFactorEdge{}, false
 	}
 	if _, known := topology.source.FactorIndex(transport.Factor); !known {
@@ -223,7 +219,7 @@ func (topology *Topology) selectedDirectActivationEdge(base *Graph, receipt acti
 	} else {
 		return SelectedStructuralFactorEdge{}, false
 	}
-	input := BoundaryInput(source.Site(), target.Site(), receipt.key, pre, reindex, post)
+	input := BoundaryInput(source.Site(), target.Site(), binding, pre, reindex, post)
 	if !input.Available() {
 		return SelectedStructuralFactorEdge{}, false
 	}

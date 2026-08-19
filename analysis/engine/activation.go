@@ -57,7 +57,7 @@ func Activate(value Activation, application, target, endpoint identity.SemanticK
 		}
 		return false
 	}
-	member, selected := value.execution.owner.topology.SelectReceiptMember(value.execution.owner.trigger, equation.PairLocator{
+	member, selected := value.execution.owner.topology.SelectActivationMember(value.execution.owner.trigger, equation.PairLocator{
 		Application: compositionKeyOf(application),
 		Target:      compositionKeyOf(target),
 		Endpoint:    compositionKeyOf(endpoint),

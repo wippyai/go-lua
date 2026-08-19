@@ -99,7 +99,7 @@ func TestPointStateTransportSharesLatentRootButLiftClosesIt(t *testing.T) {
 	if !ok {
 		t.Fatal("seal sparse RHS rule")
 	}
-	overlaid, ok := work.OverlayRuleContribution(rhs, rule)
+	overlaid, _, ok := work.OverlayRuleContribution(rhs, rule)
 	if !ok {
 		t.Fatal("overlay sparse RHS rule")
 	}
@@ -249,7 +249,7 @@ func TestPointRHSAbsentBaseDoesNotInjectDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("lower root")
 	}
-	adoptedRule, ok := work.AddRuleContribution(emptyRHS, lower)
+	adoptedRule, _, ok := work.AddRuleContribution(emptyRHS, lower)
 	if !ok || !work.OwnsPointRHS(adoptedRule) {
 		t.Fatal("adopt rule into empty RHS")
 	}
@@ -270,7 +270,7 @@ func TestPointRHSAbsentBaseDoesNotInjectDefault(t *testing.T) {
 		t.Fatal("empty RHS environment fold rebuilt root")
 	}
 
-	overlaid, ok := work.OverlayRuleContribution(emptyRHS, lower)
+	overlaid, _, ok := work.OverlayRuleContribution(emptyRHS, lower)
 	if !ok {
 		t.Fatal("overlay empty base")
 	}
@@ -449,7 +449,7 @@ func TestPointRHSOverlaySharesUntouchedFactorRoot(t *testing.T) {
 	if !ok {
 		t.Fatal("adopt filtered point")
 	}
-	overlaid, ok := work.OverlayRuleContribution(rhs, rule)
+	overlaid, _, ok := work.OverlayRuleContribution(rhs, rule)
 	if !ok {
 		t.Fatal("overlay value rule")
 	}
@@ -675,11 +675,11 @@ func TestPointRHSFoldMatchesCanonicalOrderAndClosesOnlyOnSupportGrowth(t *testin
 	}
 	lower := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4))
 	explicitDefault := toRule(finishContributionAt(t, work, plan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), on, 7))
-	canonical, ok := work.AddRuleContribution(base, lower)
+	canonical, _, ok := work.AddRuleContribution(base, lower)
 	if !ok {
 		t.Fatal("canonical lower")
 	}
-	canonical, ok = work.AddRuleContribution(canonical, explicitDefault)
+	canonical, _, ok = work.AddRuleContribution(canonical, explicitDefault)
 	if !ok {
 		t.Fatal("canonical default")
 	}

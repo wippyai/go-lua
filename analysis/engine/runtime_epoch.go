@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -437,7 +438,11 @@ func newRuntimeEpoch(runtime *solverRuntime, relation equation.Relation, ctx con
 		if !paired {
 			return nil, false
 		}
-		epoch.points[pointIndex] = initial
+		// The initial point is a base install, not a publication: it carries no
+		// classified transition.
+		if !epoch.installPoint(pointIndex, initial, change.Set{}) {
+			return nil, false
+		}
 		if !epoch.markPostfixDirty(pointIndex) {
 			return nil, false
 		}

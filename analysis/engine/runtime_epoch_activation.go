@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	demandpkg "github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/facts/change"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 )
@@ -228,7 +229,11 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	runtime.pointRegion = overlay.pointRegion
 	runtime.activeRegions = overlay.activeRegions
 	for _, activation := range prepared.pointActivations {
-		epoch.points[activation.index] = activation.state
+		// An activation installs a point without publishing a
+		// predecessor-to-successor transition, so it issues no classification.
+		if !epoch.installPoint(activation.index, activation.state, change.Set{}) {
+			return false
+		}
 		epoch.structuralDirty[activation.index] = true
 		epoch.structural.inputs[activation.index] = structuralInputEpoch{}
 	}

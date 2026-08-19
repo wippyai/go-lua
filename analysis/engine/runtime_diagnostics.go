@@ -206,6 +206,13 @@ type SolveDiagnostics struct {
 	RawOnlyPublications  uint64
 	VersionBumps         uint64
 
+	// UnclassifiedPublications counts the installs whose producing operation
+	// issued no ordering classification. PublicationsByReason attributes the
+	// classified ones: position i counts the installs carrying the reason at
+	// change position i.
+	UnclassifiedPublications uint64
+	PublicationsByReason     [change.ReasonWidth]uint64
+
 	// Wakes counts the Groups a publication woke. One route accumulates every
 	// channel, so a Group reached by several channels is one wake carrying
 	// several reasons. WakesByReason attributes those reasons: position i
@@ -255,6 +262,8 @@ type solveDiagnosticState struct {
 	rawPublications              uint64
 	rawOnlyPublications          uint64
 	versionBumps                 uint64
+	unclassifiedPublications     uint64
+	publicationsByReason         [change.ReasonWidth]uint64
 	wakes                        uint64
 	wakesByReason                [change.ReasonWidth]uint64
 	interfaceRefreshes           uint64
@@ -587,6 +596,8 @@ func (diagnostics *solveDiagnosticState) snapshot() SolveDiagnostics {
 		RawOnlyPublications:          diagnostics.rawOnlyPublications,
 		VersionBumps:                 diagnostics.versionBumps,
 		Wakes:                        diagnostics.wakes,
+		UnclassifiedPublications:     diagnostics.unclassifiedPublications,
+		PublicationsByReason:         diagnostics.publicationsByReason,
 		WakesByReason:                diagnostics.wakesByReason,
 		InterfaceRefreshes:           diagnostics.interfaceRefreshes,
 		InterfaceRefreshCompleted:    diagnostics.interfaceRefreshCompleted,
@@ -641,6 +652,25 @@ func (diagnostics *solveDiagnosticState) recordPass(frameCount int) {
 func (diagnostics *solveDiagnosticState) recordActivation(count int) {
 	if diagnostics != nil && count > 0 {
 		diagnostics.activations += uint64(count)
+	}
+}
+
+// recordPublicationEvidence attributes one install's issued change facts. An
+// operation that published no classified transition is counted as such rather
+// than being silently attributed to an ascent.
+func (diagnostics *solveDiagnosticState) recordPublicationEvidence(evidence change.Set) {
+	if diagnostics == nil || !diagnostics.publicationEnabled() {
+		return
+	}
+	if evidence.Unknown() {
+		diagnostics.unclassifiedPublications++
+		return
+	}
+	for position := 0; position < change.ReasonWidth; position++ {
+		reason, ok := change.ReasonAt(position)
+		if ok && evidence.Has(reason) {
+			diagnostics.publicationsByReason[position]++
+		}
 	}
 }
 

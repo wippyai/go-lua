@@ -8,10 +8,10 @@ import (
 )
 
 // Topology is the one sealed structural authority for a Solver. It owns the
-// ordinary graph and the immutable receipt-origin activation selections.
+// ordinary graph and the immutable binding-origin activation selections.
 type Topology struct {
 	source *composition.Composition
-	// deferredQueries is issued only by the receipt-only observation seal. It
+	// deferredQueries is issued only by the binding-only observation seal. It
 	// records that every declared Query family was intentionally deferred to
 	// solve-local owned observation roots rather than silently omitted.
 	deferredQueries bool
@@ -26,13 +26,16 @@ type Topology struct {
 	// orders every accepted set this Topology ever admits.
 	initialRelation Relation
 
-	receipts         []activationReceipt
-	receiptAt        map[composition.Key]int
-	receiptByTrigger map[composition.Key][]int
+	// These are the owner-issued activation rows. They remain immutable after
+	// sealing; selection scans them directly instead of rebuilding an index or
+	// reissuing a wrapper around each row.
+	materializations []TemplateMaterialization
+	directCandidates []DirectActivationCandidate
+	instanceKeys     []composition.Key
 	// triggers is the declared activation binding of every sealed trigger,
 	// keyed by the trigger's canonical rule-instance key. It is the authority
-	// for a trigger's family and application; receipts index the candidates
-	// that binding admits, and a trigger with none is still bound.
+	// for a trigger's family and application; candidate rows are separate, and
+	// a trigger with none is still bound.
 	triggers map[composition.Key]activationTriggerBinding
 	reverses []derivedActivationReverse
 }
@@ -44,36 +47,14 @@ type activationTriggerBinding struct {
 	application composition.Key
 }
 
-// activationReceipt is the sealed index of one pre-materialized target row.
-// It contains no template, port table, or lowering capability.
-type activationReceipt struct {
-	key         composition.Key
-	family      composition.Key
-	trigger     composition.Key
-	application composition.Key
-	target      composition.Key
-	endpoint    composition.Key
-	direct      DirectActivationCandidate
-}
-
 // Deprecated compatibility storage for the in-flight selector migration.
-// It is not used by graph lowering; receipt-origin rows are authoritative.
+// It is not used by graph lowering; binding-origin rows are authoritative.
 // derivedActivationReverse is produced exclusively by a sealed binding's
 // actual export ports. It is not a second user-authored declaration.
 type derivedActivationReverse struct {
 	binding composition.Key
 	target  composition.Key
 	trigger composition.Key
-}
-
-func (receipt *activationReceipt) issue(owner *Topology, locator PairLocator) (Member, bool) {
-	if receipt == nil || owner == nil || !receipt.key.Available() || !receipt.family.Available() || !receipt.trigger.Available() {
-		return Member{}, false
-	}
-	if receipt.application != locator.Application || receipt.target != locator.Target || receipt.endpoint != locator.Endpoint {
-		return Member{}, false
-	}
-	return Member{owner: owner, binding: receipt.key, locator: locator}, true
 }
 
 // SealTopology freezes a single base graph and its binding descriptors. It
@@ -94,7 +75,7 @@ func SealTopologyWithFailure(source *composition.Composition, spec TopologySpec)
 	return sealTopologyWithFailure(source, spec, false)
 }
 
-// SealObservationTopologyWithFailure is the narrow receipt-only topology
+// SealObservationTopologyWithFailure is the narrow binding-only topology
 // seal for a schema whose Query families are all deferred to solve-local
 // observation roots. It admits exactly zero ordinary Query rows; partial and
 // ordinary-query topologies remain the responsibility of SealTopology.
@@ -138,17 +119,15 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 		return nil, sealRefused(SealFailureFamilyTopology, "instances"), false
 	}
 	topology := &Topology{
-		source:           source,
-		deferredQueries:  deferredQueries,
-		receiptAt:        make(map[composition.Key]int),
-		receiptByTrigger: make(map[composition.Key][]int),
-		triggers:         make(map[composition.Key]activationTriggerBinding),
+		source:          source,
+		deferredQueries: deferredQueries,
+		triggers:        make(map[composition.Key]activationTriggerBinding),
 	}
 	if !topology.sealTriggers(sealed.ActivationTriggers, instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-triggers"), false
 	}
-	if !topology.sealReceipts(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
-		return nil, sealRefused(SealFailureFamilyTopology, "receipts"), false
+	if !topology.sealActivationRows(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
+		return nil, sealRefused(SealFailureFamilyTopology, "activation-rows"), false
 	}
 	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
 		return nil, sealRefused(SealFailureFamilyTopology, "operand-realms"), false
@@ -176,7 +155,7 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 
 // appendAssemblyTargets joins the already-directory-owned target rows to the
 // caller's ordinary topology rows. Point and rule references are local to
-// each materialized target receipt, so they are shifted exactly once at this
+// each materialized target binding, so they are shifted exactly once at this
 // boundary; no target Batch capability can reach the compiler.
 func appendAssemblyTargets(spec *TopologySpec, targets []TopologySpec) bool {
 	if spec == nil {
@@ -347,10 +326,10 @@ func (topology *Topology) sealTriggers(bindings []ActivationTriggerBinding, inst
 	return true
 }
 
-// receiptAgreesWithTrigger holds when a candidate receipt names a trigger the
+// bindingAgreesWithTrigger holds when a candidate binding names a trigger the
 // declaration bound, under that trigger's declared family and application. A
-// receipt cannot introduce a trigger, a family, or an application of its own.
-func (topology *Topology) receiptAgreesWithTrigger(trigger composition.Key, origin MaterializationOrigin) bool {
+// binding cannot introduce a trigger, a family, or an application of its own.
+func (topology *Topology) bindingAgreesWithTrigger(trigger composition.Key, origin MaterializationOrigin) bool {
 	binding, bound := topology.triggers[trigger]
 	return bound && binding.family == origin.Family && binding.application == origin.Application
 }
@@ -365,17 +344,23 @@ func (topology *Topology) TriggerBound(trigger, family composition.Key) bool {
 	return bound && binding.family == family
 }
 
-func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []TemplateMaterialization, direct []DirectActivationCandidate, instances []canonicalInstance) bool {
+func (topology *Topology) sealActivationRows(base *Batch, pointCount int, values []TemplateMaterialization, direct []DirectActivationCandidate, instances []canonicalInstance) bool {
 	if topology == nil || topology.source == nil || base == nil || pointCount == 0 {
 		return false
 	}
-	receipts := make([]activationReceipt, 0, len(values)+len(direct))
+	instanceKeys := make([]composition.Key, len(instances))
+	for index, instance := range instances {
+		if !instance.key.Available() {
+			return false
+		}
+		instanceKeys[index] = instance.key
+	}
 	seen := make(map[composition.Key]struct{}, len(values)+len(direct))
 	for _, value := range values {
 		origin, ok := value.Origin()
 		// Structural/template assembly laws may materialize a target without
 		// an activation trigger. Such rows still belong in the sealed graph,
-		// but cannot mint a runtime selection receipt. Production activation
+		// but cannot mint a runtime selection binding. Production activation
 		// callers attach origin before admission.
 		if !ok {
 			continue
@@ -391,20 +376,17 @@ func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []Tem
 		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
 			return false
 		}
-		if !topology.receiptAgreesWithTrigger(instance.key, origin) {
+		if !topology.bindingAgreesWithTrigger(instance.key, origin) {
 			return false
 		}
-		key, keyed := identityKey("analysis/engine/equation/activation-receipt", func(writer *canonical.DigestWriter) bool {
-			return writeKey(writer, value.Key()) && writeKey(writer, instance.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint)
-		})
-		if !keyed {
+		key := value.Key()
+		if !key.Available() {
 			return false
 		}
 		if _, duplicate := seen[key]; duplicate {
 			return false
 		}
 		seen[key] = struct{}{}
-		receipts = append(receipts, activationReceipt{key: key, family: origin.Family, trigger: instance.key, application: origin.Application, target: origin.Target, endpoint: origin.Endpoint})
 	}
 	for _, value := range direct {
 		origin, ok := value.Origin()
@@ -419,7 +401,7 @@ func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []Tem
 		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
 			return false
 		}
-		if !topology.receiptAgreesWithTrigger(instance.key, origin) {
+		if !topology.bindingAgreesWithTrigger(instance.key, origin) {
 			return false
 		}
 		for index := 0; index < value.TransportCount(); index++ {
@@ -428,26 +410,18 @@ func (topology *Topology) sealReceipts(base *Batch, pointCount int, values []Tem
 				return false
 			}
 		}
-		key, keyed := identityKey("analysis/engine/equation/activation-receipt", func(writer *canonical.DigestWriter) bool {
-			return writeKey(writer, value.Key()) && writeKey(writer, instance.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint)
-		})
-		if !keyed {
+		key := value.Key()
+		if !key.Available() {
 			return false
 		}
 		if _, duplicate := seen[key]; duplicate {
 			return false
 		}
 		seen[key] = struct{}{}
-		receipts = append(receipts, activationReceipt{key: key, family: origin.Family, trigger: instance.key, application: origin.Application, target: origin.Target, endpoint: origin.Endpoint, direct: value})
 	}
-	sort.Slice(receipts, func(left, right int) bool { return lessKey(receipts[left].key, receipts[right].key) })
-	topology.receipts = receipts
-	topology.receiptAt = make(map[composition.Key]int, len(receipts))
-	topology.receiptByTrigger = make(map[composition.Key][]int)
-	for index := range receipts {
-		topology.receiptAt[receipts[index].key] = index
-		topology.receiptByTrigger[receipts[index].trigger] = append(topology.receiptByTrigger[receipts[index].trigger], index)
-	}
+	topology.materializations = append([]TemplateMaterialization(nil), values...)
+	topology.directCandidates = append([]DirectActivationCandidate(nil), direct...)
+	topology.instanceKeys = instanceKeys
 	return true
 }
 
@@ -458,31 +432,8 @@ func (topology *Topology) ownsMember(member Member) bool {
 	if topology == nil || member.owner != topology || !member.binding.Available() || !member.locator.Available() {
 		return false
 	}
-	index, found := topology.receiptAt[member.binding]
-	if !found || index < 0 || index >= len(topology.receipts) {
-		return false
-	}
-	receipt := topology.receipts[index]
-	return receipt.application == member.locator.Application && receipt.target == member.locator.Target && receipt.endpoint == member.locator.Endpoint
-}
-
-// ActivationReceipt returns the one sealed receipt owned by one exact trigger
-// occurrence and cold family. One trigger has exactly one binding: allowing a
-// slice here would let singleton axes reconstruct a compatibility table.
-func (topology *Topology) ActivationReceipt(trigger, family composition.Key) (composition.Key, bool) {
-	if topology == nil || !trigger.Available() || !family.Available() {
-		return composition.Key{}, false
-	}
-	indexes := topology.receiptByTrigger[trigger]
-	if len(indexes) == 0 {
-		return composition.Key{}, false
-	}
-	for _, index := range indexes {
-		if index >= 0 && index < len(topology.receipts) && topology.receipts[index].family == family {
-			return topology.receipts[index].key, true
-		}
-	}
-	return composition.Key{}, false
+	origin, found := topology.activationOrigin(member.binding)
+	return found && origin.Application == member.locator.Application && origin.Target == member.locator.Target && origin.Endpoint == member.locator.Endpoint
 }
 
 // ActivationApplication returns the exact application constituent sealed on
@@ -499,26 +450,65 @@ func (topology *Topology) ActivationApplication(trigger, family composition.Key)
 	return binding.application, true
 }
 
-// SelectReceiptMember converts one trigger locator only when an exact
-// pre-materialized receipt owns that tuple.
-func (topology *Topology) SelectReceiptMember(trigger composition.Key, locator PairLocator) (Member, bool) {
+// SelectActivationMember converts one trigger locator only when an exact
+// owner-issued activation row owns that tuple.
+func (topology *Topology) SelectActivationMember(trigger composition.Key, locator PairLocator) (Member, bool) {
 	if topology == nil || !trigger.Available() || !locator.Available() {
 		return Member{}, false
 	}
-	indexes := topology.receiptByTrigger[trigger]
-	if len(indexes) == 0 {
-		return Member{}, false
-	}
-	for _, index := range indexes {
-		if index < 0 || index >= len(topology.receipts) {
-			continue
+	for _, value := range topology.materializations {
+		if origin, ok := value.Origin(); ok {
+			if valueTrigger, triggerOK := topology.activationTrigger(origin); triggerOK && valueTrigger == trigger && origin.Application == locator.Application && origin.Target == locator.Target && origin.Endpoint == locator.Endpoint {
+				return Member{owner: topology, binding: value.Key(), locator: locator}, true
+			}
 		}
-		receipt := &topology.receipts[index]
-		if member, ok := receipt.issue(topology, locator); ok {
-			return member, true
+	}
+	for _, value := range topology.directCandidates {
+		if origin, ok := value.Origin(); ok {
+			if valueTrigger, triggerOK := topology.activationTrigger(origin); triggerOK && valueTrigger == trigger && origin.Application == locator.Application && origin.Target == locator.Target && origin.Endpoint == locator.Endpoint {
+				return Member{owner: topology, binding: value.Key(), locator: locator}, true
+			}
 		}
 	}
 	return Member{}, false
+}
+
+func (topology *Topology) activationTrigger(origin MaterializationOrigin) (composition.Key, bool) {
+	if topology == nil || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(topology.instanceKeys) {
+		return composition.Key{}, false
+	}
+	trigger := topology.instanceKeys[origin.TriggerOrdinal]
+	_, bound := topology.triggers[trigger]
+	return trigger, bound
+}
+
+func (topology *Topology) activationOrigin(key composition.Key) (MaterializationOrigin, bool) {
+	if topology == nil || !key.Available() {
+		return MaterializationOrigin{}, false
+	}
+	for _, value := range topology.materializations {
+		if value.Key() == key {
+			return value.Origin()
+		}
+	}
+	for _, value := range topology.directCandidates {
+		if value.Key() == key {
+			return value.Origin()
+		}
+	}
+	return MaterializationOrigin{}, false
+}
+
+func (topology *Topology) directCandidate(key composition.Key) (DirectActivationCandidate, bool) {
+	if topology == nil || !key.Available() {
+		return DirectActivationCandidate{}, false
+	}
+	for _, value := range topology.directCandidates {
+		if value.Key() == key {
+			return value, true
+		}
+	}
+	return DirectActivationCandidate{}, false
 }
 
 func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool) {
@@ -526,15 +516,7 @@ func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool
 		return composition.Key{}, false
 	}
 	return identityKey("analysis/engine/equation/topology", func(writer *canonical.DigestWriter) bool {
-		if !writeKey(writer, base) || writer.Uint(boolUint(topology.deferredQueries)) != nil || writer.Count(uint64(len(topology.receipts))) != nil {
-			return false
-		}
-		for _, receipt := range topology.receipts {
-			if !writeKey(writer, receipt.key) || !writeKey(writer, receipt.family) || !writeKey(writer, receipt.trigger) || !writeKey(writer, receipt.application) || !writeKey(writer, receipt.target) || !writeKey(writer, receipt.endpoint) {
-				return false
-			}
-		}
-		return true
+		return writeKey(writer, base) && writer.Uint(boolUint(topology.deferredQueries)) == nil
 	})
 }
 
@@ -617,13 +599,16 @@ func (topology *Topology) acceptedEvidenceKey(member Member, premise Expr) (comp
 	if topology == nil || !member.ownedBy(topology) || !premise.Available() {
 		return composition.Key{}, false
 	}
-	index, bound := topology.receiptAt[member.Binding()]
-	if !bound || index < 0 || index >= len(topology.receipts) {
+	origin, bound := topology.activationOrigin(member.Binding())
+	if !bound {
 		return composition.Key{}, false
 	}
-	receipt := topology.receipts[index]
+	trigger, triggerOK := topology.activationTrigger(origin)
+	if !triggerOK {
+		return composition.Key{}, false
+	}
 	return identityKey("analysis/engine/equation/activation-evidence", func(writer *canonical.DigestWriter) bool {
-		return writeMemberTuple(writer, member) && writeKey(writer, receipt.family) && writeKey(writer, receipt.trigger) && writeKey(writer, receipt.application) && writeExpr(writer, premise)
+		return writeMemberTuple(writer, member) && writeKey(writer, origin.Family) && writeKey(writer, trigger) && writeKey(writer, origin.Application) && writeExpr(writer, premise)
 	})
 }
 
@@ -729,7 +714,7 @@ func (topology *Topology) QueryRow(index uint64) (QueryRowLocator, bool) {
 
 // ActivationMemberRow projects one exact trigger Rule reference only when the
 // sealed topology owns at least one materialized candidate for that trigger.
-// Candidate target tuples remain receipt-owned and do not multiply the stable
+// Candidate target tuples remain binding-owned and do not multiply the stable
 // structural-member directory.
 func (topology *Topology) ActivationMemberRow(ref RuleRef) (ActivationMemberRowLocator, bool) {
 	index := int(uint64(ref)) - 1
@@ -819,7 +804,7 @@ func (topology *Topology) MergeAccepted(left, right AcceptedMember) (AcceptedMem
 }
 
 // graphSemanticKeyWithFailure retains the graph-key failure boundary for the
-// receipt compiler without exposing mutable Graph state to callers.
+// binding compiler without exposing mutable Graph state to callers.
 func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealFailure, bool) {
 	if graph == nil || graph.self != graph || graph.composition == nil {
 		return composition.Key{}, sealRefused(SealFailureFamilyIdentity, "graph-key-structure"), false

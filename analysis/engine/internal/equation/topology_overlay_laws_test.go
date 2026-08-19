@@ -57,14 +57,18 @@ func TestTopologyGraphAcceptedRevisionIsACompactSharedView(t *testing.T) {
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
-	key := boundaryKey(91)
-	receipt := activationReceipt{key: key, family: boundaryKey(92), trigger: boundaryKey(93), application: boundaryKey(94), target: boundaryKey(95), endpoint: boundaryKey(96)}
-	topology.receipts = []activationReceipt{receipt}
-	topology.receiptAt = map[composition.Key]int{key: 0}
-	topology.receiptByTrigger = map[composition.Key][]int{receipt.trigger: {0}}
-	member, memberOK := topology.SelectReceiptMember(receipt.trigger, PairLocator{Application: receipt.application, Target: receipt.target, Endpoint: receipt.endpoint})
+	origin := MaterializationOrigin{Family: boundaryKey(92), Application: boundaryKey(94), Target: boundaryKey(95), Endpoint: boundaryKey(96), TriggerOrdinal: 0}
+	materialized, materializedOK = materialized.WithOrigin(origin)
+	if !materializedOK {
+		t.Fatal("binding origin")
+	}
+	trigger := boundaryKey(93)
+	topology.materializations = []TemplateMaterialization{materialized}
+	topology.instanceKeys = []composition.Key{trigger}
+	topology.triggers[trigger] = activationTriggerBinding{family: origin.Family, application: origin.Application}
+	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: origin.Application, Target: origin.Target, Endpoint: origin.Endpoint})
 	if !memberOK {
-		t.Fatal("receipt member")
+		t.Fatal("binding member")
 	}
 	accepted, acceptedOK := topology.Accept(member, TrueExpr())
 	if !acceptedOK {

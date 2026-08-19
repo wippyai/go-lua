@@ -118,7 +118,7 @@ func TestMergeSelectedPointStateWidenAcceptsAscendingCachedExact(t *testing.T) {
 	if !ok {
 		t.Fatal("canonical X+E")
 	}
-	canonical, ok = work.AddRuleContribution(canonical, bRule)
+	canonical, _, ok = work.AddRuleContribution(canonical, bRule)
 	if !ok {
 		t.Fatal("canonical X+E+B")
 	}
