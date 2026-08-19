@@ -231,12 +231,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		return err
 	}
 
-	suspensions := c.suspensionCount(op)
+	suspensions := c.Operations.SuspensionCount(op)
 	if err := w.Count(uint64(suspensions)); err != nil {
 		return err
 	}
 	for index := 0; index < suspensions; index++ {
-		yield, reentry, source, multiplicity, found := c.suspensionAt(op, index)
+		yield, reentry, source, multiplicity, found := c.Operations.SuspensionAt(op, index)
 		if !found {
 			return errors.New("target: malformed suspension")
 		}
@@ -256,16 +256,16 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
-	spawns := c.spawnCount(op)
+	spawns := c.Operations.SpawnCount(op)
 	if err := w.Count(uint64(spawns)); err != nil {
 		return err
 	}
 	for index := 0; index < spawns; index++ {
-		spawn, found := c.spawnIDAt(op, index)
+		spawn, found := c.Operations.SpawnIDAt(op, index)
 		if !found {
 			return errors.New("target: malformed spawn")
 		}
-		owner, function, child, yield, resume, entry, resumeValues, found := c.spawnRelation(spawn)
+		owner, function, child, yield, resume, entry, resumeValues, found := c.Operations.SpawnRelation(spawn)
 		if !found || owner != op {
 			return errors.New("target: malformed spawn")
 		}
@@ -280,12 +280,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 				return err
 			}
 		}
-		alternatives := c.spawnSiblingCount(spawn)
+		alternatives := c.Operations.SpawnSiblingCount(spawn)
 		if err := w.Count(uint64(alternatives)); err != nil {
 			return err
 		}
 		for sibling := 0; sibling < alternatives; sibling++ {
-			alternative, found := c.spawnSiblingAt(spawn, sibling)
+			alternative, found := c.Operations.SpawnSiblingAt(spawn, sibling)
 			if !found {
 				return errors.New("target: malformed spawn sibling")
 			}
@@ -294,16 +294,16 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			}
 		}
 	}
-	resumes := c.ResumeCount(op)
+	resumes := c.Operations.ResumeCount(op)
 	if err := w.Count(uint64(resumes)); err != nil {
 		return err
 	}
 	for index := 0; index < resumes; index++ {
-		resume, found := c.ResumeIDAt(op, index)
+		resume, found := c.Operations.ResumeIDAt(op, index)
 		if !found {
 			return errors.New("target: malformed resume")
 		}
-		owner, source, carrier, arguments, found := c.Resume(resume)
+		owner, source, carrier, arguments, found := c.Operations.Resume(resume)
 		if !found || owner != op {
 			return errors.New("target: malformed resume")
 		}
@@ -319,12 +319,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := encodeValues(w, c, arguments); err != nil {
 			return err
 		}
-		outcomes := c.resumeOutcomeCount(resume)
+		outcomes := c.Operations.ResumeOutcomeCount(resume)
 		if err := w.Count(uint64(outcomes)); err != nil {
 			return err
 		}
 		for outcome := 0; outcome < outcomes; outcome++ {
-			kind, targetOutcome, found := c.resumeOutcomeAt(resume, outcome)
+			kind, targetOutcome, found := c.Operations.ResumeOutcomeAt(resume, outcome)
 			if !found {
 				return errors.New("target: malformed resume outcome")
 			}

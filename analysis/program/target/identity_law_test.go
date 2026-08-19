@@ -593,8 +593,8 @@ func TestCallbackAndResumeContentIDsFenceOwnersAndInvert(t *testing.T) {
 	}
 	alphaCallback, _ := contract.Operations.CallbackAt(alpha, 0)
 	betaCallback, _ := contract.Operations.CallbackAt(beta, 0)
-	alphaResume, _ := contract.ResumeIDAt(alpha, 0)
-	betaResume, _ := contract.ResumeIDAt(beta, 0)
+	alphaResume, _ := contract.Operations.ResumeIDAt(alpha, 0)
+	betaResume, _ := contract.Operations.ResumeIDAt(beta, 0)
 
 	callback, ok := contract.CallbackContentID(alpha, alphaCallback)
 	if !ok || !callback.Available() {
@@ -668,8 +668,8 @@ func TestCallbackAndResumeContentIDsAreReplayAndPermutationStable(t *testing.T) 
 		if !leftOK || !rightOK || leftCallbackID != rightCallbackID {
 			t.Fatalf("%s callback identity changed across replay", name)
 		}
-		leftResume, _ := left.ResumeIDAt(leftOp, 0)
-		rightResume, _ := right.ResumeIDAt(rightOp, 0)
+		leftResume, _ := left.Operations.ResumeIDAt(leftOp, 0)
+		rightResume, _ := right.Operations.ResumeIDAt(rightOp, 0)
 		leftResumeID, leftOK := left.ResumeContentID(leftOp, leftResume)
 		rightResumeID, rightOK := right.ResumeContentID(rightOp, rightResume)
 		if !leftOK || !rightOK || leftResumeID != rightResumeID {
@@ -681,7 +681,7 @@ func TestCallbackAndResumeContentIDsAreReplayAndPermutationStable(t *testing.T) 
 func TestCallbackAndResumeContentIDsTrackDescriptorMutation(t *testing.T) {
 	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackResumeContentOperation("mutable", 0, 0)}})
 	callback, _ := base.Operations.CallbackAt(1, 0)
-	resume, _ := base.ResumeIDAt(1, 0)
+	resume, _ := base.Operations.ResumeIDAt(1, 0)
 	baseCallback, _ := base.CallbackContentID(1, callback)
 	baseResume, _ := base.ResumeContentID(1, resume)
 

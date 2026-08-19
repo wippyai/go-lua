@@ -75,8 +75,26 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		bindingCount += c.Operations.BindingCount(vocabulary.Operation(operationIndex + 1))
 	}
 	transferCount, transferOutcomeCount := 0, 0
+	outcomeCount, callbackCount := 0, 0
+	callbackResultCount, resultAliasCount, producedCount, producedCaptureCount, freshResultCount := 0, 0, 0, 0, 0
+	suspensionCount, spawnCount, resumeCount, resumeOutcomeCount := 0, 0, 0, 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		op := vocabulary.Operation(operationIndex + 1)
+		outcomeCount += c.Operations.OutcomeCount(op)
+		callbackCount += c.Operations.CallbackCount(op)
+		suspensionCount += c.Operations.SuspensionCount(op)
+		spawnCount += c.Operations.SpawnCount(op)
+		resumeCount += c.Operations.ResumeCount(op)
+		resumeOutcomeCount += c.Operations.ResumeCount(op) * 5
+		for outcome := 0; outcome < c.Operations.OutcomeCount(op); outcome++ {
+			callbackResultCount += c.Operations.CallbackResultCount(op, outcome)
+			resultAliasCount += c.Operations.ResultAliasCount(op, outcome)
+			producedCount += c.Operations.ProducedCount(op, outcome)
+			freshResultCount += c.Operations.FreshResultCount(op, outcome)
+			for produced := 0; produced < c.Operations.ProducedCount(op, outcome); produced++ {
+				producedCaptureCount += c.Operations.ProducedCaptureCount(op, outcome, produced)
+			}
+		}
 		transferCount += c.Operations.TransferCount(op)
 		for index := 0; index < c.Operations.TransferCount(op); index++ {
 			transferOutcomeCount += c.Operations.TransferOutcomeCount(op, index)
@@ -88,25 +106,25 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		put(ids.TargetOperation, c.Operations.OperationCount()) &&
 		put(ids.TargetABI, c.Operations.OperationCount()) &&
 		put(ids.TargetBinding, bindingCount) &&
-		put(ids.TargetOutcome, len(c.outcomes)) &&
+		put(ids.TargetOutcome, outcomeCount) &&
 		put(ids.TargetOperationEffect, operationEffects) &&
 		put(ids.TargetCallbackEffect, callbackEffects) &&
 		put(ids.TargetPublicationEffect, publicationEffects) &&
-		put(ids.TargetCallback, len(c.callbacks)) &&
+		put(ids.TargetCallback, callbackCount) &&
 		put(ids.TargetCallbackRelease, callbackReleases) &&
-		put(ids.TargetCallbackResult, len(c.callbackResults)) &&
-		put(ids.TargetResultAlias, len(c.resultAliases)) &&
-		put(ids.TargetProduced, len(c.produced)) &&
-		put(ids.TargetProducedCapture, len(c.captures)) &&
-		put(ids.TargetFreshResult, len(c.fresh)) &&
+		put(ids.TargetCallbackResult, callbackResultCount) &&
+		put(ids.TargetResultAlias, resultAliasCount) &&
+		put(ids.TargetProduced, producedCount) &&
+		put(ids.TargetProducedCapture, producedCaptureCount) &&
+		put(ids.TargetFreshResult, freshResultCount) &&
 		put(ids.TargetSubedge, len(c.subedges)) &&
 		put(ids.TargetSubedgeArgumentOrigin, len(c.subedgeOrigins)) &&
 		put(ids.TargetSubedgeRelation, subedgeRelations) &&
-		put(ids.TargetSuspension, len(c.suspensions)+opaqueSuspensionCount) &&
-		put(ids.TargetSpawn, len(c.spawns)) &&
-		put(ids.TargetSpawnSibling, len(c.spawns)*spawnSiblingAlternatives) &&
-		put(ids.TargetResume, len(c.resumes)) &&
-		put(ids.TargetResumeOutcome, len(c.resumes)*crossActivationOutcomes) &&
+		put(ids.TargetSuspension, suspensionCount) &&
+		put(ids.TargetSpawn, spawnCount) &&
+		put(ids.TargetSpawnSibling, spawnCount*2) &&
+		put(ids.TargetResume, resumeCount) &&
+		put(ids.TargetResumeOutcome, resumeOutcomeCount) &&
 		put(ids.TargetTransfer, transferCount) &&
 		put(ids.TargetTransferOutcome, transferOutcomeCount) &&
 		put(ids.TargetProtocol, protocolCounts.Protocols) &&

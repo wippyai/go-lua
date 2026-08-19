@@ -562,12 +562,12 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 			}
 		}
 	}
-	for index := 0; index < contract.ResumeCount(operation); index++ {
-		resume, ok := contract.ResumeIDAt(operation, index)
+	for index := 0; index < contract.Operations.ResumeCount(operation); index++ {
+		resume, ok := contract.Operations.ResumeIDAt(operation, index)
 		if !ok {
 			return errors.New("static: malformed resume")
 		}
-		_, _, _, values, ok := contract.Resume(resume)
+		_, _, _, values, ok := contract.Operations.Resume(resume)
 		if !ok {
 			return errors.New("static: resume arguments unavailable")
 		}

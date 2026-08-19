@@ -46,15 +46,22 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operatio
 		c.inputFormalRanges[operationIndex] = start
 	}
 
-	c.outcomeResultRanges = make([]indexRange, len(c.outcomes))
-	for outcomeIndex, row := range c.outcomes {
-		count := c.Operations.ValuesCount(row.values)
+	c.outcomeResultRanges = make([]indexRange, len(c.outcomeContentIDs))
+	for outcomeIndex := range c.outcomeContentIDs {
+		if outcomeIndex >= len(outcomeOwners) || outcomeIndex >= len(outcomeOrdinals) {
+			return errors.New("target: malformed semantic outcome columns")
+		}
+		owner := outcomeOwners[outcomeIndex]
+		ordinal := outcomeOrdinals[outcomeIndex]
+		_, values, outcomeOK := c.Operations.OutcomeAt(owner, int(ordinal))
+		if !outcomeOK {
+			return errors.New("target: malformed semantic outcome")
+		}
+		count := c.Operations.ValuesCount(values)
 		start, err := checkedStoredRange("semantic outcome result table", len(c.outcomeResultIDs), count)
 		if err != nil {
 			return err
 		}
-		owner := outcomeOwners[outcomeIndex]
-		ordinal := outcomeOrdinals[outcomeIndex]
 		if owner == 0 {
 			return errors.New("target: malformed semantic outcome owner")
 		}

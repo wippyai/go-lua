@@ -15,7 +15,7 @@ func (c *Contract) OperationSubedgeRelation(op vocabulary.Operation) (operand vo
 		return 0, 0, 0, 0, 0, false
 	}
 	relation := c.subedgeRelations[row.subedgeRelation-1]
-	if relation.subedge == 0 || uint64(relation.subedge) > uint64(len(c.subedges)) || relation.resultOutcome >= uint32(row.outcomes.len()) {
+	if relation.subedge == 0 || uint64(relation.subedge) > uint64(len(c.subedges)) || relation.resultOutcome >= uint32(c.Operations.OutcomeCount(op)) {
 		return 0, 0, 0, 0, 0, false
 	}
 	return relation.operand, relation.selector, relation.subedge, relation.resultOutcome, relation.result, true

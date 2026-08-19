@@ -8,20 +8,31 @@ import (
 )
 
 type queryState struct {
-	operations    []queryOperationRow
-	types         []queryTypeRow
-	values        []queryValuesRow
-	effects       []queryEffectRow
-	transfers     []queryTransferRow
-	transferEnds  []vocabulary.TransferPossibility
-	outcomeRows   []queryOutcomeRow
-	behaviorRows  []queryBehaviorResultRow
-	predicateRows []queryBehaviorPredicateRow
+	operations      []queryOperationRow
+	types           []queryTypeRow
+	values          []queryValuesRow
+	effects         []queryEffectRow
+	transfers       []queryTransferRow
+	transferEnds    []vocabulary.TransferPossibility
+	outcomeRows     []queryOutcomeRow
+	produced        []queryProducedRow
+	captures        []queryCaptureRow
+	fresh           []queryFreshRow
+	callbackResults []queryCallbackResultRow
+	resultAliases   []queryResultAliasRow
+	suspensions     []querySuspensionRow
+	spawns          []querySpawnRow
+	resumes         []queryResumeRow
+	behaviorRows    []queryBehaviorResultRow
+	predicateRows   []queryBehaviorPredicateRow
 }
 
 type queryOperationRow struct {
 	input              vocabulary.Values
 	outcomes           queryRange
+	suspensions        queryRange
+	spawns             queryRange
+	resumes            queryRange
 	behavior           queryRange
 	behaviorPredicates queryRange
 	valuesTypes        []vocabulary.Type
@@ -55,8 +66,66 @@ type queryValuesRow struct {
 }
 
 type queryOutcomeRow struct {
-	kind   flowkind.OutcomeKind
-	values vocabulary.Values
+	kind            flowkind.OutcomeKind
+	values          vocabulary.Values
+	produced        queryRange
+	fresh           queryRange
+	callbackResults queryRange
+	resultAliases   queryRange
+}
+
+type queryProducedRow struct {
+	result           uint32
+	target           vocabulary.Operation
+	captures         queryRange
+	typeValueCapture uint32
+}
+
+type queryCaptureRow struct {
+	kind    vocabulary.CaptureKind
+	ordinal uint32
+}
+
+type queryFreshRow struct {
+	result  uint32
+	ordinal uint32
+	kind    schematype.FreshClass
+}
+
+type queryCallbackResultRow struct {
+	result   uint32
+	callback vocabulary.CallbackID
+}
+
+type queryResultAliasRow struct {
+	result uint32
+	source vocabulary.InputSource
+}
+
+type querySuspensionRow struct {
+	yield        uint32
+	reentry      uint32
+	source       vocabulary.ReentrySource
+	multiplicity vocabulary.ReentryMultiplicity
+}
+
+type querySpawnRow struct {
+	owner        vocabulary.Operation
+	function     vocabulary.InputSource
+	child        vocabulary.CallbackID
+	yield        uint32
+	parentResume uint32
+	childEntry   vocabulary.Values
+	resumeValues vocabulary.Values
+	alternatives [2]vocabulary.SpawnSiblingAlternative
+}
+
+type queryResumeRow struct {
+	owner     vocabulary.Operation
+	source    vocabulary.ResumeSource
+	carrier   vocabulary.ValueFormal
+	arguments vocabulary.Values
+	outcomes  [5]uint32
 }
 
 type queryBehaviorResultRow struct {

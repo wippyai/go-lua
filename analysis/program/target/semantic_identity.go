@@ -129,12 +129,11 @@ func (c *Contract) findCallbackContentID(id identity.ContentID) (vocabulary.Oper
 // operation anchor, source/carrier, argument Values, and all five sealed
 // outcome selectors.
 func (c *Contract) ResumeContentID(op vocabulary.Operation, resume vocabulary.ResumeID) (identity.ContentID, bool) {
-	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || resume == 0 || int(resume) > len(c.resumes) || int(resume) > len(c.resumeContentIDs) {
+	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || resume == 0 || int(resume) > len(c.resumeContentIDs) {
 		return identity.ContentID{}, false
 	}
-	row := c.resumes[resume-1]
-	owner, ok := c.operation(op)
-	if !ok || row.owner != op || uint64(resume-1) < uint64(owner.resumes.start) || uint64(resume-1) >= uint64(owner.resumes.end) {
+	owner, _, _, _, ok := c.Operations.Resume(resume)
+	if !ok || owner != op {
 		return identity.ContentID{}, false
 	}
 	id := c.resumeContentIDs[resume-1]
@@ -157,10 +156,13 @@ func (c *Contract) findResumeContentID(id identity.ContentID) (vocabulary.Operat
 		return 0, 0, false
 	}
 	row := c.resumeContentIndex[i]
-	if row.resume == 0 || int(row.resume) > len(c.resumes) {
+	if row.resume == 0 || int(row.resume) > len(c.resumeContentIDs) {
 		return 0, 0, false
 	}
-	owner := c.resumes[row.resume-1].owner
+	owner, _, _, _, ownerOK := c.Operations.Resume(row.resume)
+	if !ownerOK {
+		return 0, 0, false
+	}
 	got, ok := c.ResumeContentID(owner, row.resume)
 	if !ok || got != id {
 		return 0, 0, false
@@ -169,11 +171,7 @@ func (c *Contract) findResumeContentID(id identity.ContentID) (vocabulary.Operat
 }
 
 func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) {
-	row, ok := c.operation(op)
-	if !ok || index < 0 || index >= row.outcomes.len() {
-		return 0, false
-	}
-	return int(row.outcomes.start) + index, true
+	return c.Operations.OutcomePositionAt(op, index)
 }
 
 // sealSemanticIdentities is one finite finalization phase.  It retains only
@@ -181,11 +179,19 @@ func (c *Contract) outcomeIndex(op vocabulary.Operation, index int) (int, bool) 
 // normal Target Seal phase above.
 func (c *Contract) sealSemanticIdentities() error {
 	c.callbackSelectors = make([]identity.ContentID, len(c.callbacks))
-	c.outcomeSelectors = make([]identity.ContentID, len(c.outcomes))
-	outcomeOwners := make([]vocabulary.Operation, len(c.outcomes))
-	outcomeOrdinals := make([]uint32, len(c.outcomes))
+	outcomeCount := 0
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		operation, ok := c.Operations.OperationAt(operationIndex)
+		if !ok {
+			return errors.New("target: malformed operation outcome owner")
+		}
+		outcomeCount += c.Operations.OutcomeCount(operation)
+	}
+	c.outcomeSelectors = make([]identity.ContentID, outcomeCount)
+	outcomeOwners := make([]vocabulary.Operation, outcomeCount)
+	outcomeOrdinals := make([]uint32, outcomeCount)
 	c.operationContentIDs = make([]identity.ContentID, len(c.operations))
-	c.outcomeContentIDs = make([]identity.ContentID, len(c.outcomes))
+	c.outcomeContentIDs = make([]identity.ContentID, outcomeCount)
 	transferCount, transferOutcomeCount := 0, 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		op := vocabulary.Operation(operationIndex + 1)
@@ -198,46 +204,68 @@ func (c *Contract) sealSemanticIdentities() error {
 	c.transferOutcomeIDs = make([]identity.ContentID, transferOutcomeCount)
 	c.callbackContentIDs = make([]identity.ContentID, len(c.callbacks))
 	c.callbackContentIndex = make([]callbackContentIDRow, 0, len(c.callbacks))
-	c.resumeContentIDs = make([]identity.ContentID, len(c.resumes))
-	c.resumeContentIndex = make([]resumeContentIDRow, 0, len(c.resumes))
+	resumeCount := 0
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		operation, ok := c.Operations.OperationAt(operationIndex)
+		if !ok {
+			return errors.New("target: malformed resume owner")
+		}
+		resumeCount += c.Operations.ResumeCount(operation)
+	}
+	c.resumeContentIDs = make([]identity.ContentID, resumeCount)
+	c.resumeContentIndex = make([]resumeContentIDRow, 0, resumeCount)
 
 	// Dense outcome owner/ordinal columns are formed once in table order.  They
 	// make the remaining identity pass strictly linear in the sealed tables.
-	for operationIndex, operation := range c.operations {
-		owner := vocabulary.Operation(operationIndex + 1)
-		for outcome := operation.outcomes.start; outcome < operation.outcomes.end; outcome++ {
-			outcomeOwners[outcome] = owner
-			outcomeOrdinals[outcome] = outcome - operation.outcomes.start
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		owner, ok := c.Operations.OperationAt(operationIndex)
+		if !ok {
+			return errors.New("target: malformed operation outcome owner")
+		}
+		for ordinal := 0; ordinal < c.Operations.OutcomeCount(owner); ordinal++ {
+			flat, flatOK := c.Operations.OutcomePositionAt(owner, ordinal)
+			if !flatOK || flat < 0 || flat >= len(outcomeOwners) {
+				return errors.New("target: malformed operation outcome position")
+			}
+			outcomeOwners[flat] = owner
+			outcomeOrdinals[flat] = uint32(ordinal)
 		}
 	}
 
 	// Outcome selectors are deliberately owner-free: they are the fixed local
 	// discriminator needed while deriving a produced child's parent anchor.
-	for i := range c.outcomes {
-		row := c.outcomes[i]
+	for i := range c.outcomeSelectors {
+		owner := outcomeOwners[i]
 		local := outcomeOrdinals[i]
+		kind, values, outcomeOK := c.Operations.OutcomeAt(owner, int(local))
+		if !outcomeOK {
+			return errors.New("target: malformed outcome")
+		}
 		id, err := c.semanticID(semanticOutcomeSelector, func(w *framing.Writer) error {
 			if err := w.Uint(uint64(local)); err != nil {
 				return err
 			}
-			if err := w.Uint(uint64(row.kind)); err != nil {
+			if err := w.Uint(uint64(kind)); err != nil {
 				return err
 			}
-			if err := encodeValues(w, c, row.values); err != nil {
+			if err := encodeValues(w, c, values); err != nil {
 				return err
 			}
-			if err := w.Count(uint64(row.fresh.len())); err != nil {
+			if err := w.Count(uint64(c.Operations.FreshResultCount(owner, int(local)))); err != nil {
 				return err
 			}
-			for j := row.fresh.start; j < row.fresh.end; j++ {
-				x := c.fresh[j]
-				if err := w.Uint(uint64(x.result)); err != nil {
+			for j := 0; j < c.Operations.FreshResultCount(owner, int(local)); j++ {
+				result, ordinal, freshKind, freshOK := c.Operations.FreshResultAt(owner, int(local), j)
+				if !freshOK {
+					return errors.New("target: malformed fresh result")
+				}
+				if err := w.Uint(uint64(result)); err != nil {
 					return err
 				}
-				if err := w.Uint(uint64(x.ordinal)); err != nil {
+				if err := w.Uint(uint64(ordinal)); err != nil {
 					return err
 				}
-				if err := w.Uint(uint64(x.kind)); err != nil {
+				if err := w.Uint(uint64(freshKind)); err != nil {
 					return err
 				}
 			}
@@ -315,45 +343,61 @@ func (c *Contract) sealSemanticIdentities() error {
 		return err
 	}
 
-	for i, row := range c.resumes {
-		owner, ok := c.anchor(row.owner)
-		if !ok {
+	resumeOrdinal := 0
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		operation, operationOK := c.Operations.OperationAt(operationIndex)
+		if !operationOK {
 			return errors.New("target: malformed resume content owner")
 		}
-		ownerRow, ok := c.operation(row.owner)
-		if !ok || uint64(i) < uint64(ownerRow.resumes.start) || uint64(i) >= uint64(ownerRow.resumes.end) {
-			return errors.New("target: resume content owner fence")
-		}
-		id, err := c.semanticID(semanticResumeContent, func(w *framing.Writer) error {
-			if err := w.Bytes(owner[:]); err != nil {
-				return err
+		for resumeIndex := 0; resumeIndex < c.Operations.ResumeCount(operation); resumeIndex++ {
+			resume, resumeOK := c.Operations.ResumeIDAt(operation, resumeIndex)
+			if !resumeOK {
+				return errors.New("target: malformed resume content handle")
 			}
-			if err := w.Uint(uint64(row.source)); err != nil {
-				return err
+			ownerID, ownerOK := c.anchor(operation)
+			if !ownerOK {
+				return errors.New("target: malformed resume content owner")
 			}
-			if err := w.Uint(uint64(row.carrier)); err != nil {
-				return err
+			_, source, carrier, arguments, rowOK := c.Operations.Resume(resume)
+			if !rowOK {
+				return errors.New("target: malformed resume content row")
 			}
-			if err := encodeValues(w, c, row.arguments); err != nil {
-				return err
-			}
-			for _, outcome := range row.outcomes {
-				index, ok := c.outcomeIndex(row.owner, int(outcome))
-				if !ok || index < 0 || index >= len(c.outcomeSelectors) {
-					return errors.New("target: malformed resume content outcome")
-				}
-				selector := c.outcomeSelectors[index]
-				if err := w.Bytes(selector[:]); err != nil {
+			id, err := c.semanticID(semanticResumeContent, func(w *framing.Writer) error {
+				if err := w.Bytes(ownerID[:]); err != nil {
 					return err
 				}
+				if err := w.Uint(uint64(source)); err != nil {
+					return err
+				}
+				if err := w.Uint(uint64(carrier)); err != nil {
+					return err
+				}
+				if err := encodeValues(w, c, arguments); err != nil {
+					return err
+				}
+				for outcome := 0; outcome < c.Operations.ResumeOutcomeCount(resume); outcome++ {
+					_, targetOutcome, outcomeOK := c.Operations.ResumeOutcomeAt(resume, outcome)
+					if !outcomeOK {
+						return errors.New("target: malformed resume content outcome")
+					}
+					position, positionOK := c.Operations.OutcomePositionAt(operation, int(targetOutcome))
+					if !positionOK || position < 0 || position >= len(c.outcomeSelectors) {
+						return errors.New("target: malformed resume content outcome")
+					}
+					selector := c.outcomeSelectors[position]
+					if err := w.Bytes(selector[:]); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
-			return nil
-		})
-		if err != nil {
-			return err
+			c.resumeContentIDs[resumeOrdinal] = id
+			c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, resume: resume})
+			resumeOrdinal++
 		}
-		c.resumeContentIDs[i] = id
-		c.resumeContentIndex = append(c.resumeContentIndex, resumeContentIDRow{id: id, resume: vocabulary.ResumeID(i + 1)})
 	}
 
 	for i := range c.operations {
@@ -373,7 +417,7 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 		c.operationContentIDs[i] = id
 	}
-	for oi := range c.outcomes {
+	for oi := range c.outcomeSelectors {
 		owner := outcomeOwners[oi]
 		if owner == 0 {
 			return errors.New("target: malformed outcome owner")
@@ -387,7 +431,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			if err := w.Bytes(selector[:]); err != nil {
 				return err
 			}
-			return c.encodePortableOutcome(w, vocabulary.Operation(owner), oi)
+			return c.encodePortableOutcome(w, owner, int(outcomeOrdinals[oi]))
 		})
 		if err != nil {
 			return err

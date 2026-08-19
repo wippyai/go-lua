@@ -84,58 +84,19 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 	if err != nil {
 		return err
 	}
-	suspensions, suspensionErr := c.appendSuspensions(draft.suspensions)
-	if suspensionErr != nil {
-		return suspensionErr
-	}
-	operationSuspensions := suspensions
-	resumes, resumeErr := c.appendResumes(op, draft.resumes, valuesHandle)
-	if resumeErr != nil {
-		return resumeErr
-	}
-	operationResumes := resumes
-	outcomeRange, err := checkedStoredRange("outcome table", len(c.outcomes), len(draft.outcomes))
-	if err != nil {
-		return err
-	}
 	for _, outcome := range draft.outcomes {
 		key, keyErr := outcome.values.key()
 		if keyErr != nil {
 			return keyErr
 		}
-		produced, producedErr := c.appendProduced(outcome.produced, callbackIDs)
-		if producedErr != nil {
-			return producedErr
-		}
-		fresh, freshErr := c.appendFreshResults(outcome.fresh)
-		if freshErr != nil {
-			return freshErr
-		}
-		callbackResults, callbackResultErr := c.appendCallbackResults(outcome.callbackResults, callbackIDs)
-		if callbackResultErr != nil {
-			return callbackResultErr
-		}
-		resultAliases, resultAliasErr := c.appendResultAliases(outcome.resultAliases)
-		if resultAliasErr != nil {
-			return resultAliasErr
-		}
-		c.outcomes = append(c.outcomes, outcomeRow{
-			kind: outcome.kind, values: valuesHandle[key], produced: produced, fresh: fresh,
-			callbackResults: callbackResults, resultAliases: resultAliases,
-		})
 		outcomeValues = append(outcomeValues, valuesHandle[key])
 	}
-	operationOutcomes := outcomeRange
+	operationOutcomes := indexRange{end: uint32(c.Operations.OutcomeCount(op))}
 	subedgeRange, subedgeErr := c.appendSubedges(op, draft.subedges, callbackIDs, valuesHandle, keys)
 	if subedgeErr != nil {
 		return subedgeErr
 	}
 	operationSubedges := subedgeRange
-	spawns, spawnErr := c.appendSpawns(op, draft.spawns, callbackIDs, outcomeValues)
-	if spawnErr != nil {
-		return spawnErr
-	}
-	operationSpawns := spawns
 	effectRange, err := c.appendEffects(builder, effectOwnerOperation, draft.effects)
 	if err != nil {
 		return err
@@ -150,10 +111,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		operationRelation = branch
 	}
 	c.operations = append(c.operations, operationRow{
-		outcomes: operationOutcomes, subedges: operationSubedges,
-		suspensions: operationSuspensions, spawns: operationSpawns,
-		resumes:         operationResumes,
-		subedgeRelation: operationRelation, effects: operationEffects,
+		subedges: operationSubedges, subedgeRelation: operationRelation, effects: operationEffects,
 		effectTail: draft.effectTail, effectVar: draft.effectVar,
 	})
 	query := operationvalue.QueryOperationInput{
@@ -188,6 +146,67 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 			return errors.New("target: unresolved operation outcome Values")
 		}
 		query.Outcomes = append(query.Outcomes, operationvalue.QueryOutcomeInput{Kind: outcome.kind, Values: value})
+		for _, produced := range outcome.produced {
+			captures := make([]operationvalue.CaptureInput, len(produced.captures))
+			for captureIndex, capture := range produced.captures {
+				ordinal := capture.Ordinal
+				if capture.Kind == vocabulary.CaptureCallback {
+					if capture.Ordinal == 0 || int(capture.Ordinal) > len(callbackIDs) {
+						return errors.New("target: unresolved produced callback capture")
+					}
+					ordinal = uint32(callbackIDs[capture.Ordinal-1])
+				}
+				captures[captureIndex] = operationvalue.CaptureInput{Kind: capture.Kind, Ordinal: ordinal}
+			}
+			query.Produced = append(query.Produced, operationvalue.ProducedQueryInput{
+				Outcome: uint32(len(query.Outcomes) - 1), Result: produced.result, Target: produced.target, Captures: captures,
+			})
+		}
+		for _, fresh := range outcome.fresh {
+			query.FreshResults = append(query.FreshResults, operationvalue.FreshResultInput{
+				Outcome: uint32(len(query.Outcomes) - 1), Result: fresh.result, Ordinal: fresh.ordinal, Kind: fresh.kind,
+			})
+		}
+		for _, result := range outcome.callbackResults {
+			if result.callback == 0 || int(result.callback) > len(callbackIDs) {
+				return errors.New("target: unresolved callback result")
+			}
+			query.CallbackResults = append(query.CallbackResults, operationvalue.CallbackResultInput{
+				Outcome: uint32(len(query.Outcomes) - 1), Result: result.result, Callback: callbackIDs[result.callback-1],
+			})
+		}
+		for _, alias := range outcome.resultAliases {
+			query.ResultAliases = append(query.ResultAliases, operationvalue.ResultAliasInput{
+				Outcome: uint32(len(query.Outcomes) - 1), Result: alias.result, Source: alias.source,
+			})
+		}
+	}
+	for _, suspension := range draft.suspensions {
+		query.Suspensions = append(query.Suspensions, operationvalue.SuspensionInput{
+			Yield: suspension.yield, Reentry: suspension.reentry, Source: suspension.source, Multiplicity: suspension.multiplicity,
+		})
+	}
+	for _, spawn := range draft.spawns {
+		if spawn.child == 0 || int(spawn.child) > len(callbackIDs) {
+			return errors.New("target: unresolved spawn callback")
+		}
+		if int(spawn.childEntry) >= len(outcomeValues) || int(spawn.parentResume) >= len(outcomeValues) {
+			return errors.New("target: unresolved spawn outcome")
+		}
+		query.Spawns = append(query.Spawns, operationvalue.SpawnInput{
+			Function: spawn.function, Child: callbackIDs[spawn.child-1], Yield: spawn.yield,
+			ParentResume: spawn.parentResume, ChildEntry: outcomeValues[spawn.childEntry], ResumeValues: outcomeValues[spawn.parentResume],
+			Alternatives: spawn.alternatives,
+		})
+	}
+	for _, resume := range draft.resumes {
+		arguments, valuesErr := lookupDraftValues(valuesHandle, resume.arguments)
+		if valuesErr != nil {
+			return valuesErr
+		}
+		query.Resumes = append(query.Resumes, operationvalue.ResumeInput{
+			Source: resume.source, Carrier: resume.carrier, Arguments: arguments, Outcomes: resume.outcomes,
+		})
 	}
 	for _, result := range draft.behavior.results {
 		query.Behavior = append(query.Behavior, operationvalue.BehaviorResultInput{
@@ -228,9 +247,6 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	if opaque == 0 || uint64(opaque) != uint64(len(c.operations)+1) {
 		return errors.New("target: noncanonical opaque operation handle")
 	}
-	if _, err := checkedStoredRange("outcome table", len(c.outcomes), 4); err != nil {
-		return err
-	}
 	unknownDraft := valuesDraft{tail: vocabulary.ValuesUnknown}
 	unknown, err := builder.AppendQueryValues(operationvalue.QueryValuesDeclaration{
 		Owner: opaque, Tail: vocabulary.ValuesUnknown,
@@ -241,15 +257,6 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	unknownKey, err := unknownDraft.key()
 	if err != nil {
 		return err
-	}
-	outcomes, err := checkedStoredRange("outcome table", len(c.outcomes), 4)
-	if err != nil {
-		return err
-	}
-	for _, kind := range [...]flowkind.OutcomeKind{
-		flowkind.OutcomeNormal, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel,
-	} {
-		c.outcomes = append(c.outcomes, outcomeRow{kind: kind, values: unknown})
 	}
 	transfers := []operationvalue.TransferInput{{
 		Endpoint:     vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal},
@@ -278,10 +285,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	if err != nil {
 		return err
 	}
-	c.operations = append(c.operations, operationRow{
-		outcomes:   outcomes,
-		effectTail: vocabulary.RowUnknownOpen,
-	})
+	c.operations = append(c.operations, operationRow{effectTail: vocabulary.RowUnknownOpen})
 	return builder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
 		Input: unknown,
 		Outcomes: []operationvalue.QueryOutcomeInput{

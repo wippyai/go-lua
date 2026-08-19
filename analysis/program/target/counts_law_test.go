@@ -43,9 +43,9 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 		add(ids.TargetOperationEffect, contract.Operations.EffectCount(op))
 		add(ids.TargetSubedge, contract.SubedgeCount(op))
 		add(ids.TargetBinding, contract.Operations.BindingCount(op))
-		add(ids.TargetResume, contract.ResumeCount(op))
-		add(ids.TargetSpawn, contract.spawnCount(op))
-		add(ids.TargetSuspension, contract.suspensionCount(op))
+		add(ids.TargetResume, contract.Operations.ResumeCount(op))
+		add(ids.TargetSpawn, contract.Operations.SpawnCount(op))
+		add(ids.TargetSuspension, contract.Operations.SuspensionCount(op))
 		add(ids.TargetTransfer, contract.Operations.TransferCount(op))
 
 		for effect := 0; effect < contract.Operations.EffectCount(op); effect++ {
@@ -79,28 +79,28 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 				add(ids.TargetCallbackRelease, 1)
 			}
 		}
-		for index := 0; index < contract.ResumeCount(op); index++ {
-			resume, found := contract.ResumeIDAt(op, index)
+		for index := 0; index < contract.Operations.ResumeCount(op); index++ {
+			resume, found := contract.Operations.ResumeIDAt(op, index)
 			if !found {
 				t.Fatalf("resume %d of operation %d is not readable", index, op)
 			}
-			add(ids.TargetResumeOutcome, contract.resumeOutcomeCount(resume))
+			add(ids.TargetResumeOutcome, contract.Operations.ResumeOutcomeCount(resume))
 		}
-		for index := 0; index < contract.spawnCount(op); index++ {
-			spawn, found := contract.spawnIDAt(op, index)
+		for index := 0; index < contract.Operations.SpawnCount(op); index++ {
+			spawn, found := contract.Operations.SpawnIDAt(op, index)
 			if !found {
 				t.Fatalf("spawn %d of operation %d is not readable", index, op)
 			}
-			add(ids.TargetSpawnSibling, contract.spawnSiblingCount(spawn))
+			add(ids.TargetSpawnSibling, contract.Operations.SpawnSiblingCount(spawn))
 		}
 		for outcome := 0; outcome < contract.Operations.OutcomeCount(op); outcome++ {
 			add(ids.TargetOutcome, 1)
-			add(ids.TargetCallbackResult, contract.callbackResultCount(op, outcome))
-			add(ids.TargetResultAlias, contract.resultAliasCount(op, outcome))
-			add(ids.TargetFreshResult, contract.FreshResultCount(op, outcome))
-			add(ids.TargetProduced, contract.producedCount(op, outcome))
-			for produced := 0; produced < contract.producedCount(op, outcome); produced++ {
-				add(ids.TargetProducedCapture, contract.producedCaptureCount(op, outcome, produced))
+			add(ids.TargetCallbackResult, contract.Operations.CallbackResultCount(op, outcome))
+			add(ids.TargetResultAlias, contract.Operations.ResultAliasCount(op, outcome))
+			add(ids.TargetFreshResult, contract.Operations.FreshResultCount(op, outcome))
+			add(ids.TargetProduced, contract.Operations.ProducedCount(op, outcome))
+			for produced := 0; produced < contract.Operations.ProducedCount(op, outcome); produced++ {
+				add(ids.TargetProducedCapture, contract.Operations.ProducedCaptureCount(op, outcome, produced))
 			}
 		}
 		if _, _, _, _, _, found := contract.OperationSubedgeRelation(op); found {

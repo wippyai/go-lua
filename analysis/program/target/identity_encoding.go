@@ -156,22 +156,22 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if err := w.Count(uint64(row.outcomes.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.OutcomeCount(op))); err != nil {
 		return err
 	}
-	for i := row.outcomes.start; i < row.outcomes.end; i++ {
-		if err := c.encodePortableOutcome(w, op, int(i)); err != nil {
+	for i := 0; i < c.Operations.OutcomeCount(op); i++ {
+		if err := c.encodePortableOutcome(w, op, i); err != nil {
 			return err
 		}
 	}
 	if err := c.encodeBehavior(w, op); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(c.suspensionCount(op))); err != nil {
+	if err := w.Count(uint64(c.Operations.SuspensionCount(op))); err != nil {
 		return err
 	}
-	for i := 0; i < c.suspensionCount(op); i++ {
-		y, r, s, m, ok := c.suspensionAt(op, i)
+	for i := 0; i < c.Operations.SuspensionCount(op); i++ {
+		y, r, s, m, ok := c.Operations.SuspensionAt(op, i)
 		if !ok {
 			return errors.New("target: malformed suspension")
 		}
@@ -181,52 +181,74 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			}
 		}
 	}
-	if err := w.Count(uint64(row.spawns.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.SpawnCount(op))); err != nil {
 		return err
 	}
-	for i := row.spawns.start; i < row.spawns.end; i++ {
-		x := c.spawns[i]
-		child, ok := c.callbackSelector(x.child)
+	for i := 0; i < c.Operations.SpawnCount(op); i++ {
+		spawn, ok := c.Operations.SpawnIDAt(op, i)
+		if !ok {
+			return errors.New("target: malformed spawn")
+		}
+		owner, function, childID, yield, parentResume, childEntry, resumeValues, ok := c.Operations.SpawnRelation(spawn)
+		if !ok || owner != op {
+			return errors.New("target: malformed spawn")
+		}
+		child, ok := c.callbackSelector(childID)
 		if !ok {
 			return errors.New("target: malformed spawn callback")
 		}
-		if err := encodeInput(w, x.function); err != nil {
+		if err := encodeInput(w, function); err != nil {
 			return err
 		}
 		if err := w.Bytes(child[:]); err != nil {
 			return err
 		}
-		for _, v := range []uint64{uint64(x.yield), uint64(x.parentResume)} {
+		for _, v := range []uint64{uint64(yield), uint64(parentResume)} {
 			if err := w.Uint(v); err != nil {
 				return err
 			}
 		}
-		if err := encodeValues(w, c, x.childEntry); err != nil {
+		if err := encodeValues(w, c, childEntry); err != nil {
 			return err
 		}
-		if err := encodeValues(w, c, x.resumeValues); err != nil {
+		if err := encodeValues(w, c, resumeValues); err != nil {
 			return err
 		}
-		for _, v := range x.alternatives {
+		for sibling := 0; sibling < c.Operations.SpawnSiblingCount(spawn); sibling++ {
+			v, siblingOK := c.Operations.SpawnSiblingAt(spawn, sibling)
+			if !siblingOK {
+				return errors.New("target: malformed spawn sibling")
+			}
 			if err := w.Uint(uint64(v)); err != nil {
 				return err
 			}
 		}
 	}
-	if err := w.Count(uint64(row.resumes.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.ResumeCount(op))); err != nil {
 		return err
 	}
-	for i := row.resumes.start; i < row.resumes.end; i++ {
-		x := c.resumes[i]
-		for _, v := range []uint64{uint64(x.source), uint64(x.carrier)} {
+	for i := 0; i < c.Operations.ResumeCount(op); i++ {
+		resume, ok := c.Operations.ResumeIDAt(op, i)
+		if !ok {
+			return errors.New("target: malformed resume")
+		}
+		owner, source, carrier, arguments, ok := c.Operations.Resume(resume)
+		if !ok || owner != op {
+			return errors.New("target: malformed resume")
+		}
+		for _, v := range []uint64{uint64(source), uint64(carrier)} {
 			if err := w.Uint(v); err != nil {
 				return err
 			}
 		}
-		if err := encodeValues(w, c, x.arguments); err != nil {
+		if err := encodeValues(w, c, arguments); err != nil {
 			return err
 		}
-		for _, v := range x.outcomes {
+		for outcome := 0; outcome < c.Operations.ResumeOutcomeCount(resume); outcome++ {
+			_, v, outcomeOK := c.Operations.ResumeOutcomeAt(resume, outcome)
+			if !outcomeOK {
+				return errors.New("target: malformed resume outcome")
+			}
 			if err := w.Uint(uint64(v)); err != nil {
 				return err
 			}
@@ -483,87 +505,102 @@ func encodeOptionalValues(w *framing.Writer, c *Contract, v vocabulary.Values) e
 	return encodeValues(w, c, v)
 }
 
-func (c *Contract) encodePortableOutcome(w *framing.Writer, owner vocabulary.Operation, flat int) error {
-	if flat < 0 || flat >= len(c.outcomes) {
+func (c *Contract) encodePortableOutcome(w *framing.Writer, owner vocabulary.Operation, outcome int) error {
+	kind, values, ok := c.Operations.OutcomeAt(owner, outcome)
+	if !ok {
 		return errors.New("target: malformed outcome")
 	}
-	row := c.outcomes[flat]
-	if err := w.Uint(uint64(row.kind)); err != nil {
+	if err := w.Uint(uint64(kind)); err != nil {
 		return err
 	}
-	if err := encodeValues(w, c, row.values); err != nil {
+	if err := encodeValues(w, c, values); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.produced.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.ProducedCount(owner, outcome))); err != nil {
 		return err
 	}
-	for i := row.produced.start; i < row.produced.end; i++ {
-		p := c.produced[i]
-		a, ok := c.anchor(p.target)
+	for i := 0; i < c.Operations.ProducedCount(owner, outcome); i++ {
+		result, target, ok := c.Operations.ProducedAt(owner, outcome, i)
+		if !ok {
+			return errors.New("target: malformed produced")
+		}
+		a, ok := c.anchor(target)
 		if !ok {
 			return errors.New("target: malformed produced anchor")
 		}
-		if err := w.Uint(uint64(p.result)); err != nil {
+		if err := w.Uint(uint64(result)); err != nil {
 			return err
 		}
 		if err := w.Bytes(a[:]); err != nil {
 			return err
 		}
-		if err := w.Count(uint64(p.captures.len())); err != nil {
+		if err := w.Count(uint64(c.Operations.ProducedCaptureCount(owner, outcome, i))); err != nil {
 			return err
 		}
-		for j := p.captures.start; j < p.captures.end; j++ {
-			x := c.captures[j]
-			if err := w.Uint(uint64(x.kind)); err != nil {
+		for j := 0; j < c.Operations.ProducedCaptureCount(owner, outcome, i); j++ {
+			kind, ordinal, ok := c.Operations.ProducedCaptureAt(owner, outcome, i, j)
+			if !ok {
+				return errors.New("target: malformed produced capture")
+			}
+			if err := w.Uint(uint64(kind)); err != nil {
 				return err
 			}
-			if x.kind == vocabulary.CaptureCallback {
-				s, ok := c.callbackSelector(vocabulary.CallbackID(x.ordinal))
+			if kind == vocabulary.CaptureCallback {
+				s, ok := c.callbackSelector(vocabulary.CallbackID(ordinal))
 				if !ok {
 					return errors.New("target: malformed produced callback")
 				}
 				if err := w.Bytes(s[:]); err != nil {
 					return err
 				}
-			} else if err := w.Uint(uint64(x.ordinal)); err != nil {
+			} else if err := w.Uint(uint64(ordinal)); err != nil {
 				return err
 			}
 		}
 	}
-	if err := w.Count(uint64(row.callbackResults.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.CallbackResultCount(owner, outcome))); err != nil {
 		return err
 	}
-	for i := row.callbackResults.start; i < row.callbackResults.end; i++ {
-		x := c.callbackResults[i]
-		s, ok := c.callbackSelector(x.callback)
+	for i := 0; i < c.Operations.CallbackResultCount(owner, outcome); i++ {
+		result, callback, ok := c.Operations.CallbackResultAt(owner, outcome, i)
 		if !ok {
 			return errors.New("target: malformed callback result")
 		}
-		if err := w.Uint(uint64(x.result)); err != nil {
+		s, ok := c.callbackSelector(callback)
+		if !ok {
+			return errors.New("target: malformed callback result")
+		}
+		if err := w.Uint(uint64(result)); err != nil {
 			return err
 		}
 		if err := w.Bytes(s[:]); err != nil {
 			return err
 		}
 	}
-	if err := w.Count(uint64(row.resultAliases.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.ResultAliasCount(owner, outcome))); err != nil {
 		return err
 	}
-	for i := row.resultAliases.start; i < row.resultAliases.end; i++ {
-		x := c.resultAliases[i]
-		if err := w.Uint(uint64(x.result)); err != nil {
+	for i := 0; i < c.Operations.ResultAliasCount(owner, outcome); i++ {
+		result, kind, ordinal, ok := c.Operations.ResultAliasAt(owner, outcome, i)
+		if !ok {
+			return errors.New("target: malformed result alias")
+		}
+		if err := w.Uint(uint64(result)); err != nil {
 			return err
 		}
-		if err := encodeInput(w, x.source); err != nil {
+		if err := encodeInput(w, vocabulary.InputSource{Kind: kind, Ordinal: ordinal}); err != nil {
 			return err
 		}
 	}
-	if err := w.Count(uint64(row.fresh.len())); err != nil {
+	if err := w.Count(uint64(c.Operations.FreshResultCount(owner, outcome))); err != nil {
 		return err
 	}
-	for i := row.fresh.start; i < row.fresh.end; i++ {
-		x := c.fresh[i]
-		for _, v := range []uint64{uint64(x.result), uint64(x.ordinal), uint64(x.kind)} {
+	for i := 0; i < c.Operations.FreshResultCount(owner, outcome); i++ {
+		result, ordinal, kind, ok := c.Operations.FreshResultAt(owner, outcome, i)
+		if !ok {
+			return errors.New("target: malformed fresh result")
+		}
+		for _, v := range []uint64{uint64(result), uint64(ordinal), uint64(kind)} {
 			if err := w.Uint(v); err != nil {
 				return err
 			}

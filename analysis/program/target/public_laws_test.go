@@ -273,23 +273,23 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 	for index := 0; index < contract.Operations.OutcomeCount(op); index++ {
 		kind, values, ok := contract.Operations.OutcomeAt(op, index)
 		fmt.Fprintf(out, "outcome[%d]=%d/%d/%v:%s;", index, kind, values, ok, publicValuesSnapshot(t, contract, values, ok))
-		for callbackIndex := 0; callbackIndex < contract.callbackResultCount(op, index); callbackIndex++ {
-			result, callback, callbackOK := contract.callbackResultAt(op, index, callbackIndex)
+		for callbackIndex := 0; callbackIndex < contract.Operations.CallbackResultCount(op, index); callbackIndex++ {
+			result, callback, callbackOK := contract.Operations.CallbackResultAt(op, index, callbackIndex)
 			fmt.Fprintf(out, "callback-result[%d]=%d/%d/%v;", callbackIndex, result, callback, callbackOK)
 		}
-		for aliasIndex := 0; aliasIndex < contract.resultAliasCount(op, index); aliasIndex++ {
-			result, kind, source, aliasOK := contract.resultAliasAt(op, index, aliasIndex)
+		for aliasIndex := 0; aliasIndex < contract.Operations.ResultAliasCount(op, index); aliasIndex++ {
+			result, kind, source, aliasOK := contract.Operations.ResultAliasAt(op, index, aliasIndex)
 			fmt.Fprintf(out, "result-alias[%d]=%d/%d/%d/%v;", aliasIndex, result, kind, source, aliasOK)
 		}
-		for freshIndex := 0; freshIndex < contract.FreshResultCount(op, index); freshIndex++ {
-			result, ordinal, kind, freshOK := contract.FreshResultAt(op, index, freshIndex)
+		for freshIndex := 0; freshIndex < contract.Operations.FreshResultCount(op, index); freshIndex++ {
+			result, ordinal, kind, freshOK := contract.Operations.FreshResultAt(op, index, freshIndex)
 			fmt.Fprintf(out, "fresh-result[%d]=%d/%d/%d/%v;", freshIndex, result, ordinal, kind, freshOK)
 		}
-		for producedIndex := 0; producedIndex < contract.producedCount(op, index); producedIndex++ {
-			result, target, producedOK := contract.producedAt(op, index, producedIndex)
+		for producedIndex := 0; producedIndex < contract.Operations.ProducedCount(op, index); producedIndex++ {
+			result, target, producedOK := contract.Operations.ProducedAt(op, index, producedIndex)
 			fmt.Fprintf(out, "produced[%d]=%d/%d/%v;", producedIndex, result, target, producedOK)
-			for captureIndex := 0; captureIndex < contract.producedCaptureCount(op, index, producedIndex); captureIndex++ {
-				kind, source, captureOK := contract.producedCaptureAt(op, index, producedIndex, captureIndex)
+			for captureIndex := 0; captureIndex < contract.Operations.ProducedCaptureCount(op, index, producedIndex); captureIndex++ {
+				kind, source, captureOK := contract.Operations.ProducedCaptureAt(op, index, producedIndex, captureIndex)
 				fmt.Fprintf(out, "capture[%d]=%d/%d/%v;", captureIndex, kind, source, captureOK)
 			}
 		}
@@ -347,16 +347,16 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 		fmt.Fprintf(out, "effect[%d]=target:%d/%v;", index, target, targetOK)
 		writeEffectArguments(out, contract, op, index)
 	}
-	for index := 0; index < contract.suspensionCount(op); index++ {
-		yield, reentry, source, multiplicity, ok := contract.suspensionAt(op, index)
+	for index := 0; index < contract.Operations.SuspensionCount(op); index++ {
+		yield, reentry, source, multiplicity, ok := contract.Operations.SuspensionAt(op, index)
 		fmt.Fprintf(out, "suspension[%d]=%d/%d/%d/%d/%v;", index, yield, reentry, source, multiplicity, ok)
 	}
-	for index := 0; index < contract.ResumeCount(op); index++ {
-		resume, resumeOK := contract.ResumeIDAt(op, index)
-		owner, source, carrier, arguments, ok := contract.Resume(resume)
+	for index := 0; index < contract.Operations.ResumeCount(op); index++ {
+		resume, resumeOK := contract.Operations.ResumeIDAt(op, index)
+		owner, source, carrier, arguments, ok := contract.Operations.Resume(resume)
 		fmt.Fprintf(out, "resume[%d]=%d/%d/%d/%d/%v/%v;", index, owner, source, carrier, arguments, resumeOK, ok)
-		for outcome := 0; outcome < contract.resumeOutcomeCount(resume); outcome++ {
-			kind, target, outcomeOK := contract.resumeOutcomeAt(resume, outcome)
+		for outcome := 0; outcome < contract.Operations.ResumeOutcomeCount(resume); outcome++ {
+			kind, target, outcomeOK := contract.Operations.ResumeOutcomeAt(resume, outcome)
 			fmt.Fprintf(out, "resume-outcome[%d]=%d/%d/%v;", outcome, kind, target, outcomeOK)
 		}
 	}

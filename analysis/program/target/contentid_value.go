@@ -90,12 +90,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 		return err
 	}
 
-	produced := c.producedCount(op, outcome)
+	produced := c.Operations.ProducedCount(op, outcome)
 	if err := w.Count(uint64(produced)); err != nil {
 		return err
 	}
 	for index := 0; index < produced; index++ {
-		result, target, found := c.producedAt(op, outcome, index)
+		result, target, found := c.Operations.ProducedAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed produced operation")
 		}
@@ -108,12 +108,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 		if err := w.Uint(uint64(target)); err != nil {
 			return err
 		}
-		captures := c.producedCaptureCount(op, outcome, index)
+		captures := c.Operations.ProducedCaptureCount(op, outcome, index)
 		if err := w.Count(uint64(captures)); err != nil {
 			return err
 		}
 		for capture := 0; capture < captures; capture++ {
-			kind, ordinal, found := c.producedCaptureAt(op, outcome, index, capture)
+			kind, ordinal, found := c.Operations.ProducedCaptureAt(op, outcome, index, capture)
 			if !found {
 				return errors.New("target: malformed produced capture")
 			}
@@ -126,12 +126,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 		}
 	}
 
-	callbackResults := c.callbackResultCount(op, outcome)
+	callbackResults := c.Operations.CallbackResultCount(op, outcome)
 	if err := w.Count(uint64(callbackResults)); err != nil {
 		return err
 	}
 	for index := 0; index < callbackResults; index++ {
-		result, callback, found := c.callbackResultAt(op, outcome, index)
+		result, callback, found := c.Operations.CallbackResultAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed callback result")
 		}
@@ -145,12 +145,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 			return err
 		}
 	}
-	aliases := c.resultAliasCount(op, outcome)
+	aliases := c.Operations.ResultAliasCount(op, outcome)
 	if err := w.Count(uint64(aliases)); err != nil {
 		return err
 	}
 	for index := 0; index < aliases; index++ {
-		result, kind, ordinal, found := c.resultAliasAt(op, outcome, index)
+		result, kind, ordinal, found := c.Operations.ResultAliasAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed result alias")
 		}
@@ -164,12 +164,12 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 			return err
 		}
 	}
-	fresh := c.FreshResultCount(op, outcome)
+	fresh := c.Operations.FreshResultCount(op, outcome)
 	if err := w.Count(uint64(fresh)); err != nil {
 		return err
 	}
 	for index := 0; index < fresh; index++ {
-		result, ordinal, kind, found := c.FreshResultAt(op, outcome, index)
+		result, ordinal, kind, found := c.Operations.FreshResultAt(op, outcome, index)
 		if !found {
 			return errors.New("target: malformed fresh result")
 		}

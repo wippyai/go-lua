@@ -174,6 +174,9 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 		core.query.outcomeRows = append(core.query.outcomeRows, queryOutcomeRow{kind: outcome.Kind, values: outcome.Values})
 	}
 	row.outcomes.end = len(core.query.outcomeRows)
+	if err := core.appendQueryContinuation(op, &row, input); err != nil {
+		return err
+	}
 	row.behavior = queryRange{start: len(core.query.behaviorRows)}
 	for _, item := range input.Behavior {
 		core.query.behaviorRows = append(core.query.behaviorRows, queryBehaviorResultRow{outcome: item.Outcome, result: item.Result, source: item.Source, relation: item.Relation})
@@ -197,6 +200,230 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 	row.transfers.end = len(core.query.transfers)
 	core.query.operations[int(op)-1] = row
 	return nil
+}
+
+const noQueryTypeValueCapture = ^uint32(0)
+
+func (core *Core) appendQueryContinuation(op vocabulary.Operation, row *queryOperationRow, input QueryOperationInput) error {
+	if row == nil {
+		return invalidQuery("nil operation query row")
+	}
+	if op == 0 || int(op) > core.OperationCount() {
+		return invalidQuery("continuation owner is outside operation table")
+	}
+	if core.isOpaque(op) && (len(input.Suspensions) != 0 || len(input.Spawns) != 0 || len(input.Resumes) != 0 || len(input.Produced) != 0 || len(input.FreshResults) != 0 || len(input.CallbackResults) != 0 || len(input.ResultAliases) != 0) {
+		return invalidQuery("opaque operation cannot carry authored continuation rows")
+	}
+	if err := core.appendQueryOutputRows(op, row, input); err != nil {
+		return err
+	}
+
+	row.suspensions = queryRange{start: len(core.query.suspensions)}
+	for _, item := range input.Suspensions {
+		if !core.validOutcome(op, item.Yield) || !core.validOutcome(op, item.Reentry) {
+			return invalidQuery("suspension outcome is outside operation")
+		}
+		if item.Source != vocabulary.ReentryByCall && item.Source != vocabulary.ReentryByProvider {
+			return invalidQuery("suspension has invalid reentry source")
+		}
+		if item.Multiplicity != vocabulary.ReentryOnce && item.Multiplicity != vocabulary.ReentryMany {
+			return invalidQuery("suspension has invalid multiplicity")
+		}
+		for prior := row.suspensions.start; prior < len(core.query.suspensions); prior++ {
+			old := core.query.suspensions[prior]
+			if old.yield == item.Yield && old.reentry == item.Reentry && old.source == item.Source {
+				return invalidQuery("duplicate suspension")
+			}
+		}
+		core.query.suspensions = append(core.query.suspensions, querySuspensionRow{
+			yield: item.Yield, reentry: item.Reentry, source: item.Source, multiplicity: item.Multiplicity,
+		})
+	}
+	row.suspensions.end = len(core.query.suspensions)
+
+	row.spawns = queryRange{start: len(core.query.spawns)}
+	for _, item := range input.Spawns {
+		if item.Child == 0 {
+			return invalidQuery("spawn child callback is unavailable")
+		}
+		childOwner, childOK := core.CallbackOwner(item.Child)
+		if !childOK || childOwner != op {
+			return invalidQuery("spawn child callback is outside operation")
+		}
+		if !core.validOutcome(op, item.Yield) || !core.validOutcome(op, item.ParentResume) {
+			return invalidQuery("spawn outcome is outside operation")
+		}
+		if item.ChildEntry != 0 && !core.query.validValues(item.ChildEntry) || item.ResumeValues != 0 && !core.query.validValues(item.ResumeValues) {
+			return invalidQuery("spawn Values relation is outside Values table")
+		}
+		if !validQuerySiblingAlternatives(item.Alternatives) {
+			return invalidQuery("spawn sibling alternatives are incomplete")
+		}
+		core.query.spawns = append(core.query.spawns, querySpawnRow{
+			owner: op, function: item.Function, child: item.Child, yield: item.Yield,
+			parentResume: item.ParentResume, childEntry: item.ChildEntry, resumeValues: item.ResumeValues,
+			alternatives: item.Alternatives,
+		})
+	}
+	row.spawns.end = len(core.query.spawns)
+
+	row.resumes = queryRange{start: len(core.query.resumes)}
+	for _, item := range input.Resumes {
+		if item.Arguments != 0 && !core.query.validValues(item.Arguments) {
+			return invalidQuery("resume arguments are outside Values table")
+		}
+		for _, outcome := range item.Outcomes {
+			if !core.validOutcome(op, outcome) {
+				return invalidQuery("resume outcome is outside operation")
+			}
+		}
+		core.query.resumes = append(core.query.resumes, queryResumeRow{
+			owner: op, source: item.Source, carrier: item.Carrier, arguments: item.Arguments, outcomes: item.Outcomes,
+		})
+	}
+	row.resumes.end = len(core.query.resumes)
+	return nil
+}
+
+func (core Core) isOpaque(op vocabulary.Operation) bool {
+	opaque, ok := core.Opaque()
+	return ok && opaque == op
+}
+
+func (core Core) validOutcome(op vocabulary.Operation, outcome uint32) bool {
+	return outcome < uint32(core.OutcomeCount(op))
+}
+
+func validQuerySiblingAlternatives(values [2]vocabulary.SpawnSiblingAlternative) bool {
+	if values[0] == values[1] {
+		return false
+	}
+	for _, value := range values {
+		if value != vocabulary.SpawnChildEntryThenParentResume && value != vocabulary.SpawnParentResumeThenChildEntry {
+			return false
+		}
+	}
+	return true
+}
+
+func (core *Core) appendQueryOutputRows(op vocabulary.Operation, operation *queryOperationRow, input QueryOperationInput) error {
+	outcomeCount := core.OutcomeCount(op)
+	produced := make([][]ProducedQueryInput, outcomeCount)
+	for _, item := range input.Produced {
+		if item.Outcome >= uint32(outcomeCount) || item.Target == 0 || int(item.Target) > core.OperationCount() {
+			return invalidQuery("produced relation is outside operation table")
+		}
+		if item.Result >= core.outcomeSlots(op, item.Outcome) {
+			return invalidQuery("produced result is outside outcome slots")
+		}
+		for captureIndex, capture := range item.Captures {
+			if capture.Kind == 0 || capture.Kind > vocabulary.CaptureCallback {
+				return invalidQuery("produced capture has invalid kind")
+			}
+			if capture.Kind == vocabulary.CaptureCallback {
+				owner, ok := core.CallbackOwner(vocabulary.CallbackID(capture.Ordinal))
+				if !ok || owner != op {
+					return invalidQuery("produced callback capture is outside operation")
+				}
+			}
+			if capture.Kind == vocabulary.CaptureTypeValueFormal && captureIndex > int(^uint32(0)) {
+				return invalidQuery("produced capture index overflow")
+			}
+		}
+		produced[item.Outcome] = append(produced[item.Outcome], item)
+	}
+	for outcome, items := range produced {
+		start := len(core.query.produced)
+		for index, item := range items {
+			if index > 0 && items[index-1].Result >= item.Result {
+				return invalidQuery("produced rows are not strictly ordered")
+			}
+			captureStart := len(core.query.captures)
+			typeValueCapture := noQueryTypeValueCapture
+			for captureIndex, capture := range item.Captures {
+				if capture.Kind == vocabulary.CaptureTypeValueFormal {
+					if typeValueCapture != noQueryTypeValueCapture {
+						return invalidQuery("produced row has multiple TypeValue captures")
+					}
+					typeValueCapture = uint32(captureIndex)
+				}
+				core.query.captures = append(core.query.captures, queryCaptureRow{kind: capture.Kind, ordinal: capture.Ordinal})
+			}
+			core.query.produced = append(core.query.produced, queryProducedRow{
+				result: item.Result, target: item.Target,
+				captures: queryRange{start: captureStart, end: len(core.query.captures)}, typeValueCapture: typeValueCapture,
+			})
+		}
+		operationOutcome := &core.query.outcomeRows[operation.outcomes.start+outcome]
+		operationOutcome.produced = queryRange{start: start, end: len(core.query.produced)}
+	}
+
+	fresh := make([][]FreshResultInput, outcomeCount)
+	for _, item := range input.FreshResults {
+		if item.Outcome >= uint32(outcomeCount) || item.Result >= core.outcomeSlots(op, item.Outcome) {
+			return invalidQuery("fresh result is outside outcome slots")
+		}
+		fresh[item.Outcome] = append(fresh[item.Outcome], item)
+	}
+	for outcome, items := range fresh {
+		start := len(core.query.fresh)
+		for index, item := range items {
+			if index > 0 && items[index-1].Result >= item.Result {
+				return invalidQuery("fresh rows are not strictly ordered")
+			}
+			core.query.fresh = append(core.query.fresh, queryFreshRow{result: item.Result, ordinal: item.Ordinal, kind: item.Kind})
+		}
+		core.query.outcomeRows[operation.outcomes.start+outcome].fresh = queryRange{start: start, end: len(core.query.fresh)}
+	}
+
+	callbackResults := make([][]CallbackResultInput, outcomeCount)
+	for _, item := range input.CallbackResults {
+		if item.Outcome >= uint32(outcomeCount) || item.Result >= core.outcomeSlots(op, item.Outcome) {
+			return invalidQuery("callback result is outside outcome slots")
+		}
+		owner, ok := core.CallbackOwner(item.Callback)
+		if !ok || owner != op {
+			return invalidQuery("callback result callback is outside operation")
+		}
+		callbackResults[item.Outcome] = append(callbackResults[item.Outcome], item)
+	}
+	for outcome, items := range callbackResults {
+		start := len(core.query.callbackResults)
+		for index, item := range items {
+			if index > 0 && items[index-1].Result >= item.Result {
+				return invalidQuery("callback result rows are not strictly ordered")
+			}
+			core.query.callbackResults = append(core.query.callbackResults, queryCallbackResultRow{result: item.Result, callback: item.Callback})
+		}
+		core.query.outcomeRows[operation.outcomes.start+outcome].callbackResults = queryRange{start: start, end: len(core.query.callbackResults)}
+	}
+
+	aliases := make([][]ResultAliasInput, outcomeCount)
+	for _, item := range input.ResultAliases {
+		if item.Outcome >= uint32(outcomeCount) || item.Result >= core.outcomeSlots(op, item.Outcome) {
+			return invalidQuery("result alias is outside outcome slots")
+		}
+		aliases[item.Outcome] = append(aliases[item.Outcome], item)
+	}
+	for outcome, items := range aliases {
+		start := len(core.query.resultAliases)
+		for index, item := range items {
+			if index > 0 && items[index-1].Result >= item.Result {
+				return invalidQuery("result alias rows are not strictly ordered")
+			}
+			core.query.resultAliases = append(core.query.resultAliases, queryResultAliasRow{result: item.Result, source: item.Source})
+		}
+		core.query.outcomeRows[operation.outcomes.start+outcome].resultAliases = queryRange{start: start, end: len(core.query.resultAliases)}
+	}
+	return nil
+}
+
+func (core Core) outcomeSlots(op vocabulary.Operation, outcome uint32) uint32 {
+	slots, ok := core.OutcomeValueSlots(op, int(outcome))
+	if !ok {
+		return 0
+	}
+	return slots
 }
 
 // FinishQuery verifies that every geometry operation received exactly one

@@ -480,7 +480,7 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	if !ok {
 		t.Fatal("produced parent absent")
 	}
-	child, _, ok := producedBase.producedForResult(parent, 0, 0)
+	child, _, ok := producedBase.Operations.ProducedForResult(parent, 0, 0)
 	if !ok {
 		t.Fatal("produced child absent")
 	}
@@ -491,7 +491,7 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	}
 	producedReplay := mustSeal(t, deltaProduced(0))
 	replayParent, _ := producedReplay.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
-	replayChild, _, _ := producedReplay.producedForResult(replayParent, 0, 0)
+	replayChild, _, _ := producedReplay.Operations.ProducedForResult(replayParent, 0, 0)
 	if got, _ := producedReplay.OperationContentID(replayParent); got != parentID {
 		t.Fatal("produced parent replay changed identity")
 	}

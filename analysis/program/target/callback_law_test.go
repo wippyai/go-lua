@@ -491,14 +491,14 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 	assertPublicContractEqual(t, first, second)
 
 	op, ok := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
-	if !ok || first.callbackResultCount(op, 0) != 2 {
+	if !ok || first.Operations.CallbackResultCount(op, 0) != 2 {
 		t.Fatalf("callback result relation missing: %d/%v", op, ok)
 	}
-	callback, index, ok := first.callbackForResult(op, 0, 0)
+	callback, index, ok := first.Operations.CallbackForResult(op, 0, 0)
 	if !ok || index != 0 || callback != 1 {
 		t.Fatalf("result 0 callback = %d/%d/%v, want 1/0/true", callback, index, ok)
 	}
-	callback, index, ok = first.callbackForResult(op, 0, 1)
+	callback, index, ok = first.Operations.CallbackForResult(op, 0, 1)
 	if !ok || index != 1 || callback != 2 {
 		t.Fatalf("result 1 callback = %d/%d/%v, want 2/1/true", callback, index, ok)
 	}
@@ -512,7 +512,7 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 		}
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, _, found := first.callbackForResult(op, 0, 1); !found {
+		if _, _, found := first.Operations.CallbackForResult(op, 0, 1); !found {
 			panic("callback result disappeared")
 		}
 	}); allocs != 0 {

@@ -340,10 +340,10 @@ func TestSealRelationsRejectDuplicateBindingsAndCanonicalizeOrder(t *testing.T) 
 func TestSealResolutionRetainsProducedOperationAnchors(t *testing.T) {
 	contract := mustSeal(t, deltaProduced(0))
 	parent, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
-	if !ok || contract.producedCount(parent, 0) != 1 {
-		t.Fatalf("produced resolution = op:%d/%v count:%d", parent, ok, contract.producedCount(parent, 0))
+	if !ok || contract.Operations.ProducedCount(parent, 0) != 1 {
+		t.Fatalf("produced resolution = op:%d/%v count:%d", parent, ok, contract.Operations.ProducedCount(parent, 0))
 	}
-	_, child, ok := contract.producedAt(parent, 0, 0)
+	_, child, ok := contract.Operations.ProducedAt(parent, 0, 0)
 	if !ok || child == 0 || child == parent {
 		t.Fatalf("produced child = %d/%v, parent=%d", child, ok, parent)
 	}

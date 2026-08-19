@@ -46,14 +46,14 @@ func TestProducedOperationUsesOneOrdinaryOperationIdentity(t *testing.T) {
 	if !ok || factory != 1 || contract.Operations.BoundCount() != 1 {
 		t.Fatalf("factory/bound = %d/%v/%d", factory, ok, contract.Operations.BoundCount())
 	}
-	first, row, ok := contract.producedForResult(factory, 0, 0)
+	first, row, ok := contract.Operations.ProducedForResult(factory, 0, 0)
 	if !ok || first != 2 || row != 0 {
 		t.Fatalf("factory result = %d/%d/%v, want 2/0/true", first, row, ok)
 	}
-	if kind, source, ok := contract.producedCaptureAt(factory, 0, row, 0); !ok || kind != vocabulary.CaptureValueFormal || source != 0 {
+	if kind, source, ok := contract.Operations.ProducedCaptureAt(factory, 0, row, 0); !ok || kind != vocabulary.CaptureValueFormal || source != 0 {
 		t.Fatalf("factory capture = %d/%d/%v", kind, source, ok)
 	}
-	second, _, ok := contract.producedForResult(first, 0, 0)
+	second, _, ok := contract.Operations.ProducedForResult(first, 0, 0)
 	if !ok || second != 3 {
 		t.Fatalf("produced chain = %d/%v, want 3/true", second, ok)
 	}
@@ -91,11 +91,11 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 	if !ok || functionSource.Kind != vocabulary.InputSourceValueFormal || functionSource.Ordinal != 0 {
 		t.Fatalf("callback function = %#v/%v", functionSource, ok)
 	}
-	_, row, ok := contract.producedForResult(wrap, 0, 0)
+	_, row, ok := contract.Operations.ProducedForResult(wrap, 0, 0)
 	if !ok {
 		t.Fatal("missing wrap produced operation")
 	}
-	kind, source, ok := contract.producedCaptureAt(wrap, 0, row, 0)
+	kind, source, ok := contract.Operations.ProducedCaptureAt(wrap, 0, row, 0)
 	if !ok || kind != vocabulary.CaptureCallback || vocabulary.CallbackID(source) != callback {
 		t.Fatalf("callback capture = %d/%d/%v, want %d", kind, source, ok, callback)
 	}
@@ -154,7 +154,7 @@ func TestBoundOperationsStayCanonicalPrefixWithProducedChildren(t *testing.T) {
 		}
 		alphaOp, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}})
 		betaOp, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"beta"}})
-		childOp, _, found := contract.producedForResult(alphaOp, 0, 0)
+		childOp, _, found := contract.Operations.ProducedForResult(alphaOp, 0, 0)
 		if alphaOp != 1 || betaOp != 2 || !found || childOp != 3 {
 			t.Fatalf("canonical prefix = alpha:%d beta:%d child:%d/%v", alphaOp, betaOp, childOp, found)
 		}
@@ -208,17 +208,17 @@ func TestDeepProducedChainSealsIteratively(t *testing.T) {
 		t.Fatal("root binding missing")
 	}
 	for index := 1; index < depth; index++ {
-		next, _, found := contract.producedForResult(current, 0, 0)
+		next, _, found := contract.Operations.ProducedForResult(current, 0, 0)
 		if !found {
 			t.Fatalf("chain ended at %d, want step %d", index, depth)
 		}
 		current = next
 	}
-	if contract.producedCount(current, 0) != 0 {
+	if contract.Operations.ProducedCount(current, 0) != 0 {
 		t.Fatal("terminal produced operation has a successor")
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, _, found := contract.producedForResult(current, 0, 0); found {
+		if _, _, found := contract.Operations.ProducedForResult(current, 0, 0); found {
 			panic("terminal unexpectedly produced")
 		}
 	}); allocs != 0 {
@@ -232,7 +232,7 @@ func TestProducedTypeValueCaptureIsTypedAndIndexed(t *testing.T) {
 	if !ok {
 		t.Fatal("missing factory operation")
 	}
-	if formal, ok := contract.producedTypeValueCapture(op, 0, 0); !ok || formal != 1 {
+	if formal, ok := contract.Operations.ProducedTypeValueCapture(op, 0, 0); !ok || formal != 1 {
 		t.Fatalf("typed produced capture = %d/%v, want 1/true", formal, ok)
 	}
 	coexisting := typeValueCaptureSpec(vocabulary.CaptureTypeValueFormal, 1)
@@ -244,13 +244,13 @@ func TestProducedTypeValueCaptureIsTypedAndIndexed(t *testing.T) {
 	coexisting.Operations[0].ValuesVars = 1
 	coexistingContract := mustSeal(t, coexisting)
 	coexistingOp, _ := coexistingContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
-	if formal, ok := coexistingContract.producedTypeValueCapture(coexistingOp, 0, 0); !ok || formal != 1 {
+	if formal, ok := coexistingContract.Operations.ProducedTypeValueCapture(coexistingOp, 0, 0); !ok || formal != 1 {
 		t.Fatalf("coexisting typed capture = %d/%v, want 1/true", formal, ok)
 	}
 
 	ordinary := mustSeal(t, typeValueCaptureSpec(vocabulary.CaptureValueFormal, 1))
 	ordinaryOp, _ := ordinary.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
-	if _, ok := ordinary.producedTypeValueCapture(ordinaryOp, 0, 0); ok {
+	if _, ok := ordinary.Operations.ProducedTypeValueCapture(ordinaryOp, 0, 0); ok {
 		t.Fatal("ordinary value capture became a TypeValue capture")
 	}
 }
@@ -328,7 +328,7 @@ func TestProducedTypeValueCaptureRequiresExactFreshFunctionResult(t *testing.T) 
 	if !ok {
 		t.Fatal("ordinary Produced operation disappeared")
 	}
-	if _, produced, ok := contract.producedForResult(op, 0, 0); !ok || produced != 0 {
+	if _, produced, ok := contract.Operations.ProducedForResult(op, 0, 0); !ok || produced != 0 {
 		t.Fatal("ordinary Produced row changed without TypeValue capture")
 	}
 }
@@ -368,9 +368,9 @@ func TestProducedTypeValueFreshFunctionCanonicalRoundTrip(t *testing.T) {
 			t.Fatal("round-trip factory operation absent")
 		}
 		for result := uint32(0); result < 2; result++ {
-			_, produced, producedOK := contract.producedForResult(op, 0, result)
-			formal, captureOK := contract.producedTypeValueCapture(op, 0, produced)
-			ordinal, kind, fresh, freshOK := contract.freshResultForResult(op, 0, result)
+			_, produced, producedOK := contract.Operations.ProducedForResult(op, 0, result)
+			formal, captureOK := contract.Operations.ProducedTypeValueCapture(op, 0, produced)
+			ordinal, kind, fresh, freshOK := contract.Operations.FreshResultForResult(op, 0, result)
 			if !producedOK || !captureOK || uint32(formal) != result || !freshOK || kind != schematype.FreshClassFunction || fresh != int(ordinal) {
 				t.Fatalf("result %d round trip = produced:%d/%v capture:%d/%v fresh:%d/%d/%d/%v", result, produced, producedOK, formal, captureOK, ordinal, kind, fresh, freshOK)
 			}
@@ -395,12 +395,12 @@ func TestProducedTypeValueCaptureWideSealAndQueryStayDirect(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: operations})
 	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}})
 	for _, index := range []int{0, width - 1} {
-		if formal, ok := contract.producedTypeValueCapture(op, 0, index); !ok || int(formal) != index {
+		if formal, ok := contract.Operations.ProducedTypeValueCapture(op, 0, index); !ok || int(formal) != index {
 			t.Fatalf("wide typed capture %d = %d/%v", index, formal, ok)
 		}
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, ok := contract.producedTypeValueCapture(op, 0, width-1); !ok {
+		if _, ok := contract.Operations.ProducedTypeValueCapture(op, 0, width-1); !ok {
 			panic("wide typed capture disappeared")
 		}
 	}); allocs != 0 {
@@ -448,7 +448,7 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}, child}})
 	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh"}})
-	if count := contract.FreshResultCount(op, 0); count != 2 {
+	if count := contract.Operations.FreshResultCount(op, 0); count != 2 {
 		t.Fatalf("normal fresh count = %d, want 2", count)
 	}
 	for index, want := range []struct {
@@ -456,21 +456,21 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 		ordinal uint32
 		kind    schematype.FreshClass
 	}{{0, 0, schematype.FreshClassTable}, {1, 1, schematype.FreshClassFunction}} {
-		result, ordinal, kind, found := contract.FreshResultAt(op, 0, index)
+		result, ordinal, kind, found := contract.Operations.FreshResultAt(op, 0, index)
 		if !found || result != want.result || ordinal != want.ordinal || kind != want.kind {
 			t.Fatalf("FreshResultAt(%d) = %d/%d/%d/%v, want %d/%d/%d/true", index, result, ordinal, kind, found, want.result, want.ordinal, want.kind)
 		}
 	}
-	if ordinal, kind, index, found := contract.freshResultForResult(op, 0, 1); !found || ordinal != 1 || kind != schematype.FreshClassFunction || index != 1 {
+	if ordinal, kind, index, found := contract.Operations.FreshResultForResult(op, 0, 1); !found || ordinal != 1 || kind != schematype.FreshClassFunction || index != 1 {
 		t.Fatalf("FreshResultForResult = %d/%d/%d/%v, want 1/function/1/true", ordinal, kind, index, found)
 	}
-	if _, _, _, found := contract.FreshResultAt(op, 0, 2); found {
+	if _, _, _, found := contract.Operations.FreshResultAt(op, 0, 2); found {
 		t.Fatal("FreshResultAt accepted outside range")
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		_ = contract.FreshResultCount(op, 0)
-		_, _, _, _ = contract.FreshResultAt(op, 0, 1)
-		_, _, _, _ = contract.freshResultForResult(op, 0, 1)
+		_ = contract.Operations.FreshResultCount(op, 0)
+		_, _, _, _ = contract.Operations.FreshResultAt(op, 0, 1)
+		_, _, _, _ = contract.Operations.FreshResultForResult(op, 0, 1)
 	}); allocations != 0 {
 		t.Fatalf("FreshResult queries allocated %f times", allocations)
 	}
@@ -560,21 +560,21 @@ func TestResultAliasesCanonicalizeAndRemainConjunctive(t *testing.T) {
 		t.Fatal(err)
 	}
 	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"aliases"}})
-	if !ok || contract.resultAliasCount(op, 0) != 2 {
-		t.Fatalf("result aliases missing: op=%d ok=%v count=%d", op, ok, contract.resultAliasCount(op, 0))
+	if !ok || contract.Operations.ResultAliasCount(op, 0) != 2 {
+		t.Fatalf("result aliases missing: op=%d ok=%v count=%d", op, ok, contract.Operations.ResultAliasCount(op, 0))
 	}
-	result, kind, source, ok := contract.resultAliasAt(op, 0, 0)
+	result, kind, source, ok := contract.Operations.ResultAliasAt(op, 0, 0)
 	if !ok || result != 0 || kind != vocabulary.InputSourceValueFormal || source != 0 {
 		t.Fatalf("first alias = %d/%d/%d/%v", result, kind, source, ok)
 	}
-	kind, source, row, ok := contract.resultAliasForResult(op, 0, 1)
+	kind, source, row, ok := contract.Operations.ResultAliasForResult(op, 0, 1)
 	if !ok || kind != vocabulary.InputSourceValueFormal || source != 1 || row != 1 {
 		t.Fatalf("alias lookup = %d/%d/%d/%v", kind, source, row, ok)
 	}
-	if _, _, _, ok := contract.resultAliasForResult(op, 0, 2); ok {
+	if _, _, _, ok := contract.Operations.ResultAliasForResult(op, 0, 2); ok {
 		t.Fatal("unknown result alias found")
 	}
-	if got := testing.AllocsPerRun(100, func() { _, _, _, _ = contract.resultAliasForResult(op, 0, 1) }); got != 0 {
+	if got := testing.AllocsPerRun(100, func() { _, _, _, _ = contract.Operations.ResultAliasForResult(op, 0, 1) }); got != 0 {
 		t.Fatalf("ResultAliasForResult allocated %f times", got)
 	}
 }
@@ -597,8 +597,8 @@ func TestResultAliasCoexistsWithCallbackResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-alias"}})
-	if !ok || contract.callbackResultCount(op, 0) != 1 || contract.resultAliasCount(op, 0) != 1 {
-		t.Fatalf("callback/alias conjunction missing: op=%d ok=%v callbacks=%d aliases=%d", op, ok, contract.callbackResultCount(op, 0), contract.resultAliasCount(op, 0))
+	if !ok || contract.Operations.CallbackResultCount(op, 0) != 1 || contract.Operations.ResultAliasCount(op, 0) != 1 {
+		t.Fatalf("callback/alias conjunction missing: op=%d ok=%v callbacks=%d aliases=%d", op, ok, contract.Operations.CallbackResultCount(op, 0), contract.Operations.ResultAliasCount(op, 0))
 	}
 }
 
@@ -658,10 +658,10 @@ func TestResultAliasPermutationAndWideLookup(t *testing.T) {
 	right := seal(sorted)
 	assertPublicContractEqual(t, left, right)
 	op, _ := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-alias"}})
-	if kind, source, row, ok := left.resultAliasForResult(op, 0, width-1); !ok || kind != vocabulary.InputSourceValueFormal || source != width-1 || row != width-1 {
+	if kind, source, row, ok := left.Operations.ResultAliasForResult(op, 0, width-1); !ok || kind != vocabulary.InputSourceValueFormal || source != width-1 || row != width-1 {
 		t.Fatalf("wide alias lookup = %d/%d/%d/%v", kind, source, row, ok)
 	}
-	if got := testing.AllocsPerRun(100, func() { _, _, _, _ = left.resultAliasForResult(op, 0, width-1) }); got != 0 {
+	if got := testing.AllocsPerRun(100, func() { _, _, _, _ = left.Operations.ResultAliasForResult(op, 0, width-1) }); got != 0 {
 		t.Fatalf("wide ResultAliasForResult allocated %f times", got)
 	}
 }

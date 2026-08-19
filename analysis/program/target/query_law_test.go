@@ -56,14 +56,14 @@ func TestInvocationQueriesExposeCallbackOwnedRelations(t *testing.T) {
 func TestContinuationQueriesReturnCanonicalSuspensionCoordinates(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{deltaSuspension(vocabulary.ReentryMany)}})
 	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"suspend"}})
-	if !ok || contract.suspensionCount(op) != 1 {
-		t.Fatalf("suspension lookup = %d/%v", contract.suspensionCount(op), ok)
+	if !ok || contract.Operations.SuspensionCount(op) != 1 {
+		t.Fatalf("suspension lookup = %d/%v", contract.Operations.SuspensionCount(op), ok)
 	}
-	yield, reentry, source, multiplicity, ok := contract.suspensionAt(op, 0)
+	yield, reentry, source, multiplicity, ok := contract.Operations.SuspensionAt(op, 0)
 	if !ok || yield != 1 || reentry != 0 || source != vocabulary.ReentryByCall || multiplicity != vocabulary.ReentryMany {
 		t.Fatalf("SuspensionAt = %d/%d/%d/%d/%v", yield, reentry, source, multiplicity, ok)
 	}
-	if _, _, _, _, ok := contract.suspensionAt(op, 1); ok {
+	if _, _, _, _, ok := contract.Operations.SuspensionAt(op, 1); ok {
 		t.Fatal("out-of-range suspension query resolved")
 	}
 }

@@ -321,8 +321,8 @@ func (algebra *Algebra) buildKeys(project *linkproject.Component) bool {
 				return false
 			}
 		}
-		for resumeIndex := 0; resumeIndex < contract.ResumeCount(operation); resumeIndex++ {
-			resume, present := contract.ResumeIDAt(operation, resumeIndex)
+		for resumeIndex := 0; resumeIndex < contract.Operations.ResumeCount(operation); resumeIndex++ {
+			resume, present := contract.Operations.ResumeIDAt(operation, resumeIndex)
 			if !present {
 				return false
 			}

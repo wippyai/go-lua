@@ -972,8 +972,8 @@ func (owner *heapBuilder) addTargetFreshResults() bool {
 			return false
 		}
 		for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
-			for freshIndex := 0; freshIndex < contract.FreshResultCount(operation, outcome); freshIndex++ {
-				result, ordinal, kind, freshOK := contract.FreshResultAt(operation, outcome, freshIndex)
+			for freshIndex := 0; freshIndex < contract.Operations.FreshResultCount(operation, outcome); freshIndex++ {
+				result, ordinal, kind, freshOK := contract.Operations.FreshResultAt(operation, outcome, freshIndex)
 				key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}
 				if !freshOK {
 					return false
@@ -1008,8 +1008,8 @@ func (owner *heapBuilder) addTargetFreshResults() bool {
 				continue
 			}
 			for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
-				for freshIndex := 0; freshIndex < contract.FreshResultCount(operation, outcome); freshIndex++ {
-					result, ordinal, kind, freshOK := contract.FreshResultAt(operation, outcome, freshIndex)
+				for freshIndex := 0; freshIndex < contract.Operations.FreshResultCount(operation, outcome); freshIndex++ {
+					result, ordinal, kind, freshOK := contract.Operations.FreshResultAt(operation, outcome, freshIndex)
 					key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}
 					if !freshOK {
 						return false

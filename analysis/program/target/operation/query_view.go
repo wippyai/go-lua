@@ -128,6 +128,16 @@ func (core Core) OutcomeAt(op vocabulary.Operation, index int) (flowkind.Outcome
 	return outcome.kind, outcome.values, true
 }
 
+// OutcomePositionAt returns the immutable flat query position for one local
+// outcome. It is a join key for identity columns, not a second outcome handle.
+func (core Core) OutcomePositionAt(op vocabulary.Operation, index int) (int, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || index < 0 || index >= row.outcomes.len() {
+		return 0, false
+	}
+	return row.outcomes.start + index, true
+}
+
 func (core Core) BehaviorResultCount(op vocabulary.Operation) int {
 	row, ok := core.queryOperation(op)
 	if !ok {
@@ -383,4 +393,338 @@ func (core Core) TypeDeclaration(typ vocabulary.Type) (schematype.Type, bool) {
 		return schematype.Type{}, false
 	}
 	return core.query.types[int(typ)-1].declaration, true
+}
+
+const (
+	opaqueSuspensionCount   = 3
+	queryNoTypeValueCapture = ^uint32(0)
+)
+
+func (core Core) SuspensionCount(op vocabulary.Operation) int {
+	row, ok := core.queryOperation(op)
+	if !ok {
+		return 0
+	}
+	if core.isOpaque(op) {
+		return opaqueSuspensionCount
+	}
+	return row.suspensions.len()
+}
+
+func (core Core) SuspensionAt(op vocabulary.Operation, index int) (yield, reentry uint32, source vocabulary.ReentrySource, multiplicity vocabulary.ReentryMultiplicity, ok bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || index < 0 {
+		return 0, 0, 0, 0, false
+	}
+	if core.isOpaque(op) {
+		if index >= opaqueSuspensionCount {
+			return 0, 0, 0, 0, false
+		}
+		reentry := uint32(index)
+		if index == 2 {
+			reentry = 3
+		}
+		return 2, reentry, vocabulary.ReentryByProvider, vocabulary.ReentryMany, true
+	}
+	if index >= row.suspensions.len() {
+		return 0, 0, 0, 0, false
+	}
+	item := core.query.suspensions[row.suspensions.start+index]
+	return item.yield, item.reentry, item.source, item.multiplicity, true
+}
+
+func (core Core) SpawnCount(op vocabulary.Operation) int {
+	row, ok := core.queryOperation(op)
+	if !ok || core.isOpaque(op) {
+		return 0
+	}
+	return row.spawns.len()
+}
+
+func (core Core) SpawnIDAt(op vocabulary.Operation, index int) (vocabulary.SpawnID, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || core.isOpaque(op) || index < 0 || index >= row.spawns.len() {
+		return 0, false
+	}
+	return vocabulary.SpawnID(row.spawns.start + index + 1), true
+}
+
+func (core Core) spawn(id vocabulary.SpawnID) (querySpawnRow, bool) {
+	if id == 0 || int(id) > len(core.query.spawns) {
+		return querySpawnRow{}, false
+	}
+	return core.query.spawns[id-1], true
+}
+
+func (core Core) SpawnRelation(id vocabulary.SpawnID) (owner vocabulary.Operation, function vocabulary.InputSource, child vocabulary.CallbackID, parentYield, parentResume uint32, childEntry, resumeValues vocabulary.Values, ok bool) {
+	row, ok := core.spawn(id)
+	if !ok {
+		return 0, vocabulary.InputSource{}, 0, 0, 0, 0, 0, false
+	}
+	return row.owner, row.function, row.child, row.yield, row.parentResume, row.childEntry, row.resumeValues, true
+}
+
+func (core Core) SpawnSiblingCount(id vocabulary.SpawnID) int {
+	if _, ok := core.spawn(id); !ok {
+		return 0
+	}
+	return 2
+}
+
+func (core Core) SpawnSiblingAt(id vocabulary.SpawnID, index int) (vocabulary.SpawnSiblingAlternative, bool) {
+	row, ok := core.spawn(id)
+	if !ok || index < 0 || index >= 2 {
+		return vocabulary.SpawnSiblingInvalid, false
+	}
+	return row.alternatives[index], true
+}
+
+func (core Core) ResumeCount(op vocabulary.Operation) int {
+	row, ok := core.queryOperation(op)
+	if !ok || core.isOpaque(op) {
+		return 0
+	}
+	return row.resumes.len()
+}
+
+func (core Core) ResumeIDAt(op vocabulary.Operation, index int) (vocabulary.ResumeID, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || core.isOpaque(op) || index < 0 || index >= row.resumes.len() {
+		return 0, false
+	}
+	return vocabulary.ResumeID(row.resumes.start + index + 1), true
+}
+
+func (core Core) resume(id vocabulary.ResumeID) (queryResumeRow, bool) {
+	if id == 0 || int(id) > len(core.query.resumes) {
+		return queryResumeRow{}, false
+	}
+	return core.query.resumes[id-1], true
+}
+
+func (core Core) Resume(id vocabulary.ResumeID) (owner vocabulary.Operation, source vocabulary.ResumeSource, carrier vocabulary.ValueFormal, arguments vocabulary.Values, ok bool) {
+	row, ok := core.resume(id)
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+	return row.owner, row.source, row.carrier, row.arguments, true
+}
+
+func (core Core) ResumeOutcomeCount(id vocabulary.ResumeID) int {
+	if _, ok := core.resume(id); !ok {
+		return 0
+	}
+	return 5
+}
+
+func (core Core) ResumeOutcomeAt(id vocabulary.ResumeID, index int) (flowkind.OutcomeKind, uint32, bool) {
+	row, ok := core.resume(id)
+	if !ok || index < 0 || index >= 5 {
+		return 0, 0, false
+	}
+	return [...]flowkind.OutcomeKind{
+		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
+		flowkind.OutcomeYield, flowkind.OutcomeCancel,
+	}[index], row.outcomes[index], true
+}
+
+func (core Core) CallbackResultCount(op vocabulary.Operation, outcome int) int {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok {
+		return 0
+	}
+	return row.callbackResults.len()
+}
+
+func (core Core) CallbackResultAt(op vocabulary.Operation, outcome, index int) (uint32, vocabulary.CallbackID, bool) {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok || index < 0 || index >= row.callbackResults.len() {
+		return 0, 0, false
+	}
+	item := core.query.callbackResults[row.callbackResults.start+index]
+	return item.result, item.callback, true
+}
+
+func (core Core) CallbackForResult(op vocabulary.Operation, outcome int, result uint32) (vocabulary.CallbackID, int, bool) {
+	count := core.CallbackResultCount(op, outcome)
+	left, right := 0, count
+	for left < right {
+		mid := left + (right-left)/2
+		current, _, ok := core.CallbackResultAt(op, outcome, mid)
+		if !ok {
+			return 0, 0, false
+		}
+		if current < result {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	if left >= count {
+		return 0, 0, false
+	}
+	current, callback, ok := core.CallbackResultAt(op, outcome, left)
+	return callback, left, ok && current == result
+}
+
+func (core Core) ResultAliasCount(op vocabulary.Operation, outcome int) int {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok {
+		return 0
+	}
+	return row.resultAliases.len()
+}
+
+func (core Core) ResultAliasAt(op vocabulary.Operation, outcome, index int) (uint32, vocabulary.InputSourceKind, uint32, bool) {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok || index < 0 || index >= row.resultAliases.len() {
+		return 0, 0, 0, false
+	}
+	item := core.query.resultAliases[row.resultAliases.start+index]
+	return item.result, item.source.Kind, item.source.Ordinal, true
+}
+
+func (core Core) ResultAliasForResult(op vocabulary.Operation, outcome int, result uint32) (vocabulary.InputSourceKind, uint32, int, bool) {
+	count := core.ResultAliasCount(op, outcome)
+	left, right := 0, count
+	for left < right {
+		mid := left + (right-left)/2
+		current, _, _, ok := core.ResultAliasAt(op, outcome, mid)
+		if !ok {
+			return 0, 0, 0, false
+		}
+		if current < result {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	if left >= count {
+		return 0, 0, 0, false
+	}
+	current, kind, source, ok := core.ResultAliasAt(op, outcome, left)
+	return kind, source, left, ok && current == result
+}
+
+func (core Core) ProducedCount(op vocabulary.Operation, outcome int) int {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok {
+		return 0
+	}
+	return row.produced.len()
+}
+
+func (core Core) ProducedAt(op vocabulary.Operation, outcome, index int) (uint32, vocabulary.Operation, bool) {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok || index < 0 || index >= row.produced.len() {
+		return 0, 0, false
+	}
+	item := core.query.produced[row.produced.start+index]
+	return item.result, item.target, true
+}
+
+func (core Core) ProducedForResult(op vocabulary.Operation, outcome int, result uint32) (vocabulary.Operation, int, bool) {
+	count := core.ProducedCount(op, outcome)
+	left, right := 0, count
+	for left < right {
+		mid := left + (right-left)/2
+		current, _, ok := core.ProducedAt(op, outcome, mid)
+		if !ok {
+			return 0, 0, false
+		}
+		if current < result {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	if left >= count {
+		return 0, 0, false
+	}
+	current, target, ok := core.ProducedAt(op, outcome, left)
+	return target, left, ok && current == result
+}
+
+func (core Core) ProducedCaptureCount(op vocabulary.Operation, outcome, produced int) int {
+	item, ok := core.producedRowAt(op, outcome, produced)
+	if !ok {
+		return 0
+	}
+	return item.captures.len()
+}
+
+func (core Core) ProducedCaptureAt(op vocabulary.Operation, outcome, produced, capture int) (vocabulary.CaptureKind, uint32, bool) {
+	item, ok := core.producedRowAt(op, outcome, produced)
+	if !ok || capture < 0 || capture >= item.captures.len() {
+		return 0, 0, false
+	}
+	value := core.query.captures[item.captures.start+capture]
+	return value.kind, value.ordinal, true
+}
+
+func (core Core) ProducedTypeValueCapture(op vocabulary.Operation, outcome, produced int) (vocabulary.ValueFormal, bool) {
+	item, ok := core.producedRowAt(op, outcome, produced)
+	if !ok || item.typeValueCapture == queryNoTypeValueCapture || item.typeValueCapture >= uint32(item.captures.len()) {
+		return 0, false
+	}
+	value := core.query.captures[item.captures.start+int(item.typeValueCapture)]
+	if value.kind != vocabulary.CaptureTypeValueFormal {
+		return 0, false
+	}
+	return vocabulary.ValueFormal(value.ordinal), true
+}
+
+func (core Core) FreshResultCount(op vocabulary.Operation, outcome int) int {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok {
+		return 0
+	}
+	return row.fresh.len()
+}
+
+func (core Core) FreshResultAt(op vocabulary.Operation, outcome, index int) (result, ordinal uint32, kind schematype.FreshClass, ok bool) {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok || index < 0 || index >= row.fresh.len() {
+		return 0, 0, schematype.FreshClassInvalid, false
+	}
+	item := core.query.fresh[row.fresh.start+index]
+	return item.result, item.ordinal, item.kind, true
+}
+
+func (core Core) FreshResultForResult(op vocabulary.Operation, outcome int, result uint32) (ordinal uint32, kind schematype.FreshClass, index int, ok bool) {
+	count := core.FreshResultCount(op, outcome)
+	left, right := 0, count
+	for left < right {
+		mid := left + (right-left)/2
+		current, _, _, found := core.FreshResultAt(op, outcome, mid)
+		if !found {
+			return 0, schematype.FreshClassInvalid, 0, false
+		}
+		if current < result {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	if left >= count {
+		return 0, schematype.FreshClassInvalid, 0, false
+	}
+	current, ordinal, kind, found := core.FreshResultAt(op, outcome, left)
+	return ordinal, kind, left, found && current == result
+}
+
+func (core Core) outcomeQueryRow(op vocabulary.Operation, outcome int) (queryOutcomeRow, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+		return queryOutcomeRow{}, false
+	}
+	return core.query.outcomeRows[row.outcomes.start+outcome], true
+}
+
+func (core Core) producedRowAt(op vocabulary.Operation, outcome, index int) (queryProducedRow, bool) {
+	row, ok := core.outcomeQueryRow(op, outcome)
+	if !ok || index < 0 || index >= row.produced.len() {
+		return queryProducedRow{}, false
+	}
+	return core.query.produced[row.produced.start+index], true
 }

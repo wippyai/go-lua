@@ -149,7 +149,7 @@ func TestSubedgeSealsExplicitTransportAndCanonicalRoles(t *testing.T) {
 	if _, callbackOK := left.subedgeCallback(protected); !callbackOK {
 		t.Fatal("callback-backed subedge lost its callback source")
 	}
-	if left.suspensionCount(op) != 0 {
+	if left.Operations.SuspensionCount(op) != 0 {
 		t.Fatal("PropagateYield fabricated an owner suspension")
 	}
 	for _, edge := range []vocabulary.SubedgeID{protected, handler} {
