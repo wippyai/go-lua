@@ -21,6 +21,13 @@ func TestSourceRejectsEmptyCanonicalName(t *testing.T) {
 	}
 }
 
+func TestLowerPublishesAParsedChunk(t *testing.T) {
+	program, err := programlower.Lower(programlower.Source{Name: "source.lua", Text: []byte("return 1\n")})
+	if err != nil || program == nil {
+		t.Fatalf("Lower returned program=%v, err=%v", program, err)
+	}
+}
+
 func TestSourceTextMutationDoesNotChangeLoweredProgram(t *testing.T) {
 	text := []byte("return 1")
 	p, err := programlower.Lower(programlower.Source{Name: "logical/mutation.lua", Text: text})
