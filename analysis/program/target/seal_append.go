@@ -27,13 +27,8 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	if err != nil {
 		return err
 	}
-	row := operationRow{
-		bindings:   bindings,
-		valuesVars: draft.valuesVars,
-		rowFormals: draft.rowFormals,
-		effectTail: draft.effectTail,
-		effectVar:  draft.effectVar,
-	}
+	rowFormals := draft.rowFormals
+	effectTail, effectVar := draft.effectTail, draft.effectVar
 	formalRange, err := checkedStoredRange("type formal pool", len(c.formals), len(draft.constraints))
 	if err != nil {
 		return err
@@ -41,7 +36,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 	for _, constraint := range draft.constraints {
 		c.formals = append(c.formals, typeHandle[constraint])
 	}
-	row.typeFormals = formalRange
+	operationTypeFormals := formalRange
 	valuesTypes, valuesTypeErr := checkedStoredRange("Values variable type pool", len(c.valuesVarTypes), len(draft.valuesTypes))
 	if valuesTypeErr != nil {
 		return valuesTypeErr
@@ -53,7 +48,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		}
 		c.valuesVarTypes = append(c.valuesVarTypes, handle)
 	}
-	row.valuesTypes = valuesTypes
+	operationValuesTypes := valuesTypes
 
 	valuesHandle := make(map[string]vocabulary.Values)
 	allValues := make(map[string]valuesDraft)
@@ -110,22 +105,21 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		}
 		valuesHandle[key] = handle
 	}
-	row.input = valuesHandle[inputKey]
-	callbackIDs, callbackRange, err := c.appendCallbacks(op, draft.callbacks, valuesHandle, callbackIDs)
+	operationInput := valuesHandle[inputKey]
+	callbackIDs, _, err = c.appendCallbacks(op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
-	row.callbacks = callbackRange
 	suspensions, suspensionErr := c.appendSuspensions(draft.suspensions)
 	if suspensionErr != nil {
 		return suspensionErr
 	}
-	row.suspensions = suspensions
+	operationSuspensions := suspensions
 	resumes, resumeErr := c.appendResumes(op, draft.resumes, valuesHandle)
 	if resumeErr != nil {
 		return resumeErr
 	}
-	row.resumes = resumes
+	operationResumes := resumes
 	outcomeRange, err := checkedStoredRange("outcome table", len(c.outcomes), len(draft.outcomes))
 	if err != nil {
 		return err
@@ -157,44 +151,50 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		})
 		outcomeValues = append(outcomeValues, valuesHandle[key])
 	}
-	row.outcomes = outcomeRange
+	operationOutcomes := outcomeRange
 	behaviorRange, behaviorPredicateRange, behaviorErr := c.appendBehavior(draft.behavior)
 	if behaviorErr != nil {
 		return behaviorErr
 	}
-	row.behavior = behaviorRange
-	row.behaviorPredicates = behaviorPredicateRange
+	operationBehavior, operationPredicates := behaviorRange, behaviorPredicateRange
 	subedgeRange, subedgeErr := c.appendSubedges(op, draft.subedges, callbackIDs, valuesHandle, keys)
 	if subedgeErr != nil {
 		return subedgeErr
 	}
-	row.subedges = subedgeRange
+	operationSubedges := subedgeRange
 	spawns, spawnErr := c.appendSpawns(op, draft.spawns, callbackIDs, outcomeValues)
 	if spawnErr != nil {
 		return spawnErr
 	}
-	row.spawns = spawns
+	operationSpawns := spawns
 	transfers, transferErr := c.appendTransfers(op, draft.transfers)
 	if transferErr != nil {
 		return transferErr
 	}
-	row.transfers = transfers
+	operationTransfers := transfers
 	effectRange, err := c.appendEffects(effectOwnerOperation, draft.effects)
 	if err != nil {
 		return err
 	}
-	row.effects = effectRange
+	operationEffects := effectRange
+	operationRelation := uint32(0)
 	if draft.subedgeRelation != nil {
-		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, row)
+		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, operationSubedges, operationOutcomes, operationEffects)
 		if branchErr != nil {
 			return branchErr
 		}
-		row.subedgeRelation = branch
+		operationRelation = branch
 	}
-	c.operations = append(c.operations, row)
-	if len(draft.bindings) != 0 {
-		c.boundCount++
-	}
+	c.operations = append(c.operations, operationRow{
+		bindings: bindings, input: operationInput, outcomes: operationOutcomes,
+		behavior: operationBehavior, behaviorPredicates: operationPredicates,
+		valuesTypes: operationValuesTypes, subedges: operationSubedges,
+		suspensions: operationSuspensions, spawns: operationSpawns,
+		resumes: operationResumes, transfers: operationTransfers,
+		subedgeRelation: operationRelation, effects: operationEffects,
+		typeFormals: operationTypeFormals, rowFormals: rowFormals,
+		effectTail: effectTail, effectVar: effectVar,
+	})
 	return nil
 }
 
@@ -296,14 +296,6 @@ func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys exactkey.
 }
 
 func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys exactkey.Table) (bindingRange, error) {
-	owner, err := checkedStoredRange("binding segment pool", len(c.segments), len(input.Owner))
-	if err != nil {
-		return bindingRange{}, err
-	}
-	member, err := checkedStoredRange("binding segment pool", int(owner.end), len(input.Member))
-	if err != nil {
-		return bindingRange{}, err
-	}
 	ownerKeys, err := checkedStoredRange("binding exact-key pool", len(c.bindingKeys), len(input.Owner))
 	if err != nil {
 		return bindingRange{}, err
@@ -312,10 +304,7 @@ func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys exactkey.Tab
 	if err != nil {
 		return bindingRange{}, err
 	}
-	row := bindingRange{namespace: input.Namespace}
-	row.owner, row.member, row.ownerKeys, row.memberKeys = owner, member, ownerKeys, memberKeys
-	c.segments = append(c.segments, input.Owner...)
-	c.segments = append(c.segments, input.Member...)
+	row := bindingRange{ownerKeys: ownerKeys, memberKeys: memberKeys}
 	for _, segment := range input.Owner {
 		key, keyErr := exactKeyHandle(keys, keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
 		if keyErr != nil {
@@ -387,7 +376,7 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		return err
 	}
 	issuedOpaque := callbackIDForOpaque(c.operationCore, opaque)
-	_, callbacks, err := c.appendCallbacks(opaque, []callbackDraft{{
+	_, _, err = c.appendCallbacks(opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
@@ -401,13 +390,9 @@ func (c *Contract) appendOpaque(opaque vocabulary.Operation) error {
 		return err
 	}
 	c.operations = append(c.operations, operationRow{
-		input:      unknown,
-		outcomes:   outcomes,
-		callbacks:  callbacks,
-		transfers:  transfers,
+		input: unknown, outcomes: outcomes, transfers: transfers,
 		effectTail: vocabulary.RowUnknownOpen,
 	})
-	c.opaque = opaque
 	return nil
 }
 
@@ -420,23 +405,22 @@ func callbackIDForOpaque(core operationvalue.Core, opaque vocabulary.Operation) 
 }
 
 func (c *Contract) buildLookup() error {
-	c.lookup = make([]bindingIndexRow, 0, len(c.bindings))
-	for index := 0; index < c.boundOperationCount(); index++ {
-		handle, err := checkedStoredHandle("operation handle", index)
-		if err != nil {
-			return err
+	c.lookup = make([]bindingIndexRow, 0, c.operationCore.BindingTotal())
+	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		row, ok := c.operation(op)
+		if !ok || row.bindings.end > uint32(len(c.bindings)) {
+			return errors.New("target: malformed binding range")
 		}
-		op := vocabulary.Operation(handle)
-		row := c.operations[index]
-		for binding := row.bindings.start; binding < row.bindings.end; binding++ {
-			c.lookup = append(c.lookup, bindingIndexRow{binding: binding, operation: op})
+		for index := row.bindings.start; index < row.bindings.end; index++ {
+			c.lookup = append(c.lookup, bindingIndexRow{binding: index - row.bindings.start, operation: op})
 		}
 	}
 	sort.Slice(c.lookup, func(left, right int) bool {
-		return c.compareBindingRows(c.lookup[left].binding, c.lookup[right].binding) < 0
+		return c.compareBindingRows(c.lookup[left], c.lookup[right]) < 0
 	})
 	for index := 1; index < len(c.lookup); index++ {
-		if c.compareBindingRows(c.lookup[index-1].binding, c.lookup[index].binding) == 0 {
+		if c.compareBindingRows(c.lookup[index-1], c.lookup[index]) == 0 {
 			return errors.New("target: duplicate sealed binding")
 		}
 	}

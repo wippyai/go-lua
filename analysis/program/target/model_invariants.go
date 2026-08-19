@@ -55,33 +55,3 @@ func (d PublicationEffectDescriptor) validConsequences() bool {
 		return false
 	}
 }
-
-func (c *Contract) bindingEqual(row bindingRange, input vocabulary.BindingSpec) bool {
-	if row.namespace != input.Namespace || row.owner.len() != len(input.Owner) || row.member.len() != len(input.Member) {
-		return false
-	}
-	for index := range input.Owner {
-		if c.segments[row.owner.start+uint32(index)] != input.Owner[index] {
-			return false
-		}
-	}
-	for index := range input.Member {
-		if c.segments[row.member.start+uint32(index)] != input.Member[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func compareBindingRangeSpec(left bindingRange, right vocabulary.BindingSpec, segments []string) int {
-	if left.namespace < right.Namespace {
-		return -1
-	}
-	if left.namespace > right.Namespace {
-		return 1
-	}
-	if order := vocabulary.CompareSegments(segments[left.owner.start:left.owner.end], right.Owner); order != 0 {
-		return order
-	}
-	return vocabulary.CompareSegments(segments[left.member.start:left.member.end], right.Member)
-}

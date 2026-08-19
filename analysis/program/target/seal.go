@@ -104,7 +104,8 @@ func Seal(spec *Spec) (*Contract, error) {
 
 	// Contract is staging-only until the final return. Any failed append drops
 	// it whole, so Seal never exposes a partially converted representation.
-	contract := &Contract{Table: bootTable, exactKeys: exactKeys, operationCore: operationCore, operations: make([]operationRow, 0, operationCount), protocols: protocols}
+	contract := &Contract{Table: bootTable, exactKeys: exactKeys, operationCore: operationCore,
+		operations: make([]operationRow, 0, operationCount), protocols: protocols}
 	for index := range drafts {
 		op, ok := operationCore.OperationAt(index)
 		if !ok {

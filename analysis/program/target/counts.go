@@ -25,7 +25,8 @@ func (c *Contract) CountRows() denominator.CountRows {
 // populations share one table and are told apart by the effect owner. Nothing
 // here re-derives a relation by walking the indexes into those tables.
 func (c *Contract) buildCountRows() (denominator.CountRows, error) {
-	if c == nil || len(c.operations) == 0 || c.opaque != vocabulary.Operation(len(c.operations)) {
+	opaque, opaqueOK := c.Opaque()
+	if c == nil || c.OperationCount() == 0 || !opaqueOK || opaque != vocabulary.Operation(c.OperationCount()) {
 		return denominator.CountRows{}, errCountRows
 	}
 
@@ -62,8 +63,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	}
 
 	var subedgeRelations int
-	for index := range c.operations {
-		if c.operations[index].subedgeRelation != 0 {
+	for _, operation := range c.operations {
+		if operation.subedgeRelation != 0 {
 			subedgeRelations++
 		}
 	}
@@ -72,8 +73,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 
 	ok := put(ids.TargetContract, 1) &&
 		put(ids.TargetOpaque, 1) &&
-		put(ids.TargetOperation, len(c.operations)) &&
-		put(ids.TargetABI, len(c.operations)) &&
+		put(ids.TargetOperation, c.OperationCount()) &&
+		put(ids.TargetABI, c.OperationCount()) &&
 		put(ids.TargetBinding, len(c.bindings)) &&
 		put(ids.TargetOutcome, len(c.outcomes)) &&
 		put(ids.TargetOperationEffect, operationEffects) &&

@@ -1,131 +1,14 @@
-// Package operation owns the canonical operation geometry shared by Target's
-// boot and protocol owners.  It is deliberately smaller than Target: the
-// input consists only of neutral, already-validated value data and the sealed
-// result retains no operation draft or Target row.
 package operation
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/wippyai/go-lua/analysis/identity"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/program/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
-	"sort"
 )
-
-// Input is neutral operation geometry accepted after Target has validated its
-// root drafts. Source is the zero-based authoring coordinate; Core computes
-// canonical root/produced order, issues operation handles, and retains the
-// source-to-handle column.
-//
-// The nested slices are construction input only. CompileGeometry copies them
-// into the sealed rows/pools below, so callers retain no write path into a
-// Geometry or Core value.
-type Input struct {
-	Operations []OperationInput
-}
-
-// OperationInput is one root-validated operation descriptor. Produced edges
-// name TargetSource rather than an operation handle because canonical order
-// and handles are owned and issued here.
-type OperationInput struct {
-	Source            int
-	Bindings          []vocabulary.BindingSpec
-	InputFormalCount  int
-	ValuesVars        uint32
-	OutcomeValueSlots []OutcomeInput
-	Callbacks         []CallbackInput
-	Produced          []ProducedInput
-}
-
-// OutcomeInput carries the fixed result-slot count and the neutral local
-// discriminator used when a produced child receives its operation anchor.
-// Anchor is copied as bytes and is not interpreted by this package.
-type OutcomeInput struct {
-	ValueSlots uint32
-	Anchor     []byte
-}
-
-// CallbackInput is the callback coordinate and lifecycle needed by protocol
-// and by Target's callback relation. Source is the zero-based callback
-// authoring coordinate; the canonical callback ID is issued by Core.
-type CallbackInput struct {
-	Source    int
-	Lifecycle vocabulary.CallbackLifecycle
-}
-
-// ProducedInput is one parent/outcome/result to child relation. TargetSource
-// is a zero-based source operation coordinate, not a pre-issued Operation.
-type ProducedInput struct {
-	TargetSource int
-	Outcome      uint32
-	Result       uint32
-}
-
-type operationRow struct {
-	source    int
-	bindings  rows.Span
-	outcomes  rows.Span
-	callbacks rows.Span
-	produced  rows.Span
-	input     uint32
-	valuesVar uint32
-}
-
-type bindingRow struct {
-	namespace vocabulary.BindingNamespace
-	owner     rows.Span
-	member    rows.Span
-}
-
-type outcomeRow struct {
-	slots  uint32
-	anchor rows.Span
-}
-
-type callbackRow struct {
-	id        vocabulary.CallbackID
-	owner     vocabulary.Operation
-	source    int
-	lifecycle vocabulary.CallbackLifecycle
-}
-
-type producedRow struct {
-	parent  vocabulary.Operation
-	child   vocabulary.Operation
-	outcome uint32
-	result  uint32
-}
-
-type sourceRow struct{ operation vocabulary.Operation }
-
-// Geometry is the first immutable operation value. It owns canonical
-// operation/callback coordinates and all anchor-neutral geometry, but not the
-// exact-key-dependent binding/produced semantic anchors.
-type Geometry struct {
-	operations rows.Rows[operationRow]
-	bindings   rows.Pool[bindingRow]
-	segments   rows.Pool[string]
-	outcomes   rows.Pool[outcomeRow]
-	anchors    rows.Pool[byte]
-	callbacks  rows.Pool[callbackRow]
-	produced   rows.Pool[producedRow]
-	sources    rows.Rows[sourceRow]
-	sourceN    int
-}
-
-// anchorRow is kept separate from Geometry so exact-key finalization returns a
-// distinct immutable value rather than mutating Geometry in place.
-type anchorRow struct{ id identity.ContentID }
-
-// Core is the complete immutable operation owner. Every operation handle,
-// callback ID/lifecycle, and operation semantic anchor is read from this
-// value. No caller can append, backpatch, or toggle a publication flag.
-type Core struct {
-	geometry Geometry
-	anchors  rows.Rows[anchorRow]
-}
 
 // CompileGeometry validates, canonicalizes, and seals neutral operation
 // geometry. It is the sole issuer of dense operation handles and callback IDs.
@@ -148,7 +31,7 @@ func CompileGeometry(input Input) (Geometry, error) {
 		bindingRows  rows.PoolBuilder[bindingRow]
 		outcomeRows  rows.PoolBuilder[outcomeRow]
 		anchorPool   rows.PoolBuilder[byte]
-		callbackRows rows.PoolBuilder[callbackRow]
+		callbackRows []callbackRow
 		producedRows rows.PoolBuilder[producedRow]
 	)
 	operations := make([]operationRow, len(input.Operations)+1)
@@ -228,12 +111,20 @@ func CompileGeometry(input Input) (Geometry, error) {
 				return Geometry{}, fmt.Errorf("target/operation: callback %d has invalid lifecycle", callbackIndex)
 			}
 			callbackValues = append(callbackValues, callbackRow{
-				id:    vocabulary.CallbackID(callbackRows.Len() + len(callbackValues) + 1),
-				owner: vocabulary.Operation(index + 1), source: callback.Source, lifecycle: callback.Lifecycle,
+				id: vocabulary.CallbackID(len(callbackRows) + len(callbackValues) + 1), owner: vocabulary.Operation(index + 1),
+				source: callback.Source, ordinal: uint32(callbackIndex), lifecycle: callback.Lifecycle,
 			})
 		}
-		callbackRange, ok := callbackRows.Append(callbackValues)
-		if !ok {
+		callbackStart, err := vocabulary.CheckedStoredLength("operation callback table", len(callbackRows))
+		if err != nil {
+			return Geometry{}, err
+		}
+		if _, err := vocabulary.CheckedStoredTotal("operation callback table", len(callbackRows), len(callbackValues)); err != nil {
+			return Geometry{}, err
+		}
+		callbackRows = append(callbackRows, callbackValues...)
+		callbackRange := callbackRange{start: callbackStart, end: callbackStart + uint32(len(callbackValues))}
+		if callbackRange.end < callbackRange.start {
 			return Geometry{}, errors.New("target/operation: operation callback range overflow")
 		}
 		operations[index] = operationRow{
@@ -283,17 +174,36 @@ func CompileGeometry(input Input) (Geometry, error) {
 	if !ok {
 		return Geometry{}, errors.New("target/operation: opaque outcome range overflow")
 	}
-	opaqueCallbackRange, ok := callbackRows.Append([]callbackRow{{id: vocabulary.CallbackID(callbackRows.Len() + 1), owner: opaque, lifecycle: vocabulary.CallbackRetainedOptionalMany}})
-	if !ok {
+	opaqueCallbackStart, err := vocabulary.CheckedStoredLength("operation callback table", len(callbackRows))
+	if err != nil {
+		return Geometry{}, err
+	}
+	if _, err := vocabulary.CheckedStoredTotal("operation callback table", len(callbackRows), 1); err != nil {
+		return Geometry{}, err
+	}
+	callbackRows = append(callbackRows, callbackRow{id: vocabulary.CallbackID(len(callbackRows) + 1), owner: opaque, ordinal: 0, lifecycle: vocabulary.CallbackRetainedOptionalMany})
+	opaqueCallbackRange := callbackRange{start: opaqueCallbackStart, end: opaqueCallbackStart + 1}
+	if opaqueCallbackRange.end < opaqueCallbackRange.start {
 		return Geometry{}, errors.New("target/operation: opaque callback rows overflow")
 	}
 	operations[len(input.Operations)] = operationRow{outcomes: unknownRange, callbacks: opaqueCallbackRange}
 
 	return Geometry{
 		operations: rows.NewRows(operations), bindings: bindingRows.Seal(), segments: segmentPool.Seal(),
-		outcomes: outcomeRows.Seal(), anchors: anchorPool.Seal(), callbacks: callbackRows.Seal(),
-		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations),
+		outcomes: outcomeRows.Seal(), anchors: anchorPool.Seal(), callbacks: rows.NewRows(callbackRows),
+		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations), boundN: boundCount(input.Operations),
 	}, nil
+}
+
+func boundCount(operations []OperationInput) int {
+	count := 0
+	for _, operation := range operations {
+		if len(operation.Bindings) == 0 {
+			break
+		}
+		count++
+	}
+	return count
 }
 
 // canonicalOrder is the operation owner's source-order-independent catalogue.

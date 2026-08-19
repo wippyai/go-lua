@@ -36,7 +36,8 @@ func (c *Contract) ContentID() (id identity.ContentID) {
 			id = identity.ContentID{}
 		}
 	}()
-	if c == nil || !c.sealed || c.opaque == 0 || uint64(c.opaque) != uint64(len(c.operations)) {
+	opaque, opaqueOK := c.Opaque()
+	if c == nil || !c.sealed || !opaqueOK || uint64(opaque) != uint64(c.OperationCount()) {
 		return identity.ContentID{}
 	}
 	hash := sha256.New()

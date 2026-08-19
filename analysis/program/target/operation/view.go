@@ -1,7 +1,6 @@
 package operation
 
 import (
-	"errors"
 	"iter"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -14,6 +13,13 @@ func (core Core) OperationCount() int { return core.geometry.operations.Count() 
 // SourceCount is the number of authored operation rows. The opaque row has no
 // source coordinate and is intentionally omitted from this projection.
 func (core Core) SourceCount() int { return core.geometry.sourceN }
+
+// BoundCount is the canonical root/provider prefix. Canonical ordering emits
+// every binding-owned operation before produced-only children and the opaque
+// row, so this count is stable without a Target-side counter.
+func (core Core) BoundCount() int {
+	return core.geometry.boundN
+}
 
 // SourceCount and SourceOperation are also available on the first immutable
 // geometry value so Target can map drafts before exact-key anchor finalization.
@@ -71,57 +77,6 @@ func (core Core) operation(op vocabulary.Operation) (operationRow, bool) {
 	return core.geometry.operations.At(int(op) - 1)
 }
 
-// BindingCount and BindingAt expose copied neutral binding values. The final
-// operation owner retains only rows and segment pools.
-func (core Core) BindingCount(op vocabulary.Operation) int {
-	row, ok := core.operation(op)
-	if !ok {
-		return 0
-	}
-	return core.geometry.bindings.Count(row.bindings)
-}
-
-func (core Core) BindingAt(op vocabulary.Operation, index int) (vocabulary.BindingSpec, bool) {
-	row, ok := core.operation(op)
-	if !ok {
-		return vocabulary.BindingSpec{}, false
-	}
-	binding, ok := core.geometry.bindings.At(row.bindings, index)
-	if !ok {
-		return vocabulary.BindingSpec{}, false
-	}
-	owner := make([]string, core.geometry.segments.Count(binding.owner))
-	for index := range owner {
-		value, valueOK := core.geometry.segments.At(binding.owner, index)
-		if !valueOK {
-			return vocabulary.BindingSpec{}, false
-		}
-		owner[index] = value
-	}
-	member := make([]string, core.geometry.segments.Count(binding.member))
-	for index := range member {
-		value, valueOK := core.geometry.segments.At(binding.member, index)
-		if !valueOK {
-			return vocabulary.BindingSpec{}, false
-		}
-		member[index] = value
-	}
-	return vocabulary.BindingSpec{Namespace: binding.namespace, Owner: owner, Member: member}, true
-}
-
-func (core Core) bindingSpecs(op vocabulary.Operation) ([]vocabulary.BindingSpec, error) {
-	count := core.BindingCount(op)
-	bindings := make([]vocabulary.BindingSpec, count)
-	for index := range bindings {
-		binding, ok := core.BindingAt(op, index)
-		if !ok {
-			return nil, errors.New("target/operation: malformed binding projection")
-		}
-		bindings[index] = binding
-	}
-	return bindings, nil
-}
-
 // InputFormalCount and ValuesVarCount are the narrow value-geometry columns
 // consumed by Protocol.
 func (core Core) InputFormalCount(op vocabulary.Operation) int {
@@ -158,83 +113,6 @@ func (core Core) OutcomeValueSlots(op vocabulary.Operation, index int) (uint32, 
 		return 0, false
 	}
 	return outcome.slots, true
-}
-
-// CallbackCount, CallbackAt, CallbackOwner, CallbackSource, and
-// CallbackLifecycle expose owner-issued callback coordinates. Lifecycle is
-// retained here as part of the callback geometry, not recomputed by Target.
-func (core Core) CallbackCount(op vocabulary.Operation) int {
-	row, ok := core.operation(op)
-	if !ok {
-		return 0
-	}
-	return core.geometry.callbacks.Count(row.callbacks)
-}
-
-func (core Core) CallbackAt(op vocabulary.Operation, index int) (vocabulary.CallbackID, bool) {
-	row, ok := core.operation(op)
-	if !ok {
-		return 0, false
-	}
-	callback, ok := core.geometry.callbacks.At(row.callbacks, index)
-	if !ok {
-		return 0, false
-	}
-	return callback.id, true
-}
-
-func (core Core) CallbackOwner(id vocabulary.CallbackID) (vocabulary.Operation, bool) {
-	if id == 0 {
-		return 0, false
-	}
-	for operation := 1; operation <= core.OperationCount(); operation++ {
-		op := vocabulary.Operation(operation)
-		for index := 0; index < core.CallbackCount(op); index++ {
-			callback, ok := core.CallbackAt(op, index)
-			if ok && callback == id {
-				return op, true
-			}
-		}
-	}
-	return 0, false
-}
-
-func (core Core) CallbackSource(id vocabulary.CallbackID) (vocabulary.InputSource, bool) {
-	row, ok := core.callback(id)
-	if !ok {
-		return vocabulary.InputSource{}, false
-	}
-	if opaque, opaqueOK := core.Opaque(); opaqueOK && row.owner == opaque {
-		return vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}, true
-	}
-	return vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(row.source)}, true
-}
-
-func (core Core) CallbackLifecycle(id vocabulary.CallbackID) (vocabulary.CallbackLifecycle, bool) {
-	row, ok := core.callback(id)
-	if !ok {
-		return 0, false
-	}
-	return row.lifecycle, true
-}
-
-func (core Core) callback(id vocabulary.CallbackID) (callbackRow, bool) {
-	if id == 0 {
-		return callbackRow{}, false
-	}
-	for operation := 1; operation <= core.OperationCount(); operation++ {
-		op := vocabulary.Operation(operation)
-		row, rowOK := core.operation(op)
-		if !rowOK {
-			return callbackRow{}, false
-		}
-		for _, callback := range core.geometry.callbacks.All(row.callbacks) {
-			if callback.id == id {
-				return callback, true
-			}
-		}
-	}
-	return callbackRow{}, false
 }
 
 // Anchor is the operation semantic anchor issued by Core.

@@ -13,6 +13,10 @@ import (
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
+// operationRow is the Target aggregate's cross-subsystem relation index. The
+// operation package owns handles, binding/callback/outcome geometry, and
+// produced edges; this row retains only ranges into Target-owned pools and
+// the aggregate's input/value/effect projections.
 type operationRow struct {
 	bindings           indexRange
 	input              vocabulary.Values
@@ -20,7 +24,6 @@ type operationRow struct {
 	behavior           indexRange
 	behaviorPredicates indexRange
 	valuesTypes        indexRange
-	callbacks          indexRange
 	subedges           indexRange
 	suspensions        indexRange
 	spawns             indexRange
@@ -30,16 +33,12 @@ type operationRow struct {
 	releases           indexRange
 	effects            indexRange
 	typeFormals        indexRange
-	valuesVars         uint32
 	rowFormals         uint32
 	effectTail         vocabulary.RowTail
 	effectVar          vocabulary.RowVar
 }
 
 type bindingRange struct {
-	namespace  vocabulary.BindingNamespace
-	owner      indexRange
-	member     indexRange
 	ownerKeys  indexRange
 	memberKeys indexRange
 }
@@ -143,12 +142,10 @@ type subedgeRelationRow struct {
 }
 
 type callbackRow struct {
-	owner      vocabulary.Operation
 	function   vocabulary.InputSource
 	admission  schematype.CallableAdmission
 	arguments  vocabulary.Values
 	outcomes   [5]vocabulary.Values
-	lifecycle  vocabulary.CallbackLifecycle
 	subedge    vocabulary.SubedgeID
 	effects    indexRange
 	effectTail vocabulary.RowTail
@@ -282,7 +279,6 @@ type Contract struct {
 	produced               []producedRow
 	fresh                  []freshResultRow
 	captures               []captureRow
-	segments               []string
 	bindingKeys            []vocabulary.ExactKey
 	lookup                 []bindingIndexRow
 	exactKeys              exactkey.Table
@@ -291,9 +287,7 @@ type Contract struct {
 	// declared with the rest of the model; the values are written and read only
 	// by the identity altitude.
 	identityColumns
-	boundCount uint32
-	opaque     vocabulary.Operation
-	sealed     bool
+	sealed bool
 }
 
 // identityColumns are the content identities the identity altitude computes

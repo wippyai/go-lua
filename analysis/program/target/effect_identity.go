@@ -46,10 +46,14 @@ func (c *Contract) sealEffectIdentities() error {
 	}
 	for index, row := range c.callbacks {
 		callback := vocabulary.CallbackID(index + 1)
-		if err := c.sealEffectRow(row.owner, callback, row.effects); err != nil {
+		owner, ownerOK := c.operationCore.CallbackOwner(callback)
+		if !ownerOK {
+			return errors.New("target: malformed effect callback owner")
+		}
+		if err := c.sealEffectRow(owner, callback, row.effects); err != nil {
 			return err
 		}
-		id, err := c.effectFamilyID(semanticCallbackEffectFamily, row.owner, callback, row.effectTail, row.effectVar, row.effects)
+		id, err := c.effectFamilyID(semanticCallbackEffectFamily, owner, callback, row.effectTail, row.effectVar, row.effects)
 		if err != nil {
 			return err
 		}
@@ -83,10 +87,11 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 			}
 		}
 	}
-	if err := w.Count(uint64(row.valuesVars)); err != nil {
+	valuesVars := c.ValuesVarCount(op)
+	if err := w.Count(uint64(valuesVars)); err != nil {
 		return err
 	}
-	if row.valuesTypes.len() != int(row.valuesVars) || !validIdentityRange(row.valuesTypes, len(c.valuesVarTypes)) {
+	if row.valuesTypes.len() != valuesVars || !validIdentityRange(row.valuesTypes, len(c.valuesVarTypes)) {
 		return errors.New("target: malformed effect Values ABI")
 	}
 	for index := row.valuesTypes.start; index < row.valuesTypes.end; index++ {
@@ -102,7 +107,8 @@ func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary
 		return errors.New("target: malformed effect row range")
 	}
 	if callback != 0 {
-		if uint64(callback) > uint64(len(c.callbacks)) || c.callbacks[callback-1].owner != owner ||
+		callbackOwner, ownerOK := c.operationCore.CallbackOwner(callback)
+		if uint64(callback) > uint64(len(c.callbacks)) || !ownerOK || callbackOwner != owner ||
 			uint64(callback) > uint64(len(c.callbackContentIDs)) || !c.callbackContentIDs[callback-1].Available() {
 			return errors.New("target: malformed effect callback")
 		}

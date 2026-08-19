@@ -10,16 +10,16 @@ func (c *Contract) OperationCount() int {
 	if c == nil {
 		return 0
 	}
-	return len(c.operations)
+	return c.operationCore.OperationCount()
 }
 
 // OperationAt returns one canonical operation by zero-based index. The opaque
 // operation is deterministic last and participates normally in all queries.
 func (c *Contract) OperationAt(index int) (vocabulary.Operation, bool) {
-	if c == nil || index < 0 || index >= c.OperationCount() {
+	if c == nil {
 		return 0, false
 	}
-	return vocabulary.Operation(index + 1), true
+	return c.operationCore.OperationAt(index)
 }
 
 // boundOperationCount is the source/provider operation prefix. Produced-only
@@ -28,29 +28,53 @@ func (c *Contract) boundOperationCount() int {
 	if c == nil {
 		return 0
 	}
-	return int(c.boundCount)
+	return c.operationCore.BoundCount()
 }
 
 func (c *Contract) boundOperationAt(index int) (vocabulary.Operation, bool) {
 	if c == nil || index < 0 || index >= c.boundOperationCount() {
 		return 0, false
 	}
-	return vocabulary.Operation(index + 1), true
+	return c.operationCore.OperationAt(index)
 }
 
 // Opaque returns the synthesized maximal opaque operation.
 func (c *Contract) Opaque() (vocabulary.Operation, bool) {
-	if c == nil || c.opaque == 0 {
+	if c == nil {
 		return 0, false
 	}
-	return c.opaque, true
+	return c.operationCore.Opaque()
+}
+
+func (c *Contract) opaqueOperation(op vocabulary.Operation) bool {
+	opaque, ok := c.Opaque()
+	return ok && op == opaque
+}
+
+func (c *Contract) operationIndex(op vocabulary.Operation) (int, bool) {
+	if c == nil || op == 0 || uint64(op) > uint64(len(c.operations)) {
+		return 0, false
+	}
+	if _, ok := c.operationCore.OperationAt(int(op) - 1); !ok {
+		return 0, false
+	}
+	return int(op) - 1, true
 }
 
 func (c *Contract) operation(op vocabulary.Operation) (operationRow, bool) {
-	if c == nil || op == 0 || uint64(op) > uint64(len(c.operations)) {
+	index, ok := c.operationIndex(op)
+	if !ok {
 		return operationRow{}, false
 	}
-	return c.operations[uint32(op)-1], true
+	return c.operations[index], true
+}
+
+func (c *Contract) operationOutcomeRange(op vocabulary.Operation) (indexRange, bool) {
+	row, ok := c.operation(op)
+	if !ok {
+		return indexRange{}, false
+	}
+	return row.outcomes, true
 }
 
 func (c *Contract) Input(op vocabulary.Operation) (vocabulary.Values, bool) {
@@ -76,7 +100,8 @@ func (c *Contract) TypeFormalConstraint(op vocabulary.Operation, formal vocabula
 	if !ok || uint64(formal) >= uint64(row.typeFormals.len()) {
 		return 0, false
 	}
-	value := c.formals[row.typeFormals.start+uint32(formal)]
+	typeFormals := row.typeFormals
+	value := c.formals[typeFormals.start+uint32(formal)]
 	if value == 0 {
 		return 0, false
 	}
@@ -86,31 +111,32 @@ func (c *Contract) TypeFormalConstraint(op vocabulary.Operation, formal vocabula
 // ValueFormalCount is the number of fixed Input slots. It is the valid bound
 // for EffectSpec.ValueArgs.
 func (c *Contract) ValueFormalCount(op vocabulary.Operation) int {
-	row, ok := c.operation(op)
+	input, ok := c.Input(op)
 	if !ok {
 		return 0
 	}
-	return c.ValuesCount(row.input)
+	return c.ValuesCount(input)
 }
 
 // ValuesVarCount is the operation-scoped open-Values variable arity. It is
 // independent from the derived ValueFormal coordinate space.
 func (c *Contract) ValuesVarCount(op vocabulary.Operation) int {
-	row, ok := c.operation(op)
-	if !ok {
+	if c == nil {
 		return 0
 	}
-	return int(row.valuesVars)
+	return int(c.operationCore.ValuesVarCount(op))
 }
 
 // ValuesVarType returns the total sealed class for one operation-local open
 // Values port. Unconstrained ports use the ABI default neutral Any class.
 func (c *Contract) ValuesVarType(op vocabulary.Operation, variable vocabulary.ValuesVar) (vocabulary.Type, bool) {
 	row, ok := c.operation(op)
-	if !ok || uint64(variable) >= uint64(row.valuesVars) || row.valuesTypes.len() != int(row.valuesVars) {
+	valuesVars := c.ValuesVarCount(op)
+	if !ok || uint64(variable) >= uint64(valuesVars) || row.valuesTypes.len() != valuesVars {
 		return 0, false
 	}
-	return c.valuesVarTypes[row.valuesTypes.start+uint32(variable)], true
+	valuesTypes := row.valuesTypes
+	return c.valuesVarTypes[valuesTypes.start+uint32(variable)], true
 }
 
 func (c *Contract) rowFormalCount(op vocabulary.Operation) int {
@@ -197,7 +223,8 @@ func (c *Contract) OutcomeAt(op vocabulary.Operation, index int) (flowkind.Outco
 	if !ok || index < 0 || index >= row.outcomes.len() {
 		return 0, 0, false
 	}
-	outcome := c.outcomes[row.outcomes.start+uint32(index)]
+	outcomes := row.outcomes
+	outcome := c.outcomes[outcomes.start+uint32(index)]
 	return outcome.kind, outcome.values, true
 }
 
@@ -220,7 +247,8 @@ func (c *Contract) BehaviorResultAt(op vocabulary.Operation, index int) (outcome
 	if !ok || index < 0 || index >= row.behavior.len() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}
-	item := c.behaviorResults[row.behavior.start+uint32(index)]
+	behavior := row.behavior
+	item := c.behaviorResults[behavior.start+uint32(index)]
 	return item.outcome, item.result, item.source, item.relation, true
 }
 
@@ -242,7 +270,8 @@ func (c *Contract) BehaviorPredicateAt(op vocabulary.Operation, index int) (outc
 	if !ok || index < 0 || index >= row.behaviorPredicates.len() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}
-	item := c.behaviorPredicates[row.behaviorPredicates.start+uint32(index)]
+	predicates := row.behaviorPredicates
+	item := c.behaviorPredicates[predicates.start+uint32(index)]
 	return item.outcome, item.result, item.subject, item.relation, true
 }
 
@@ -260,11 +289,12 @@ func (c *Contract) transferCount(op vocabulary.Operation) int {
 // transfer declaration. The authored ordinal is consumed here and is never a
 // Link or domain identity.
 func (c *Contract) transferIDAt(op vocabulary.Operation, index int) (vocabulary.TransferID, bool) {
-	operation, ok := c.operation(op)
-	if !ok || index < 0 || index >= operation.transfers.len() {
+	row, ok := c.operation(op)
+	if !ok || index < 0 || index >= row.transfers.len() {
 		return 0, false
 	}
-	return vocabulary.TransferID(operation.transfers.start + uint32(index) + 1), true
+	transfers := row.transfers
+	return vocabulary.TransferID(transfers.start + uint32(index) + 1), true
 }
 
 func (c *Contract) transferID(id vocabulary.TransferID) (transferRow, bool) {
@@ -272,7 +302,7 @@ func (c *Contract) transferID(id vocabulary.TransferID) (transferRow, bool) {
 		return transferRow{}, false
 	}
 	row := c.transfers[uint32(id)-1]
-	if _, ok := c.operation(row.owner); !ok {
+	if _, ok := c.operationIndex(row.owner); !ok {
 		return transferRow{}, false
 	}
 	return row, true
@@ -374,11 +404,12 @@ func (c *Contract) transferOutcomeAt(op vocabulary.Operation, transfer, index in
 }
 
 func (c *Contract) transfer(op vocabulary.Operation, index int) (transferRow, bool) {
-	operation, ok := c.operation(op)
-	if !ok || index < 0 || index >= operation.transfers.len() {
+	row, ok := c.operation(op)
+	if !ok || index < 0 || index >= row.transfers.len() {
 		return transferRow{}, false
 	}
-	return c.transfers[operation.transfers.start+uint32(index)], true
+	transfers := row.transfers
+	return c.transfers[transfers.start+uint32(index)], true
 }
 
 func (c *Contract) EffectCount(op vocabulary.Operation) int {
@@ -405,12 +436,12 @@ func (c *Contract) validPublicationEffectRow(effect effectRow) bool {
 	if c == nil || !effect.hasPublication || !effect.publication.validConsequences() {
 		return false
 	}
-	target, ok := c.operation(effect.target)
-	if !ok || uint64(effect.publication.subject) >= uint64(c.ValuesCount(target.input)) {
+	target, ok := c.Input(effect.target)
+	if !ok || uint64(effect.publication.subject) >= uint64(c.ValuesCount(target)) {
 		return false
 	}
 	return effect.publication.destination != vocabulary.PublicationDestinationValueFormal ||
-		uint64(effect.publication.context) < uint64(c.ValuesCount(target.input))
+		uint64(effect.publication.context) < uint64(c.ValuesCount(target))
 }
 
 func (c *Contract) EffectValueArgumentCount(op vocabulary.Operation, index int) int {
@@ -490,15 +521,15 @@ func (c *Contract) effect(op vocabulary.Operation, index int) (effectRow, bool) 
 	if !ok || index < 0 || index >= row.effects.len() {
 		return effectRow{}, false
 	}
-	return c.effects[row.effects.start+uint32(index)], true
+	effects := row.effects
+	return c.effects[effects.start+uint32(index)], true
 }
 
 func (c *Contract) BindingCount(op vocabulary.Operation) int {
-	row, ok := c.operation(op)
-	if !ok {
+	if c == nil {
 		return 0
 	}
-	return row.bindings.len()
+	return c.operationCore.BindingCount(op)
 }
 
 func (c *Contract) bindingAt(op vocabulary.Operation, index int) (bindingRange, bool) {
@@ -510,27 +541,24 @@ func (c *Contract) bindingAt(op vocabulary.Operation, index int) (bindingRange, 
 }
 
 func (c *Contract) BindingNamespaceAt(op vocabulary.Operation, binding int) (vocabulary.BindingNamespace, bool) {
-	row, ok := c.bindingAt(op, binding)
-	if !ok {
+	if c == nil {
 		return 0, false
 	}
-	return row.namespace, true
+	return c.operationCore.BindingNamespaceAt(op, binding)
 }
 
 func (c *Contract) BindingOwnerCountAt(op vocabulary.Operation, binding int) int {
-	row, ok := c.bindingAt(op, binding)
-	if !ok {
+	if c == nil {
 		return 0
 	}
-	return row.owner.len()
+	return c.operationCore.BindingOwnerCountAt(op, binding)
 }
 
 func (c *Contract) bindingOwnerAt(op vocabulary.Operation, binding, index int) (string, bool) {
-	row, ok := c.bindingAt(op, binding)
-	if !ok || index < 0 || index >= row.owner.len() {
+	if c == nil {
 		return "", false
 	}
-	return c.segments[row.owner.start+uint32(index)], true
+	return c.operationCore.BindingOwnerAt(op, binding, index)
 }
 
 // bindingOwnerKeyAt returns the exact-key handle for the same binding owner
@@ -545,19 +573,17 @@ func (c *Contract) bindingOwnerKeyAt(op vocabulary.Operation, binding, index int
 }
 
 func (c *Contract) BindingMemberCountAt(op vocabulary.Operation, binding int) int {
-	row, ok := c.bindingAt(op, binding)
-	if !ok {
+	if c == nil {
 		return 0
 	}
-	return row.member.len()
+	return c.operationCore.BindingMemberCountAt(op, binding)
 }
 
 func (c *Contract) BindingMemberAt(op vocabulary.Operation, binding, index int) (string, bool) {
-	row, ok := c.bindingAt(op, binding)
-	if !ok || index < 0 || index >= row.member.len() {
+	if c == nil {
 		return "", false
 	}
-	return c.segments[row.member.start+uint32(index)], true
+	return c.operationCore.BindingMemberAt(op, binding, index)
 }
 
 // bindingMemberKeyAt is BindingOwnerKeyAt's member-segment counterpart.
@@ -580,7 +606,10 @@ func (c *Contract) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation,
 	for left < right {
 		middle := left + (right-left)/2
 		row := c.lookup[middle]
-		order := compareBindingRangeSpec(c.bindings[row.binding], binding, c.segments)
+		order, ok := c.compareBindingSpec(row, binding)
+		if !ok {
+			return 0, false
+		}
 		if order < 0 {
 			left = middle + 1
 		} else {
@@ -591,10 +620,19 @@ func (c *Contract) Lookup(binding vocabulary.BindingSpec) (vocabulary.Operation,
 		return 0, false
 	}
 	row := c.lookup[left]
-	if !c.bindingEqual(c.bindings[row.binding], binding) {
+	order, ok := c.compareBindingSpec(row, binding)
+	if !ok || order != 0 {
 		return 0, false
 	}
 	return row.operation, true
+}
+
+func (c *Contract) compareBindingSpec(index bindingIndexRow, right vocabulary.BindingSpec) (int, bool) {
+	return c.operationCore.CompareBinding(index.operation, int(index.binding), right)
+}
+
+func (c *Contract) compareBindingIndices(left, right bindingIndexRow) (int, bool) {
+	return c.operationCore.CompareBindings(left.operation, int(left.binding), right.operation, int(right.binding))
 }
 
 // PublicationEffectDescriptor returns the immutable Target-owned publication

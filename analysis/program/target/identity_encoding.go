@@ -108,10 +108,11 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			}
 		}
 	}
-	if err := w.Uint(uint64(row.valuesVars)); err != nil {
+	valuesVars := c.ValuesVarCount(op)
+	if err := w.Uint(uint64(valuesVars)); err != nil {
 		return err
 	}
-	for i := 0; i < int(row.valuesVars); i++ {
+	for i := 0; i < valuesVars; i++ {
 		if err := encodeType(w, c, c.valuesVarTypes[row.valuesTypes.start+uint32(i)]); err != nil {
 			return err
 		}
@@ -122,11 +123,16 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 	if err := encodeValues(w, c, row.input); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.callbacks.len())); err != nil {
+	callbackCount := c.operationCore.CallbackCount(op)
+	if err := w.Count(uint64(callbackCount)); err != nil {
 		return err
 	}
-	for i := row.callbacks.start; i < row.callbacks.end; i++ {
-		if err := c.encodePortableCallback(w, vocabulary.CallbackID(i+1)); err != nil {
+	for i := 0; i < callbackCount; i++ {
+		callback, callbackOK := c.operationCore.CallbackAt(op, i)
+		if !callbackOK {
+			return errors.New("target: malformed callback geometry")
+		}
+		if err := c.encodePortableCallback(w, callback); err != nil {
 			return err
 		}
 	}
@@ -289,7 +295,11 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 			return err
 		}
 	}
-	if err := w.Uint(uint64(row.lifecycle)); err != nil {
+	lifecycle, lifecycleOK := c.operationCore.CallbackLifecycle(id)
+	if !lifecycleOK {
+		return errors.New("target: malformed callback lifecycle")
+	}
+	if err := w.Uint(uint64(lifecycle)); err != nil {
 		return err
 	}
 	if err := w.Uint(uint64(row.effectTail)); err != nil {

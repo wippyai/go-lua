@@ -16,7 +16,7 @@ func (c *Contract) suspensionCount(op vocabulary.Operation) int {
 	if !ok {
 		return 0
 	}
-	if op == c.opaque {
+	if c.opaqueOperation(op) {
 		return opaqueSuspensionCount
 	}
 	return row.suspensions.len()
@@ -30,7 +30,7 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 	if !ok || index < 0 {
 		return 0, 0, 0, 0, false
 	}
-	if op == c.opaque {
+	if c.opaqueOperation(op) {
 		if index >= opaqueSuspensionCount {
 			return 0, 0, 0, 0, false
 		}
@@ -40,10 +40,11 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 		}
 		return 2, reentry, vocabulary.ReentryByProvider, vocabulary.ReentryMany, true
 	}
-	if index >= row.suspensions.len() {
+	suspensions := row.suspensions
+	if index >= suspensions.len() {
 		return 0, 0, 0, 0, false
 	}
-	value := c.suspensions[row.suspensions.start+uint32(index)]
+	value := c.suspensions[suspensions.start+uint32(index)]
 	return value.yield, value.reentry, value.source, value.multiplicity, true
 }
 
@@ -51,7 +52,7 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 // sealed contract admits at most one such authority globally.
 func (c *Contract) spawnCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	if !ok || op == c.opaque {
+	if !ok || c.opaqueOperation(op) {
 		return 0
 	}
 	return row.spawns.len()
@@ -60,10 +61,11 @@ func (c *Contract) spawnCount(op vocabulary.Operation) int {
 // spawnIDAt returns the sealed identity of an operation-owned spawn relation.
 func (c *Contract) spawnIDAt(op vocabulary.Operation, index int) (vocabulary.SpawnID, bool) {
 	row, ok := c.operation(op)
-	if !ok || op == c.opaque || index < 0 || index >= row.spawns.len() {
+	if !ok || c.opaqueOperation(op) || index < 0 || index >= row.spawns.len() {
 		return 0, false
 	}
-	return vocabulary.SpawnID(row.spawns.start + uint32(index) + 1), true
+	spawns := row.spawns
+	return vocabulary.SpawnID(spawns.start + uint32(index) + 1), true
 }
 
 func (c *Contract) spawn(id vocabulary.SpawnID) (spawnRow, bool) {
@@ -108,7 +110,7 @@ func (c *Contract) spawnSiblingAt(id vocabulary.SpawnID, index int) (vocabulary.
 
 func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	if !ok || op == c.opaque {
+	if !ok || c.opaqueOperation(op) {
 		return 0
 	}
 	return row.resumes.len()
@@ -119,10 +121,11 @@ func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 // not be retained as a Link or runtime identity.
 func (c *Contract) ResumeIDAt(op vocabulary.Operation, index int) (vocabulary.ResumeID, bool) {
 	row, ok := c.operation(op)
-	if !ok || op == c.opaque || index < 0 || index >= row.resumes.len() {
+	if !ok || c.opaqueOperation(op) || index < 0 || index >= row.resumes.len() {
 		return 0, false
 	}
-	return vocabulary.ResumeID(row.resumes.start + uint32(index) + 1), true
+	resumes := row.resumes
+	return vocabulary.ResumeID(resumes.start + uint32(index) + 1), true
 }
 
 func (c *Contract) resume(id vocabulary.ResumeID) (resumeRow, bool) {
@@ -168,19 +171,19 @@ func (c *Contract) resumeOutcomeAt(resume vocabulary.ResumeID, index int) (kind 
 }
 
 func (c *Contract) callbackResultCount(op vocabulary.Operation, outcome int) int {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return 0
 	}
-	return c.outcomes[row.outcomes.start+uint32(outcome)].callbackResults.len()
+	return c.outcomes[outcomes.start+uint32(outcome)].callbackResults.len()
 }
 
 func (c *Contract) callbackResultRowAt(op vocabulary.Operation, outcome, index int) (callbackResultRow, bool) {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return callbackResultRow{}, false
 	}
-	results := c.outcomes[row.outcomes.start+uint32(outcome)].callbackResults
+	results := c.outcomes[outcomes.start+uint32(outcome)].callbackResults
 	if index < 0 || index >= results.len() {
 		return callbackResultRow{}, false
 	}
@@ -223,19 +226,19 @@ func (c *Contract) callbackForResult(op vocabulary.Operation, outcome int, resul
 // resultAliasCount returns the static result-to-input correspondences owned
 // by one outcome.
 func (c *Contract) resultAliasCount(op vocabulary.Operation, outcome int) int {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return 0
 	}
-	return c.outcomes[row.outcomes.start+uint32(outcome)].resultAliases.len()
+	return c.outcomes[outcomes.start+uint32(outcome)].resultAliases.len()
 }
 
 func (c *Contract) resultAliasRowAt(op vocabulary.Operation, outcome, index int) (resultAliasRow, bool) {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return resultAliasRow{}, false
 	}
-	aliases := c.outcomes[row.outcomes.start+uint32(outcome)].resultAliases
+	aliases := c.outcomes[outcomes.start+uint32(outcome)].resultAliases
 	if index < 0 || index >= aliases.len() {
 		return resultAliasRow{}, false
 	}
@@ -278,19 +281,19 @@ func (c *Contract) resultAliasForResult(op vocabulary.Operation, outcome int, re
 }
 
 func (c *Contract) producedCount(op vocabulary.Operation, outcome int) int {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return 0
 	}
-	return c.outcomes[row.outcomes.start+uint32(outcome)].produced.len()
+	return c.outcomes[outcomes.start+uint32(outcome)].produced.len()
 }
 
 func (c *Contract) producedRowAt(op vocabulary.Operation, outcome, index int) (producedRow, bool) {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return producedRow{}, false
 	}
-	produced := c.outcomes[row.outcomes.start+uint32(outcome)].produced
+	produced := c.outcomes[outcomes.start+uint32(outcome)].produced
 	if index < 0 || index >= produced.len() {
 		return producedRow{}, false
 	}
@@ -333,19 +336,19 @@ func (c *Contract) producedForResult(op vocabulary.Operation, outcome int, resul
 // FreshResultCount is the number of nominal result roots owned by one
 // canonical outcome.
 func (c *Contract) FreshResultCount(op vocabulary.Operation, outcome int) int {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return 0
 	}
-	return c.outcomes[row.outcomes.start+uint32(outcome)].fresh.len()
+	return c.outcomes[outcomes.start+uint32(outcome)].fresh.len()
 }
 
 func (c *Contract) freshResultAt(op vocabulary.Operation, outcome, index int) (freshResultRow, bool) {
-	row, ok := c.operation(op)
-	if !ok || outcome < 0 || outcome >= row.outcomes.len() {
+	outcomes, ok := c.operationOutcomeRange(op)
+	if !ok || outcome < 0 || outcome >= outcomes.len() {
 		return freshResultRow{}, false
 	}
-	fresh := c.outcomes[row.outcomes.start+uint32(outcome)].fresh
+	fresh := c.outcomes[outcomes.start+uint32(outcome)].fresh
 	if index < 0 || index >= fresh.len() {
 		return freshResultRow{}, false
 	}

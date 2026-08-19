@@ -7,19 +7,17 @@ import (
 )
 
 func (c *Contract) CallbackCount(op vocabulary.Operation) int {
-	row, ok := c.operation(op)
-	if !ok {
+	if c == nil {
 		return 0
 	}
-	return row.callbacks.len()
+	return c.operationCore.CallbackCount(op)
 }
 
 func (c *Contract) CallbackAt(op vocabulary.Operation, index int) (vocabulary.CallbackID, bool) {
-	row, ok := c.operation(op)
-	if !ok || index < 0 || index >= row.callbacks.len() {
+	if c == nil {
 		return 0, false
 	}
-	return vocabulary.CallbackID(row.callbacks.start + uint32(index) + 1), true
+	return c.operationCore.CallbackAt(op, index)
 }
 
 func (c *Contract) callback(id vocabulary.CallbackID) (callbackRow, bool) {
@@ -34,19 +32,10 @@ func (c *Contract) callback(id vocabulary.CallbackID) (callbackRow, bool) {
 // being accepted merely because its stored owner is an otherwise valid
 // operation.
 func (c *Contract) CallbackOwner(id vocabulary.CallbackID) (vocabulary.Operation, bool) {
-	row, ok := c.callback(id)
-	if !ok || row.owner == 0 {
+	if c == nil {
 		return 0, false
 	}
-	owner, ok := c.operation(row.owner)
-	if !ok {
-		return 0, false
-	}
-	index := uint32(id) - 1
-	if index < owner.callbacks.start || index >= owner.callbacks.end {
-		return 0, false
-	}
-	return row.owner, true
+	return c.operationCore.CallbackOwner(id)
 }
 
 // callbackFunction returns the exact input authority that supplies a callback
@@ -94,7 +83,8 @@ func (c *Contract) callbackAdmission(id vocabulary.CallbackID) (schematype.Calla
 // not imply a callback is closed, successful, or non-reentrant.
 func (c *Contract) callbackOpaque(id vocabulary.CallbackID) bool {
 	owner, ok := c.CallbackOwner(id)
-	return ok && owner == c.opaque
+	opaque, opaqueOK := c.Opaque()
+	return ok && opaqueOK && owner == opaque
 }
 
 // callbackSubedge returns the sole immediate typed application of callback.
@@ -127,7 +117,8 @@ func (c *Contract) SubedgeAt(op vocabulary.Operation, index int) (vocabulary.Sub
 	if !ok || index < 0 || index >= row.subedges.len() {
 		return 0, false
 	}
-	return vocabulary.SubedgeID(row.subedges.start + uint32(index) + 1), true
+	subedges := row.subedges
+	return vocabulary.SubedgeID(subedges.start + uint32(index) + 1), true
 }
 
 func (c *Contract) subedge(id vocabulary.SubedgeID) (subedgeRow, bool) {
@@ -144,12 +135,13 @@ func (c *Contract) subedgeOwner(id vocabulary.SubedgeID) (vocabulary.Operation, 
 	if !ok || row.owner == 0 {
 		return 0, false
 	}
-	owner, ok := c.operation(row.owner)
+	ownerRow, ok := c.operation(row.owner)
 	if !ok {
 		return 0, false
 	}
 	index := uint32(id) - 1
-	if index < owner.subedges.start || index >= owner.subedges.end {
+	subedges := ownerRow.subedges
+	if index < subedges.start || index >= subedges.end {
 		return 0, false
 	}
 	return row.owner, true
@@ -293,8 +285,10 @@ func (c *Contract) subedgeRouteAt(id vocabulary.SubedgeID, kind flowkind.Outcome
 
 // CallbackLifecycle returns the complete sealed callback lifecycle relation.
 func (c *Contract) CallbackLifecycle(id vocabulary.CallbackID) (vocabulary.CallbackLifecycle, bool) {
-	row, ok := c.callback(id)
-	return row.lifecycle, ok
+	if c == nil {
+		return 0, false
+	}
+	return c.operationCore.CallbackLifecycle(id)
 }
 
 // CallbackEffectCount returns the finite explicit occurrences in the
@@ -440,7 +434,8 @@ func (c *Contract) callbackReleaseAt(op vocabulary.Operation, index int) (vocabu
 	if !ok || index < 0 || index >= row.releases.len() {
 		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
 	}
-	release := c.callbackReleases[row.releases.start+uint32(index)]
+	releases := row.releases
+	release := c.callbackReleases[releases.start+uint32(index)]
 	if release.operation != op {
 		return 0, 0, 0, vocabulary.CallbackReleaseInvalid, false
 	}

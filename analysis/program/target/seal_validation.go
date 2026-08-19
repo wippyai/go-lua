@@ -4,21 +4,27 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
-func (c *Contract) compareBindingRows(left, right uint32) int {
-	return compareBindingRanges(c.bindings[left], c.bindings[right], c.segments)
-}
-
-func compareBindingRanges(left, right bindingRange, segments []string) int {
-	if left.namespace < right.namespace {
-		return -1
+func (c *Contract) compareBindingRows(left, right bindingIndexRow) int {
+	order, ok := c.compareBindingIndices(left, right)
+	if !ok {
+		return 0
 	}
-	if left.namespace > right.namespace {
-		return 1
-	}
-	if order := vocabulary.CompareSegments(segments[left.owner.start:left.owner.end], segments[right.owner.start:right.owner.end]); order != 0 {
+	if order != 0 {
 		return order
 	}
-	return vocabulary.CompareSegments(segments[left.member.start:left.member.end], segments[right.member.start:right.member.end])
+	if left.operation != right.operation {
+		if left.operation < right.operation {
+			return -1
+		}
+		return 1
+	}
+	if left.binding < right.binding {
+		return -1
+	}
+	if left.binding > right.binding {
+		return 1
+	}
+	return 0
 }
 
 func compareEffect(left, right effectDraft) int {

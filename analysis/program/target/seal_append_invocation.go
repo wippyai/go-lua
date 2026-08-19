@@ -41,8 +41,8 @@ func (c *Contract) appendCallbacks(owner vocabulary.Operation, input []callbackD
 			outcomes[terminal] = value
 		}
 		c.callbacks = append(c.callbacks, callbackRow{
-			owner: owner, function: callback.function, admission: callback.admission,
-			arguments: arguments, outcomes: outcomes, lifecycle: callback.lifecycle,
+			function: callback.function, admission: callback.admission,
+			arguments: arguments, outcomes: outcomes,
 			effects: effects, effectTail: callback.effects.tail, effectVar: callback.effects.variable,
 		})
 	}

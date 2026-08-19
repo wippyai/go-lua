@@ -89,9 +89,8 @@ func (c *Contract) CallbackContentID(op vocabulary.Operation, callback vocabular
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || callback == 0 || int(callback) > len(c.callbacks) || int(callback) > len(c.callbackContentIDs) {
 		return identity.ContentID{}, false
 	}
-	row := c.callbacks[callback-1]
-	owner, ok := c.operation(op)
-	if !ok || row.owner != op || uint64(callback-1) < uint64(owner.callbacks.start) || uint64(callback-1) >= uint64(owner.callbacks.end) {
+	owner, callbackIndex, ownerOK := c.operationCore.CallbackIndex(callback)
+	if !ownerOK || owner != op || callbackIndex < 0 || callbackIndex >= c.operationCore.CallbackCount(op) {
 		return identity.ContentID{}, false
 	}
 	id := c.callbackContentIDs[callback-1]
@@ -235,19 +234,21 @@ func (c *Contract) sealSemanticIdentities() error {
 	}
 
 	for i, row := range c.callbacks {
-		owner, ok := c.anchor(row.owner)
-		if !ok {
+		callbackID := vocabulary.CallbackID(i + 1)
+		owner, callbackIndex, callbackOK := c.operationCore.CallbackIndex(callbackID)
+		anchorID, anchorOK := c.anchor(owner)
+		if !callbackOK || !anchorOK {
 			return errors.New("target: malformed callback owner")
 		}
+		lifecycle, lifecycleOK := c.operationCore.CallbackLifecycle(callbackID)
+		if !lifecycleOK {
+			return errors.New("target: malformed callback lifecycle")
+		}
 		id, err := c.semanticID(semanticCallbackSelector, func(w *framing.Writer) error {
-			if err := w.Bytes(owner[:]); err != nil {
+			if err := w.Bytes(anchorID[:]); err != nil {
 				return err
 			}
-			ownerRow, ok := c.operation(row.owner)
-			if !ok {
-				return errors.New("target: malformed callback owner")
-			}
-			if err := w.Uint(uint64(uint32(i) - ownerRow.callbacks.start)); err != nil {
+			if err := w.Uint(uint64(callbackIndex)); err != nil {
 				return err
 			}
 			if err := encodeInput(w, row.function); err != nil {
@@ -264,28 +265,26 @@ func (c *Contract) sealSemanticIdentities() error {
 			if err := w.Uint(uint64(row.admission)); err != nil {
 				return err
 			}
-			return w.Uint(uint64(row.lifecycle))
+			return w.Uint(uint64(lifecycle))
 		})
 		if err != nil {
 			return err
 		}
 		c.callbackSelectors[i] = id
 	}
-	for i, row := range c.callbacks {
-		owner, ok := c.anchor(row.owner)
-		if !ok {
+	for i := range c.callbacks {
+		callbackID := vocabulary.CallbackID(i + 1)
+		owner, _, ownerOK := c.operationCore.CallbackIndex(callbackID)
+		anchorID, anchorOK := c.anchor(owner)
+		if !ownerOK || !anchorOK {
 			return errors.New("target: malformed callback content owner")
 		}
 		selector, ok := c.callbackSelector(vocabulary.CallbackID(i + 1))
 		if !ok {
 			return errors.New("target: missing callback selector")
 		}
-		ownerRow, ok := c.operation(row.owner)
-		if !ok || uint64(i) < uint64(ownerRow.callbacks.start) || uint64(i) >= uint64(ownerRow.callbacks.end) {
-			return errors.New("target: callback content owner fence")
-		}
 		id, err := c.semanticID(semanticCallbackContent, func(w *framing.Writer) error {
-			if err := w.Bytes(owner[:]); err != nil {
+			if err := w.Bytes(anchorID[:]); err != nil {
 				return err
 			}
 			return w.Bytes(selector[:])
@@ -294,7 +293,7 @@ func (c *Contract) sealSemanticIdentities() error {
 			return err
 		}
 		c.callbackContentIDs[i] = id
-		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, op: row.owner, callback: vocabulary.CallbackID(i + 1)})
+		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, op: owner, callback: callbackID})
 	}
 	if err := c.sealEffectIdentities(); err != nil {
 		return err
