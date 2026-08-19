@@ -15,9 +15,6 @@ func freezeBindings(input []vocabulary.BindingSpec) ([]vocabulary.BindingSpec, e
 	}
 	out := make([]vocabulary.BindingSpec, len(input))
 	for index, binding := range input {
-		if !vocabulary.ValidBinding(binding) {
-			return nil, fmt.Errorf("target: invalid binding %d", index)
-		}
 		out[index] = cloneBinding(binding)
 	}
 	sort.Slice(out, func(left, right int) bool { return compareBinding(out[left], out[right]) < 0 })

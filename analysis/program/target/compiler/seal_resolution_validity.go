@@ -59,16 +59,6 @@ func retainedCallbackLifecycle(lifecycle vocabulary.CallbackLifecycle) bool {
 	return lifecycle >= vocabulary.CallbackRetainedOptionalOnce && lifecycle <= vocabulary.CallbackRetainedRequiredMany
 }
 
-func onceCallbackLifecycle(lifecycle vocabulary.CallbackLifecycle) bool {
-	switch lifecycle {
-	case vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncRequiredOnce,
-		vocabulary.CallbackRetainedOptionalOnce, vocabulary.CallbackRetainedRequiredOnce:
-		return true
-	default:
-		return false
-	}
-}
-
 func validCallbackReleaseMode(mode vocabulary.CallbackReleaseMode) bool {
 	return mode == vocabulary.CallbackReleaseOne || mode == vocabulary.CallbackReleaseAll
 }

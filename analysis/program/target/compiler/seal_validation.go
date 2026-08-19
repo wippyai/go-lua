@@ -106,11 +106,3 @@ func compareUint32Slice[T ~uint32](left, right []T) int {
 	}
 	return 0
 }
-
-func totalEffectArguments(input []effectDraft, count func(effectDraft) int, what string) (int, error) {
-	parts := make([]int, len(input))
-	for index, effect := range input {
-		parts[index] = count(effect)
-	}
-	return vocabulary.CheckedStoredTotal(what, parts...)
-}

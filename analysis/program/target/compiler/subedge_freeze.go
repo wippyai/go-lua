@@ -97,8 +97,6 @@ func cloneSubedgeSpec(input vocabulary.SubedgeSpec) vocabulary.SubedgeSpec {
 	return out
 }
 
-func zeroLiteral(value keyspace.LiteralValue) bool { return value == (keyspace.LiteralValue{}) }
-
 func normalizeRequiredExactKey(value keyspace.LiteralValue) (keyspace.LiteralValue, error) {
 	normalized, ok := scalar.Normalize(value)
 	if !ok {
