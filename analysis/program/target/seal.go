@@ -187,7 +187,7 @@ func operationGeometryInput(drafts []operationDraft) operationvalue.Input {
 		}
 		input.Operations[index] = operationvalue.OperationInput{
 			Source: draft.source, Bindings: draft.bindings,
-			InputFormalCount: len(draft.input.types), ValuesVars: draft.valuesVars,
+			InputFormalCount: len(draft.input.types), TypeFormalCount: len(draft.formals), RowFormalCount: int(draft.rowFormals), ValuesVars: draft.valuesVars,
 			OutcomeValueSlots: outcomes, Callbacks: callbacks, Produced: produced,
 		}
 	}

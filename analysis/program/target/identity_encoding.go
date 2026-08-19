@@ -263,17 +263,22 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if err := w.Uint(uint64(row.effectTail)); err != nil {
+	tail, variable, tailOK := c.Operations.EffectTail(op)
+	if !tailOK {
+		return errors.New("target: malformed operation effect row")
+	}
+	if err := w.Uint(uint64(tail)); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(row.effectVar)); err != nil {
+	if err := w.Uint(uint64(variable)); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.effects.len())); err != nil {
+	effects := c.Operations.EffectCount(op)
+	if err := w.Count(uint64(effects)); err != nil {
 		return err
 	}
-	for i := row.effects.start; i < row.effects.end; i++ {
-		if err := c.encodePortableEffect(w, c.effects[i]); err != nil {
+	for i := 0; i < effects; i++ {
+		if err := c.encodePortableEffect(w, op, i, false); err != nil {
 			return err
 		}
 	}
@@ -337,17 +342,26 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 	if err := w.Uint(uint64(lifecycle)); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(row.effectTail)); err != nil {
+	tail, variable, tailOK := c.Operations.CallbackEffectTail(id)
+	if !tailOK {
+		return errors.New("target: malformed callback effect row")
+	}
+	if err := w.Uint(uint64(tail)); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(row.effectVar)); err != nil {
+	if err := w.Uint(uint64(variable)); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.effects.len())); err != nil {
+	effects := c.Operations.CallbackEffectCount(id)
+	if err := w.Count(uint64(effects)); err != nil {
 		return err
 	}
-	for i := row.effects.start; i < row.effects.end; i++ {
-		if err := c.encodePortableEffect(w, c.effects[i]); err != nil {
+	owner, ownerOK := c.Operations.CallbackOwner(id)
+	if !ownerOK {
+		return errors.New("target: malformed callback effect owner")
+	}
+	for i := 0; i < effects; i++ {
+		if err := c.encodePortableEffect(w, owner, i, true, id); err != nil {
 			return err
 		}
 	}
@@ -657,36 +671,103 @@ func (c *Contract) encodeTransfer(w *framing.Writer, op vocabulary.Operation, in
 	}
 	return nil
 }
-func (c *Contract) encodePortableEffect(w *framing.Writer, row effectRow) error {
-	a, ok := c.anchor(row.target)
+func (c *Contract) encodePortableEffect(w *framing.Writer, owner vocabulary.Operation, effect int, callback bool, callbackID ...vocabulary.CallbackID) error {
+	var target vocabulary.Operation
+	if callback {
+		if len(callbackID) != 1 {
+			return errors.New("target: malformed callback effect owner")
+		}
+		var ok bool
+		target, ok = c.Operations.CallbackEffectTarget(callbackID[0], effect)
+		if !ok {
+			return errors.New("target: malformed callback effect")
+		}
+	} else {
+		var ok bool
+		target, ok = c.Operations.EffectTarget(owner, effect)
+		if !ok {
+			return errors.New("target: malformed effect")
+		}
+	}
+	a, ok := c.anchor(target)
 	if !ok {
 		return errors.New("target: malformed effect target")
 	}
 	if err := w.Bytes(a[:]); err != nil {
 		return err
 	}
-	for _, xs := range []indexRange{row.values, row.types, row.valuesVar, row.rows} {
-		if err := w.Count(uint64(xs.len())); err != nil {
+	valueCount := c.Operations.EffectValueArgumentCount(owner, effect)
+	typeCount := c.Operations.EffectTypeArgumentCount(owner, effect)
+	valuesVarCount := c.Operations.EffectValuesArgumentCount(owner, effect)
+	rowCount := c.Operations.EffectRowArgumentCount(owner, effect)
+	if callback {
+		valueCount = c.Operations.CallbackEffectValueArgumentCount(callbackID[0], effect)
+		typeCount = c.Operations.CallbackEffectTypeArgumentCount(callbackID[0], effect)
+		valuesVarCount = c.Operations.CallbackEffectValuesArgumentCount(callbackID[0], effect)
+		rowCount = c.Operations.CallbackEffectRowArgumentCount(callbackID[0], effect)
+	}
+	for _, count := range []int{valueCount, typeCount, valuesVarCount, rowCount} {
+		if err := w.Count(uint64(count)); err != nil {
 			return err
 		}
 	}
-	for i := row.values.start; i < row.values.end; i++ {
-		if err := w.Uint(uint64(c.effectVals[i])); err != nil {
+	for i := 0; i < valueCount; i++ {
+		var value vocabulary.ValueFormal
+		var valueOK bool
+		if callback {
+			value, valueOK = c.Operations.CallbackEffectValueArgumentAt(callbackID[0], effect, i)
+		} else {
+			value, valueOK = c.Operations.EffectValueArgumentAt(owner, effect, i)
+		}
+		if !valueOK {
+			return errors.New("target: malformed portable effect value argument")
+		}
+		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	for i := row.types.start; i < row.types.end; i++ {
-		if err := w.Uint(uint64(c.effectType[i])); err != nil {
+	for i := 0; i < typeCount; i++ {
+		var value vocabulary.TypeFormal
+		var valueOK bool
+		if callback {
+			value, valueOK = c.Operations.CallbackEffectTypeArgumentAt(callbackID[0], effect, i)
+		} else {
+			value, valueOK = c.Operations.EffectTypeArgumentAt(owner, effect, i)
+		}
+		if !valueOK {
+			return errors.New("target: malformed portable effect type argument")
+		}
+		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	for i := row.valuesVar.start; i < row.valuesVar.end; i++ {
-		if err := w.Uint(uint64(c.effectVars[i])); err != nil {
+	for i := 0; i < valuesVarCount; i++ {
+		var value vocabulary.ValuesVar
+		var valueOK bool
+		if callback {
+			value, valueOK = c.Operations.CallbackEffectValuesArgumentAt(callbackID[0], effect, i)
+		} else {
+			value, valueOK = c.Operations.EffectValuesArgumentAt(owner, effect, i)
+		}
+		if !valueOK {
+			return errors.New("target: malformed portable effect Values argument")
+		}
+		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	for i := row.rows.start; i < row.rows.end; i++ {
-		if err := w.Uint(uint64(c.effectRows[i])); err != nil {
+	for i := 0; i < rowCount; i++ {
+		var value vocabulary.RowVar
+		var valueOK bool
+		if callback {
+			value, valueOK = c.Operations.CallbackEffectRowArgumentAt(callbackID[0], effect, i)
+		} else {
+			value, valueOK = c.Operations.EffectRowArgumentAt(owner, effect, i)
+		}
+		if !valueOK {
+			return errors.New("target: malformed portable effect row argument")
+		}
+		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}

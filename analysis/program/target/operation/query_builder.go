@@ -41,7 +41,20 @@ func (core *Core) beginQuery() error {
 	if len(core.query.operations) != 0 {
 		return invalidQuery("query already started")
 	}
-	core.query = queryState{operations: make([]queryOperationRow, core.OperationCount())}
+	core.query = queryState{
+		operations: make([]queryOperationRow, core.OperationCount()),
+		callbacks:  make([]queryCallbackRow, core.geometry.callbacks.Count()),
+	}
+	for index := 0; index < core.geometry.callbacks.Count(); index++ {
+		callback, ok := core.geometry.callbacks.At(index)
+		if !ok || callback.id == 0 {
+			return invalidQuery("callback geometry is not dense")
+		}
+		if _, ownerOK := core.operation(callback.owner); !ownerOK {
+			return invalidQuery("callback geometry has no owner")
+		}
+		core.query.callbacks[index].owner = callback.owner
+	}
 	return nil
 }
 
@@ -102,31 +115,105 @@ func (core *Core) appendQueryValues(input QueryValuesDeclaration, handles map[st
 	return vocabulary.Values(len(core.query.values)), nil
 }
 
-// AppendQueryEffect records the effect query row at the same dense position
-// as Target's retained effect relation. Effect identity remains Target-owned;
-// this row is only the operation query view.
-func (core *Core) appendQueryEffect(input EffectInput) error {
+// appendEffect freezes one effect occurrence in Core and returns its dense
+// owner-issued position. The target operation is already canonical here;
+// every ABI and publication fence is checked before the row is published.
+func (core *Core) appendEffect(input EffectInput) (int, error) {
 	if core == nil || core.query.operations == nil {
-		return invalidQuery("query has not started")
+		return 0, invalidQuery("query has not started")
 	}
 	if input.Target == 0 || int(input.Target) > core.OperationCount() {
-		return invalidQuery("effect target is outside operation table")
+		return 0, invalidQuery("effect target is outside operation table")
 	}
-	core.query.effects = append(core.query.effects, queryEffectRow{
+	if len(input.Values) != core.ValueFormalCount(input.Target) ||
+		len(input.Types) != core.TypeFormalCount(input.Target) ||
+		len(input.ValuesVar) != core.ValuesVarCount(input.Target) ||
+		len(input.Rows) != core.RowFormalCount(input.Target) {
+		return 0, invalidQuery("effect arguments do not match target ABI")
+	}
+	for _, value := range input.Values {
+		if value < 0 || int(value) >= core.ValueFormalCount(input.Target) {
+			return 0, invalidQuery("effect value argument is outside target ABI")
+		}
+	}
+	for _, value := range input.Types {
+		if value < 0 || int(value) >= core.TypeFormalCount(input.Target) {
+			return 0, invalidQuery("effect type argument is outside target ABI")
+		}
+	}
+	for _, value := range input.ValuesVar {
+		if value < 0 || int(value) >= core.ValuesVarCount(input.Target) {
+			return 0, invalidQuery("effect Values argument is outside target ABI")
+		}
+	}
+	for _, value := range input.Rows {
+		if value < 0 || int(value) >= core.RowFormalCount(input.Target) {
+			return 0, invalidQuery("effect row argument is outside target ABI")
+		}
+	}
+	publication, publicationOK, publicationErr := freezePublicationEffect(input.Publication, input.HasPublication, core.ValueFormalCount(input.Target))
+	if publicationErr != nil {
+		return 0, publicationErr
+	}
+	row := queryEffectRow{
 		target:         input.Target,
 		values:         append([]vocabulary.ValueFormal(nil), input.Values...),
 		types:          append([]vocabulary.TypeFormal(nil), input.Types...),
 		valuesVar:      append([]vocabulary.ValuesVar(nil), input.ValuesVar...),
 		rows:           append([]vocabulary.RowVar(nil), input.Rows...),
-		publication:    input.Publication,
-		hasPublication: input.HasPublication,
-	})
+		publication:    publication,
+		hasPublication: publicationOK,
+	}
+	position := len(core.query.effects)
+	core.query.effects = append(core.query.effects, row)
+	return position, nil
+}
+
+// AppendEffect publishes one operation-owned effect occurrence and returns
+// its dense Core position. Callback-owned rows use AppendCallbackEffects so
+// their ownership range is sealed alongside the callback row.
+func (builder *QueryBuilder) AppendEffect(input EffectInput) (int, error) {
+	return builder.core.appendEffect(input)
+}
+
+// AppendCallbackEffects publishes the complete expected row for one callback.
+// The callback range and row schema are owned by Core; no Target row or
+// forwarding index is retained.
+func (builder *QueryBuilder) AppendCallbackEffects(callback vocabulary.CallbackID, tail vocabulary.RowTail, variable vocabulary.RowVar, input []EffectInput) error {
+	core := &builder.core
+	if core == nil || core.query.operations == nil {
+		return invalidQuery("query has not started")
+	}
+	if callback == 0 || int(callback) > len(core.query.callbacks) {
+		return invalidQuery("callback is outside callback table")
+	}
+	row := &core.query.callbacks[int(callback)-1]
+	if row.published {
+		return invalidQuery("callback effect row already published")
+	}
+	if tail != vocabulary.RowClosed && tail != vocabulary.RowVariable && tail != vocabulary.RowUnknownOpen {
+		return invalidQuery("callback effect row has invalid tail")
+	}
+	if tail != vocabulary.RowVariable && variable != 0 {
+		return invalidQuery("closed callback effect row carries variable")
+	}
+	if tail == vocabulary.RowVariable && uint64(variable) >= uint64(core.RowFormalCount(row.owner)) {
+		return invalidQuery("callback effect row variable is outside owner ABI")
+	}
+	start := len(core.query.effects)
+	for _, effect := range input {
+		if _, err := core.appendEffect(effect); err != nil {
+			return err
+		}
+	}
+	row.effects = queryRange{start: start, end: len(core.query.effects)}
+	row.effectTail, row.effectVar, row.published = tail, variable, true
 	return nil
 }
 
 // AppendQueryOperation consumes one complete frozen query declaration and
 // publishes its rows directly into Core. Effects refer to the dense effect
-// query positions issued by AppendQueryEffect.
+// query positions issued by AppendEffect.
 func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOperationInput) error {
 	if core == nil || core.query.operations == nil {
 		return invalidQuery("query has not started")
@@ -152,6 +239,9 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 		if typ != 0 && !validQueryType(typ, len(core.query.types)) {
 			return invalidQuery("operation type formal is outside type table")
 		}
+	}
+	if len(input.TypeFormals) != core.TypeFormalCount(op) {
+		return invalidQuery("operation type formal table does not match operation geometry")
 	}
 	if !validQueryRange(input.EffectIndices, len(core.query.effects)) {
 		return invalidQuery("operation effect index is outside effect table")
@@ -446,10 +536,6 @@ func (builder *QueryBuilder) AppendQueryTypes(input map[string][]byte, declarati
 
 func (builder *QueryBuilder) AppendQueryValues(input QueryValuesDeclaration, handles map[string]vocabulary.Type) (vocabulary.Values, error) {
 	return builder.core.appendQueryValues(input, handles)
-}
-
-func (builder *QueryBuilder) AppendQueryEffect(input EffectInput) error {
-	return builder.core.appendQueryEffect(input)
 }
 
 func (builder *QueryBuilder) AppendQueryOperation(op vocabulary.Operation, input QueryOperationInput) error {

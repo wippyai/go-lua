@@ -20,11 +20,11 @@ func (core Core) Input(op vocabulary.Operation) (vocabulary.Values, bool) {
 }
 
 func (core Core) TypeFormalCount(op vocabulary.Operation) int {
-	row, ok := core.queryOperation(op)
+	geometry, ok := core.operation(op)
 	if !ok {
 		return 0
 	}
-	return len(row.typeFormals)
+	return int(geometry.typeForms)
 }
 
 func (core Core) TypeFormalConstraint(op vocabulary.Operation, formal vocabulary.TypeFormal) (vocabulary.Type, bool) {
@@ -37,11 +37,7 @@ func (core Core) TypeFormalConstraint(op vocabulary.Operation, formal vocabulary
 }
 
 func (core Core) ValueFormalCount(op vocabulary.Operation) int {
-	input, ok := core.Input(op)
-	if !ok {
-		return 0
-	}
-	return core.ValuesCount(input)
+	return core.InputFormalCount(op)
 }
 
 func (core Core) ValuesVarType(op vocabulary.Operation, variable vocabulary.ValuesVar) (vocabulary.Type, bool) {
@@ -57,11 +53,11 @@ func (core Core) ValuesVarType(op vocabulary.Operation, variable vocabulary.Valu
 }
 
 func (core Core) RowFormalCount(op vocabulary.Operation) int {
-	row, ok := core.queryOperation(op)
+	geometry, ok := core.operation(op)
 	if !ok {
 		return 0
 	}
-	return int(row.rowFormals)
+	return int(geometry.rowForms)
 }
 
 func (core Core) ValuesCount(values vocabulary.Values) int {
@@ -380,12 +376,128 @@ func (core Core) effect(op vocabulary.Operation, index int) (queryEffectRow, boo
 // EffectPublication returns the exact authored publication value retained by
 // an operation effect. It is intentionally a vocabulary value so the owner
 // does not depend on Target's public facade type.
-func (core Core) EffectPublication(op vocabulary.Operation, index int) (vocabulary.PublicationEffectSpec, bool) {
+func (core Core) EffectPublication(op vocabulary.Operation, index int) (PublicationEffectDescriptor, bool) {
 	effect, ok := core.effect(op, index)
 	if !ok || !effect.hasPublication {
-		return vocabulary.PublicationEffectSpec{}, false
+		return PublicationEffectDescriptor{}, false
 	}
 	return effect.publication, true
+}
+
+// CallbackEffectCount returns the finite expected row owned by callback.
+func (core Core) CallbackEffectCount(callback vocabulary.CallbackID) int {
+	row, ok := core.callbackQuery(callback)
+	if !ok {
+		return 0
+	}
+	return row.effects.len()
+}
+
+func (core Core) CallbackEffectTarget(callback vocabulary.CallbackID, index int) (vocabulary.Operation, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	return effect.target, ok
+}
+
+func (core Core) CallbackEffectValueArgumentCount(callback vocabulary.CallbackID, index int) int {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok {
+		return 0
+	}
+	return len(effect.values)
+}
+
+func (core Core) CallbackEffectValueArgumentAt(callback vocabulary.CallbackID, index, argument int) (vocabulary.ValueFormal, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok || argument < 0 || argument >= len(effect.values) {
+		return 0, false
+	}
+	return effect.values[argument], true
+}
+
+func (core Core) CallbackEffectTypeArgumentCount(callback vocabulary.CallbackID, index int) int {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok {
+		return 0
+	}
+	return len(effect.types)
+}
+
+func (core Core) CallbackEffectTypeArgumentAt(callback vocabulary.CallbackID, index, argument int) (vocabulary.TypeFormal, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok || argument < 0 || argument >= len(effect.types) {
+		return 0, false
+	}
+	return effect.types[argument], true
+}
+
+func (core Core) CallbackEffectValuesArgumentCount(callback vocabulary.CallbackID, index int) int {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok {
+		return 0
+	}
+	return len(effect.valuesVar)
+}
+
+func (core Core) CallbackEffectValuesArgumentAt(callback vocabulary.CallbackID, index, argument int) (vocabulary.ValuesVar, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok || argument < 0 || argument >= len(effect.valuesVar) {
+		return 0, false
+	}
+	return effect.valuesVar[argument], true
+}
+
+func (core Core) CallbackEffectRowArgumentCount(callback vocabulary.CallbackID, index int) int {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok {
+		return 0
+	}
+	return len(effect.rows)
+}
+
+func (core Core) CallbackEffectRowArgumentAt(callback vocabulary.CallbackID, index, argument int) (vocabulary.RowVar, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok || argument < 0 || argument >= len(effect.rows) {
+		return 0, false
+	}
+	return effect.rows[argument], true
+}
+
+func (core Core) CallbackEffectTail(callback vocabulary.CallbackID) (vocabulary.RowTail, vocabulary.RowVar, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok {
+		return 0, 0, false
+	}
+	return row.effectTail, row.effectVar, true
+}
+
+func (core Core) CallbackEffectPublication(callback vocabulary.CallbackID, index int) (PublicationEffectDescriptor, bool) {
+	effect, ok := core.callbackEffect(callback, index)
+	if !ok || !effect.hasPublication {
+		return PublicationEffectDescriptor{}, false
+	}
+	return effect.publication, true
+}
+
+func (core Core) callbackQuery(callback vocabulary.CallbackID) (queryCallbackRow, bool) {
+	if callback == 0 || int(callback) > len(core.query.callbacks) {
+		return queryCallbackRow{}, false
+	}
+	row := core.query.callbacks[int(callback)-1]
+	if !row.published {
+		return queryCallbackRow{}, false
+	}
+	if row.owner == 0 || row.effects.end < row.effects.start || row.effects.end > len(core.query.effects) {
+		return queryCallbackRow{}, false
+	}
+	return row, true
+}
+
+func (core Core) callbackEffect(callback vocabulary.CallbackID, index int) (queryEffectRow, bool) {
+	row, ok := core.callbackQuery(callback)
+	if !ok || index < 0 || index >= row.effects.len() {
+		return queryEffectRow{}, false
+	}
+	return core.query.effects[int(row.effects.start)+index], true
 }
 
 func (core Core) TypeDeclaration(typ vocabulary.Type) (schematype.Type, bool) {

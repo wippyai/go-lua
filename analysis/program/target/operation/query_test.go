@@ -12,7 +12,7 @@ func TestQueryBuilderPublishesOperationValuesAndEffects(t *testing.T) {
 	core := compileTestCore(t, Input{
 		Operations: []OperationInput{
 			{
-				Source: 0, Bindings: []vocabulary.BindingSpec{testBinding("query")}, InputFormalCount: 1,
+				Source: 0, Bindings: []vocabulary.BindingSpec{testBinding("query")}, InputFormalCount: 1, TypeFormalCount: 1,
 				ValuesVars: 1, OutcomeValueSlots: []OutcomeInput{{ValueSlots: 1, Anchor: []byte("query")}},
 			},
 		},
@@ -36,8 +36,8 @@ func TestQueryBuilderPublishesOperationValuesAndEffects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppendQueryValues: %v", err)
 	}
-	if err := builder.AppendQueryEffect(EffectInput{Target: 1, Values: []vocabulary.ValueFormal{0}}); err != nil {
-		t.Fatalf("AppendQueryEffect: %v", err)
+	if _, err := builder.AppendEffect(EffectInput{Target: 1, Values: []vocabulary.ValueFormal{0}, Types: []vocabulary.TypeFormal{0}, ValuesVar: []vocabulary.ValuesVar{0}}); err != nil {
+		t.Fatalf("AppendEffect: %v", err)
 	}
 	if err := builder.AppendQueryOperation(1, QueryOperationInput{
 		Input:       values,

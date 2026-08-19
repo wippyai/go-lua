@@ -49,7 +49,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 		add(ids.TargetTransfer, contract.Operations.TransferCount(op))
 
 		for effect := 0; effect < contract.Operations.EffectCount(op); effect++ {
-			if _, found := contract.PublicationEffectDescriptor(op, effect); found {
+			if _, found := contract.Operations.EffectPublication(op, effect); found {
 				add(ids.TargetPublicationEffect, 1)
 			}
 		}
@@ -69,9 +69,9 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 				t.Fatalf("callback %d of operation %d is not readable", index, op)
 			}
 			add(ids.TargetCallback, 1)
-			add(ids.TargetCallbackEffect, contract.CallbackEffectCount(callback))
-			for effect := 0; effect < contract.CallbackEffectCount(callback); effect++ {
-				if _, found := contract.CallbackPublicationEffectDescriptor(callback, effect); found {
+			add(ids.TargetCallbackEffect, contract.Operations.CallbackEffectCount(callback))
+			for effect := 0; effect < contract.Operations.CallbackEffectCount(callback); effect++ {
+				if _, found := contract.Operations.CallbackEffectPublication(callback, effect); found {
 					add(ids.TargetPublicationEffect, 1)
 				}
 			}

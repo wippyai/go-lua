@@ -12,16 +12,13 @@ import (
 )
 
 // operationRow is the Target aggregate's cross-subsystem relation index. The
-// operation package owns operation handles, outcomes, callbacks, and every
-// continuation/output relation; this row retains only Target-owned invocation
-// and effect projections.
+// operation package owns operation handles, outcomes, callbacks, every
+// continuation/output relation, and both effect populations; this row retains
+// only Target-owned invocation relations.
 type operationRow struct {
 	subedges        indexRange
 	subedgeRelation uint32
 	releases        indexRange
-	effects         indexRange
-	effectTail      vocabulary.RowTail
-	effectVar       vocabulary.RowVar
 }
 
 type subedgeRelationRow struct {
@@ -34,15 +31,12 @@ type subedgeRelationRow struct {
 }
 
 type callbackRow struct {
-	function   vocabulary.InputSource
-	admission  schematype.CallableAdmission
-	arguments  vocabulary.Values
-	outcomes   [5]vocabulary.Values
-	subedge    vocabulary.SubedgeID
-	effects    indexRange
-	effectTail vocabulary.RowTail
-	effectVar  vocabulary.RowVar
-	release    uint32
+	function  vocabulary.InputSource
+	admission schematype.CallableAdmission
+	arguments vocabulary.Values
+	outcomes  [5]vocabulary.Values
+	subedge   vocabulary.SubedgeID
+	release   uint32
 }
 
 type subedgeRow struct {
@@ -92,27 +86,6 @@ type callbackReleaseRow struct {
 	zeroOutcome  uint32
 }
 
-// effectOwner discriminates the owner of one row in the flat effect table. The
-// table is indexed by both operationRow.effects and callbackRow.effects, so the
-// owner is what tells the two populations apart without walking either index.
-type effectOwner uint8
-
-const (
-	effectOwnerOperation effectOwner = iota + 1
-	effectOwnerCallback
-)
-
-type effectRow struct {
-	owner          effectOwner
-	target         vocabulary.Operation
-	values         indexRange
-	types          indexRange
-	valuesVar      indexRange
-	rows           indexRange
-	publication    PublicationEffectDescriptor
-	hasPublication bool
-}
-
 type indexRange struct{ start, end uint32 }
 
 func (r indexRange) len() int { return int(r.end - r.start) }
@@ -136,11 +109,6 @@ type Contract struct {
 	bootvalue.Table
 	Operations             operationvalue.Core
 	operations             []operationRow
-	effects                []effectRow
-	effectVals             []vocabulary.ValueFormal
-	effectType             []vocabulary.TypeFormal
-	effectVars             []vocabulary.ValuesVar
-	effectRows             []vocabulary.RowVar
 	callbacks              []callbackRow
 	subedges               []subedgeRow
 	subedgeOrigins         []subedgeArgumentOriginRow
@@ -162,31 +130,22 @@ type Contract struct {
 // second graph authority: each row is a cached canonical descriptor indexed
 // only by the existing dense Target tables.
 type identityColumns struct {
-	// Effect identity columns are projections of the existing
-	// operation/callback/effect tables. Effect descriptors intentionally have
-	// no inverse index: duplicate authored occurrences are distinct evidence,
-	// while their descriptor identity is the shared semantic quotient.
-	effectOperationIDs      []identity.ContentID
-	effectDescriptorIDs     []identity.ContentID
-	effectOccurrenceIDs     []identity.ContentID
-	operationEffectFamilies []identity.ContentID
-	callbackEffectFamilies  []identity.ContentID
-	operationContentIDs     []identity.ContentID
-	callbackSelectors       []identity.ContentID
-	callbackContentIDs      []identity.ContentID
-	callbackContentIndex    []callbackContentIDRow
-	outcomeSelectors        []identity.ContentID
-	outcomeContentIDs       []identity.ContentID
-	transferContentIDs      []identity.ContentID
-	transferOutcomeIDs      []identity.ContentID
-	resumeContentIDs        []identity.ContentID
-	resumeContentIndex      []resumeContentIDRow
-	inputFormalRanges       []indexRange
-	inputFormalIDs          []identity.ContentID
-	inputFormalIndex        []inputFormalIDRow
-	outcomeResultRanges     []indexRange
-	outcomeResultIDs        []identity.ContentID
-	outcomeResultIndex      []outcomeResultIDRow
+	operationContentIDs  []identity.ContentID
+	callbackSelectors    []identity.ContentID
+	callbackContentIDs   []identity.ContentID
+	callbackContentIndex []callbackContentIDRow
+	outcomeSelectors     []identity.ContentID
+	outcomeContentIDs    []identity.ContentID
+	transferContentIDs   []identity.ContentID
+	transferOutcomeIDs   []identity.ContentID
+	resumeContentIDs     []identity.ContentID
+	resumeContentIndex   []resumeContentIDRow
+	inputFormalRanges    []indexRange
+	inputFormalIDs       []identity.ContentID
+	inputFormalIndex     []inputFormalIDRow
+	outcomeResultRanges  []indexRange
+	outcomeResultIDs     []identity.ContentID
+	outcomeResultIndex   []outcomeResultIDRow
 }
 
 type inputFormalIDRow struct {

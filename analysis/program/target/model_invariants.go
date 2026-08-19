@@ -27,31 +27,3 @@ func initialBindingClassForValue(kind vocabulary.InitialValueKind) vocabulary.In
 		return vocabulary.InitialBindingInvalid
 	}
 }
-
-func (d PublicationEffectDescriptor) validConsequences() bool {
-	switch d.kind {
-	case vocabulary.PublicationEffectSendTransfer:
-		return d.destination == vocabulary.PublicationDestinationValueFormal &&
-			d.escape == vocabulary.PublicationEscapeSendTransfer &&
-			(d.mutability == vocabulary.PublicationMutabilityPreserve || d.mutability == vocabulary.PublicationMutabilityCopyOnWrite) &&
-			d.lifetime == vocabulary.PublicationLifetimePreserve
-	case vocabulary.PublicationEffectReturnEscape:
-		return d.destination == vocabulary.PublicationDestinationNone && d.escape == vocabulary.PublicationEscapeReturn &&
-			d.mutability == vocabulary.PublicationMutabilityPreserve && d.lifetime == vocabulary.PublicationLifetimePreserve
-	case vocabulary.PublicationEffectCallbackEscape:
-		return d.destination == vocabulary.PublicationDestinationNone && d.escape == vocabulary.PublicationEscapeCallback &&
-			d.mutability == vocabulary.PublicationMutabilityPreserve && d.lifetime == vocabulary.PublicationLifetimePreserve
-	case vocabulary.PublicationEffectFreezeSeal:
-		return d.destination == vocabulary.PublicationDestinationNone && d.escape == vocabulary.PublicationEscapeNone &&
-			d.mutability == vocabulary.PublicationMutabilitySeal && d.lifetime == vocabulary.PublicationLifetimePreserve
-	case vocabulary.PublicationEffectWriteMutation:
-		return d.destination == vocabulary.PublicationDestinationNone && d.escape == vocabulary.PublicationEscapeNone &&
-			(d.mutability == vocabulary.PublicationMutabilityWrite || d.mutability == vocabulary.PublicationMutabilityCopyOnWrite) &&
-			d.lifetime == vocabulary.PublicationLifetimePreserve
-	case vocabulary.PublicationEffectCloseRelease:
-		return d.destination == vocabulary.PublicationDestinationNone && d.escape == vocabulary.PublicationEscapeNone &&
-			d.mutability == vocabulary.PublicationMutabilityPreserve && d.lifetime == vocabulary.PublicationLifetimeRelease
-	default:
-		return false
-	}
-}

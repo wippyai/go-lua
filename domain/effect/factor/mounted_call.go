@@ -107,7 +107,7 @@ func (a *Algebra) SelectedMountedCallOpaque(root Root, mounted MountedCall, oper
 		if !ok {
 			return Value{}, false
 		}
-		tail, _, ok := a.contract.CallbackEffectTail(callback)
+		tail, _, ok := a.contract.Operations.CallbackEffectTail(callback)
 		if !ok || tail == vocabulary.RowVariable {
 			return Value{}, false
 		}

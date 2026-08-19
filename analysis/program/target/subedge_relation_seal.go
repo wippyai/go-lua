@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
-func (c *Contract) appendSubedgeRelation(_ vocabulary.Operation, draft subedgeRelationDraft, subedges, outcomes, effects indexRange) (uint32, error) {
+func (c *Contract) appendSubedgeRelation(_ vocabulary.Operation, draft subedgeRelationDraft, subedges, outcomes indexRange, effectCount int) (uint32, error) {
 	if draft.subedgeRank >= uint32(subedges.len()) || draft.resultOutcome >= uint32(outcomes.len()) {
 		return 0, errors.New("target: malformed subedge relation")
 	}
@@ -18,7 +18,7 @@ func (c *Contract) appendSubedgeRelation(_ vocabulary.Operation, draft subedgeRe
 		return 0, err
 	}
 	for _, effect := range draft.effects {
-		if uint64(effect) >= uint64(effects.len()) {
+		if uint64(effect) >= uint64(effectCount) {
 			return 0, errors.New("target: malformed subedge relation effect alias")
 		}
 		c.subedgeRelationEffects = append(c.subedgeRelationEffects, effect)

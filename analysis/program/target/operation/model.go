@@ -26,6 +26,8 @@ type OperationInput struct {
 	Source            int
 	Bindings          []vocabulary.BindingSpec
 	InputFormalCount  int
+	TypeFormalCount   int
+	RowFormalCount    int
 	ValuesVars        uint32
 	OutcomeValueSlots []OutcomeInput
 	Callbacks         []CallbackInput
@@ -62,6 +64,8 @@ type operationRow struct {
 	callbacks callbackRange
 	produced  rows.Span
 	input     uint32
+	typeForms uint32
+	rowForms  uint32
 	valuesVar uint32
 }
 
@@ -138,12 +142,17 @@ type anchorRow struct{ id identity.ContentID }
 // callback ID/lifecycle, and operation semantic anchor is read from this
 // value. No caller can append, backpatch, or toggle a publication flag.
 type Core struct {
-	geometry       Geometry
-	anchors        rows.Rows[anchorRow]
-	keys           exactkey.Table
-	bindingKeys    rows.Pool[vocabulary.ExactKey]
-	bindingKeyRows rows.Pool[bindingKeyRow]
-	bindingRanges  rows.Rows[bindingKeyRange]
-	lookup         rows.Rows[bindingIndexRow]
-	query          queryState
+	geometry                Geometry
+	anchors                 rows.Rows[anchorRow]
+	keys                    exactkey.Table
+	bindingKeys             rows.Pool[vocabulary.ExactKey]
+	bindingKeyRows          rows.Pool[bindingKeyRow]
+	bindingRanges           rows.Rows[bindingKeyRange]
+	lookup                  rows.Rows[bindingIndexRow]
+	query                   queryState
+	effectOperationIDs      []identity.ContentID
+	effectDescriptorIDs     []identity.ContentID
+	effectOccurrenceIDs     []identity.ContentID
+	operationEffectFamilies []identity.ContentID
+	callbackEffectFamilies  []identity.ContentID
 }

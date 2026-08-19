@@ -325,10 +325,10 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			values, ok := contract.CallbackOutcome(callback, kind)
 			fmt.Fprintf(out, "callback-outcome[%d]=%d/%v;", kind, values, ok)
 		}
-		tail, rowVar, tailOK := contract.CallbackEffectTail(callback)
+		tail, rowVar, tailOK := contract.Operations.CallbackEffectTail(callback)
 		fmt.Fprintf(out, "callback-effect-tail=%d/%d/%v;", tail, rowVar, tailOK)
-		for effect := 0; effect < contract.CallbackEffectCount(callback); effect++ {
-			target, targetOK := contract.CallbackEffectTarget(callback, effect)
+		for effect := 0; effect < contract.Operations.CallbackEffectCount(callback); effect++ {
+			target, targetOK := contract.Operations.CallbackEffectTarget(callback, effect)
 			fmt.Fprintf(out, "callback-effect[%d]=target:%d/%v;", effect, target, targetOK)
 			writeCallbackEffectArguments(out, contract, callback, effect)
 		}
@@ -427,24 +427,24 @@ func writeEffectArguments(out *strings.Builder, contract *Contract, op vocabular
 }
 
 func writeCallbackEffectArguments(out *strings.Builder, contract *Contract, callback vocabulary.CallbackID, effect int) {
-	fmt.Fprintf(out, "values(%d)=", contract.CallbackEffectValueArgumentCount(callback, effect))
-	for index := 0; index < contract.CallbackEffectValueArgumentCount(callback, effect); index++ {
-		value, ok := contract.CallbackEffectValueArgumentAt(callback, effect, index)
+	fmt.Fprintf(out, "values(%d)=", contract.Operations.CallbackEffectValueArgumentCount(callback, effect))
+	for index := 0; index < contract.Operations.CallbackEffectValueArgumentCount(callback, effect); index++ {
+		value, ok := contract.Operations.CallbackEffectValueArgumentAt(callback, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "types(%d)=", contract.CallbackEffectTypeArgumentCount(callback, effect))
-	for index := 0; index < contract.CallbackEffectTypeArgumentCount(callback, effect); index++ {
-		value, ok := contract.CallbackEffectTypeArgumentAt(callback, effect, index)
+	fmt.Fprintf(out, "types(%d)=", contract.Operations.CallbackEffectTypeArgumentCount(callback, effect))
+	for index := 0; index < contract.Operations.CallbackEffectTypeArgumentCount(callback, effect); index++ {
+		value, ok := contract.Operations.CallbackEffectTypeArgumentAt(callback, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "Values(%d)=", contract.CallbackEffectValuesArgumentCount(callback, effect))
-	for index := 0; index < contract.CallbackEffectValuesArgumentCount(callback, effect); index++ {
-		value, ok := contract.CallbackEffectValuesArgumentAt(callback, effect, index)
+	fmt.Fprintf(out, "Values(%d)=", contract.Operations.CallbackEffectValuesArgumentCount(callback, effect))
+	for index := 0; index < contract.Operations.CallbackEffectValuesArgumentCount(callback, effect); index++ {
+		value, ok := contract.Operations.CallbackEffectValuesArgumentAt(callback, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "rows(%d)=", contract.CallbackEffectRowArgumentCount(callback, effect))
-	for index := 0; index < contract.CallbackEffectRowArgumentCount(callback, effect); index++ {
-		value, ok := contract.callbackEffectRowArgumentAt(callback, effect, index)
+	fmt.Fprintf(out, "rows(%d)=", contract.Operations.CallbackEffectRowArgumentCount(callback, effect))
+	for index := 0; index < contract.Operations.CallbackEffectRowArgumentCount(callback, effect); index++ {
+		value, ok := contract.Operations.CallbackEffectRowArgumentAt(callback, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
 }

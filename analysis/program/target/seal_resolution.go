@@ -38,18 +38,6 @@ func (d *operationDraft) resolveEffectList(effects []effectDraft, all []operatio
 			return fmt.Errorf("target: %s %d does not match target ABI", label, index)
 		}
 		effects[index].target = targetOp
-		if effects[index].hasPublication {
-			descriptor, publicationErr := freezePublicationEffect(effects[index].publication)
-			if publicationErr != nil {
-				return fmt.Errorf("target: %s %d publication: %w", label, index, publicationErr)
-			}
-			if uint64(descriptor.subject) >= uint64(target.valueFormalCount()) {
-				return fmt.Errorf("target: %s %d publication subject outside effect target ABI", label, index)
-			}
-			if descriptor.destination == vocabulary.PublicationDestinationValueFormal && uint64(descriptor.context) >= uint64(target.valueFormalCount()) {
-				return fmt.Errorf("target: %s %d publication destination outside effect target ABI", label, index)
-			}
-		}
 	}
 	sort.Slice(effects, func(left, right int) bool { return compareEffect(effects[left], effects[right]) < 0 })
 	return nil

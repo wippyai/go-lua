@@ -57,7 +57,7 @@ func (c *Contract) OperationSubedgeRelationEffectAliasAt(op vocabulary.Operation
 		return 0, false
 	}
 	effect := c.subedgeRelationEffects[relation.effects.start+uint32(index)]
-	if uint64(effect) >= uint64(row.effects.len()) {
+	if uint64(effect) >= uint64(c.Operations.EffectCount(op)) {
 		return 0, false
 	}
 	return int(effect), true

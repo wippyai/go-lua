@@ -77,7 +77,7 @@ func (v Calls) TypeFormalArguments(contract *target.Contract, application linkpr
 		}
 	}
 	staticID := p.Static().ContentID()
-	operationID, ok := contract.EffectOperationID(operation)
+	operationID, ok := contract.Operations.EffectOperationID(operation)
 	if !staticID.Available() || !ok || !operationID.Available() {
 		return TypeFormalArguments{}, false
 	}

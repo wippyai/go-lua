@@ -10,6 +10,7 @@ package target
 import (
 	"crypto/sha256"
 	"errors"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
 
@@ -339,9 +340,27 @@ func (c *Contract) sealSemanticIdentities() error {
 		c.callbackContentIDs[i] = id
 		c.callbackContentIndex = append(c.callbackContentIndex, callbackContentIDRow{id: id, callback: callbackID})
 	}
-	if err := c.sealEffectIdentities(); err != nil {
+	sealedOperations, err := c.Operations.SealEffectIdentities(operationvalue.EffectIdentityContext{
+		SemanticID:   c.semanticID,
+		EncodeValues: func(w *framing.Writer, values vocabulary.Values) error { return encodeValues(w, c, values) },
+		EncodeType:   func(w *framing.Writer, typ vocabulary.Type) error { return encodeType(w, c, typ) },
+		CallbackContentID: func(callback vocabulary.CallbackID) (identity.ContentID, bool) {
+			if callback == 0 || int(callback) > len(c.callbackContentIDs) {
+				return identity.ContentID{}, false
+			}
+			id := c.callbackContentIDs[callback-1]
+			return id, id.Available()
+		},
+		EffectOperationKind:       semanticEffectOperation,
+		EffectDescriptorKind:      semanticEffectDescriptor,
+		EffectOccurrenceKind:      semanticEffectOccurrence,
+		OperationEffectFamilyKind: semanticOperationEffectFamily,
+		CallbackEffectFamilyKind:  semanticCallbackEffectFamily,
+	})
+	if err != nil {
 		return err
 	}
+	c.Operations = sealedOperations
 
 	resumeOrdinal := 0
 	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {

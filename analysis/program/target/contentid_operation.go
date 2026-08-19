@@ -139,7 +139,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := w.Uint(uint64(lifecycle)); err != nil {
 			return err
 		}
-		tail, variable, found := c.CallbackEffectTail(id)
+		tail, variable, found := c.Operations.CallbackEffectTail(id)
 		if !found {
 			return errors.New("target: malformed callback effect tail")
 		}
@@ -149,16 +149,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := w.Uint(uint64(variable)); err != nil {
 			return err
 		}
-		effects := c.CallbackEffectCount(id)
+		effects := c.Operations.CallbackEffectCount(id)
 		if err := w.Count(uint64(effects)); err != nil {
 			return err
 		}
 		for effect := 0; effect < effects; effect++ {
-			row, ok := c.callbackEffect(id, effect)
-			if !ok {
-				return errors.New("target: malformed callback effect")
-			}
-			if err := encodeEffectRow(w, c, row); err != nil {
+			if err := encodeCallbackEffect(w, c, id, effect); err != nil {
 				return err
 			}
 		}

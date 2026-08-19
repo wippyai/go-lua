@@ -2,6 +2,7 @@ package target
 
 import (
 	"errors"
+	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/internal/framing"
@@ -190,95 +191,150 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 }
 
 func encodeEffect(w *framing.Writer, c *Contract, op vocabulary.Operation, effect int) error {
-	row, ok := c.effect(op, effect)
+	target, ok := c.Operations.EffectTarget(op, effect)
 	if !ok {
 		return errors.New("target: malformed effect")
 	}
-	return encodeEffectRow(w, c, row)
+	return encodeEffectArguments(w, c, target,
+		func(index int) (vocabulary.ValueFormal, bool) {
+			return c.Operations.EffectValueArgumentAt(op, effect, index)
+		},
+		func(index int) (vocabulary.TypeFormal, bool) {
+			return c.Operations.EffectTypeArgumentAt(op, effect, index)
+		},
+		func(index int) (vocabulary.ValuesVar, bool) {
+			return c.Operations.EffectValuesArgumentAt(op, effect, index)
+		},
+		func(index int) (vocabulary.RowVar, bool) { return c.Operations.EffectRowArgumentAt(op, effect, index) },
+		func() (operationvalue.PublicationEffectDescriptor, bool) {
+			return c.Operations.EffectPublication(op, effect)
+		})
 }
 
-func encodeEffectRow(w *framing.Writer, c *Contract, effect effectRow) error {
+func encodeCallbackEffect(w *framing.Writer, c *Contract, callback vocabulary.CallbackID, effect int) error {
+	target, ok := c.Operations.CallbackEffectTarget(callback, effect)
+	if !ok {
+		return errors.New("target: malformed callback effect")
+	}
+	return encodeEffectArguments(w, c, target,
+		func(index int) (vocabulary.ValueFormal, bool) {
+			return c.Operations.CallbackEffectValueArgumentAt(callback, effect, index)
+		},
+		func(index int) (vocabulary.TypeFormal, bool) {
+			return c.Operations.CallbackEffectTypeArgumentAt(callback, effect, index)
+		},
+		func(index int) (vocabulary.ValuesVar, bool) {
+			return c.Operations.CallbackEffectValuesArgumentAt(callback, effect, index)
+		},
+		func(index int) (vocabulary.RowVar, bool) {
+			return c.Operations.CallbackEffectRowArgumentAt(callback, effect, index)
+		},
+		func() (operationvalue.PublicationEffectDescriptor, bool) {
+			return c.Operations.CallbackEffectPublication(callback, effect)
+		})
+}
+
+func encodeEffectArguments(w *framing.Writer, c *Contract, target vocabulary.Operation,
+	valueAt func(int) (vocabulary.ValueFormal, bool), typeAt func(int) (vocabulary.TypeFormal, bool),
+	valuesVarAt func(int) (vocabulary.ValuesVar, bool), rowAt func(int) (vocabulary.RowVar, bool),
+	publication func() (operationvalue.PublicationEffectDescriptor, bool)) error {
 	if err := w.Record(recordEffect); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(effect.target)); err != nil {
+	if err := w.Uint(uint64(target)); err != nil {
 		return err
 	}
-	valueArgs := effect.values.len()
+	valueArgs := 0
+	if targetValues, ok := c.Operations.Input(target); ok {
+		valueArgs = c.Operations.ValuesCount(targetValues)
+	}
 	if err := w.Count(uint64(valueArgs)); err != nil {
 		return err
 	}
 	for index := 0; index < valueArgs; index++ {
-		value := c.effectVals[effect.values.start+uint32(index)]
+		value, ok := valueAt(index)
+		if !ok {
+			return errors.New("target: malformed effect value argument")
+		}
 		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	typeArgs := effect.types.len()
+	typeArgs := c.Operations.TypeFormalCount(target)
 	if err := w.Count(uint64(typeArgs)); err != nil {
 		return err
 	}
 	for index := 0; index < typeArgs; index++ {
-		value := c.effectType[effect.types.start+uint32(index)]
+		value, ok := typeAt(index)
+		if !ok {
+			return errors.New("target: malformed effect type argument")
+		}
 		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	valuesArgs := effect.valuesVar.len()
+	valuesArgs := c.Operations.ValuesVarCount(target)
 	if err := w.Count(uint64(valuesArgs)); err != nil {
 		return err
 	}
 	for index := 0; index < valuesArgs; index++ {
-		value := c.effectVars[effect.valuesVar.start+uint32(index)]
+		value, ok := valuesVarAt(index)
+		if !ok {
+			return errors.New("target: malformed effect Values argument")
+		}
 		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	rowArgs := effect.rows.len()
+	rowArgs := c.Operations.RowFormalCount(target)
 	if err := w.Count(uint64(rowArgs)); err != nil {
 		return err
 	}
 	for index := 0; index < rowArgs; index++ {
-		value := c.effectRows[effect.rows.start+uint32(index)]
+		value, ok := rowAt(index)
+		if !ok {
+			return errors.New("target: malformed effect row argument")
+		}
 		if err := w.Uint(uint64(value)); err != nil {
 			return err
 		}
 	}
-	if err := w.Bool(effect.hasPublication); err != nil {
+	descriptor, hasPublication := publication()
+	if err := w.Bool(hasPublication); err != nil {
 		return err
 	}
-	if effect.hasPublication {
-		if !c.validPublicationEffectRow(effect) {
+	if hasPublication {
+		if !descriptor.Valid() {
 			return errors.New("target: malformed publication effect selector")
 		}
-		if err := encodePublicationEffectDescriptor(w, effect.publication); err != nil {
+		if err := encodePublicationEffectDescriptor(w, descriptor); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func encodePublicationEffectDescriptor(w *framing.Writer, descriptor PublicationEffectDescriptor) error {
-	if !descriptor.validConsequences() {
+func encodePublicationEffectDescriptor(w *framing.Writer, descriptor operationvalue.PublicationEffectDescriptor) error {
+	if !descriptor.Valid() {
 		return errors.New("target: malformed publication effect descriptor")
 	}
-	if err := w.Uint(uint64(descriptor.kind)); err != nil {
+	if err := w.Uint(uint64(descriptor.Kind())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.subject)); err != nil {
+	if err := w.Uint(uint64(descriptor.Subject())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.destination)); err != nil {
+	if err := w.Uint(uint64(descriptor.DestinationRole())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.context)); err != nil {
+	if err := w.Uint(uint64(descriptor.Context())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.escape)); err != nil {
+	if err := w.Uint(uint64(descriptor.Escape())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.mutability)); err != nil {
+	if err := w.Uint(uint64(descriptor.Mutability())); err != nil {
 		return err
 	}
-	return w.Uint(uint64(descriptor.lifetime))
+	return w.Uint(uint64(descriptor.Lifetime()))
 }

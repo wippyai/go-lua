@@ -334,7 +334,7 @@ func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner voc
 	t.Helper()
 	publication, generic = -1, -1
 	for effect := 0; effect < contract.Operations.EffectCount(owner); effect++ {
-		if _, published := contract.PublicationEffectDescriptor(owner, effect); published {
+		if _, published := contract.Operations.EffectPublication(owner, effect); published {
 			if publication >= 0 {
 				t.Fatal("multiple ordinary publication effects")
 			}
@@ -355,8 +355,8 @@ func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner voc
 func callbackPublicationEffectIndex(t testing.TB, contract *target.Contract, callback vocabulary.CallbackID) int {
 	t.Helper()
 	publication := -1
-	for effect := 0; effect < contract.CallbackEffectCount(callback); effect++ {
-		if _, published := contract.CallbackPublicationEffectDescriptor(callback, effect); published {
+	for effect := 0; effect < contract.Operations.CallbackEffectCount(callback); effect++ {
+		if _, published := contract.Operations.CallbackEffectPublication(callback, effect); published {
 			if publication >= 0 {
 				t.Fatal("multiple callback publication effects")
 			}
@@ -378,8 +378,8 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	if !formalOK || !bindingOK || !publicationOK || !publication.Valid() || publication.Role() != effectfactor.PublicationAtomBindingOrdinary || publication.Kind() != vocabulary.PublicationEffectSendTransfer || publication.Escape() != vocabulary.PublicationEscapeSendTransfer || publication.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || publication.Lifetime() != vocabulary.PublicationLifetimePreserve {
 		t.Fatal("ordinary publication binding")
 	}
-	descriptorID, descriptorOK := ordinary.contract.PublicationEffectDescriptorID(ordinary.owner, publicationEffect)
-	occurrenceID, occurrenceOK := ordinary.contract.PublicationEffectOccurrenceID(ordinary.owner, publicationEffect)
+	descriptorID, descriptorOK := ordinary.contract.Operations.PublicationEffectDescriptorID(ordinary.owner, publicationEffect)
+	occurrenceID, occurrenceOK := ordinary.contract.Operations.PublicationEffectOccurrenceID(ordinary.owner, publicationEffect)
 	boundDescriptor, boundDescriptorOK := publication.DescriptorID()
 	boundOccurrence, boundOccurrenceOK := publication.OccurrenceID()
 	subject, subjectOK := publication.SubjectSelector()
@@ -451,8 +451,8 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	if _, contextOK := callbackPublication.ContextSelector(); contextOK {
 		t.Fatal("destination-free callback publication carried context selector")
 	}
-	callbackDescriptor, callbackDescriptorOK := callbackFixture.contract.CallbackPublicationEffectDescriptorID(callback, callbackEffect)
-	callbackOccurrence, callbackOccurrenceOK := callbackFixture.contract.CallbackPublicationEffectOccurrenceID(callback, callbackEffect)
+	callbackDescriptor, callbackDescriptorOK := callbackFixture.contract.Operations.CallbackPublicationEffectDescriptorID(callback, callbackEffect)
+	callbackOccurrence, callbackOccurrenceOK := callbackFixture.contract.Operations.CallbackPublicationEffectOccurrenceID(callback, callbackEffect)
 	boundCallbackDescriptor, boundCallbackDescriptorOK := callbackPublication.DescriptorID()
 	boundCallbackOccurrence, boundCallbackOccurrenceOK := callbackPublication.OccurrenceID()
 	callbackSubject, callbackSubjectOK := callbackPublication.SubjectSelector()

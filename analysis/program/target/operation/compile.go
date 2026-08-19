@@ -48,6 +48,18 @@ func CompileGeometry(input Input) (Geometry, error) {
 		if item.InputFormalCount < 0 {
 			return Geometry{}, fmt.Errorf("target/operation: negative input formal count for operation %d", index)
 		}
+		if item.TypeFormalCount < 0 {
+			return Geometry{}, fmt.Errorf("target/operation: negative type formal count for operation %d", index)
+		}
+		if item.RowFormalCount < 0 {
+			return Geometry{}, fmt.Errorf("target/operation: negative row formal count for operation %d", index)
+		}
+		if _, err := vocabulary.CheckedStoredLength("operation row formal count", item.RowFormalCount); err != nil {
+			return Geometry{}, err
+		}
+		if _, err := vocabulary.CheckedStoredLength("operation type formal count", item.TypeFormalCount); err != nil {
+			return Geometry{}, err
+		}
 		if _, err := vocabulary.CheckedStoredLength("operation input formal count", item.InputFormalCount); err != nil {
 			return Geometry{}, err
 		}
@@ -129,7 +141,7 @@ func CompileGeometry(input Input) (Geometry, error) {
 		}
 		operations[index] = operationRow{
 			bindings: bindingRange, outcomes: outcomeRange, callbacks: callbackRange,
-			input: uint32(item.InputFormalCount), valuesVar: item.ValuesVars,
+			input: uint32(item.InputFormalCount), typeForms: uint32(item.TypeFormalCount), rowForms: uint32(item.RowFormalCount), valuesVar: item.ValuesVars,
 		}
 		producedInputs[index] = append([]ProducedInput(nil), item.Produced...)
 	}

@@ -41,17 +41,25 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	}
 
 	var operationEffects, callbackEffects, publicationEffects int
-	for _, effect := range c.effects {
-		switch effect.owner {
-		case effectOwnerOperation:
-			operationEffects++
-		case effectOwnerCallback:
-			callbackEffects++
-		default:
-			return denominator.CountRows{}, errCountRows
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		operationEffects += c.Operations.EffectCount(op)
+		for effect := 0; effect < c.Operations.EffectCount(op); effect++ {
+			if _, ok := c.Operations.EffectPublication(op, effect); ok {
+				publicationEffects++
+			}
 		}
-		if c.validPublicationEffectRow(effect) {
-			publicationEffects++
+		for callbackIndex := 0; callbackIndex < c.Operations.CallbackCount(op); callbackIndex++ {
+			callback, callbackOK := c.Operations.CallbackAt(op, callbackIndex)
+			if !callbackOK {
+				return denominator.CountRows{}, errCountRows
+			}
+			callbackEffects += c.Operations.CallbackEffectCount(callback)
+			for effect := 0; effect < c.Operations.CallbackEffectCount(callback); effect++ {
+				if _, ok := c.Operations.CallbackEffectPublication(callback, effect); ok {
+					publicationEffects++
+				}
+			}
 		}
 	}
 

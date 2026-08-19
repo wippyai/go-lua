@@ -456,12 +456,12 @@ func TestCallbackExpectedRowsAndRetainedReleaseAreDirectAndCanonical(t *testing.
 	if !ownerOK || !releaseOK || !callbackOK {
 		t.Fatal("callback boundary fixture failed to resolve")
 	}
-	tail, variable, tailOK := first.CallbackEffectTail(callback)
-	if !tailOK || tail != vocabulary.RowVariable || variable != 0 || first.CallbackEffectCount(callback) != 1 {
-		t.Fatalf("callback expected row = %d/%d/%v effects:%d", tail, variable, tailOK, first.CallbackEffectCount(callback))
+	tail, variable, tailOK := first.Operations.CallbackEffectTail(callback)
+	if !tailOK || tail != vocabulary.RowVariable || variable != 0 || first.Operations.CallbackEffectCount(callback) != 1 {
+		t.Fatalf("callback expected row = %d/%d/%v effects:%d", tail, variable, tailOK, first.Operations.CallbackEffectCount(callback))
 	}
-	effectTarget, effectOK := first.CallbackEffectTarget(callback, 0)
-	row, rowOK := first.callbackEffectRowArgumentAt(callback, 0, 0)
+	effectTarget, effectOK := first.Operations.CallbackEffectTarget(callback, 0)
+	row, rowOK := first.Operations.CallbackEffectRowArgumentAt(callback, 0, 0)
 	if !effectOK || effectTarget != releaseOp || !rowOK || row != 0 {
 		t.Fatalf("callback effect = target:%d/%v row:%d/%v", effectTarget, effectOK, row, rowOK)
 	}

@@ -122,7 +122,7 @@ func TestModelRowsKeepOperationOwnedRangesCorrelated(t *testing.T) {
 
 func TestModelValuesPublicationDescriptorGettersRetainTypedAuthority(t *testing.T) {
 	contract, owner := publicationEffectContract(t, sendPublication(vocabulary.PublicationMutabilityCopyOnWrite), false)
-	descriptor, ok := contract.PublicationEffectDescriptor(owner, 0)
+	descriptor, ok := contract.Operations.EffectPublication(owner, 0)
 	if !ok {
 		t.Fatal("publication descriptor unavailable")
 	}
@@ -214,7 +214,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	} {
 		authored := publicationFor(kind)
 		sealed, sealedOwner := publicationEffectContract(t, authored, false)
-		descriptor, found := sealed.PublicationEffectDescriptor(sealedOwner, 0)
+		descriptor, found := sealed.Operations.EffectPublication(sealedOwner, 0)
 		if !found || descriptor.Kind() != kind || descriptor.Subject() != authored.Subject ||
 			descriptor.DestinationRole() != authored.Destination || descriptor.Context() != authored.Context ||
 			descriptor.Escape() != authored.Escape || descriptor.Mutability() != authored.Mutability || descriptor.Lifetime() != authored.Lifetime {
@@ -233,7 +233,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	}
 
 	contract, owner := publicationEffectContract(t, sendPublication(vocabulary.PublicationMutabilityCopyOnWrite), true)
-	descriptor, ok := contract.PublicationEffectDescriptor(owner, 0)
+	descriptor, ok := contract.Operations.EffectPublication(owner, 0)
 	if !ok {
 		t.Fatal("explicit publication descriptor unavailable")
 	}
@@ -243,49 +243,33 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 		descriptor.Lifetime() != vocabulary.PublicationLifetimePreserve {
 		t.Fatal("publication descriptor projection changed its exact authored semantics")
 	}
-	firstDescriptor, firstDescriptorOK := contract.PublicationEffectDescriptorID(owner, 0)
-	secondDescriptor, secondDescriptorOK := contract.PublicationEffectDescriptorID(owner, 1)
-	firstOccurrence, firstOccurrenceOK := contract.PublicationEffectOccurrenceID(owner, 0)
-	secondOccurrence, secondOccurrenceOK := contract.PublicationEffectOccurrenceID(owner, 1)
+	firstDescriptor, firstDescriptorOK := contract.Operations.PublicationEffectDescriptorID(owner, 0)
+	secondDescriptor, secondDescriptorOK := contract.Operations.PublicationEffectDescriptorID(owner, 1)
+	firstOccurrence, firstOccurrenceOK := contract.Operations.PublicationEffectOccurrenceID(owner, 0)
+	secondOccurrence, secondOccurrenceOK := contract.Operations.PublicationEffectOccurrenceID(owner, 1)
 	if !firstDescriptorOK || !secondDescriptorOK || firstDescriptor != secondDescriptor {
 		t.Fatal("duplicate publication effects did not canonicalize to one descriptor identity")
 	}
 	if !firstOccurrenceOK || !secondOccurrenceOK || firstOccurrence == secondOccurrence {
 		t.Fatal("duplicate publication effects lost their distinct occurrence identities")
 	}
-	if _, ok := contract.PublicationEffectDescriptor(owner, 2); ok {
+	if _, ok := contract.Operations.EffectPublication(owner, 2); ok {
 		t.Fatal("out-of-range effect position accepted a spliced publication descriptor")
 	}
-	tampered := *contract
-	tampered.effects = append([]effectRow(nil), contract.effects...)
-	ownerRow, ownerRowOK := tampered.operation(owner)
-	if !ownerRowOK || ownerRow.effects.len() == 0 {
-		t.Fatal("publication fixture has no mutable sealed effect row")
-	}
-	tampered.effects[ownerRow.effects.start].publication.subject = 2
-	if _, ok := tampered.PublicationEffectDescriptor(owner, 0); ok {
-		t.Fatal("publication query accepted a stale out-of-ABI sealed row")
-	}
-	if id := tampered.ContentID(); id.Available() {
-		t.Fatal("stale out-of-ABI publication row retained a whole-contract identity")
-	}
-	if _, err := tampered.effectDescriptorID(owner, tampered.effects[ownerRow.effects.start]); err == nil {
-		t.Fatal("stale out-of-ABI publication row retained an effect descriptor identity")
-	}
 	without, withoutOwner := publicationEffectContract(t, nil, false)
-	if _, ok := without.PublicationEffectDescriptor(withoutOwner, 0); ok {
+	if _, ok := without.Operations.EffectPublication(withoutOwner, 0); ok {
 		t.Fatal("generic effect inferred publication semantics")
 	}
-	if _, ok := without.PublicationEffectDescriptorID(withoutOwner, 0); ok {
+	if _, ok := without.Operations.PublicationEffectDescriptorID(withoutOwner, 0); ok {
 		t.Fatal("generic effect exposed a publication descriptor identity")
 	}
 
 	changed, changedOwner := publicationEffectContract(t, sendPublication(vocabulary.PublicationMutabilityPreserve), false)
-	changedDescriptor, changedOK := changed.PublicationEffectDescriptorID(changedOwner, 0)
+	changedDescriptor, changedOK := changed.Operations.PublicationEffectDescriptorID(changedOwner, 0)
 	if !changedOK || changedDescriptor == firstDescriptor {
 		t.Fatal("publication consequence did not participate in canonical descriptor identity")
 	}
-	if foreign, ok := changed.PublicationEffectDescriptorID(owner, 0); !ok || foreign != changedDescriptor || foreign == firstDescriptor {
+	if foreign, ok := changed.Operations.PublicationEffectDescriptorID(owner, 0); !ok || foreign != changedDescriptor || foreign == firstDescriptor {
 		t.Fatal("receiver-local query did not select its own sealed descriptor row")
 	}
 
@@ -295,10 +279,10 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 		t.Fatal("permuted distinct publication effects changed Contract identity")
 	}
 	for index := 0; index < firstDistinct.Operations.EffectCount(firstDistinctOwner); index++ {
-		firstDescriptorID, firstDescriptorOK := firstDistinct.PublicationEffectDescriptorID(firstDistinctOwner, index)
-		secondDescriptorID, secondDescriptorOK := secondDistinct.PublicationEffectDescriptorID(secondDistinctOwner, index)
-		firstOccurrenceID, firstOccurrenceOK := firstDistinct.PublicationEffectOccurrenceID(firstDistinctOwner, index)
-		secondOccurrenceID, secondOccurrenceOK := secondDistinct.PublicationEffectOccurrenceID(secondDistinctOwner, index)
+		firstDescriptorID, firstDescriptorOK := firstDistinct.Operations.PublicationEffectDescriptorID(firstDistinctOwner, index)
+		secondDescriptorID, secondDescriptorOK := secondDistinct.Operations.PublicationEffectDescriptorID(secondDistinctOwner, index)
+		firstOccurrenceID, firstOccurrenceOK := firstDistinct.Operations.PublicationEffectOccurrenceID(firstDistinctOwner, index)
+		secondOccurrenceID, secondOccurrenceOK := secondDistinct.Operations.PublicationEffectOccurrenceID(secondDistinctOwner, index)
 		if !firstDescriptorOK || !secondDescriptorOK || firstDescriptorID != secondDescriptorID ||
 			!firstOccurrenceOK || !secondOccurrenceOK || firstOccurrenceID != secondOccurrenceID {
 			t.Fatalf("permuted distinct publication effect %d changed a sealed identity", index)
@@ -326,8 +310,8 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 		Occurrences: []vocabulary.EffectSpec{{Target: 2, ValueArgs: []vocabulary.ValueFormal{0, 1}, RowArgs: []vocabulary.RowVar{0}, Publication: callbackPublication}},
 		Tail:        vocabulary.RowClosed,
 	}, vocabulary.RowSpec{Tail: vocabulary.RowClosed})), "publication-callback")
-	callbackDescriptor, callbackOK := callbackContract.CallbackPublicationEffectDescriptor(callback, 0)
-	callbackID, callbackIDOK := callbackContract.CallbackPublicationEffectOccurrenceID(callback, 0)
+	callbackDescriptor, callbackOK := callbackContract.Operations.CallbackEffectPublication(callback, 0)
+	callbackID, callbackIDOK := callbackContract.Operations.CallbackPublicationEffectOccurrenceID(callback, 0)
 	if !callbackOK || !callbackIDOK || !callbackID.Available() || callbackDescriptor.Kind() != vocabulary.PublicationEffectCallbackEscape ||
 		callbackOwner == 0 {
 		t.Fatal("callback publication descriptor is unavailable")

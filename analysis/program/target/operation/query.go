@@ -9,6 +9,7 @@ import (
 
 type queryState struct {
 	operations      []queryOperationRow
+	callbacks       []queryCallbackRow
 	types           []queryTypeRow
 	values          []queryValuesRow
 	effects         []queryEffectRow
@@ -42,6 +43,17 @@ type queryOperationRow struct {
 	rowFormals         uint32
 	effectTail         vocabulary.RowTail
 	effectVar          vocabulary.RowVar
+}
+
+// queryCallbackRow is the callback-owned side of the operation effect plane.
+// Callback IDs and their owner are issued by Geometry; this row retains only
+// the sealed expected-effect range and row schema for that callback.
+type queryCallbackRow struct {
+	owner      vocabulary.Operation
+	effects    queryRange
+	effectTail vocabulary.RowTail
+	effectVar  vocabulary.RowVar
+	published  bool
 }
 
 type queryRange struct{ start, end int }
@@ -158,7 +170,7 @@ type queryEffectRow struct {
 	types          []vocabulary.TypeFormal
 	valuesVar      []vocabulary.ValuesVar
 	rows           []vocabulary.RowVar
-	publication    vocabulary.PublicationEffectSpec
+	publication    PublicationEffectDescriptor
 	hasPublication bool
 }
 

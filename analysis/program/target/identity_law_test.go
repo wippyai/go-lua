@@ -63,33 +63,33 @@ func TestEffectIdentityDuplicateDescriptorHasDistinctOccurrences(t *testing.T) {
 		{Target: 2, ValueArgs: []vocabulary.ValueFormal{0, 1}, RowArgs: []vocabulary.RowVar{0}},
 	}, Tail: vocabulary.RowClosed}
 	contract, owner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", effects)), "effect-owner")
-	firstDescriptor, ok := contract.EffectDescriptorID(owner, 0)
+	firstDescriptor, ok := contract.Operations.EffectDescriptorID(owner, 0)
 	if !ok {
 		t.Fatal("first effect descriptor unavailable")
 	}
-	secondDescriptor, ok := contract.EffectDescriptorID(owner, 1)
+	secondDescriptor, ok := contract.Operations.EffectDescriptorID(owner, 1)
 	if !ok || secondDescriptor != firstDescriptor {
 		t.Fatal("duplicate effects did not share a descriptor")
 	}
-	firstOccurrence, ok := contract.effectOccurrenceID(owner, 0)
+	firstOccurrence, ok := contract.Operations.EffectOccurrenceID(owner, 0)
 	if !ok {
 		t.Fatal("first effect occurrence unavailable")
 	}
-	secondOccurrence, ok := contract.effectOccurrenceID(owner, 1)
+	secondOccurrence, ok := contract.Operations.EffectOccurrenceID(owner, 1)
 	if !ok || secondOccurrence == firstOccurrence {
 		t.Fatal("duplicate effects did not retain distinct occurrences")
 	}
-	firstFamily, ok := contract.effectRowFamilyID(owner)
+	firstFamily, ok := contract.Operations.EffectRowFamilyID(owner)
 	if !ok {
 		t.Fatal("effect family unavailable")
 	}
 	withoutDuplicate := vocabulary.RowSpec{Occurrences: effects.Occurrences[:1], Tail: vocabulary.RowClosed}
 	withoutContract, withoutOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", withoutDuplicate)), "effect-owner")
-	withoutDescriptor, ok := withoutContract.EffectDescriptorID(withoutOwner, 0)
+	withoutDescriptor, ok := withoutContract.Operations.EffectDescriptorID(withoutOwner, 0)
 	if !ok || withoutDescriptor != firstDescriptor {
 		t.Fatal("duplicate count changed the semantic descriptor")
 	}
-	withoutFamily, ok := withoutContract.effectRowFamilyID(withoutOwner)
+	withoutFamily, ok := withoutContract.Operations.EffectRowFamilyID(withoutOwner)
 	if !ok || withoutFamily == firstFamily {
 		t.Fatal("duplicate count did not change the effect family")
 	}
@@ -98,11 +98,11 @@ func TestEffectIdentityDuplicateDescriptorHasDistinctOccurrences(t *testing.T) {
 func TestEffectIdentityExcludesUnrelatedRowsButTracksABI(t *testing.T) {
 	baseEffects := vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: 2, ValueArgs: []vocabulary.ValueFormal{0, 1}, RowArgs: []vocabulary.RowVar{0}}}, Tail: vocabulary.RowClosed}
 	base, owner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", baseEffects)), "effect-owner")
-	baseOperation, ok := base.EffectOperationID(owner)
+	baseOperation, ok := base.Operations.EffectOperationID(owner)
 	if !ok {
 		t.Fatal("effect operation identity unavailable")
 	}
-	baseDescriptor, ok := base.EffectDescriptorID(owner, 0)
+	baseDescriptor, ok := base.Operations.EffectDescriptorID(owner, 0)
 	if !ok {
 		t.Fatal("effect descriptor unavailable")
 	}
@@ -110,36 +110,36 @@ func TestEffectIdentityExcludesUnrelatedRowsButTracksABI(t *testing.T) {
 	mutated := baseEffects
 	mutated.Occurrences = append(mutated.Occurrences, vocabulary.EffectSpec{Target: 2, ValueArgs: []vocabulary.ValueFormal{1, 0}, RowArgs: []vocabulary.RowVar{0}})
 	withExtra, extraOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", mutated)), "effect-owner")
-	if got, ok := withExtra.EffectOperationID(extraOwner); !ok || got != baseOperation {
+	if got, ok := withExtra.Operations.EffectOperationID(extraOwner); !ok || got != baseOperation {
 		t.Fatal("unrelated owner effect changed EffectOperationID")
 	}
-	if got, ok := withExtra.EffectDescriptorID(extraOwner, 0); !ok || got != baseDescriptor {
+	if got, ok := withExtra.Operations.EffectDescriptorID(extraOwner, 0); !ok || got != baseDescriptor {
 		t.Fatal("unrelated owner effect changed existing descriptor")
 	}
 
 	outcomeMutation := effectIdentityOperation("effect-owner", baseEffects)
 	outcomeMutation.Outcomes = []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testInteger}, Tail: vocabulary.ValuesClosed}}}
 	withOutcome, outcomeOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(outcomeMutation), "effect-owner")
-	if got, ok := withOutcome.EffectOperationID(outcomeOwner); !ok || got != baseOperation {
+	if got, ok := withOutcome.Operations.EffectOperationID(outcomeOwner); !ok || got != baseOperation {
 		t.Fatal("unrelated owner outcome changed EffectOperationID")
 	}
-	if got, ok := withOutcome.EffectDescriptorID(outcomeOwner, 0); !ok || got != baseDescriptor {
+	if got, ok := withOutcome.Operations.EffectDescriptorID(outcomeOwner, 0); !ok || got != baseDescriptor {
 		t.Fatal("unrelated owner outcome changed descriptor")
 	}
 
 	abiMutation := effectIdentityOperation("effect-owner", baseEffects)
 	abiMutation.Input.Fixed[0] = testInteger
 	withABI, abiOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(abiMutation), "effect-owner")
-	if got, ok := withABI.EffectOperationID(abiOwner); !ok || got == baseOperation {
+	if got, ok := withABI.Operations.EffectOperationID(abiOwner); !ok || got == baseOperation {
 		t.Fatal("input ABI mutation did not change EffectOperationID")
 	}
-	if got, ok := withABI.EffectDescriptorID(abiOwner, 0); !ok || got == baseDescriptor {
+	if got, ok := withABI.Operations.EffectDescriptorID(abiOwner, 0); !ok || got == baseDescriptor {
 		t.Fatal("input ABI mutation did not change descriptor")
 	}
 
 	bindingMutation := effectIdentityOperation("effect-owner-renamed", baseEffects)
 	withBinding, bindingOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(bindingMutation), "effect-owner-renamed")
-	if got, ok := withBinding.EffectOperationID(bindingOwner); !ok || got == baseOperation {
+	if got, ok := withBinding.Operations.EffectOperationID(bindingOwner); !ok || got == baseOperation {
 		t.Fatal("binding mutation did not change EffectOperationID")
 	}
 }
@@ -150,25 +150,25 @@ func TestEffectIdentitySeparatesOrdinaryAndCallbackOccurrences(t *testing.T) {
 	if callback == 0 {
 		t.Fatal("callback absent")
 	}
-	ordinaryDescriptor, ok := contract.EffectDescriptorID(owner, 0)
+	ordinaryDescriptor, ok := contract.Operations.EffectDescriptorID(owner, 0)
 	if !ok {
 		t.Fatal("ordinary descriptor unavailable")
 	}
-	callbackDescriptor, ok := contract.CallbackEffectDescriptorID(callback, 0)
+	callbackDescriptor, ok := contract.Operations.CallbackEffectDescriptorID(callback, 0)
 	if !ok || callbackDescriptor != ordinaryDescriptor {
 		t.Fatal("equivalent ordinary and callback effects did not share descriptor")
 	}
-	ordinaryOccurrence, ok := contract.effectOccurrenceID(owner, 0)
+	ordinaryOccurrence, ok := contract.Operations.EffectOccurrenceID(owner, 0)
 	if !ok {
 		t.Fatal("ordinary occurrence unavailable")
 	}
-	callbackOccurrence, ok := contract.callbackEffectOccurrenceID(callback, 0)
+	callbackOccurrence, ok := contract.Operations.CallbackEffectOccurrenceID(callback, 0)
 	if !ok || callbackOccurrence == ordinaryOccurrence {
 		t.Fatal("ordinary and callback occurrences were conflated")
 	}
-	if ordinaryFamily, ok := contract.effectRowFamilyID(owner); !ok {
+	if ordinaryFamily, ok := contract.Operations.EffectRowFamilyID(owner); !ok {
 		t.Fatal("ordinary family unavailable")
-	} else if callbackFamily, ok := contract.callbackEffectRowFamilyID(callback); !ok || callbackFamily == ordinaryFamily {
+	} else if callbackFamily, ok := contract.Operations.CallbackEffectRowFamilyID(callback); !ok || callbackFamily == ordinaryFamily {
 		t.Fatal("ordinary and callback families were conflated")
 	}
 }
@@ -178,27 +178,27 @@ func TestEffectIdentityCallbackTailChangesFamilyOnly(t *testing.T) {
 	variable := vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: 1, ValueArgs: []vocabulary.ValueFormal{0, 1}, RowArgs: []vocabulary.RowVar{0}}}, Tail: vocabulary.RowVariable, Var: 0}
 	base, _, baseCallback := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityCallbackOperation("effect-callback", closed, vocabulary.RowSpec{Tail: vocabulary.RowClosed})), "effect-callback")
 	changed, _, changedCallback := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityCallbackOperation("effect-callback", variable, vocabulary.RowSpec{Tail: vocabulary.RowClosed})), "effect-callback")
-	baseDescriptor, ok := base.CallbackEffectDescriptorID(baseCallback, 0)
+	baseDescriptor, ok := base.Operations.CallbackEffectDescriptorID(baseCallback, 0)
 	if !ok {
 		t.Fatal("base callback descriptor unavailable")
 	}
-	changedDescriptor, ok := changed.CallbackEffectDescriptorID(changedCallback, 0)
+	changedDescriptor, ok := changed.Operations.CallbackEffectDescriptorID(changedCallback, 0)
 	if !ok || changedDescriptor != baseDescriptor {
 		t.Fatal("callback row tail changed descriptor")
 	}
-	baseOccurrence, ok := base.callbackEffectOccurrenceID(baseCallback, 0)
+	baseOccurrence, ok := base.Operations.CallbackEffectOccurrenceID(baseCallback, 0)
 	if !ok {
 		t.Fatal("base callback occurrence unavailable")
 	}
-	changedOccurrence, ok := changed.callbackEffectOccurrenceID(changedCallback, 0)
+	changedOccurrence, ok := changed.Operations.CallbackEffectOccurrenceID(changedCallback, 0)
 	if !ok || changedOccurrence != baseOccurrence {
 		t.Fatal("callback row tail changed occurrence")
 	}
-	baseFamily, ok := base.callbackEffectRowFamilyID(baseCallback)
+	baseFamily, ok := base.Operations.CallbackEffectRowFamilyID(baseCallback)
 	if !ok {
 		t.Fatal("base callback family unavailable")
 	}
-	changedFamily, ok := changed.callbackEffectRowFamilyID(changedCallback)
+	changedFamily, ok := changed.Operations.CallbackEffectRowFamilyID(changedCallback)
 	if !ok || changedFamily == baseFamily {
 		t.Fatal("callback row tail did not change family")
 	}
@@ -208,18 +208,18 @@ func TestEffectIdentityQueriesAllocateNothingAndReplay(t *testing.T) {
 	effects := vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: 2, ValueArgs: []vocabulary.ValueFormal{0, 1}, RowArgs: []vocabulary.RowVar{0}}}, Tail: vocabulary.RowClosed}
 	left, owner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", effects)), "effect-owner")
 	right, rightOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-owner", effects)), "effect-owner")
-	leftOperation, ok := left.EffectOperationID(owner)
+	leftOperation, ok := left.Operations.EffectOperationID(owner)
 	if !ok {
 		t.Fatal("left operation identity unavailable")
 	}
-	if rightOperation, ok := right.EffectOperationID(rightOwner); !ok || rightOperation != leftOperation {
+	if rightOperation, ok := right.Operations.EffectOperationID(rightOwner); !ok || rightOperation != leftOperation {
 		t.Fatal("equivalent reseal changed operation identity")
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		_, _ = left.EffectOperationID(owner)
-		_, _ = left.EffectDescriptorID(owner, 0)
-		_, _ = left.effectOccurrenceID(owner, 0)
-		_, _ = left.effectRowFamilyID(owner)
+		_, _ = left.Operations.EffectOperationID(owner)
+		_, _ = left.Operations.EffectDescriptorID(owner, 0)
+		_, _ = left.Operations.EffectOccurrenceID(owner, 0)
+		_, _ = left.Operations.EffectRowFamilyID(owner)
 	}); allocs != 0 {
 		t.Fatalf("effect identity queries allocated %f times", allocs)
 	}
@@ -228,7 +228,7 @@ func TestEffectIdentityQueriesAllocateNothingAndReplay(t *testing.T) {
 func TestEffectIdentityEmptyOrdinaryAndOpaqueFamiliesAreAvailable(t *testing.T) {
 	spec := effectIdentitySpec(effectIdentityOperation("effect-empty", vocabulary.RowSpec{Tail: vocabulary.RowClosed}))
 	left, owner, _ := firstEffectIdentityContract(t, spec, "effect-empty")
-	leftFamily, ok := left.effectRowFamilyID(owner)
+	leftFamily, ok := left.Operations.EffectRowFamilyID(owner)
 	if !ok || !leftFamily.Available() {
 		t.Fatal("empty ordinary effect family unavailable")
 	}
@@ -236,19 +236,19 @@ func TestEffectIdentityEmptyOrdinaryAndOpaqueFamiliesAreAvailable(t *testing.T) 
 	if !ok {
 		t.Fatal("opaque operation unavailable")
 	}
-	opaqueFamily, ok := left.effectRowFamilyID(opaque)
+	opaqueFamily, ok := left.Operations.EffectRowFamilyID(opaque)
 	if !ok || !opaqueFamily.Available() {
 		t.Fatal("opaque effect family unavailable")
 	}
 	right, rightOwner, _ := firstEffectIdentityContract(t, effectIdentitySpec(effectIdentityOperation("effect-empty", vocabulary.RowSpec{Tail: vocabulary.RowClosed})), "effect-empty")
-	if got, ok := right.effectRowFamilyID(rightOwner); !ok || got != leftFamily {
+	if got, ok := right.Operations.EffectRowFamilyID(rightOwner); !ok || got != leftFamily {
 		t.Fatal("empty ordinary family changed across reseal")
 	}
 	rightOpaque, ok := right.Operations.Opaque()
 	if !ok {
 		t.Fatal("opaque operation unavailable after reseal")
 	}
-	if got, ok := right.effectRowFamilyID(rightOpaque); !ok || got != opaqueFamily {
+	if got, ok := right.Operations.EffectRowFamilyID(rightOpaque); !ok || got != opaqueFamily {
 		t.Fatal("opaque family changed across reseal")
 	}
 }
@@ -257,14 +257,14 @@ func TestEffectIdentityCallbackEmptyFamilyIgnoresOwnerABI(t *testing.T) {
 	empty := vocabulary.RowSpec{Tail: vocabulary.RowClosed}
 	baseSpec := effectIdentitySpec(effectIdentityCallbackOperation("effect-callback-empty", empty, empty))
 	base, _, baseCallback := firstEffectIdentityContract(t, baseSpec, "effect-callback-empty")
-	baseFamily, ok := base.callbackEffectRowFamilyID(baseCallback)
+	baseFamily, ok := base.Operations.CallbackEffectRowFamilyID(baseCallback)
 	if !ok || !baseFamily.Available() {
 		t.Fatal("empty callback effect family unavailable")
 	}
 	changedOperation := effectIdentityCallbackOperation("effect-callback-empty", empty, empty)
 	changedOperation.Input.Fixed[0] = testInteger
 	changed, _, changedCallback := firstEffectIdentityContract(t, effectIdentitySpec(changedOperation), "effect-callback-empty")
-	if got, ok := changed.callbackEffectRowFamilyID(changedCallback); !ok || got != baseFamily {
+	if got, ok := changed.Operations.CallbackEffectRowFamilyID(changedCallback); !ok || got != baseFamily {
 		t.Fatal("empty callback family churned with owner ABI")
 	}
 }
@@ -287,7 +287,7 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 		if !ok {
 			t.Fatal("formal ABI operation absent")
 		}
-		return contract.EffectOperationID(op)
+		return contract.Operations.EffectOperationID(op)
 	}
 	formalNumber, ok := formalID(formalSpec(testNumber))
 	if !ok {
@@ -313,7 +313,7 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 		if !ok {
 			t.Fatal("Values ABI operation absent")
 		}
-		return contract.EffectOperationID(op)
+		return contract.Operations.EffectOperationID(op)
 	}
 	valuesString, ok := valuesID(valuesSpec(testString))
 	if !ok {
@@ -343,11 +343,11 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 	if !ok {
 		t.Fatal("two-row-formal operation absent")
 	}
-	rowOneID, ok := rowOne.EffectOperationID(rowOneOp)
+	rowOneID, ok := rowOne.Operations.EffectOperationID(rowOneOp)
 	if !ok {
 		t.Fatal("one-row-formal identity unavailable")
 	}
-	rowTwoID, ok := rowTwo.EffectOperationID(rowTwoOp)
+	rowTwoID, ok := rowTwo.Operations.EffectOperationID(rowTwoOp)
 	if !ok || rowTwoID == rowOneID {
 		t.Fatal("row formal count mutation did not change EffectOperationID")
 	}

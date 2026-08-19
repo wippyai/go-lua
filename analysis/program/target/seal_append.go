@@ -80,7 +80,7 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		valuesHandle[key] = handle
 	}
 	operationInput := valuesHandle[inputKey]
-	callbackIDs, _, err = c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
+	callbackIDs, err = c.appendCallbacks(builder, op, draft.callbacks, valuesHandle, callbackIDs)
 	if err != nil {
 		return err
 	}
@@ -97,27 +97,29 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		return subedgeErr
 	}
 	operationSubedges := subedgeRange
-	effectRange, err := c.appendEffects(builder, effectOwnerOperation, draft.effects)
-	if err != nil {
-		return err
+	operationEffects := make([]int, len(draft.effects))
+	for index, effect := range draft.effects {
+		handle, appendErr := builder.AppendEffect(effectInput(effect))
+		if appendErr != nil {
+			return appendErr
+		}
+		operationEffects[index] = handle
 	}
-	operationEffects := effectRange
 	operationRelation := uint32(0)
 	if draft.subedgeRelation != nil {
-		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, operationSubedges, operationOutcomes, operationEffects)
+		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, operationSubedges, operationOutcomes, len(operationEffects))
 		if branchErr != nil {
 			return branchErr
 		}
 		operationRelation = branch
 	}
 	c.operations = append(c.operations, operationRow{
-		subedges: operationSubedges, subedgeRelation: operationRelation, effects: operationEffects,
-		effectTail: draft.effectTail, effectVar: draft.effectVar,
+		subedges: operationSubedges, subedgeRelation: operationRelation,
 	})
 	query := operationvalue.QueryOperationInput{
 		Input: operationInput, RowFormals: draft.rowFormals,
 		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
-		EffectIndices: make([]int, operationEffects.len()),
+		EffectIndices: operationEffects,
 		TypeFormals:   make([]vocabulary.Type, len(draft.constraints)),
 		ValuesTypes:   make([]vocabulary.Type, len(draft.valuesTypes)),
 	}
@@ -132,9 +134,6 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 			return errors.New("target: unresolved Values variable type")
 		}
 		query.ValuesTypes[index] = handle
-	}
-	for index := range query.EffectIndices {
-		query.EffectIndices[index] = int(operationEffects.start) + index
 	}
 	for _, outcome := range draft.outcomes {
 		key, keyErr := outcome.values.key()
@@ -272,7 +271,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 		},
 	}}
 	issuedOpaque := callbackIDForOpaque(c.Operations, opaque)
-	_, _, err = c.appendCallbacks(builder, opaque, []callbackDraft{{
+	_, err = c.appendCallbacks(builder, opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,
 		arguments: unknownDraft,
@@ -285,7 +284,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 	if err != nil {
 		return err
 	}
-	c.operations = append(c.operations, operationRow{effectTail: vocabulary.RowUnknownOpen})
+	c.operations = append(c.operations, operationRow{})
 	return builder.AppendQueryOperation(opaque, operationvalue.QueryOperationInput{
 		Input: unknown,
 		Outcomes: []operationvalue.QueryOutcomeInput{

@@ -8,123 +8,62 @@ import (
 	"sort"
 )
 
-func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, indexRange, error) {
-	rangeOut, err := checkedStoredRange("callback table", len(c.callbacks), len(input))
-	if err != nil {
-		return nil, indexRange{}, err
+func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, error) {
+	if _, err := checkedStoredRange("callback table", len(c.callbacks), len(input)); err != nil {
+		return nil, err
 	}
 	if len(issued) != len(input) {
-		return nil, indexRange{}, errors.New("target: operation callback geometry mismatch")
+		return nil, errors.New("target: operation callback geometry mismatch")
 	}
 	ids := append([]vocabulary.CallbackID(nil), issued...)
 	for index := range input {
 		callback := &input[index]
-		effects, effectErr := c.appendEffects(builder, effectOwnerCallback, callback.effects.effects)
-		if effectErr != nil {
-			return nil, indexRange{}, effectErr
-		}
 		id := issued[index]
 		if id == 0 {
-			return nil, indexRange{}, errors.New("target: operation callback geometry has zero handle")
+			return nil, errors.New("target: operation callback geometry has zero handle")
 		}
 		ids[callback.source] = id
 		callback.sealed = id
+		effects := make([]operationvalue.EffectInput, len(callback.effects.effects))
+		for effectIndex, effect := range callback.effects.effects {
+			effects[effectIndex] = effectInput(effect)
+		}
+		if err := builder.AppendCallbackEffects(id, callback.effects.tail, callback.effects.variable, effects); err != nil {
+			return nil, err
+		}
 		arguments, valuesErr := lookupDraftValues(values, callback.arguments)
 		if valuesErr != nil {
-			return nil, indexRange{}, valuesErr
+			return nil, valuesErr
 		}
 		var outcomes [5]vocabulary.Values
 		for terminal := range callback.outcomes {
 			value, terminalErr := lookupDraftValues(values, callback.outcomes[terminal])
 			if terminalErr != nil {
-				return nil, indexRange{}, terminalErr
+				return nil, terminalErr
 			}
 			outcomes[terminal] = value
 		}
 		c.callbacks = append(c.callbacks, callbackRow{
 			function: callback.function, admission: callback.admission,
 			arguments: arguments, outcomes: outcomes,
-			effects: effects, effectTail: callback.effects.tail, effectVar: callback.effects.variable,
 		})
 	}
-	return ids, rangeOut, nil
+	return ids, nil
 }
 
-func (c *Contract) appendEffects(builder *operationvalue.QueryBuilder, owner effectOwner, input []effectDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("effect table", len(c.effects), len(input))
-	if err != nil {
-		return indexRange{}, err
+func effectInput(effect effectDraft) operationvalue.EffectInput {
+	input := operationvalue.EffectInput{
+		Target:         effect.target,
+		Values:         append([]vocabulary.ValueFormal(nil), effect.values...),
+		Types:          append([]vocabulary.TypeFormal(nil), effect.types...),
+		ValuesVar:      append([]vocabulary.ValuesVar(nil), effect.valuesVar...),
+		Rows:           append([]vocabulary.RowVar(nil), effect.rows...),
+		HasPublication: effect.hasPublication,
 	}
-	valueArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.values) }, "effect value argument pool")
-	if err != nil {
-		return indexRange{}, err
+	if effect.hasPublication {
+		input.Publication = effect.publication
 	}
-	typeArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.types) }, "effect type argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	valuesArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.valuesVar) }, "effect Values argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	rowArgs, err := totalEffectArguments(input, func(effect effectDraft) int { return len(effect.rows) }, "effect row argument pool")
-	if err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect value argument pool", len(c.effectVals), valueArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect type argument pool", len(c.effectType), typeArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect Values argument pool", len(c.effectVars), valuesArgs); err != nil {
-		return indexRange{}, err
-	}
-	if _, err := checkedStoredRange("effect row argument pool", len(c.effectRows), rowArgs); err != nil {
-		return indexRange{}, err
-	}
-	for _, effect := range input {
-		row := effectRow{owner: owner, target: effect.target}
-		if effect.hasPublication {
-			descriptor, publicationErr := freezePublicationEffect(effect.publication)
-			if publicationErr != nil {
-				return indexRange{}, publicationErr
-			}
-			row.publication, row.hasPublication = descriptor, true
-		}
-		if row.values, err = appendStoredRange(&c.effectVals, effect.values, "effect value argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.types, err = appendStoredRange(&c.effectType, effect.types, "effect type argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.valuesVar, err = appendStoredRange(&c.effectVars, effect.valuesVar, "effect Values argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		if row.rows, err = appendStoredRange(&c.effectRows, effect.rows, "effect row argument pool"); err != nil {
-			return indexRange{}, err
-		}
-		c.effects = append(c.effects, row)
-		query := operationvalue.EffectInput{
-			Target: effect.target, Values: append([]vocabulary.ValueFormal(nil), effect.values...),
-			Types:          append([]vocabulary.TypeFormal(nil), effect.types...),
-			ValuesVar:      append([]vocabulary.ValuesVar(nil), effect.valuesVar...),
-			Rows:           append([]vocabulary.RowVar(nil), effect.rows...),
-			HasPublication: row.hasPublication,
-		}
-		if row.hasPublication {
-			query.Publication = vocabulary.PublicationEffectSpec{
-				Kind: row.publication.Kind(), Subject: row.publication.Subject(),
-				Destination: row.publication.DestinationRole(), Context: row.publication.Context(),
-				Escape: row.publication.Escape(), Mutability: row.publication.Mutability(),
-				Lifetime: row.publication.Lifetime(),
-			}
-		}
-		if err := builder.AppendQueryEffect(query); err != nil {
-			return indexRange{}, err
-		}
-	}
-	return rangeOut, nil
+	return input
 }
 
 func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {

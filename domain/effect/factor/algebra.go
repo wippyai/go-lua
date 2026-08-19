@@ -378,7 +378,7 @@ func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentI
 		return Atom{}, false
 	}
 	callbackOwner, ownerOK := a.contract.Operations.CallbackOwner(callback)
-	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
+	tail, _, tailOK := a.contract.Operations.CallbackEffectTail(callback)
 	if !ownerOK || callbackOwner != owner || !tailOK || tail != vocabulary.RowUnknownOpen {
 		return Atom{}, false
 	}
@@ -434,12 +434,12 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 		if !ok {
 			return Value{}, false
 		}
-		callbackTail, _, ok := a.contract.CallbackEffectTail(callback)
+		callbackTail, _, ok := a.contract.Operations.CallbackEffectTail(callback)
 		if !ok || (callbackTail != vocabulary.RowClosed && callbackTail != vocabulary.RowUnknownOpen) {
 			return Value{}, false
 		}
 		var added bool
-		atomCount, added = checkedIntAdd(atomCount, a.contract.CallbackEffectCount(callback))
+		atomCount, added = checkedIntAdd(atomCount, a.contract.Operations.CallbackEffectCount(callback))
 		if !added {
 			return Value{}, false
 		}
@@ -457,7 +457,7 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 		if !ok {
 			return Value{}, false
 		}
-		for effect := 0; effect < a.contract.CallbackEffectCount(callback); effect++ {
+		for effect := 0; effect < a.contract.Operations.CallbackEffectCount(callback); effect++ {
 			atom, ok := a.CallbackEffectAtom(root, applicationID, operation, callback, effect)
 			if !ok {
 				return Value{}, false
@@ -493,7 +493,7 @@ func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID
 		if !ok {
 			return Value{}, false
 		}
-		callbackTail, _, ok := a.contract.CallbackEffectTail(callback)
+		callbackTail, _, ok := a.contract.Operations.CallbackEffectTail(callback)
 		if !ok || callbackTail == vocabulary.RowVariable {
 			return Value{}, false
 		}
@@ -855,7 +855,7 @@ func (a *Algebra) sealCapacity() bool {
 			if !callbackOK {
 				return false
 			}
-			occurrences, ok = checkedAdd(occurrences, uint64(a.contract.CallbackEffectCount(callback)))
+			occurrences, ok = checkedAdd(occurrences, uint64(a.contract.Operations.CallbackEffectCount(callback)))
 			if !ok {
 				return false
 			}
@@ -951,8 +951,8 @@ func (a *Algebra) validateOrdinaryInputs(owner vocabulary.Operation, effect int)
 }
 
 func (a *Algebra) validateCallbackInputs(owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) bool {
-	for i := 0; i < a.contract.CallbackEffectValueArgumentCount(callback, effect); i++ {
-		formal, ok := a.contract.CallbackEffectValueArgumentAt(callback, effect, i)
+	for i := 0; i < a.contract.Operations.CallbackEffectValueArgumentCount(callback, effect); i++ {
+		formal, ok := a.contract.Operations.CallbackEffectValueArgumentAt(callback, effect, i)
 		if !ok {
 			return false
 		}
@@ -960,13 +960,13 @@ func (a *Algebra) validateCallbackInputs(owner vocabulary.Operation, callback vo
 			return false
 		}
 	}
-	targetOperation, targetOK := a.contract.CallbackEffectTarget(callback, effect)
+	targetOperation, targetOK := a.contract.Operations.CallbackEffectTarget(callback, effect)
 	if !targetOK {
 		return false
 	}
 	tailArgument, tailed := a.inputTailArgument(targetOperation)
-	for i := 0; i < a.contract.CallbackEffectValuesArgumentCount(callback, effect); i++ {
-		formal, ok := a.contract.CallbackEffectValuesArgumentAt(callback, effect, i)
+	for i := 0; i < a.contract.Operations.CallbackEffectValuesArgumentCount(callback, effect); i++ {
+		formal, ok := a.contract.Operations.CallbackEffectValuesArgumentAt(callback, effect, i)
 		if !ok {
 			return false
 		}
