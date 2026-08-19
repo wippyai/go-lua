@@ -642,11 +642,11 @@ func TestAdmissionFailureTailContributesToTheOneValuesVarClassTable(t *testing.T
 	if !found {
 		t.Fatal("admission-tail-string operation missing")
 	}
-	edge, found := strings.SubedgeAt(op, 0)
+	edge, found := strings.Operations.SubedgeAt(op, 0)
 	if !found {
 		t.Fatal("admission-tail-string Subedge missing")
 	}
-	failure, found := strings.AdmissionFailure(edge)
+	failure, found := strings.Operations.SubedgeAdmissionFailure(edge)
 	if !found {
 		t.Fatal("admission failure source missing")
 	}

@@ -313,7 +313,7 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 		arguments, argumentsOK := contract.CallbackArguments(callback)
 		admission, admissionOK := contract.callbackAdmission(callback)
 		lifecycle, lifecycleOK := contract.Operations.CallbackLifecycle(callback)
-		subedge, subedgeOK := contract.callbackSubedge(callback)
+		subedge, subedgeOK := contract.Operations.CallbackSubedge(callback)
 		fmt.Fprintf(out, "callback[%d]=%d/%v:owner=%d/%v,function=%d/%d/%v,args=%d/%v,admission=%d/%v,lifecycle=%d/%v;",
 			index, callback, callbackOK, owner, ownerOK, function.Kind, function.Ordinal, functionOK,
 			arguments, argumentsOK, admission, admissionOK, lifecycle, lifecycleOK)
@@ -366,37 +366,37 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 }
 
 func writeSubedgeSnapshot(out *strings.Builder, contract *Contract, op vocabulary.Operation) {
-	for index := 0; index < contract.SubedgeCount(op); index++ {
-		edge, edgeOK := contract.SubedgeAt(op, index)
-		owner, ownerOK := contract.subedgeOwner(edge)
-		role, roleOK := contract.subedgeRole(edge)
-		family, familyOK := contract.SubedgeFamily(edge)
-		callee, calleeOK := contract.subedgeCallee(edge)
-		admission, admissionOK := contract.subedgeAdmission(edge)
-		arguments, argumentsOK := contract.SubedgeArguments(edge)
-		ruleEntry, ruleEntryOK := contract.subedgeRuleEntry(edge)
+	for index := 0; index < contract.Operations.SubedgeCount(op); index++ {
+		edge, edgeOK := contract.Operations.SubedgeAt(op, index)
+		owner, ownerOK := contract.Operations.SubedgeOwner(edge)
+		role, roleOK := contract.Operations.SubedgeRole(edge)
+		family, familyOK := contract.Operations.SubedgeFamily(edge)
+		callee, calleeOK := contract.Operations.SubedgeCallee(edge)
+		admission, admissionOK := contract.Operations.SubedgeAdmission(edge)
+		arguments, argumentsOK := contract.Operations.SubedgeArguments(edge)
+		ruleEntry, ruleEntryOK := contract.Operations.SubedgeRuleEntry(edge)
 		fmt.Fprintf(out, "subedge[%d]=%d/%v:owner=%d/%v,role=%d/%v,family=%d/%v,callee=%d/%v,admission=%d/%v,args=%d/%v,rule-entry=%t/%v;",
 			index, edge, edgeOK, owner, ownerOK, role, roleOK, family, familyOK, callee, calleeOK, admission, admissionOK, arguments, argumentsOK, ruleEntry, ruleEntryOK)
 		switch callee {
 		case vocabulary.SubedgeCalleeCallback:
-			callback, callbackOK := contract.subedgeCallback(edge)
+			callback, callbackOK := contract.Operations.SubedgeCallback(edge)
 			fmt.Fprintf(out, "subedge-callback=%d/%v;", callback, callbackOK)
 		case vocabulary.SubedgeCalleeCapturedInitialRead:
-			root, key, readOK := contract.subedgeCapturedInitialRead(edge)
+			root, key, readOK := contract.Operations.SubedgeCapturedInitialRead(edge)
 			fmt.Fprintf(out, "subedge-read=%d/%d/%v;", root, key, readOK)
 		case vocabulary.SubedgeCalleeMetaKey:
-			key, keyOK := contract.subedgeMetaKey(edge)
+			key, keyOK := contract.Operations.SubedgeMetaKey(edge)
 			fmt.Fprintf(out, "subedge-meta=%d/%v;", key, keyOK)
 		}
-		failure, failureOK := contract.AdmissionFailure(edge)
-		admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK := contract.admissionRoute(edge)
+		failure, failureOK := contract.Operations.SubedgeAdmissionFailure(edge)
+		admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK := contract.Operations.SubedgeAdmissionRoute(edge)
 		fmt.Fprintf(out, "subedge-admission=%d/%v,route=%d/%d/%d/%d/%d/%d/%d/%d/%v;", failure, failureOK, admissionRoute, admissionAdjustment, admissionResult, admissionPlacement, admissionOffset, admissionOutcome, admissionSibling, admissionDestination, admissionRouteOK)
 		for _, kind := range []flowkind.OutcomeKind{
 			flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 			flowkind.OutcomeYield, flowkind.OutcomeCancel,
 		} {
-			terminal, terminalOK := contract.SubedgeTerminal(edge, kind)
-			route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK := contract.subedgeRouteAt(edge, kind)
+			terminal, terminalOK := contract.Operations.SubedgeTerminal(edge, kind)
+			route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK := contract.Operations.SubedgeRouteAt(edge, kind)
 			fmt.Fprintf(out, "subedge-terminal[%d]=%d/%v,route=%d/%d/%d/%d/%d/%d/%d/%d/%v;",
 				kind, terminal, terminalOK, route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK)
 		}

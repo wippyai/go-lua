@@ -11,23 +11,11 @@ import (
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 )
 
-// operationRow is the Target aggregate's cross-subsystem relation index. The
-// operation package owns operation handles, outcomes, callbacks, every
-// continuation/output relation, and both effect populations; this row retains
-// only Target-owned invocation relations.
+// operationRow retains only Target-owned callback-release geometry. Operation
+// Core owns the canonical operation handle and all operation/subedge query
+// relations.
 type operationRow struct {
-	subedges        indexRange
-	subedgeRelation uint32
-	releases        indexRange
-}
-
-type subedgeRelationRow struct {
-	operand       vocabulary.ValueFormal
-	selector      uint32
-	subedge       vocabulary.SubedgeID
-	resultOutcome uint32
-	result        uint32
-	effects       indexRange
+	releases indexRange
 }
 
 type callbackRow struct {
@@ -35,45 +23,7 @@ type callbackRow struct {
 	admission schematype.CallableAdmission
 	arguments vocabulary.Values
 	outcomes  [5]vocabulary.Values
-	subedge   vocabulary.SubedgeID
 	release   uint32
-}
-
-type subedgeRow struct {
-	owner            vocabulary.Operation
-	role             uint32
-	family           vocabulary.SubedgeFamily
-	callee           vocabulary.SubedgeCalleeKind
-	callback         vocabulary.CallbackID
-	readRoot         vocabulary.InitialRoot
-	readKey          vocabulary.ExactKey
-	metaKey          vocabulary.ExactKey
-	admission        schematype.CallableAdmission
-	arguments        vocabulary.Values
-	ruleEntry        bool
-	argumentOrigins  indexRange
-	outcomes         [5]vocabulary.Values
-	admissionFailure vocabulary.Values
-	admissionRoute   subedgeRouteRow
-	routes           [5]subedgeRouteRow
-}
-
-type subedgeArgumentOriginRow struct {
-	segment vocabulary.ArgumentSegment
-	index   uint32
-	kind    vocabulary.ArgumentSource
-	source  vocabulary.InputSource
-}
-
-type subedgeRouteRow struct {
-	route       vocabulary.SubedgeRoute
-	adjustment  vocabulary.Adjustment
-	result      vocabulary.Values
-	placement   vocabulary.Placement
-	offset      uint32
-	outcome     uint32
-	subedge     vocabulary.SubedgeID
-	destination vocabulary.Values
 }
 
 type callbackReleaseRow struct {
@@ -107,17 +57,13 @@ func (c *Contract) operation(op vocabulary.Operation) (operationRow, bool) {
 // hot query returns only scalar handles or values.
 type Contract struct {
 	bootvalue.Table
-	Operations             operationvalue.Core
-	operations             []operationRow
-	callbacks              []callbackRow
-	subedges               []subedgeRow
-	subedgeOrigins         []subedgeArgumentOriginRow
-	subedgeRelations       []subedgeRelationRow
-	subedgeRelationEffects []uint32
-	callbackReleases       []callbackReleaseRow
-	protocols              protocolvalue.Table
-	exactKeys              exactkey.Table
-	counts                 denominator.CountRows
+	Operations       operationvalue.Core
+	operations       []operationRow
+	callbacks        []callbackRow
+	callbackReleases []callbackReleaseRow
+	protocols        protocolvalue.Table
+	exactKeys        exactkey.Table
+	counts           denominator.CountRows
 	// identityColumns carries the identity plane's own columns. The layout is
 	// declared with the rest of the model; the values are written and read only
 	// by the identity altitude.

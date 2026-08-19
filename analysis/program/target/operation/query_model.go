@@ -12,6 +12,8 @@ import (
 type QueryOperationInput struct {
 	Input              vocabulary.Values
 	Outcomes           []QueryOutcomeInput
+	Subedges           []SubedgeInput
+	SubedgeRelation    *SubedgeRelationInput
 	Produced           []ProducedQueryInput
 	FreshResults       []FreshResultInput
 	CallbackResults    []CallbackResultInput
@@ -28,6 +30,58 @@ type QueryOperationInput struct {
 	RowFormals         uint32
 	EffectTail         vocabulary.RowTail
 	EffectVar          vocabulary.RowVar
+}
+
+// SubedgeInput is the neutral, already-resolved sealed declaration for one
+// typed internal application. Target resolves authoring references to owner
+// coordinates before this boundary; Core issues the global SubedgeID and
+// retains the immutable rows.
+type SubedgeInput struct {
+	Role             uint32
+	Family           vocabulary.SubedgeFamily
+	Callee           vocabulary.SubedgeCalleeKind
+	Callback         vocabulary.CallbackID
+	ReadRoot         vocabulary.InitialRoot
+	ReadKey          vocabulary.ExactKey
+	MetaKey          vocabulary.ExactKey
+	Admission        schematype.CallableAdmission
+	Arguments        vocabulary.Values
+	RuleEntry        bool
+	ArgumentOrigins  []SubedgeArgumentOriginInput
+	Outcomes         [5]vocabulary.Values
+	AdmissionFailure vocabulary.Values
+	AdmissionRoute   SubedgeRouteInput
+	Routes           [5]SubedgeRouteInput
+}
+
+type SubedgeArgumentOriginInput struct {
+	Segment vocabulary.ArgumentSegment
+	Index   uint32
+	Kind    vocabulary.ArgumentSource
+	Source  vocabulary.InputSource
+}
+
+// SubedgeRouteInput uses a zero-based canonical sibling rank. Core converts
+// that rank to a global SubedgeID only after the owner range is sealed.
+type SubedgeRouteInput struct {
+	Route       vocabulary.SubedgeRoute
+	Adjustment  vocabulary.Adjustment
+	Result      vocabulary.Values
+	Placement   vocabulary.Placement
+	Offset      uint32
+	Outcome     uint32
+	HasSibling  bool
+	SiblingRank uint32
+	Destination vocabulary.Values
+}
+
+type SubedgeRelationInput struct {
+	Operand       vocabulary.ValueFormal
+	Selector      uint32
+	SubedgeRank   uint32
+	ResultOutcome uint32
+	Result        uint32
+	EffectAliases []uint32
 }
 
 // ProducedQueryInput is the neutral, already-resolved relation handed to the

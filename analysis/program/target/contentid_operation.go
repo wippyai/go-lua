@@ -200,12 +200,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	subedges := c.SubedgeCount(op)
+	subedges := c.Operations.SubedgeCount(op)
 	if err := w.Count(uint64(subedges)); err != nil {
 		return err
 	}
 	for index := 0; index < subedges; index++ {
-		edge, found := c.SubedgeAt(op, index)
+		edge, found := c.Operations.SubedgeAt(op, index)
 		if !found {
 			return errors.New("target: malformed subedge")
 		}
@@ -413,7 +413,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
-	if operand, selector, subedge, resultOutcome, result, present := c.OperationSubedgeRelation(op); present {
+	if operand, selector, subedge, resultOutcome, result, present := c.Operations.OperationSubedgeRelation(op); present {
 		if err := w.Bool(true); err != nil {
 			return err
 		}
@@ -425,19 +425,19 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 				return err
 			}
 		}
-		role, found := c.subedgeRole(subedge)
+		role, found := c.Operations.SubedgeRole(subedge)
 		if !found || role == 0 {
 			return errors.New("target: malformed operation subedge relation")
 		}
 		if err := w.Uint(uint64(role)); err != nil {
 			return err
 		}
-		aliases := c.OperationSubedgeRelationEffectAliasCount(op)
+		aliases := c.Operations.OperationSubedgeRelationEffectAliasCount(op)
 		if err := w.Count(uint64(aliases)); err != nil {
 			return err
 		}
 		for index := 0; index < aliases; index++ {
-			effect, found := c.OperationSubedgeRelationEffectAliasAt(op, index)
+			effect, found := c.Operations.OperationSubedgeRelationEffectAliasAt(op, index)
 			if !found {
 				return errors.New("target: malformed operation subedge relation effect alias")
 			}

@@ -91,12 +91,6 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		}
 		outcomeValues = append(outcomeValues, valuesHandle[key])
 	}
-	operationOutcomes := indexRange{end: uint32(c.Operations.OutcomeCount(op))}
-	subedgeRange, subedgeErr := c.appendSubedges(op, draft.subedges, callbackIDs, valuesHandle, keys)
-	if subedgeErr != nil {
-		return subedgeErr
-	}
-	operationSubedges := subedgeRange
 	operationEffects := make([]int, len(draft.effects))
 	for index, effect := range draft.effects {
 		handle, appendErr := builder.AppendEffect(effectInput(effect))
@@ -105,23 +99,18 @@ func (c *Contract) appendOperation(builder *operationvalue.QueryBuilder, op voca
 		}
 		operationEffects[index] = handle
 	}
-	operationRelation := uint32(0)
-	if draft.subedgeRelation != nil {
-		branch, branchErr := c.appendSubedgeRelation(op, *draft.subedgeRelation, operationSubedges, operationOutcomes, len(operationEffects))
-		if branchErr != nil {
-			return branchErr
-		}
-		operationRelation = branch
+	subedges, subedgeRelation, subedgeErr := c.querySubedgeInputs(draft, callbackIDs, valuesHandle, keys, len(operationEffects))
+	if subedgeErr != nil {
+		return subedgeErr
 	}
-	c.operations = append(c.operations, operationRow{
-		subedges: operationSubedges, subedgeRelation: operationRelation,
-	})
+	c.operations = append(c.operations, operationRow{})
 	query := operationvalue.QueryOperationInput{
 		Input: operationInput, RowFormals: draft.rowFormals,
 		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
 		EffectIndices: operationEffects,
-		TypeFormals:   make([]vocabulary.Type, len(draft.constraints)),
-		ValuesTypes:   make([]vocabulary.Type, len(draft.valuesTypes)),
+		Subedges:      subedges, SubedgeRelation: subedgeRelation,
+		TypeFormals: make([]vocabulary.Type, len(draft.constraints)),
+		ValuesTypes: make([]vocabulary.Type, len(draft.valuesTypes)),
 	}
 	for index, constraint := range draft.constraints {
 		// A missing declaration is the canonical unconstrained formal and is

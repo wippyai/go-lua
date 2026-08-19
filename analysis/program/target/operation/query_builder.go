@@ -264,6 +264,9 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 		core.query.outcomeRows = append(core.query.outcomeRows, queryOutcomeRow{kind: outcome.Kind, values: outcome.Values})
 	}
 	row.outcomes.end = len(core.query.outcomeRows)
+	if err := core.appendQuerySubedges(op, &row, input); err != nil {
+		return err
+	}
 	if err := core.appendQueryContinuation(op, &row, input); err != nil {
 		return err
 	}

@@ -8,6 +8,112 @@ import (
 	"sort"
 )
 
+// querySubedgeInputs resolves the Target draft's Values and exact-key
+// declarations into the neutral operation-owner boundary. No Target row or
+// draft escapes into operation.Core.
+func (c *Contract) querySubedgeInputs(draft *operationDraft, callbacks []vocabulary.CallbackID, values map[string]vocabulary.Values, keys exactkey.Table, effectCount int) ([]operationvalue.SubedgeInput, *operationvalue.SubedgeRelationInput, error) {
+	if draft == nil {
+		return nil, nil, errors.New("target: nil subedge draft")
+	}
+	rows := make([]operationvalue.SubedgeInput, len(draft.subedges))
+	for index, edge := range draft.subedges {
+		arguments, err := lookupDraftValues(values, edge.arguments)
+		if err != nil {
+			return nil, nil, err
+		}
+		row := operationvalue.SubedgeInput{
+			Role: edge.role, Family: edge.family, Callee: edge.callee,
+			Admission: edge.admission, Arguments: arguments, RuleEntry: edge.ruleEntry,
+		}
+		for terminal := range edge.outcomes {
+			value, valueErr := lookupDraftValues(values, edge.outcomes[terminal])
+			if valueErr != nil {
+				return nil, nil, valueErr
+			}
+			row.Outcomes[terminal] = value
+		}
+		failure, failureErr := lookupDraftValues(values, edge.admissionFailure)
+		if failureErr != nil {
+			return nil, nil, failureErr
+		}
+		row.AdmissionFailure = failure
+		row.ArgumentOrigins = make([]operationvalue.SubedgeArgumentOriginInput, len(edge.argumentOrigins))
+		for originIndex, origin := range edge.argumentOrigins {
+			row.ArgumentOrigins[originIndex] = operationvalue.SubedgeArgumentOriginInput{
+				Segment: origin.segment, Index: origin.index, Kind: origin.kind, Source: origin.source,
+			}
+		}
+		if edge.callee == vocabulary.SubedgeCalleeCallback {
+			if edge.callback == 0 || int(edge.callback) > len(callbacks) || callbacks[edge.callback-1] == 0 {
+				return nil, nil, errors.New("target: unresolved callback subedge callee")
+			}
+			row.Callback = callbacks[edge.callback-1]
+		}
+		if edge.callee == vocabulary.SubedgeCalleeCapturedInitialRead {
+			if edge.readRootID == 0 {
+				return nil, nil, errors.New("target: unresolved captured initial read root")
+			}
+			key, keyErr := exactKeyHandle(keys, edge.readKey)
+			if keyErr != nil {
+				return nil, nil, keyErr
+			}
+			row.ReadRoot, row.ReadKey = edge.readRootID, key
+		}
+		if edge.callee == vocabulary.SubedgeCalleeMetaKey {
+			key, keyErr := exactKeyHandle(keys, edge.metaKey)
+			if keyErr != nil {
+				return nil, nil, keyErr
+			}
+			row.MetaKey = key
+		}
+		var routeErr error
+		row.AdmissionRoute, routeErr = c.querySubedgeRouteInput(edge.admissionRoute, values)
+		if routeErr != nil {
+			return nil, nil, routeErr
+		}
+		for terminal, route := range edge.routes {
+			row.Routes[terminal], routeErr = c.querySubedgeRouteInput(route, values)
+			if routeErr != nil {
+				return nil, nil, routeErr
+			}
+		}
+		rows[index] = row
+	}
+	var relation *operationvalue.SubedgeRelationInput
+	if draft.subedgeRelation != nil {
+		r := draft.subedgeRelation
+		effects := append([]uint32(nil), r.effects...)
+		if len(effects) > effectCount {
+			return nil, nil, errors.New("target: subedge relation effect alias outside operation")
+		}
+		relation = &operationvalue.SubedgeRelationInput{
+			Operand: r.operand, Selector: r.selector, SubedgeRank: r.subedgeRank,
+			ResultOutcome: r.resultOutcome, Result: r.result, EffectAliases: effects,
+		}
+	}
+	return rows, relation, nil
+}
+
+func (c *Contract) querySubedgeRouteInput(route subedgeRouteDraft, values map[string]vocabulary.Values) (operationvalue.SubedgeRouteInput, error) {
+	result, resultErr := lookupDraftValues(values, route.result)
+	if resultErr != nil {
+		return operationvalue.SubedgeRouteInput{}, resultErr
+	}
+	destination := vocabulary.Values(0)
+	if route.destination.tail != 0 || route.destination.varID != 0 || route.destination.tailType != "" || len(route.destination.types) != 0 || len(route.destination.suffix) != 0 {
+		var destinationErr error
+		destination, destinationErr = lookupDraftValues(values, route.destination)
+		if destinationErr != nil {
+			return operationvalue.SubedgeRouteInput{}, destinationErr
+		}
+	}
+	return operationvalue.SubedgeRouteInput{
+		Route: route.route, Adjustment: route.adjustment, Result: result,
+		Placement: route.placement, Offset: route.offset, Outcome: route.outcome,
+		HasSibling: route.subedge != 0, SiblingRank: route.subedgeRank, Destination: destination,
+	}, nil
+}
+
 func (c *Contract) appendCallbacks(builder *operationvalue.QueryBuilder, owner vocabulary.Operation, input []callbackDraft, values map[string]vocabulary.Values, issued []vocabulary.CallbackID) ([]vocabulary.CallbackID, error) {
 	if _, err := checkedStoredRange("callback table", len(c.callbacks), len(input)); err != nil {
 		return nil, err
@@ -117,106 +223,6 @@ func (c *Contract) appendCallbackReleases(drafts []operationDraft) error {
 		}
 	}
 	return nil
-}
-
-func (c *Contract) appendSubedges(owner vocabulary.Operation, input []subedgeDraft, callbacks []vocabulary.CallbackID, values map[string]vocabulary.Values, keys exactkey.Table) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("subedge table", len(c.subedges), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	ids := make([]vocabulary.SubedgeID, len(input))
-	for index := range input {
-		if input[index].source < 0 || input[index].source >= len(ids) {
-			return indexRange{}, errors.New("target: malformed subedge source")
-		}
-		handle, handleErr := checkedStoredHandle("subedge table", len(c.subedges)+index)
-		if handleErr != nil {
-			return indexRange{}, handleErr
-		}
-		ids[input[index].source] = vocabulary.SubedgeID(handle)
-		input[index].sealed = vocabulary.SubedgeID(handle)
-	}
-	for index := range input {
-		edge := input[index]
-		arguments, valuesErr := lookupDraftValues(values, edge.arguments)
-		if valuesErr != nil {
-			return indexRange{}, valuesErr
-		}
-		row := subedgeRow{
-			owner: owner, role: edge.role, family: edge.family, callee: edge.callee,
-			admission: edge.admission, arguments: arguments, ruleEntry: edge.ruleEntry,
-		}
-		origins, originsErr := c.appendSubedgeArgumentOrigins(edge.argumentOrigins)
-		if originsErr != nil {
-			return indexRange{}, originsErr
-		}
-		row.argumentOrigins = origins
-		if edge.callee == vocabulary.SubedgeCalleeCallback {
-			if edge.callback == 0 || int(edge.callback) > len(callbacks) || callbacks[edge.callback-1] == 0 {
-				return indexRange{}, errors.New("target: unresolved callback subedge callee")
-			}
-			row.callback = callbacks[edge.callback-1]
-			callbackIndex := uint32(row.callback) - 1
-			if c.callbacks[callbackIndex].subedge != 0 {
-				return indexRange{}, errors.New("target: callback has multiple direct subedges")
-			}
-			c.callbacks[callbackIndex].subedge = ids[edge.source]
-		}
-		if edge.callee == vocabulary.SubedgeCalleeCapturedInitialRead {
-			if edge.readRootID == 0 {
-				return indexRange{}, errors.New("target: unresolved captured initial read root")
-			}
-			key, keyErr := exactKeyHandle(keys, edge.readKey)
-			if keyErr != nil {
-				return indexRange{}, keyErr
-			}
-			row.readRoot, row.readKey = edge.readRootID, key
-		}
-		if edge.callee == vocabulary.SubedgeCalleeMetaKey {
-			key, keyErr := exactKeyHandle(keys, edge.metaKey)
-			if keyErr != nil {
-				return indexRange{}, keyErr
-			}
-			row.metaKey = key
-		}
-		for terminal := range edge.outcomes {
-			value, terminalErr := lookupDraftValues(values, edge.outcomes[terminal])
-			if terminalErr != nil {
-				return indexRange{}, terminalErr
-			}
-			row.outcomes[terminal] = value
-		}
-		failure, failureErr := lookupDraftValues(values, edge.admissionFailure)
-		if failureErr != nil {
-			return indexRange{}, failureErr
-		}
-		row.admissionFailure = failure
-		admissionRoute, admissionRouteErr := c.appendSubedgeRoute(edge.admissionRoute, ids, values)
-		if admissionRouteErr != nil {
-			return indexRange{}, admissionRouteErr
-		}
-		row.admissionRoute = admissionRoute
-		for terminal, route := range edge.routes {
-			item, itemErr := c.appendSubedgeRoute(route, ids, values)
-			if itemErr != nil {
-				return indexRange{}, itemErr
-			}
-			row.routes[terminal] = item
-		}
-		c.subedges = append(c.subedges, row)
-	}
-	return rangeOut, nil
-}
-
-func (c *Contract) appendSubedgeArgumentOrigins(input []subedgeArgumentOriginDraft) (indexRange, error) {
-	rangeOut, err := checkedStoredRange("subedge argument origin table", len(c.subedgeOrigins), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, origin := range input {
-		c.subedgeOrigins = append(c.subedgeOrigins, subedgeArgumentOriginRow(origin))
-	}
-	return rangeOut, nil
 }
 
 func compareCallbackRelease(left, right callbackReleaseRow) int {

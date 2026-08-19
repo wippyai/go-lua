@@ -38,27 +38,27 @@ func encodeBindingSegments(w *framing.Writer, c *Contract, op vocabulary.Operati
 // semantic roles and full Values endpoints. It deliberately never encodes a
 // Values handle as if handle equality were a flow edge.
 func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, edge vocabulary.SubedgeID) error {
-	edgeOwner, ok := c.subedgeOwner(edge)
+	edgeOwner, ok := c.Operations.SubedgeOwner(edge)
 	if !ok || edgeOwner != owner {
 		return errors.New("target: malformed subedge owner")
 	}
-	role, ok := c.subedgeRole(edge)
+	role, ok := c.Operations.SubedgeRole(edge)
 	if !ok || role == 0 {
 		return errors.New("target: malformed subedge role")
 	}
-	family, ok := c.SubedgeFamily(edge)
+	family, ok := c.Operations.SubedgeFamily(edge)
 	if !ok || !vocabulary.ValidSubedgeFamily(family) {
 		return errors.New("target: malformed subedge family")
 	}
-	callee, ok := c.subedgeCallee(edge)
+	callee, ok := c.Operations.SubedgeCallee(edge)
 	if !ok {
 		return errors.New("target: malformed subedge callee")
 	}
-	admission, ok := c.subedgeAdmission(edge)
+	admission, ok := c.Operations.SubedgeAdmission(edge)
 	if !ok || !admission.Available() {
 		return errors.New("target: malformed subedge admission")
 	}
-	arguments, ok := c.SubedgeArguments(edge)
+	arguments, ok := c.Operations.SubedgeArguments(edge)
 	if !ok {
 		return errors.New("target: malformed subedge arguments")
 	}
@@ -83,7 +83,7 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 			return errors.New("target: Call subedge lacks callee")
 		}
 	case vocabulary.SubedgeCalleeCallback:
-		callback, found := c.subedgeCallback(edge)
+		callback, found := c.Operations.SubedgeCallback(edge)
 		if !found {
 			return errors.New("target: malformed callback subedge callee")
 		}
@@ -91,7 +91,7 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 			return err
 		}
 	case vocabulary.SubedgeCalleeCapturedInitialRead:
-		root, key, found := c.subedgeCapturedInitialRead(edge)
+		root, key, found := c.Operations.SubedgeCapturedInitialRead(edge)
 		if !found {
 			return errors.New("target: malformed captured initial read")
 		}
@@ -102,7 +102,7 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 			return err
 		}
 	case vocabulary.SubedgeCalleeMetaKey:
-		key, found := c.subedgeMetaKey(edge)
+		key, found := c.Operations.SubedgeMetaKey(edge)
 		if !found {
 			return errors.New("target: malformed metakey subedge callee")
 		}
@@ -115,19 +115,19 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 	if err := encodeValues(w, c, arguments); err != nil {
 		return err
 	}
-	ruleEntry, found := c.subedgeRuleEntry(edge)
+	ruleEntry, found := c.Operations.SubedgeRuleEntry(edge)
 	if !found {
 		return errors.New("target: malformed subedge entry authority")
 	}
 	if err := w.Bool(ruleEntry); err != nil {
 		return err
 	}
-	originCount := c.argumentOriginCount(edge)
+	originCount := c.Operations.SubedgeArgumentOriginCount(edge)
 	if err := w.Count(uint64(originCount)); err != nil {
 		return err
 	}
 	for index := 0; index < originCount; index++ {
-		segment, ordinal, source, input, found := c.ArgumentOriginAt(edge, index)
+		segment, ordinal, source, input, found := c.Operations.SubedgeArgumentOriginAt(edge, index)
 		if !found || segment == vocabulary.ArgumentSegmentInvalid || source == vocabulary.ArgumentSourceInvalid {
 			return errors.New("target: malformed subedge argument origin")
 		}
@@ -149,7 +149,7 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 		flowkind.OutcomeYield, flowkind.OutcomeCancel,
 	} {
-		terminal, found := c.SubedgeTerminal(edge, kind)
+		terminal, found := c.Operations.SubedgeTerminal(edge, kind)
 		if !found {
 			return errors.New("target: malformed subedge terminal")
 		}
@@ -160,14 +160,14 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 			return err
 		}
 	}
-	failure, found := c.AdmissionFailure(edge)
+	failure, found := c.Operations.SubedgeAdmissionFailure(edge)
 	if !found {
 		return errors.New("target: malformed subedge admission failure")
 	}
 	if err := encodeValues(w, c, failure); err != nil {
 		return err
 	}
-	route, adjustment, result, placement, offset, outcome, sibling, destination, found := c.admissionRoute(edge)
+	route, adjustment, result, placement, offset, outcome, sibling, destination, found := c.Operations.SubedgeAdmissionRoute(edge)
 	if !found || route == vocabulary.RouteInvalid {
 		return errors.New("target: malformed subedge admission route")
 	}
@@ -178,7 +178,7 @@ func encodeSubedge(w *framing.Writer, c *Contract, owner vocabulary.Operation, e
 		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
 		flowkind.OutcomeYield, flowkind.OutcomeCancel,
 	} {
-		route, adjustment, result, placement, offset, outcome, sibling, destination, found := c.subedgeRouteAt(edge, kind)
+		route, adjustment, result, placement, offset, outcome, sibling, destination, found := c.Operations.SubedgeRouteAt(edge, kind)
 		if !found || route == vocabulary.RouteInvalid {
 			return errors.New("target: malformed subedge route")
 		}
@@ -235,8 +235,8 @@ func encodeSubedgeRoute(w *framing.Writer, c *Contract, owner vocabulary.Operati
 			if outcome != 0 {
 				return errors.New("target: C-boundary sibling route carries outcome")
 			}
-			siblingOwner, ownerOK := c.subedgeOwner(sibling)
-			siblingRole, roleOK := c.subedgeRole(sibling)
+			siblingOwner, ownerOK := c.Operations.SubedgeOwner(sibling)
+			siblingRole, roleOK := c.Operations.SubedgeRole(sibling)
 			if !ownerOK || siblingOwner != owner || !roleOK || siblingRole == 0 {
 				return errors.New("target: malformed C-boundary sibling role")
 			}
@@ -249,8 +249,8 @@ func encodeSubedgeRoute(w *framing.Writer, c *Contract, owner vocabulary.Operati
 		if outcome != 0 || sibling == 0 || destination == 0 {
 			return errors.New("target: malformed sibling subedge route")
 		}
-		siblingOwner, ownerOK := c.subedgeOwner(sibling)
-		siblingRole, roleOK := c.subedgeRole(sibling)
+		siblingOwner, ownerOK := c.Operations.SubedgeOwner(sibling)
+		siblingRole, roleOK := c.Operations.SubedgeRole(sibling)
 		if !ownerOK || siblingOwner != owner || !roleOK || siblingRole == 0 {
 			return errors.New("target: malformed sibling semantic role")
 		}

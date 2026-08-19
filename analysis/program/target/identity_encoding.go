@@ -2,6 +2,7 @@ package target
 
 import (
 	"errors"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/internal/framing"
@@ -87,7 +88,7 @@ func (c *Contract) encodeBindings(w *framing.Writer, op vocabulary.Operation) er
 }
 
 func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Operation) error {
-	row, ok := c.operation(op)
+	_, ok := c.operation(op)
 	if !ok {
 		return errors.New("target: malformed operation")
 	}
@@ -148,11 +149,16 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if err := w.Count(uint64(row.subedges.len())); err != nil {
+	subedges := c.Operations.SubedgeCount(op)
+	if err := w.Count(uint64(subedges)); err != nil {
 		return err
 	}
-	for i := row.subedges.start; i < row.subedges.end; i++ {
-		if err := c.encodePortableSubedge(w, op, c.subedges[i]); err != nil {
+	for i := 0; i < subedges; i++ {
+		edge, edgeOK := c.Operations.SubedgeAt(op, i)
+		if !edgeOK {
+			return errors.New("target: malformed subedge")
+		}
+		if err := c.encodePortableSubedge(w, op, edge); err != nil {
 			return err
 		}
 	}
@@ -282,27 +288,35 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if row.subedgeRelation == 0 {
+	operand, selector, subedge, resultOutcome, result, relationOK := c.Operations.OperationSubedgeRelation(op)
+	if !relationOK {
 		return w.Bool(false)
 	}
 	if err := w.Bool(true); err != nil {
 		return err
 	}
-	relation := c.subedgeRelations[row.subedgeRelation-1]
-	for _, v := range []uint64{uint64(relation.operand), uint64(relation.selector), uint64(relation.resultOutcome), uint64(relation.result)} {
+	for _, v := range []uint64{uint64(operand), uint64(selector), uint64(resultOutcome), uint64(result)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	role := c.subedges[relation.subedge-1].role
+	role, roleOK := c.Operations.SubedgeRole(subedge)
+	if !roleOK {
+		return errors.New("target: malformed operation subedge relation")
+	}
 	if err := w.Uint(uint64(role)); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(relation.effects.len())); err != nil {
+	aliases := c.Operations.OperationSubedgeRelationEffectAliasCount(op)
+	if err := w.Count(uint64(aliases)); err != nil {
 		return err
 	}
-	for i := relation.effects.start; i < relation.effects.end; i++ {
-		if err := w.Uint(uint64(c.subedgeRelationEffects[i])); err != nil {
+	for i := 0; i < aliases; i++ {
+		effect, effectOK := c.Operations.OperationSubedgeRelationEffectAliasAt(op, i)
+		if !effectOK {
+			return errors.New("target: malformed operation subedge relation effect alias")
+		}
+		if err := w.Uint(uint64(effect)); err != nil {
 			return err
 		}
 	}
@@ -409,105 +423,157 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 	return nil
 }
 
-func (c *Contract) encodePortableSubedge(w *framing.Writer, owner vocabulary.Operation, row subedgeRow) error {
-	for _, v := range []uint64{uint64(row.role), uint64(row.family), uint64(row.callee), uint64(row.admission)} {
+func (c *Contract) encodePortableSubedge(w *framing.Writer, owner vocabulary.Operation, edge vocabulary.SubedgeID) error {
+	ownerID, ownerOK := c.Operations.SubedgeOwner(edge)
+	if !ownerOK || ownerID != owner {
+		return errors.New("target: malformed subedge owner")
+	}
+	role, roleOK := c.Operations.SubedgeRole(edge)
+	family, familyOK := c.Operations.SubedgeFamily(edge)
+	callee, calleeOK := c.Operations.SubedgeCallee(edge)
+	admission, admissionOK := c.Operations.SubedgeAdmission(edge)
+	if !roleOK || !familyOK || !calleeOK || !admissionOK {
+		return errors.New("target: malformed subedge")
+	}
+	for _, v := range []uint64{uint64(role), uint64(family), uint64(callee), uint64(admission)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	switch row.callee {
+	switch callee {
 	case vocabulary.SubedgeCalleeCallback:
-		s, ok := c.callbackSelector(row.callback)
-		if !ok {
+		callback, callbackOK := c.Operations.SubedgeCallback(edge)
+		s, ok := c.callbackSelector(callback)
+		if !callbackOK || !ok {
 			return errors.New("target: malformed subedge callback")
 		}
 		if err := w.Bytes(s[:]); err != nil {
 			return err
 		}
 	case vocabulary.SubedgeCalleeCapturedInitialRead:
-		identity, ok := c.InitialRootIdentity(row.readRoot)
-		if !ok {
+		root, key, readOK := c.Operations.SubedgeCapturedInitialRead(edge)
+		identity, ok := c.InitialRootIdentity(root)
+		if !readOK || !ok {
 			return errors.New("target: malformed subedge root")
 		}
 		if err := w.String(identity); err != nil {
 			return err
 		}
-		if err := encodeExactKey(w, c, row.readKey); err != nil {
+		if err := encodeExactKey(w, c, key); err != nil {
 			return err
 		}
 	case vocabulary.SubedgeCalleeMetaKey:
-		if err := encodeExactKey(w, c, row.metaKey); err != nil {
+		key, keyOK := c.Operations.SubedgeMetaKey(edge)
+		if !keyOK {
+			return errors.New("target: malformed subedge meta key")
+		}
+		if err := encodeExactKey(w, c, key); err != nil {
 			return err
 		}
 	case vocabulary.SubedgeCalleeInvalid:
 	default:
 		return errors.New("target: malformed subedge callee")
 	}
-	if err := encodeValues(w, c, row.arguments); err != nil {
+	arguments, argumentsOK := c.Operations.SubedgeArguments(edge)
+	if !argumentsOK {
+		return errors.New("target: malformed subedge arguments")
+	}
+	if err := encodeValues(w, c, arguments); err != nil {
 		return err
 	}
-	if err := w.Bool(row.ruleEntry); err != nil {
+	ruleEntry, ruleOK := c.Operations.SubedgeRuleEntry(edge)
+	if !ruleOK {
+		return errors.New("target: malformed subedge entry authority")
+	}
+	if err := w.Bool(ruleEntry); err != nil {
 		return err
 	}
-	if err := w.Count(uint64(row.argumentOrigins.len())); err != nil {
+	originCount := c.Operations.SubedgeArgumentOriginCount(edge)
+	if err := w.Count(uint64(originCount)); err != nil {
 		return err
 	}
-	for i := row.argumentOrigins.start; i < row.argumentOrigins.end; i++ {
-		x := c.subedgeOrigins[i]
-		for _, v := range []uint64{uint64(x.segment), uint64(x.index), uint64(x.kind)} {
+	for i := 0; i < originCount; i++ {
+		segment, ordinal, source, input, originOK := c.Operations.SubedgeArgumentOriginAt(edge, i)
+		if !originOK {
+			return errors.New("target: malformed subedge argument origin")
+		}
+		for _, v := range []uint64{uint64(segment), uint64(ordinal), uint64(source)} {
 			if err := w.Uint(v); err != nil {
 				return err
 			}
 		}
-		if err := encodeInput(w, x.source); err != nil {
+		if err := encodeInput(w, input); err != nil {
 			return err
 		}
 	}
-	for _, v := range row.outcomes {
+	for _, kind := range [...]flowkind.OutcomeKind{
+		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
+		flowkind.OutcomeYield, flowkind.OutcomeCancel,
+	} {
+		v, outcomeOK := c.Operations.SubedgeTerminal(edge, kind)
+		if !outcomeOK {
+			return errors.New("target: malformed subedge outcome")
+		}
 		if err := encodeValues(w, c, v); err != nil {
 			return err
 		}
 	}
-	if err := encodeValues(w, c, row.admissionFailure); err != nil {
+	failure, failureOK := c.Operations.SubedgeAdmissionFailure(edge)
+	if !failureOK {
+		return errors.New("target: malformed subedge admission failure")
+	}
+	if err := encodeValues(w, c, failure); err != nil {
 		return err
 	}
-	if err := c.encodePortableRoute(w, owner, row.admissionRoute); err != nil {
+	route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK := c.Operations.SubedgeAdmissionRoute(edge)
+	if !routeOK {
+		return errors.New("target: malformed subedge admission route")
+	}
+	if err := c.encodePortableRoute(w, owner, route, adjustment, result, placement, offset, outcome, sibling, destination); err != nil {
 		return err
 	}
-	for _, r := range row.routes {
-		if err := c.encodePortableRoute(w, owner, r); err != nil {
+	for _, kind := range [...]flowkind.OutcomeKind{
+		flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow,
+		flowkind.OutcomeYield, flowkind.OutcomeCancel,
+	} {
+		route, adjustment, result, placement, offset, outcome, sibling, destination, routeOK = c.Operations.SubedgeRouteAt(edge, kind)
+		if !routeOK {
+			return errors.New("target: malformed subedge route")
+		}
+		if err := c.encodePortableRoute(w, owner, route, adjustment, result, placement, offset, outcome, sibling, destination); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (c *Contract) encodePortableRoute(w *framing.Writer, owner vocabulary.Operation, row subedgeRouteRow) error {
-	for _, v := range []uint64{uint64(row.route), uint64(row.adjustment)} {
+func (c *Contract) encodePortableRoute(w *framing.Writer, owner vocabulary.Operation, route vocabulary.SubedgeRoute, adjustment vocabulary.Adjustment, result vocabulary.Values, placement vocabulary.Placement, offset, outcome uint32, sibling vocabulary.SubedgeID, destination vocabulary.Values) error {
+	for _, v := range []uint64{uint64(route), uint64(adjustment)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	if err := encodeValues(w, c, row.result); err != nil {
+	if err := encodeValues(w, c, result); err != nil {
 		return err
 	}
-	for _, v := range []uint64{uint64(row.placement), uint64(row.offset), uint64(row.outcome)} {
+	for _, v := range []uint64{uint64(placement), uint64(offset), uint64(outcome)} {
 		if err := w.Uint(v); err != nil {
 			return err
 		}
 	}
-	if row.subedge != 0 {
-		edge, ok := c.subedge(row.subedge)
-		if !ok || edge.owner != owner {
+	if sibling != 0 {
+		siblingOwner, siblingOK := c.Operations.SubedgeOwner(sibling)
+		role, roleOK := c.Operations.SubedgeRole(sibling)
+		if !siblingOK || !roleOK || siblingOwner != owner {
 			return errors.New("target: malformed route sibling")
 		}
-		if err := w.Uint(uint64(edge.role)); err != nil {
+		if err := w.Uint(uint64(role)); err != nil {
 			return err
 		}
 	} else if err := w.Uint(0); err != nil {
 		return err
 	}
-	return encodeOptionalValues(w, c, row.destination)
+	return encodeOptionalValues(w, c, destination)
 }
 func encodeOptionalValues(w *framing.Writer, c *Contract, v vocabulary.Values) error {
 	if err := w.Bool(v != 0); err != nil {

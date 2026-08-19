@@ -41,7 +41,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 		add(ids.TargetOperation, 1)
 		add(ids.TargetABI, 1)
 		add(ids.TargetOperationEffect, contract.Operations.EffectCount(op))
-		add(ids.TargetSubedge, contract.SubedgeCount(op))
+		add(ids.TargetSubedge, contract.Operations.SubedgeCount(op))
 		add(ids.TargetBinding, contract.Operations.BindingCount(op))
 		add(ids.TargetResume, contract.Operations.ResumeCount(op))
 		add(ids.TargetSpawn, contract.Operations.SpawnCount(op))
@@ -53,12 +53,12 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 				add(ids.TargetPublicationEffect, 1)
 			}
 		}
-		for subedge := 0; subedge < contract.SubedgeCount(op); subedge++ {
-			edge, found := contract.SubedgeAt(op, subedge)
+		for subedge := 0; subedge < contract.Operations.SubedgeCount(op); subedge++ {
+			edge, found := contract.Operations.SubedgeAt(op, subedge)
 			if !found {
 				t.Fatalf("subedge %d of operation %d is not readable", subedge, op)
 			}
-			add(ids.TargetSubedgeArgumentOrigin, contract.argumentOriginCount(edge))
+			add(ids.TargetSubedgeArgumentOrigin, contract.Operations.SubedgeArgumentOriginCount(edge))
 		}
 		for transfer := 0; transfer < contract.Operations.TransferCount(op); transfer++ {
 			add(ids.TargetTransferOutcome, contract.Operations.TransferOutcomeCount(op, transfer))
@@ -103,7 +103,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 				add(ids.TargetProducedCapture, contract.Operations.ProducedCaptureCount(op, outcome, produced))
 			}
 		}
-		if _, _, _, _, _, found := contract.OperationSubedgeRelation(op); found {
+		if _, _, _, _, _, found := contract.Operations.OperationSubedgeRelation(op); found {
 			add(ids.TargetSubedgeRelation, 1)
 		}
 	}

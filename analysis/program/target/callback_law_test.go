@@ -136,17 +136,17 @@ func TestCallbackSubedgeProjectsOnlyImmediateDirectExecution(t *testing.T) {
 	direct, directOK := contract.Operations.CallbackAt(op, 0)
 	retained, retainedOK := contract.Operations.CallbackAt(op, 1)
 	edge := subedgeByRole(t, contract, op, 1)
-	got, found := contract.callbackSubedge(direct)
+	got, found := contract.Operations.CallbackSubedge(direct)
 	if !directOK || !found || got != edge {
 		t.Fatalf("direct callback Subedge = %d/%v, want %d", got, found, edge)
 	}
-	if inverse, inverseOK := contract.subedgeCallback(got); !inverseOK || inverse != direct {
+	if inverse, inverseOK := contract.Operations.SubedgeCallback(got); !inverseOK || inverse != direct {
 		t.Fatalf("Subedge inverse = %d/%v, want %d", inverse, inverseOK, direct)
 	}
 	if !retainedOK {
 		t.Fatal("retained callback missing")
 	}
-	if edge, found := contract.callbackSubedge(retained); found || edge != 0 {
+	if edge, found := contract.Operations.CallbackSubedge(retained); found || edge != 0 {
 		t.Fatalf("retained callback unexpectedly has immediate Subedge %d/%v", edge, found)
 	}
 	opaque, opaqueOK := contract.Operations.Opaque()
@@ -154,10 +154,10 @@ func TestCallbackSubedgeProjectsOnlyImmediateDirectExecution(t *testing.T) {
 	if !opaqueOK || !callbackOK {
 		t.Fatal("opaque callback missing")
 	}
-	if edge, found := contract.callbackSubedge(opaqueCallback); found || edge != 0 {
+	if edge, found := contract.Operations.CallbackSubedge(opaqueCallback); found || edge != 0 {
 		t.Fatalf("opaque callback unexpectedly has immediate Subedge %d/%v", edge, found)
 	}
-	if edge, found := contract.callbackSubedge(0); found || edge != 0 {
+	if edge, found := contract.Operations.CallbackSubedge(0); found || edge != 0 {
 		t.Fatalf("zero callback resolved immediate Subedge %d/%v", edge, found)
 	}
 }

@@ -8,29 +8,35 @@ import (
 )
 
 type queryState struct {
-	operations      []queryOperationRow
-	callbacks       []queryCallbackRow
-	types           []queryTypeRow
-	values          []queryValuesRow
-	effects         []queryEffectRow
-	transfers       []queryTransferRow
-	transferEnds    []vocabulary.TransferPossibility
-	outcomeRows     []queryOutcomeRow
-	produced        []queryProducedRow
-	captures        []queryCaptureRow
-	fresh           []queryFreshRow
-	callbackResults []queryCallbackResultRow
-	resultAliases   []queryResultAliasRow
-	suspensions     []querySuspensionRow
-	spawns          []querySpawnRow
-	resumes         []queryResumeRow
-	behaviorRows    []queryBehaviorResultRow
-	predicateRows   []queryBehaviorPredicateRow
+	operations             []queryOperationRow
+	callbacks              []queryCallbackRow
+	types                  []queryTypeRow
+	values                 []queryValuesRow
+	effects                []queryEffectRow
+	transfers              []queryTransferRow
+	transferEnds           []vocabulary.TransferPossibility
+	outcomeRows            []queryOutcomeRow
+	produced               []queryProducedRow
+	captures               []queryCaptureRow
+	fresh                  []queryFreshRow
+	callbackResults        []queryCallbackResultRow
+	resultAliases          []queryResultAliasRow
+	suspensions            []querySuspensionRow
+	spawns                 []querySpawnRow
+	resumes                []queryResumeRow
+	behaviorRows           []queryBehaviorResultRow
+	predicateRows          []queryBehaviorPredicateRow
+	subedges               []querySubedgeRow
+	subedgeOrigins         []querySubedgeArgumentOriginRow
+	subedgeRelations       []querySubedgeRelationRow
+	subedgeRelationEffects []uint32
 }
 
 type queryOperationRow struct {
 	input              vocabulary.Values
 	outcomes           queryRange
+	subedges           queryRange
+	subedgeRelation    uint32
 	suspensions        queryRange
 	spawns             queryRange
 	resumes            queryRange
@@ -45,11 +51,58 @@ type queryOperationRow struct {
 	effectVar          vocabulary.RowVar
 }
 
+type querySubedgeRow struct {
+	owner            vocabulary.Operation
+	role             uint32
+	family           vocabulary.SubedgeFamily
+	callee           vocabulary.SubedgeCalleeKind
+	callback         vocabulary.CallbackID
+	readRoot         vocabulary.InitialRoot
+	readKey          vocabulary.ExactKey
+	metaKey          vocabulary.ExactKey
+	admission        schematype.CallableAdmission
+	arguments        vocabulary.Values
+	ruleEntry        bool
+	argumentOrigins  queryRange
+	outcomes         [5]vocabulary.Values
+	admissionFailure vocabulary.Values
+	admissionRoute   querySubedgeRouteRow
+	routes           [5]querySubedgeRouteRow
+}
+
+type querySubedgeArgumentOriginRow struct {
+	segment vocabulary.ArgumentSegment
+	index   uint32
+	kind    vocabulary.ArgumentSource
+	source  vocabulary.InputSource
+}
+
+type querySubedgeRouteRow struct {
+	route       vocabulary.SubedgeRoute
+	adjustment  vocabulary.Adjustment
+	result      vocabulary.Values
+	placement   vocabulary.Placement
+	offset      uint32
+	outcome     uint32
+	subedge     vocabulary.SubedgeID
+	destination vocabulary.Values
+}
+
+type querySubedgeRelationRow struct {
+	operand       vocabulary.ValueFormal
+	selector      uint32
+	subedge       vocabulary.SubedgeID
+	resultOutcome uint32
+	result        uint32
+	effects       queryRange
+}
+
 // queryCallbackRow is the callback-owned side of the operation effect plane.
 // Callback IDs and their owner are issued by Geometry; this row retains only
 // the sealed expected-effect range and row schema for that callback.
 type queryCallbackRow struct {
 	owner      vocabulary.Operation
+	subedge    vocabulary.SubedgeID
 	effects    queryRange
 	effectTail vocabulary.RowTail
 	effectVar  vocabulary.RowVar

@@ -70,10 +70,19 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		}
 	}
 
-	var subedgeRelations int
-	for _, operation := range c.operations {
-		if operation.subedgeRelation != 0 {
+	var subedgeCount, subedgeOrigins, subedgeRelations int
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		op := vocabulary.Operation(operationIndex + 1)
+		subedgeCount += c.Operations.SubedgeCount(op)
+		if _, _, _, _, _, found := c.Operations.OperationSubedgeRelation(op); found {
 			subedgeRelations++
+		}
+		for subedgeIndex := 0; subedgeIndex < c.Operations.SubedgeCount(op); subedgeIndex++ {
+			edge, edgeOK := c.Operations.SubedgeAt(op, subedgeIndex)
+			if !edgeOK {
+				return denominator.CountRows{}, errCountRows
+			}
+			subedgeOrigins += c.Operations.SubedgeArgumentOriginCount(edge)
 		}
 	}
 	protocolCounts := c.protocols.Counts()
@@ -125,8 +134,8 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 		put(ids.TargetProduced, producedCount) &&
 		put(ids.TargetProducedCapture, producedCaptureCount) &&
 		put(ids.TargetFreshResult, freshResultCount) &&
-		put(ids.TargetSubedge, len(c.subedges)) &&
-		put(ids.TargetSubedgeArgumentOrigin, len(c.subedgeOrigins)) &&
+		put(ids.TargetSubedge, subedgeCount) &&
+		put(ids.TargetSubedgeArgumentOrigin, subedgeOrigins) &&
 		put(ids.TargetSubedgeRelation, subedgeRelations) &&
 		put(ids.TargetSuspension, suspensionCount) &&
 		put(ids.TargetSpawn, spawnCount) &&

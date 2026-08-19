@@ -537,12 +537,12 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 			}
 		}
 	}
-	for index := 0; index < contract.SubedgeCount(operation); index++ {
-		edge, ok := contract.SubedgeAt(operation, index)
+	for index := 0; index < contract.Operations.SubedgeCount(operation); index++ {
+		edge, ok := contract.Operations.SubedgeAt(operation, index)
 		if !ok {
 			return errors.New("static: malformed subedge")
 		}
-		values, ok := contract.SubedgeArguments(edge)
+		values, ok := contract.Operations.SubedgeArguments(edge)
 		if !ok {
 			return errors.New("static: subedge arguments unavailable")
 		}
@@ -550,13 +550,13 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 			return err
 		}
 		for _, kind := range kinds {
-			if values, found := contract.SubedgeTerminal(edge, kind); found {
+			if values, found := contract.Operations.SubedgeTerminal(edge, kind); found {
 				if err := s.addValues(contract, values); err != nil {
 					return err
 				}
 			}
 		}
-		if values, found := contract.AdmissionFailure(edge); found {
+		if values, found := contract.Operations.SubedgeAdmissionFailure(edge); found {
 			if err := s.addValues(contract, values); err != nil {
 				return err
 			}
