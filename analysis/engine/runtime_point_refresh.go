@@ -565,16 +565,22 @@ func (epoch *executorEpoch) refreshPoint(point equation.Point, pointIndex, regio
 			}
 		}
 	}
+	// An interface refresh rebuilds this head against a boundary that moved
+	// underneath the cached episode row, so it may continue only when its
+	// complete exact RHS grows from that row; anything else is a stale
+	// refresh and restarts the region from Init.
+	//
+	// An ordinary ascent step carries no such demand. Only the head is
+	// admitted as a Region; every enclosed nonhead exact-replaces its complete
+	// RHS, so the head's one-step image is the Bourdoncle image of a vector
+	// whose interior components are assigned rather than accumulated. That
+	// image is free to move between steps. The ascent is carried by the head
+	// publication below, where Widen bounds the new row above the current
+	// point, and each interior replacement is separately admitted at the
+	// candidate boundary; demanding inclusion on the image itself refuses a
+	// lawful step with no path forward.
 	refreshBoundary = refused(SolveFailureFamilyRefresh, "region-ascent-monotone")
-	if phase == phaseAscent && episode.hasExact && !epoch.work.LessOrEqPointRHS(episode.exact, exact) {
-		// An interface refresh may continue only when its complete exact RHS
-		// grows from the cached episode RHS. A decrease or incomparable result
-		// is a genuine non-monotone boundary. Only a pending interface refresh
-		// has enough fresh-boundary evidence to restart; an unchanged episode
-		// retains the existing fail-closed Rule-law behavior.
-		if !refreshPending {
-			return false, false
-		}
+	if phase == phaseAscent && refreshPending && episode.hasExact && !epoch.work.LessOrEqPointRHS(episode.exact, exact) {
 		if epoch.diagnostics != nil {
 			epoch.diagnostics.recordInterfaceRefreshOutcome(epoch, regionIndex, refreshOldExact, exact, false, true)
 		}

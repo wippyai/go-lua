@@ -436,6 +436,14 @@ func (work *Work) Decompose(mask Mask) (Decomposition, bool) {
 	}, true
 }
 
+// Empty reports whether mask contains no valuation, accepting a region this
+// Work is still constructing. It is the candidate counterpart of the
+// package-level Empty, which reads published regions only.
+func (work *Work) Empty(mask Mask) bool {
+	view, ok := work.Decompose(mask)
+	return ok && view.Terminal && !view.Value
+}
+
 // Seal publishes every Mask constructed by this Work in one BDD cut.  A Mask
 // then becomes valid through its Guard owner and no construction cache survives.
 func (work *Work) Seal() bool {

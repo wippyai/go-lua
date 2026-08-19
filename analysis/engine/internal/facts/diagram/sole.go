@@ -36,7 +36,7 @@ type SoleScratch[K scalar.Key, V any] struct {
 	treeFrames  []soleTreeFrame[K, V]
 
 	trackedFrames []trackedFrame[V]
-	tracked       map[trackedTriple[V]]trackedResult[V]
+	tracked       trackedMemo[V]
 
 	// many is the operation-local storage for one synchronized fixed-order
 	// fold.  It is deliberately embedded in the caller-owned SoleScratch:
@@ -179,7 +179,7 @@ func (scratch *SoleScratch[K, V]) Clear() {
 	scratch.treeFrames = scratch.treeFrames[:0]
 	clear(scratch.trackedFrames)
 	scratch.trackedFrames = scratch.trackedFrames[:0]
-	clear(scratch.tracked)
+	scratch.tracked.reset()
 	scratch.clearManyWork()
 	clear(scratch.manyRootNodes)
 	scratch.manyRootNodes = scratch.manyRootNodes[:0]

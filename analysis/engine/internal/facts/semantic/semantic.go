@@ -58,6 +58,12 @@ type Domain[F ~uint64, K scalar.Key, V any] struct {
 	ops       Operations[V]
 	defaultID terminal.ID[V]
 	checks    Convergence[K, V]
+	// eraseDefaultID and equalPublished are immutable callbacks over the
+	// sealed terminal page. They are bound once here so a per-operation
+	// traversal passes them straight through instead of allocating one
+	// closure per call on a hot publication path.
+	eraseDefaultID diagram.Transform[V]
+	equalPublished func(left, right terminal.ID[V]) bool
 }
 
 // Plane is one immutable published typed FDD root.  It deliberately stores
@@ -103,7 +109,17 @@ func NewWithConvergence[F ~uint64, K scalar.Key, V any](facts *diagram.Diagram[F
 	if !present {
 		return nil, false
 	}
-	return &Domain[F, K, V]{diagram: facts, terminals: values, ops: ops, defaultID: defaultID, checks: checks}, true
+	domain := &Domain[F, K, V]{diagram: facts, terminals: values, ops: ops, defaultID: defaultID, checks: checks}
+	domain.eraseDefaultID = func(value terminal.ID[V]) (terminal.ID[V], bool) {
+		if value == defaultID {
+			return terminal.ID[V]{}, true
+		}
+		return value, true
+	}
+	domain.equalPublished = func(left, right terminal.ID[V]) bool {
+		return domain.equalTerminal(values, left, right)
+	}
+	return domain, true
 }
 
 // Plane accepts one published sparse root from this exact Diagram.
@@ -161,37 +177,51 @@ type ContributionRegions[K scalar.Key] func(K) (support.Mask, bool)
 // RuleContribution: sparse undefined under a supplied region means
 // Present(Default), while sparse undefined outside it means Absent.  Raw
 // State operations intentionally do not use this routine.
-func (domain *Domain[F, K, V]) CloseContribution(input Plane[F, K, V], within support.Mask, regions ContributionRegions[K]) (Plane[F, K, V], bool) {
-	if !domain.validPlane(input) || !domain.validSupport(within) || regions == nil {
-		return Plane[F, K, V]{}, false
+//
+// The close is one tracked traversal per column: the authored region and the
+// Default erasure are the two halves of a single rewrite, and the same walk
+// reports the net semantic difference from the input over within.  That
+// changed region is the close's own proof that it moved nothing inside the
+// contribution's support, so a caller never re-derives it with a second
+// comparison pass.  A column the rewrite leaves alone is returned by pointer,
+// which is what lets an unmoved close republish the input root.
+func (domain *Domain[F, K, V]) CloseContribution(input Plane[F, K, V], within support.Mask, surface ContributionRegions[K], scratch *diagram.SoleScratch[K, V], regions *support.Work) (Plane[F, K, V], support.Mask, bool) {
+	if !domain.validPlane(input) || !domain.validSupport(within) || surface == nil || scratch == nil || regions == nil || !regions.Open() || !regions.Valid(within) {
+		return Plane[F, K, V]{}, support.Mask{}, false
 	}
 	builder := domain.diagram.Begin()
 	if builder == nil {
-		return Plane[F, K, V]{}, false
+		return Plane[F, K, V]{}, support.Mask{}, false
 	}
+	changed := regions.False()
 	root, ok := builder.TransformSoleFactor(input.root, func(key K, value diagram.Value[V]) (diagram.Value[V], bool) {
-		region, present := regions(key)
-		if !present {
-			return builder.Constant(terminal.ID[V]{})
-		}
-		if !region.Valid() || region.Manager() != domain.guards() || !region.Entails(within) {
+		region, present := surface(key)
+		switch {
+		case !present:
+			// An unauthored key is Absent, which is the empty authored region.
+			region = regions.False()
+		case !region.Valid() || region.Manager() != domain.guards() || !region.Entails(within):
 			return diagram.Value[V]{}, false
 		}
-		masked, ok := builder.Mask(value, region)
+		output, moved, ok := builder.TrackedMaskTransform(value, value, region, within, regions, scratch, domain.eraseDefaultID, domain.equalPublished)
 		if !ok {
 			return diagram.Value[V]{}, false
 		}
-		return domain.eraseDefault(builder, masked)
+		changed, ok = regions.Or(changed, moved)
+		if !ok {
+			return diagram.Value[V]{}, false
+		}
+		return output, true
 	})
 	if !ok {
 		builder.Discard()
-		return Plane[F, K, V]{}, false
+		return Plane[F, K, V]{}, support.Mask{}, false
 	}
 	root, ok = builder.Seal(root)
 	if !ok {
-		return Plane[F, K, V]{}, false
+		return Plane[F, K, V]{}, support.Mask{}, false
 	}
-	return Plane[F, K, V]{root: root}, true
+	return Plane[F, K, V]{root: root}, changed, true
 }
 
 // ContributionClosed proves the physical half of the closed contribution
@@ -1073,7 +1103,14 @@ func (domain *Domain[F, K, V]) joinStable(value V) bool {
 	return joinOK && domain.ops.Equal(joined, value)
 }
 
-func (domain *Domain[F, K, V]) equalTerminal(values *terminal.Work[V], left, right terminal.ID[V]) bool {
+// terminalValues reads one interned typed terminal page. The sealed Arena and
+// an open candidate Work both answer it, so one comparator serves a published
+// plane and an in-flight candidate publication alike.
+type terminalValues[V any] interface {
+	Value(id terminal.ID[V]) (V, bool)
+}
+
+func (domain *Domain[F, K, V]) equalTerminal(values terminalValues[V], left, right terminal.ID[V]) bool {
 	if domain == nil || values == nil {
 		return false
 	}

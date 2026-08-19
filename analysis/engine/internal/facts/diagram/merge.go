@@ -671,12 +671,25 @@ func sameDecision[V any](candidate *node[V], atom guard.Atom, low, high *node[V]
 
 func (builder *Builder[F, K, V]) decisionOrExisting(atom guard.Atom, low, high, first, second *node[V]) *node[V] {
 	if sameDecision(first, atom, low, high) {
-		return first
+		return builder.adoptDecision(atom, low, high, first)
 	}
 	if sameDecision(second, atom, low, high) {
-		return second
+		return builder.adoptDecision(atom, low, high, second)
 	}
 	return builder.decision(atom, low, high)
+}
+
+// adoptDecision records an immutable predecessor node as this transaction's
+// node for its exact structure. Without it a later construction of the same
+// decision would mint an equal duplicate, and a parent holding one of each
+// would no longer reduce.
+func (builder *Builder[F, K, V]) adoptDecision(atom guard.Atom, low, high, existing *node[V]) *node[V] {
+	key := decisionKey[V]{atom: atom, low: low, high: high}
+	if cached := builder.decisions[key]; cached != nil {
+		return cached
+	}
+	builder.decisions[key] = existing
+	return existing
 }
 
 func buildSoleKeys[K scalar.Key, V any](scratch *SoleScratch[K, V]) *keyNode[K, V] {

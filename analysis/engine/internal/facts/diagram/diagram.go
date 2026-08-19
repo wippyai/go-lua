@@ -73,6 +73,37 @@ type Builder[F ~uint64, K scalar.Key, V any] struct {
 	decisions         map[decisionKey[V]]*node[V]
 	updates           map[updateKey[V]]*node[V]
 	imports           map[*node[V]]*node[V]
+
+	// The memos below are transaction-owned reusable storage for the pointwise
+	// operations. Their keys name only operands, never the operation applied,
+	// so every one of them is reset when its operation begins: this is storage
+	// reuse across the many columns of one transaction, never result reuse
+	// across two different operations. Each nested walk keeps its own field so
+	// an outer operation and the inner combine it drives cannot alias.
+	zipWork        map[zipKey[V]]*node[V]
+	transformWork  map[transformKey[V]]*node[V]
+	transformNodes map[*node[V]]*node[V]
+	existsWork     map[existsKey[V]]*node[V]
+	existsZip      map[zipKey[V]]*node[V]
+	reindexNodes   map[*node[V]]*node[V]
+	reindexZip     map[zipKey[V]]*node[V]
+	reindexITEWork map[reindexITEKey[V]]*node[V]
+	// maskWork is the one memo that survives its operation. Mask carries no
+	// callback at all, so (node, region) already names its result exactly and
+	// a transaction that restricts many columns to the same authored region
+	// proves each shared suffix once.
+	maskWork map[maskKey[V]]*node[V]
+}
+
+// reuseMemo hands back caller-owned map storage emptied for one operation. A
+// nil map is created on first use, so a Builder that never runs an operation
+// never allocates its memo.
+func reuseMemo[T comparable, R any](storage map[T]R) map[T]R {
+	if storage == nil {
+		return make(map[T]R)
+	}
+	clear(storage)
+	return storage
 }
 
 type lease struct{ marker byte }
@@ -415,6 +446,7 @@ func (builder *Builder[F, K, V]) Seal(root Root[F, K, V]) (Root[F, K, V], bool) 
 	builder.decisions = nil
 	builder.updates = nil
 	builder.imports = nil
+	builder.releaseMemos()
 	builder.terminalAuthority = nil
 	builder.terminalWork = nil
 	return Root[F, K, V]{diagram: builder.diagram, root: root.root, count: root.count, sealed: true}, true
@@ -434,6 +466,7 @@ func (builder *Builder[F, K, V]) Discard() {
 	builder.decisions = nil
 	builder.updates = nil
 	builder.imports = nil
+	builder.releaseMemos()
 	builder.terminalAuthority = nil
 	builder.terminalWork = nil
 }
@@ -507,7 +540,8 @@ func (builder *Builder[F, K, V]) Zip(left, right Value[V], operation Combine[V])
 	if builder == nil || !builder.open || !builder.validValue(left) || !builder.validValue(right) || operation == nil {
 		return Value[V]{}, false
 	}
-	result, valid := builder.zip(left.node, right.node, operation, make(map[zipKey[V]]*node[V]))
+	builder.zipWork = reuseMemo(builder.zipWork)
+	result, valid := builder.zip(left.node, right.node, operation, builder.zipWork)
 	if !valid {
 		return Value[V]{}, false
 	}
@@ -521,7 +555,8 @@ func (builder *Builder[F, K, V]) Transform(value Value[V], when support.Mask, op
 	if builder == nil || !builder.open || !builder.validValue(value) || !when.Valid() || when.Manager() != builder.diagram.guards || operation == nil {
 		return Value[V]{}, false
 	}
-	result, valid := builder.transform(builder.importNode(value.node), when, operation, make(map[transformKey[V]]*node[V]), make(map[*node[V]]*node[V]))
+	builder.transformWork, builder.transformNodes = reuseMemo(builder.transformWork), reuseMemo(builder.transformNodes)
+	result, valid := builder.transform(builder.importNode(value.node), when, operation, builder.transformWork, builder.transformNodes)
 	if !valid {
 		return Value[V]{}, false
 	}
@@ -706,7 +741,10 @@ func (builder *Builder[F, K, V]) Mask(value Value[V], region support.Mask) (Valu
 	if builder == nil || !builder.open || !builder.validValue(value) || !region.Valid() || region.Manager() != builder.diagram.guards {
 		return Value[V]{}, false
 	}
-	result, valid := builder.mask(value.node, region, make(map[maskKey[V]]*node[V]))
+	if builder.maskWork == nil {
+		builder.maskWork = make(map[maskKey[V]]*node[V])
+	}
+	result, valid := builder.mask(value.node, region, builder.maskWork)
 	if !valid {
 		return Value[V]{}, false
 	}
@@ -725,7 +763,8 @@ func (builder *Builder[F, K, V]) Exists(value Value[V], atom guard.Atom, operati
 	if !admitted {
 		return Value[V]{}, false
 	}
-	result, valid := builder.exists(value.node, rank, operation, make(map[existsKey[V]]*node[V]), make(map[zipKey[V]]*node[V]))
+	builder.existsWork, builder.existsZip = reuseMemo(builder.existsWork), reuseMemo(builder.existsZip)
+	result, valid := builder.exists(value.node, rank, operation, builder.existsWork, builder.existsZip)
 	if !valid {
 		return Value[V]{}, false
 	}
@@ -744,14 +783,16 @@ func (builder *Builder[F, K, V]) Reindex(value Value[V], relation guard.Reindex,
 	if relation.Identity() {
 		return value, true
 	}
+	builder.reindexNodes, builder.reindexZip = reuseMemo(builder.reindexNodes), reuseMemo(builder.reindexZip)
 	if relation.PureProjection() {
-		result, ok := builder.reindexProjection(value.node, relation, operation, make(map[*node[V]]*node[V]), make(map[zipKey[V]]*node[V]))
+		result, ok := builder.reindexProjection(value.node, relation, operation, builder.reindexNodes, builder.reindexZip)
 		if !ok {
 			return Value[V]{}, false
 		}
 		return Value[V]{owner: builder.diagram.owner, node: result}, true
 	}
-	result, ok := builder.reindex(value.node, relation, operation, make(map[*node[V]]*node[V]), make(map[zipKey[V]]*node[V]), make(map[reindexITEKey[V]]*node[V]))
+	builder.reindexITEWork = reuseMemo(builder.reindexITEWork)
+	result, ok := builder.reindex(value.node, relation, operation, builder.reindexNodes, builder.reindexZip, builder.reindexITEWork)
 	if !ok {
 		return Value[V]{}, false
 	}
@@ -1395,6 +1436,20 @@ func (diagram *Diagram[F, K, V]) ForEach(root Root[F, K, V], visit func(Fact[F, 
 	return true, true
 }
 
+// releaseMemos drops the transaction's pointwise operation storage. A sealed
+// or discarded Builder must not keep candidate nodes reachable through a memo.
+func (builder *Builder[F, K, V]) releaseMemos() {
+	builder.zipWork = nil
+	builder.transformWork = nil
+	builder.transformNodes = nil
+	builder.existsWork = nil
+	builder.existsZip = nil
+	builder.reindexNodes = nil
+	builder.reindexZip = nil
+	builder.reindexITEWork = nil
+	builder.maskWork = nil
+}
+
 func (builder *Builder[F, K, V]) terminal(value terminal.ID[V]) *node[V] {
 	if cached := builder.terminals[value]; cached != nil {
 		return cached
@@ -1402,6 +1457,27 @@ func (builder *Builder[F, K, V]) terminal(value terminal.ID[V]) *node[V] {
 	created := &node[V]{terminal: true, value: value}
 	builder.terminals[value] = created
 	return created
+}
+
+// adoptTerminal returns this transaction's one node for value, adopting an
+// immutable predecessor leaf that already carries it. A rewrite that keeps a
+// predecessor leaf must keep it for every occurrence of that terminal:
+// reduction and comparison both read one node per value as one meaning, so a
+// second live node for the same value would leave a redundant decision above
+// it and make an unmoved rewrite look structurally different.
+func (builder *Builder[F, K, V]) adoptTerminal(value terminal.ID[V], first, second *node[V]) *node[V] {
+	if cached := builder.terminals[value]; cached != nil {
+		return cached
+	}
+	switch {
+	case first != nil && first.terminal && first.value == value:
+		builder.terminals[value] = first
+		return first
+	case second != nil && second.terminal && second.value == value:
+		builder.terminals[value] = second
+		return second
+	}
+	return builder.terminal(value)
 }
 
 // importNode registers an FDD from an earlier Builder in this Builder's local

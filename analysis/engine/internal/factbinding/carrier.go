@@ -984,6 +984,18 @@ func (work *bindingWork[K, V]) LessOrEqContributionUnder(left, right carrier.Roo
 	}, &work.scratch), true
 }
 
+// AscentOrderedContributionUnder proves Kleene progress for one closed typed
+// slot. It deliberately does not carry LessOrEqContributionUnder's coverage
+// inclusion premise. Inclusion is what makes the successor contain the
+// predecessor; progress asks only for a defined upper bound, and a coverage
+// cell one side does not author reads as that side's Default under the union
+// surface, where the domain's own Widen has to dominate both cells before the
+// replacement is admitted. Keeping the stronger premise here refused every
+// authored-coverage movement as an unanswerable operand instead of judging it.
+//
+// Support remains the outer feasibility fence: coverage is authorship inside a
+// contribution, while a successor whose support does not contain the
+// predecessor's is not a step of the same chain at all.
 func (work *bindingWork[K, V]) AscentOrderedContributionUnder(left, right carrier.RootHandle, leftSupport, rightSupport support.Mask, leftCoverage, rightCoverage carrier.SlotCoverage) (bool, bool) {
 	if !work.live() || work.binding == nil || !leftSupport.Valid() || !rightSupport.Valid() || leftSupport.Manager() != work.binding.plane.domain.Guards() || rightSupport.Manager() != work.binding.plane.domain.Guards() || !work.entailsSupport(leftSupport, rightSupport) {
 		return false, false
@@ -999,17 +1011,22 @@ func (work *bindingWork[K, V]) AscentOrderedContributionUnder(left, right carrie
 	defer func() {
 		clear(work.coverageLeft)
 		clear(work.coverageRight)
+		clear(work.coverageOutput)
 	}()
 	work.coverageLeft, ok = work.contributionCoverage(leftCoverage, leftSupport, work.coverageLeft)
 	if !ok {
 		return false, false
 	}
 	work.coverageRight, ok = work.contributionCoverage(rightCoverage, rightSupport, work.coverageRight)
-	if !ok || !coverageMapContains(work.entailsWork, work.poll, work.coverageLeft, work.coverageRight) {
+	if !ok {
+		return false, false
+	}
+	work.coverageOutput, ok = unionContributionCoverage(work.coverageLeft, work.coverageRight, work.coverageOutput)
+	if !ok {
 		return false, false
 	}
 	return work.binding.plane.domain.AscentOrderedContribution(first, second, func(key K) (support.Mask, bool) {
-		return contributionRegion(work.coverageLeft, key)
+		return contributionRegion(work.coverageOutput, key)
 	}, &work.scratch), true
 }
 
@@ -1165,12 +1182,16 @@ func (work *bindingWork[K, V]) CloseContributionUnder(before, input carrier.Root
 		return carrier.ChangeHandle{}, false
 	}
 	coverageValid := true
-	closed, ok := work.binding.plane.domain.CloseContribution(candidate, within, func(key K) (support.Mask, bool) {
+	closed, moved, ok := work.binding.plane.domain.CloseContribution(candidate, within, func(key K) (support.Mask, bool) {
 		region, present, valid := work.contributionRegionAt(coverage, within, key)
 		coverageValid = coverageValid && valid
 		return region, present && valid
-	})
-	if !ok || !coverageValid || !work.binding.plane.domain.EqualUnder(candidate, closed, within, &work.scratch) {
+	}, &work.scratch, delta)
+	// The close reports the exact region it moved inside within. An empty
+	// region is the agreement proof this issuance requires, derived by the one
+	// traversal that performed the close rather than by a second comparison of
+	// its input against its output.
+	if !ok || !coverageValid || !delta.Empty(moved) {
 		return carrier.ChangeHandle{}, false
 	}
 	// When the predecessor and candidate name the same immutable root, the
@@ -2304,9 +2325,9 @@ func (work *bindingWork[K, V]) MergeSelectedContributionUnder(kind carrier.Merge
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	closed, ok := binding.plane.domain.CloseContribution(next, outputSupport, func(key K) (support.Mask, bool) {
+	closed, _, ok := binding.plane.domain.CloseContribution(next, outputSupport, func(key K) (support.Mask, bool) {
 		return contributionRegion(work.coverageOutput, key)
-	})
+	}, &work.scratch, delta)
 	// Unlike Finish, a selected recurrence is allowed to derive a raw semantic
 	// value on a historical current fiber that exact RHS authorship has since
 	// removed.  That fiber is Absent in the publishable contribution, so the
@@ -2447,9 +2468,9 @@ func (work *bindingWork[K, V]) ReindexPointContributionUnder(left carrier.RootHa
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
-	closed, ok := binding.plane.domain.CloseContribution(next, target, func(key K) (support.Mask, bool) {
+	closed, _, ok := binding.plane.domain.CloseContribution(next, target, func(key K) (support.Mask, bool) {
 		return contributionRegion(work.coverageOutput, key)
-	})
+	}, &work.scratch, delta)
 	if !ok {
 		return carrier.ChangeHandle{}, false
 	}
