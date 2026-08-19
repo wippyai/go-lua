@@ -12,7 +12,7 @@ import (
 // abstract domains, preventing a Link- or Result-side fold from becoming a
 // second arithmetic authority.
 func ExactArithmeticLiteral(left, right keyspace.LiteralValue, op flowkind.BinaryOp) (keyspace.LiteralValue, bool) {
-	if op < flowkind.BinaryAdd || op > flowkind.BinaryPow || !numericLiteral(left) || !numericLiteral(right) {
+	if !flowkind.IsBinaryArithmetic(op) || !numericLiteral(left) || !numericLiteral(right) {
 		return keyspace.LiteralValue{}, false
 	}
 	if left.Kind == keyspace.LiteralInteger && right.Kind == keyspace.LiteralInteger {

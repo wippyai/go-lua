@@ -23,7 +23,7 @@ type compiledNativeArithmeticSummary struct {
 func (summary compiledNativeArithmeticSummary) valid() bool {
 	return summary.mount.Available() && summary.artifact.Available() && summary.proof.Available() &&
 		summary.occurrence.Available() && summary.body.Available() && summary.point.Available() && summary.span.Available() &&
-		summary.proof != summary.occurrence && summary.op >= flowkind.BinaryAdd && summary.op <= flowkind.BinaryPow &&
+		summary.proof != summary.occurrence && flowkind.IsBinaryArithmetic(summary.op) &&
 		summary.left.Valid() && summary.right.Valid() && summary.result.Valid() && summary.divisor.Valid() &&
 		(summary.divisor == cold.ArithmeticDivisorNone || summary.op == flowkind.BinaryIDiv)
 }
