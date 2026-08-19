@@ -194,7 +194,78 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 			return Core{}, errors.New("target/operation: unresolved operation anchor")
 		}
 	}
-	return Core{geometry: geometry, anchors: rows.NewRows(anchors)}, nil
+	bindingKeys, bindingKeyRows, bindingRanges, projectionErr := compileBindingKeyProjection(geometry, keys)
+	if projectionErr != nil {
+		return Core{}, projectionErr
+	}
+	return Core{
+		geometry: geometry, anchors: rows.NewRows(anchors), bindingKeys: bindingKeys,
+		bindingKeyRows: bindingKeyRows, bindingRanges: bindingRanges,
+	}, nil
+}
+
+func compileBindingKeyProjection(geometry Geometry, keys exactkey.Table) (rows.Pool[vocabulary.ExactKey], rows.Pool[bindingKeyRow], rows.Rows[bindingKeyRange], error) {
+	var (
+		keyPool     rows.PoolBuilder[vocabulary.ExactKey]
+		bindingPool rows.PoolBuilder[bindingKeyRow]
+	)
+	ranges := make([]bindingKeyRange, geometry.operations.Count())
+	for operationIndex := 0; operationIndex < geometry.operations.Count(); operationIndex++ {
+		operation, ok := geometry.operations.At(operationIndex)
+		if !ok {
+			return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, errors.New("target/operation: malformed binding geometry")
+		}
+		count := geometry.bindings.Count(operation.bindings)
+		if count != operation.bindings.Len() {
+			return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, errors.New("target/operation: malformed binding geometry")
+		}
+		bindingRows := make([]bindingKeyRow, count)
+		for bindingIndex := range bindingRows {
+			binding, bindingOK := geometry.bindings.At(operation.bindings, bindingIndex)
+			if !bindingOK {
+				return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, errors.New("target/operation: malformed binding geometry")
+			}
+			owner, ownerErr := appendBindingKeys(&keyPool, geometry, binding.owner, keys)
+			if ownerErr != nil {
+				return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, ownerErr
+			}
+			member, memberErr := appendBindingKeys(&keyPool, geometry, binding.member, keys)
+			if memberErr != nil {
+				return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, memberErr
+			}
+			bindingRows[bindingIndex] = bindingKeyRow{owner: owner, member: member}
+		}
+		bindingRange, rangeOK := bindingPool.Append(bindingRows)
+		if !rangeOK {
+			return rows.Pool[vocabulary.ExactKey]{}, rows.Pool[bindingKeyRow]{}, rows.Rows[bindingKeyRange]{}, errors.New("target/operation: binding key range overflow")
+		}
+		ranges[operationIndex] = bindingKeyRange{bindings: bindingRange}
+	}
+	return keyPool.Seal(), bindingPool.Seal(), rows.NewRows(ranges), nil
+}
+
+func appendBindingKeys(pool *rows.PoolBuilder[vocabulary.ExactKey], geometry Geometry, segments rows.Span, keys exactkey.Table) (rows.Span, error) {
+	count := geometry.segments.Count(segments)
+	if count != segments.Len() {
+		return rows.Span{}, errors.New("target/operation: malformed binding geometry")
+	}
+	values := make([]vocabulary.ExactKey, count)
+	for index := range values {
+		segment, ok := geometry.segments.At(segments, index)
+		if !ok {
+			return rows.Span{}, errors.New("target/operation: malformed binding segment")
+		}
+		key, keyOK := keys.Handle(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
+		if !keyOK || key == 0 {
+			return rows.Span{}, errors.New("target/operation: unresolved operation binding key")
+		}
+		values[index] = key
+	}
+	span, ok := pool.Append(values)
+	if !ok {
+		return rows.Span{}, errors.New("target/operation: binding key pool overflow")
+	}
+	return span, nil
 }
 
 func (geometry Geometry) bindingSpecs(span rows.Span) ([]vocabulary.BindingSpec, error) {

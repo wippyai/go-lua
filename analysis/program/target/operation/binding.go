@@ -26,6 +26,17 @@ func (core Core) binding(op vocabulary.Operation, index int) (bindingRow, bool) 
 	return core.geometry.bindings.At(row.bindings, index)
 }
 
+func (core Core) bindingKey(op vocabulary.Operation, index int) (bindingKeyRow, bool) {
+	if op == 0 {
+		return bindingKeyRow{}, false
+	}
+	rangeRow, ok := core.bindingRanges.At(int(op) - 1)
+	if !ok {
+		return bindingKeyRow{}, false
+	}
+	return core.bindingKeyRows.At(rangeRow.bindings, index)
+}
+
 func (core Core) BindingNamespaceAt(op vocabulary.Operation, index int) (vocabulary.BindingNamespace, bool) {
 	binding, ok := core.binding(op, index)
 	if !ok {
@@ -64,6 +75,26 @@ func (core Core) BindingMemberAt(op vocabulary.Operation, binding, index int) (s
 		return "", false
 	}
 	return core.geometry.segments.At(row.member, index)
+}
+
+// BindingOwnerKeyAt returns the exact-key handle projected for one owner
+// segment by the immutable operation anchor value.
+func (core Core) BindingOwnerKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
+	row, ok := core.bindingKey(op, binding)
+	if !ok {
+		return 0, false
+	}
+	return core.bindingKeys.At(row.owner, index)
+}
+
+// BindingMemberKeyAt returns the exact-key handle projected for one member
+// segment by the immutable operation anchor value.
+func (core Core) BindingMemberKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
+	row, ok := core.bindingKey(op, binding)
+	if !ok {
+		return 0, false
+	}
+	return core.bindingKeys.At(row.member, index)
 }
 
 // compareBindingSpec compares one owner-issued binding row with a neutral

@@ -3,7 +3,6 @@ package target
 import (
 	"errors"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
@@ -20,10 +19,6 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		return errors.New("target: noncanonical operation handle")
 	}
 	typeHandle, err := c.appendTypes(op, draft.types, draft.declarations)
-	if err != nil {
-		return err
-	}
-	bindings, err := c.appendBindings(draft.bindings, keys)
 	if err != nil {
 		return err
 	}
@@ -186,7 +181,7 @@ func (c *Contract) appendOperation(op vocabulary.Operation, draft *operationDraf
 		operationRelation = branch
 	}
 	c.operations = append(c.operations, operationRow{
-		bindings: bindings, input: operationInput, outcomes: operationOutcomes,
+		input: operationInput, outcomes: operationOutcomes,
 		behavior: operationBehavior, behaviorPredicates: operationPredicates,
 		valuesTypes: operationValuesTypes, subedges: operationSubedges,
 		suspensions: operationSuspensions, spawns: operationSpawns,
@@ -278,48 +273,6 @@ func (c *Contract) appendValues(owner vocabulary.Operation, input valuesDraft, h
 	}
 	c.values = append(c.values, row)
 	return vocabulary.Values(handle), nil
-}
-
-func (c *Contract) appendBindings(input []vocabulary.BindingSpec, keys exactkey.Table) (indexRange, error) {
-	output, err := checkedStoredRange("binding table", len(c.bindings), len(input))
-	if err != nil {
-		return indexRange{}, err
-	}
-	for _, binding := range input {
-		row, appendErr := c.appendBinding(binding, keys)
-		if appendErr != nil {
-			return indexRange{}, appendErr
-		}
-		c.bindings = append(c.bindings, row)
-	}
-	return output, nil
-}
-
-func (c *Contract) appendBinding(input vocabulary.BindingSpec, keys exactkey.Table) (bindingRange, error) {
-	ownerKeys, err := checkedStoredRange("binding exact-key pool", len(c.bindingKeys), len(input.Owner))
-	if err != nil {
-		return bindingRange{}, err
-	}
-	memberKeys, err := checkedStoredRange("binding exact-key pool", int(ownerKeys.end), len(input.Member))
-	if err != nil {
-		return bindingRange{}, err
-	}
-	row := bindingRange{ownerKeys: ownerKeys, memberKeys: memberKeys}
-	for _, segment := range input.Owner {
-		key, keyErr := exactKeyHandle(keys, keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
-		if keyErr != nil {
-			return bindingRange{}, keyErr
-		}
-		c.bindingKeys = append(c.bindingKeys, key)
-	}
-	for _, segment := range input.Member {
-		key, keyErr := exactKeyHandle(keys, keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
-		if keyErr != nil {
-			return bindingRange{}, keyErr
-		}
-		c.bindingKeys = append(c.bindingKeys, key)
-	}
-	return row, nil
 }
 
 func lookupDraftValues(values map[string]vocabulary.Values, draft valuesDraft) (vocabulary.Values, error) {

@@ -532,14 +532,6 @@ func (c *Contract) BindingCount(op vocabulary.Operation) int {
 	return c.operationCore.BindingCount(op)
 }
 
-func (c *Contract) bindingAt(op vocabulary.Operation, index int) (bindingRange, bool) {
-	row, ok := c.operation(op)
-	if !ok || index < 0 || index >= row.bindings.len() {
-		return bindingRange{}, false
-	}
-	return c.bindings[row.bindings.start+uint32(index)], true
-}
-
 func (c *Contract) BindingNamespaceAt(op vocabulary.Operation, binding int) (vocabulary.BindingNamespace, bool) {
 	if c == nil {
 		return 0, false
@@ -565,11 +557,10 @@ func (c *Contract) bindingOwnerAt(op vocabulary.Operation, binding, index int) (
 // segment. The string projection is cold spelling only; Link consumes this
 // handle and must not normalize the segment again.
 func (c *Contract) bindingOwnerKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
-	row, ok := c.bindingAt(op, binding)
-	if !ok || index < 0 || index >= row.ownerKeys.len() {
+	if c == nil {
 		return 0, false
 	}
-	return c.bindingKeys[row.ownerKeys.start+uint32(index)], true
+	return c.operationCore.BindingOwnerKeyAt(op, binding, index)
 }
 
 func (c *Contract) BindingMemberCountAt(op vocabulary.Operation, binding int) int {
@@ -588,11 +579,10 @@ func (c *Contract) BindingMemberAt(op vocabulary.Operation, binding, index int) 
 
 // bindingMemberKeyAt is BindingOwnerKeyAt's member-segment counterpart.
 func (c *Contract) bindingMemberKeyAt(op vocabulary.Operation, binding, index int) (vocabulary.ExactKey, bool) {
-	row, ok := c.bindingAt(op, binding)
-	if !ok || index < 0 || index >= row.memberKeys.len() {
+	if c == nil {
 		return 0, false
 	}
-	return c.bindingKeys[row.memberKeys.start+uint32(index)], true
+	return c.operationCore.BindingMemberKeyAt(op, binding, index)
 }
 
 // Lookup finds an exact binding without joining, hashing, parser fallback, or

@@ -107,6 +107,13 @@ type bindingIndexRow struct {
 	operation vocabulary.Operation
 }
 
+type bindingKeyRow struct {
+	owner  rows.Span
+	member rows.Span
+}
+
+type bindingKeyRange struct{ bindings rows.Span }
+
 // Geometry is the first immutable operation value. It owns canonical
 // operation/callback coordinates and all anchor-neutral geometry, but not the
 // exact-key-dependent binding/produced semantic anchors.
@@ -132,6 +139,9 @@ type anchorRow struct{ id identity.ContentID }
 // callback ID/lifecycle, and operation semantic anchor is read from this
 // value. No caller can append, backpatch, or toggle a publication flag.
 type Core struct {
-	geometry Geometry
-	anchors  rows.Rows[anchorRow]
+	geometry       Geometry
+	anchors        rows.Rows[anchorRow]
+	bindingKeys    rows.Pool[vocabulary.ExactKey]
+	bindingKeyRows rows.Pool[bindingKeyRow]
+	bindingRanges  rows.Rows[bindingKeyRange]
 }

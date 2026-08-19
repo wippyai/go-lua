@@ -18,7 +18,6 @@ import (
 // produced edges; this row retains only ranges into Target-owned pools and
 // the aggregate's input/value/effect projections.
 type operationRow struct {
-	bindings           indexRange
 	input              vocabulary.Values
 	outcomes           indexRange
 	behavior           indexRange
@@ -36,11 +35,6 @@ type operationRow struct {
 	rowFormals         uint32
 	effectTail         vocabulary.RowTail
 	effectVar          vocabulary.RowVar
-}
-
-type bindingRange struct {
-	ownerKeys  indexRange
-	memberKeys indexRange
 }
 
 type valuesRow struct {
@@ -256,7 +250,6 @@ type Contract struct {
 	valuesVarTypes         []vocabulary.Type
 	effectRows             []vocabulary.RowVar
 	formals                []vocabulary.Type
-	bindings               []bindingRange
 	callbacks              []callbackRow
 	subedges               []subedgeRow
 	subedgeOrigins         []subedgeArgumentOriginRow
@@ -274,7 +267,6 @@ type Contract struct {
 	produced               []producedRow
 	fresh                  []freshResultRow
 	captures               []captureRow
-	bindingKeys            []vocabulary.ExactKey
 	exactKeys              exactkey.Table
 	counts                 denominator.CountRows
 	// identityColumns carries the identity plane's own columns. The layout is

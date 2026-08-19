@@ -70,12 +70,16 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	}
 	protocolCounts := c.protocols.Counts()
 	bootCounts := c.Table.Counts()
+	bindingCount := 0
+	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+		bindingCount += c.BindingCount(vocabulary.Operation(operationIndex + 1))
+	}
 
 	ok := put(ids.TargetContract, 1) &&
 		put(ids.TargetOpaque, 1) &&
 		put(ids.TargetOperation, c.OperationCount()) &&
 		put(ids.TargetABI, c.OperationCount()) &&
-		put(ids.TargetBinding, len(c.bindings)) &&
+		put(ids.TargetBinding, bindingCount) &&
 		put(ids.TargetOutcome, len(c.outcomes)) &&
 		put(ids.TargetOperationEffect, operationEffects) &&
 		put(ids.TargetCallbackEffect, callbackEffects) &&
