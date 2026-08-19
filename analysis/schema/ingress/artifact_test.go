@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
 )
 
 func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
@@ -37,8 +36,7 @@ func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
 		"Values": true, "ValuesMember": true, "ValuesTail": true, "StaticTypeValue": true, "StaticTypeNode": true,
 		"StaticTypeArgument": true,
 		"Occurrence":         true, "Outcome": true, "FunctionFormal": true,
-		"BodyRoot":           true,
-		"ExactScalarSummary": true, "ArithmeticSummary": true, "UnarySummary": true,
+		"BodyRoot":              true,
 		"DiagnosticObservation": true,
 	}
 	for _, declaration := range file.Decls {

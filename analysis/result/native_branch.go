@@ -9,10 +9,10 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -117,7 +117,7 @@ func appendNativeArithmeticRows(rows *[]nativePublicationRow, seen map[identity.
 		return false
 	}
 	representation := "representation=" + result + " left=" + left + " operator=" + operator + " overflow=" + overflow.String() + " result_representation=" + result + " right=" + right
-	if summary.result != programartifact.NumericRepresentationNumber {
+	if summary.result != cold.NumericRepresentationNumber {
 		representation = "exact=true " + representation
 	}
 	if !appendNativeArithmeticRow(rows, seen, nativePublicationFamilyRepresentation, summary, representation) {
@@ -176,7 +176,7 @@ func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.Conte
 		return false
 	}
 	value := "operator=unm overflow=" + overflow.String() + " representation=" + result + " result_representation=" + result + " operand_representation=" + operand
-	if summary.result != programartifact.NumericRepresentationNumber {
+	if summary.result != cold.NumericRepresentationNumber {
 		value = "exact=true " + value
 	}
 	semantic, semanticOK := nativePublicationFamilyRepresentation.semanticID()
@@ -210,13 +210,13 @@ func appendNativeUnaryRows(rows *[]nativePublicationRow, seen map[identity.Conte
 // nativeNumericRepresentation is this publication's single spelling of the
 // sealed representation vocabulary: the names exist nowhere else, so they are
 // rendered here rather than projected from a declared row.
-func nativeNumericRepresentation(representation programartifact.NumericRepresentation) (string, bool) {
+func nativeNumericRepresentation(representation cold.NumericRepresentation) (string, bool) {
 	switch representation {
-	case programartifact.NumericRepresentationInteger:
+	case cold.NumericRepresentationInteger:
 		return "integer", true
-	case programartifact.NumericRepresentationFloat:
+	case cold.NumericRepresentationFloat:
 		return "float", true
-	case programartifact.NumericRepresentationNumber:
+	case cold.NumericRepresentationNumber:
 		return "number", true
 	default:
 		return "", false
@@ -250,13 +250,13 @@ func nativeArithmeticOperator(op flowkind.BinaryOp) (string, bool) {
 // nativeArithmeticDivisor is this publication's single spelling of the sealed
 // divisor-property vocabulary; the guard conclusions carry no declared name of
 // their own, and the absent property renders as no clause at all.
-func nativeArithmeticDivisor(property programartifact.ArithmeticDivisorProperty) (string, bool) {
+func nativeArithmeticDivisor(property cold.ArithmeticDivisorProperty) (string, bool) {
 	switch property {
-	case programartifact.ArithmeticDivisorNone:
+	case cold.ArithmeticDivisorNone:
 		return "", true
-	case programartifact.ArithmeticDivisorNonzero:
+	case cold.ArithmeticDivisorNonzero:
 		return "nonzero", true
-	case programartifact.ArithmeticDivisorNonzeroNotMinusOne:
+	case cold.ArithmeticDivisorNonzeroNotMinusOne:
 		return "nonzero_not_minus_one", true
 	default:
 		return "", false

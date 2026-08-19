@@ -2,14 +2,17 @@ package result
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
-// Mount is one compile-time ingress snapshot placed at a Link module key.
-// Result projection reads Snapshot and ModuleKey only.
+// Mount is one compile-time ingress snapshot and its shared cold Program
+// placed at a Link module key. Result projection reads structural rows from
+// Snapshot and Program-owned summaries from Program.
 type Mount struct {
 	Snapshot  *ingress.Snapshot
 	ModuleKey identity.ContentID
+	Program   cold.Program
 }
 
 // NewMount admits one sealed ingress snapshot at a module key.
@@ -17,13 +20,17 @@ func NewMount(snapshot *ingress.Snapshot, moduleKey identity.ContentID) (Mount, 
 	if snapshot == nil || !snapshot.Available() || !moduleKey.Available() {
 		return Mount{}, false
 	}
-	return Mount{Snapshot: snapshot, ModuleKey: moduleKey}, true
+	program, programOK := snapshot.ColdProgram(moduleKey)
+	if !programOK {
+		return Mount{}, false
+	}
+	return Mount{Snapshot: snapshot, ModuleKey: moduleKey, Program: program}, true
 }
 
 // Valid reports a sealed ingress snapshot at an available module key.
 func (mount Mount) Valid() bool {
-	return mount.Snapshot != nil && mount.Snapshot.Available() && mount.ModuleKey.Available() &&
-		mount.Snapshot.ArtifactID().Available()
+	return mount.Snapshot != nil && mount.Snapshot.Available() && mount.ModuleKey.Available() && mount.Program.Available() &&
+		mount.Program.ModuleKey == mount.ModuleKey && mount.Snapshot.ArtifactID() == mount.Program.ArtifactID && mount.Snapshot.ProgramID() == mount.Program.ProgramID
 }
 
 // ValueCoordinate is the Link substitution for one Value factor coordinate.

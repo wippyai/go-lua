@@ -48,9 +48,6 @@ return identity(1)
 		snapshot.HeapIndexCount() != artifact.HeapIndexCount() || snapshot.OccurrenceCount() != artifact.OccurrenceCount() ||
 		snapshot.StaticTypeValueCount() != artifact.StaticTypeValueCount() ||
 		snapshot.CallArgumentCount() != artifact.CallArgumentCount() ||
-		snapshot.ExactScalarSummaryCount() != artifact.ExactScalarSummaryCount() ||
-		snapshot.ArithmeticSummaryCount() != artifact.ArithmeticSummaryCount() ||
-		snapshot.UnarySummaryCount() != artifact.UnarySummaryCount() ||
 		snapshot.DiagnosticObservationCount() != artifact.DiagnosticObservationCount() ||
 		snapshot.StaticTypeNodeCount() != artifact.StaticTypeNodeCount() ||
 		snapshot.StaticTypeArgumentCount() != artifact.StaticTypeArgumentCount() ||
@@ -182,26 +179,6 @@ return identity(1)
 			t.Fatalf("call argument %d is not recoverable by id", index)
 		}
 	}
-	for index := 0; index < snapshot.ExactScalarSummaryCount(); index++ {
-		got, gotOK := snapshot.ExactScalarSummaryAt(index)
-		want, wantOK := artifact.ExactScalarSummaryAt(index)
-		if !gotOK || !wantOK || got.ID() != want.ID() || got.OccurrenceID() != want.OccurrenceID() ||
-			got.SubjectID() != want.SubjectID() || got.BodyPathID() != want.BodyPathID() {
-			t.Fatalf("exact scalar summary %d drifted", index)
-		}
-	}
-	for index := 0; index < snapshot.ArithmeticSummaryCount(); index++ {
-		got, gotOK := snapshot.ArithmeticSummaryAt(index)
-		want, wantOK := artifact.ArithmeticSummaryAt(index)
-		left, right, result, representationsOK := want.Representations()
-		if !gotOK || !wantOK || !representationsOK || got.ID() != want.ID() ||
-			got.OccurrenceID() != want.OccurrenceID() || got.BodyPathID() != want.BodyPathID() ||
-			got.Operator() != uint8(want.Operator()) || got.Left() != uint8(left) ||
-			got.Right() != uint8(right) || got.Result() != uint8(result) ||
-			got.Divisor() != uint8(want.DivisorProperty()) {
-			t.Fatalf("arithmetic summary %d drifted", index)
-		}
-	}
 	for index := 0; index < snapshot.DiagnosticObservationCount(); index++ {
 		got, gotOK := snapshot.DiagnosticObservationAt(index)
 		want, wantOK := artifact.DiagnosticObservationAt(index)
@@ -217,17 +194,6 @@ return identity(1)
 				gotConformance.Site() != wantConformance.Site() || len(gotPoints) != len(wantPoints) {
 				t.Fatalf("diagnostic observation %d lost conformance evidence", index)
 			}
-		}
-	}
-	for index := 0; index < snapshot.UnarySummaryCount(); index++ {
-		got, gotOK := snapshot.UnarySummaryAt(index)
-		want, wantOK := artifact.UnarySummaryAt(index)
-		operand, result, representationsOK := want.Representations()
-		if !gotOK || !wantOK || !representationsOK || got.ID() != want.ID() ||
-			got.OccurrenceID() != want.OccurrenceID() || got.BodyPathID() != want.BodyPathID() ||
-			got.OutputPointID() != want.OutputPointID() || got.Operator() != uint8(want.Operator()) ||
-			got.Operand() != uint8(operand) || got.Result() != uint8(result) {
-			t.Fatalf("unary summary %d drifted", index)
 		}
 	}
 	for index := 0; index < snapshot.OccurrenceCount(); index++ {

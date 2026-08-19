@@ -5,106 +5,8 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
-
-// ExactScalarSummaryRole is the closed arithmetic-use position authenticated
-// by a Program summary.  It is semantic, not an authored operand ordinal
-// supplied later by Link.
-type ExactScalarSummaryRole uint8
-
-const (
-	ExactScalarSummaryLeft ExactScalarSummaryRole = iota + 1
-	ExactScalarSummaryRight
-	ExactScalarSummaryResult
-)
-
-func (role ExactScalarSummaryRole) Valid() bool {
-	return role >= ExactScalarSummaryLeft && role <= ExactScalarSummaryResult
-}
-
-// ExactScalarSummaryRow is one reusable Program-owned concrete scalar at an
-// exact arithmetic operand or result. It is deliberately narrower than a
-// Value-domain fact: the complete Program-local transfer closure must yield
-// one scalar at this use. Link can mount the row without solving the Program
-// body again, while unrelated authored literals never become global facts.
-type ExactScalarSummaryRow struct {
-	id         identity.ContentID
-	occurrence identity.ContentID
-	subject    identity.ContentID
-	body       identity.ContentID
-	role       ExactScalarSummaryRole
-	literal    keyspace.LiteralValue
-}
-
-func (artifact *Artifact) ExactScalarSummaryCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.exactScalarSummaries)
-}
-
-func (artifact *Artifact) ExactScalarSummaryAt(index int) (ExactScalarSummaryRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.exactScalarSummaries) {
-		return ExactScalarSummaryRow{}, false
-	}
-	row := artifact.exactScalarSummaries[index]
-	return row, row.Available()
-}
-
-func (row ExactScalarSummaryRow) Available() bool {
-	return row.id.Available() && row.occurrence.Available() && row.subject.Available() && row.body.Available() && row.role.Valid() &&
-		(row.literal.Kind == keyspace.LiteralInteger || row.literal.Kind == keyspace.LiteralFloat) &&
-		row.id == exactScalarSummaryID(row.occurrence, row.subject, row.body, row.role, row.literal)
-}
-
-func (row ExactScalarSummaryRow) ID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.id
-}
-
-func (row ExactScalarSummaryRow) OccurrenceID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.occurrence
-}
-
-func (row ExactScalarSummaryRow) BodyPathID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.body
-}
-
-func (row ExactScalarSummaryRow) SubjectID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.subject
-}
-
-func (row ExactScalarSummaryRow) Role() ExactScalarSummaryRole {
-	if !row.Available() {
-		return 0
-	}
-	return row.role
-}
-
-func (row ExactScalarSummaryRow) Literal() (keyspace.LiteralValue, bool) {
-	return row.literal, row.Available()
-}
-
-func exactScalarSummaryID(occurrence, subject, body identity.ContentID, role ExactScalarSummaryRole, literal keyspace.LiteralValue) identity.ContentID {
-	if !occurrence.Available() || !subject.Available() || !body.Available() || !role.Valid() ||
-		(literal.Kind != keyspace.LiteralInteger && literal.Kind != keyspace.LiteralFloat) {
-		return identity.ContentID{}
-	}
-	return digest("analysis/program-artifact/exact-scalar-summary", artifactFormat,
-		bytesField(occurrence), bytesField(subject), bytesField(body), uintField(uint64(role)), uintField(uint64(literal.Kind)),
-		uintField(uint64(literal.Integer)), uintField(literal.FloatBits))
-}
 
 type exactScalarState struct {
 	unknown bool
@@ -318,7 +220,7 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 		}
 	}
 
-	summaries := make([]ExactScalarSummaryRow, 0, len(arithmetic)*3)
+	summaries := make([]cold.ExactScalarSummary, 0, len(arithmetic)*3)
 	seen := make(map[identity.ContentID]struct{}, len(arithmetic)*3)
 	for index, row := range arithmetic {
 		left, right, _, endpointsOK := row.BinaryArithmetic()
@@ -326,31 +228,32 @@ func (compiler *compiler) deriveExactScalarSummariesFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		uses := [...]struct {
-			role    ExactScalarSummaryRole
+			role    cold.ExactScalarSummaryRole
 			subject identity.ContentID
 		}{
-			{role: ExactScalarSummaryLeft, subject: left},
-			{role: ExactScalarSummaryRight, subject: right},
-			{role: ExactScalarSummaryResult, subject: row.ID()},
+			{role: cold.ExactScalarSummaryLeft, subject: left},
+			{role: cold.ExactScalarSummaryRight, subject: right},
+			{role: cold.ExactScalarSummaryResult, subject: row.ID()},
 		}
 		for _, use := range uses {
 			literal, exactOK := states[use.subject].exact()
 			if !exactOK {
 				continue
 			}
-			summary := ExactScalarSummaryRow{occurrence: row.ID(), subject: use.subject, body: row.body, role: use.role, literal: literal}
-			summary.id = exactScalarSummaryID(summary.occurrence, summary.subject, summary.body, summary.role, summary.literal)
-			if !summary.Available() {
+			summary, summaryOK := cold.NewExactScalarSummary(row.ID(), use.subject, row.body, use.role, cold.SummaryLiteral{
+				Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits,
+			})
+			if !summaryOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			if _, duplicate := seen[summary.id]; duplicate {
+			if _, duplicate := seen[summary.ID()]; duplicate {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
-			seen[summary.id] = struct{}{}
+			seen[summary.ID()] = struct{}{}
 			summaries = append(summaries, summary)
 		}
 	}
-	identity.SortByContentID(summaries, func(row ExactScalarSummaryRow) identity.ContentID { return row.id })
+	identity.SortByContentID(summaries, func(row cold.ExactScalarSummary) identity.ContentID { return row.ID() })
 	compiler.exactScalarSummaries = summaries
 	compiler.exactScalarStates = states
 	return CompileFailure{}

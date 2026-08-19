@@ -43,9 +43,6 @@ type Artifact struct {
 	outcomes               []OutcomeRow
 	returnValues           []ReturnValue
 	occurrences            []OccurrenceRow
-	exactScalarSummaries   []ExactScalarSummaryRow
-	arithmeticSummaries    []ArithmeticSummaryRow
-	unarySummaries         []UnarySummaryRow
 	heapAllocations        []HeapAllocationRow
 	heapIndexes            []HeapIndexRow
 	occurrenceByID         map[occurrenceLookup]uint32

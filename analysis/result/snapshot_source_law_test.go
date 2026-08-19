@@ -47,10 +47,7 @@ func TestNativeSummariesReadSealedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(src)
-	if strings.Contains(text, "mount.artifact.ExactScalarSummary") ||
-		strings.Contains(text, "mount.artifact.ArithmeticSummary") ||
-		strings.Contains(text, "mount.artifact.UnarySummary") ||
-		strings.Contains(text, "func exactNativeScalarRulePoint(artifact *programartifact.Artifact") {
+	if strings.Contains(text, "func exactNativeScalarRulePoint(artifact *programartifact.Artifact") {
 		t.Fatal("native summaries still reopen ProgramArtifact columns")
 	}
 	if !strings.Contains(text, "func exactNativeScalarRulePoint(snapshot *ingress.Snapshot") {

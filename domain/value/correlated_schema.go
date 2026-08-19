@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/target"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -487,24 +488,28 @@ func (builder *valueBuilder) sealProject() *linkproject.Component   { return bui
 func (builder *valueBuilder) sealBoundary() *linkboundary.Component { return builder.boundary }
 func (builder *valueBuilder) sealHost() *linkhost.Component         { return builder.host }
 
-// ArtifactMount binds one immutable reusable ProgramArtifact to one concrete
-// Link mount. Module is the mount qualifier: equal Program artifacts may be
+// ArtifactMount binds one immutable reusable compiled Program to one concrete
+// Link mount. Module is the mount qualifier: equal Programs may be
 // mounted more than once without positional joins or shared occurrence IDs.
 type ArtifactMount struct {
 	snapshot *ingress.Snapshot
 	module   identity.ContentID
-	program  identity.ContentID
+	program  cold.Program
 }
 
 func NewArtifactMount(snapshot *ingress.Snapshot, module, programID identity.ContentID) (ArtifactMount, bool) {
 	if snapshot == nil || !snapshot.Available() || !module.Available() || !programID.Available() || snapshot.ProgramID() != programID {
 		return ArtifactMount{}, false
 	}
-	return ArtifactMount{snapshot: snapshot, module: module, program: programID}, true
+	program, programOK := snapshot.ColdProgram(module)
+	if !programOK || program.ProgramID != programID {
+		return ArtifactMount{}, false
+	}
+	return ArtifactMount{snapshot: snapshot, module: module, program: program}, true
 }
 
 func (mount ArtifactMount) Available() bool {
-	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.snapshot.ProgramID() == mount.program
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.module.Available() && mount.program.Available() && mount.program.ModuleKey == mount.module && mount.snapshot.ProgramID() == mount.program.ProgramID && mount.snapshot.ArtifactID() == mount.program.ArtifactID
 }
 func (mount ArtifactMount) Module() identity.ContentID {
 	if !mount.Available() {
@@ -516,13 +521,19 @@ func (mount ArtifactMount) ProgramID() identity.ContentID {
 	if !mount.Available() {
 		return identity.ContentID{}
 	}
-	return mount.program
+	return mount.program.ProgramID
 }
 func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	if !mount.Available() {
 		return nil
 	}
 	return mount.snapshot
+}
+func (mount ArtifactMount) Program() cold.Program {
+	if !mount.Available() {
+		return cold.Program{}
+	}
+	return mount.program
 }
 
 // LinkID is the detached owner identity for this sealed Value schema. Hot

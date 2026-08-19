@@ -98,13 +98,13 @@ func artifactID(artifact *Artifact) identity.ContentID {
 	}
 	// The call-target family is read out of the sealed cold publication in its
 	// emitted order, which is the order the identity has always committed to.
-	targets, published := cold.CallTargetCount(&artifact.frozen, artifact.coldCatalog)
+	targets, published := cold.CallTargetFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !published {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(targets)))
 	for index := 0; index < targets; index++ {
-		target, held := cold.CallTargetAt(&artifact.frozen, artifact.coldCatalog, index)
+		target, held := cold.CallTargetFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !held {
 			return identity.ContentID{}
 		}
@@ -142,20 +142,47 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(uintField(uint64(row.literalFamily)), boolField(row.literalOK), uintField(uint64(row.literal.Kind)), boolField(row.literal.Bool), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits), field{bytes: []byte(row.literal.String), kind: fieldBytes})
 	}
-	sink.add(uintField(uint64(len(artifact.exactScalarSummaries))))
-	for _, row := range artifact.exactScalarSummaries {
-		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.subject), bytesField(row.body),
-			uintField(uint64(row.role)), uintField(uint64(row.literal.Kind)), uintField(uint64(row.literal.Integer)), uintField(row.literal.FloatBits))
+	exactCount, exactPublished := cold.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !exactPublished {
+		return identity.ContentID{}
 	}
-	sink.add(uintField(uint64(len(artifact.arithmeticSummaries))))
-	for _, row := range artifact.arithmeticSummaries {
-		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), uintField(uint64(row.op)),
-			uintField(uint64(row.left)), uintField(uint64(row.right)), uintField(uint64(row.result)), uintField(uint64(row.divisor)))
+	sink.add(uintField(uint64(exactCount)))
+	for index := 0; index < exactCount; index++ {
+		row, rowOK := cold.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		literal, literalOK := row.Literal()
+		if !rowOK || !literalOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.SubjectID()), bytesField(row.BodyPathID()),
+			uintField(uint64(row.Role())), uintField(uint64(literal.Kind)), uintField(uint64(literal.Integer)), uintField(literal.FloatBits))
 	}
-	sink.add(uintField(uint64(len(artifact.unarySummaries))))
-	for _, row := range artifact.unarySummaries {
-		sink.add(bytesField(row.id), bytesField(row.occurrence), bytesField(row.body), bytesField(row.point), uintField(uint64(row.op)),
-			uintField(uint64(row.operand)), uintField(uint64(row.result)))
+	arithmeticCount, arithmeticPublished := cold.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !arithmeticPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(arithmeticCount)))
+	for index := 0; index < arithmeticCount; index++ {
+		row, rowOK := cold.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		left, right, result, representationsOK := row.Representations()
+		if !rowOK || !representationsOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.BodyPathID()), uintField(uint64(row.Operator())),
+			uintField(uint64(left)), uintField(uint64(right)), uintField(uint64(result)), uintField(uint64(row.DivisorProperty())))
+	}
+	unaryCount, unaryPublished := cold.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !unaryPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(unaryCount)))
+	for index := 0; index < unaryCount; index++ {
+		row, rowOK := cold.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		operand, result, representationsOK := row.Representations()
+		if !rowOK || !representationsOK {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.ID()), bytesField(row.OccurrenceID()), bytesField(row.BodyPathID()), bytesField(row.OutputPointID()), uintField(uint64(row.Operator())),
+			uintField(uint64(operand)), uintField(uint64(result)))
 	}
 	sink.add(uintField(uint64(len(artifact.heapAllocations))))
 	for _, allocation := range artifact.heapAllocations {

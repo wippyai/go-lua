@@ -3,6 +3,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
 
 func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFailure {
@@ -171,65 +172,86 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		rows[row.id] = struct{}{}
 	}
-	for index, row := range artifact.exactScalarSummaries {
-		if !row.Available() || index > 0 && !contentIDBefore(artifact.exactScalarSummaries[index-1].id, row.id) {
+	exactCount, exactPublished := cold.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !exactPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	var priorExact identity.ContentID
+	for index := 0; index < exactCount; index++ {
+		row, rowOK := cold.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		if !rowOK || index > 0 && !contentIDBefore(priorExact, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		_, exists := state.occurrenceRows[OccurrenceBinaryArithmetic][row.occurrence]
+		priorExact = row.ID()
+		_, exists := state.occurrenceRows[OccurrenceBinaryArithmetic][row.OccurrenceID()]
 		if !exists {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.occurrence}]
-		if !found || uint64(binary) >= uint64(len(artifact.occurrences)) || artifact.occurrences[binary].body != row.body {
+		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.OccurrenceID()}]
+		if !found || uint64(binary) >= uint64(len(artifact.occurrences)) || artifact.occurrences[binary].body != row.BodyPathID() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		left, right, _, endpointsOK := artifact.occurrences[binary].BinaryArithmetic()
 		wantSubject := artifact.occurrences[binary].ID()
-		switch row.role {
-		case ExactScalarSummaryLeft:
+		switch row.Role() {
+		case cold.ExactScalarSummaryLeft:
 			wantSubject = left
-		case ExactScalarSummaryRight:
+		case cold.ExactScalarSummaryRight:
 			wantSubject = right
-		case ExactScalarSummaryResult:
+		case cold.ExactScalarSummaryResult:
 		default:
 			endpointsOK = false
 		}
-		if !endpointsOK || row.subject != wantSubject {
+		if !endpointsOK || row.SubjectID() != wantSubject {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index, row := range artifact.arithmeticSummaries {
-		if !row.Available() || index > 0 && !contentIDBefore(artifact.arithmeticSummaries[index-1].id, row.id) {
+	arithmeticCount, arithmeticPublished := cold.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !arithmeticPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	var priorArithmetic identity.ContentID
+	for index := 0; index < arithmeticCount; index++ {
+		row, rowOK := cold.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		if !rowOK || index > 0 && !contentIDBefore(priorArithmetic, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.occurrence}]
+		priorArithmetic = row.ID()
+		binary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceBinaryArithmetic, id: row.OccurrenceID()}]
 		if !found || uint64(binary) >= uint64(len(artifact.occurrences)) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		occurrence := artifact.occurrences[binary]
 		_, _, op, endpointsOK := occurrence.BinaryArithmetic()
-		if !endpointsOK || occurrence.body != row.body || op != row.op {
+		if !endpointsOK || occurrence.body != row.BodyPathID() || op != flowkind.BinaryOp(row.Operator()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	for index, row := range artifact.unarySummaries {
-		if !row.Available() || index > 0 && !contentIDBefore(artifact.unarySummaries[index-1].id, row.id) {
+	unaryCount, unaryPublished := cold.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
+	if !unaryPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	var priorUnary identity.ContentID
+	for index := 0; index < unaryCount; index++ {
+		row, rowOK := cold.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
+		if !rowOK || index > 0 && !contentIDBefore(priorUnary, row.ID()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 0, CompileReasonOccurrenceUnavailable)
 		}
-		unary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceUnary, id: row.occurrence}]
+		priorUnary = row.ID()
+		unary, found := artifact.occurrenceByID[occurrenceLookup{kind: OccurrenceUnary, id: row.OccurrenceID()}]
 		if !found || uint64(unary) >= uint64(len(artifact.occurrences)) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 1, CompileReasonOccurrenceUnavailable)
 		}
 		occurrence := artifact.occurrences[unary]
-		if occurrence.body != row.body {
+		if occurrence.body != row.BodyPathID() {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
 		}
-		if flowkind.UnaryOp(occurrence.code) != row.op {
+		if flowkind.UnaryOp(occurrence.code) != flowkind.UnaryOp(row.Operator()) {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 3, CompileReasonOccurrenceUnavailable)
 		}
 		pointFound := false
 		for _, point := range occurrence.points {
-			pointFound = pointFound || point == row.point
+			pointFound = pointFound || point == row.OutputPointID()
 		}
 		if !pointFound {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 5, CompileReasonOccurrenceUnavailable)

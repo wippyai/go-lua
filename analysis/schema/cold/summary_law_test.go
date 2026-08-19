@@ -38,9 +38,9 @@ func sealSummaryLaw(t *testing.T) (snapshot.Frozen, identity.ContentID, []ExactS
 		t.Fatal("cold catalog")
 	}
 	exact, arithmetic, unary := summaryLawRows(t)
-	exactContent, exactSealed := ExactScalarSummaryContent(exact, catalog)
-	arithmeticContent, arithmeticSealed := ArithmeticSummaryContent(arithmetic, catalog)
-	unaryContent, unarySealed := UnarySummaryContent(unary, catalog)
+	exactContent, exactSealed := ExactScalarSummaryFamily().Content(exact, catalog)
+	arithmeticContent, arithmeticSealed := ArithmeticSummaryFamily().Content(arithmetic, catalog)
+	unaryContent, unarySealed := UnarySummaryFamily().Content(unary, catalog)
 	if !exactSealed || !arithmeticSealed || !unarySealed {
 		t.Fatal("summary content rejected declared rows")
 	}
@@ -57,13 +57,13 @@ func sealSummaryLaw(t *testing.T) (snapshot.Frozen, identity.ContentID, []ExactS
 			t.Fatal("empty preceding cold family")
 		}
 	}
-	if err := snapshot.PutFrozenColumn(&builder, ExactScalarSummaries(catalog), exactContent); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, ExactScalarSummaryFamily().Axis(catalog), exactContent); err != nil {
 		t.Fatalf("put exact scalar column: %v", err)
 	}
-	if err := snapshot.PutFrozenColumn(&builder, ArithmeticSummaries(catalog), arithmeticContent); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, ArithmeticSummaryFamily().Axis(catalog), arithmeticContent); err != nil {
 		t.Fatalf("put arithmetic column: %v", err)
 	}
-	if err := snapshot.PutFrozenColumn(&builder, UnarySummaries(catalog), unaryContent); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, UnarySummaryFamily().Axis(catalog), unaryContent); err != nil {
 		t.Fatalf("put unary column: %v", err)
 	}
 	frozen, err := builder.Seal()
@@ -109,10 +109,10 @@ func TestSummaryColumnsReadBackThroughProgram(t *testing.T) {
 		t.Fatal("negative arithmetic ordinal reported a row")
 	}
 	foreign := summaryLawID(t, "foreign-catalog")
-	if _, published := ExactScalarSummaryCount(&frozen, foreign); published {
+	if _, published := ExactScalarSummaryFamily().Count(&frozen, foreign); published {
 		t.Fatal("foreign catalog reported the summary family")
 	}
-	if _, status := snapshot.ReadFrozen(&frozen, ExactScalarSummaries(foreign), Ordinal(0)); status != snapshot.ReadInvalid {
+	if _, status := snapshot.ReadFrozen(&frozen, ExactScalarSummaryFamily().Axis(foreign), Ordinal(0)); status != snapshot.ReadInvalid {
 		t.Fatalf("foreign exact axis reported %v", status)
 	}
 }

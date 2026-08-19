@@ -5,18 +5,19 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 )
 
 // compiledNativeArithmeticSummary is a short-lived projection of one
-// ProgramArtifact arithmetic summary. It is deliberately not retained by the
+// cold Program arithmetic summary. It is deliberately not retained by the
 // result geometry: native publication reads the immutable artifact column at
 // detach time and immediately turns this value into publication rows.
 type compiledNativeArithmeticSummary struct {
 	mount, artifact, proof, occurrence, body, point, span identity.ContentID
 	op                                                    flowkind.BinaryOp
-	left, right, result                                   programartifact.NumericRepresentation
-	divisor                                               programartifact.ArithmeticDivisorProperty
+	left, right, result                                   cold.NumericRepresentation
+	divisor                                               cold.ArithmeticDivisorProperty
 }
 
 func (summary compiledNativeArithmeticSummary) valid() bool {
@@ -24,13 +25,13 @@ func (summary compiledNativeArithmeticSummary) valid() bool {
 		summary.occurrence.Available() && summary.body.Available() && summary.point.Available() && summary.span.Available() &&
 		summary.proof != summary.occurrence && summary.op >= flowkind.BinaryAdd && summary.op <= flowkind.BinaryPow &&
 		summary.left.Valid() && summary.right.Valid() && summary.result.Valid() && summary.divisor.Valid() &&
-		(summary.divisor == programartifact.ArithmeticDivisorNone || summary.op == flowkind.BinaryIDiv)
+		(summary.divisor == cold.ArithmeticDivisorNone || summary.op == flowkind.BinaryIDiv)
 }
 
 type compiledNativeUnarySummary struct {
 	mount, artifact, proof, occurrence, body, point, span identity.ContentID
 	op                                                    flowkind.UnaryOp
-	operand, result                                       programartifact.NumericRepresentation
+	operand, result                                       cold.NumericRepresentation
 }
 
 func (summary compiledNativeUnarySummary) valid() bool {
@@ -47,7 +48,7 @@ const (
 )
 
 // compiledNativeScalarSource is a short-lived projection of one exact scalar
-// summary. ProgramArtifact remains the owner of the summary; this value exists
+// summary. The cold Program remains the owner of the summary; this value exists
 // only while its publication rows are being assembled.
 type compiledNativeScalarSource struct {
 	kind       compiledNativeScalarSourceKind
@@ -92,7 +93,7 @@ func (source compiledNativeScalarSource) valid() bool {
 	}
 }
 
-// appendNativeArtifactSummaryRows reads the ProgramArtifact-owned native
+// appendNativeArtifactSummaryRows reads the cold Program-owned native
 // summary columns directly. The compiled values are never put in a receipt or
 // another cache; each is consumed immediately by the native row projection.
 func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[identity.ContentID]struct{}, mounts []Mount) bool {
@@ -100,12 +101,19 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 		return false
 	}
 	for _, mount := range mounts {
-		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.ModuleKey.Available() || !mount.Snapshot.ArtifactID().Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() || !mount.ModuleKey.Available() || mount.Program.ModuleKey != mount.ModuleKey || !mount.Snapshot.ArtifactID().Available() {
 			return false
 		}
-		for summaryIndex := 0; summaryIndex < mount.Snapshot.ExactScalarSummaryCount(); summaryIndex++ {
-			summary, summaryOK := mount.Snapshot.ExactScalarSummaryAt(summaryIndex)
-			literal, literalOK := summary.Literal()
+		exactCount, exactPublished := mount.Program.ExactScalarSummaryCount()
+		arithmeticCount, arithmeticPublished := mount.Program.ArithmeticSummaryCount()
+		unaryCount, unaryPublished := mount.Program.UnarySummaryCount()
+		if !exactPublished || !arithmeticPublished || !unaryPublished {
+			return false
+		}
+		for summaryIndex := 0; summaryIndex < exactCount; summaryIndex++ {
+			summary, summaryOK := mount.Program.ExactScalarSummaryAt(summaryIndex)
+			coldLiteral, literalOK := summary.Literal()
+			literal := keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}
 			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceBinaryArithmetic), summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !literalOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID {
@@ -128,32 +136,33 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 				return false
 			}
 		}
-		for summaryIndex := 0; summaryIndex < mount.Snapshot.ArithmeticSummaryCount(); summaryIndex++ {
-			summary, summaryOK := mount.Snapshot.ArithmeticSummaryAt(summaryIndex)
+		for summaryIndex := 0; summaryIndex < arithmeticCount; summaryIndex++ {
+			summary, summaryOK := mount.Program.ArithmeticSummaryAt(summaryIndex)
 			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceBinaryArithmetic), summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, summary.OccurrenceID())
+			left, right, result, representationsOK := summary.Representations()
 			compiled := compiledNativeArithmeticSummary{
 				mount: mount.ModuleKey, artifact: mount.Snapshot.ArtifactID(), proof: summary.ID(), occurrence: summary.OccurrenceID(),
 				body: bodyID, point: point, span: occurrence.ID(), op: flowkind.BinaryOp(summary.Operator()),
-				left: programartifact.NumericRepresentation(summary.Left()), right: programartifact.NumericRepresentation(summary.Right()),
-				result: programartifact.NumericRepresentation(summary.Result()), divisor: programartifact.ArithmeticDivisorProperty(summary.Divisor()),
+				left: left, right: right, result: result, divisor: summary.DivisorProperty(),
 			}
-			if !summaryOK || !occurrenceOK || !bodyOK || !pointOK || summary.BodyPathID() != bodyID || !compiled.valid() ||
+			if !summaryOK || !representationsOK || !occurrenceOK || !bodyOK || !pointOK || summary.BodyPathID() != bodyID || !compiled.valid() ||
 				!appendNativeArithmeticRows(rows, seen, compiled) {
 				return false
 			}
 		}
-		for summaryIndex := 0; summaryIndex < mount.Snapshot.UnarySummaryCount(); summaryIndex++ {
-			summary, summaryOK := mount.Snapshot.UnarySummaryAt(summaryIndex)
+		for summaryIndex := 0; summaryIndex < unaryCount; summaryIndex++ {
+			summary, summaryOK := mount.Program.UnarySummaryAt(summaryIndex)
 			occurrence, occurrenceOK := mount.Snapshot.OccurrenceForID(uint8(programartifact.OccurrenceUnary), summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
+			operand, result, representationsOK := summary.Representations()
 			compiled := compiledNativeUnarySummary{
 				mount: mount.ModuleKey, artifact: mount.Snapshot.ArtifactID(), proof: summary.ID(), occurrence: summary.OccurrenceID(),
 				body: bodyID, point: summary.OutputPointID(), span: occurrence.ID(), op: flowkind.UnaryOp(summary.Operator()),
-				operand: programartifact.NumericRepresentation(summary.Operand()), result: programartifact.NumericRepresentation(summary.Result()),
+				operand: operand, result: result,
 			}
-			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID || !compiled.valid() ||
+			if !summaryOK || !representationsOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID || !compiled.valid() ||
 				!appendNativeUnaryRows(rows, seen, compiled) {
 				return false
 			}

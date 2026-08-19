@@ -10,7 +10,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 // StructuralArm and EventKind are the boundary spellings of two sealed
@@ -53,6 +56,8 @@ type Snapshot struct {
 	artifactID          identity.ContentID
 	programID           identity.ContentID
 	schemaID            identity.ContentID
+	frozen              snapshotstore.Frozen
+	coldCatalog         identity.ContentID
 	vocabulary          structure.Table
 	points              []Point
 	edges               []StructuralEdge
@@ -68,9 +73,6 @@ type Snapshot struct {
 	values              []Values
 	occurrences         []Occurrence
 	indexes             []HeapIndex
-	summaries           []ExactScalarSummary
-	arithmetic          []ArithmeticSummary
-	unaries             []UnarySummary
 	observations        []DiagnosticObservation
 	outcomes            []Outcome
 	staticTypeValues    []StaticTypeValue
@@ -81,7 +83,7 @@ type Snapshot struct {
 }
 
 func (snapshot *Snapshot) Available() bool {
-	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && vocabularyAuthority(snapshot.vocabulary)
+	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && snapshot.frozen.Published() && snapshot.coldCatalog.Available() && vocabularyAuthority(snapshot.vocabulary)
 }
 
 func vocabularyAuthority(vocabulary structure.Table) bool {
@@ -111,6 +113,20 @@ func (snapshot *Snapshot) SchemaID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return snapshot.schemaID
+}
+
+// ColdProgram authenticates this ingress snapshot as the same published cold
+// Program mounted under module. Summary consumers use this row rather than
+// reopening ingress or retaining a second summary projection.
+func (snapshot *Snapshot) ColdProgram(module identity.ContentID) (cold.Program, bool) {
+	if !snapshot.Available() || !module.Available() {
+		return cold.Program{}, false
+	}
+	program := cold.Program{
+		Frozen: snapshot.frozen, ModuleKey: module,
+		ArtifactID: snapshot.artifactID, ProgramID: snapshot.programID, SchemaID: snapshot.schemaID,
+	}
+	return program, program.Available()
 }
 func (snapshot *Snapshot) PointCount() int {
 	if !snapshot.Available() {
@@ -377,42 +393,6 @@ func (snapshot *Snapshot) OutcomeReturnValueAt(outcomeIndex, valueIndex int) (Va
 		return ValuesMember{}, false
 	}
 	return ValuesMember{id: row.returns[valueIndex]}, true
-}
-func (snapshot *Snapshot) ExactScalarSummaryCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.summaries)
-}
-func (snapshot *Snapshot) ExactScalarSummaryAt(index int) (ExactScalarSummary, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.summaries) {
-		return ExactScalarSummary{}, false
-	}
-	return snapshot.summaries[index], true
-}
-func (snapshot *Snapshot) ArithmeticSummaryCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.arithmetic)
-}
-func (snapshot *Snapshot) ArithmeticSummaryAt(index int) (ArithmeticSummary, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.arithmetic) {
-		return ArithmeticSummary{}, false
-	}
-	return snapshot.arithmetic[index], true
-}
-func (snapshot *Snapshot) UnarySummaryCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.unaries)
-}
-func (snapshot *Snapshot) UnarySummaryAt(index int) (UnarySummary, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.unaries) {
-		return UnarySummary{}, false
-	}
-	return snapshot.unaries[index], true
 }
 func (snapshot *Snapshot) DiagnosticObservationCount() int {
 	if !snapshot.Available() {
@@ -1131,53 +1111,6 @@ func (row HeapIndex) Values() (identity.ContentID, int, bool) {
 	return row.valuesSpan, row.position, true
 }
 
-type ExactScalarSummary struct {
-	id, occurrence, subject, body identity.ContentID
-	role                          uint8
-	literal                       keyspace.LiteralValue
-}
-
-func (row ExactScalarSummary) ID() identity.ContentID           { return row.id }
-func (row ExactScalarSummary) OccurrenceID() identity.ContentID { return row.occurrence }
-func (row ExactScalarSummary) SubjectID() identity.ContentID    { return row.subject }
-func (row ExactScalarSummary) BodyPathID() identity.ContentID   { return row.body }
-func (row ExactScalarSummary) Role() uint8                      { return row.role }
-func (row ExactScalarSummary) Literal() (keyspace.LiteralValue, bool) {
-	return row.literal, row.id.Available()
-}
-
-type ArithmeticSummary struct {
-	id, occurrence, body identity.ContentID
-	op                   uint8
-	left, right, result  uint8
-	divisor              uint8
-}
-
-func (row ArithmeticSummary) ID() identity.ContentID           { return row.id }
-func (row ArithmeticSummary) OccurrenceID() identity.ContentID { return row.occurrence }
-func (row ArithmeticSummary) BodyPathID() identity.ContentID   { return row.body }
-func (row ArithmeticSummary) Operator() uint8                  { return row.op }
-func (row ArithmeticSummary) Left() uint8                      { return row.left }
-func (row ArithmeticSummary) Right() uint8                     { return row.right }
-func (row ArithmeticSummary) Result() uint8                    { return row.result }
-func (row ArithmeticSummary) Divisor() uint8                   { return row.divisor }
-
-type UnarySummary struct {
-	id, occurrence, body, point identity.ContentID
-	op                          uint8
-	operand, result             uint8
-}
-
-func (row UnarySummary) ID() identity.ContentID           { return row.id }
-func (row UnarySummary) OccurrenceID() identity.ContentID { return row.occurrence }
-func (row UnarySummary) BodyPathID() identity.ContentID   { return row.body }
-func (row UnarySummary) OutputPointID() identity.ContentID {
-	return row.point
-}
-func (row UnarySummary) Operator() uint8 { return row.op }
-func (row UnarySummary) Operand() uint8  { return row.operand }
-func (row UnarySummary) Result() uint8   { return row.result }
-
 type diagnosticBranch struct {
 	decision, value identity.ContentID
 	points          []identity.ContentID
@@ -1195,6 +1128,7 @@ func (payload diagnosticBranch) EvidencePoints() ([]identity.ContentID, bool) {
 type diagnosticUnresolvedType struct {
 	reference, root identity.ContentID
 	path            []string
+	name            string
 }
 
 func (payload diagnosticUnresolvedType) StaticReferenceID() identity.ContentID {
@@ -1206,6 +1140,9 @@ func (payload diagnosticUnresolvedType) Path() ([]string, bool) {
 		return nil, false
 	}
 	return append([]string(nil), payload.path...), true
+}
+func (payload diagnosticUnresolvedType) Name() (string, bool) {
+	return payload.name, payload.name != ""
 }
 
 type diagnosticUnresolvedValue struct {
@@ -1221,7 +1158,7 @@ func (payload diagnosticUnresolvedValue) Name() (string, bool) {
 
 type diagnosticConformance struct {
 	call, argument, declared, span identity.ContentID
-	site                           uint8
+	site                           schemadiag.Site
 	position                       uint32
 	points                         []identity.ContentID
 }
@@ -1234,7 +1171,7 @@ func (payload diagnosticConformance) DeclaredStaticTypeID() identity.ContentID {
 	return payload.declared
 }
 func (payload diagnosticConformance) SpanID() identity.ContentID { return payload.span }
-func (payload diagnosticConformance) Site() uint8                { return payload.site }
+func (payload diagnosticConformance) Site() schemadiag.Site      { return payload.site }
 func (payload diagnosticConformance) Position() (uint32, bool) {
 	return payload.position, payload.call.Available()
 }
@@ -1425,11 +1362,17 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 	if !artifactAuthority(artifact) || !vocabularyAuthority(vocabulary) {
 		return nil, false
 	}
+	frozen, coldCatalog, coldPublished := artifact.ColdPublication()
+	if !coldPublished {
+		return nil, false
+	}
 	snapshot := &Snapshot{
-		artifactID: artifact.ID(),
-		programID:  artifact.CompileKey().ProgramID(),
-		schemaID:   artifact.CompileKey().SchemaDigest(),
-		vocabulary: vocabulary,
+		artifactID:  artifact.ID(),
+		programID:   artifact.CompileKey().ProgramID(),
+		schemaID:    artifact.CompileKey().SchemaDigest(),
+		frozen:      frozen,
+		coldCatalog: coldCatalog,
+		vocabulary:  vocabulary,
 	}
 	snapshot.points = make([]Point, 0, artifact.PointCount())
 	for index := 0; index < artifact.PointCount(); index++ {
@@ -1790,52 +1733,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		}
 		snapshot.outcomes = append(snapshot.outcomes, Outcome{id: row.ID(), body: row.BodyID(), kind: uint8(row.Kind()), returns: returns})
 	}
-	snapshot.summaries = make([]ExactScalarSummary, 0, artifact.ExactScalarSummaryCount())
-	for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
-		row, ok := artifact.ExactScalarSummaryAt(index)
-		if !ok {
-			return nil, false
-		}
-		literal, literalOK := row.Literal()
-		if !literalOK {
-			return nil, false
-		}
-		snapshot.summaries = append(snapshot.summaries, ExactScalarSummary{
-			id: row.ID(), occurrence: row.OccurrenceID(), subject: row.SubjectID(), body: row.BodyPathID(),
-			role: uint8(row.Role()), literal: literal,
-		})
-	}
-	snapshot.arithmetic = make([]ArithmeticSummary, 0, artifact.ArithmeticSummaryCount())
-	for index := 0; index < artifact.ArithmeticSummaryCount(); index++ {
-		row, ok := artifact.ArithmeticSummaryAt(index)
-		if !ok {
-			return nil, false
-		}
-		left, right, result, representationsOK := row.Representations()
-		if !representationsOK {
-			return nil, false
-		}
-		snapshot.arithmetic = append(snapshot.arithmetic, ArithmeticSummary{
-			id: row.ID(), occurrence: row.OccurrenceID(), body: row.BodyPathID(),
-			op: uint8(row.Operator()), left: uint8(left), right: uint8(right), result: uint8(result),
-			divisor: uint8(row.DivisorProperty()),
-		})
-	}
-	snapshot.unaries = make([]UnarySummary, 0, artifact.UnarySummaryCount())
-	for index := 0; index < artifact.UnarySummaryCount(); index++ {
-		row, ok := artifact.UnarySummaryAt(index)
-		if !ok {
-			return nil, false
-		}
-		operand, result, representationsOK := row.Representations()
-		if !representationsOK {
-			return nil, false
-		}
-		snapshot.unaries = append(snapshot.unaries, UnarySummary{
-			id: row.ID(), occurrence: row.OccurrenceID(), body: row.BodyPathID(), point: row.OutputPointID(),
-			op: uint8(row.Operator()), operand: uint8(operand), result: uint8(result),
-		})
-	}
 	snapshot.observations = make([]DiagnosticObservation, 0, artifact.DiagnosticObservationCount())
 	for index := 0; index < artifact.DiagnosticObservationCount(); index++ {
 		row, ok := artifact.DiagnosticObservationAt(index)
@@ -1886,10 +1783,11 @@ func lowerDiagnosticObservation(row programartifact.DiagnosticObservationRow) (D
 	case structure.DiagnosticObservationTypeReferenceUnresolved:
 		unresolved, unresolvedOK := row.UnresolvedTypeReference()
 		path, pathOK := unresolved.Path()
-		if !unresolvedOK || !pathOK {
+		name, nameOK := unresolved.Name()
+		if !unresolvedOK || !pathOK || !nameOK {
 			return DiagnosticObservation{}, false
 		}
-		observation.unresolved = diagnosticUnresolvedType{reference: unresolved.StaticReferenceID(), root: unresolved.RootID(), path: append([]string(nil), path...)}
+		observation.unresolved = diagnosticUnresolvedType{reference: unresolved.StaticReferenceID(), root: unresolved.RootID(), path: append([]string(nil), path...), name: name}
 	case structure.DiagnosticObservationValueReferenceUnresolved:
 		unresolved, unresolvedOK := row.UnresolvedValueReference()
 		name, nameOK := unresolved.Name()

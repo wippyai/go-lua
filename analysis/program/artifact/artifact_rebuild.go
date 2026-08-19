@@ -43,10 +43,10 @@ type compiler struct {
 	heapIndexes                []HeapIndexRow
 	allocationRows             []allocationCompileRow
 	occurrences                []OccurrenceRow
-	exactScalarSummaries       []ExactScalarSummaryRow
+	exactScalarSummaries       []cold.ExactScalarSummary
 	exactScalarStates          map[identity.ContentID]exactScalarState
-	arithmeticSummaries        []ArithmeticSummaryRow
-	unarySummaries             []UnarySummaryRow
+	arithmeticSummaries        []cold.ArithmeticSummary
+	unarySummaries             []cold.UnarySummary
 	ruleOccurrences            []RuleOccurrence
 	issuance                   IssuanceDirectory
 	diagnosticObservations     []DiagnosticObservationRow

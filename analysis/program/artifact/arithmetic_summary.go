@@ -5,121 +5,8 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 )
-
-// NumericRepresentation is ProgramArtifact's closed domain-abstract numeric
-// carrier. Number means the integer/float union; it is not an exact machine
-// representation claim.
-type NumericRepresentation uint8
-
-const (
-	NumericRepresentationInvalid NumericRepresentation = iota
-	NumericRepresentationInteger
-	NumericRepresentationFloat
-	NumericRepresentationNumber
-)
-
-func (representation NumericRepresentation) Valid() bool {
-	return representation >= NumericRepresentationInteger && representation <= NumericRepresentationNumber
-}
-
-// ArithmeticDivisorProperty is an exact Program-local guard conclusion for
-// an arithmetic right operand. None is deliberate withholding.
-type ArithmeticDivisorProperty uint8
-
-const (
-	ArithmeticDivisorNone ArithmeticDivisorProperty = iota
-	ArithmeticDivisorNonzero
-	ArithmeticDivisorNonzeroNotMinusOne
-)
-
-func (property ArithmeticDivisorProperty) Valid() bool {
-	return property <= ArithmeticDivisorNonzeroNotMinusOne
-}
-
-func (property ArithmeticDivisorProperty) validFor(op flowkind.BinaryOp) bool {
-	if !property.Valid() {
-		return false
-	}
-	return property == ArithmeticDivisorNone || op == flowkind.BinaryIDiv
-}
-
-// ArithmeticSummaryRow is one reusable abstract interpretation result for a
-// Program-owned arithmetic occurrence. It is derived once from formal/static
-// annotations and local transfer closure; Link only mounts the summary.
-type ArithmeticSummaryRow struct {
-	id, occurrence, body identity.ContentID
-	op                   flowkind.BinaryOp
-	left, right, result  NumericRepresentation
-	divisor              ArithmeticDivisorProperty
-}
-
-func (artifact *Artifact) ArithmeticSummaryCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.arithmeticSummaries)
-}
-
-func (artifact *Artifact) ArithmeticSummaryAt(index int) (ArithmeticSummaryRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.arithmeticSummaries) {
-		return ArithmeticSummaryRow{}, false
-	}
-	row := artifact.arithmeticSummaries[index]
-	return row, row.Available()
-}
-
-func (row ArithmeticSummaryRow) Available() bool {
-	return row.id.Available() && row.occurrence.Available() && row.body.Available() &&
-		flowkind.IsBinaryArithmetic(row.op) && row.left.Valid() && row.right.Valid() && row.result.Valid() && row.divisor.validFor(row.op) &&
-		row.id == arithmeticSummaryID(row.occurrence, row.body, row.op, row.left, row.right, row.result, row.divisor)
-}
-
-func (row ArithmeticSummaryRow) ID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.id
-}
-func (row ArithmeticSummaryRow) OccurrenceID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.occurrence
-}
-func (row ArithmeticSummaryRow) BodyPathID() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.body
-}
-func (row ArithmeticSummaryRow) Operator() flowkind.BinaryOp {
-	if !row.Available() {
-		return 0
-	}
-	return row.op
-}
-func (row ArithmeticSummaryRow) Representations() (left, right, result NumericRepresentation, ok bool) {
-	if !row.Available() {
-		return 0, 0, 0, false
-	}
-	return row.left, row.right, row.result, true
-}
-
-func (row ArithmeticSummaryRow) DivisorProperty() ArithmeticDivisorProperty {
-	if !row.Available() {
-		return ArithmeticDivisorNone
-	}
-	return row.divisor
-}
-
-func arithmeticSummaryID(occurrence, body identity.ContentID, op flowkind.BinaryOp, left, right, result NumericRepresentation, divisor ArithmeticDivisorProperty) identity.ContentID {
-	if !occurrence.Available() || !body.Available() || !flowkind.IsBinaryArithmetic(op) || !left.Valid() || !right.Valid() || !result.Valid() || !divisor.validFor(op) {
-		return identity.ContentID{}
-	}
-	return digest("analysis/program-artifact/arithmetic-summary", artifactFormat,
-		bytesField(occurrence), bytesField(body), uintField(uint64(op)), uintField(uint64(left)), uintField(uint64(right)), uintField(uint64(result)), uintField(uint64(divisor)))
-}
 
 const (
 	numericIntegerMask uint8 = 1 << iota
@@ -132,19 +19,19 @@ type numericSummaryState struct {
 }
 
 func (state numericSummaryState) known() bool { return state.unknown || state.mask != 0 }
-func (state numericSummaryState) representation() (NumericRepresentation, bool) {
+func (state numericSummaryState) representation() (cold.NumericRepresentation, bool) {
 	if state.unknown {
-		return NumericRepresentationInvalid, false
+		return cold.NumericRepresentationInvalid, false
 	}
 	switch state.mask {
 	case numericIntegerMask:
-		return NumericRepresentationInteger, true
+		return cold.NumericRepresentationInteger, true
 	case numericFloatMask:
-		return NumericRepresentationFloat, true
+		return cold.NumericRepresentationFloat, true
 	case numericIntegerMask | numericFloatMask:
-		return NumericRepresentationNumber, true
+		return cold.NumericRepresentationNumber, true
 	default:
-		return NumericRepresentationInvalid, false
+		return cold.NumericRepresentationInvalid, false
 	}
 }
 
@@ -196,7 +83,7 @@ func intersectArithmeticGuardFacts(left, right map[identity.ContentID]arithmetic
 // yield no fact. Multiple incoming body entries are intersected, so one
 // unguarded path withholds the summary rather than turning a may-guard into a
 // proof.
-func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]ArithmeticDivisorProperty, CompileFailure) {
+func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]cold.ArithmeticDivisorProperty, CompileFailure) {
 	if compiler == nil || compiler.exactScalarStates == nil {
 		return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
@@ -349,7 +236,7 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		}
 	}
 
-	properties := make(map[identity.ContentID]ArithmeticDivisorProperty)
+	properties := make(map[identity.ContentID]cold.ArithmeticDivisorProperty)
 	for index, row := range compiler.occurrences {
 		if row.Kind() != OccurrenceBinaryArithmetic {
 			continue
@@ -365,9 +252,9 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		mask := bodyFacts[row.body][cell]
 		switch {
 		case mask&(arithmeticGuardExcludesZero|arithmeticGuardExcludesMinusOne) == (arithmeticGuardExcludesZero | arithmeticGuardExcludesMinusOne):
-			properties[row.ID()] = ArithmeticDivisorNonzeroNotMinusOne
+			properties[row.ID()] = cold.ArithmeticDivisorNonzeroNotMinusOne
 		case mask&arithmeticGuardExcludesZero != 0:
-			properties[row.ID()] = ArithmeticDivisorNonzero
+			properties[row.ID()] = cold.ArithmeticDivisorNonzero
 		}
 	}
 	return properties, CompileFailure{}
@@ -637,7 +524,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	if divisorFailure.Available() {
 		return divisorFailure
 	}
-	summaries := make([]ArithmeticSummaryRow, 0, len(arithmetic))
+	summaries := make([]cold.ArithmeticSummary, 0, len(arithmetic))
 	for index, row := range arithmetic {
 		leftID, rightID, op, _ := row.BinaryArithmetic()
 		left, leftOK := states[leftID].representation()
@@ -646,15 +533,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		if !leftOK || !rightOK || !resultOK {
 			continue
 		}
-		summary := ArithmeticSummaryRow{occurrence: row.ID(), body: row.body, op: op, left: left, right: right, result: result, divisor: divisors[row.ID()]}
-		summary.id = arithmeticSummaryID(summary.occurrence, summary.body, summary.op, summary.left, summary.right, summary.result, summary.divisor)
-		if !summary.Available() {
+		summary, summaryOK := cold.NewArithmeticSummary(row.ID(), row.body, cold.SummaryOperator(op), left, right, result, divisors[row.ID()])
+		if !summaryOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		summaries = append(summaries, summary)
 	}
-	identity.SortByContentID(summaries, func(row ArithmeticSummaryRow) identity.ContentID { return row.id })
-	unarySummaries := make([]UnarySummaryRow, 0, len(unaries))
+	identity.SortByContentID(summaries, func(row cold.ArithmeticSummary) identity.ContentID { return row.ID() })
+	unarySummaries := make([]cold.UnarySummary, 0, len(unaries))
 	for index, row := range unaries {
 		operandID, operandOK := row.InputAt(0)
 		operand, operandRepresentationOK := states[operandID].representation()
@@ -667,17 +553,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			continue
 		}
 		for _, output := range geometry.finish {
-			summary := UnarySummaryRow{
-				occurrence: row.ID(), body: row.body, point: output, op: flowkind.UnaryOp(row.Code()), operand: operand, result: result,
-			}
-			summary.id = unarySummaryID(summary.occurrence, summary.body, summary.point, summary.op, summary.operand, summary.result)
-			if !summary.Available() {
+			summary, summaryOK := cold.NewUnarySummary(row.ID(), row.body, output, cold.SummaryOperator(row.Code()), operand, result)
+			if !summaryOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			unarySummaries = append(unarySummaries, summary)
 		}
 	}
-	identity.SortByContentID(unarySummaries, func(row UnarySummaryRow) identity.ContentID { return row.id })
+	identity.SortByContentID(unarySummaries, func(row cold.UnarySummary) identity.ContentID { return row.ID() })
 	compiler.arithmeticSummaries = summaries
 	compiler.unarySummaries = unarySummaries
 	return CompileFailure{}

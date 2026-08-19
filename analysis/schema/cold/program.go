@@ -72,7 +72,7 @@ func (row Program) ExactScalarSummaryCount() (int, bool) {
 	if !derived {
 		return 0, false
 	}
-	return ExactScalarSummaryCount(&row.Frozen, catalog)
+	return ExactScalarSummaryFamily().Count(&row.Frozen, catalog)
 }
 
 // ExactScalarSummaryAt returns one exact scalar proof by its emitted ordinal.
@@ -81,7 +81,7 @@ func (row Program) ExactScalarSummaryAt(index int) (ExactScalarSummary, bool) {
 	if !derived {
 		return ExactScalarSummary{}, false
 	}
-	return ExactScalarSummaryAt(&row.Frozen, catalog, index)
+	return ExactScalarSummaryFamily().At(&row.Frozen, catalog, index)
 }
 
 // ArithmeticSummaryCount is the sealed width of this program's arithmetic
@@ -91,7 +91,7 @@ func (row Program) ArithmeticSummaryCount() (int, bool) {
 	if !derived {
 		return 0, false
 	}
-	return ArithmeticSummaryCount(&row.Frozen, catalog)
+	return ArithmeticSummaryFamily().Count(&row.Frozen, catalog)
 }
 
 // ArithmeticSummaryAt returns one arithmetic proof by its emitted ordinal.
@@ -100,7 +100,7 @@ func (row Program) ArithmeticSummaryAt(index int) (ArithmeticSummary, bool) {
 	if !derived {
 		return ArithmeticSummary{}, false
 	}
-	return ArithmeticSummaryAt(&row.Frozen, catalog, index)
+	return ArithmeticSummaryFamily().At(&row.Frozen, catalog, index)
 }
 
 // UnarySummaryCount is the sealed width of this program's unary summary
@@ -110,7 +110,7 @@ func (row Program) UnarySummaryCount() (int, bool) {
 	if !derived {
 		return 0, false
 	}
-	return UnarySummaryCount(&row.Frozen, catalog)
+	return UnarySummaryFamily().Count(&row.Frozen, catalog)
 }
 
 // UnarySummaryAt returns one unary proof by its emitted ordinal.
@@ -119,5 +119,5 @@ func (row Program) UnarySummaryAt(index int) (UnarySummary, bool) {
 	if !derived {
 		return UnarySummary{}, false
 	}
-	return UnarySummaryAt(&row.Frozen, catalog, index)
+	return UnarySummaryFamily().At(&row.Frozen, catalog, index)
 }

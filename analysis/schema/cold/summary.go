@@ -2,7 +2,6 @@ package cold
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -283,6 +282,24 @@ var (
 	unarySummaryFamily       = Family[UnarySummary]{slot: slotUnarySummary, name: "unary-summary"}
 )
 
+// ExactScalarSummaryFamily returns the immutable exact-scalar column
+// declaration. Callers use its canonical Family methods directly.
+func ExactScalarSummaryFamily() Family[ExactScalarSummary] {
+	return exactScalarSummaryFamily
+}
+
+// ArithmeticSummaryFamily returns the immutable arithmetic column
+// declaration. Callers use its canonical Family methods directly.
+func ArithmeticSummaryFamily() Family[ArithmeticSummary] {
+	return arithmeticSummaryFamily
+}
+
+// UnarySummaryFamily returns the immutable unary column declaration. Callers
+// use its canonical Family methods directly.
+func UnarySummaryFamily() Family[UnarySummary] {
+	return unarySummaryFamily
+}
+
 func exactScalarSummaryID(occurrence, subject, body identity.ContentID, role ExactScalarSummaryRole, literal SummaryLiteral) identity.ContentID {
 	if !occurrence.Available() || !subject.Available() || !body.Available() || !role.Valid() || !literal.Valid() {
 		return identity.ContentID{}
@@ -322,55 +339,4 @@ func unarySummaryID(occurrence, body, point identity.ContentID, op SummaryOperat
 		return identity.ContentID{}
 	}
 	return identity.ContentID(writer.Sum())
-}
-
-// ExactScalarSummaries is the address of the exact scalar summary column.
-func ExactScalarSummaries(catalog identity.ContentID) snapshot.Axis[Ordinal, ExactScalarSummary] {
-	return exactScalarSummaryFamily.Axis(catalog)
-}
-
-// ArithmeticSummaries is the address of the arithmetic summary column.
-func ArithmeticSummaries(catalog identity.ContentID) snapshot.Axis[Ordinal, ArithmeticSummary] {
-	return arithmeticSummaryFamily.Axis(catalog)
-}
-
-// UnarySummaries is the address of the unary summary column.
-func UnarySummaries(catalog identity.ContentID) snapshot.Axis[Ordinal, UnarySummary] {
-	return unarySummaryFamily.Axis(catalog)
-}
-
-func ExactScalarSummaryContent(rows []ExactScalarSummary, catalog identity.ContentID) (snapshot.Content[Ordinal, ExactScalarSummary], bool) {
-	return exactScalarSummaryFamily.Content(rows, catalog)
-}
-
-func ArithmeticSummaryContent(rows []ArithmeticSummary, catalog identity.ContentID) (snapshot.Content[Ordinal, ArithmeticSummary], bool) {
-	return arithmeticSummaryFamily.Content(rows, catalog)
-}
-
-func UnarySummaryContent(rows []UnarySummary, catalog identity.ContentID) (snapshot.Content[Ordinal, UnarySummary], bool) {
-	return unarySummaryFamily.Content(rows, catalog)
-}
-
-func ExactScalarSummaryCount(frozen *snapshot.Frozen, catalog identity.ContentID) (int, bool) {
-	return exactScalarSummaryFamily.Count(frozen, catalog)
-}
-
-func ExactScalarSummaryAt(frozen *snapshot.Frozen, catalog identity.ContentID, index int) (ExactScalarSummary, bool) {
-	return exactScalarSummaryFamily.At(frozen, catalog, index)
-}
-
-func ArithmeticSummaryCount(frozen *snapshot.Frozen, catalog identity.ContentID) (int, bool) {
-	return arithmeticSummaryFamily.Count(frozen, catalog)
-}
-
-func ArithmeticSummaryAt(frozen *snapshot.Frozen, catalog identity.ContentID, index int) (ArithmeticSummary, bool) {
-	return arithmeticSummaryFamily.At(frozen, catalog, index)
-}
-
-func UnarySummaryCount(frozen *snapshot.Frozen, catalog identity.ContentID) (int, bool) {
-	return unarySummaryFamily.Count(frozen, catalog)
-}
-
-func UnarySummaryAt(frozen *snapshot.Frozen, catalog identity.ContentID, index int) (UnarySummary, bool) {
-	return unarySummaryFamily.At(frozen, catalog, index)
 }

@@ -9,8 +9,29 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/composite"
 )
+
+func summaryProgram(t testing.TB, artifact *programartifact.Artifact) cold.Program {
+	t.Helper()
+	frozen, catalog, published := artifact.ColdPublication()
+	if !published {
+		t.Fatal("summary cold publication unavailable")
+	}
+	artifactID := artifact.ID()
+	module, moduleOK := identity.DeriveContentID("test/numeric-summary-module", artifactID[:])
+	if !moduleOK {
+		t.Fatal("summary test module identity unavailable")
+	}
+	program := cold.Program{
+		Frozen: frozen, ModuleKey: module, ArtifactID: artifact.ID(), ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
+	}
+	if !program.Available() || !catalog.Available() {
+		t.Fatal("summary cold program unavailable")
+	}
+	return program
+}
 
 func TestProgramArtifactExactScalarSummaryCrossesLocalStorageOnce(t *testing.T) {
 	published, err := lower.Lower(lower.Source{Name: "artifact-exact-scalar-summary.lua", Text: []byte(`
@@ -32,15 +53,17 @@ return total
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile scalar summary fixture: %s", failure.Error())
 	}
-	if artifact.ExactScalarSummaryCount() != 3 {
-		t.Fatalf("exact scalar summary count = %d, want 3", artifact.ExactScalarSummaryCount())
+	program := summaryProgram(t, artifact)
+	exactCount, exactPublished := program.ExactScalarSummaryCount()
+	if !exactPublished || exactCount != 3 {
+		t.Fatalf("exact scalar summary count = %d/%v, want 3/true", exactCount, exactPublished)
 	}
 	var occurrenceID identity.ContentID
-	values := make(map[programartifact.ExactScalarSummaryRole]int64, 3)
-	for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
-		summary, summaryOK := artifact.ExactScalarSummaryAt(index)
+	values := make(map[cold.ExactScalarSummaryRole]int64, 3)
+	for index := 0; index < exactCount; index++ {
+		summary, summaryOK := program.ExactScalarSummaryAt(index)
 		literal, literalOK := summary.Literal()
-		if !summaryOK || !literalOK || literal.Kind != keyspace.LiteralInteger || !summary.SubjectID().Available() || !summary.Role().Valid() {
+		if !summaryOK || !literalOK || literal.Kind != uint8(keyspace.LiteralInteger) || !summary.SubjectID().Available() || !summary.Role().Valid() {
 			t.Fatalf("scalar summary[%d]=%+v/%v literal=%+v/%v", index, summary, summaryOK, literal, literalOK)
 		}
 		if !occurrenceID.Available() {
@@ -53,7 +76,7 @@ return total
 		}
 		values[summary.Role()] = literal.Integer
 	}
-	if values[programartifact.ExactScalarSummaryLeft] != 10 || values[programartifact.ExactScalarSummaryRight] != 5 || values[programartifact.ExactScalarSummaryResult] != 15 {
+	if values[cold.ExactScalarSummaryLeft] != 10 || values[cold.ExactScalarSummaryRight] != 5 || values[cold.ExactScalarSummaryResult] != 15 {
 		t.Fatalf("exact scalar use summary=%v, want left=10 right=5 result=15", values)
 	}
 	arithmetic, arithmeticOK := artifact.OccurrenceForID(programartifact.OccurrenceBinaryArithmetic, occurrenceID)
@@ -66,23 +89,24 @@ return total
 		!ruleOK || !pointOK || !inputOK || point == input || rule.Stage() != programartifact.RuleStageLocal {
 		t.Fatalf("scalar arithmetic=%+v/%v rule=%+v/%v", arithmetic, arithmeticOK, rule, ruleOK)
 	}
-	for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
-		summary, _ := artifact.ExactScalarSummaryAt(index)
+	for index := 0; index < exactCount; index++ {
+		summary, _ := program.ExactScalarSummaryAt(index)
 		if summary.BodyPathID() != body {
 			t.Fatalf("scalar summary[%d] body=%s, want %s", index, summary.BodyPathID(), body)
 		}
 	}
-	if artifact.ArithmeticSummaryCount() != 1 {
-		t.Fatalf("arithmetic summary count=%d, want 1", artifact.ArithmeticSummaryCount())
+	arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
+	if !arithmeticPublished || arithmeticCount != 1 {
+		t.Fatalf("arithmetic summary count=%d/%v, want 1/true", arithmeticCount, arithmeticPublished)
 	}
-	numeric, numericOK := artifact.ArithmeticSummaryAt(0)
+	numeric, numericOK := program.ArithmeticSummaryAt(0)
 	numericLeft, numericRight, numericResult, representationsOK := numeric.Representations()
 	if !numericOK || !representationsOK || numeric.OccurrenceID() != occurrenceID || numeric.BodyPathID() != body ||
-		numeric.Operator() != flowkind.BinaryAdd || numericLeft != programartifact.NumericRepresentationInteger ||
-		numericRight != programartifact.NumericRepresentationInteger || numericResult != programartifact.NumericRepresentationInteger {
+		numeric.Operator() != cold.SummaryOperator(flowkind.BinaryAdd) || numericLeft != cold.NumericRepresentationInteger ||
+		numericRight != cold.NumericRepresentationInteger || numericResult != cold.NumericRepresentationInteger {
 		t.Fatalf("arithmetic summary=%+v/%v representations=%d/%d/%d/%v", numeric, numericOK, numericLeft, numericRight, numericResult, representationsOK)
 	}
-	if _, ok := artifact.ExactScalarSummaryAt(-1); ok {
+	if _, ok := program.ExactScalarSummaryAt(-1); ok {
 		t.Fatal("negative scalar summary index accepted")
 	}
 }
@@ -111,30 +135,37 @@ return pick
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile scalar merge fixture: %s", failure.Error())
 	}
-	if artifact.ExactScalarSummaryCount() != 0 {
+	program := summaryProgram(t, artifact)
+	exactCount, exactPublished := program.ExactScalarSummaryCount()
+	if !exactPublished {
+		t.Fatal("exact scalar summary column unpublished")
+	}
+	if exactCount != 0 {
 		rows := make([]struct {
-			role    programartifact.ExactScalarSummaryRole
+			role    cold.ExactScalarSummaryRole
 			subject identity.ContentID
 			literal keyspace.LiteralValue
-		}, 0, artifact.ExactScalarSummaryCount())
-		for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
-			row, _ := artifact.ExactScalarSummaryAt(index)
-			literal, _ := row.Literal()
+		}, 0, exactCount)
+		for index := 0; index < exactCount; index++ {
+			row, _ := program.ExactScalarSummaryAt(index)
+			coldLiteral, _ := row.Literal()
+			literal := keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}
 			rows = append(rows, struct {
-				role    programartifact.ExactScalarSummaryRole
+				role    cold.ExactScalarSummaryRole
 				subject identity.ContentID
 				literal keyspace.LiteralValue
 			}{role: row.Role(), subject: row.SubjectID(), literal: literal})
 		}
-		t.Fatalf("merged mutation issued %d exact scalar summaries: %+v", artifact.ExactScalarSummaryCount(), rows)
+		t.Fatalf("merged mutation issued %d exact scalar summaries: %+v", exactCount, rows)
 	}
-	if artifact.ArithmeticSummaryCount() != 1 {
-		t.Fatalf("merged mutation arithmetic summary count=%d, want 1", artifact.ArithmeticSummaryCount())
+	arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
+	if !arithmeticPublished || arithmeticCount != 1 {
+		t.Fatalf("merged mutation arithmetic summary count=%d/%v, want 1/true", arithmeticCount, arithmeticPublished)
 	}
-	summary, summaryOK := artifact.ArithmeticSummaryAt(0)
+	summary, summaryOK := program.ArithmeticSummaryAt(0)
 	left, right, result, representationsOK := summary.Representations()
-	if !summaryOK || !representationsOK || summary.Operator() != flowkind.BinaryAdd ||
-		left != programartifact.NumericRepresentationNumber || right != programartifact.NumericRepresentationNumber || result != programartifact.NumericRepresentationNumber {
+	if !summaryOK || !representationsOK || summary.Operator() != cold.SummaryOperator(flowkind.BinaryAdd) ||
+		left != cold.NumericRepresentationNumber || right != cold.NumericRepresentationNumber || result != cold.NumericRepresentationNumber {
 		t.Fatalf("merged mutation arithmetic=%+v/%v representations=%d/%d/%d/%v", summary, summaryOK, left, right, result, representationsOK)
 	}
 }
@@ -158,11 +189,11 @@ func TestProgramArtifactArithmeticSummaryAuthenticatesGuardedDivisor(t *testing.
 	}
 	for _, test := range []struct {
 		name, guard string
-		want        programartifact.ArithmeticDivisorProperty
+		want        cold.ArithmeticDivisorProperty
 	}{
-		{name: "both", guard: "b ~= 0 and b ~= -1", want: programartifact.ArithmeticDivisorNonzeroNotMinusOne},
-		{name: "zero", guard: "b ~= 0", want: programartifact.ArithmeticDivisorNonzero},
-		{name: "disjunction", guard: "b ~= 0 or b ~= -1", want: programartifact.ArithmeticDivisorNone},
+		{name: "both", guard: "b ~= 0 and b ~= -1", want: cold.ArithmeticDivisorNonzeroNotMinusOne},
+		{name: "zero", guard: "b ~= 0", want: cold.ArithmeticDivisorNonzero},
+		{name: "disjunction", guard: "b ~= 0 or b ~= -1", want: cold.ArithmeticDivisorNone},
 	} {
 		artifact := compile("artifact-divisor-"+test.name+".lua", `
 local function idiv(a: integer, b: integer): integer
@@ -173,13 +204,15 @@ local function idiv(a: integer, b: integer): integer
 end
 return idiv
 `)
-		if artifact.ArithmeticSummaryCount() != 1 {
-			t.Fatalf("%s arithmetic summary count=%d, want 1", test.name, artifact.ArithmeticSummaryCount())
+		program := summaryProgram(t, artifact)
+		arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
+		if !arithmeticPublished || arithmeticCount != 1 {
+			t.Fatalf("%s arithmetic summary count=%d/%v, want 1/true", test.name, arithmeticCount, arithmeticPublished)
 		}
-		summary, summaryOK := artifact.ArithmeticSummaryAt(0)
+		summary, summaryOK := program.ArithmeticSummaryAt(0)
 		left, right, result, representationsOK := summary.Representations()
-		if !summaryOK || !representationsOK || summary.Operator() != flowkind.BinaryIDiv ||
-			left != programartifact.NumericRepresentationInteger || right != programartifact.NumericRepresentationInteger || result != programartifact.NumericRepresentationInteger ||
+		if !summaryOK || !representationsOK || summary.Operator() != cold.SummaryOperator(flowkind.BinaryIDiv) ||
+			left != cold.NumericRepresentationInteger || right != cold.NumericRepresentationInteger || result != cold.NumericRepresentationInteger ||
 			summary.DivisorProperty() != test.want {
 			t.Fatalf("%s summary=%+v/%v representations=%d/%d/%d/%v divisor=%d, want %d", test.name, summary, summaryOK,
 				left, right, result, representationsOK, summary.DivisorProperty(), test.want)
@@ -191,11 +224,13 @@ local function idiv(a: integer, b: integer): integer
 end
 return idiv
 `)
-	if unguarded.ArithmeticSummaryCount() != 1 {
-		t.Fatalf("unguarded arithmetic summary count=%d, want 1", unguarded.ArithmeticSummaryCount())
+	program := summaryProgram(t, unguarded)
+	arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
+	if !arithmeticPublished || arithmeticCount != 1 {
+		t.Fatalf("unguarded arithmetic summary count=%d/%v, want 1/true", arithmeticCount, arithmeticPublished)
 	}
-	summary, summaryOK := unguarded.ArithmeticSummaryAt(0)
-	if !summaryOK || summary.DivisorProperty() != programartifact.ArithmeticDivisorNone {
+	summary, summaryOK := program.ArithmeticSummaryAt(0)
+	if !summaryOK || summary.DivisorProperty() != cold.ArithmeticDivisorNone {
 		t.Fatalf("unguarded summary=%+v/%v divisor=%d, want none", summary, summaryOK, summary.DivisorProperty())
 	}
 }
@@ -223,10 +258,12 @@ local function invert(n: integer): integer
 end
 return invert
 `)
-	if artifact.UnarySummaryCount() != 1 {
-		t.Fatalf("unary summary count=%d, want 1", artifact.UnarySummaryCount())
+	program := summaryProgram(t, artifact)
+	unaryCount, unaryPublished := program.UnarySummaryCount()
+	if !unaryPublished || unaryCount != 1 {
+		t.Fatalf("unary summary count=%d/%v, want 1/true", unaryCount, unaryPublished)
 	}
-	summary, summaryOK := artifact.UnarySummaryAt(0)
+	summary, summaryOK := program.UnarySummaryAt(0)
 	operand, result, representationsOK := summary.Representations()
 	occurrence, occurrenceOK := artifact.OccurrenceForID(programartifact.OccurrenceUnary, summary.OccurrenceID())
 	outputOwned := false
@@ -235,7 +272,7 @@ return invert
 		outputOwned = outputOwned || pointOK && point == summary.OutputPointID()
 	}
 	if !summaryOK || !representationsOK || !occurrenceOK || !outputOwned ||
-		summary.Operator() != flowkind.UnaryNeg || operand != programartifact.NumericRepresentationInteger || result != programartifact.NumericRepresentationInteger {
+		summary.Operator() != cold.SummaryOperator(flowkind.UnaryNeg) || operand != cold.NumericRepresentationInteger || result != cold.NumericRepresentationInteger {
 		t.Fatalf("unary summary=%+v/%v occurrence=%+v/%v output-owned=%v representations=%d/%d/%v", summary, summaryOK,
 			occurrence, occurrenceOK, outputOwned, operand, result, representationsOK)
 	}
@@ -245,8 +282,10 @@ local function invert(n)
 end
 return invert
 `)
-	if untyped.UnarySummaryCount() != 0 {
-		t.Fatalf("untyped unary summaries=%d, want 0", untyped.UnarySummaryCount())
+	untypedProgram := summaryProgram(t, untyped)
+	untypedCount, untypedPublished := untypedProgram.UnarySummaryCount()
+	if !untypedPublished || untypedCount != 0 {
+		t.Fatalf("untyped unary summaries=%d/%v, want 0/true", untypedCount, untypedPublished)
 	}
 }
 

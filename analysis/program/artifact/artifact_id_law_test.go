@@ -21,13 +21,28 @@ func coldLawPublication(t *testing.T) (snapshot.Frozen, identity.ContentID) {
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	content, sealed := cold.CallTargetContent(nil, catalog)
+	content, sealed := cold.CallTargetFamily().Content(nil, catalog)
 	if !sealed {
 		t.Fatal("empty cold family")
 	}
+	exactContent, exactSealed := cold.ExactScalarSummaryFamily().Content(nil, catalog)
+	arithmeticContent, arithmeticSealed := cold.ArithmeticSummaryFamily().Content(nil, catalog)
+	unaryContent, unarySealed := cold.UnarySummaryFamily().Content(nil, catalog)
+	if !exactSealed || !arithmeticSealed || !unarySealed {
+		t.Fatal("empty numeric summary families")
+	}
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(1))
-	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargets(catalog), content); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargetFamily().Axis(catalog), content); err != nil {
 		t.Fatalf("put cold column: %v", err)
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.ExactScalarSummaryFamily().Axis(catalog), exactContent); err != nil {
+		t.Fatalf("put exact scalar column: %v", err)
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.ArithmeticSummaryFamily().Axis(catalog), arithmeticContent); err != nil {
+		t.Fatalf("put arithmetic column: %v", err)
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.UnarySummaryFamily().Axis(catalog), unaryContent); err != nil {
+		t.Fatalf("put unary column: %v", err)
 	}
 	frozen, err := builder.Seal()
 	if err != nil {

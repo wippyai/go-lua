@@ -1,10 +1,10 @@
 package value
 
 import (
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
@@ -51,18 +51,23 @@ func (schema *valueBuilder) sealComputedArithmeticAtoms() bool {
 		return false
 	}
 	for _, mount := range schema.artifacts {
-		artifact := mount.Snapshot()
-		if artifact == nil {
+		program := mount.Program()
+		if !program.Available() {
 			return false
 		}
-		for index := 0; index < artifact.ExactScalarSummaryCount(); index++ {
-			row, rowOK := artifact.ExactScalarSummaryAt(index)
-			literal, literalOK := row.Literal()
+		count, published := program.ExactScalarSummaryCount()
+		if !published {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.ExactScalarSummaryAt(index)
+			coldLiteral, literalOK := row.Literal()
+			literal := keyspace.LiteralValue{Kind: keyspace.LiteralKind(coldLiteral.Kind), Integer: coldLiteral.Integer, FloatBits: coldLiteral.FloatBits}
 			if !rowOK || !literalOK ||
 				(literal.Kind != keyspace.LiteralInteger && literal.Kind != keyspace.LiteralFloat) {
 				return false
 			}
-			if row.Role() != uint8(programartifact.ExactScalarSummaryResult) {
+			if row.Role() != cold.ExactScalarSummaryResult {
 				continue
 			}
 			if schema.atomForExactArithmetic(literal) != 0 {

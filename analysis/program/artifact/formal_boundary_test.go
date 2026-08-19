@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/schema/cold"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -179,13 +180,15 @@ return add
 	if !boundary.Available() || !leftOK || !rightOK || !leftTypeOK || !rightTypeOK || !leftOwned || !rightOwned || leftType == rightType {
 		t.Fatalf("declared formal types left=%s/%v/%v right=%s/%v/%v boundary=%+v", leftType, leftTypeOK, leftOwned, rightType, rightTypeOK, rightOwned, boundary)
 	}
-	if artifact.ArithmeticSummaryCount() != 1 {
-		t.Fatalf("declared formal arithmetic summaries=%d, want 1", artifact.ArithmeticSummaryCount())
+	program := summaryProgram(t, artifact)
+	arithmeticCount, arithmeticPublished := program.ArithmeticSummaryCount()
+	if !arithmeticPublished || arithmeticCount != 1 {
+		t.Fatalf("declared formal arithmetic summaries=%d/%v, want 1/true", arithmeticCount, arithmeticPublished)
 	}
-	summary, summaryOK := artifact.ArithmeticSummaryAt(0)
+	summary, summaryOK := program.ArithmeticSummaryAt(0)
 	leftRepresentation, rightRepresentation, resultRepresentation, representationsOK := summary.Representations()
-	if !summaryOK || !representationsOK || leftRepresentation != programartifact.NumericRepresentationInteger ||
-		rightRepresentation != programartifact.NumericRepresentationNumber || resultRepresentation != programartifact.NumericRepresentationNumber {
+	if !summaryOK || !representationsOK || leftRepresentation != cold.NumericRepresentationInteger ||
+		rightRepresentation != cold.NumericRepresentationNumber || resultRepresentation != cold.NumericRepresentationNumber {
 		t.Fatalf("declared formal arithmetic=%+v/%v representations=%d/%d/%d/%v", summary, summaryOK,
 			leftRepresentation, rightRepresentation, resultRepresentation, representationsOK)
 	}

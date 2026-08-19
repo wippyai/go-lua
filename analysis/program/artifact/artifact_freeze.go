@@ -73,7 +73,7 @@ func (compiler *compiler) sealArtifact() (*Artifact, CompileFailure) {
 		bodies: compiler.bodies, functionBoundaries: compiler.functionBoundaries, outcomes: compiler.outcomes, returnValues: compiler.returnValues,
 		boundaries:      compiler.boundaries,
 		heapAllocations: compiler.heapAllocations, heapIndexes: compiler.heapIndexes,
-		occurrences: compiler.occurrences, exactScalarSummaries: compiler.exactScalarSummaries, arithmeticSummaries: compiler.arithmeticSummaries, unarySummaries: compiler.unarySummaries, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
+		occurrences: compiler.occurrences, occurrenceByID: occurrenceByID, occurrenceByKind: occurrenceByKind, functionBoundaryByBody: functionBoundaryByBody, ruleOccurrences: compiler.ruleOccurrences,
 		diagnosticObservations: compiler.diagnosticObservations, staticTypeArguments: compiler.staticTypeArguments, staticTypeValues: compiler.staticTypeValues, staticTypeNodes: compiler.staticTypeNodes, staticExpressions: compiler.staticExpressions, staticInputs: compiler.staticInputs,
 	}
 	artifact.id = artifactID(artifact)
@@ -106,12 +106,33 @@ func freezeColdPublication(compiler *compiler) (snapshot.Frozen, identity.Conten
 	if !store.Available() {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
-	content, sealed := cold.CallTargetContent(compiler.callTargets, catalog)
+	content, sealed := cold.CallTargetFamily().Content(compiler.callTargets, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
+	exactScalarContent, exactScalarSealed := cold.ExactScalarSummaryFamily().Content(compiler.exactScalarSummaries, catalog)
+	if !exactScalarSealed {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
+	arithmeticContent, arithmeticSealed := cold.ArithmeticSummaryFamily().Content(compiler.arithmeticSummaries, catalog)
+	if !arithmeticSealed {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
+	unaryContent, unarySealed := cold.UnarySummaryFamily().Content(compiler.unarySummaries, catalog)
+	if !unarySealed {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
 	builder := snapshot.NewFrozen(catalog, store)
-	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargets(catalog), content); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, cold.CallTargetFamily().Axis(catalog), content); err != nil {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.ExactScalarSummaryFamily().Axis(catalog), exactScalarContent); err != nil {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.ArithmeticSummaryFamily().Axis(catalog), arithmeticContent); err != nil {
+		return snapshot.Frozen{}, identity.ContentID{}, false
+	}
+	if err := snapshot.PutFrozenColumn(&builder, cold.UnarySummaryFamily().Axis(catalog), unaryContent); err != nil {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
 	frozen, err := builder.Seal()
