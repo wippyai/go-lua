@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	sourceowner "github.com/wippyai/go-lua/analysis/program/source"
-	staticowner "github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
+	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -252,7 +252,7 @@ func anchoredStaticTerm(p *program.Program, expr ast.TypeExpr) (keyspace.Term, e
 
 func anchoredStaticTermAt(p *program.Program, expr ast.TypeExpr, types interface {
 	Count() int
-	At(int) (staticowner.StaticTypeRef, bool)
+	At(int) (staticquery.StaticTypeRef, bool)
 }) (keyspace.Term, error) {
 	if expr == nil {
 		return 0, fmt.Errorf("nil static source anchor")
