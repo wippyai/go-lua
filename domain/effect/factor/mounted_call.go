@@ -97,13 +97,13 @@ func (a *Algebra) SelectedMountedCallOpaque(root Root, mounted MountedCall, oper
 	if !a.selectedMountedCall(root, mounted, operation) {
 		return Value{}, false
 	}
-	tail, _, ok := a.contract.EffectTail(operation)
+	tail, _, ok := a.contract.Operations.EffectTail(operation)
 	if !ok || tail == vocabulary.RowVariable {
 		return Value{}, false
 	}
 	known := tail == vocabulary.RowUnknownOpen
-	for index := 0; index < a.contract.CallbackCount(operation); index++ {
-		callback, ok := a.contract.CallbackAt(operation, index)
+	for index := 0; index < a.contract.Operations.CallbackCount(operation); index++ {
+		callback, ok := a.contract.Operations.CallbackAt(operation, index)
 		if !ok {
 			return Value{}, false
 		}

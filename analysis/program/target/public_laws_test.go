@@ -39,18 +39,18 @@ func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
-	op, ok := contract.Lookup(binding)
+	op, ok := contract.Operations.Lookup(binding)
 	if !ok {
 		t.Fatal("method-capable binding missing")
 	}
-	input, ok := contract.Input(op)
-	if !ok || contract.ValueFormalCount(op) != 1 || contract.ValuesCount(input) != 1 {
-		t.Fatalf("target input ABI = %d fixed/%d formals", contract.ValuesCount(input), contract.ValueFormalCount(op))
+	input, ok := contract.Operations.Input(op)
+	if !ok || contract.Operations.ValueFormalCount(op) != 1 || contract.Operations.ValuesCount(input) != 1 {
+		t.Fatalf("target input ABI = %d fixed/%d formals", contract.Operations.ValuesCount(input), contract.Operations.ValueFormalCount(op))
 	}
-	if value, ok := contract.ValuesAt(input, 0); !ok || value == 0 {
+	if value, ok := contract.Operations.ValuesAt(input, 0); !ok || value == 0 {
 		t.Fatal("Input.Fixed[0] was not retained")
 	}
-	if _, ok := contract.Lookup(vocabulary.BindingSpec{
+	if _, ok := contract.Operations.Lookup(vocabulary.BindingSpec{
 		Namespace: vocabulary.BindingProvider,
 		Owner:     []string{"network.channel"},
 		Member:    []string{"case", "receive"},
@@ -58,7 +58,7 @@ func TestPublicLawTargetHasNoCallFormPlane(t *testing.T) {
 		t.Fatal("joined owner path resolved a segmented provider binding")
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, ok := contract.Lookup(binding); !ok {
+		if _, ok := contract.Operations.Lookup(binding); !ok {
 			panic("segmented provider binding disappeared")
 		}
 	}); allocs != 0 {
@@ -83,16 +83,16 @@ func TestBindingLookupKeepsAliasesPrefixesAndBytesExact(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
 		operation(segmented), operation(longer), operation(aliasRight, prefix, aliasLeft),
 	}})
-	aliasA, ok := contract.Lookup(aliasLeft)
+	aliasA, ok := contract.Operations.Lookup(aliasLeft)
 	if !ok {
 		t.Fatal("first alias missing")
 	}
-	aliasB, ok := contract.Lookup(aliasRight)
+	aliasB, ok := contract.Operations.Lookup(aliasRight)
 	if !ok || aliasA != aliasB {
 		t.Fatalf("aliases = %d/%d/%v", aliasA, aliasB, ok)
 	}
 	for _, binding := range []vocabulary.BindingSpec{prefix, longer, segmented} {
-		if _, ok := contract.Lookup(binding); !ok {
+		if _, ok := contract.Operations.Lookup(binding); !ok {
 			t.Fatalf("exact binding disappeared: %#v", binding)
 		}
 	}
@@ -102,12 +102,12 @@ func TestBindingLookupKeepsAliasesPrefixesAndBytesExact(t *testing.T) {
 		{Namespace: vocabulary.BindingProvider, Owner: []string{"actor", "m"}, Member: []string{"send", "x"}},
 		{Namespace: vocabulary.BindingProvider, Owner: []string{"actor", "m\x00"}, Member: []string{"send"}},
 	} {
-		if _, ok := contract.Lookup(binding); ok {
+		if _, ok := contract.Operations.Lookup(binding); ok {
 			t.Fatalf("prefix/byte-neighbor resolved: %#v", binding)
 		}
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, ok := contract.Lookup(segmented); !ok {
+		if _, ok := contract.Operations.Lookup(segmented); !ok {
 			panic("segmented binding disappeared")
 		}
 	}); allocs != 0 {
@@ -117,18 +117,18 @@ func TestBindingLookupKeepsAliasesPrefixesAndBytesExact(t *testing.T) {
 
 func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	opaque, ok := contract.Opaque()
+	opaque, ok := contract.Operations.Opaque()
 	if !ok {
 		t.Fatal("opaque operation missing")
 	}
-	if contract.Core.BoundCount() != 0 || contract.OperationCount() != 1 {
+	if contract.Operations.BoundCount() != 0 || contract.Operations.OperationCount() != 1 {
 		t.Fatal("opaque is not the sole row of an empty authored contract")
 	}
-	input, ok := contract.Input(opaque)
+	input, ok := contract.Operations.Input(opaque)
 	if !ok {
 		t.Fatal("opaque input missing")
 	}
-	if tail, variable, ok := contract.ValuesTail(input); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
+	if tail, variable, ok := contract.Operations.ValuesTail(input); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
 		t.Fatalf("opaque input tail = %d/%d/%v, want unknown/0/true", tail, variable, ok)
 	}
 	want := [...]flowkind.OutcomeKind{
@@ -137,22 +137,22 @@ func TestOpaqueHasExactlyFourUnknownOutcomes(t *testing.T) {
 		flowkind.OutcomeYield,
 		flowkind.OutcomeCancel,
 	}
-	if got := contract.OutcomeCount(opaque); got != len(want) {
+	if got := contract.Operations.OutcomeCount(opaque); got != len(want) {
 		t.Fatalf("opaque outcomes = %d, want %d", got, len(want))
 	}
 	for index, kind := range want {
-		gotKind, values, ok := contract.OutcomeAt(opaque, index)
+		gotKind, values, ok := contract.Operations.OutcomeAt(opaque, index)
 		if !ok || gotKind != kind || values != input {
 			t.Fatalf("opaque outcome %d = %d/%d/%v, want %d/%d/true", index, gotKind, values, ok, kind, input)
 		}
-		if tail, variable, ok := contract.ValuesTail(values); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
+		if tail, variable, ok := contract.Operations.ValuesTail(values); !ok || tail != vocabulary.ValuesUnknown || variable != 0 {
 			t.Fatalf("opaque outcome %d values are not exactly unknown", index)
 		}
 	}
-	if count := contract.EffectCount(opaque); count != 0 {
+	if count := contract.Operations.EffectCount(opaque); count != 0 {
 		t.Fatalf("opaque explicit effect count = %d, want 0", count)
 	}
-	if tail, variable, ok := contract.EffectTail(opaque); !ok || tail != vocabulary.RowUnknownOpen || variable != 0 {
+	if tail, variable, ok := contract.Operations.EffectTail(opaque); !ok || tail != vocabulary.RowUnknownOpen || variable != 0 {
 		t.Fatalf("opaque effect tail = %d/%d/%v, want unknown-open/0/true", tail, variable, ok)
 	}
 }
@@ -202,15 +202,15 @@ func assertPublicContractEqual(t *testing.T, left, right *Contract) {
 func publicContractSnapshot(t *testing.T, contract *Contract) string {
 	t.Helper()
 	var out strings.Builder
-	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.OperationCount(), contract.Core.BoundCount())
-	opaque, opaqueOK := contract.Opaque()
+	fmt.Fprintf(&out, "operations=%d,bound=%d;", contract.Operations.OperationCount(), contract.Operations.BoundCount())
+	opaque, opaqueOK := contract.Operations.Opaque()
 	fmt.Fprintf(&out, "opaque=%d/%v;", opaque, opaqueOK)
-	for index := 0; index < contract.Core.BoundCount(); index++ {
-		op, ok := contract.Core.OperationAt(index)
+	for index := 0; index < contract.Operations.BoundCount(); index++ {
+		op, ok := contract.Operations.OperationAt(index)
 		fmt.Fprintf(&out, "bound[%d]=%d/%v;", index, op, ok)
 	}
-	for index := 0; index < contract.OperationCount(); index++ {
-		op, ok := contract.OperationAt(index)
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		op, ok := contract.Operations.OperationAt(index)
 		fmt.Fprintf(&out, "op[%d]=%d/%v{", index, op, ok)
 		writeOperationSnapshot(t, &out, contract, op)
 		out.WriteString("}")
@@ -258,20 +258,20 @@ func writeProtocolSnapshot(out *strings.Builder, contract *Contract, protocol vo
 
 func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contract, op vocabulary.Operation) {
 	t.Helper()
-	input, inputOK := contract.Input(op)
+	input, inputOK := contract.Operations.Input(op)
 	fmt.Fprintf(out, "input=%d/%v:%s;", input, inputOK, publicValuesSnapshot(t, contract, input, inputOK))
 	fmt.Fprintf(out, "type-formals=%d,value-formals=%d,values-vars=%d,row-formals=%d;",
-		contract.TypeFormalCount(op), contract.ValueFormalCount(op), contract.ValuesVarCount(op), contract.Core.RowFormalCount(op))
-	for index := 0; index < contract.ValuesVarCount(op); index++ {
-		class, ok := contract.ValuesVarType(op, vocabulary.ValuesVar(index))
+		contract.Operations.TypeFormalCount(op), contract.Operations.ValueFormalCount(op), contract.Operations.ValuesVarCount(op), contract.Operations.RowFormalCount(op))
+	for index := 0; index < contract.Operations.ValuesVarCount(op); index++ {
+		class, ok := contract.Operations.ValuesVarType(op, vocabulary.ValuesVar(index))
 		fmt.Fprintf(out, "values-var-type[%d]=%d/%v:%s;", index, class, ok, publicTypeDigest(t, contract, class, ok))
 	}
-	for index := 0; index < contract.TypeFormalCount(op); index++ {
-		constraint, ok := contract.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
+	for index := 0; index < contract.Operations.TypeFormalCount(op); index++ {
+		constraint, ok := contract.Operations.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
 		fmt.Fprintf(out, "constraint[%d]=%d/%v:%s;", index, constraint, ok, publicTypeDigest(t, contract, constraint, ok))
 	}
-	for index := 0; index < contract.OutcomeCount(op); index++ {
-		kind, values, ok := contract.OutcomeAt(op, index)
+	for index := 0; index < contract.Operations.OutcomeCount(op); index++ {
+		kind, values, ok := contract.Operations.OutcomeAt(op, index)
 		fmt.Fprintf(out, "outcome[%d]=%d/%d/%v:%s;", index, kind, values, ok, publicValuesSnapshot(t, contract, values, ok))
 		for callbackIndex := 0; callbackIndex < contract.callbackResultCount(op, index); callbackIndex++ {
 			result, callback, callbackOK := contract.callbackResultAt(op, index, callbackIndex)
@@ -294,25 +294,25 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			}
 		}
 	}
-	for transfer := 0; transfer < contract.Core.TransferCount(op); transfer++ {
-		endpoint, endpointOK := contract.Core.TransferEndpointAt(op, transfer)
-		payload, payloadOK := contract.Core.TransferPayloadAt(op, transfer)
-		alias, aliasOK := contract.Core.TransferAliasAt(op, transfer)
-		identity, identityOK := contract.Core.TransferIdentityAt(op, transfer)
-		capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(op, transfer)
+	for transfer := 0; transfer < contract.Operations.TransferCount(op); transfer++ {
+		endpoint, endpointOK := contract.Operations.TransferEndpointAt(op, transfer)
+		payload, payloadOK := contract.Operations.TransferPayloadAt(op, transfer)
+		alias, aliasOK := contract.Operations.TransferAliasAt(op, transfer)
+		identity, identityOK := contract.Operations.TransferIdentityAt(op, transfer)
+		capabilities, capabilitiesOK := contract.Operations.TransferCapabilitiesAt(op, transfer)
 		fmt.Fprintf(out, "transfer[%d]=endpoint:%d/%d/%v,payload:%d/%d/%v,alias:%d/%d/%v,identity:%d/%v,capabilities:%d/%v;", transfer, endpoint.Kind, endpoint.Input, endpointOK, payload.Kind, payload.Ordinal, payloadOK, alias.Kind, alias.Ordinal, aliasOK, identity, identityOK, capabilities, capabilitiesOK)
-		for outcome := 0; outcome < contract.Core.TransferOutcomeCount(op, transfer); outcome++ {
-			ordinal, possibility, outcomeOK := contract.Core.TransferOutcomeAt(op, transfer, outcome)
+		for outcome := 0; outcome < contract.Operations.TransferOutcomeCount(op, transfer); outcome++ {
+			ordinal, possibility, outcomeOK := contract.Operations.TransferOutcomeAt(op, transfer, outcome)
 			fmt.Fprintf(out, "transfer-outcome[%d]=%d/%d/%v;", outcome, ordinal, possibility, outcomeOK)
 		}
 	}
-	for index := 0; index < contract.CallbackCount(op); index++ {
-		callback, callbackOK := contract.CallbackAt(op, index)
-		owner, ownerOK := contract.CallbackOwner(callback)
+	for index := 0; index < contract.Operations.CallbackCount(op); index++ {
+		callback, callbackOK := contract.Operations.CallbackAt(op, index)
+		owner, ownerOK := contract.Operations.CallbackOwner(callback)
 		function, functionOK := contract.callbackFunction(callback)
 		arguments, argumentsOK := contract.CallbackArguments(callback)
 		admission, admissionOK := contract.callbackAdmission(callback)
-		lifecycle, lifecycleOK := contract.CallbackLifecycle(callback)
+		lifecycle, lifecycleOK := contract.Operations.CallbackLifecycle(callback)
 		subedge, subedgeOK := contract.callbackSubedge(callback)
 		fmt.Fprintf(out, "callback[%d]=%d/%v:owner=%d/%v,function=%d/%d/%v,args=%d/%v,admission=%d/%v,lifecycle=%d/%v;",
 			index, callback, callbackOK, owner, ownerOK, function.Kind, function.Ordinal, functionOK,
@@ -342,8 +342,8 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 		callback, input, outcome, mode, releaseOK := contract.callbackReleaseAt(op, release)
 		fmt.Fprintf(out, "release[%d]=%d/%d/%d/%d/%v;", release, callback, input, outcome, mode, releaseOK)
 	}
-	for index := 0; index < contract.EffectCount(op); index++ {
-		target, targetOK := contract.EffectTarget(op, index)
+	for index := 0; index < contract.Operations.EffectCount(op); index++ {
+		target, targetOK := contract.Operations.EffectTarget(op, index)
 		fmt.Fprintf(out, "effect[%d]=target:%d/%v;", index, target, targetOK)
 		writeEffectArguments(out, contract, op, index)
 	}
@@ -360,7 +360,7 @@ func writeOperationSnapshot(t *testing.T, out *strings.Builder, contract *Contra
 			fmt.Fprintf(out, "resume-outcome[%d]=%d/%d/%v;", outcome, kind, target, outcomeOK)
 		}
 	}
-	tail, rowVar, tailOK := contract.EffectTail(op)
+	tail, rowVar, tailOK := contract.Operations.EffectTail(op)
 	fmt.Fprintf(out, "effect-tail=%d/%d/%v;", tail, rowVar, tailOK)
 	writeBindingSnapshot(out, contract, op)
 }
@@ -404,24 +404,24 @@ func writeSubedgeSnapshot(out *strings.Builder, contract *Contract, op vocabular
 }
 
 func writeEffectArguments(out *strings.Builder, contract *Contract, op vocabulary.Operation, effect int) {
-	fmt.Fprintf(out, "values(%d)=", contract.EffectValueArgumentCount(op, effect))
-	for index := 0; index < contract.EffectValueArgumentCount(op, effect); index++ {
-		value, ok := contract.EffectValueArgumentAt(op, effect, index)
+	fmt.Fprintf(out, "values(%d)=", contract.Operations.EffectValueArgumentCount(op, effect))
+	for index := 0; index < contract.Operations.EffectValueArgumentCount(op, effect); index++ {
+		value, ok := contract.Operations.EffectValueArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "types(%d)=", contract.EffectTypeArgumentCount(op, effect))
-	for index := 0; index < contract.EffectTypeArgumentCount(op, effect); index++ {
-		value, ok := contract.EffectTypeArgumentAt(op, effect, index)
+	fmt.Fprintf(out, "types(%d)=", contract.Operations.EffectTypeArgumentCount(op, effect))
+	for index := 0; index < contract.Operations.EffectTypeArgumentCount(op, effect); index++ {
+		value, ok := contract.Operations.EffectTypeArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "Values(%d)=", contract.EffectValuesArgumentCount(op, effect))
-	for index := 0; index < contract.EffectValuesArgumentCount(op, effect); index++ {
-		value, ok := contract.EffectValuesArgumentAt(op, effect, index)
+	fmt.Fprintf(out, "Values(%d)=", contract.Operations.EffectValuesArgumentCount(op, effect))
+	for index := 0; index < contract.Operations.EffectValuesArgumentCount(op, effect); index++ {
+		value, ok := contract.Operations.EffectValuesArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
-	fmt.Fprintf(out, "rows(%d)=", contract.EffectRowArgumentCount(op, effect))
-	for index := 0; index < contract.EffectRowArgumentCount(op, effect); index++ {
-		value, ok := contract.Core.EffectRowArgumentAt(op, effect, index)
+	fmt.Fprintf(out, "rows(%d)=", contract.Operations.EffectRowArgumentCount(op, effect))
+	for index := 0; index < contract.Operations.EffectRowArgumentCount(op, effect); index++ {
+		value, ok := contract.Operations.EffectRowArgumentAt(op, effect, index)
 		fmt.Fprintf(out, "%d/%v,", value, ok)
 	}
 }
@@ -450,27 +450,27 @@ func writeCallbackEffectArguments(out *strings.Builder, contract *Contract, call
 }
 
 func writeBindingSnapshot(out *strings.Builder, contract *Contract, op vocabulary.Operation) {
-	fmt.Fprintf(out, "bindings=%d;", contract.BindingCount(op))
-	for bindingIndex := 0; bindingIndex < contract.BindingCount(op); bindingIndex++ {
-		namespace, namespaceOK := contract.BindingNamespaceAt(op, bindingIndex)
-		ownerCount := contract.BindingOwnerCountAt(op, bindingIndex)
-		memberCount := contract.BindingMemberCountAt(op, bindingIndex)
+	fmt.Fprintf(out, "bindings=%d;", contract.Operations.BindingCount(op))
+	for bindingIndex := 0; bindingIndex < contract.Operations.BindingCount(op); bindingIndex++ {
+		namespace, namespaceOK := contract.Operations.BindingNamespaceAt(op, bindingIndex)
+		ownerCount := contract.Operations.BindingOwnerCountAt(op, bindingIndex)
+		memberCount := contract.Operations.BindingMemberCountAt(op, bindingIndex)
 		fmt.Fprintf(out, "binding[%d]=%d/%v,owner=%d,member=%d;", bindingIndex, namespace, namespaceOK, ownerCount, memberCount)
 		if !namespaceOK {
 			continue
 		}
 		binding := vocabulary.BindingSpec{Namespace: namespace}
 		for index := 0; index < ownerCount; index++ {
-			part, ok := contract.Core.BindingOwnerAt(op, bindingIndex, index)
+			part, ok := contract.Operations.BindingOwnerAt(op, bindingIndex, index)
 			fmt.Fprintf(out, "owner[%d]=%q/%v;", index, part, ok)
 			binding.Owner = append(binding.Owner, part)
 		}
 		for index := 0; index < memberCount; index++ {
-			part, ok := contract.BindingMemberAt(op, bindingIndex, index)
+			part, ok := contract.Operations.BindingMemberAt(op, bindingIndex, index)
 			fmt.Fprintf(out, "member[%d]=%q/%v;", index, part, ok)
 			binding.Member = append(binding.Member, part)
 		}
-		lookup, lookupOK := contract.Lookup(binding)
+		lookup, lookupOK := contract.Operations.Lookup(binding)
 		fmt.Fprintf(out, "lookup=%d/%v;", lookup, lookupOK)
 	}
 }
@@ -481,16 +481,16 @@ func publicValuesSnapshot(t *testing.T, contract *Contract, values vocabulary.Va
 		return "invalid"
 	}
 	var out strings.Builder
-	tail, variable, tailOK := contract.ValuesTail(values)
-	tailType, tailTypeOK := contract.ValuesTailType(values)
-	fmt.Fprintf(&out, "count=%d,suffix=%d,tail=%d/%d/%v,tail-type=%d/%v:%s:[", contract.ValuesCount(values), contract.ValuesSuffixCount(values), tail, variable, tailOK, tailType, tailTypeOK, publicTypeDigest(t, contract, tailType, tailTypeOK))
-	for index := 0; index < contract.ValuesCount(values); index++ {
-		value, ok := contract.ValuesAt(values, index)
+	tail, variable, tailOK := contract.Operations.ValuesTail(values)
+	tailType, tailTypeOK := contract.Operations.ValuesTailType(values)
+	fmt.Fprintf(&out, "count=%d,suffix=%d,tail=%d/%d/%v,tail-type=%d/%v:%s:[", contract.Operations.ValuesCount(values), contract.Operations.ValuesSuffixCount(values), tail, variable, tailOK, tailType, tailTypeOK, publicTypeDigest(t, contract, tailType, tailTypeOK))
+	for index := 0; index < contract.Operations.ValuesCount(values); index++ {
+		value, ok := contract.Operations.ValuesAt(values, index)
 		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeDigest(t, contract, value, ok))
 	}
 	out.WriteString("];suffix[")
-	for index := 0; index < contract.ValuesSuffixCount(values); index++ {
-		value, ok := contract.ValuesSuffixAt(values, index)
+	for index := 0; index < contract.Operations.ValuesSuffixCount(values); index++ {
+		value, ok := contract.Operations.ValuesSuffixAt(values, index)
 		fmt.Fprintf(&out, "%d/%v:%s,", value, ok, publicTypeDigest(t, contract, value, ok))
 	}
 	out.WriteByte(']')
@@ -502,6 +502,6 @@ func publicTypeDigest(t *testing.T, contract *Contract, value vocabulary.Type, o
 	if !ok {
 		return "invalid"
 	}
-	declaration, declarationOK := contract.TypeDeclaration(value)
+	declaration, declarationOK := contract.Operations.TypeDeclaration(value)
 	return fmt.Sprintf("%x/%v", declaration.Digest(), declarationOK)
 }

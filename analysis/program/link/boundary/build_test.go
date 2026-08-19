@@ -51,8 +51,8 @@ func TestBoundaryForeignAuthoritiesAndCardinalityFormula(t *testing.T) {
 		if !ok {
 			t.Fatalf("base application %d unavailable", applicationIndex)
 		}
-		for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
-			operation, ok := contract.OperationAt(operationIndex)
+		for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
+			operation, ok := contract.Operations.OperationAt(operationIndex)
 			if !ok {
 				t.Fatalf("operation %d unavailable", operationIndex)
 			}
@@ -210,7 +210,7 @@ func TestBoundarySeedsAndEndpointsAreFencedAndCanonical(t *testing.T) {
 		t.Fatal("Endpoint ID and its nominal Seed ID diverged")
 	}
 	provider = vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
-	providerOp, ok := contract.Lookup(provider)
+	providerOp, ok := contract.Operations.Lookup(provider)
 	if !ok {
 		t.Fatal("provider operation unavailable")
 	}
@@ -440,7 +440,7 @@ func TestBoundarySeedIDsIgnoreUnrelatedMountDelta(t *testing.T) {
 	}
 	one, two := buildBoundary(oneProject), buildBoundary(twoProject)
 	provider := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"host", "pkg"}, Member: []string{"service", "f"}}
-	op, ok := contract.Lookup(provider)
+	op, ok := contract.Operations.Lookup(provider)
 	if !ok {
 		t.Fatal("provider operation unavailable")
 	}
@@ -903,7 +903,7 @@ func TestBoundaryPortableSeedAndEndpointIdentitiesIgnoreUnrelatedTargetDelta(t *
 	baseContract, unrelatedContract := boundaryEndpointTarget(t), boundaryEndpointTargetVariant(t, true, true, false, false)
 	base, unrelated := build(baseContract), build(unrelatedContract)
 	operation := func(contract *target.Contract) vocabulary.Operation {
-		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
+		op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 		if !ok {
 			t.Fatal("operation unavailable")
 		}
@@ -959,11 +959,11 @@ func TestBoundaryPortableSeedAndEndpointIdentitiesIgnoreUnrelatedTargetDelta(t *
 	}
 	baseEndpoint, _ := base.Endpoints().At(0)
 	unrelatedEndpoint, _ := unrelated.Endpoints().At(0)
-	baseProviderOp, ok := baseContract.Lookup(provider)
+	baseProviderOp, ok := baseContract.Operations.Lookup(provider)
 	if !ok {
 		t.Fatal("base provider operation unavailable")
 	}
-	unrelatedProviderOp, ok := unrelatedContract.Lookup(provider)
+	unrelatedProviderOp, ok := unrelatedContract.Operations.Lookup(provider)
 	if !ok {
 		t.Fatal("unrelated provider operation unavailable")
 	}

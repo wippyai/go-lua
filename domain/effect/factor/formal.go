@@ -131,7 +131,7 @@ func (binding PublicationAtomBinding) valid() bool {
 	var selectorFormal vocabulary.ValueFormal
 	switch binding.role {
 	case publicationAtomBindingOrdinary:
-		if binding.callback != 0 || binding.binding.formal.role != formalAtomOrdinary || uint64(binding.effect) >= uint64(binding.owner.contract.EffectCount(binding.operation)) {
+		if binding.callback != 0 || binding.binding.formal.role != formalAtomOrdinary || uint64(binding.effect) >= uint64(binding.owner.contract.Operations.EffectCount(binding.operation)) {
 			return false
 		}
 		effect := int(binding.effect)
@@ -148,7 +148,7 @@ func (binding PublicationAtomBinding) valid() bool {
 		if !ok || binding.binding.formal.descriptor != descriptorID {
 			return false
 		}
-		selectorFormal, ok = binding.owner.contract.EffectValueArgumentAt(binding.operation, effect, int(expected.Subject()))
+		selectorFormal, ok = binding.owner.contract.Operations.EffectValueArgumentAt(binding.operation, effect, int(expected.Subject()))
 		if !ok {
 			return false
 		}
@@ -157,7 +157,7 @@ func (binding PublicationAtomBinding) valid() bool {
 			return false
 		}
 		effect := int(binding.effect)
-		callbackOwner, ownerOK := binding.owner.contract.CallbackOwner(binding.callback)
+		callbackOwner, ownerOK := binding.owner.contract.Operations.CallbackOwner(binding.callback)
 		if !ownerOK || callbackOwner != binding.operation {
 			return false
 		}
@@ -198,7 +198,7 @@ func (binding PublicationAtomBinding) valid() bool {
 		var contextFormal vocabulary.ValueFormal
 		var contextOK bool
 		if binding.role == publicationAtomBindingOrdinary {
-			contextFormal, contextOK = binding.owner.contract.EffectValueArgumentAt(binding.operation, int(binding.effect), int(expected.Context()))
+			contextFormal, contextOK = binding.owner.contract.Operations.EffectValueArgumentAt(binding.operation, int(binding.effect), int(expected.Context()))
 		} else {
 			contextFormal, contextOK = binding.owner.contract.CallbackEffectValueArgumentAt(binding.callback, int(binding.effect), int(expected.Context()))
 		}
@@ -313,11 +313,11 @@ func (a *Algebra) FormalCallEffectAtom(mounted MountedCall, owner vocabulary.Ope
 	if !ok {
 		return FormalAtom{}, false
 	}
-	tail, _, tailOK := a.contract.EffectTail(owner)
-	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) || effect < 0 || effect >= a.contract.EffectCount(owner) || a.contract.EffectRowArgumentCount(owner, effect) != 0 {
+	tail, _, tailOK := a.contract.Operations.EffectTail(owner)
+	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) || effect < 0 || effect >= a.contract.Operations.EffectCount(owner) || a.contract.Operations.EffectRowArgumentCount(owner, effect) != 0 {
 		return FormalAtom{}, false
 	}
-	targetOperation, targetOK := a.contract.EffectTarget(owner, effect)
+	targetOperation, targetOK := a.contract.Operations.EffectTarget(owner, effect)
 	if !targetOK || !a.validateOrdinaryInputs(owner, effect) {
 		return FormalAtom{}, false
 	}
@@ -337,7 +337,7 @@ func (a *Algebra) FormalCallbackEffectAtom(mounted MountedCall, owner vocabulary
 	if !ok || effect < 0 || effect >= a.contract.CallbackEffectCount(callback) {
 		return FormalAtom{}, false
 	}
-	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
+	callbackOwner, ownerOK := a.contract.Operations.CallbackOwner(callback)
 	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
 	if !ownerOK || callbackOwner != owner || !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) || a.contract.CallbackEffectRowArgumentCount(callback, effect) != 0 {
 		return FormalAtom{}, false
@@ -386,14 +386,14 @@ func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, o
 	if !formalOK || !bindingOK || atomBinding != expectedBinding || !descriptorOK || !descriptorIDOK || !occurrenceOK {
 		return PublicationAtomBinding{}, false
 	}
-	subjectFormal, subjectOK := a.contract.EffectValueArgumentAt(owner, effect, int(descriptor.Subject()))
+	subjectFormal, subjectOK := a.contract.Operations.EffectValueArgumentAt(owner, effect, int(descriptor.Subject()))
 	subject, selectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
 	if !subjectOK || !selectorOK {
 		return PublicationAtomBinding{}, false
 	}
 	binding := PublicationAtomBinding{owner: a, mounted: mounted, binding: atomBinding, role: publicationAtomBindingOrdinary, operation: owner, effect: uint32(effect), descriptor: descriptor, descriptorID: descriptorID, occurrenceID: occurrenceID, subject: subject, sealed: true}
 	if descriptor.DestinationRole() == vocabulary.PublicationDestinationValueFormal {
-		contextFormal, contextOK := a.contract.EffectValueArgumentAt(owner, effect, int(descriptor.Context()))
+		contextFormal, contextOK := a.contract.Operations.EffectValueArgumentAt(owner, effect, int(descriptor.Context()))
 		context, contextSelectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
 		if !contextOK || !contextSelectorOK {
 			return PublicationAtomBinding{}, false
@@ -442,7 +442,7 @@ func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted Mounted
 	}
 	publications := make([]PublicationAtomBinding, 0, len(bindings))
 	index := 0
-	for effect := 0; effect < a.contract.EffectCount(owner); effect++ {
+	for effect := 0; effect < a.contract.Operations.EffectCount(owner); effect++ {
 		if index >= len(bindings) {
 			return nil, false
 		}
@@ -455,8 +455,8 @@ func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted Mounted
 		}
 		index++
 	}
-	for callbackIndex := 0; callbackIndex < a.contract.CallbackCount(owner); callbackIndex++ {
-		callback, callbackOK := a.contract.CallbackAt(owner, callbackIndex)
+	for callbackIndex := 0; callbackIndex < a.contract.Operations.CallbackCount(owner); callbackIndex++ {
+		callback, callbackOK := a.contract.Operations.CallbackAt(owner, callbackIndex)
 		if !callbackOK {
 			return nil, false
 		}
@@ -485,14 +485,14 @@ func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, own
 	if !a.ownsRoot(root) {
 		return nil, false
 	}
-	tail, _, tailOK := a.contract.EffectTail(owner)
+	tail, _, tailOK := a.contract.Operations.EffectTail(owner)
 	if !tailOK || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
 		return nil, false
 	}
-	count := a.contract.EffectCount(owner)
-	callbackCount := a.contract.CallbackCount(owner)
+	count := a.contract.Operations.EffectCount(owner)
+	callbackCount := a.contract.Operations.CallbackCount(owner)
 	for callbackIndex := 0; callbackIndex < callbackCount; callbackIndex++ {
-		callback, callbackOK := a.contract.CallbackAt(owner, callbackIndex)
+		callback, callbackOK := a.contract.Operations.CallbackAt(owner, callbackIndex)
 		if !callbackOK {
 			return nil, false
 		}
@@ -507,7 +507,7 @@ func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, own
 		}
 	}
 	bindings := make([]AtomBinding, 0, count)
-	for effect := 0; effect < a.contract.EffectCount(owner); effect++ {
+	for effect := 0; effect < a.contract.Operations.EffectCount(owner); effect++ {
 		formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
 		binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 		if !formalOK || !bindingOK {
@@ -516,7 +516,7 @@ func (a *Algebra) SelectedCallEffectBindings(root Root, mounted MountedCall, own
 		bindings = append(bindings, binding)
 	}
 	for callbackIndex := 0; callbackIndex < callbackCount; callbackIndex++ {
-		callback, callbackOK := a.contract.CallbackAt(owner, callbackIndex)
+		callback, callbackOK := a.contract.Operations.CallbackAt(owner, callbackIndex)
 		if !callbackOK {
 			return nil, false
 		}
@@ -564,10 +564,10 @@ func (a *Algebra) formalCallRoot(mounted MountedCall, owner vocabulary.Operation
 }
 
 func (a *Algebra) ordinaryTypeFormalDescriptor(applicationID identity.ContentID, arguments pack.FormalCallTypeArguments, owner vocabulary.Operation, effect int) (identity.ContentID, bool) {
-	count := a.contract.EffectTypeArgumentCount(owner, effect)
+	count := a.contract.Operations.EffectTypeArgumentCount(owner, effect)
 	positions := make([]vocabulary.TypeFormal, count)
 	for index := range positions {
-		formal, ok := a.contract.EffectTypeArgumentAt(owner, effect, index)
+		formal, ok := a.contract.Operations.EffectTypeArgumentAt(owner, effect, index)
 		if !ok {
 			return identity.ContentID{}, false
 		}

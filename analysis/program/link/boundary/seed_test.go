@@ -26,7 +26,7 @@ func TestBoundarySeedViewsRemainCanonicalAndOwnerFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
+	operation, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 	if !ok {
 		t.Fatal("operation unavailable")
 	}

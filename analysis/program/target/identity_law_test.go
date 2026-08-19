@@ -49,11 +49,11 @@ func effectIdentitySpec(operation vocabulary.OperationSpec) Spec {
 func firstEffectIdentityContract(t *testing.T, spec Spec, name string) (*Contract, vocabulary.Operation, vocabulary.CallbackID) {
 	t.Helper()
 	contract := mustSeal(t, spec)
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
 	if !ok {
 		t.Fatalf("operation %q absent", name)
 	}
-	callback, _ := contract.CallbackAt(op, 0)
+	callback, _ := contract.Operations.CallbackAt(op, 0)
 	return contract, op, callback
 }
 
@@ -232,7 +232,7 @@ func TestEffectIdentityEmptyOrdinaryAndOpaqueFamiliesAreAvailable(t *testing.T) 
 	if !ok || !leftFamily.Available() {
 		t.Fatal("empty ordinary effect family unavailable")
 	}
-	opaque, ok := left.Opaque()
+	opaque, ok := left.Operations.Opaque()
 	if !ok {
 		t.Fatal("opaque operation unavailable")
 	}
@@ -244,7 +244,7 @@ func TestEffectIdentityEmptyOrdinaryAndOpaqueFamiliesAreAvailable(t *testing.T) 
 	if got, ok := right.effectRowFamilyID(rightOwner); !ok || got != leftFamily {
 		t.Fatal("empty ordinary family changed across reseal")
 	}
-	rightOpaque, ok := right.Opaque()
+	rightOpaque, ok := right.Operations.Opaque()
 	if !ok {
 		t.Fatal("opaque operation unavailable after reseal")
 	}
@@ -283,7 +283,7 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 	}
 	formalID := func(spec Spec) (identity.ContentID, bool) {
 		contract := mustSeal(t, spec)
-		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-formal-abi"}})
+		op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-formal-abi"}})
 		if !ok {
 			t.Fatal("formal ABI operation absent")
 		}
@@ -309,7 +309,7 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 	}
 	valuesID := func(spec Spec) (identity.ContentID, bool) {
 		contract := mustSeal(t, spec)
-		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-values-abi"}})
+		op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-values-abi"}})
 		if !ok {
 			t.Fatal("Values ABI operation absent")
 		}
@@ -335,11 +335,11 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 	}
 	rowOne := mustSeal(t, rowSpec(1))
 	rowTwo := mustSeal(t, rowSpec(2))
-	rowOneOp, ok := rowOne.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-row-abi"}})
+	rowOneOp, ok := rowOne.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-row-abi"}})
 	if !ok {
 		t.Fatal("one-row-formal operation absent")
 	}
-	rowTwoOp, ok := rowTwo.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-row-abi"}})
+	rowTwoOp, ok := rowTwo.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-row-abi"}})
 	if !ok {
 		t.Fatal("two-row-formal operation absent")
 	}
@@ -355,7 +355,7 @@ func TestEffectIdentityTracksFormalAndOpenABI(t *testing.T) {
 
 func TestHostPrerequisiteIDsRoundTripAndFence(t *testing.T) {
 	contract := mustSeal(t, endpointIdentityTransferDependencies(1))
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
 	input, ok := contract.InputFormalID(op, 1)
 	if !ok || !input.Available() {
 		t.Fatal("input formal identity unavailable")
@@ -386,13 +386,13 @@ func TestHostPrerequisiteIDsRoundTripAndFence(t *testing.T) {
 
 func TestHostPrerequisiteIDsAreLocalAndReplayStable(t *testing.T) {
 	base := mustSeal(t, endpointIdentityTransferDependencies(1))
-	op, _ := base.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
+	op, _ := base.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
 	input, _ := base.InputFormalID(op, 0)
 	result, _ := base.OutcomeResultID(op, 0, 1)
 	withUnrelated := endpointIdentityTransferDependencies(1)
 	withUnrelated.Operations = append(withUnrelated.Operations, endpointIdentityOperation("aardvark-host-id"))
 	changed := mustSeal(t, withUnrelated)
-	op, _ = changed.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
+	op, _ = changed.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
 	if got, ok := changed.InputFormalID(op, 0); !ok || got != input {
 		t.Fatal("unrelated operation changed input formal ID")
 	}
@@ -400,7 +400,7 @@ func TestHostPrerequisiteIDsAreLocalAndReplayStable(t *testing.T) {
 		t.Fatal("unrelated operation changed outcome result ID")
 	}
 	mutation := mustSeal(t, endpointIdentityTransferDependencies(2))
-	op, _ = mutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
+	op, _ = mutation.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer-dependencies"}})
 	if got, _ := mutation.OutcomeResultID(op, 0, 1); got == result {
 		t.Fatal("callback-result mutation did not change outcome result ID")
 	}
@@ -417,15 +417,15 @@ func TestHostPrerequisiteIDsAreLocalAndReplayStable(t *testing.T) {
 func TestInputFormalIDPermutationReplayAndForeignRangeFence(t *testing.T) {
 	left := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("alpha-formal"), endpointIdentityOperation("beta-formal")}})
 	right := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("beta-formal"), endpointIdentityOperation("alpha-formal")}})
-	leftOp, _ := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha-formal"}})
-	rightOp, _ := right.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha-formal"}})
+	leftOp, _ := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha-formal"}})
+	rightOp, _ := right.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha-formal"}})
 	leftID, leftOK := left.InputFormalID(leftOp, 0)
 	rightID, rightOK := right.InputFormalID(rightOp, 0)
 	if !leftOK || !rightOK || leftID != rightID {
 		t.Fatal("input formal ID changed under authoring permutation")
 	}
 	foreign := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityOperation("foreign-formal"), endpointIdentityOperation("foreign-other")}})
-	foreignOp, _ := foreign.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"foreign-other"}})
+	foreignOp, _ := foreign.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"foreign-other"}})
 	if _, ok := left.InputFormalID(foreignOp, 1); ok {
 		t.Fatal("foreign out-of-range scalar coordinate accepted")
 	}
@@ -503,7 +503,7 @@ func TestSemanticIdentityQueriesTrackOperationAndOutcomeOwners(t *testing.T) {
 		Kind:   flowkind.OutcomeNormal,
 		Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed},
 	}})}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"semantic-id"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"semantic-id"}})
 	if !ok {
 		t.Fatal("semantic identity operation missing")
 	}
@@ -526,7 +526,7 @@ func TestRelationIdentityQueriesRoundTripFormalAndOutcomeRows(t *testing.T) {
 		Kind:   flowkind.OutcomeNormal,
 		Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed},
 	}})}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"relation-id"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"relation-id"}})
 	if !ok {
 		t.Fatal("relation identity operation missing")
 	}
@@ -583,16 +583,16 @@ func TestCallbackAndResumeContentIDsFenceOwnersAndInvert(t *testing.T) {
 		callbackResumeContentOperation("alpha", 0, 0),
 		callbackResumeContentOperation("beta", 1, 1),
 	}})
-	alpha, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}})
+	alpha, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}})
 	if !ok {
 		t.Fatal("alpha operation missing")
 	}
-	beta, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"beta"}})
+	beta, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"beta"}})
 	if !ok {
 		t.Fatal("beta operation missing")
 	}
-	alphaCallback, _ := contract.CallbackAt(alpha, 0)
-	betaCallback, _ := contract.CallbackAt(beta, 0)
+	alphaCallback, _ := contract.Operations.CallbackAt(alpha, 0)
+	betaCallback, _ := contract.Operations.CallbackAt(beta, 0)
 	alphaResume, _ := contract.ResumeIDAt(alpha, 0)
 	betaResume, _ := contract.ResumeIDAt(beta, 0)
 
@@ -659,10 +659,10 @@ func TestCallbackAndResumeContentIDsAreReplayAndPermutationStable(t *testing.T) 
 		callbackResumeContentOperation("beta", 1, 1),
 	}})
 	for _, name := range []string{"alpha", "beta"} {
-		leftOp, _ := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
-		rightOp, _ := right.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
-		leftCallback, _ := left.CallbackAt(leftOp, 0)
-		rightCallback, _ := right.CallbackAt(rightOp, 0)
+		leftOp, _ := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+		rightOp, _ := right.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+		leftCallback, _ := left.Operations.CallbackAt(leftOp, 0)
+		rightCallback, _ := right.Operations.CallbackAt(rightOp, 0)
 		leftCallbackID, leftOK := left.CallbackContentID(leftOp, leftCallback)
 		rightCallbackID, rightOK := right.CallbackContentID(rightOp, rightCallback)
 		if !leftOK || !rightOK || leftCallbackID != rightCallbackID {
@@ -680,7 +680,7 @@ func TestCallbackAndResumeContentIDsAreReplayAndPermutationStable(t *testing.T) 
 
 func TestCallbackAndResumeContentIDsTrackDescriptorMutation(t *testing.T) {
 	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackResumeContentOperation("mutable", 0, 0)}})
-	callback, _ := base.CallbackAt(1, 0)
+	callback, _ := base.Operations.CallbackAt(1, 0)
 	resume, _ := base.ResumeIDAt(1, 0)
 	baseCallback, _ := base.CallbackContentID(1, callback)
 	baseResume, _ := base.ResumeContentID(1, resume)

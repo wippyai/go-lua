@@ -65,7 +65,7 @@ func TestProtocolMultipleAcquisitionsAndEntryRows(t *testing.T) {
 	if contract.protocols.EscapeCount(p) != 2 {
 		t.Fatalf("escape count = %d", contract.protocols.EscapeCount(p))
 	}
-	opaque, _ := contract.Opaque()
+	opaque, _ := contract.Operations.Opaque()
 	op, source, ordinal, ok := contract.protocols.EscapeAt(p, 1)
 	if !ok || op != opaque || source != vocabulary.InputSourceAllInputs || ordinal != 0 {
 		t.Fatalf("derived opaque escape = %d/%d/%d/%v", op, source, ordinal, ok)
@@ -261,11 +261,11 @@ func TestProtocolCallbackHoldersSealExactRetainedRelation(t *testing.T) {
 	if !ok || input != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}) {
 		t.Fatalf("callback-holder input = %d/%#v/%d/%v", op, input, callback, ok)
 	}
-	owner, ownerOK := contract.CallbackOwner(callback)
+	owner, ownerOK := contract.Operations.CallbackOwner(callback)
 	if !ownerOK || owner != op {
 		t.Fatalf("callback-holder owner = %d/%v, want %d", owner, ownerOK, op)
 	}
-	lifecycle, lifecycleOK := contract.CallbackLifecycle(callback)
+	lifecycle, lifecycleOK := contract.Operations.CallbackLifecycle(callback)
 	if !lifecycleOK || !retainedCallbackLifecycle(lifecycle) {
 		t.Fatalf("callback-holder lifecycle = %d/%v", lifecycle, lifecycleOK)
 	}

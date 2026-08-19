@@ -14,7 +14,7 @@ func (target Target) BehaviorResultCount() int {
 	if !ok {
 		return 0
 	}
-	return target.owner.contract.BehaviorResultCount(operation)
+	return target.owner.contract.Operations.BehaviorResultCount(operation)
 }
 
 // BehaviorResultAt projects one neutral result correspondence. Relation is an
@@ -25,7 +25,7 @@ func (target Target) BehaviorResultAt(index int) (outcome, result uint32, source
 	if !operationOK || index < 0 || index >= target.BehaviorResultCount() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}
-	outcome, result, source, relation, ok = target.owner.contract.BehaviorResultAt(operation, index)
+	outcome, result, source, relation, ok = target.owner.contract.Operations.BehaviorResultAt(operation, index)
 	if !ok || !relation.Available() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}
@@ -39,7 +39,7 @@ func (target Target) BehaviorPredicateCount() int {
 	if !ok {
 		return 0
 	}
-	return target.owner.contract.BehaviorPredicateCount(operation)
+	return target.owner.contract.Operations.BehaviorPredicateCount(operation)
 }
 
 // BehaviorPredicateAt projects one neutral predicate correspondence. Branch
@@ -49,7 +49,7 @@ func (target Target) BehaviorPredicateAt(index int) (outcome, result uint32, sub
 	if !operationOK || index < 0 || index >= target.BehaviorPredicateCount() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}
-	outcome, result, subject, relation, ok = target.owner.contract.BehaviorPredicateAt(operation, index)
+	outcome, result, subject, relation, ok = target.owner.contract.Operations.BehaviorPredicateAt(operation, index)
 	if !ok || !relation.Available() {
 		return 0, 0, vocabulary.InputSource{}, schema.EntryID{}, false
 	}

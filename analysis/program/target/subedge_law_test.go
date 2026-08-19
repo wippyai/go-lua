@@ -131,7 +131,7 @@ func TestSubedgeSealsExplicitTransportAndCanonicalRoles(t *testing.T) {
 	if left.ContentID() != right.ContentID() {
 		t.Fatal("callback/outcome/subedge authoring permutation changed ContentID")
 	}
-	op, ok := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"protected-subedge"}})
+	op, ok := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"protected-subedge"}})
 	if !ok || left.SubedgeCount(op) != 2 {
 		t.Fatalf("subedge count = %d/%v", left.SubedgeCount(op), ok)
 	}
@@ -176,23 +176,23 @@ func TestSubedgeScalarAdjustmentHasItsOwnClosedResult(t *testing.T) {
 	if pack.ContentID() == scalar.ContentID() {
 		t.Fatal("pack and scalar adjustment share a content identity")
 	}
-	op, _ := scalar.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"protected-scalar"}})
+	op, _ := scalar.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"protected-scalar"}})
 	protected := subedgeByRole(t, scalar, op, 100)
 	route, adjustment, result, placement, offset, _, _, destination, ok := scalar.subedgeRouteAt(protected, flowkind.OutcomeThrow)
 	if !ok || route != vocabulary.RouteSubedge || adjustment != vocabulary.AdjustmentExact || placement != vocabulary.PlacementFixed || offset != 0 || result == 0 || result != destination {
 		t.Fatalf("scalar route = %d/%d/%d/%d/%d/%d/%v", route, adjustment, result, placement, offset, destination, ok)
 	}
-	if count := scalar.ValuesCount(result); count != 1 {
+	if count := scalar.Operations.ValuesCount(result); count != 1 {
 		t.Fatalf("scalar result width = %d, want 1", count)
 	}
-	if tail, _, ok := scalar.ValuesTail(result); !ok || tail != vocabulary.ValuesClosed {
+	if tail, _, ok := scalar.Operations.ValuesTail(result); !ok || tail != vocabulary.ValuesClosed {
 		t.Fatalf("scalar result tail = %d/%v", tail, ok)
 	}
 }
 
 func TestSubedgeAdmissionFailureAndArgumentAuthorityAreExplicit(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{protectedSubedgeOperation("pcall-xpcall-admission", true, false, false)}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"pcall-xpcall-admission"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"pcall-xpcall-admission"}})
 	protected := subedgeByRole(t, contract, op, 100)
 	handler := subedgeByRole(t, contract, op, 200)
 
@@ -259,7 +259,7 @@ func TestSubedgeNonCallFamiliesHaveClosedABIAndCanonicalOrigins(t *testing.T) {
 	if leftContract.ContentID() != rightContract.ContentID() {
 		t.Fatal("argument-origin authoring order changed ContentID")
 	}
-	op, _ := leftContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"noncall-origin-order"}})
+	op, _ := leftContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"noncall-origin-order"}})
 	edge := subedgeByRole(t, leftContract, op, 1)
 	if count := leftContract.argumentOriginCount(edge); count != 2 {
 		t.Fatalf("non-Call origin count = %d", count)
@@ -331,14 +331,14 @@ func TestSubedgeRejectYieldUsesTheExistingCanonicalThrow(t *testing.T) {
 		Placement: vocabulary.PlacementFixed, Outcome: uint32(len(op.Outcomes) - 1),
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{op}})
-	sealed, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"reject-yield"}})
+	sealed, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"reject-yield"}})
 	edge := subedgeByRole(t, contract, sealed, 100)
 	route, adjustment, result, placement, offset, outcome, sibling, destination, ok := contract.subedgeRouteAt(edge, flowkind.OutcomeYield)
 	if !ok || route != vocabulary.RouteRejectYield || adjustment != vocabulary.AdjustmentExact || result == 0 || placement != vocabulary.PlacementFixed || offset != 0 || sibling != 0 || destination == 0 {
 		t.Fatalf("RejectYield = %d/%d/%d/%d/%d/%d/%d/%d/%v", route, adjustment, result, placement, offset, outcome, sibling, destination, ok)
 	}
-	kind, values, outcomeOK := contract.OutcomeAt(sealed, int(outcome))
-	if !outcomeOK || kind != flowkind.OutcomeThrow || values != destination || contract.ValuesCount(destination) != 1 {
+	kind, values, outcomeOK := contract.Operations.OutcomeAt(sealed, int(outcome))
+	if !outcomeOK || kind != flowkind.OutcomeThrow || values != destination || contract.Operations.ValuesCount(destination) != 1 {
 		t.Fatalf("RejectYield destination = %d/%d/%d/%v", kind, values, destination, outcomeOK)
 	}
 	invalid := protectedSubedgeOperation("reject-yield-invalid", false, false, false)
@@ -525,10 +525,10 @@ func TestSubedgeNullaryCallbackMuRespectsLifecycleMultiplicity(t *testing.T) {
 	}
 	many := nullaryCallbackMuOperation("nullary-callback-many", vocabulary.CallbackSyncOptionalMany)
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{many}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"nullary-callback-many"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"nullary-callback-many"}})
 	edge := subedgeByRole(t, contract, op, 10)
 	callback, callbackOK := contract.subedgeCallback(edge)
-	if lifecycle, lifecycleOK := contract.CallbackLifecycle(callback); !callbackOK || !lifecycleOK || lifecycle != vocabulary.CallbackSyncOptionalMany {
+	if lifecycle, lifecycleOK := contract.Operations.CallbackLifecycle(callback); !callbackOK || !lifecycleOK || lifecycle != vocabulary.CallbackSyncOptionalMany {
 		t.Fatalf("nullary callback lifecycle = %d/%v/%v", lifecycle, callbackOK, lifecycleOK)
 	}
 }
@@ -543,13 +543,13 @@ func TestSubedgeOnceCallbackRejectsReachableMultiEdgeRecurrence(t *testing.T) {
 func TestSubedgeXPCALLHandlerSelfRecurrenceSealsIteratively(t *testing.T) {
 	op := xpcallHandlerSelfRecurrence("xpcall-self", vocabulary.CallbackSyncOptionalMany, false, false)
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{op}})
-	sealed, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"xpcall-self"}})
+	sealed, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"xpcall-self"}})
 	handler := subedgeByRole(t, contract, sealed, 200)
 	if admission, ok := contract.subedgeAdmission(handler); !ok || admission != schematype.CallableAdmissionDirectFunction {
 		t.Fatalf("xpcall handler admission = %d/%v, want schematype.CallableAdmissionDirectFunction", admission, ok)
 	}
 	callback, callbackOK := contract.subedgeCallback(handler)
-	if lifecycle, ok := contract.CallbackLifecycle(callback); !callbackOK || !ok || lifecycle != vocabulary.CallbackSyncOptionalMany {
+	if lifecycle, ok := contract.Operations.CallbackLifecycle(callback); !callbackOK || !ok || lifecycle != vocabulary.CallbackSyncOptionalMany {
 		t.Fatalf("xpcall recursive handler lifecycle = %d/%v/%v, want SyncOptionalMany", lifecycle, callbackOK, ok)
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeThrow, flowkind.OutcomeYield} {
@@ -583,7 +583,7 @@ func TestSubedgeReachabilityRequiresAnExplicitRoot(t *testing.T) {
 
 	direct := nullarySubedgeOperation("nullary-rule-entry", nullarySubedge(10, 1, true))
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{direct}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"nullary-rule-entry"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"nullary-rule-entry"}})
 	edge := subedgeByRole(t, contract, op, 10)
 	if ruleEntry, ok := contract.subedgeRuleEntry(edge); !ok || !ruleEntry {
 		t.Fatalf("nullary RuleEntry = %v/%v", ruleEntry, ok)
@@ -610,13 +610,13 @@ func TestSubedgeReachabilityRequiresAnExplicitRoot(t *testing.T) {
 
 func TestOpaqueCallbackIsExplicitlyConservative(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	op, ok := contract.Opaque()
-	callback, callbackOK := contract.CallbackAt(op, 0)
+	op, ok := contract.Operations.Opaque()
+	callback, callbackOK := contract.Operations.CallbackAt(op, 0)
 	if !ok || !callbackOK || !contract.callbackOpaque(callback) || contract.SubedgeCount(op) != 0 {
 		t.Fatalf("opaque callback = op:%d/%v callback:%d/%v opaque:%v subedges:%d", op, ok, callback, callbackOK, contract.callbackOpaque(callback), contract.SubedgeCount(op))
 	}
 	arguments, argumentsOK := contract.CallbackArguments(callback)
-	input, inputOK := contract.Input(op)
+	input, inputOK := contract.Operations.Input(op)
 	if !argumentsOK || !inputOK || arguments != input {
 		t.Fatalf("opaque callback arguments = %d/%v input=%d/%v", arguments, argumentsOK, input, inputOK)
 	}
@@ -630,7 +630,7 @@ func TestOpaqueCallbackIsExplicitlyConservative(t *testing.T) {
 
 func TestSubedgeFreezeResolvesAuthoredEdgesToDenseIDs(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{protectedSubedgeOperation("freeze-edge", false, false, false)}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"freeze-edge"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"freeze-edge"}})
 	if !ok || contract.SubedgeCount(op) == 0 {
 		t.Fatalf("subedge owner = %d/%v count=%d", op, ok, contract.SubedgeCount(op))
 	}
@@ -645,7 +645,7 @@ func TestSubedgeFreezeResolvesAuthoredEdgesToDenseIDs(t *testing.T) {
 
 func TestSubedgeRowsPreserveCanonicalRoleAndFamily(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{protectedSubedgeOperation("row-edge", false, false, false)}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-edge"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-edge"}})
 	edge, ok := contract.SubedgeAt(op, 0)
 	if !ok {
 		t.Fatal("subedge row missing")
@@ -675,7 +675,7 @@ func TestOperationSubedgeRelationProjectsOnlySealedCoordinates(t *testing.T) {
 		Operand: 1, Selector: 37, Subedge: 1, ResultOutcome: 0, Result: 0,
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{operation}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"neutral-subedge-relation"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"neutral-subedge-relation"}})
 	if !ok {
 		t.Fatal("operation missing")
 	}

@@ -37,7 +37,7 @@ func TestHostSelectorScalePreservesEveryShardRelation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, ok := contract.Lookup(binding)
+	operation, ok := contract.Operations.Lookup(binding)
 	if !ok {
 		t.Fatal("missing fixture provider operation")
 	}

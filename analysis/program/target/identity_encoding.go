@@ -18,11 +18,11 @@ func encodeInput(w *framing.Writer, value vocabulary.InputSource) error {
 // Relation identities are already sealed schema identities; this codec merely
 // carries their bytes and never decodes or classifies them.
 func (c *Contract) encodeBehavior(w *framing.Writer, op vocabulary.Operation) error {
-	if err := w.Count(uint64(c.BehaviorResultCount(op))); err != nil {
+	if err := w.Count(uint64(c.Operations.BehaviorResultCount(op))); err != nil {
 		return err
 	}
-	for index := 0; index < c.BehaviorResultCount(op); index++ {
-		outcome, result, source, relation, ok := c.BehaviorResultAt(op, index)
+	for index := 0; index < c.Operations.BehaviorResultCount(op); index++ {
+		outcome, result, source, relation, ok := c.Operations.BehaviorResultAt(op, index)
 		if !ok || !relation.Available() {
 			return errors.New("target: malformed behavior result")
 		}
@@ -39,11 +39,11 @@ func (c *Contract) encodeBehavior(w *framing.Writer, op vocabulary.Operation) er
 			return err
 		}
 	}
-	if err := w.Count(uint64(c.BehaviorPredicateCount(op))); err != nil {
+	if err := w.Count(uint64(c.Operations.BehaviorPredicateCount(op))); err != nil {
 		return err
 	}
-	for index := 0; index < c.BehaviorPredicateCount(op); index++ {
-		outcome, result, subject, relation, ok := c.BehaviorPredicateAt(op, index)
+	for index := 0; index < c.Operations.BehaviorPredicateCount(op); index++ {
+		outcome, result, subject, relation, ok := c.Operations.BehaviorPredicateAt(op, index)
 		if !ok || !relation.Available() {
 			return errors.New("target: malformed behavior predicate")
 		}
@@ -64,12 +64,12 @@ func (c *Contract) encodeBehavior(w *framing.Writer, op vocabulary.Operation) er
 }
 
 func (c *Contract) encodeBindings(w *framing.Writer, op vocabulary.Operation) error {
-	count := c.BindingCount(op)
+	count := c.Operations.BindingCount(op)
 	if err := w.Count(uint64(count)); err != nil {
 		return err
 	}
 	for i := 0; i < count; i++ {
-		ns, ok := c.BindingNamespaceAt(op, i)
+		ns, ok := c.Operations.BindingNamespaceAt(op, i)
 		if !ok {
 			return errors.New("target: malformed binding")
 		}
@@ -94,12 +94,12 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 	if err := c.encodeBindings(w, op); err != nil {
 		return err
 	}
-	typeFormals := c.TypeFormalCount(op)
+	typeFormals := c.Operations.TypeFormalCount(op)
 	if err := w.Count(uint64(typeFormals)); err != nil {
 		return err
 	}
 	for i := 0; i < typeFormals; i++ {
-		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(i))
+		value, valueOK := c.Operations.TypeFormalConstraint(op, vocabulary.TypeFormal(i))
 		if !valueOK {
 			value = 0
 		}
@@ -112,12 +112,12 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			}
 		}
 	}
-	valuesVars := c.ValuesVarCount(op)
+	valuesVars := c.Operations.ValuesVarCount(op)
 	if err := w.Uint(uint64(valuesVars)); err != nil {
 		return err
 	}
 	for i := 0; i < valuesVars; i++ {
-		value, valueOK := c.ValuesVarType(op, vocabulary.ValuesVar(i))
+		value, valueOK := c.Operations.ValuesVarType(op, vocabulary.ValuesVar(i))
 		if !valueOK {
 			return errors.New("target: malformed Values variable type")
 		}
@@ -125,22 +125,22 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
-	if err := w.Uint(uint64(c.RowFormalCount(op))); err != nil {
+	if err := w.Uint(uint64(c.Operations.RowFormalCount(op))); err != nil {
 		return err
 	}
-	input, inputOK := c.Input(op)
+	input, inputOK := c.Operations.Input(op)
 	if !inputOK {
 		return errors.New("target: malformed operation input")
 	}
 	if err := encodeValues(w, c, input); err != nil {
 		return err
 	}
-	callbackCount := c.Core.CallbackCount(op)
+	callbackCount := c.Operations.CallbackCount(op)
 	if err := w.Count(uint64(callbackCount)); err != nil {
 		return err
 	}
 	for i := 0; i < callbackCount; i++ {
-		callback, callbackOK := c.Core.CallbackAt(op, i)
+		callback, callbackOK := c.Operations.CallbackAt(op, i)
 		if !callbackOK {
 			return errors.New("target: malformed callback geometry")
 		}
@@ -232,7 +232,7 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			}
 		}
 	}
-	transferCount := c.TransferCount(op)
+	transferCount := c.Operations.TransferCount(op)
 	if err := w.Count(uint64(transferCount)); err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func (c *Contract) encodePortableCallback(w *framing.Writer, id vocabulary.Callb
 			return err
 		}
 	}
-	lifecycle, lifecycleOK := c.Core.CallbackLifecycle(id)
+	lifecycle, lifecycleOK := c.Operations.CallbackLifecycle(id)
 	if !lifecycleOK {
 		return errors.New("target: malformed callback lifecycle")
 	}
@@ -574,8 +574,8 @@ func (c *Contract) encodePortableOutcome(w *framing.Writer, owner vocabulary.Ope
 }
 
 func (c *Contract) encodeTransfer(w *framing.Writer, op vocabulary.Operation, index int) error {
-	endpoint, payload, alias, identity, capabilities, ok := c.Core.TransferDeclaration(func() vocabulary.TransferID {
-		id, _ := c.Core.TransferIDAt(op, index)
+	endpoint, payload, alias, identity, capabilities, ok := c.Operations.TransferDeclaration(func() vocabulary.TransferID {
+		id, _ := c.Operations.TransferIDAt(op, index)
 		return id
 	}())
 	if !ok {
@@ -598,11 +598,11 @@ func (c *Contract) encodeTransfer(w *framing.Writer, op vocabulary.Operation, in
 			return err
 		}
 	}
-	transfer, transferOK := c.Core.TransferIDAt(op, index)
+	transfer, transferOK := c.Operations.TransferIDAt(op, index)
 	if !transferOK {
 		return errors.New("target: malformed transfer handle")
 	}
-	outcomes := c.Core.TransferOutcomeCount(op, index)
+	outcomes := c.Operations.TransferOutcomeCount(op, index)
 	if err := w.Count(uint64(outcomes)); err != nil {
 		return err
 	}
@@ -610,7 +610,7 @@ func (c *Contract) encodeTransfer(w *framing.Writer, op vocabulary.Operation, in
 		if err := w.Uint(uint64(i)); err != nil {
 			return err
 		}
-		_, possibility, possibilityOK := c.Core.TransferDeclarationOutcomeAt(transfer, i)
+		_, possibility, possibilityOK := c.Operations.TransferDeclarationOutcomeAt(transfer, i)
 		if !possibilityOK {
 			return errors.New("target: malformed transfer outcome")
 		}

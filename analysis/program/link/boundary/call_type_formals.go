@@ -68,11 +68,11 @@ func (v Calls) TypeFormalArguments(contract *target.Contract, application linkpr
 		return TypeFormalArguments{}, false
 	}
 	count, ok := p.Static().Contracts().Calls().TypeArgumentCount(call)
-	if !ok || count != contract.TypeFormalCount(operation) {
+	if !ok || count != contract.Operations.TypeFormalCount(operation) {
 		return TypeFormalArguments{}, false
 	}
 	for index := 0; index < count; index++ {
-		if _, constrained := contract.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); constrained {
+		if _, constrained := contract.Operations.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); constrained {
 			return TypeFormalArguments{}, false
 		}
 	}

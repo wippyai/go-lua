@@ -54,12 +54,12 @@ func (c *Contract) validPublicationEffectRow(effect effectRow) bool {
 	if c == nil || !effect.hasPublication || !effect.publication.validConsequences() {
 		return false
 	}
-	target, ok := c.Core.Input(effect.target)
-	if !ok || uint64(effect.publication.subject) >= uint64(c.Core.ValuesCount(target)) {
+	target, ok := c.Operations.Input(effect.target)
+	if !ok || uint64(effect.publication.subject) >= uint64(c.Operations.ValuesCount(target)) {
 		return false
 	}
 	return effect.publication.destination != vocabulary.PublicationDestinationValueFormal ||
-		uint64(effect.publication.context) < uint64(c.Core.ValuesCount(target))
+		uint64(effect.publication.context) < uint64(c.Operations.ValuesCount(target))
 }
 
 // PublicationEffectDescriptor returns the Target-owned publication semantics

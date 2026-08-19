@@ -9,9 +9,9 @@ import (
 )
 
 func encodeBindingSegments(w *framing.Writer, c *Contract, op vocabulary.Operation, binding int, owner bool) error {
-	count := c.BindingMemberCountAt(op, binding)
+	count := c.Operations.BindingMemberCountAt(op, binding)
 	if owner {
-		count = c.BindingOwnerCountAt(op, binding)
+		count = c.Operations.BindingOwnerCountAt(op, binding)
 	}
 	if err := w.Count(uint64(count)); err != nil {
 		return err
@@ -20,9 +20,9 @@ func encodeBindingSegments(w *framing.Writer, c *Contract, op vocabulary.Operati
 		var value vocabulary.ExactKey
 		var ok bool
 		if owner {
-			value, ok = c.Core.BindingOwnerKeyAt(op, binding, index)
+			value, ok = c.Operations.BindingOwnerKeyAt(op, binding, index)
 		} else {
-			value, ok = c.Core.BindingMemberKeyAt(op, binding, index)
+			value, ok = c.Operations.BindingMemberKeyAt(op, binding, index)
 		}
 		if !ok {
 			return errors.New("target: malformed binding segment")

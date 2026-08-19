@@ -16,7 +16,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		return err
 	}
 
-	bindings := c.BindingCount(op)
+	bindings := c.Operations.BindingCount(op)
 	if err := w.Count(uint64(bindings)); err != nil {
 		return err
 	}
@@ -24,7 +24,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := w.Record(recordBinding); err != nil {
 			return err
 		}
-		namespace, ok := c.BindingNamespaceAt(op, index)
+		namespace, ok := c.Operations.BindingNamespaceAt(op, index)
 		if !ok {
 			return errors.New("target: malformed binding")
 		}
@@ -39,12 +39,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	formals := c.TypeFormalCount(op)
+	formals := c.Operations.TypeFormalCount(op)
 	if err := w.Count(uint64(formals)); err != nil {
 		return err
 	}
 	for index := 0; index < formals; index++ {
-		constraint, found := c.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
+		constraint, found := c.Operations.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
 		if err := w.Bool(found); err != nil {
 			return err
 		}
@@ -54,11 +54,11 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			}
 		}
 	}
-	if err := w.Uint(uint64(c.ValuesVarCount(op))); err != nil {
+	if err := w.Uint(uint64(c.Operations.ValuesVarCount(op))); err != nil {
 		return err
 	}
-	for variable := 0; variable < c.ValuesVarCount(op); variable++ {
-		class, found := c.ValuesVarType(op, vocabulary.ValuesVar(variable))
+	for variable := 0; variable < c.Operations.ValuesVarCount(op); variable++ {
+		class, found := c.Operations.ValuesVarType(op, vocabulary.ValuesVar(variable))
 		if !found {
 			return errors.New("target: malformed Values variable type")
 		}
@@ -66,10 +66,10 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
-	if err := w.Uint(uint64(c.RowFormalCount(op))); err != nil {
+	if err := w.Uint(uint64(c.Operations.RowFormalCount(op))); err != nil {
 		return err
 	}
-	input, ok := c.Input(op)
+	input, ok := c.Operations.Input(op)
 	if !ok {
 		return errors.New("target: malformed input Values")
 	}
@@ -77,16 +77,16 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		return err
 	}
 
-	callbacks := c.CallbackCount(op)
+	callbacks := c.Operations.CallbackCount(op)
 	if err := w.Count(uint64(callbacks)); err != nil {
 		return err
 	}
 	for index := 0; index < callbacks; index++ {
-		id, found := c.CallbackAt(op, index)
+		id, found := c.Operations.CallbackAt(op, index)
 		if !found {
 			return errors.New("target: malformed callback")
 		}
-		owner, found := c.CallbackOwner(id)
+		owner, found := c.Operations.CallbackOwner(id)
 		if !found || owner != op {
 			return errors.New("target: malformed callback owner")
 		}
@@ -132,7 +132,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 				return err
 			}
 		}
-		lifecycle, found := c.CallbackLifecycle(id)
+		lifecycle, found := c.Operations.CallbackLifecycle(id)
 		if !found {
 			return errors.New("target: malformed callback lifecycle")
 		}
@@ -218,7 +218,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	outcomes := c.OutcomeCount(op)
+	outcomes := c.Operations.OutcomeCount(op)
 	if err := w.Count(uint64(outcomes)); err != nil {
 		return err
 	}
@@ -337,12 +337,12 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	transfers := c.TransferCount(op)
+	transfers := c.Operations.TransferCount(op)
 	if err := w.Count(uint64(transfers)); err != nil {
 		return err
 	}
 	for index := 0; index < transfers; index++ {
-		endpoint, found := c.TransferEndpointAt(op, index)
+		endpoint, found := c.Operations.TransferEndpointAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer")
 		}
@@ -352,40 +352,40 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		if err := encodeCoordinate(w, uint64(endpoint.Kind), uint64(endpoint.Input)); err != nil {
 			return err
 		}
-		payload, found := c.TransferPayloadAt(op, index)
+		payload, found := c.Operations.TransferPayloadAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer payload")
 		}
 		if err := encodeCoordinate(w, uint64(payload.Kind), uint64(payload.Ordinal)); err != nil {
 			return err
 		}
-		alias, found := c.TransferAliasAt(op, index)
+		alias, found := c.Operations.TransferAliasAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer alias")
 		}
 		if err := encodeCoordinate(w, uint64(alias.Kind), uint64(alias.Ordinal)); err != nil {
 			return err
 		}
-		identity, found := c.TransferIdentityAt(op, index)
+		identity, found := c.Operations.TransferIdentityAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer identity")
 		}
 		if err := w.Uint(uint64(identity)); err != nil {
 			return err
 		}
-		capabilities, found := c.TransferCapabilitiesAt(op, index)
+		capabilities, found := c.Operations.TransferCapabilitiesAt(op, index)
 		if !found {
 			return errors.New("target: malformed transfer capabilities")
 		}
 		if err := w.Uint(uint64(capabilities)); err != nil {
 			return err
 		}
-		count := c.TransferOutcomeCount(op, index)
+		count := c.Operations.TransferOutcomeCount(op, index)
 		if err := w.Count(uint64(count)); err != nil {
 			return err
 		}
 		for item := 0; item < count; item++ {
-			outcome, possibility, found := c.TransferOutcomeAt(op, index, item)
+			outcome, possibility, found := c.Operations.TransferOutcomeAt(op, index, item)
 			if !found {
 				return errors.New("target: malformed transfer outcome")
 			}
@@ -398,7 +398,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 		}
 	}
 
-	tail, variable, found := c.EffectTail(op)
+	tail, variable, found := c.Operations.EffectTail(op)
 	if !found {
 		return errors.New("target: malformed effect tail")
 	}
@@ -408,7 +408,7 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 	if err := w.Uint(uint64(variable)); err != nil {
 		return err
 	}
-	effects := c.EffectCount(op)
+	effects := c.Operations.EffectCount(op)
 	if err := w.Count(uint64(effects)); err != nil {
 		return err
 	}

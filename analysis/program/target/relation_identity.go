@@ -20,16 +20,16 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operatio
 	c.inputFormalRanges = make([]indexRange, len(c.operations))
 	for operationIndex := range c.operations {
 		op := vocabulary.Operation(operationIndex + 1)
-		input, inputOK := c.Input(op)
+		input, inputOK := c.Operations.Input(op)
 		if !inputOK {
 			return errors.New("target: malformed semantic input")
 		}
-		start, err := checkedStoredRange("semantic input formal table", len(c.inputFormalIDs), c.ValuesCount(input))
+		start, err := checkedStoredRange("semantic input formal table", len(c.inputFormalIDs), c.Operations.ValuesCount(input))
 		if err != nil {
 			return err
 		}
 		operationID := c.operationContentIDs[operationIndex]
-		for formal := 0; formal < c.ValuesCount(input); formal++ {
+		for formal := 0; formal < c.Operations.ValuesCount(input); formal++ {
 			selector := vocabulary.ValueFormal(formal)
 			id, err := c.semanticID(semanticInputFormal, func(w *framing.Writer) error {
 				if err := w.Bytes(operationID[:]); err != nil {
@@ -48,7 +48,7 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operatio
 
 	c.outcomeResultRanges = make([]indexRange, len(c.outcomes))
 	for outcomeIndex, row := range c.outcomes {
-		count := c.ValuesCount(row.values)
+		count := c.Operations.ValuesCount(row.values)
 		start, err := checkedStoredRange("semantic outcome result table", len(c.outcomeResultIDs), count)
 		if err != nil {
 			return err

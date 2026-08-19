@@ -201,8 +201,8 @@ func (a *Algebra) captureApplicationOps(project *linkproject.Component, boundary
 			return false
 		}
 		rows := make(map[vocabulary.Operation]int)
-		for j := 0; j < a.contract.OperationCount(); j++ {
-			op, opOK := a.contract.OperationAt(j)
+		for j := 0; j < a.contract.Operations.OperationCount(); j++ {
+			op, opOK := a.contract.Operations.OperationAt(j)
 			if !opOK {
 				return false
 			}
@@ -366,7 +366,7 @@ func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.Content
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
-	tail, _, ok := a.contract.EffectTail(owner)
+	tail, _, ok := a.contract.Operations.EffectTail(owner)
 	if !ok || tail != vocabulary.RowUnknownOpen {
 		return Atom{}, false
 	}
@@ -377,7 +377,7 @@ func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentI
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
 		return Atom{}, false
 	}
-	callbackOwner, ownerOK := a.contract.CallbackOwner(callback)
+	callbackOwner, ownerOK := a.contract.Operations.CallbackOwner(callback)
 	tail, _, tailOK := a.contract.CallbackEffectTail(callback)
 	if !ownerOK || callbackOwner != owner || !tailOK || tail != vocabulary.RowUnknownOpen {
 		return Atom{}, false
@@ -423,14 +423,14 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
-	tail, _, ok := a.contract.EffectTail(operation)
+	tail, _, ok := a.contract.Operations.EffectTail(operation)
 	if !ok || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
 		return Value{}, false
 	}
-	atomCount := a.contract.EffectCount(operation)
-	callbacks := a.contract.CallbackCount(operation)
+	atomCount := a.contract.Operations.EffectCount(operation)
+	callbacks := a.contract.Operations.CallbackCount(operation)
 	for callbackIndex := 0; callbackIndex < callbacks; callbackIndex++ {
-		callback, ok := a.contract.CallbackAt(operation, callbackIndex)
+		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
 		if !ok {
 			return Value{}, false
 		}
@@ -445,7 +445,7 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 		}
 	}
 	atoms := make([]Atom, 0, atomCount)
-	for effect := 0; effect < a.contract.EffectCount(operation); effect++ {
+	for effect := 0; effect < a.contract.Operations.EffectCount(operation); effect++ {
 		atom, ok := a.CallEffectAtom(root, applicationID, operation, effect)
 		if !ok {
 			return Value{}, false
@@ -453,7 +453,7 @@ func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentI
 		atoms = append(atoms, atom)
 	}
 	for callbackIndex := 0; callbackIndex < callbacks; callbackIndex++ {
-		callback, ok := a.contract.CallbackAt(operation, callbackIndex)
+		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
 		if !ok {
 			return Value{}, false
 		}
@@ -475,7 +475,7 @@ func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID
 	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
 		return Value{}, false
 	}
-	tail, _, ok := a.contract.EffectTail(operation)
+	tail, _, ok := a.contract.Operations.EffectTail(operation)
 	if !ok || tail == vocabulary.RowVariable {
 		return Value{}, false
 	}
@@ -488,8 +488,8 @@ func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID
 		}
 		unknown, known = atom, true
 	}
-	for callbackIndex := 0; callbackIndex < a.contract.CallbackCount(operation); callbackIndex++ {
-		callback, ok := a.contract.CallbackAt(operation, callbackIndex)
+	for callbackIndex := 0; callbackIndex < a.contract.Operations.CallbackCount(operation); callbackIndex++ {
+		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
 		if !ok {
 			return Value{}, false
 		}
@@ -840,18 +840,18 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 func (a *Algebra) sealCapacity() bool {
 	contexts := uint64(a.applicationCount)
 	occurrences := uint64(0)
-	for i := 0; i < a.contract.OperationCount(); i++ {
-		op, ok := a.contract.OperationAt(i)
+	for i := 0; i < a.contract.Operations.OperationCount(); i++ {
+		op, ok := a.contract.Operations.OperationAt(i)
 		if !ok {
 			return false
 		}
-		occurrences, ok = checkedAdd(occurrences, uint64(a.contract.EffectCount(op)))
+		occurrences, ok = checkedAdd(occurrences, uint64(a.contract.Operations.EffectCount(op)))
 		if !ok {
 			return false
 		}
-		callbacks := a.contract.CallbackCount(op)
+		callbacks := a.contract.Operations.CallbackCount(op)
 		for callbackIndex := 0; callbackIndex < callbacks; callbackIndex++ {
-			callback, callbackOK := a.contract.CallbackAt(op, callbackIndex)
+			callback, callbackOK := a.contract.Operations.CallbackAt(op, callbackIndex)
 			if !callbackOK {
 				return false
 			}
@@ -909,11 +909,11 @@ func (a *Algebra) callInRootID(root Root, applicationID identity.ContentID) bool
 // input var; every other position substitutes an outcome-scoped var, which
 // names no input and therefore selects nothing out of the caller's Pack.
 func (a *Algebra) inputTailArgument(operation vocabulary.Operation) (int, bool) {
-	input, inputOK := a.contract.Input(operation)
+	input, inputOK := a.contract.Operations.Input(operation)
 	if !inputOK {
 		return 0, false
 	}
-	tail, variable, tailOK := a.contract.ValuesTail(input)
+	tail, variable, tailOK := a.contract.Operations.ValuesTail(input)
 	if !tailOK || tail != vocabulary.ValuesVariable {
 		return 0, false
 	}
@@ -921,8 +921,8 @@ func (a *Algebra) inputTailArgument(operation vocabulary.Operation) (int, bool) 
 }
 
 func (a *Algebra) validateOrdinaryInputs(owner vocabulary.Operation, effect int) bool {
-	for i := 0; i < a.contract.EffectValueArgumentCount(owner, effect); i++ {
-		formal, ok := a.contract.EffectValueArgumentAt(owner, effect, i)
+	for i := 0; i < a.contract.Operations.EffectValueArgumentCount(owner, effect); i++ {
+		formal, ok := a.contract.Operations.EffectValueArgumentAt(owner, effect, i)
 		if !ok {
 			return false
 		}
@@ -930,13 +930,13 @@ func (a *Algebra) validateOrdinaryInputs(owner vocabulary.Operation, effect int)
 			return false
 		}
 	}
-	targetOperation, targetOK := a.contract.EffectTarget(owner, effect)
+	targetOperation, targetOK := a.contract.Operations.EffectTarget(owner, effect)
 	if !targetOK {
 		return false
 	}
 	tailArgument, tailed := a.inputTailArgument(targetOperation)
-	for i := 0; i < a.contract.EffectValuesArgumentCount(owner, effect); i++ {
-		formal, ok := a.contract.EffectValuesArgumentAt(owner, effect, i)
+	for i := 0; i < a.contract.Operations.EffectValuesArgumentCount(owner, effect); i++ {
+		formal, ok := a.contract.Operations.EffectValuesArgumentAt(owner, effect, i)
 		if !ok {
 			return false
 		}

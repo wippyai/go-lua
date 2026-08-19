@@ -25,8 +25,8 @@ func (c *Contract) CountRows() denominator.CountRows {
 // populations share one table and are told apart by the effect owner. Nothing
 // here re-derives a relation by walking the indexes into those tables.
 func (c *Contract) buildCountRows() (denominator.CountRows, error) {
-	opaque, opaqueOK := c.Opaque()
-	if c == nil || c.OperationCount() == 0 || !opaqueOK || opaque != vocabulary.Operation(c.OperationCount()) {
+	opaque, opaqueOK := c.Operations.Opaque()
+	if c == nil || c.Operations.OperationCount() == 0 || !opaqueOK || opaque != vocabulary.Operation(c.Operations.OperationCount()) {
 		return denominator.CountRows{}, errCountRows
 	}
 
@@ -71,22 +71,22 @@ func (c *Contract) buildCountRows() (denominator.CountRows, error) {
 	protocolCounts := c.protocols.Counts()
 	bootCounts := c.Table.Counts()
 	bindingCount := 0
-	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
-		bindingCount += c.BindingCount(vocabulary.Operation(operationIndex + 1))
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
+		bindingCount += c.Operations.BindingCount(vocabulary.Operation(operationIndex + 1))
 	}
 	transferCount, transferOutcomeCount := 0, 0
-	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		op := vocabulary.Operation(operationIndex + 1)
-		transferCount += c.TransferCount(op)
-		for index := 0; index < c.TransferCount(op); index++ {
-			transferOutcomeCount += c.TransferOutcomeCount(op, index)
+		transferCount += c.Operations.TransferCount(op)
+		for index := 0; index < c.Operations.TransferCount(op); index++ {
+			transferOutcomeCount += c.Operations.TransferOutcomeCount(op, index)
 		}
 	}
 
 	ok := put(ids.TargetContract, 1) &&
 		put(ids.TargetOpaque, 1) &&
-		put(ids.TargetOperation, c.OperationCount()) &&
-		put(ids.TargetABI, c.OperationCount()) &&
+		put(ids.TargetOperation, c.Operations.OperationCount()) &&
+		put(ids.TargetABI, c.Operations.OperationCount()) &&
 		put(ids.TargetBinding, bindingCount) &&
 		put(ids.TargetOutcome, len(c.outcomes)) &&
 		put(ids.TargetOperationEffect, operationEffects) &&

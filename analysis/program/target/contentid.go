@@ -36,8 +36,8 @@ func (c *Contract) ContentID() (id identity.ContentID) {
 			id = identity.ContentID{}
 		}
 	}()
-	opaque, opaqueOK := c.Opaque()
-	if c == nil || !c.sealed || !opaqueOK || uint64(opaque) != uint64(c.OperationCount()) {
+	opaque, opaqueOK := c.Operations.Opaque()
+	if c == nil || !c.sealed || !opaqueOK || uint64(opaque) != uint64(c.Operations.OperationCount()) {
 		return identity.ContentID{}
 	}
 	hash := sha256.New()
@@ -112,12 +112,12 @@ func encodeContract(w *framing.Writer, c *Contract) error {
 	if err := w.Record(recordContract); err != nil {
 		return err
 	}
-	operations := c.OperationCount()
+	operations := c.Operations.OperationCount()
 	if err := w.Count(uint64(operations)); err != nil {
 		return err
 	}
 	for index := 0; index < operations; index++ {
-		op, ok := c.OperationAt(index)
+		op, ok := c.Operations.OperationAt(index)
 		if !ok {
 			return errors.New("target: malformed operation table")
 		}

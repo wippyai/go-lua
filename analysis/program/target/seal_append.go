@@ -264,7 +264,7 @@ func (c *Contract) appendOpaque(builder *operationvalue.QueryBuilder, opaque voc
 			vocabulary.TransferMayDeliver | vocabulary.TransferMayReject,
 		},
 	}}
-	issuedOpaque := callbackIDForOpaque(c.Core, opaque)
+	issuedOpaque := callbackIDForOpaque(c.Operations, opaque)
 	_, _, err = c.appendCallbacks(builder, opaque, []callbackDraft{{
 		function:  vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs},
 		admission: schematype.CallableAdmissionOrdinary,

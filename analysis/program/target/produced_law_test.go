@@ -42,9 +42,9 @@ func TestProducedOperationUsesOneOrdinaryOperationIdentity(t *testing.T) {
 			Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		},
 	}})
-	factory, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
-	if !ok || factory != 1 || contract.Core.BoundCount() != 1 {
-		t.Fatalf("factory/bound = %d/%v/%d", factory, ok, contract.Core.BoundCount())
+	factory, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
+	if !ok || factory != 1 || contract.Operations.BoundCount() != 1 {
+		t.Fatalf("factory/bound = %d/%v/%d", factory, ok, contract.Operations.BoundCount())
 	}
 	first, row, ok := contract.producedForResult(factory, 0, 0)
 	if !ok || first != 2 || row != 0 {
@@ -82,8 +82,8 @@ func TestProducedCallbackCaptureRemapsToSealedID(t *testing.T) {
 		},
 		{Input: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}},
 	}})
-	wrap, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wrap"}})
-	callback, ok := contract.CallbackAt(wrap, 0)
+	wrap, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wrap"}})
+	callback, ok := contract.Operations.CallbackAt(wrap, 0)
 	if !ok || callback == 0 {
 		t.Fatal("missing sealed callback")
 	}
@@ -111,10 +111,10 @@ func TestBindingAliasesShareOneOperation(t *testing.T) {
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
-	gfind, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gfind"}})
-	gmatch, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gmatch"}})
-	if gfind == 0 || gfind != gmatch || contract.BindingCount(gfind) != 2 {
-		t.Fatalf("aliases = %d/%d, binding count %d", gfind, gmatch, contract.BindingCount(gfind))
+	gfind, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gfind"}})
+	gmatch, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"string"}, Member: []string{"gmatch"}})
+	if gfind == 0 || gfind != gmatch || contract.Operations.BindingCount(gfind) != 2 {
+		t.Fatalf("aliases = %d/%d, binding count %d", gfind, gmatch, contract.Operations.BindingCount(gfind))
 	}
 }
 
@@ -143,17 +143,17 @@ func TestBoundOperationsStayCanonicalPrefixWithProducedChildren(t *testing.T) {
 		return copy
 	}()}})
 	for _, contract := range []*Contract{first, second} {
-		if contract.Core.BoundCount() != 2 {
-			t.Fatalf("bound operation count = %d, want 2", contract.Core.BoundCount())
+		if contract.Operations.BoundCount() != 2 {
+			t.Fatalf("bound operation count = %d, want 2", contract.Operations.BoundCount())
 		}
-		for index := 0; index < contract.Core.BoundCount(); index++ {
-			op, ok := contract.Core.OperationAt(index)
+		for index := 0; index < contract.Operations.BoundCount(); index++ {
+			op, ok := contract.Operations.OperationAt(index)
 			if !ok || op != vocabulary.Operation(index+1) {
 				t.Fatalf("BoundOperationAt(%d) = %d/%v, want %d/true", index, op, ok, index+1)
 			}
 		}
-		alphaOp, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}})
-		betaOp, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"beta"}})
+		alphaOp, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}})
+		betaOp, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"beta"}})
 		childOp, _, found := contract.producedForResult(alphaOp, 0, 0)
 		if alphaOp != 1 || betaOp != 2 || !found || childOp != 3 {
 			t.Fatalf("canonical prefix = alpha:%d beta:%d child:%d/%v", alphaOp, betaOp, childOp, found)
@@ -200,10 +200,10 @@ func TestDeepProducedChainSealsIteratively(t *testing.T) {
 		}
 	}
 	contract := mustSeal(t, Spec{Operations: operations})
-	if contract.OperationCount() != depth+1 || contract.Core.BoundCount() != 1 {
-		t.Fatalf("deep chain operations = %d/%d", contract.OperationCount(), contract.Core.BoundCount())
+	if contract.Operations.OperationCount() != depth+1 || contract.Operations.BoundCount() != 1 {
+		t.Fatalf("deep chain operations = %d/%d", contract.Operations.OperationCount(), contract.Operations.BoundCount())
 	}
-	current, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root"}})
+	current, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root"}})
 	if !ok {
 		t.Fatal("root binding missing")
 	}
@@ -228,7 +228,7 @@ func TestDeepProducedChainSealsIteratively(t *testing.T) {
 
 func TestProducedTypeValueCaptureIsTypedAndIndexed(t *testing.T) {
 	contract := mustSeal(t, typeValueCaptureSpec(vocabulary.CaptureTypeValueFormal, 1))
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
 	if !ok {
 		t.Fatal("missing factory operation")
 	}
@@ -243,13 +243,13 @@ func TestProducedTypeValueCaptureIsTypedAndIndexed(t *testing.T) {
 	}
 	coexisting.Operations[0].ValuesVars = 1
 	coexistingContract := mustSeal(t, coexisting)
-	coexistingOp, _ := coexistingContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
+	coexistingOp, _ := coexistingContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
 	if formal, ok := coexistingContract.producedTypeValueCapture(coexistingOp, 0, 0); !ok || formal != 1 {
 		t.Fatalf("coexisting typed capture = %d/%v, want 1/true", formal, ok)
 	}
 
 	ordinary := mustSeal(t, typeValueCaptureSpec(vocabulary.CaptureValueFormal, 1))
-	ordinaryOp, _ := ordinary.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
+	ordinaryOp, _ := ordinary.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
 	if _, ok := ordinary.producedTypeValueCapture(ordinaryOp, 0, 0); ok {
 		t.Fatal("ordinary value capture became a TypeValue capture")
 	}
@@ -324,7 +324,7 @@ func TestProducedTypeValueCaptureRequiresExactFreshFunctionResult(t *testing.T) 
 	ordinary := typeValueCaptureSpec(vocabulary.CaptureValueFormal, 1)
 	ordinary.Operations[0].Outcomes[0].FreshResults = nil
 	contract := mustSeal(t, ordinary)
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory"}})
 	if !ok {
 		t.Fatal("ordinary Produced operation disappeared")
 	}
@@ -363,7 +363,7 @@ func TestProducedTypeValueFreshFunctionCanonicalRoundTrip(t *testing.T) {
 		t.Fatal("Produced/FreshFunction authoring permutation changed Contract identity")
 	}
 	for _, contract := range []*Contract{left, right} {
-		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory-roundtrip"}})
+		op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"factory-roundtrip"}})
 		if !ok {
 			t.Fatal("round-trip factory operation absent")
 		}
@@ -393,7 +393,7 @@ func TestProducedTypeValueCaptureWideSealAndQueryStayDirect(t *testing.T) {
 	}
 	operations[0] = vocabulary.OperationSpec{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}}}, Input: vocabulary.ValuesSpec{Fixed: input, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: output, Tail: vocabulary.ValuesClosed}, Produced: produced, FreshResults: fresh}}, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}
 	contract := mustSeal(t, Spec{Operations: operations})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}})
 	for _, index := range []int{0, width - 1} {
 		if formal, ok := contract.producedTypeValueCapture(op, 0, index); !ok || int(formal) != index {
 			t.Fatalf("wide typed capture %d = %d/%v", index, formal, ok)
@@ -447,7 +447,7 @@ func TestFreshResultsSealDenselyAndAllowConjunctiveRelations(t *testing.T) {
 		},
 		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}, child}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh"}})
 	if count := contract.FreshResultCount(op, 0); count != 2 {
 		t.Fatalf("normal fresh count = %d, want 2", count)
 	}
@@ -533,8 +533,8 @@ func TestFreshResultDistinguishesSameShapeCasesAndProducedAnchors(t *testing.T) 
 	if left.ContentID() != right.ContentID() {
 		t.Fatal("FreshResult outcome permutation changed ContentID")
 	}
-	op, _ := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-cases"}})
-	if count := left.OutcomeCount(op); count != 2 {
+	op, _ := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-cases"}})
+	if count := left.Operations.OutcomeCount(op); count != 2 {
 		t.Fatalf("same-shape Fresh outcomes = %d, want 2", count)
 	}
 }
@@ -559,7 +559,7 @@ func TestResultAliasesCanonicalizeAndRemainConjunctive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"aliases"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"aliases"}})
 	if !ok || contract.resultAliasCount(op, 0) != 2 {
 		t.Fatalf("result aliases missing: op=%d ok=%v count=%d", op, ok, contract.resultAliasCount(op, 0))
 	}
@@ -596,7 +596,7 @@ func TestResultAliasCoexistsWithCallbackResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-alias"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-alias"}})
 	if !ok || contract.callbackResultCount(op, 0) != 1 || contract.resultAliasCount(op, 0) != 1 {
 		t.Fatalf("callback/alias conjunction missing: op=%d ok=%v callbacks=%d aliases=%d", op, ok, contract.callbackResultCount(op, 0), contract.resultAliasCount(op, 0))
 	}
@@ -657,7 +657,7 @@ func TestResultAliasPermutationAndWideLookup(t *testing.T) {
 	}
 	right := seal(sorted)
 	assertPublicContractEqual(t, left, right)
-	op, _ := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-alias"}})
+	op, _ := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-alias"}})
 	if kind, source, row, ok := left.resultAliasForResult(op, 0, width-1); !ok || kind != vocabulary.InputSourceValueFormal || source != width-1 || row != width-1 {
 		t.Fatalf("wide alias lookup = %d/%d/%d/%v", kind, source, row, ok)
 	}

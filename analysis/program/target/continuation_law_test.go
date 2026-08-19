@@ -54,7 +54,7 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 		},
 	}})
 
-	yield, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"yield"}})
+	yield, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"yield"}})
 	if contract.suspensionCount(yield) != 3 {
 		t.Fatalf("suspension count = %d, want 3", contract.suspensionCount(yield))
 	}
@@ -71,12 +71,12 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 		if !ok || yieldOutcome != 2 || reentryOutcome != want.reentry || source != want.source || multiplicity != vocabulary.ReentryOnce {
 			t.Fatalf("SuspensionAt(%d) = %d/%d/%d/%d/%v", index, yieldOutcome, reentryOutcome, source, multiplicity, ok)
 		}
-		if kind, _, ok := contract.OutcomeAt(yield, int(reentryOutcome)); !ok || kind != want.kind {
+		if kind, _, ok := contract.Operations.OutcomeAt(yield, int(reentryOutcome)); !ok || kind != want.kind {
 			t.Fatalf("reentry %d kind = %d/%v, want %d", index, kind, ok, want.kind)
 		}
 	}
 
-	create, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"create"}})
+	create, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"create"}})
 	callback, _, ok := contract.callbackForResult(create, 0, 0)
 	if !ok || callback == 0 {
 		t.Fatal("create result has no exact CallbackID")
@@ -90,10 +90,10 @@ func TestSuspensionCanonicalizesOutcomeOrdinalsAndKeepsCallbackValues(t *testing
 		}
 	}
 
-	resume, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume"}})
+	resume, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume"}})
 	resumeID, _ := contract.ResumeIDAt(resume, 0)
 	owner, resumeSource, carrier, arguments, ok := contract.Resume(resumeID)
-	tail, variable, tailOK := contract.ValuesTail(arguments)
+	tail, variable, tailOK := contract.Operations.ValuesTail(arguments)
 	if !ok || owner != resume || resumeSource != vocabulary.ResumeSourceValueFormal || carrier != 0 || !tailOK || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("Resume = %d/%d/%d/%d/%d/%d/%v/%v, want owner/formal/0/variable/0/true", owner, resumeSource, carrier, arguments, tail, variable, ok, tailOK)
 	}
@@ -127,7 +127,7 @@ func TestProducedResumeUsesCapturedCallbackWithoutCallableShadow(t *testing.T) {
 			Effects:    vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		},
 	}})
-	wrap, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wrap"}})
+	wrap, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wrap"}})
 	invoke, produced, ok := contract.producedForResult(wrap, 0, 0)
 	if !ok || invoke == 0 {
 		t.Fatal("wrap result did not select one ordinary Produced Operation")
@@ -138,7 +138,7 @@ func TestProducedResumeUsesCapturedCallbackWithoutCallableShadow(t *testing.T) {
 	}
 	resumeID, _ := contract.ResumeIDAt(invoke, 0)
 	owner, source, carrier, arguments, ok := contract.Resume(resumeID)
-	tail, variable, tailOK := contract.ValuesTail(arguments)
+	tail, variable, tailOK := contract.Operations.ValuesTail(arguments)
 	if !ok || owner != invoke || source != vocabulary.ResumeSourceProduced || carrier != 0 || !tailOK || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("produced Resume = %d/%d/%d/%d/%d/%d/%v/%v", owner, source, carrier, arguments, tail, variable, ok, tailOK)
 	}
@@ -189,7 +189,7 @@ func TestResumeSealsCompleteCanonicalOutcomeCorrespondence(t *testing.T) {
 	if left.ContentID() != right.ContentID() {
 		t.Fatal("resume author permutations changed ContentID")
 	}
-	op, ok := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume-canonical"}})
+	op, ok := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume-canonical"}})
 	if !ok {
 		t.Fatal("resume operation missing")
 	}
@@ -246,7 +246,7 @@ func TestResumeIDsCanonicalizePermutationAndRoundTrip(t *testing.T) {
 	if left.ContentID() != right.ContentID() {
 		t.Fatal("resume permutation changed ContentID")
 	}
-	op, ok := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume-id"}})
+	op, ok := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"resume-id"}})
 	if !ok || left.ResumeCount(op) != 2 {
 		t.Fatalf("resume identities missing: %d/%v", op, ok)
 	}
@@ -254,7 +254,7 @@ func TestResumeIDsCanonicalizePermutationAndRoundTrip(t *testing.T) {
 		id, found := left.ResumeIDAt(op, index)
 		owner, source, carrier, arguments, detailsFound := left.Resume(id)
 		idAgain, foundAgain := left.ResumeIDAt(owner, index)
-		tail, variable, tailOK := left.ValuesTail(arguments)
+		tail, variable, tailOK := left.Operations.ValuesTail(arguments)
 		if !found || !detailsFound || !foundAgain || id == 0 || idAgain != id || owner != op ||
 			source != vocabulary.ResumeSourceValueFormal || carrier != wantCarrier || !tailOK || tail != vocabulary.ValuesVariable || variable != 0 {
 			t.Fatalf("resume %d = id:%d owner:%d source:%d carrier:%d args:%d tail:%d/%d found:%v/%v/%v/%v", index, id, owner, source, carrier, arguments, tail, variable, found, detailsFound, foundAgain, tailOK)
@@ -342,22 +342,22 @@ func TestResumePayloadTransportUsesOnlyExistingValuesRelations(t *testing.T) {
 			Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 		},
 	}})
-	yield, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transport-yield"}})
-	resume, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transport-resume"}})
+	yield, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transport-yield"}})
+	resume, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transport-resume"}})
 	_, reentry, _, _, ok := contract.suspensionAt(yield, 0)
 	if !ok {
 		t.Fatal("suspension missing")
 	}
-	_, reentryValues, ok := contract.OutcomeAt(yield, int(reentry))
+	_, reentryValues, ok := contract.Operations.OutcomeAt(yield, int(reentry))
 	if !ok {
 		t.Fatal("reentry outcome missing")
 	}
-	if tail, variable, ok := contract.ValuesTail(reentryValues); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
+	if tail, variable, ok := contract.Operations.ValuesTail(reentryValues); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("reentry Values = %d/%d/%v, want variable/0/true", tail, variable, ok)
 	}
 	resumeID, _ := contract.ResumeIDAt(resume, 0)
 	owner, _, _, arguments, ok := contract.Resume(resumeID)
-	tail, variable, tailOK := contract.ValuesTail(arguments)
+	tail, variable, tailOK := contract.Operations.ValuesTail(arguments)
 	if !ok || owner != resume || !tailOK || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("resume arguments = %d/%d/%d/%v/%v, want variable/0/true", arguments, tail, variable, ok, tailOK)
 	}
@@ -373,11 +373,11 @@ func TestResumePayloadTransportUsesOnlyExistingValuesRelations(t *testing.T) {
 		if !ok {
 			t.Fatalf("resume outcome %d missing", item.index)
 		}
-		_, values, ok := contract.OutcomeAt(resume, int(outcome))
+		_, values, ok := contract.Operations.OutcomeAt(resume, int(outcome))
 		if !ok {
 			t.Fatalf("mapped operation outcome %d missing", outcome)
 		}
-		if tail, variable, ok := contract.ValuesTail(values); !ok || tail != item.tail || variable != item.varID {
+		if tail, variable, ok := contract.Operations.ValuesTail(values); !ok || tail != item.tail || variable != item.varID {
 			t.Fatalf("mapped outcome %d Values = %d/%d/%v, want %d/%d/true", item.index, tail, variable, ok, item.tail, item.varID)
 		}
 	}
@@ -468,7 +468,7 @@ func TestSuspensionRejectsInvalidAuthority(t *testing.T) {
 
 func TestOpaqueSuspensionIsDerivedAndQueriesAllocateNothing(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	opaque, _ := contract.Opaque()
+	opaque, _ := contract.Operations.Opaque()
 	if contract.suspensionCount(opaque) != 3 || contract.ResumeCount(opaque) != 0 {
 		t.Fatal("opaque suspension was not derived exactly")
 	}
@@ -523,10 +523,10 @@ func TestWideProducedResumesSealWithoutQuadraticValidation(t *testing.T) {
 		}
 	}
 	contract := mustSeal(t, Spec{Operations: operations})
-	if contract.OperationCount() != width+2 {
-		t.Fatalf("operation count = %d, want %d", contract.OperationCount(), width+2)
+	if contract.Operations.OperationCount() != width+2 {
+		t.Fatalf("operation count = %d, want %d", contract.Operations.OperationCount(), width+2)
 	}
-	root, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}})
+	root, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide"}})
 	last, _, ok := contract.producedForResult(root, 0, width-1)
 	if !ok || contract.ResumeCount(last) != 1 {
 		t.Fatal("wide produced resume was not retained")
@@ -564,7 +564,7 @@ func TestDeepProducedResumesSealIteratively(t *testing.T) {
 		operations[index] = operation
 	}
 	contract := mustSeal(t, Spec{Operations: operations})
-	current, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"deep-resume"}})
+	current, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"deep-resume"}})
 	for index := 1; index < depth; index++ {
 		next, _, ok := contract.producedForResult(current, 0, 0)
 		if !ok {
@@ -617,7 +617,7 @@ func spawnTestOperation(name string) vocabulary.OperationSpec {
 
 func TestSpawnSealsOneTypedDetachedAuthority(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{spawnTestOperation("spawn")}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn"}})
 	if !ok || contract.spawnCount(op) != 1 {
 		t.Fatalf("spawn authority = %v/%d", ok, contract.spawnCount(op))
 	}
@@ -626,7 +626,7 @@ func TestSpawnSealsOneTypedDetachedAuthority(t *testing.T) {
 	if !ok || owner != op || function != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal}) || yield == resume || entry != resumed {
 		t.Fatalf("spawn relation = %#v/%#v/%d/%d/%d/%d/%d/%v", owner, function, child, yield, resume, entry, resumed, ok)
 	}
-	if childOwner, found := contract.CallbackOwner(child); !found || childOwner != op {
+	if childOwner, found := contract.Operations.CallbackOwner(child); !found || childOwner != op {
 		t.Fatalf("child owner = %d/%v", childOwner, found)
 	}
 	for _, kind := range []flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel} {
@@ -681,9 +681,9 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 				[]vocabulary.TransferOutcomeSpec{{Outcome: 3, Possibility: vocabulary.TransferMayReject}, {Outcome: 0, Possibility: vocabulary.TransferMayDeliver}, {Outcome: 2, Possibility: vocabulary.TransferMayDeliver | vocabulary.TransferMayReject}, {Outcome: 1, Possibility: vocabulary.TransferMayReject}}),
 		},
 	)}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer"}})
-	if !ok || contract.Core.TransferCount(op) != 2 {
-		t.Fatalf("transfer operation/count = %d/%v/%d", op, ok, contract.Core.TransferCount(op))
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer"}})
+	if !ok || contract.Operations.TransferCount(op) != 2 {
+		t.Fatalf("transfer operation/count = %d/%v/%d", op, ok, contract.Operations.TransferCount(op))
 	}
 	want := []struct {
 		endpoint     vocabulary.TransferEndpoint
@@ -697,27 +697,27 @@ func TestTransferCanonicalizesEndpointPayloadAndOutcomes(t *testing.T) {
 		{vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal}, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar}, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar}, vocabulary.TransferIdentityUnspecified, vocabulary.TransferCapabilitiesLoseAll, []vocabulary.TransferPossibility{vocabulary.TransferMayDeliver, vocabulary.TransferMayDeliver | vocabulary.TransferMayReject, vocabulary.TransferMayDeliver, vocabulary.TransferMayReject}},
 	}
 	for index, expected := range want {
-		id, idOK := contract.Core.TransferIDAt(op, index)
-		owner, ownerOK := contract.Core.TransferOwner(id)
-		declaredEndpoint, declaredPayload, declaredAlias, declaredIdentity, declaredCapabilities, declarationOK := contract.Core.TransferDeclaration(id)
+		id, idOK := contract.Operations.TransferIDAt(op, index)
+		owner, ownerOK := contract.Operations.TransferOwner(id)
+		declaredEndpoint, declaredPayload, declaredAlias, declaredIdentity, declaredCapabilities, declarationOK := contract.Operations.TransferDeclaration(id)
 		if !idOK || id == 0 || !ownerOK || owner != op || !declarationOK || declaredEndpoint != expected.endpoint || declaredPayload != expected.payload || declaredAlias != expected.alias || declaredIdentity != expected.identity || declaredCapabilities != expected.capabilities {
 			t.Fatalf("sealed transfer identity %d did not preserve its exact declaration", index)
 		}
-		endpoint, endpointOK := contract.Core.TransferEndpointAt(op, index)
-		payload, payloadOK := contract.Core.TransferPayloadAt(op, index)
-		alias, aliasOK := contract.Core.TransferAliasAt(op, index)
-		identity, identityOK := contract.Core.TransferIdentityAt(op, index)
-		capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(op, index)
+		endpoint, endpointOK := contract.Operations.TransferEndpointAt(op, index)
+		payload, payloadOK := contract.Operations.TransferPayloadAt(op, index)
+		alias, aliasOK := contract.Operations.TransferAliasAt(op, index)
+		identity, identityOK := contract.Operations.TransferIdentityAt(op, index)
+		capabilities, capabilitiesOK := contract.Operations.TransferCapabilitiesAt(op, index)
 		if !endpointOK || endpoint != expected.endpoint || !payloadOK || payload != expected.payload || !aliasOK || alias != expected.alias ||
 			!identityOK || identity != expected.identity || !capabilitiesOK || capabilities != expected.capabilities {
 			t.Fatalf("transfer %d = endpoint:%#v/%v payload:%#v/%v identity:%d/%v capabilities:%d/%v", index, endpoint, endpointOK, payload, payloadOK, identity, identityOK, capabilities, capabilitiesOK)
 		}
 		for outcome, mask := range expected.masks {
-			declaredOrdinal, declaredMask, declaredFound := contract.Core.TransferDeclarationOutcomeAt(id, outcome)
+			declaredOrdinal, declaredMask, declaredFound := contract.Operations.TransferDeclarationOutcomeAt(id, outcome)
 			if !declaredFound || declaredOrdinal != uint32(outcome) || declaredMask != mask {
 				t.Fatalf("sealed transfer identity outcome %d/%d lost declaration", index, outcome)
 			}
-			ordinal, got, found := contract.Core.TransferOutcomeAt(op, index, outcome)
+			ordinal, got, found := contract.Operations.TransferOutcomeAt(op, index, outcome)
 			if !found || ordinal != uint32(outcome) || got != mask {
 				t.Fatalf("transfer outcome %d/%d = %d/%d/%v", index, outcome, ordinal, got, found)
 			}
@@ -753,11 +753,11 @@ func TestTransferAliasIsCanonicalDeclarationAndContentAuthority(t *testing.T) {
 	if left.ContentID() == right.ContentID() {
 		t.Fatal("transfer alias did not affect target ContentID")
 	}
-	op, ok := right.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer"}})
+	op, ok := right.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"transfer"}})
 	if !ok {
 		t.Fatal("transfer operation")
 	}
-	alias, ok := right.Core.TransferAliasAt(op, 0)
+	alias, ok := right.Operations.TransferAliasAt(op, 0)
 	if !ok || alias != other.Alias {
 		t.Fatal("transfer alias lost canonical declaration")
 	}
@@ -813,23 +813,23 @@ func TestTransferRejectsIncompleteOrInvalidAuthority(t *testing.T) {
 
 func TestOpaqueTransferIsMaximalAndAllocationFree(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	opaque, ok := contract.Opaque()
-	if !ok || contract.Core.TransferCount(opaque) != 1 {
-		t.Fatalf("opaque/count = %d/%v/%d", opaque, ok, contract.Core.TransferCount(opaque))
+	opaque, ok := contract.Operations.Opaque()
+	if !ok || contract.Operations.TransferCount(opaque) != 1 {
+		t.Fatalf("opaque/count = %d/%v/%d", opaque, ok, contract.Operations.TransferCount(opaque))
 	}
-	endpoint, endpointOK := contract.Core.TransferEndpointAt(opaque, 0)
-	payload, payloadOK := contract.Core.TransferPayloadAt(opaque, 0)
-	alias, aliasOK := contract.Core.TransferAliasAt(opaque, 0)
-	identity, identityOK := contract.Core.TransferIdentityAt(opaque, 0)
-	capabilities, capabilitiesOK := contract.Core.TransferCapabilitiesAt(opaque, 0)
+	endpoint, endpointOK := contract.Operations.TransferEndpointAt(opaque, 0)
+	payload, payloadOK := contract.Operations.TransferPayloadAt(opaque, 0)
+	alias, aliasOK := contract.Operations.TransferAliasAt(opaque, 0)
+	identity, identityOK := contract.Operations.TransferIdentityAt(opaque, 0)
+	capabilities, capabilitiesOK := contract.Operations.TransferCapabilitiesAt(opaque, 0)
 	if !endpointOK || endpoint != (vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointExternal}) || !payloadOK || payload != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) || !aliasOK || alias != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) || !identityOK || identity != vocabulary.TransferIdentityUnspecified || !capabilitiesOK || capabilities != vocabulary.TransferCapabilitiesUnspecified {
 		t.Fatalf("opaque transfer = %#v/%v %#v/%v %#v/%v %d/%v %d/%v", endpoint, endpointOK, payload, payloadOK, alias, aliasOK, identity, identityOK, capabilities, capabilitiesOK)
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if _, ok := contract.Core.TransferEndpointAt(opaque, 0); !ok {
+		if _, ok := contract.Operations.TransferEndpointAt(opaque, 0); !ok {
 			panic("opaque transfer endpoint disappeared")
 		}
-		if _, ok := contract.Core.TransferPayloadAt(opaque, 0); !ok {
+		if _, ok := contract.Operations.TransferPayloadAt(opaque, 0); !ok {
 			panic("opaque transfer payload disappeared")
 		}
 	}); allocs != 0 {
@@ -847,9 +847,9 @@ func TestTransferWideAndDeepValidationHasNoSemanticCap(t *testing.T) {
 			[]vocabulary.TransferOutcomeSpec{{Outcome: 3, Possibility: vocabulary.TransferMayReject}, {Outcome: 1, Possibility: vocabulary.TransferMayReject}, {Outcome: 2, Possibility: vocabulary.TransferMayDeliver}, {Outcome: 0, Possibility: vocabulary.TransferMayDeliver | vocabulary.TransferMayReject}})
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{{Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-transfer"}}}, Input: vocabulary.ValuesSpec{Fixed: fixed, Tail: vocabulary.ValuesClosed}, Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeCancel, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeYield, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}, {Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Tail: vocabulary.ValuesClosed}}}, Transfers: transfers, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed}}}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-transfer"}})
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"wide-transfer"}})
 	for index := 0; index < width; index++ {
-		endpoint, ok := contract.Core.TransferEndpointAt(op, index)
+		endpoint, ok := contract.Operations.TransferEndpointAt(op, index)
 		if !ok || endpoint != (vocabulary.TransferEndpoint{Kind: vocabulary.TransferEndpointInput, Input: vocabulary.ValueFormal(index)}) {
 			t.Fatalf("wide transfer %d = %#v/%v", index, endpoint, ok)
 		}
@@ -919,19 +919,19 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 		},
 	}})
 
-	suspend, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-suspend"}})
+	suspend, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-suspend"}})
 	yield, reentry, _, _, ok := contract.suspensionAt(suspend, 0)
 	if !ok {
 		t.Fatal("fresh suspension missing")
 	}
-	if kind, _, found := contract.OutcomeAt(suspend, int(yield)); !found || kind != flowkind.OutcomeYield {
+	if kind, _, found := contract.Operations.OutcomeAt(suspend, int(yield)); !found || kind != flowkind.OutcomeYield {
 		t.Fatalf("suspension yield = %d/%d/%v", yield, kind, found)
 	}
 	if _, kind, _, found := contract.freshResultForResult(suspend, int(reentry), 0); !found || kind != schematype.FreshClassTable {
 		t.Fatalf("suspension reentry = %d lacks remapped schematype.FreshClassTable case", reentry)
 	}
 
-	resume, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-resume"}})
+	resume, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-resume"}})
 	resumeID, ok := contract.ResumeIDAt(resume, 0)
 	if !ok {
 		t.Fatal("fresh resume missing")
@@ -946,7 +946,7 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 		}
 	}
 
-	spawn, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-spawn"}})
+	spawn, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"fresh-spawn"}})
 	spawnID, ok := contract.spawnIDAt(spawn, 0)
 	if !ok {
 		t.Fatal("fresh spawn missing")
@@ -955,10 +955,10 @@ func TestFreshOutcomeOrderingRemapsSuspensionAndResumeCoordinates(t *testing.T) 
 	if !found {
 		t.Fatal("fresh spawn relation unavailable")
 	}
-	if kind, _, found := contract.OutcomeAt(spawn, int(parentYield)); !found || kind != flowkind.OutcomeYield {
+	if kind, _, found := contract.Operations.OutcomeAt(spawn, int(parentYield)); !found || kind != flowkind.OutcomeYield {
 		t.Fatalf("spawn yield = %d/%d/%v", parentYield, kind, found)
 	}
-	if kind, values, found := contract.OutcomeAt(spawn, int(parentResume)); !found || kind != flowkind.OutcomeNormal || values != childEntry || values != resumeValues || contract.ValuesCount(values) != 0 {
+	if kind, values, found := contract.Operations.OutcomeAt(spawn, int(parentResume)); !found || kind != flowkind.OutcomeNormal || values != childEntry || values != resumeValues || contract.Operations.ValuesCount(values) != 0 {
 		t.Fatalf("spawn resume = %d/%d/%d/%d/%v", parentResume, kind, childEntry, resumeValues, found)
 	}
 }

@@ -1,8 +1,8 @@
 package factor_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -103,7 +103,7 @@ func newEffectFactorFixture(t testing.TB, spec target.Spec, source string) effec
 	if !ok || factor == nil {
 		t.Fatal("seal Effect mounts")
 	}
-	owner, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
+	owner, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
 	if !ok {
 		t.Fatal("sink operation")
 	}
@@ -256,7 +256,7 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 	if !ok || effectAtomID(t, closed.factor, bound) != effectAtomID(t, closed.factor, effectKnownAtom(t, closed)) {
 		t.Fatal("formal binding did not preserve atom identity")
 	}
-	callback, ok := closed.contract.CallbackAt(closed.owner, 0)
+	callback, ok := closed.contract.Operations.CallbackAt(closed.owner, 0)
 	if !ok {
 		t.Fatal("callback descriptor")
 	}
@@ -265,7 +265,7 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 		t.Fatal("callback formal effect")
 	}
 	open := newEffectFactorFixture(t, effectFactorSpec(vocabulary.RowClosed, false), "local function sink(value) return value end\nsink(1)")
-	opaque, ok := open.contract.Opaque()
+	opaque, ok := open.contract.Operations.Opaque()
 	if !ok {
 		t.Fatal("opaque operation")
 	}
@@ -333,7 +333,7 @@ func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKin
 func publicationEffectIndexes(t testing.TB, contract *target.Contract, owner vocabulary.Operation) (publication, generic int) {
 	t.Helper()
 	publication, generic = -1, -1
-	for effect := 0; effect < contract.EffectCount(owner); effect++ {
+	for effect := 0; effect < contract.Operations.EffectCount(owner); effect++ {
 		if _, published := contract.PublicationEffectDescriptor(owner, effect); published {
 			if publication >= 0 {
 				t.Fatal("multiple ordinary publication effects")
@@ -404,7 +404,7 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, genericBinding); ok {
 		t.Fatal("publication binding admitted mismatched atom")
 	}
-	foreignOperation, foreignOperationOK := ordinary.contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}})
+	foreignOperation, foreignOperationOK := ordinary.contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}})
 	if !foreignOperationOK || foreignOperation == ordinary.owner {
 		t.Fatal("foreign target operation")
 	}
@@ -440,7 +440,7 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	}
 
 	callbackFixture := newEffectFactorFixture(t, publicationEffectFactorSpec(vocabulary.PublicationEffectCallbackEscape, true), "local function sink(left, right) return left end\nsink(1, 2)")
-	callback, callbackOK := callbackFixture.contract.CallbackAt(callbackFixture.owner, 0)
+	callback, callbackOK := callbackFixture.contract.Operations.CallbackAt(callbackFixture.owner, 0)
 	callbackEffect := callbackPublicationEffectIndex(t, callbackFixture.contract, callback)
 	callbackFormal, callbackFormalOK := callbackFixture.factor.FormalCallbackEffectAtom(callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect)
 	callbackAtom, callbackAtomOK := callbackFixture.factor.BindFormalCallbackEffectAtom(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, callbackFormal)

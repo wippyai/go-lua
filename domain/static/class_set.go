@@ -136,9 +136,9 @@ func sealClassSet(authority *Authority) (*ClassSet, *typeauthority.Runtime, erro
 	if contract == nil || !contract.ContentID().Available() {
 		return nil, nil, errors.New("static: Link target unavailable")
 	}
-	seenOperations := make(map[vocabulary.Operation]struct{}, contract.OperationCount())
-	for index := 0; index < contract.OperationCount(); index++ {
-		operation, valid := contract.OperationAt(index)
+	seenOperations := make(map[vocabulary.Operation]struct{}, contract.Operations.OperationCount())
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		operation, valid := contract.Operations.OperationAt(index)
 		if !valid {
 			return nil, nil, errors.New("static: malformed operation family")
 		}
@@ -425,7 +425,7 @@ func (s *ClassSet) addTarget(contract *target.Contract, value vocabulary.Type) e
 	if _, exists := s.byTarget[value]; exists {
 		return nil
 	}
-	declaration, ok := contract.TypeDeclaration(value)
+	declaration, ok := contract.Operations.TypeDeclaration(value)
 	if !ok {
 		return errors.New("static: Target type declaration unavailable")
 	}
@@ -459,8 +459,8 @@ func (s *ClassSet) addTarget(contract *target.Contract, value vocabulary.Type) e
 }
 
 func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values) error {
-	for index := 0; index < contract.ValuesCount(values); index++ {
-		value, ok := contract.ValuesAt(values, index)
+	for index := 0; index < contract.Operations.ValuesCount(values); index++ {
+		value, ok := contract.Operations.ValuesAt(values, index)
 		if !ok {
 			return errors.New("static: malformed Target Values")
 		}
@@ -468,8 +468,8 @@ func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values
 			return err
 		}
 	}
-	for index := 0; index < contract.ValuesSuffixCount(values); index++ {
-		value, ok := contract.ValuesSuffixAt(values, index)
+	for index := 0; index < contract.Operations.ValuesSuffixCount(values); index++ {
+		value, ok := contract.Operations.ValuesSuffixAt(values, index)
 		if !ok {
 			return errors.New("static: malformed Target Values suffix")
 		}
@@ -477,29 +477,29 @@ func (s *ClassSet) addValues(contract *target.Contract, values vocabulary.Values
 			return err
 		}
 	}
-	if value, ok := contract.ValuesTailType(values); ok {
+	if value, ok := contract.Operations.ValuesTailType(values); ok {
 		return s.addTarget(contract, value)
 	}
 	return nil
 }
 
 func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.Operation) error {
-	input, ok := contract.Input(operation)
+	input, ok := contract.Operations.Input(operation)
 	if !ok {
 		return errors.New("static: operation input unavailable")
 	}
 	if err := s.addValues(contract, input); err != nil {
 		return err
 	}
-	for index := 0; index < contract.TypeFormalCount(operation); index++ {
-		if value, ok := contract.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); ok {
+	for index := 0; index < contract.Operations.TypeFormalCount(operation); index++ {
+		if value, ok := contract.Operations.TypeFormalConstraint(operation, vocabulary.TypeFormal(index)); ok {
 			if err := s.addTarget(contract, value); err != nil {
 				return err
 			}
 		}
 	}
-	for index := 0; index < contract.ValuesVarCount(operation); index++ {
-		value, ok := contract.ValuesVarType(operation, vocabulary.ValuesVar(index))
+	for index := 0; index < contract.Operations.ValuesVarCount(operation); index++ {
+		value, ok := contract.Operations.ValuesVarType(operation, vocabulary.ValuesVar(index))
 		if !ok {
 			return errors.New("static: ValuesVar type unavailable")
 		}
@@ -507,8 +507,8 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 			return err
 		}
 	}
-	for index := 0; index < contract.OutcomeCount(operation); index++ {
-		_, values, ok := contract.OutcomeAt(operation, index)
+	for index := 0; index < contract.Operations.OutcomeCount(operation); index++ {
+		_, values, ok := contract.Operations.OutcomeAt(operation, index)
 		if !ok {
 			return errors.New("static: malformed outcome")
 		}
@@ -517,8 +517,8 @@ func (s *ClassSet) addOperation(contract *target.Contract, operation vocabulary.
 		}
 	}
 	kinds := [...]flowkind.OutcomeKind{flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel}
-	for index := 0; index < contract.CallbackCount(operation); index++ {
-		callback, ok := contract.CallbackAt(operation, index)
+	for index := 0; index < contract.Operations.CallbackCount(operation); index++ {
+		callback, ok := contract.Operations.CallbackAt(operation, index)
 		if !ok {
 			return errors.New("static: malformed callback")
 		}
@@ -614,8 +614,8 @@ func (s *ClassSet) contentID(runtime *typeauthority.Runtime, operations map[voca
 	targetID := contract.ContentID()
 	h.Write(targetID[:])
 	// Target handle order, not map iteration, fixes selected-operation identity.
-	for index := 0; index < contract.OperationCount(); index++ {
-		operation, _ := contract.OperationAt(index)
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		operation, _ := contract.Operations.OperationAt(index)
 		if _, ok := operations[operation]; ok {
 			operationID, valid := contract.OperationContentID(operation)
 			if !valid {

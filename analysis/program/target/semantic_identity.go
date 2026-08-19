@@ -71,7 +71,7 @@ func (c *Contract) anchor(op vocabulary.Operation) (identity.ContentID, bool) {
 	if c == nil || op == 0 {
 		return identity.ContentID{}, false
 	}
-	return c.Core.Anchor(op)
+	return c.Operations.Anchor(op)
 }
 
 func (c *Contract) callbackSelector(id vocabulary.CallbackID) (identity.ContentID, bool) {
@@ -89,8 +89,8 @@ func (c *Contract) CallbackContentID(op vocabulary.Operation, callback vocabular
 	if c == nil || !c.sealed || op == 0 || int(op) > len(c.operations) || callback == 0 || int(callback) > len(c.callbacks) || int(callback) > len(c.callbackContentIDs) {
 		return identity.ContentID{}, false
 	}
-	owner, callbackIndex, ownerOK := c.Core.CallbackIndex(callback)
-	if !ownerOK || owner != op || callbackIndex < 0 || callbackIndex >= c.Core.CallbackCount(op) {
+	owner, callbackIndex, ownerOK := c.Operations.CallbackIndex(callback)
+	if !ownerOK || owner != op || callbackIndex < 0 || callbackIndex >= c.Operations.CallbackCount(op) {
 		return identity.ContentID{}, false
 	}
 	id := c.callbackContentIDs[callback-1]
@@ -113,7 +113,7 @@ func (c *Contract) findCallbackContentID(id identity.ContentID) (vocabulary.Oper
 		return 0, 0, false
 	}
 	row := c.callbackContentIndex[i]
-	owner, ownerOK := c.Core.CallbackOwner(row.callback)
+	owner, ownerOK := c.Operations.CallbackOwner(row.callback)
 	if !ownerOK {
 		return 0, 0, false
 	}
@@ -187,11 +187,11 @@ func (c *Contract) sealSemanticIdentities() error {
 	c.operationContentIDs = make([]identity.ContentID, len(c.operations))
 	c.outcomeContentIDs = make([]identity.ContentID, len(c.outcomes))
 	transferCount, transferOutcomeCount := 0, 0
-	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		op := vocabulary.Operation(operationIndex + 1)
-		transferCount += c.TransferCount(op)
-		for transferIndex := 0; transferIndex < c.TransferCount(op); transferIndex++ {
-			transferOutcomeCount += c.TransferOutcomeCount(op, transferIndex)
+		transferCount += c.Operations.TransferCount(op)
+		for transferIndex := 0; transferIndex < c.Operations.TransferCount(op); transferIndex++ {
+			transferOutcomeCount += c.Operations.TransferOutcomeCount(op, transferIndex)
 		}
 	}
 	c.transferContentIDs = make([]identity.ContentID, transferCount)
@@ -251,12 +251,12 @@ func (c *Contract) sealSemanticIdentities() error {
 
 	for i, row := range c.callbacks {
 		callbackID := vocabulary.CallbackID(i + 1)
-		owner, callbackIndex, callbackOK := c.Core.CallbackIndex(callbackID)
+		owner, callbackIndex, callbackOK := c.Operations.CallbackIndex(callbackID)
 		anchorID, anchorOK := c.anchor(owner)
 		if !callbackOK || !anchorOK {
 			return errors.New("target: malformed callback owner")
 		}
-		lifecycle, lifecycleOK := c.Core.CallbackLifecycle(callbackID)
+		lifecycle, lifecycleOK := c.Operations.CallbackLifecycle(callbackID)
 		if !lifecycleOK {
 			return errors.New("target: malformed callback lifecycle")
 		}
@@ -290,7 +290,7 @@ func (c *Contract) sealSemanticIdentities() error {
 	}
 	for i := range c.callbacks {
 		callbackID := vocabulary.CallbackID(i + 1)
-		owner, _, ownerOK := c.Core.CallbackIndex(callbackID)
+		owner, _, ownerOK := c.Operations.CallbackIndex(callbackID)
 		anchorID, anchorOK := c.anchor(owner)
 		if !ownerOK || !anchorOK {
 			return errors.New("target: malformed callback content owner")
@@ -394,11 +394,11 @@ func (c *Contract) sealSemanticIdentities() error {
 		}
 		c.outcomeContentIDs[oi] = id
 	}
-	for operationIndex := 0; operationIndex < c.OperationCount(); operationIndex++ {
+	for operationIndex := 0; operationIndex < c.Operations.OperationCount(); operationIndex++ {
 		owner := vocabulary.Operation(operationIndex + 1)
 		ownerID := c.operationContentIDs[operationIndex]
-		for transferIndex := 0; transferIndex < c.TransferCount(owner); transferIndex++ {
-			transfer, transferOK := c.Core.TransferIDAt(owner, transferIndex)
+		for transferIndex := 0; transferIndex < c.Operations.TransferCount(owner); transferIndex++ {
+			transfer, transferOK := c.Operations.TransferIDAt(owner, transferIndex)
 			if !transferOK {
 				return errors.New("target: malformed transfer handle")
 			}
@@ -412,14 +412,14 @@ func (c *Contract) sealSemanticIdentities() error {
 				return err
 			}
 			c.transferContentIDs[transfer-1] = id
-			for outcome := 0; outcome < c.TransferOutcomeCount(owner, transferIndex); outcome++ {
+			for outcome := 0; outcome < c.Operations.TransferOutcomeCount(owner, transferIndex); outcome++ {
 				oi, ok := c.outcomeIndex(owner, outcome)
 				if !ok {
 					return errors.New("target: malformed transfer outcome")
 				}
 				outcomeID := c.outcomeContentIDs[oi]
-				_, possibility, possibilityOK := c.Core.TransferDeclarationOutcomeAt(transfer, outcome)
-				position, positionOK := c.Core.TransferOutcomePositionAt(transfer, outcome)
+				_, possibility, possibilityOK := c.Operations.TransferDeclarationOutcomeAt(transfer, outcome)
+				position, positionOK := c.Operations.TransferOutcomePositionAt(transfer, outcome)
 				if !possibilityOK || !positionOK || position >= len(c.transferOutcomeIDs) {
 					return errors.New("target: malformed transfer outcome")
 				}
@@ -477,7 +477,7 @@ func (c *Contract) outcomeContentID(op vocabulary.Operation, index int) (identit
 // transferContentID checks that two receiver-local handles agree on their
 // owner. It cannot authenticate a numerically coincident foreign scalar.
 func (c *Contract) transferContentID(owner vocabulary.Operation, transfer vocabulary.TransferID) (identity.ContentID, bool) {
-	transferOwner, ok := c.Core.TransferOwner(transfer)
+	transferOwner, ok := c.Operations.TransferOwner(transfer)
 	if !ok || transferOwner != owner || !c.sealed || int(transfer) > len(c.transferContentIDs) {
 		return identity.ContentID{}, false
 	}
@@ -487,15 +487,15 @@ func (c *Contract) transferContentID(owner vocabulary.Operation, transfer vocabu
 // transferOutcomeContentID has the same receiver-local scalar limitation as
 // TransferContentID; the returned ContentID is portable, not the input handle.
 func (c *Contract) transferOutcomeContentID(owner vocabulary.Operation, transfer vocabulary.TransferID, outcome int) (identity.ContentID, vocabulary.TransferPossibility, bool) {
-	transferOwner, ok := c.Core.TransferOwner(transfer)
+	transferOwner, ok := c.Operations.TransferOwner(transfer)
 	if !ok || transferOwner != owner || outcome < 0 || !c.sealed {
 		return identity.ContentID{}, vocabulary.TransferPossibility(0), false
 	}
-	i, positionOK := c.Core.TransferOutcomePositionAt(transfer, outcome)
+	i, positionOK := c.Operations.TransferOutcomePositionAt(transfer, outcome)
 	if !positionOK || i >= len(c.transferOutcomeIDs) {
 		return identity.ContentID{}, vocabulary.TransferPossibility(0), false
 	}
-	_, possibility, possibilityOK := c.Core.TransferDeclarationOutcomeAt(transfer, outcome)
+	_, possibility, possibilityOK := c.Operations.TransferDeclarationOutcomeAt(transfer, outcome)
 	if !possibilityOK {
 		return identity.ContentID{}, vocabulary.TransferPossibility(0), false
 	}

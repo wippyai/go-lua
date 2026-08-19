@@ -3,12 +3,13 @@ package host
 import (
 	"crypto/sha256"
 	"errors"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"sort"
+
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
@@ -572,8 +573,8 @@ func (a *authority) capabilityRows(index hostBuildIndex) error {
 			if s.InitialRoot != "" || !providerBinding(s.Binding) || s.Outcome != 0 || s.Result != 0 || s.Module != "" || s.Access != 0 {
 				return errUnavailable
 			}
-			op, ok := a.target.Lookup(s.Binding)
-			if !ok || int(s.Formal) >= a.target.ValueFormalCount(op) {
+			op, ok := a.target.Operations.Lookup(s.Binding)
+			if !ok || int(s.Formal) >= a.target.Operations.ValueFormalCount(op) {
 				return errUnavailable
 			}
 			r.operation, r.formal = op, s.Formal
@@ -581,12 +582,12 @@ func (a *authority) capabilityRows(index hostBuildIndex) error {
 			if s.InitialRoot != "" || !providerBinding(s.Binding) || s.Formal != 0 || s.Module != "" || s.Access != 0 {
 				return errUnavailable
 			}
-			op, ok := a.target.Lookup(s.Binding)
-			if !ok || int(s.Outcome) >= a.target.OutcomeCount(op) {
+			op, ok := a.target.Operations.Lookup(s.Binding)
+			if !ok || int(s.Outcome) >= a.target.Operations.OutcomeCount(op) {
 				return errUnavailable
 			}
-			_, values, ok := a.target.OutcomeAt(op, int(s.Outcome))
-			if !ok || int(s.Result) >= a.target.ValuesCount(values) {
+			_, values, ok := a.target.Operations.OutcomeAt(op, int(s.Outcome))
+			if !ok || int(s.Result) >= a.target.Operations.ValuesCount(values) {
 				return errUnavailable
 			}
 			r.operation, r.outcome, r.result = op, s.Outcome, s.Result
@@ -740,7 +741,7 @@ func hostAccess(p *program.Program, access keyspace.Term, member bool) bool {
 	}
 	if !member {
 		cellKind, body, key, ok := p.Flow().Authored().Storage().Cells().Get(source)
-		return ok && cellKind == flow.CellGlobal && body == 0 && key != 0
+		return ok && cellKind == authored.CellGlobal && body == 0 && key != 0
 	}
 	_, base, _, kind, ok := p.Flow().Authored().Access().Exact().Get(source)
 	return ok && base != 0 && kind != flowkind.FieldList && kind != flowkind.FieldKey
@@ -850,7 +851,7 @@ func (a *authority) bootRows() error {
 				return errUnavailable
 			}
 			kind, body, key, ok := p.Flow().Authored().Storage().Cells().Get(cell)
-			if !ok || kind != flow.CellGlobal || body != 0 || key == 0 {
+			if !ok || kind != authored.CellGlobal || body != 0 || key == 0 {
 				continue
 			}
 			if !hasGlobal {

@@ -11,12 +11,12 @@ func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) erro
 	if err := w.Record(recordValues); err != nil {
 		return err
 	}
-	fixed := c.ValuesCount(values)
+	fixed := c.Operations.ValuesCount(values)
 	if err := w.Count(uint64(fixed)); err != nil {
 		return err
 	}
 	for index := 0; index < fixed; index++ {
-		value, ok := c.ValuesAt(values, index)
+		value, ok := c.Operations.ValuesAt(values, index)
 		if !ok {
 			return errors.New("target: malformed fixed Values type")
 		}
@@ -24,7 +24,7 @@ func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) erro
 			return err
 		}
 	}
-	tail, variable, ok := c.ValuesTail(values)
+	tail, variable, ok := c.Operations.ValuesTail(values)
 	if !ok {
 		return errors.New("target: malformed Values tail")
 	}
@@ -34,12 +34,12 @@ func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) erro
 	if err := w.Uint(uint64(variable)); err != nil {
 		return err
 	}
-	suffix := c.ValuesSuffixCount(values)
+	suffix := c.Operations.ValuesSuffixCount(values)
 	if err := w.Count(uint64(suffix)); err != nil {
 		return err
 	}
 	for index := 0; index < suffix; index++ {
-		value, found := c.ValuesSuffixAt(values, index)
+		value, found := c.Operations.ValuesSuffixAt(values, index)
 		if !found {
 			return errors.New("target: malformed Values suffix type")
 		}
@@ -51,7 +51,7 @@ func encodeValues(w *framing.Writer, c *Contract, values vocabulary.Values) erro
 }
 
 func encodeType(w *framing.Writer, c *Contract, value vocabulary.Type) error {
-	declaration, ok := c.TypeDeclaration(value)
+	declaration, ok := c.Operations.TypeDeclaration(value)
 	if !ok {
 		return errors.New("target: malformed frozen type")
 	}
@@ -79,7 +79,7 @@ func encodeOutcome(w *framing.Writer, c *Contract, op vocabulary.Operation, outc
 	if err := w.Record(recordOutcome); err != nil {
 		return err
 	}
-	kind, values, ok := c.OutcomeAt(op, outcome)
+	kind, values, ok := c.Operations.OutcomeAt(op, outcome)
 	if !ok {
 		return errors.New("target: malformed outcome")
 	}

@@ -54,11 +54,11 @@ func TestTargetBehaviorProjection(t *testing.T) {
 		t.Fatalf("seal behavior link: %v", err)
 	}
 	owner := linked.OwnerCapability()
-	operation, operationOK := contract.OperationAt(0)
+	operation, operationOK := contract.Operations.OperationAt(0)
 	if !operationOK {
 		t.Fatal("operation handle")
 	}
-	plainOperation, plainOperationOK := contract.OperationAt(1)
+	plainOperation, plainOperationOK := contract.Operations.OperationAt(1)
 	if !plainOperationOK {
 		t.Fatal("plain operation handle")
 	}

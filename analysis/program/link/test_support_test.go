@@ -9,7 +9,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
-	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
@@ -73,7 +73,7 @@ func testBootContractWithProtocols(t testing.TB, operations []vocabulary.Operati
 			}
 			cellKind, body, key, ok := cells.Get(cell)
 			literal, literalOK := p.Source().Keys().Exact(key)
-			if !ok || cellKind != flow.CellGlobal || body != 0 || key == 0 || !literalOK || literal.Kind != keyspace.LiteralString {
+			if !ok || cellKind != authored.CellGlobal || body != 0 || key == 0 || !literalOK || literal.Kind != keyspace.LiteralString {
 				continue
 			}
 			name := literal.String
@@ -225,7 +225,7 @@ func hostGlobalRead(t *testing.T, p *program.Program, name string) keyspace.Term
 		}
 		cellKind, body, key, ok := p.Flow().Authored().Storage().Cells().Get(source)
 		literal, literalOK := p.Source().Keys().Exact(key)
-		if ok && cellKind == flow.CellGlobal && body == 0 && literalOK && literal.Kind == keyspace.LiteralString && literal.String == name {
+		if ok && cellKind == authored.CellGlobal && body == 0 && literalOK && literal.Kind == keyspace.LiteralString && literal.String == name {
 			return read
 		}
 	}
@@ -287,7 +287,7 @@ func capabilityFixture(t *testing.T, permuted bool) (*link.Link, *target.Contrac
 		Outcomes: []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: portableTypes(t, []typ.Type{typ.Any}), Tail: vocabulary.ValuesClosed}}},
 		Effects:  vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}, p)
-	op, ok := sealed.Lookup(binding)
+	op, ok := sealed.Operations.Lookup(binding)
 	if !ok {
 		t.Fatal("missing provider operation")
 	}

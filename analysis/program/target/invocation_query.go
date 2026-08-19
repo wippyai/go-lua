@@ -57,8 +57,8 @@ func (c *Contract) callbackAdmission(id vocabulary.CallbackID) (schematype.Calla
 // owned by the synthesized opaque operation. Missing authored Subedge rows do
 // not imply a callback is closed, successful, or non-reentrant.
 func (c *Contract) callbackOpaque(id vocabulary.CallbackID) bool {
-	owner, ok := c.CallbackOwner(id)
-	opaque, opaqueOK := c.Opaque()
+	owner, ok := c.Operations.CallbackOwner(id)
+	opaque, opaqueOK := c.Operations.Opaque()
 	return ok && opaqueOK && owner == opaque
 }
 

@@ -33,22 +33,22 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 	observed[ids.TargetContract] = 1
 	observed[ids.TargetOpaque] = 1
 
-	for index := 0; index < contract.OperationCount(); index++ {
-		op, ok := contract.OperationAt(index)
+	for index := 0; index < contract.Operations.OperationCount(); index++ {
+		op, ok := contract.Operations.OperationAt(index)
 		if !ok {
 			t.Fatalf("operation %d is not readable", index)
 		}
 		add(ids.TargetOperation, 1)
 		add(ids.TargetABI, 1)
-		add(ids.TargetOperationEffect, contract.EffectCount(op))
+		add(ids.TargetOperationEffect, contract.Operations.EffectCount(op))
 		add(ids.TargetSubedge, contract.SubedgeCount(op))
-		add(ids.TargetBinding, contract.BindingCount(op))
+		add(ids.TargetBinding, contract.Operations.BindingCount(op))
 		add(ids.TargetResume, contract.ResumeCount(op))
 		add(ids.TargetSpawn, contract.spawnCount(op))
 		add(ids.TargetSuspension, contract.suspensionCount(op))
-		add(ids.TargetTransfer, contract.Core.TransferCount(op))
+		add(ids.TargetTransfer, contract.Operations.TransferCount(op))
 
-		for effect := 0; effect < contract.EffectCount(op); effect++ {
+		for effect := 0; effect < contract.Operations.EffectCount(op); effect++ {
 			if _, found := contract.PublicationEffectDescriptor(op, effect); found {
 				add(ids.TargetPublicationEffect, 1)
 			}
@@ -60,11 +60,11 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 			}
 			add(ids.TargetSubedgeArgumentOrigin, contract.argumentOriginCount(edge))
 		}
-		for transfer := 0; transfer < contract.Core.TransferCount(op); transfer++ {
-			add(ids.TargetTransferOutcome, contract.Core.TransferOutcomeCount(op, transfer))
+		for transfer := 0; transfer < contract.Operations.TransferCount(op); transfer++ {
+			add(ids.TargetTransferOutcome, contract.Operations.TransferOutcomeCount(op, transfer))
 		}
-		for index := 0; index < contract.CallbackCount(op); index++ {
-			callback, found := contract.CallbackAt(op, index)
+		for index := 0; index < contract.Operations.CallbackCount(op); index++ {
+			callback, found := contract.Operations.CallbackAt(op, index)
 			if !found {
 				t.Fatalf("callback %d of operation %d is not readable", index, op)
 			}
@@ -93,7 +93,7 @@ func censusFromReadSurface(t *testing.T, contract *Contract) map[schema.EntryID]
 			}
 			add(ids.TargetSpawnSibling, contract.spawnSiblingCount(spawn))
 		}
-		for outcome := 0; outcome < contract.OutcomeCount(op); outcome++ {
+		for outcome := 0; outcome < contract.Operations.OutcomeCount(op); outcome++ {
 			add(ids.TargetOutcome, 1)
 			add(ids.TargetCallbackResult, contract.callbackResultCount(op, outcome))
 			add(ids.TargetResultAlias, contract.resultAliasCount(op, outcome))

@@ -1,8 +1,8 @@
 package factor_test
 
 import (
-	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -74,7 +74,7 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	packMount, packOK := pack.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	packs, packsOK := pack.SealMountedArtifacts(linked, statics, []pack.ArtifactMount{packMount})
 	algebra, algebraOK := effectfactor.NewWithMountedArtifacts(linked, packs, contract, []effectfactor.MountedArtifact{{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}})
-	owner, ownerOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
+	owner, ownerOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"sink"}})
 	mounted, mountedOK := algebra.MountedCallAt(0)
 	root, rootOK := algebra.RootForMountedCall(mounted)
 	if !packOK || !packsOK || packs == nil || !algebraOK || algebra == nil || !ownerOK || !mountedOK || !rootOK {

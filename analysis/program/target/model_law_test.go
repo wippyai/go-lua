@@ -33,18 +33,18 @@ func TestBehaviorDescriptorProjectsOpaqueResultAndPredicateRows(t *testing.T) {
 		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{spec}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"behavior"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"behavior"}})
 	if !ok {
 		t.Fatal("behavior operation missing")
 	}
-	if contract.BehaviorResultCount(op) != 1 || contract.BehaviorPredicateCount(op) != 1 {
-		t.Fatalf("behavior counts = results:%d predicates:%d", contract.BehaviorResultCount(op), contract.BehaviorPredicateCount(op))
+	if contract.Operations.BehaviorResultCount(op) != 1 || contract.Operations.BehaviorPredicateCount(op) != 1 {
+		t.Fatalf("behavior counts = results:%d predicates:%d", contract.Operations.BehaviorResultCount(op), contract.Operations.BehaviorPredicateCount(op))
 	}
-	outcome, result, source, relation, ok := contract.BehaviorResultAt(op, 0)
+	outcome, result, source, relation, ok := contract.Operations.BehaviorResultAt(op, 0)
 	if !ok || outcome != 0 || result != 0 || source.Kind != vocabulary.InputSourceValueFormal || source.Ordinal != 0 || relation != resultRelation {
 		t.Fatalf("behavior result = outcome:%d result:%d source:%#v relation:%v ok:%v", outcome, result, source, relation, ok)
 	}
-	predicateOutcome, predicateResult, subject, relation, ok := contract.BehaviorPredicateAt(op, 0)
+	predicateOutcome, predicateResult, subject, relation, ok := contract.Operations.BehaviorPredicateAt(op, 0)
 	if !ok || predicateOutcome != 0 || predicateResult != 0 || subject.Kind != vocabulary.InputSourceValueFormal || subject.Ordinal != 0 || relation != predicateRelation {
 		t.Fatalf("behavior predicate = outcome:%d result:%d subject:%#v relation:%v ok:%v", predicateOutcome, predicateResult, subject, relation, ok)
 	}
@@ -75,34 +75,34 @@ func TestBehaviorDescriptorRejectsUnidentifiedRelation(t *testing.T) {
 
 func TestModelHandlesRemainDenseAndZeroInvalid(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{builtin("model", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed})}})
-	if _, ok := contract.OperationAt(0); !ok {
+	if _, ok := contract.Operations.OperationAt(0); !ok {
 		t.Fatal("sealed operation did not receive a model handle")
 	}
-	if _, ok := contract.Input(vocabulary.Operation(1)); !ok {
+	if _, ok := contract.Operations.Input(vocabulary.Operation(1)); !ok {
 		t.Fatal("sealed operation did not receive an input Values handle")
 	}
-	if _, ok := contract.Input(0); ok {
+	if _, ok := contract.Operations.Input(0); ok {
 		t.Fatal("zero Operation handle resolved")
 	}
-	if _, ok := contract.TypeDeclaration(0); ok {
+	if _, ok := contract.Operations.TypeDeclaration(0); ok {
 		t.Fatal("zero Type handle resolved")
 	}
 }
 
 func TestModelActivationCallbackReferencesResolveToOwnedIDs(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackOwnerOperation("activation-model")}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"activation-model"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"activation-model"}})
 	if !ok {
 		t.Fatal("activation owner operation missing")
 	}
-	callback, ok := contract.CallbackAt(op, 0)
+	callback, ok := contract.Operations.CallbackAt(op, 0)
 	if !ok || callback == 0 {
 		t.Fatalf("CallbackAt = %d/%v", callback, ok)
 	}
-	if got, ok := contract.CallbackOwner(callback); !ok || got != op {
+	if got, ok := contract.Operations.CallbackOwner(callback); !ok || got != op {
 		t.Fatalf("callback owner = %d/%v, want %d/true", got, ok, op)
 	}
-	if _, ok := contract.CallbackAt(op, -1); ok {
+	if _, ok := contract.Operations.CallbackAt(op, -1); ok {
 		t.Fatal("negative callback coordinate resolved")
 	}
 }
@@ -113,9 +113,9 @@ func TestModelRowsKeepOperationOwnedRangesCorrelated(t *testing.T) {
 		builtin("row-b", testBoolean, vocabulary.RowSpec{Tail: vocabulary.RowClosed}),
 	}})
 	for _, name := range []string{"row-a", "row-b"} {
-		op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
-		if !ok || contract.OutcomeCount(op) != 1 || contract.EffectCount(op) != 0 {
-			t.Fatalf("%s row shape = op:%d/%v outcomes:%d effects:%d", name, op, ok, contract.OutcomeCount(op), contract.EffectCount(op))
+		op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+		if !ok || contract.Operations.OutcomeCount(op) != 1 || contract.Operations.EffectCount(op) != 0 {
+			t.Fatalf("%s row shape = op:%d/%v outcomes:%d effects:%d", name, op, ok, contract.Operations.OutcomeCount(op), contract.Operations.EffectCount(op))
 		}
 	}
 }
@@ -294,7 +294,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	if firstDistinct.ContentID() != secondDistinct.ContentID() {
 		t.Fatal("permuted distinct publication effects changed Contract identity")
 	}
-	for index := 0; index < firstDistinct.EffectCount(firstDistinctOwner); index++ {
+	for index := 0; index < firstDistinct.Operations.EffectCount(firstDistinctOwner); index++ {
 		firstDescriptorID, firstDescriptorOK := firstDistinct.PublicationEffectDescriptorID(firstDistinctOwner, index)
 		secondDescriptorID, secondDescriptorOK := secondDistinct.PublicationEffectDescriptorID(secondDistinctOwner, index)
 		firstOccurrenceID, firstOccurrenceOK := firstDistinct.PublicationEffectOccurrenceID(firstDistinctOwner, index)
@@ -439,31 +439,31 @@ func TestValuesSuffixCanonicalizationAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"suffix"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"suffix"}})
 	if !ok {
 		t.Fatal("missing operation")
 	}
-	input, _ := contract.Input(op)
-	_, closed, ok := contract.OutcomeAt(op, 0)
-	if !ok || closed != input || contract.ValuesCount(closed) != 2 || contract.ValuesSuffixCount(closed) != 0 {
-		t.Fatalf("closed suffix did not canonicalize into prefix: values=%d count=%d suffix=%d", closed, contract.ValuesCount(closed), contract.ValuesSuffixCount(closed))
+	input, _ := contract.Operations.Input(op)
+	_, closed, ok := contract.Operations.OutcomeAt(op, 0)
+	if !ok || closed != input || contract.Operations.ValuesCount(closed) != 2 || contract.Operations.ValuesSuffixCount(closed) != 0 {
+		t.Fatalf("closed suffix did not canonicalize into prefix: values=%d count=%d suffix=%d", closed, contract.Operations.ValuesCount(closed), contract.Operations.ValuesSuffixCount(closed))
 	}
-	_, open, ok := contract.OutcomeAt(op, 1)
-	if !ok || contract.ValuesCount(open) != 1 || contract.ValuesSuffixCount(open) != 1 {
-		t.Fatalf("open Values shape = prefix %d suffix %d", contract.ValuesCount(open), contract.ValuesSuffixCount(open))
+	_, open, ok := contract.Operations.OutcomeAt(op, 1)
+	if !ok || contract.Operations.ValuesCount(open) != 1 || contract.Operations.ValuesSuffixCount(open) != 1 {
+		t.Fatalf("open Values shape = prefix %d suffix %d", contract.Operations.ValuesCount(open), contract.Operations.ValuesSuffixCount(open))
 	}
-	prefix, prefixOK := contract.ValuesAt(open, 0)
-	suffix, suffixOK := contract.ValuesSuffixAt(open, 0)
+	prefix, prefixOK := contract.Operations.ValuesAt(open, 0)
+	suffix, suffixOK := contract.Operations.ValuesSuffixAt(open, 0)
 	if !prefixOK || !suffixOK || prefix == suffix {
 		t.Fatalf("open Values query = prefix %d/%v suffix %d/%v", prefix, prefixOK, suffix, suffixOK)
 	}
-	if _, ok := contract.ValuesSuffixAt(open, 1); ok {
+	if _, ok := contract.Operations.ValuesSuffixAt(open, 1); ok {
 		t.Fatal("suffix outside scope accepted")
 	}
 	if got := testing.AllocsPerRun(100, func() {
-		_, _ = contract.ValuesAt(open, 0)
-		_, _ = contract.ValuesSuffixAt(open, 0)
-		_ = contract.ValuesSuffixCount(open)
+		_, _ = contract.Operations.ValuesAt(open, 0)
+		_, _ = contract.Operations.ValuesSuffixAt(open, 0)
+		_ = contract.Operations.ValuesSuffixCount(open)
 	}); got != 0 {
 		t.Fatalf("Values suffix queries allocated %f times", got)
 	}
@@ -530,12 +530,12 @@ func TestWideValuesSuffixSealsAndQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, _ := contract.OperationAt(0)
-	_, values, _ := contract.OutcomeAt(op, 0)
-	if got := contract.ValuesSuffixCount(values); got != width {
+	op, _ := contract.Operations.OperationAt(0)
+	_, values, _ := contract.Operations.OutcomeAt(op, 0)
+	if got := contract.Operations.ValuesSuffixCount(values); got != width {
 		t.Fatalf("ValuesSuffixCount = %d, want %d", got, width)
 	}
-	if _, ok := contract.ValuesSuffixAt(values, width-1); !ok {
+	if _, ok := contract.Operations.ValuesSuffixAt(values, width-1); !ok {
 		t.Fatal("last wide suffix type absent")
 	}
 }
@@ -552,27 +552,27 @@ func TestValuesVarTailTypesAreTotalSharedAndAllocationFree(t *testing.T) {
 		},
 		Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"tail-class"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"tail-class"}})
 	if !ok {
 		t.Fatal("tail-class operation missing")
 	}
-	input, _ := contract.Input(op)
-	if got, found := contract.ValuesTailType(input); !found || !sameFrozenType(t, contract, got, testString) {
+	input, _ := contract.Operations.Input(op)
+	if got, found := contract.Operations.ValuesTailType(input); !found || !sameFrozenType(t, contract, got, testString) {
 		t.Fatalf("input tail type = %d/%v, want string", got, found)
 	}
 	for _, variable := range []vocabulary.ValuesVar{1, 2} {
-		got, found := contract.ValuesVarType(op, variable)
+		got, found := contract.Operations.ValuesVarType(op, variable)
 		if !found || !sameFrozenType(t, contract, got, testAny) {
 			t.Fatalf("ValuesVarType(%d) = %d/%v, want any", variable, got, found)
 		}
 	}
-	_, closed, _ := contract.OutcomeAt(op, 2)
-	if _, found := contract.ValuesTailType(closed); found {
+	_, closed, _ := contract.Operations.OutcomeAt(op, 2)
+	if _, found := contract.Operations.ValuesTailType(closed); found {
 		t.Fatal("closed Values exposed a tail type")
 	}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		_, _ = contract.ValuesVarType(op, 0)
-		_, _ = contract.ValuesTailType(input)
+		_, _ = contract.Operations.ValuesVarType(op, 0)
+		_, _ = contract.Operations.ValuesTailType(input)
 	}); allocations != 0 {
 		t.Fatalf("Values tail type queries allocated %f times", allocations)
 	}
@@ -654,7 +654,7 @@ func admissionTailClassOperation(name string, class schematype.Type) vocabulary.
 
 func TestAdmissionFailureTailContributesToTheOneValuesVarClassTable(t *testing.T) {
 	strings := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{admissionTailClassOperation("admission-tail-string", testString)}})
-	op, found := strings.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"admission-tail-string"}})
+	op, found := strings.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"admission-tail-string"}})
 	if !found {
 		t.Fatal("admission-tail-string operation missing")
 	}
@@ -666,10 +666,10 @@ func TestAdmissionFailureTailContributesToTheOneValuesVarClassTable(t *testing.T
 	if !found {
 		t.Fatal("admission failure source missing")
 	}
-	if tail, variable, ok := strings.ValuesTail(failure); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
+	if tail, variable, ok := strings.Operations.ValuesTail(failure); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("admission failure tail = %d/%d/%v", tail, variable, ok)
 	}
-	if class, ok := strings.ValuesTailType(failure); !ok || !sameFrozenType(t, strings, class, testString) {
+	if class, ok := strings.Operations.ValuesTailType(failure); !ok || !sameFrozenType(t, strings, class, testString) {
 		t.Fatalf("admission failure tail class = %d/%v, want string", class, ok)
 	}
 
@@ -690,7 +690,7 @@ func TestAdmissionFailureTailContributesToTheOneValuesVarClassTable(t *testing.T
 
 func sameFrozenType(t *testing.T, contract *Contract, frozen vocabulary.Type, want schematype.Type) bool {
 	t.Helper()
-	got, gotOK := contract.TypeDeclaration(frozen)
+	got, gotOK := contract.Operations.TypeDeclaration(frozen)
 	return gotOK && got.Equal(want)
 }
 

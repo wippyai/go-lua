@@ -79,7 +79,7 @@ func TestBootLedgerSealsTypedCanonicalRows(t *testing.T) {
 	if !ok {
 		t.Fatal("assert is not an exact operation initial value")
 	}
-	if want, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"assert"}}); !ok || assertOp != want {
+	if want, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"assert"}}); !ok || assertOp != want {
 		t.Fatalf("assert initial operation = %d, want %d/%v", assertOp, want, ok)
 	}
 	if class, value, root, key, ok := contract.InitialBinding("assert"); !ok || class != vocabulary.InitialBindingAdmitted || value != assertValue || root != global || bootExactKeyText(contract, key) != "assert" {

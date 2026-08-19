@@ -966,12 +966,12 @@ func (owner *heapBuilder) addTargetFreshResults() bool {
 	if !ok || contract == nil {
 		return false
 	}
-	for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
-		operation, operationOK := contract.OperationAt(operationIndex)
+	for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
+		operation, operationOK := contract.Operations.OperationAt(operationIndex)
 		if !operationOK {
 			return false
 		}
-		for outcome := 0; outcome < contract.OutcomeCount(operation); outcome++ {
+		for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
 			for freshIndex := 0; freshIndex < contract.FreshResultCount(operation, outcome); freshIndex++ {
 				result, ordinal, kind, freshOK := contract.FreshResultAt(operation, outcome, freshIndex)
 				key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}
@@ -999,15 +999,15 @@ func (owner *heapBuilder) addTargetFreshResults() bool {
 			return false
 		}
 		selected := make(map[uint32]runtimekind.Set)
-		for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
-			operation, operationOK := contract.OperationAt(operationIndex)
+		for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
+			operation, operationOK := contract.Operations.OperationAt(operationIndex)
 			if !operationOK {
 				return false
 			}
 			if !owner.sealBoundary().ApplicationOperationAvailable(contract, application, operation) {
 				continue
 			}
-			for outcome := 0; outcome < contract.OutcomeCount(operation); outcome++ {
+			for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
 				for freshIndex := 0; freshIndex < contract.FreshResultCount(operation, outcome); freshIndex++ {
 					result, ordinal, kind, freshOK := contract.FreshResultAt(operation, outcome, freshIndex)
 					key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}

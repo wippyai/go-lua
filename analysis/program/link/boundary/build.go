@@ -109,35 +109,35 @@ func (d *Draft) Finalize() (*Component, error) {
 
 func scopedRequireOperation(contract *target.Contract) (vocabulary.Operation, error) {
 	var require vocabulary.Operation
-	for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
-		op, ok := contract.OperationAt(operationIndex)
+	for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
+		op, ok := contract.Operations.OperationAt(operationIndex)
 		if !ok || op == 0 {
 			return 0, errors.New("link/boundary: malformed Target operation")
 		}
-		for bindingIndex := 0; bindingIndex < contract.BindingCount(op); bindingIndex++ {
-			namespace, ok := contract.BindingNamespaceAt(op, bindingIndex)
+		for bindingIndex := 0; bindingIndex < contract.Operations.BindingCount(op); bindingIndex++ {
+			namespace, ok := contract.Operations.BindingNamespaceAt(op, bindingIndex)
 			if !ok {
 				return 0, errors.New("link/boundary: malformed Target binding")
 			}
 			if namespace != vocabulary.BindingBuiltin {
 				continue
 			}
-			memberCount := contract.BindingMemberCountAt(op, bindingIndex)
+			memberCount := contract.Operations.BindingMemberCountAt(op, bindingIndex)
 			if memberCount == 0 {
 				return 0, errors.New("link/boundary: malformed Target binding member")
 			}
-			first, ok := contract.BindingMemberAt(op, bindingIndex, 0)
+			first, ok := contract.Operations.BindingMemberAt(op, bindingIndex, 0)
 			if !ok {
 				return 0, errors.New("link/boundary: malformed Target binding member")
 			}
-			isRequire, err := classifyRequireBinding(namespace, contract.BindingOwnerCountAt(op, bindingIndex), memberCount, first)
+			isRequire, err := classifyRequireBinding(namespace, contract.Operations.BindingOwnerCountAt(op, bindingIndex), memberCount, first)
 			if err != nil {
 				return 0, err
 			}
 			if !isRequire {
 				continue
 			}
-			if contract.BindingCount(op) != 1 {
+			if contract.Operations.BindingCount(op) != 1 {
 				return 0, errors.New("link/boundary: scoped require operation has other target ingress")
 			}
 			if require != 0 && require != op {

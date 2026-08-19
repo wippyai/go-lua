@@ -88,23 +88,23 @@ func TestCallbackLifecycleClosedVocabularyRoundTrip(t *testing.T) {
 		vocabulary.CallbackRetainedRequiredMany,
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation("callback-lifecycle", want...)}})
-	op, found := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-lifecycle"}})
-	if !found || contract.CallbackCount(op) != len(want) {
-		t.Fatalf("callback lifecycle inventory = %d/%v", contract.CallbackCount(op), found)
+	op, found := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-lifecycle"}})
+	if !found || contract.Operations.CallbackCount(op) != len(want) {
+		t.Fatalf("callback lifecycle inventory = %d/%v", contract.Operations.CallbackCount(op), found)
 	}
 	for index, lifecycle := range want {
-		id, idFound := contract.CallbackAt(op, index)
-		got, lifecycleFound := contract.CallbackLifecycle(id)
+		id, idFound := contract.Operations.CallbackAt(op, index)
+		got, lifecycleFound := contract.Operations.CallbackLifecycle(id)
 		if !idFound || !lifecycleFound || got != lifecycle {
 			t.Fatalf("lifecycle %d = %d/%v/%v, want %d", index, got, idFound, lifecycleFound, lifecycle)
 		}
 	}
-	if _, found := contract.CallbackLifecycle(0); found {
+	if _, found := contract.Operations.CallbackLifecycle(0); found {
 		t.Fatal("zero CallbackID resolved a lifecycle")
 	}
-	id, _ := contract.CallbackAt(op, 0)
+	id, _ := contract.Operations.CallbackAt(op, 0)
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if lifecycle, ok := contract.CallbackLifecycle(id); !ok || lifecycle != vocabulary.CallbackSyncOptionalOnce {
+		if lifecycle, ok := contract.Operations.CallbackLifecycle(id); !ok || lifecycle != vocabulary.CallbackSyncOptionalOnce {
 			panic("callback lifecycle disappeared")
 		}
 	}); allocs != 0 {
@@ -129,12 +129,12 @@ func TestCallbackSubedgeProjectsOnlyImmediateDirectExecution(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation(
 		"callback-subedge", vocabulary.CallbackSyncOptionalMany, vocabulary.CallbackRetainedOptionalMany,
 	)}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-subedge"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-subedge"}})
 	if !ok {
 		t.Fatal("callback Subedge operation missing")
 	}
-	direct, directOK := contract.CallbackAt(op, 0)
-	retained, retainedOK := contract.CallbackAt(op, 1)
+	direct, directOK := contract.Operations.CallbackAt(op, 0)
+	retained, retainedOK := contract.Operations.CallbackAt(op, 1)
 	edge := subedgeByRole(t, contract, op, 1)
 	got, found := contract.callbackSubedge(direct)
 	if !directOK || !found || got != edge {
@@ -149,8 +149,8 @@ func TestCallbackSubedgeProjectsOnlyImmediateDirectExecution(t *testing.T) {
 	if edge, found := contract.callbackSubedge(retained); found || edge != 0 {
 		t.Fatalf("retained callback unexpectedly has immediate Subedge %d/%v", edge, found)
 	}
-	opaque, opaqueOK := contract.Opaque()
-	opaqueCallback, callbackOK := contract.CallbackAt(opaque, 0)
+	opaque, opaqueOK := contract.Operations.Opaque()
+	opaqueCallback, callbackOK := contract.Operations.CallbackAt(opaque, 0)
 	if !opaqueOK || !callbackOK {
 		t.Fatal("opaque callback missing")
 	}
@@ -187,14 +187,14 @@ func TestSyncCallbackRequiresExactlyOneDirectSubedge(t *testing.T) {
 
 func TestOpaqueCallbackLifecycleIsMaximalAndExplicit(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	op, found := contract.Opaque()
-	if !found || contract.CallbackCount(op) != 1 || contract.ValuesVarCount(op) != 0 {
-		t.Fatalf("opaque callback inventory = %d callbacks/%d Values vars/%v", contract.CallbackCount(op), contract.ValuesVarCount(op), found)
+	op, found := contract.Operations.Opaque()
+	if !found || contract.Operations.CallbackCount(op) != 1 || contract.Operations.ValuesVarCount(op) != 0 {
+		t.Fatalf("opaque callback inventory = %d callbacks/%d Values vars/%v", contract.Operations.CallbackCount(op), contract.Operations.ValuesVarCount(op), found)
 	}
-	id, idFound := contract.CallbackAt(op, 0)
-	owner, ownerFound := contract.CallbackOwner(id)
+	id, idFound := contract.Operations.CallbackAt(op, 0)
+	owner, ownerFound := contract.Operations.CallbackOwner(id)
 	source, sourceFound := contract.callbackFunction(id)
-	lifecycle, lifecycleFound := contract.CallbackLifecycle(id)
+	lifecycle, lifecycleFound := contract.Operations.CallbackLifecycle(id)
 	arguments, argumentsFound := contract.CallbackArguments(id)
 	if !idFound || !ownerFound || owner != op || !sourceFound || source != (vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}) ||
 		!lifecycleFound || lifecycle != vocabulary.CallbackRetainedOptionalMany ||
@@ -203,7 +203,7 @@ func TestOpaqueCallbackLifecycleIsMaximalAndExplicit(t *testing.T) {
 			id, idFound, owner, ownerFound, source, sourceFound, lifecycle, lifecycleFound,
 			arguments, argumentsFound)
 	}
-	input, inputOK := contract.Input(op)
+	input, inputOK := contract.Operations.Input(op)
 	if !inputOK || arguments != input {
 		t.Fatalf("opaque callback arguments = %d/%v, want opaque unknown input %d", arguments, inputOK, input)
 	}
@@ -243,8 +243,8 @@ func TestCallbackOutcomeIsTotalCanonicalAndAllocationFree(t *testing.T) {
 	first := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackOutcomeOperation("callback-outcome", outcomes)}})
 	second := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackOutcomeOperation("callback-outcome", reversed)}})
 	assertPublicContractEqual(t, first, second)
-	op, found := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-outcome"}})
-	id, idFound := first.CallbackAt(op, 0)
+	op, found := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-outcome"}})
+	id, idFound := first.Operations.CallbackAt(op, 0)
 	if !found || !idFound {
 		t.Fatal("callback outcome correspondence missing")
 	}
@@ -254,7 +254,7 @@ func TestCallbackOutcomeIsTotalCanonicalAndAllocationFree(t *testing.T) {
 	}
 	for index, kind := range kinds {
 		values, ok := first.CallbackOutcome(id, kind)
-		tail, variable, tailOK := first.ValuesTail(values)
+		tail, variable, tailOK := first.Operations.ValuesTail(values)
 		if !ok || !tailOK || tail != vocabulary.ValuesVariable || variable != vocabulary.ValuesVar(index+1) {
 			t.Fatalf("callback outcome %d = %d/%d/%d/%v/%v, want tail %d", kind, values, tail, variable, ok, tailOK, index+1)
 		}
@@ -335,17 +335,17 @@ func TestCallbackOwnerCanonicalRoundTripAndForeignHandles(t *testing.T) {
 		{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-owner-a"}},
 		{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-owner-b"}},
 	} {
-		op, found := left.Lookup(binding)
+		op, found := left.Operations.Lookup(binding)
 		if !found {
 			t.Fatalf("callback owner operation missing: %#v", binding)
 		}
-		id, found := left.CallbackAt(op, 0)
-		owner, ownerFound := left.CallbackOwner(id)
+		id, found := left.Operations.CallbackAt(op, 0)
+		owner, ownerFound := left.Operations.CallbackOwner(id)
 		if !found || !ownerFound || id == 0 || owner != op {
 			t.Fatalf("callback owner round trip = %d/%d/%v/%v, want %d", id, owner, found, ownerFound, op)
 		}
 	}
-	if _, ok := left.CallbackOwner(0); ok {
+	if _, ok := left.Operations.CallbackOwner(0); ok {
 		t.Fatal("zero CallbackID resolved")
 	}
 	foreign := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{
@@ -353,27 +353,27 @@ func TestCallbackOwnerCanonicalRoundTripAndForeignHandles(t *testing.T) {
 		callbackOwnerOperation("foreign-b"),
 		callbackOwnerOperation("foreign-c"),
 	}})
-	foreignOpaque, found := foreign.Opaque()
+	foreignOpaque, found := foreign.Operations.Opaque()
 	if !found {
 		t.Fatal("foreign opaque operation missing")
 	}
-	foreignID, found := foreign.CallbackAt(foreignOpaque, 0)
+	foreignID, found := foreign.Operations.CallbackAt(foreignOpaque, 0)
 	if !found {
 		t.Fatal("foreign out-of-range CallbackID missing")
 	}
-	if _, ok := left.CallbackOwner(foreignID); ok {
+	if _, ok := left.Operations.CallbackOwner(foreignID); ok {
 		t.Fatal("out-of-range foreign CallbackID resolved in this Contract")
 	}
-	first, found := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-owner-a"}})
+	first, found := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-owner-a"}})
 	if !found {
 		t.Fatal("callback owner allocation operation missing")
 	}
-	id, found := left.CallbackAt(first, 0)
+	id, found := left.Operations.CallbackAt(first, 0)
 	if !found {
 		t.Fatal("callback owner allocation handle missing")
 	}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		if owner, ok := left.CallbackOwner(id); !ok || owner != first {
+		if owner, ok := left.Operations.CallbackOwner(id); !ok || owner != first {
 			panic("callback owner disappeared")
 		}
 	}); allocs != 0 {
@@ -391,8 +391,8 @@ func TestCallbackReleaseZeroPolicyIsRequiredAndExact(t *testing.T) {
 		{vocabulary.CallbackReleaseZeroIdempotent, 0},
 	} {
 		contract := mustSeal(t, specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: want.behavior, Outcome: want.outcome}))
-		owner, ownerOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
-		callback, callbackOK := contract.CallbackAt(owner, 0)
+		owner, ownerOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
+		callback, callbackOK := contract.Operations.CallbackAt(owner, 0)
 		got, outcome, ok := contract.callbackReleaseZero(callback)
 		if !ownerOK || !callbackOK || !ok || got != want.behavior || outcome != want.outcome {
 			t.Fatalf("zero policy = %d/%d/%v, want %d/%d", got, outcome, ok, want.behavior, want.outcome)
@@ -490,7 +490,7 @@ func TestCallbackResultsRemapWithOutcomeAndCallbackCanonicalization(t *testing.T
 	)}})
 	assertPublicContractEqual(t, first, second)
 
-	op, ok := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
+	op, ok := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	if !ok || first.callbackResultCount(op, 0) != 2 {
 		t.Fatalf("callback result relation missing: %d/%v", op, ok)
 	}
@@ -572,11 +572,11 @@ func TestCallbacksRequireValueFormalInputSource(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{operation([]vocabulary.CallbackSpec{{
 		Function: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}, Admission: schematype.CallableAdmissionOrdinary, Arguments: callbackTail(0), Outcomes: callbackOutcomes(1, 1, 2, 3, 4), Lifecycle: vocabulary.CallbackRetainedOptionalOnce, Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}})}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-input-source"}})
-	if !ok || contract.CallbackCount(op) != 1 {
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-input-source"}})
+	if !ok || contract.Operations.CallbackCount(op) != 1 {
 		t.Fatalf("callback input-source relations missing: %d/%v", op, ok)
 	}
-	id, found := contract.CallbackAt(op, 0)
+	id, found := contract.Operations.CallbackAt(op, 0)
 	got, foundSource := contract.callbackFunction(id)
 	if !found || !foundSource || got != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) {
 		t.Fatalf("callback fixed-formal source = %#v/%v/%v", got, found, foundSource)

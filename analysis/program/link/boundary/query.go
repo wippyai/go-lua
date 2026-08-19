@@ -131,7 +131,7 @@ func (c *Component) EndpointRequests() EndpointRequests {
 // predicate. It validates both exact authorities and then classifies only the
 // existing Project Application subsequences; it stores no product relation.
 func (c *Component) ApplicationOperationAvailable(contract *target.Contract, application linkproject.Application, operation vocabulary.Operation) bool {
-	if c == nil || c.authority == nil || c.authority.project == nil || contract == nil || contract != c.authority.target || operation == 0 || uint64(operation) > uint64(contract.OperationCount()) {
+	if c == nil || c.authority == nil || c.authority.project == nil || contract == nil || contract != c.authority.target || operation == 0 || uint64(operation) > uint64(contract.Operations.OperationCount()) {
 		return false
 	}
 	applications := c.authority.project.Applications()
@@ -168,12 +168,12 @@ func (c *Component) Cardinality() (int, bool) {
 	if !validateBasePartition(applications, bases, calls) {
 		return 0, false
 	}
-	operations := c.authority.target.OperationCount()
+	operations := c.authority.target.Operations.OperationCount()
 	if operations < 0 {
 		return 0, false
 	}
 	for operationIndex := 0; operationIndex < operations; operationIndex++ {
-		operation, ok := c.authority.target.OperationAt(operationIndex)
+		operation, ok := c.authority.target.Operations.OperationAt(operationIndex)
 		if !ok || operation == 0 {
 			return 0, false
 		}

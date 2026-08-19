@@ -192,7 +192,7 @@ func (c *Contract) operation(op vocabulary.Operation) (operationRow, bool) {
 	if c == nil || op == 0 || uint64(op) > uint64(len(c.operations)) {
 		return operationRow{}, false
 	}
-	if _, ok := c.Core.OperationAt(int(op) - 1); !ok {
+	if _, ok := c.Operations.OperationAt(int(op) - 1); !ok {
 		return operationRow{}, false
 	}
 	return c.operations[uint32(op)-1], true
@@ -210,7 +210,7 @@ func (c *Contract) operationOutcomeRange(op vocabulary.Operation) (indexRange, b
 // hot query returns only scalar handles or values.
 type Contract struct {
 	bootvalue.Table
-	operationvalue.Core
+	Operations             operationvalue.Core
 	operations             []operationRow
 	outcomes               []outcomeRow
 	effects                []effectRow

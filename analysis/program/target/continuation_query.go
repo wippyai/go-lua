@@ -16,7 +16,7 @@ func (c *Contract) suspensionCount(op vocabulary.Operation) int {
 	if !ok {
 		return 0
 	}
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if opaqueOK && op == opaque {
 		return opaqueSuspensionCount
 	}
@@ -31,7 +31,7 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 	if !ok || index < 0 {
 		return 0, 0, 0, 0, false
 	}
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if opaqueOK && op == opaque {
 		if index >= opaqueSuspensionCount {
 			return 0, 0, 0, 0, false
@@ -54,7 +54,7 @@ func (c *Contract) suspensionAt(op vocabulary.Operation, index int) (yield, reen
 // sealed contract admits at most one such authority globally.
 func (c *Contract) spawnCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if !ok || (opaqueOK && op == opaque) {
 		return 0
 	}
@@ -64,7 +64,7 @@ func (c *Contract) spawnCount(op vocabulary.Operation) int {
 // spawnIDAt returns the sealed identity of an operation-owned spawn relation.
 func (c *Contract) spawnIDAt(op vocabulary.Operation, index int) (vocabulary.SpawnID, bool) {
 	row, ok := c.operation(op)
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if !ok || (opaqueOK && op == opaque) || index < 0 || index >= row.spawns.len() {
 		return 0, false
 	}
@@ -114,7 +114,7 @@ func (c *Contract) spawnSiblingAt(id vocabulary.SpawnID, index int) (vocabulary.
 
 func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 	row, ok := c.operation(op)
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if !ok || (opaqueOK && op == opaque) {
 		return 0
 	}
@@ -126,7 +126,7 @@ func (c *Contract) ResumeCount(op vocabulary.Operation) int {
 // not be retained as a Link or runtime identity.
 func (c *Contract) ResumeIDAt(op vocabulary.Operation, index int) (vocabulary.ResumeID, bool) {
 	row, ok := c.operation(op)
-	opaque, opaqueOK := c.Core.Opaque()
+	opaque, opaqueOK := c.Operations.Opaque()
 	if !ok || (opaqueOK && op == opaque) || index < 0 || index >= row.resumes.len() {
 		return 0, false
 	}

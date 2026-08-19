@@ -11,35 +11,35 @@ func TestOperationQueriesKeepBoundPrefixAndOpaqueLast(t *testing.T) {
 		builtin("query-a", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed}),
 		builtin("query-b", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed}),
 	}})
-	if got := contract.OperationCount(); got != 3 {
+	if got := contract.Operations.OperationCount(); got != 3 {
 		t.Fatalf("OperationCount = %d, want bound operations plus opaque", got)
 	}
-	if got := contract.Core.BoundCount(); got != 2 {
+	if got := contract.Operations.BoundCount(); got != 2 {
 		t.Fatalf("BoundOperationCount = %d, want 2", got)
 	}
-	op, ok := contract.OperationAt(contract.OperationCount() - 1)
+	op, ok := contract.Operations.OperationAt(contract.Operations.OperationCount() - 1)
 	if !ok {
 		t.Fatal("opaque operation missing")
 	}
-	if opaque, ok := contract.Opaque(); !ok || opaque != op {
+	if opaque, ok := contract.Operations.Opaque(); !ok || opaque != op {
 		t.Fatalf("Opaque = %d/%v, want %d/true", opaque, ok, op)
 	}
-	if _, ok := contract.OperationAt(contract.OperationCount()); ok {
+	if _, ok := contract.Operations.OperationAt(contract.Operations.OperationCount()); ok {
 		t.Fatal("out-of-range operation resolved")
 	}
 }
 
 func TestInvocationQueriesExposeCallbackOwnedRelations(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackOwnerOperation("invoke-query")}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"invoke-query"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"invoke-query"}})
 	if !ok {
 		t.Fatal("callback owner operation missing")
 	}
-	id, ok := contract.CallbackAt(op, 0)
+	id, ok := contract.Operations.CallbackAt(op, 0)
 	if !ok {
 		t.Fatal("callback handle missing")
 	}
-	if owner, ok := contract.CallbackOwner(id); !ok || owner != op {
+	if owner, ok := contract.Operations.CallbackOwner(id); !ok || owner != op {
 		t.Fatalf("CallbackOwner = %d/%v, want %d/true", owner, ok, op)
 	}
 	if function, ok := contract.callbackFunction(id); !ok || function != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) {
@@ -55,7 +55,7 @@ func TestInvocationQueriesExposeCallbackOwnedRelations(t *testing.T) {
 
 func TestContinuationQueriesReturnCanonicalSuspensionCoordinates(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{deltaSuspension(vocabulary.ReentryMany)}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"suspend"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"suspend"}})
 	if !ok || contract.suspensionCount(op) != 1 {
 		t.Fatalf("suspension lookup = %d/%v", contract.suspensionCount(op), ok)
 	}

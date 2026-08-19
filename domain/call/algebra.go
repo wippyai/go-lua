@@ -303,13 +303,13 @@ func (algebra *Algebra) buildKeys(project *linkproject.Component) bool {
 	// Target owns callback/resume correspondence.  Iterate the sealed
 	// operation-local ranges exactly once; no Subedge or Application key is
 	// synthesized, and no cross product is retained.
-	for operationIndex := 0; operationIndex < contract.OperationCount(); operationIndex++ {
-		operation, present := contract.OperationAt(operationIndex)
+	for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
+		operation, present := contract.Operations.OperationAt(operationIndex)
 		if !present {
 			return false
 		}
-		for callbackIndex := 0; callbackIndex < contract.CallbackCount(operation); callbackIndex++ {
-			callback, present := contract.CallbackAt(operation, callbackIndex)
+		for callbackIndex := 0; callbackIndex < contract.Operations.CallbackCount(operation); callbackIndex++ {
+			callback, present := contract.Operations.CallbackAt(operation, callbackIndex)
 			if !present {
 				return false
 			}

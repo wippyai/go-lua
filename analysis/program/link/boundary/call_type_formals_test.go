@@ -273,7 +273,7 @@ func typeFormalBoundaryForContract(t testing.TB, p *program.Program, contract *t
 
 func typeFormalOperation(t testing.TB, contract *target.Contract) vocabulary.Operation {
 	t.Helper()
-	operation, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
+	operation, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"op"}})
 	if !ok {
 		t.Fatal("operation unavailable")
 	}

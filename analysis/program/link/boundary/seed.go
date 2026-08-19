@@ -27,7 +27,7 @@ func sealSeeds(a *authority, requests []EndpointRequest) error {
 		return errors.New("link/boundary: seed mount overflow")
 	}
 	table := &seedTable{
-		operation:     make([]uint32, a.target.OperationCount()),
+		operation:     make([]uint32, a.target.Operations.OperationCount()),
 		loaderByMount: make([]uint32, mounts.Count()),
 	}
 	appendRow := func(row seedRow) (uint32, error) {
@@ -38,8 +38,8 @@ func sealSeeds(a *authority, requests []EndpointRequest) error {
 		table.rows = append(table.rows, row)
 		return ordinal, nil
 	}
-	for index := 0; index < a.target.OperationCount(); index++ {
-		op, ok := a.target.OperationAt(index)
+	for index := 0; index < a.target.Operations.OperationCount(); index++ {
+		op, ok := a.target.Operations.OperationAt(index)
 		if !ok || op == 0 {
 			return errors.New("link/boundary: malformed Target operation")
 		}
@@ -143,7 +143,7 @@ func canonicalEndpointRequests(contract *target.Contract, requests []EndpointReq
 		if request.Identity == "" || request.Binding.Namespace != vocabulary.BindingProvider {
 			return nil, errors.New("link/boundary: endpoint needs a provider binding")
 		}
-		op, ok := contract.Lookup(request.Binding)
+		op, ok := contract.Operations.Lookup(request.Binding)
 		if !ok || op == 0 {
 			return nil, errors.New("link/boundary: endpoint has unknown provider binding")
 		}

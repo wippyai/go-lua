@@ -46,7 +46,7 @@ func (c *Contract) sealEffectIdentities() error {
 	}
 	for index, row := range c.callbacks {
 		callback := vocabulary.CallbackID(index + 1)
-		owner, ownerOK := c.Core.CallbackOwner(callback)
+		owner, ownerOK := c.Operations.CallbackOwner(callback)
 		if !ownerOK {
 			return errors.New("target: malformed effect callback owner")
 		}
@@ -69,19 +69,19 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 	if _, ok := c.operation(op); !ok {
 		return errors.New("target: malformed effect operation")
 	}
-	input, inputOK := c.Input(op)
+	input, inputOK := c.Operations.Input(op)
 	if !inputOK {
 		return errors.New("target: malformed effect operation input")
 	}
 	if err := encodeValues(w, c, input); err != nil {
 		return err
 	}
-	typeFormals := c.TypeFormalCount(op)
+	typeFormals := c.Operations.TypeFormalCount(op)
 	if err := w.Count(uint64(typeFormals)); err != nil {
 		return err
 	}
 	for index := 0; index < typeFormals; index++ {
-		value, valueOK := c.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
+		value, valueOK := c.Operations.TypeFormalConstraint(op, vocabulary.TypeFormal(index))
 		if !valueOK {
 			value = 0
 		}
@@ -94,12 +94,12 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 			}
 		}
 	}
-	valuesVars := c.ValuesVarCount(op)
+	valuesVars := c.Operations.ValuesVarCount(op)
 	if err := w.Count(uint64(valuesVars)); err != nil {
 		return err
 	}
 	for index := 0; index < valuesVars; index++ {
-		value, valueOK := c.ValuesVarType(op, vocabulary.ValuesVar(index))
+		value, valueOK := c.Operations.ValuesVarType(op, vocabulary.ValuesVar(index))
 		if !valueOK {
 			return errors.New("target: malformed effect Values ABI")
 		}
@@ -107,7 +107,7 @@ func (c *Contract) encodeEffectOperationABI(w *framing.Writer, op vocabulary.Ope
 			return err
 		}
 	}
-	return w.Count(uint64(c.RowFormalCount(op)))
+	return w.Count(uint64(c.Operations.RowFormalCount(op)))
 }
 
 func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary.CallbackID, effects indexRange) error {
@@ -115,7 +115,7 @@ func (c *Contract) sealEffectRow(owner vocabulary.Operation, callback vocabulary
 		return errors.New("target: malformed effect row range")
 	}
 	if callback != 0 {
-		callbackOwner, ownerOK := c.Core.CallbackOwner(callback)
+		callbackOwner, ownerOK := c.Operations.CallbackOwner(callback)
 		if uint64(callback) > uint64(len(c.callbacks)) || !ownerOK || callbackOwner != owner ||
 			uint64(callback) > uint64(len(c.callbackContentIDs)) || !c.callbackContentIDs[callback-1].Available() {
 			return errors.New("target: malformed effect callback")

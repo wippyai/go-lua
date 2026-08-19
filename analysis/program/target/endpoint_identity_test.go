@@ -49,11 +49,11 @@ func endpointIdentityTwoTransferOperation(name string) vocabulary.OperationSpec 
 
 func endpointIdentityOperationAndTransfer(t testing.TB, c *Contract, name string) (vocabulary.Operation, vocabulary.TransferID) {
 	t.Helper()
-	op, ok := c.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+	op, ok := c.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
 	if !ok {
 		t.Fatalf("operation %q absent", name)
 	}
-	transfer, ok := c.Core.TransferIDAt(op, 0)
+	transfer, ok := c.Operations.TransferIDAt(op, 0)
 	if !ok {
 		t.Fatalf("transfer %q absent", name)
 	}
@@ -267,20 +267,20 @@ func TestEndpointIdentityTracksExactLocalSemanticMutations(t *testing.T) {
 func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
 	first := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
 	second := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{endpointIdentityTwoTransferOperation("two-transfers")}})
-	firstOperation, ok := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || first.Core.TransferCount(firstOperation) != 2 {
+	firstOperation, ok := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
+	if !ok || first.Operations.TransferCount(firstOperation) != 2 {
 		t.Fatal("first sealed transfer declarations unavailable")
 	}
-	secondOperation, ok := second.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
-	if !ok || second.Core.TransferCount(secondOperation) != 2 {
+	secondOperation, ok := second.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"two-transfers"}})
+	if !ok || second.Operations.TransferCount(secondOperation) != 2 {
 		t.Fatal("second sealed transfer declarations unavailable")
 	}
 	for index := 0; index < 2; index++ {
-		firstTransfer, ok := first.Core.TransferIDAt(firstOperation, index)
+		firstTransfer, ok := first.Operations.TransferIDAt(firstOperation, index)
 		if !ok {
 			t.Fatalf("first transfer %d unavailable", index)
 		}
-		secondTransfer, ok := second.Core.TransferIDAt(secondOperation, index)
+		secondTransfer, ok := second.Operations.TransferIDAt(secondOperation, index)
 		if !ok {
 			t.Fatalf("second transfer %d unavailable", index)
 		}
@@ -292,7 +292,7 @@ func TestEndpointIdentityKeepsDistinctSealedTransferDeclarations(t *testing.T) {
 		if index == 0 {
 			continue
 		}
-		priorTransfer, ok := first.Core.TransferIDAt(firstOperation, index-1)
+		priorTransfer, ok := first.Operations.TransferIDAt(firstOperation, index-1)
 		if !ok {
 			t.Fatalf("prior transfer %d unavailable", index-1)
 		}
@@ -411,7 +411,7 @@ func TestEndpointIdentityDocumentsReceiverLocalScalarHandles(t *testing.T) {
 func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *testing.T) {
 	baselineSpec := specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: vocabulary.CallbackReleaseZeroThrow, Outcome: 1})
 	baseline := mustSeal(t, baselineSpec)
-	owner, ok := baseline.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
+	owner, ok := baseline.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
 	if !ok {
 		t.Fatal("release owner absent")
 	}
@@ -423,7 +423,7 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 	withEarlier := specWithCallbackReleaseZero(vocabulary.CallbackReleaseZeroSpec{Behavior: vocabulary.CallbackReleaseZeroThrow, Outcome: 1})
 	withEarlier.Operations = append(withEarlier.Operations, endpointIdentityOperation("aardvark-earlier"))
 	afterContract := mustSeal(t, withEarlier)
-	owner, ok = afterContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
+	owner, ok = afterContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"release-zero-owner"}})
 	if !ok {
 		t.Fatal("release owner absent after insertion")
 	}
@@ -433,7 +433,7 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 	}
 
 	spawnBase := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{spawnTestOperation("spawn-id")}})
-	spawnOp, ok := spawnBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
+	spawnOp, ok := spawnBase.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
 	if !ok {
 		t.Fatal("spawn operation absent")
 	}
@@ -443,7 +443,7 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 	}
 	spawnSpec := Spec{Operations: []vocabulary.OperationSpec{spawnTestOperation("spawn-id"), endpointIdentityOperation("aardvark-spawn")}}
 	spawnChanged := mustSeal(t, spawnSpec)
-	spawnOp, ok = spawnChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
+	spawnOp, ok = spawnChanged.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingModule, Owner: []string{"coroutine"}, Member: []string{"spawn-id"}})
 	if !ok {
 		t.Fatal("spawn operation absent after insertion")
 	}
@@ -454,7 +454,7 @@ func TestEndpointIdentityIgnoresEarlierGlobalCallbackAndEffectCoordinates(t *tes
 
 func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	effectBase := mustSeal(t, deltaEffects(2))
-	effectOp, ok := effectBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, ok := effectBase.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if !ok {
 		t.Fatal("effect source absent")
 	}
@@ -465,18 +465,18 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 	effectWithEarlier := deltaEffects(2)
 	effectWithEarlier.Operations = append(effectWithEarlier.Operations, endpointIdentityOperation("aardvark-effect"))
 	effectChanged := mustSeal(t, effectWithEarlier)
-	effectOp, _ = effectChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, _ = effectChanged.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if got, ok := effectChanged.OperationContentID(effectOp); !ok || got != beforeEffect {
 		t.Fatal("earlier operation renumbered effect target identity")
 	}
 	effectMutation := mustSeal(t, deltaEffects(3))
-	effectOp, _ = effectMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
+	effectOp, _ = effectMutation.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-a"}})
 	if got, ok := effectMutation.OperationContentID(effectOp); !ok || got == beforeEffect {
 		t.Fatal("effect target mutation did not change declaration identity")
 	}
 
 	producedBase := mustSeal(t, deltaProduced(0))
-	parent, ok := producedBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
+	parent, ok := producedBase.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	if !ok {
 		t.Fatal("produced parent absent")
 	}
@@ -490,7 +490,7 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 		t.Fatal("produced path did not mint distinct operation identities")
 	}
 	producedReplay := mustSeal(t, deltaProduced(0))
-	replayParent, _ := producedReplay.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
+	replayParent, _ := producedReplay.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	replayChild, _, _ := producedReplay.producedForResult(replayParent, 0, 0)
 	if got, _ := producedReplay.OperationContentID(replayParent); got != parentID {
 		t.Fatal("produced parent replay changed identity")
@@ -499,23 +499,23 @@ func TestEndpointIdentityUsesSymbolicEffectAndProducedAnchors(t *testing.T) {
 		t.Fatal("produced child replay changed identity")
 	}
 	producedMutation := mustSeal(t, deltaProduced(1))
-	mutationParent, _ := producedMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
+	mutationParent, _ := producedMutation.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	if got, _ := producedMutation.OperationContentID(mutationParent); got == parentID {
 		t.Fatal("produced capture mutation did not change parent declaration identity")
 	}
 
 	callbackBaseSpec := Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true)}}
 	callbackBase := mustSeal(t, callbackBaseSpec)
-	callbackOp, _ := callbackBase.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
+	callbackOp, _ := callbackBase.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	callbackID, _ := callbackBase.OperationContentID(callbackOp)
 	callbackEarlier := Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 1, true), endpointIdentityOperation("aardvark-callback-result")}}
 	callbackChanged := mustSeal(t, callbackEarlier)
-	callbackOp, _ = callbackChanged.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
+	callbackOp, _ = callbackChanged.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	if got, ok := callbackChanged.OperationContentID(callbackOp); !ok || got != callbackID {
 		t.Fatal("earlier operation renumbered callback-result identity")
 	}
 	callbackMutation := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{deltaCallbackOperation("callback-result", 0, 2, true)}})
-	callbackOp, _ = callbackMutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
+	callbackOp, _ = callbackMutation.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"callback-result"}})
 	if got, _ := callbackMutation.OperationContentID(callbackOp); got == callbackID {
 		t.Fatal("callback-result selector mutation did not change declaration identity")
 	}
@@ -552,7 +552,7 @@ func TestEndpointIdentityCapturedRootUsesRootIdentityNotCoordinate(t *testing.T)
 	baseSpec := completeBootSpec("Lua 5.3", vocabulary.InitialMutable)
 	baseSpec.Operations = append(baseSpec.Operations, endpointIdentityCapturedRootOperation("root-read"))
 	base := mustSeal(t, baseSpec)
-	op, ok := base.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
+	op, ok := base.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
 	if !ok {
 		t.Fatal("captured-root operation absent")
 	}
@@ -564,7 +564,7 @@ func TestEndpointIdentityCapturedRootUsesRootIdentityNotCoordinate(t *testing.T)
 	withEarlierRoot.InitialRoots = append(withEarlierRoot.InitialRoots, vocabulary.InitialRootSpec{Identity: "AardvarkRoot", Shape: vocabulary.BootShapeSpec{Aggregate: vocabulary.BootAggregateTable, Value: vocabulary.InitialValueSpec{Kind: vocabulary.InitialValueRoot, Root: "AardvarkRoot"}}})
 	withEarlierRoot.Operations = append(withEarlierRoot.Operations, endpointIdentityCapturedRootOperation("root-read"))
 	changed := mustSeal(t, withEarlierRoot)
-	op, _ = changed.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
+	op, _ = changed.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"root-read"}})
 	if got, ok := changed.OperationContentID(op); !ok || got != before {
 		t.Fatal("unrelated earlier root renumbered captured-root identity")
 	}
@@ -572,10 +572,10 @@ func TestEndpointIdentityCapturedRootUsesRootIdentityNotCoordinate(t *testing.T)
 
 func TestEndpointIdentitySubedgeCallbackSelectorLocalityAndMutation(t *testing.T) {
 	base := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation("subedge-callback", vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncOptionalOnce)}})
-	op, _ := base.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
+	op, _ := base.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	before, _ := base.OperationContentID(op)
 	withEarlier := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{callbackLifecycleOperation("subedge-callback", vocabulary.CallbackSyncOptionalOnce, vocabulary.CallbackSyncOptionalOnce), endpointIdentityOperation("aardvark-subedge")}})
-	op, _ = withEarlier.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
+	op, _ = withEarlier.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	if got, ok := withEarlier.OperationContentID(op); !ok || got != before {
 		t.Fatal("earlier operation renumbered subedge callback selector")
 	}
@@ -583,7 +583,7 @@ func TestEndpointIdentitySubedgeCallbackSelectorLocalityAndMutation(t *testing.T
 	mutated.Subedges[0].Callee.Callback = 2
 	mutated.Subedges[1].Callee.Callback = 1
 	mutation := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{mutated}})
-	op, _ = mutation.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
+	op, _ = mutation.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"subedge-callback"}})
 	if got, _ := mutation.OperationContentID(op); got == before {
 		t.Fatal("subedge callback selector mutation did not change identity")
 	}
@@ -647,8 +647,8 @@ func TestEndpointIdentityCyclesAreFiniteAndPermutationStable(t *testing.T) {
 		t.Run(cycle.name, func(t *testing.T) {
 			left, right := mustSeal(t, cycle.build(false)), mustSeal(t, cycle.build(true))
 			for _, name := range []string{"cycle-a", "cycle-b", "release-cycle-a", "release-cycle-b"} {
-				leftOp, leftOK := left.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
-				rightOp, rightOK := right.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+				leftOp, leftOK := left.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
+				rightOp, rightOK := right.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{name}})
 				if !leftOK && !rightOK {
 					continue
 				}

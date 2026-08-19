@@ -21,14 +21,14 @@ func TestSealDeterministicAcrossOperationOrder(t *testing.T) {
 	assertContractShapeEqual(t, first, second)
 	alpha := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"alpha"}}
 	for _, contract := range []*Contract{first, second} {
-		op, ok := contract.Lookup(alpha)
+		op, ok := contract.Operations.Lookup(alpha)
 		if !ok || op != 1 {
 			t.Fatalf("Lookup(alpha) = %d/%v, want 1/true", op, ok)
 		}
-		if got := contract.EffectCount(op); got != 1 {
+		if got := contract.Operations.EffectCount(op); got != 1 {
 			t.Fatalf("alpha effect count = %d, want 1", got)
 		}
-		target, ok := contract.EffectTarget(op, 0)
+		target, ok := contract.Operations.EffectTarget(op, 0)
 		if !ok || target != 2 {
 			t.Fatalf("alpha effect target = %d/%v, want 2/true", target, ok)
 		}
@@ -41,18 +41,18 @@ func TestTypeFormalsAreAlphaInvariant(t *testing.T) {
 	leftContract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{genericBuiltin("identity", left)}})
 	rightContract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{genericBuiltin("identity", right)}})
 	assertPublicContractEqual(t, leftContract, rightContract)
-	leftOp, _ := leftContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"identity"}})
-	rightOp, _ := rightContract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"identity"}})
-	leftInput, _ := leftContract.Input(leftOp)
-	rightInput, _ := rightContract.Input(rightOp)
-	leftType, _ := leftContract.ValuesAt(leftInput, 0)
-	rightType, _ := rightContract.ValuesAt(rightInput, 0)
-	leftDeclaration, leftOK := leftContract.TypeDeclaration(leftType)
-	rightDeclaration, rightOK := rightContract.TypeDeclaration(rightType)
+	leftOp, _ := leftContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"identity"}})
+	rightOp, _ := rightContract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"identity"}})
+	leftInput, _ := leftContract.Operations.Input(leftOp)
+	rightInput, _ := rightContract.Operations.Input(rightOp)
+	leftType, _ := leftContract.Operations.ValuesAt(leftInput, 0)
+	rightType, _ := rightContract.Operations.ValuesAt(rightInput, 0)
+	leftDeclaration, leftOK := leftContract.Operations.TypeDeclaration(leftType)
+	rightDeclaration, rightOK := rightContract.Operations.TypeDeclaration(rightType)
 	if !leftOK || !rightOK || !leftDeclaration.Equal(rightDeclaration) {
 		t.Fatal("alpha-renamed type formal changed frozen target type bytes")
 	}
-	leftConstraint, ok := leftContract.TypeFormalConstraint(leftOp, 0)
+	leftConstraint, ok := leftContract.Operations.TypeFormalConstraint(leftOp, 0)
 	if !ok || leftConstraint == 0 {
 		t.Fatal("missing frozen formal constraint")
 	}
@@ -73,11 +73,11 @@ func TestGenericAndRecursiveTypesFreezeWithoutRawRetention(t *testing.T) {
 		Outcomes:    []vocabulary.OutcomeSpec{{Kind: flowkind.OutcomeNormal, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{channelOfOuterDeclaration}, Tail: vocabulary.ValuesClosed}}},
 		Effects:     vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"channel"}, Member: []string{"new"}})
-	input, _ := contract.Input(op)
-	for index := 0; index < contract.ValuesCount(input); index++ {
-		frozen, _ := contract.ValuesAt(input, index)
-		if data, ok := contract.TypeDeclaration(frozen); !ok || !data.Available() {
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"channel"}, Member: []string{"new"}})
+	input, _ := contract.Operations.Input(op)
+	for index := 0; index < contract.Operations.ValuesCount(input); index++ {
+		frozen, _ := contract.Operations.ValuesAt(input, index)
+		if data, ok := contract.Operations.TypeDeclaration(frozen); !ok || !data.Available() {
 			t.Fatalf("frozen type %d unavailable", index)
 		}
 	}
@@ -89,10 +89,10 @@ func TestDeepAuthoringTypeUsesNoGoRecursion(t *testing.T) {
 		deep = testRawArray(deep)
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{builtin("deep", deep, vocabulary.RowSpec{Tail: vocabulary.RowClosed})}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"deep"}})
-	input, _ := contract.Input(op)
-	frozen, _ := contract.ValuesAt(input, 0)
-	if data, ok := contract.TypeDeclaration(frozen); !ok || !data.Available() {
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"deep"}})
+	input, _ := contract.Operations.Input(op)
+	frozen, _ := contract.Operations.ValuesAt(input, 0)
+	if data, ok := contract.Operations.TypeDeclaration(frozen); !ok || !data.Available() {
 		t.Fatal("deep type did not freeze")
 	}
 	if !contract.ContentID().Available() {
@@ -109,16 +109,16 @@ func TestSealOwnsInputsAndConsumesFailedSpec(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 	contentID := contract.ContentID()
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"owned"}})
-	input, _ := contract.Input(op)
-	frozen, _ := contract.ValuesAt(input, 0)
-	before, _ := contract.TypeDeclaration(frozen)
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"owned"}})
+	input, _ := contract.Operations.Input(op)
+	frozen, _ := contract.Operations.ValuesAt(input, 0)
+	before, _ := contract.Operations.TypeDeclaration(frozen)
 	record.Fields[0].Type = testRawNumber
 	operations[0].Bindings[0].Member[0] = "mutated"
-	if _, found := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"owned"}}); !found {
+	if _, found := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"owned"}}); !found {
 		t.Fatal("caller mutation changed sealed binding")
 	}
-	after, _ := contract.TypeDeclaration(frozen)
+	after, _ := contract.Operations.TypeDeclaration(frozen)
 	if !before.Equal(after) || !before.Available() {
 		t.Fatal("caller type mutation changed frozen bytes")
 	}
@@ -169,18 +169,18 @@ func TestBindingInputAndValuesTails(t *testing.T) {
 		Effects:    vocabulary.RowSpec{Tail: vocabulary.RowClosed},
 	}}})
 	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingProvider, Owner: []string{"channel"}, Member: []string{"send"}}
-	op, ok := contract.Lookup(binding)
+	op, ok := contract.Operations.Lookup(binding)
 	if !ok {
 		t.Fatal("method binding not found")
 	}
-	if got := contract.ValueFormalCount(op); got != 2 {
+	if got := contract.Operations.ValueFormalCount(op); got != 2 {
 		t.Fatalf("ValueFormalCount = %d, want two fixed inputs", got)
 	}
-	if got := contract.ValuesVarCount(op); got != 1 {
+	if got := contract.Operations.ValuesVarCount(op); got != 1 {
 		t.Fatalf("ValuesVarCount = %d, want 1", got)
 	}
-	input, _ := contract.Input(op)
-	if tail, variable, ok := contract.ValuesTail(input); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
+	input, _ := contract.Operations.Input(op)
+	if tail, variable, ok := contract.Operations.ValuesTail(input); !ok || tail != vocabulary.ValuesVariable || variable != 0 {
 		t.Fatalf("input tail = %d/%d/%v", tail, variable, ok)
 	}
 }
@@ -193,8 +193,8 @@ func TestCorrelatedOutcomesRejectDuplicates(t *testing.T) {
 		{Kind: flowkind.OutcomeThrow, Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{testString}, Tail: vocabulary.ValuesClosed}},
 	}
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{base}})
-	op, _ := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"receive"}})
-	if got := contract.OutcomeCount(op); got != 3 {
+	op, _ := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"receive"}})
+	if got := contract.Operations.OutcomeCount(op); got != 3 {
 		t.Fatalf("outcome count = %d, want 3", got)
 	}
 	dup := base
@@ -218,8 +218,8 @@ func TestEffectMultiplicityAndArgumentValidation(t *testing.T) {
 		}, Tail: vocabulary.RowClosed}),
 	}
 	sealed := mustSeal(t, Spec{Operations: withEffects})
-	send, _ := sealed.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
-	if got := sealed.EffectCount(send); got != 2 {
+	send, _ := sealed.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"send"}})
+	if got := sealed.Operations.EffectCount(send); got != 2 {
 		t.Fatalf("effect multiplicity = %d, want 2", got)
 	}
 	bad := withEffects
@@ -231,42 +231,42 @@ func TestEffectMultiplicityAndArgumentValidation(t *testing.T) {
 
 func TestSynthesizedOpaqueAndHotQueriesAllocateNothing(t *testing.T) {
 	contract := mustSeal(t, Spec{})
-	if got := contract.OperationCount(); got != 1 {
+	if got := contract.Operations.OperationCount(); got != 1 {
 		t.Fatalf("operation count = %d, want opaque row", got)
 	}
-	opaque, ok := contract.Opaque()
+	opaque, ok := contract.Operations.Opaque()
 	if !ok || opaque != 1 {
 		t.Fatalf("opaque = %d/%v", opaque, ok)
 	}
-	input, _ := contract.Input(opaque)
-	if tail, _, ok := contract.ValuesTail(input); !ok || tail != vocabulary.ValuesUnknown {
+	input, _ := contract.Operations.Input(opaque)
+	if tail, _, ok := contract.Operations.ValuesTail(input); !ok || tail != vocabulary.ValuesUnknown {
 		t.Fatalf("opaque input = %d/%v", tail, ok)
 	}
-	if tail, _, ok := contract.EffectTail(opaque); !ok || tail != vocabulary.RowUnknownOpen {
+	if tail, _, ok := contract.Operations.EffectTail(opaque); !ok || tail != vocabulary.RowUnknownOpen {
 		t.Fatalf("opaque effect tail = %d/%v", tail, ok)
 	}
-	if got := contract.OutcomeCount(opaque); got != 4 {
+	if got := contract.Operations.OutcomeCount(opaque); got != 4 {
 		t.Fatalf("opaque outcomes = %d, want 4", got)
 	}
-	if _, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"missing"}}); ok {
+	if _, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"missing"}}); ok {
 		t.Fatal("missing binding resolved to opaque")
 	}
 
 	bound := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{builtin("hot", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed})}})
 	binding := vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"hot"}}
 	if allocs := testing.AllocsPerRun(1000, func() {
-		op, ok := bound.Lookup(binding)
+		op, ok := bound.Operations.Lookup(binding)
 		if !ok {
 			panic("missing hot binding")
 		}
-		input, ok := bound.Input(op)
+		input, ok := bound.Operations.Input(op)
 		if !ok {
 			panic("missing input")
 		}
-		if _, ok = bound.ValuesAt(input, 0); !ok {
+		if _, ok = bound.Operations.ValuesAt(input, 0); !ok {
 			panic("missing input type")
 		}
-		if _, _, ok = bound.OutcomeAt(op, 0); !ok {
+		if _, _, ok = bound.Operations.OutcomeAt(op, 0); !ok {
 			panic("missing outcome")
 		}
 	}); allocs != 0 {
@@ -297,13 +297,13 @@ func TestSealDraftsCanonicalizeIndependentOperationAuthoring(t *testing.T) {
 		builtin("draft-b", testBoolean, vocabulary.RowSpec{Tail: vocabulary.RowClosed}),
 		builtin("draft-a", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed}),
 	}})
-	left, leftOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"draft-a"}})
-	right, rightOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"draft-b"}})
+	left, leftOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"draft-a"}})
+	right, rightOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"draft-b"}})
 	if !leftOK || !rightOK || left >= right {
 		t.Fatalf("draft canonical order = %d/%v before %d/%v", left, leftOK, right, rightOK)
 	}
-	if contract.OperationCount() != 3 {
-		t.Fatalf("draft operation count = %d, want two bound plus opaque", contract.OperationCount())
+	if contract.Operations.OperationCount() != 3 {
+		t.Fatalf("draft operation count = %d, want two bound plus opaque", contract.Operations.OperationCount())
 	}
 }
 
@@ -339,7 +339,7 @@ func TestSealRelationsRejectDuplicateBindingsAndCanonicalizeOrder(t *testing.T) 
 
 func TestSealResolutionRetainsProducedOperationAnchors(t *testing.T) {
 	contract := mustSeal(t, deltaProduced(0))
-	parent, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
+	parent, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"produced"}})
 	if !ok || contract.producedCount(parent, 0) != 1 {
 		t.Fatalf("produced resolution = op:%d/%v count:%d", parent, ok, contract.producedCount(parent, 0))
 	}
@@ -351,18 +351,18 @@ func TestSealResolutionRetainsProducedOperationAnchors(t *testing.T) {
 
 func TestSealAppendPublishesDenseOperationRelations(t *testing.T) {
 	contract := mustSeal(t, Spec{Operations: []vocabulary.OperationSpec{builtin("append-relations", testString, vocabulary.RowSpec{Tail: vocabulary.RowClosed})}})
-	op, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"append-relations"}})
+	op, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"append-relations"}})
 	if !ok {
 		t.Fatal("appended operation binding missing")
 	}
-	input, ok := contract.Input(op)
-	if !ok || input == 0 || contract.ValuesCount(input) != 1 {
-		t.Fatalf("appended input = %d/%v count=%d", input, ok, contract.ValuesCount(input))
+	input, ok := contract.Operations.Input(op)
+	if !ok || input == 0 || contract.Operations.ValuesCount(input) != 1 {
+		t.Fatalf("appended input = %d/%v count=%d", input, ok, contract.Operations.ValuesCount(input))
 	}
-	if got := contract.OutcomeCount(op); got != 1 {
+	if got := contract.Operations.OutcomeCount(op); got != 1 {
 		t.Fatalf("appended outcome count = %d, want 1", got)
 	}
-	if got := contract.BindingCount(op); got != 1 {
+	if got := contract.Operations.BindingCount(op); got != 1 {
 		t.Fatalf("appended binding count = %d, want 1", got)
 	}
 }
@@ -415,20 +415,20 @@ func TestExactKeyPoolIsCanonicalAndContractLocal(t *testing.T) {
 
 func TestEffectRowsCarryTotalRowFormalSubstitutions(t *testing.T) {
 	contract := mustSeal(t, rowBoundarySpec(vocabulary.RowVariable, vocabulary.CallbackReleaseOne))
-	owner, ok := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-owner"}})
-	if !ok || contract.EffectCount(owner) != 1 {
-		t.Fatalf("owner/effects = %d/%v/%d", owner, ok, contract.EffectCount(owner))
+	owner, ok := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-owner"}})
+	if !ok || contract.Operations.EffectCount(owner) != 1 {
+		t.Fatalf("owner/effects = %d/%v/%d", owner, ok, contract.Operations.EffectCount(owner))
 	}
-	target, targetOK := contract.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-target"}})
-	effectTarget, effectTargetOK := contract.EffectTarget(owner, 0)
-	if !targetOK || !effectTargetOK || effectTarget != target || contract.EffectRowArgumentCount(owner, 0) != 1 {
-		t.Fatalf("effect row = target:%d/%v want:%d rows:%d", effectTarget, effectTargetOK, target, contract.EffectRowArgumentCount(owner, 0))
+	target, targetOK := contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-target"}})
+	effectTarget, effectTargetOK := contract.Operations.EffectTarget(owner, 0)
+	if !targetOK || !effectTargetOK || effectTarget != target || contract.Operations.EffectRowArgumentCount(owner, 0) != 1 {
+		t.Fatalf("effect row = target:%d/%v want:%d rows:%d", effectTarget, effectTargetOK, target, contract.Operations.EffectRowArgumentCount(owner, 0))
 	}
-	row, rowOK := contract.Core.EffectRowArgumentAt(owner, 0, 0)
+	row, rowOK := contract.Operations.EffectRowArgumentAt(owner, 0, 0)
 	if !rowOK || row != 0 {
 		t.Fatalf("effect row argument = %d/%v", row, rowOK)
 	}
-	if _, ok := contract.Core.EffectRowArgumentAt(owner, 0, 1); ok {
+	if _, ok := contract.Operations.EffectRowArgumentAt(owner, 0, 1); ok {
 		t.Fatal("out-of-range effect row argument resolved")
 	}
 
@@ -450,9 +450,9 @@ func TestCallbackExpectedRowsAndRetainedReleaseAreDirectAndCanonical(t *testing.
 	if first.ContentID() == second.ContentID() {
 		t.Fatal("callback release mode was omitted from canonical artifact")
 	}
-	owner, ownerOK := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-owner"}})
-	releaseOp, releaseOK := first.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-target"}})
-	callback, callbackOK := first.CallbackAt(owner, 0)
+	owner, ownerOK := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-owner"}})
+	releaseOp, releaseOK := first.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"row-target"}})
+	callback, callbackOK := first.Operations.CallbackAt(owner, 0)
 	if !ownerOK || !releaseOK || !callbackOK {
 		t.Fatal("callback boundary fixture failed to resolve")
 	}

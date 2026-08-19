@@ -108,7 +108,7 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
-	contract := &Contract{Table: bootTable, Core: operationCore,
+	contract := &Contract{Table: bootTable, Operations: operationCore,
 		exactKeys: exactKeys, operations: make([]operationRow, 0, operationCount), protocols: protocols}
 	for index := range drafts {
 		op, ok := operationCore.OperationAt(index)
@@ -141,7 +141,7 @@ func Seal(spec *Spec) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
-	contract.Core = queryCore
+	contract.Operations = queryCore
 	if err := contract.sealSemanticIdentities(); err != nil {
 		return nil, err
 	}

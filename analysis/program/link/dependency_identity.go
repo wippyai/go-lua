@@ -108,7 +108,7 @@ func validTargetOperation(contract *target.Contract, operation vocabulary.Operat
 	if contract == nil || operation == 0 {
 		return false
 	}
-	got, ok := contract.OperationAt(int(operation - 1))
+	got, ok := contract.Operations.OperationAt(int(operation - 1))
 	return ok && got == operation
 }
 
