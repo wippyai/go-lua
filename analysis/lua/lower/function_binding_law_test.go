@@ -677,7 +677,7 @@ func bindingFunctionBody(t *testing.T, p *program.Program, function keyspace.Ter
 	if !ok || body == 0 {
 		t.Fatalf("Function(%v) has no Body", function)
 	}
-	if activation, ok := p.Flow().Activation().For(body); !ok || activation != function {
+	if activation, ok := p.Flow().Body().Activation(body); !ok || activation != function {
 		t.Fatalf("Function Body activation = %v/%v, want %v", activation, ok, function)
 	}
 	return body

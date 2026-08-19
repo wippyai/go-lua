@@ -2,7 +2,7 @@ package lower_test
 
 import "testing"
 
-// Activation is a final Flow projection from a Body to its executable
+// Activation is a Body-owned projection from a Body to its executable
 // activation owner. Guard inventories are deliberately not a second global
 // query plane; Causal Edges retain their own decisions instead.
 func TestActivationProjectionBindsFunctionBody(t *testing.T) {
@@ -20,7 +20,7 @@ end
 	if !ok || body == 0 {
 		t.Fatal("Function has no Body")
 	}
-	if activation, ok := p.Flow().Activation().For(body); !ok || activation != function {
+	if activation, ok := p.Flow().Body().Activation(body); !ok || activation != function {
 		t.Fatalf("Activation(%v) = %v/%v, want Function %v", body, activation, ok, function)
 	}
 	if count, ok := p.Flow().Causal().Edges().ActivationCount(body); !ok || count == 0 {
@@ -60,8 +60,8 @@ func TestActivationProjectionIsAlphaStable(t *testing.T) {
 	}
 	_, leftBody, _, _ := left.Flow().Authored().Functions().Get(leftFunction)
 	_, rightBody, _, _ := right.Flow().Authored().Functions().Get(rightFunction)
-	leftActivation, leftActivationOK := left.Flow().Activation().For(leftBody)
-	rightActivation, rightActivationOK := right.Flow().Activation().For(rightBody)
+	leftActivation, leftActivationOK := left.Flow().Body().Activation(leftBody)
+	rightActivation, rightActivationOK := right.Flow().Body().Activation(rightBody)
 	if !leftActivationOK || !rightActivationOK || leftActivation != rightActivation || leftActivation != leftFunction {
 		t.Fatalf("alpha activation owners = %v/%v and %v/%v", leftActivation, leftActivationOK, rightActivation, rightActivationOK)
 	}
@@ -72,7 +72,7 @@ func TestActivationQueryDoesNotAllocate(t *testing.T) {
 	function, _ := p.Flow().Authored().Functions().At(0)
 	_, body, _, _ := p.Flow().Authored().Functions().Get(function)
 	allocations := testing.AllocsPerRun(1000, func() {
-		_, _ = p.Flow().Activation().For(body)
+		_, _ = p.Flow().Body().Activation(body)
 	})
 	if allocations != 0 {
 		t.Fatalf("Activation.For allocates %f times", allocations)
@@ -100,8 +100,8 @@ return outer()
 	if !outerOK || !innerOK || outerBody == 0 || innerBody == 0 {
 		t.Fatal("nested Functions have malformed Bodies")
 	}
-	outerActivation, outerActivationOK := p.Flow().Activation().For(outerBody)
-	innerActivation, innerActivationOK := p.Flow().Activation().For(innerBody)
+	outerActivation, outerActivationOK := p.Flow().Body().Activation(outerBody)
+	innerActivation, innerActivationOK := p.Flow().Body().Activation(innerBody)
 	if !outerActivationOK || !innerActivationOK || outerActivation != outer || innerActivation != inner || outerActivation == innerActivation {
 		t.Fatalf("nested activation owners = %v/%v and %v/%v", outerActivation, outerActivationOK, innerActivation, innerActivationOK)
 	}
@@ -136,8 +136,8 @@ func TestFlowActivationIsAlphaStable(t *testing.T) {
 	}
 	_, leftBody, _, _ := left.Flow().Authored().Functions().Get(leftFunction)
 	_, rightBody, _, _ := right.Flow().Authored().Functions().Get(rightFunction)
-	leftActivation, leftActivationOK := left.Flow().Activation().For(leftBody)
-	rightActivation, rightActivationOK := right.Flow().Activation().For(rightBody)
+	leftActivation, leftActivationOK := left.Flow().Body().Activation(leftBody)
+	rightActivation, rightActivationOK := right.Flow().Body().Activation(rightBody)
 	if !leftActivationOK || !rightActivationOK || leftActivation != rightActivation || leftActivation != leftFunction {
 		t.Fatalf("alpha Activation = %v/%v and %v/%v", leftActivation, leftActivationOK, rightActivation, rightActivationOK)
 	}
@@ -148,7 +148,7 @@ func TestFlowActivationQueryDoesNotAllocate(t *testing.T) {
 	function, _ := p.Flow().Authored().Functions().At(0)
 	_, body, _, _ := p.Flow().Authored().Functions().Get(function)
 	allocations := testing.AllocsPerRun(1000, func() {
-		_, _ = p.Flow().Activation().For(body)
+		_, _ = p.Flow().Body().Activation(body)
 	})
 	if allocations != 0 {
 		t.Fatalf("Activation.For allocates %f times", allocations)

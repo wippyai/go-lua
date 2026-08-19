@@ -232,19 +232,6 @@ func Assemble(
 		return fail("Call paths", err)
 	}
 
-	// Reduce the only two structural projections retained by Flow before any
-	// remaining owner becomes terminal. A reduction defect therefore aborts
-	// every still-live owner and can never strand a partially publishable
-	// quartet.
-	activation, err := reduceActivation(bodies)
-	if err != nil {
-		return fail("activation reduction", err)
-	}
-	reducedContainment, err := reduceContainment(forest)
-	if err != nil {
-		return fail("containment reduction", err)
-	}
-
 	// Module entry is a private Flow assembly projection.  It is intentionally
 	// kept in module_entry.go; Assemble only invokes it and commits its typed
 	// owner input.  The helper must not return a second entry authority.
@@ -288,8 +275,7 @@ func Assemble(
 		provenance:  provenance.Provenance{Source: sourceID, Flow: flowID, Static: staticID, Module: moduleID},
 		authored:    authoredView,
 		body:        bodies,
-		activation:  activation,
-		containment: reducedContainment,
+		containment: forest,
 		outcomes:    outcomes,
 		ports:       ports,
 		programStructure: programStructureProjection{
@@ -333,61 +319,4 @@ func abortOwners(
 	if !flowTerminal {
 		_ = flowFinalizer.Abort()
 	}
-}
-
-func reduceActivation(bodies *body.Result) (activationProjection, error) {
-	if bodies == nil || bodies.BodyCount() == 0 {
-		return activationProjection{}, errors.New("Body activation proof is unavailable")
-	}
-	terms := make([]keyspace.Term, bodies.BodyCount())
-	for index := range terms {
-		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(index+1))
-		activation, ok := bodies.Activation(body)
-		if !ok {
-			return activationProjection{}, errors.New("Body activation proof is incomplete")
-		}
-		terms[index] = activation
-	}
-	return activationProjection{terms: terms}, nil
-}
-
-func reduceContainment(forest *containment.Result) (containmentProjection, error) {
-	if forest == nil || forest.Count() == 0 {
-		return containmentProjection{}, errors.New("containment proof is unavailable")
-	}
-	terms := make([]keyspace.Term, 0, forest.Count())
-	parents := make([]keyspace.Term, 0, forest.Count())
-	staticMarks := make([]bool, 0, forest.Count())
-	var maximum [keyspace.FamilyCount]uint32
-	for index := 0; index < forest.Count(); index++ {
-		term, ok := forest.At(index)
-		if !ok {
-			return containmentProjection{}, errors.New("containment proof has an unavailable row")
-		}
-		parent, hasParent := forest.Parent(term)
-		if !hasParent {
-			parent = 0
-		}
-		terms = append(terms, term)
-		parents = append(parents, parent)
-		staticMarks = append(staticMarks, forest.Static(term))
-		family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-		if ordinal > maximum[family] {
-			maximum[family] = ordinal
-		}
-	}
-	var index [keyspace.FamilyCount][]uint32
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if maximum[family] != 0 {
-			index[family] = make([]uint32, maximum[family]+1)
-		}
-	}
-	for at, term := range terms {
-		family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-		if family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) >= uint64(len(index[family])) {
-			return containmentProjection{}, errors.New("containment reduction produced an invalid dense ordinal")
-		}
-		index[family][ordinal] = uint32(at + 1)
-	}
-	return containmentProjection{terms: terms, parents: parents, static: staticMarks, index: index}, nil
 }

@@ -11,6 +11,7 @@ import (
 	flowbody "github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/continuation"
 	"github.com/wippyai/go-lua/analysis/program/flow/directfunction"
 	"github.com/wippyai/go-lua/analysis/program/flow/evaluation"
@@ -65,17 +66,16 @@ func (assembly *Assembly) Take() (*source.Component, *Component, *static.Compone
 }
 
 // Component is the sole published Flow semantic authority. Its field count is
-// intentionally small: authored data plus only the projections consumed after
-// assembly. Body/Binding/Containment proofs, source-control geometry,
+// intentionally small: authored data plus only the immutable owner results
+// consumed after assembly. Body/Binding proofs, source-control geometry,
 // recurrence, static scope, and all owner finalizers are seal-local; the
-// immutable Body result is retained because Flow owns its Entry/parent/root
-// queries.
+// immutable Body and Containment results remain because Flow publishes their
+// owner-issued structural queries directly.
 type Component struct {
 	provenance       provenance.Provenance
 	authored         authored.View
 	body             *flowbody.Result
-	activation       activationProjection
-	containment      containmentProjection
+	containment      *containment.Result
 	outcomes         *outcome.Result
 	ports            *evaluation.Ports
 	programStructure programStructureProjection
@@ -93,17 +93,6 @@ type Component struct {
 	callPaths        []identity.ContentID
 }
 
-type activationProjection struct {
-	terms []keyspace.Term
-}
-
-type containmentProjection struct {
-	terms   []keyspace.Term
-	parents []keyspace.Term
-	static  []bool
-	index   [keyspace.FamilyCount][]uint32
-}
-
 // programStructureProjection is Flow's sole retained Program-local structural
 // aggregate. Its boundary and causal relations are sibling owner-issued
 // projections: neither is derived from, or reconstructed through, the other.
@@ -114,8 +103,8 @@ type programStructureProjection struct {
 }
 
 // View is the typed public query surface over one committed Flow component.
-// Each vertical below is a narrow projection over the one Component; no
-// internal Result type or child owner is exposed.
+// Each vertical below either returns an immutable owner result directly or
+// keeps a narrow capability fence where the root must withhold an owner join.
 type View struct{ component *Component }
 
 func (component *Component) View() View {
@@ -182,17 +171,7 @@ func (view View) projectionAvailable() bool {
 	if !flowbody.Matches(component.body, fence.Source, fence.Flow) {
 		return false
 	}
-	bodyCount := component.executable.FamilyCount(keyspace.FamilyBody)
-	if bodyCount <= 0 || len(component.activation.terms) != bodyCount {
-		return false
-	}
-	for _, activation := range component.activation.terms {
-		if activation != 0 && (keyspace.TermFamily(activation) != keyspace.FamilyFunction || keyspace.TermOrdinal(activation) == 0) {
-			return false
-		}
-	}
-	return len(component.containment.terms) == len(component.containment.parents) &&
-		len(component.containment.terms) == len(component.containment.static)
+	return containment.Matches(component.containment, fence.Source, fence.Flow, fence.Static, fence.Module)
 }
 
 func (view View) Authored() Authored {
@@ -215,18 +194,17 @@ func (view View) Body() *flowbody.Result {
 	return view.component.body
 }
 
-func (view View) Activation() Activation {
+// Containment returns Flow's immutable canonical child-to-parent proof. It is
+// the sole published owner of parent, static-membership, and dense-term rows.
+func (view View) Containment() *containment.Result {
 	if !view.available() {
-		return Activation{}
+		return nil
 	}
-	return Activation{projection: &view.component.activation}
-}
-
-func (view View) Containment() Containment {
-	if !view.available() {
-		return Containment{}
+	fence := view.component.provenance
+	if !view.projectionFence() || !containment.Matches(view.component.containment, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
 	}
-	return Containment{projection: &view.component.containment}
+	return view.component.containment
 }
 
 func (view View) Outcomes() Outcomes {

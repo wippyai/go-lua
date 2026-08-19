@@ -6,11 +6,20 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 )
 
-// TestZeroViewProjectionsFailClosed keeps the dissolved query wrappers honest:
-// a View with no component hands out a nil owner, and every published query on
-// that owner must fail closed rather than panic.
+// TestZeroViewProjectionsFailClosed keeps direct child results and capability
+// fences honest: a View with no component hands out nil owners, and every
+// published query on those owners must fail closed rather than panic.
 func TestZeroViewProjectionsFailClosed(t *testing.T) {
 	view := View{}
+	if view.Body().BodyCount() != 0 {
+		t.Fatal("nil Body owner answered a count")
+	}
+	if _, ok := view.Body().Activation(1); ok {
+		t.Fatal("nil Body owner answered an activation lookup")
+	}
+	if view.Containment().Count() != 0 || view.Containment().Static(1) {
+		t.Fatal("nil Containment owner answered a query")
+	}
 	if view.Executable().Contains(1) || view.Executable().Count() != 0 {
 		t.Fatal("nil executable owner answered a membership query")
 	}
