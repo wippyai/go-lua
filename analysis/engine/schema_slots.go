@@ -315,7 +315,7 @@ func (form SchemaWriteForm[T]) Kind() SchemaFormKind { return form.formKind() }
 
 func (form SchemaReadForm[T]) valid(builder *SchemaBuilder) bool {
 	draft, ok := form.draft()
-	return ok && builderOpen(builder) && draft.builder == builder && draft.read &&
+	return ok && builderOpen(builder) && draft.builder == builder &&
 		(draft.formKind == SchemaFormReadExact || summaryReadFormKind(draft.formKind))
 }
 
@@ -333,7 +333,7 @@ func summaryReadRowKind(kind coldcomposition.FactorFormKind) bool {
 
 func (form SchemaWriteForm[T]) valid(builder *SchemaBuilder) bool {
 	draft, ok := form.draft()
-	return ok && builderOpen(builder) && draft.builder == builder && !draft.read && draft.formKind == SchemaFormWriteExact
+	return ok && builderOpen(builder) && draft.builder == builder && draft.formKind == SchemaFormWriteExact
 }
 
 func (form SchemaReadForm[T]) Schema() *Schema { return form.schema() }
@@ -341,12 +341,12 @@ func (form SchemaReadForm[T]) Schema() *Schema { return form.schema() }
 func (form SchemaWriteForm[T]) Schema() *Schema { return form.schema() }
 
 func (slot *FactorSlot[T]) ExactRead() (SchemaReadForm[T], bool) {
-	handle, ok := slot.declareForm(true, SchemaFormReadExact, identity.SemanticKey{})
+	handle, ok := slot.declareForm(SchemaFormReadExact, identity.SemanticKey{})
 	return SchemaReadForm[T]{handle}, ok
 }
 
 func (slot *FactorSlot[T]) SummaryRead(semantic identity.SemanticKey) (SchemaReadForm[T], bool) {
-	handle, ok := slot.declareForm(true, SchemaFormReadSummary, semantic)
+	handle, ok := slot.declareForm(SchemaFormReadSummary, semantic)
 	return SchemaReadForm[T]{handle}, ok
 }
 
@@ -355,21 +355,21 @@ func (slot *FactorSlot[T]) SummaryRead(semantic identity.SemanticKey) (SchemaRea
 // for that fold: readers of this form never observe the joint partition of
 // the declared vector, and no observation call may choose otherwise.
 func (slot *FactorSlot[T]) DistributiveSummaryRead(semantic identity.SemanticKey) (SchemaReadForm[T], bool) {
-	handle, ok := slot.declareForm(true, SchemaFormReadDistributiveSummary, semantic)
+	handle, ok := slot.declareForm(SchemaFormReadDistributiveSummary, semantic)
 	return SchemaReadForm[T]{handle}, ok
 }
 
 func (slot *FactorSlot[T]) ExactWrite() (SchemaWriteForm[T], bool) {
-	handle, ok := slot.declareForm(false, SchemaFormWriteExact, identity.SemanticKey{})
+	handle, ok := slot.declareForm(SchemaFormWriteExact, identity.SemanticKey{})
 	return SchemaWriteForm[T]{handle}, ok
 }
 
-func (slot *FactorSlot[T]) declareForm(read bool, kind SchemaFormKind, semantic identity.SemanticKey) (slotHandle[schemaFormDraft], bool) {
+func (slot *FactorSlot[T]) declareForm(kind SchemaFormKind, semantic identity.SemanticKey) (slotHandle[schemaFormDraft], bool) {
 	draft, ok := slot.factorDraft()
 	if !ok || draft.builder.phase != schemaBuilderFactors {
 		return slotHandle[schemaFormDraft]{}, false
 	}
-	form, ok := draft.builder.addForm(draft, read, kind, semantic)
+	form, ok := draft.builder.addForm(draft, kind, semantic)
 	if !ok {
 		return slotHandle[schemaFormDraft]{}, false
 	}
@@ -419,12 +419,11 @@ const (
 )
 
 type schemaFormDraft struct {
-	builder   *SchemaBuilder
-	factor    *keyDraft[factorRole]
-	semantic  identity.SemanticKey
-	formKind  SchemaFormKind
-	read      bool
-	token     *schemaTokenCell
+	builder  *SchemaBuilder
+	factor   *keyDraft[factorRole]
+	semantic identity.SemanticKey
+	formKind SchemaFormKind
+	token    *schemaTokenCell
 }
 
 func (draft *schemaFormDraft) setToken(cell *schemaTokenCell) { draft.token = cell }
@@ -442,14 +441,13 @@ func factorFormRowKind(kind SchemaFormKind) (coldcomposition.FactorFormKind, boo
 	return 0, false
 }
 
-func (builder *SchemaBuilder) addForm(factor *keyDraft[factorRole], read bool, kind SchemaFormKind, semantic identity.SemanticKey) (*schemaFormDraft, bool) {
+func (builder *SchemaBuilder) addForm(factor *keyDraft[factorRole], kind SchemaFormKind, semantic identity.SemanticKey) (*schemaFormDraft, bool) {
 	if builder == nil || factor == nil || factor.builder != builder || factor.index < 0 || factor.index >= len(builder.candidate.Factors) {
 		builder.poison()
 		return nil, false
 	}
 	if !schemaSlotCardinality(len(builder.forms)) ||
-		(read && kind != SchemaFormReadExact && !summaryReadFormKind(kind)) ||
-		(!read && kind != SchemaFormWriteExact) {
+		(kind != SchemaFormReadExact && !summaryReadFormKind(kind) && kind != SchemaFormWriteExact) {
 		builder.poison()
 		return nil, false
 	}
@@ -467,7 +465,7 @@ func (builder *SchemaBuilder) addForm(factor *keyDraft[factorRole], read bool, k
 		semantic = factorSemantic
 	}
 	for _, prior := range builder.forms {
-		if prior.factor == factor && prior.read == read && prior.formKind == kind && prior.semantic == semantic {
+		if prior.factor == factor && prior.formKind == kind && prior.semantic == semantic {
 			builder.poison()
 			return nil, false
 		}
@@ -475,7 +473,7 @@ func (builder *SchemaBuilder) addForm(factor *keyDraft[factorRole], read bool, k
 	if optional && !builder.claim(semantic) {
 		return nil, false
 	}
-	form := &schemaFormDraft{builder: builder, factor: factor, semantic: semantic, formKind: kind, read: read}
+	form := &schemaFormDraft{builder: builder, factor: factor, semantic: semantic, formKind: kind}
 	builder.forms = append(builder.forms, form)
 	if optional {
 		builder.candidate.Factors[factor.index].Forms = append(builder.candidate.Factors[factor.index].Forms, coldcomposition.FactorForm{Kind: rowKind, Semantic: compositionKeyOf(semantic)})
