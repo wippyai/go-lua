@@ -199,6 +199,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	rows := make([]FunctionBoundaryRow, 0)
+	flowView := compiler.input.Flow()
 	for bodyIndex := 0; bodyIndex < compiler.input.BodyCount(); bodyIndex++ {
 		body, bodyOK := compiler.input.BodyAt(bodyIndex)
 		if !bodyOK || !compiler.input.OwnsBody(body) || bodyIndex >= len(compiler.bodies) {
@@ -228,7 +229,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 				id: formalID, cell: cellID, storage: storageID, declared: declared, position: uint32(position),
 			})
 		}
-		if varargID, cellID, varargOK := compiler.input.FunctionVararg(function); varargOK {
+		if varargID, cellID, varargOK := flowView.FunctionVarargIDs(function); varargOK {
 			if !varargID.Available() || !cellID.Available() {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 			}

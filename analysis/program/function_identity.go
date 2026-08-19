@@ -15,7 +15,6 @@ import (
 // Program owner so every cold compiler consumes one canonical result.
 const (
 	callableCellFormal       = uint64(1)
-	callableCellVararg       = uint64(2)
 	callableCellCaptureInner = uint64(3)
 	callableCellCaptureOuter = uint64(4)
 )
@@ -92,27 +91,6 @@ func (input *Program) StorageCellID(term keyspace.Term) (identity.ContentID, boo
 		return writeProgramTerm(writer, term)
 	})
 	return id, id.Available()
-}
-
-// FunctionVararg returns the exact optional open-input identities. No storage
-// identity is invented because vararg has no fixed storage Cell row.
-func (input *Program) FunctionVararg(boundary flow.FunctionBoundary) (id, cellID identity.ContentID, ok bool) {
-	if !input.Available() {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	_, functionOK := input.FunctionID(boundary)
-	term, termOK := boundary.Vararg()
-	bodyTerm, bodyOK := boundary.Body()
-	body, bodyViewOK := input.Body(bodyTerm)
-	pathID := body.PathID()
-	if !functionOK || !termOK || term == 0 || !bodyOK || !bodyViewOK || !input.OwnsBody(body) || !pathID.Available() {
-		return identity.ContentID{}, identity.ContentID{}, false
-	}
-	cellID = callableCellID(pathID, callableCellVararg, 0)
-	id = programSemanticID("program/transformer/vararg", func(writer *framing.Writer) bool {
-		return writer.Bytes(pathID[:]) == nil && writer.Bytes(cellID[:]) == nil
-	})
-	return id, cellID, id.Available() && cellID.Available()
 }
 
 // FunctionCaptureAt returns one ordered inner/outer capture edge and its
