@@ -1,6 +1,7 @@
 package heap
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
@@ -379,8 +380,9 @@ type schema struct {
 	// keyByID is Heap's one sealed inverse for its owner-issued KeyID. It is
 	// populated only after ContentID and every root row have sealed; values are
 	// dense Key selectors, never a second identity or source representation.
-	keyByID   map[identity.ContentID]uint32
-	artifacts map[identity.ContentID]ArtifactMount
+	keyByID        map[identity.ContentID]uint32
+	freshSlotsByID []uint32
+	artifacts      map[identity.ContentID]ArtifactMount
 	// artifactOrder is the same sealed mount set in the Link's own mount
 	// order. The map answers by module; this answers "which mounts, in which
 	// order", so a consumer never carries a second copy of the mount list.
@@ -1474,7 +1476,51 @@ func (owner *heapBuilder) sealKeyIDInverse() bool {
 			return false
 		}
 	}
+	if !owner.sealFreshSlotDirectory(ownerSchema) {
+		return false
+	}
 	owner.keyByID = inverse
+	return true
+}
+
+// sealFreshSlotDirectory records the physical fresh slots in strict owner
+// KeyID order. It is one owner-issued directory, not another fresh-root
+// representation: the catalog remains the source of each slot's semantics.
+func (owner *heapBuilder) sealFreshSlotDirectory(ownerSchema Schema) bool {
+	if owner == nil || owner.freshSlotsByID != nil {
+		return false
+	}
+	count := owner.freshCount()
+	if count > uint64(^uint32(0)) || count > uint64(^uint(0)>>1) {
+		return false
+	}
+	type candidate struct {
+		id   identity.ContentID
+		slot uint32
+	}
+	candidates := make([]candidate, 0, int(count))
+	for index := uint64(0); index < count; index++ {
+		slot := uint64(owner.programRootCount) + index + 1
+		if slot > uint64(^uint32(0)) {
+			return false
+		}
+		key := Key{owner: owner.schema, slot: uint32(slot)}
+		id, idOK := ownerSchema.KeyID(key)
+		if !idOK || !id.Available() {
+			return false
+		}
+		candidates = append(candidates, candidate{id: id, slot: uint32(slot)})
+	}
+	sort.Slice(candidates, func(left, right int) bool {
+		return bytes.Compare(candidates[left].id[:], candidates[right].id[:]) < 0
+	})
+	owner.freshSlotsByID = make([]uint32, len(candidates))
+	for index, candidate := range candidates {
+		if index > 0 && candidates[index-1].id == candidate.id {
+			return false
+		}
+		owner.freshSlotsByID[index] = candidate.slot
+	}
 	return true
 }
 
@@ -1912,31 +1958,24 @@ func (schema Schema) KeyCount() int {
 // FreshCount returns the exact Target fresh-root denominator owned by this
 // Heap schema. It does not scan Keys or reconstruct a Project/Target product.
 func (schema Schema) FreshCount() int {
-	if !schema.valid() || schema.owner.fresh == nil {
+	if !schema.valid() || schema.owner.fresh == nil || schema.owner.freshSlotsByID == nil {
 		return 0
 	}
-	count := schema.owner.fresh.Count()
-	if count > uint64(^uint(0)>>1) {
-		return 0
-	}
-	return int(count)
+	return len(schema.owner.freshSlotsByID)
 }
 
 // FreshAt returns the owner-issued Key and its stable KeyID for one fresh
-// root in Catalog order. The catalog owns the Target source row; Heap remains
-// the only issuer of the aggregate Key and its content identity.
+// root in strict owner KeyID order. The catalog owns the Target source row;
+// Heap remains the only issuer of the aggregate Key and its content identity.
 func (schema Schema) FreshAt(index int) (identity.ContentID, Key, bool) {
-	if !schema.valid() || schema.owner.fresh == nil || index < 0 || uint64(index) >= schema.owner.fresh.Count() {
+	if !schema.valid() || schema.owner.fresh == nil || schema.owner.freshSlotsByID == nil || index < 0 || index >= len(schema.owner.freshSlotsByID) {
 		return identity.ContentID{}, Key{}, false
 	}
-	if _, freshOK := schema.owner.fresh.At(uint64(index)); !freshOK {
+	slot := schema.owner.freshSlotsByID[index]
+	if _, freshOK := schema.owner.freshRoot(slot); !freshOK {
 		return identity.ContentID{}, Key{}, false
 	}
-	slot := uint64(schema.owner.programRootCount) + uint64(index) + 1
-	if slot > uint64(^uint32(0)) {
-		return identity.ContentID{}, Key{}, false
-	}
-	key := Key{owner: schema.owner, slot: uint32(slot)}
+	key := Key{owner: schema.owner, slot: slot}
 	if !schema.OwnsKey(key) {
 		return identity.ContentID{}, Key{}, false
 	}

@@ -1,9 +1,11 @@
 package heap_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	fresh "github.com/wippyai/go-lua/domain/heap/internal/fresh"
@@ -24,48 +26,109 @@ func TestHeapFreshOwnerEnumerationIsStableAndKeyIDRoundTrips(t *testing.T) {
 	if !targetOK || target == nil {
 		t.Fatal("fixture omitted sealed Target contract")
 	}
-	want := make([]struct {
-		result identity.ContentID
-		kinds  runtimekind.Set
-	}, 0, target.Operations.OperationCount())
+	type freshSemantic struct {
+		application identity.ContentID
+		result      identity.ContentID
+		ordinal     uint32
+	}
+	type freshTemplate struct {
+		operation   vocabulary.Operation
+		outcome     int
+		resultIndex int
+		result      identity.ContentID
+		ordinal     uint32
+		kinds       runtimekind.Set
+	}
+	templates := make([]freshTemplate, 0, target.Operations.OperationCount())
 	for operationIndex := 0; operationIndex < target.Operations.OperationCount(); operationIndex++ {
 		operation, operationOK := target.Operations.OperationAt(operationIndex)
 		if !operationOK {
 			t.Fatalf("OperationAt(%d) failed", operationIndex)
 		}
-		result, _, kind, freshOK := target.Operations.FreshResultAt(operation, 0, 0)
-		outcomeResult, outcomeResultOK := target.OutcomeResultID(operation, 0, int(result))
-		mapped, mappedOK := fresh.KindsFor(kind)
-		if !freshOK || !outcomeResultOK || !mappedOK {
-			t.Fatalf("fresh operation %d did not expose an exact Target result", operationIndex)
+		for outcome := 0; outcome < target.Operations.OutcomeCount(operation); outcome++ {
+			for freshIndex := 0; freshIndex < target.Operations.FreshResultCount(operation, outcome); freshIndex++ {
+				result, ordinal, kind, freshOK := target.Operations.FreshResultAt(operation, outcome, freshIndex)
+				outcomeResult, outcomeResultOK := target.OutcomeResultID(operation, outcome, int(result))
+				mapped, mappedOK := fresh.KindsFor(kind)
+				if !freshOK || !outcomeResultOK || !outcomeResult.Available() {
+					t.Fatalf("fresh operation %d result %d did not expose an exact Target result", operationIndex, freshIndex)
+				}
+				if !mappedOK {
+					continue
+				}
+				templates = append(templates, freshTemplate{
+					operation: operation, outcome: outcome, resultIndex: int(result),
+					result: outcomeResult, ordinal: ordinal, kinds: mapped,
+				})
+			}
 		}
-		want = append(want, struct {
-			result identity.ContentID
-			kinds  runtimekind.Set
-		}{outcomeResult, mapped})
+	}
+	want := make(map[freshSemantic]runtimekind.Set)
+	applications := linked.Project().Applications().Calls()
+	callResults := linked.Boundary().Calls()
+	for applicationIndex := 0; applicationIndex < applications.Count(); applicationIndex++ {
+		application, applicationOK := applications.At(applicationIndex)
+		applicationID, moduleID, callID, mountedOK := applications.MountedIdentity(application)
+		if !applicationOK || !mountedOK || !applicationID.Available() || !moduleID.Available() || !callID.Available() {
+			t.Fatalf("call application %d failed exact Project mounting", applicationIndex)
+		}
+		for _, template := range templates {
+			callResult, callResultOK := callResults.CallResult(moduleID, callID, template.result)
+			if !callResultOK {
+				continue
+			}
+			rowApplication, rowApplicationOK := callResult.ApplicationID()
+			rowModule, rowModuleOK := callResult.ModuleID()
+			rowCall, rowCallOK := callResult.CallID()
+			rowResult, rowResultOK := callResult.OutcomeResultID()
+			rowOperation, rowOutcome, rowResultIndex, coordinatesOK := callResult.OutcomeResult()
+			if !rowApplicationOK || !rowModuleOK || !rowCallOK || !rowResultOK || !coordinatesOK ||
+				rowApplication != applicationID || rowModule != moduleID || rowCall != callID || rowResult != template.result ||
+				rowOperation != template.operation || rowOutcome != template.outcome || rowResultIndex != template.resultIndex {
+				t.Fatalf("application %d admitted a mismatched fresh CallResult", applicationIndex)
+			}
+			semantic := freshSemantic{application: applicationID, result: template.result, ordinal: template.ordinal}
+			if _, duplicate := want[semantic]; duplicate {
+				t.Fatalf("application %d duplicated fresh semantic tuple", applicationIndex)
+			}
+			want[semantic] = template.kinds
+		}
+	}
+	if len(want) != schema.FreshCount() {
+		t.Fatalf("semantic fresh set=%d, FreshCount=%d", len(want), schema.FreshCount())
 	}
 
-	for index, expected := range want {
+	var previousID identity.ContentID
+	for index := 0; index < schema.FreshCount(); index++ {
 		id, key, keyOK := schema.FreshAt(index)
 		if !keyOK || !key.Valid() || id == (identity.ContentID{}) {
 			t.Fatalf("FreshAt(%d)=%v/%v/%v", index, id, key, keyOK)
 		}
+		if index > 0 && bytes.Compare(previousID[:], id[:]) >= 0 {
+			t.Fatalf("FreshAt IDs are not strict ascending at %d: %x then %x", index, previousID, id)
+		}
+		previousID = id
 		if got, idOK := key.ContentID(); !idOK || got != id {
 			t.Fatalf("FreshAt(%d) KeyID=%v/%v, owner id=%v", index, got, idOK, id)
 		}
 		application, outcomeResult, ordinal, freshOK := key.FreshResultID()
-		if !freshOK || !application.Available() || outcomeResult != expected.result || ordinal != 0 {
-			t.Fatalf("FreshAt(%d) FreshResultID=%v/%v/%d/%v, want exact %v/0", index, application, outcomeResult, ordinal, freshOK, expected.result)
+		expectedKinds, expectedOK := want[freshSemantic{application: application, result: outcomeResult, ordinal: ordinal}]
+		if !freshOK || !application.Available() || !expectedOK {
+			t.Fatalf("FreshAt(%d) FreshResultID=%v/%v/%d/%v lacks a Target semantic match", index, application, outcomeResult, ordinal, freshOK)
 		}
+		delete(want, freshSemantic{application: application, result: outcomeResult, ordinal: ordinal})
 		reference, referenceOK := schema.Reference(key, materialization.Recent)
 		selector, selectorOK := schema.ReferenceSelector(reference)
-		if !referenceOK || !selectorOK || selector.RuntimeKinds() != expected.kinds {
-			t.Fatalf("FreshAt(%d) kinds=%b/%v, want %b", index, selector.RuntimeKinds(), selectorOK, expected.kinds)
+		if !referenceOK || !selectorOK || selector.RuntimeKinds() != expectedKinds {
+			t.Fatalf("FreshAt(%d) kinds=%b/%v, want %b", index, selector.RuntimeKinds(), selectorOK, expectedKinds)
 		}
 		inverse, inverseOK := schema.KeyForID(id)
 		if !inverseOK || inverse != key {
 			t.Fatalf("FreshAt(%d) KeyForID(%v)=%v/%v, want owner key", index, id, inverse, inverseOK)
 		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("FreshAt omitted %d Target semantic rows", len(want))
 	}
 	if _, _, ok := schema.FreshAt(-1); ok {
 		t.Fatal("FreshAt accepted a negative index")
