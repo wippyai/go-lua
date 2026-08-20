@@ -189,71 +189,10 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-// TargetMatches proves a staged target belongs to this exact Pack owner.
-func (owner *HotOwner) TargetMatches(target engine.RuleTarget, root pack.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.TargetMatchesRef(target, ref)
-}
-
-// ReadMatches authenticates an exact Pack read through the sealed owner.
-func ReadMatches[V, O, S any](owner *HotOwner, derivation engine.RuleDerivation[V, O], read engine.Read[S], root pack.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.DerivationReadMatchesRef(derivation, read, ref)
-}
-
-// SelectionMatches authenticates a typed Pack payload selection while
-// preserving its exact semantic route-tag type.
-func SelectionMatches[V, O, S any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](owner *HotOwner, derivation engine.RuleDerivation[V, O], disposition engine.RuleDisposition[V], read engine.Read[engine.Selection[Tag, S]], ordinal int, root pack.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-}
-
 // OwnsSchema authenticates a typed child binder's cold Pack schema without
 // exposing the retained schema or any broad authority accessor.
 func (owner *HotOwner) OwnsSchema(schema *pack.Schema) bool {
 	return owner != nil && owner.schema == schema && validPackSchema(schema)
-}
-
-// NewClosedRefs starts one sealed vector for this exact Pack Factor. The
-// vector's raw coordinates remain private to engine and can only be populated
-// through AppendRoot below.
-func (owner *HotOwner) NewClosedRefs() *engine.ClosedRefs[coordinate] {
-	implementation, ok := owner.implementation()
-	if !ok {
-		return nil
-	}
-	return implementation.NewClosedRefs()
-}
-
-// AppendRoot adds one Pack root to an owner-issued closed-reference vector.
-func (owner *HotOwner) AppendRoot(refs *engine.ClosedRefs[coordinate], root pack.Root) bool {
-	implementation, ok := owner.implementation()
-	if !ok || !implementation.OwnsClosedRefs(refs) {
-		return false
-	}
-	ref, ok := owner.Ref(root)
-	return ok && refs.Append(ref)
-}
-
-// CloseRefs seals and canonicalizes one owner-issued vector.
-func (owner *HotOwner) CloseRefs(refs *engine.ClosedRefs[coordinate]) bool {
-	implementation, ok := owner.implementation()
-	return ok && implementation.OwnsClosedRefs(refs) && refs.Close()
-}
-
-// DerivationReadMatchesRef proves that a Pack rule read consumed this exact
-// owner-issued root capability. The proof remains inside the engine's sealed
-// runtime product and exposes no equation surface or carrier coordinate.
-func DerivationReadMatchesRef[V, O, S any](derivation engine.RuleDerivation[V, O], read engine.Read[S], ref engine.Ref[coordinate]) bool {
-	return engine.DerivationReadMatchesRef(derivation, read, ref)
-}
-
-// DerivationReadMatchesClosedRefs proves that a Pack summary read consumed
-// exactly the owner-issued closed root vector.
-func DerivationReadMatchesClosedRefs[V, O, S any](derivation engine.RuleDerivation[V, O], read engine.Read[S], refs *engine.ClosedRefs[coordinate]) bool {
-	return engine.DerivationReadMatchesSummaryRefs(derivation, read, refs)
 }
 
 func (owner *HotOwner) admits(index coordinate, fact pack.Value) bool {

@@ -274,27 +274,6 @@ func SelectRouteTyped[Tag interface {
 	return ok && engine.SelectRoute(context, ref, tag)
 }
 
-// TargetMatches authenticates an exact staged Effect output.
-func (owner *HotOwner) TargetMatches(target engine.RuleTarget, root factor.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.TargetMatchesRef(target, ref)
-}
-
-// ReadMatches authenticates one exact Effect read.
-func ReadMatches[V, O, S any](owner *HotOwner, derivation engine.RuleDerivation[V, O], read engine.Read[S], root factor.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.DerivationReadMatchesRef(derivation, read, ref)
-}
-
-// SelectionMatches authenticates one selected Effect route and preserves its
-// typed route tag.
-func SelectionMatches[V, O, S any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](owner *HotOwner, derivation engine.RuleDerivation[V, O], disposition engine.RuleDisposition[V], read engine.Read[engine.Selection[Tag, S]], ordinal int, root factor.Root) bool {
-	ref, ok := owner.Ref(root)
-	return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-}
-
 func (owner *HotOwner) admits(index coordinate, value factor.Value) bool {
 	root, ok := owner.rootAt(index)
 	return ok && owner.algebra.Admit(root, value)

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/call"
 )
 
@@ -152,6 +153,13 @@ func (owner *HotOwner) Algebra() *call.Algebra {
 		return nil
 	}
 	return owner.algebra
+}
+
+// OwnsTargetContract authenticates the exact Target contract retained by
+// Call's Algebra. This keeps downstream consumers on the typed Call owner
+// surface instead of comparing reconstructed content identities.
+func (owner *HotOwner) OwnsTargetContract(target *contract.Contract) bool {
+	return owner != nil && owner.algebra != nil && owner.algebra.OwnsTargetContract(target)
 }
 
 // MatchesBinding proves exact hot transaction ownership without exposing the
@@ -325,13 +333,6 @@ func SelectRouteTyped[Tag interface {
 }](owner *HotOwner, context engine.SelectorContext, key call.Key, tag Tag) bool {
 	ref, ok := owner.Ref(key)
 	return ok && engine.SelectRoute(context, ref, tag)
-}
-
-// ReadMatches authenticates one exact Call predecessor against this owner's
-// sealed key capability without exporting Call's private coordinate.
-func ReadMatches[V, O, S any](owner *HotOwner, derivation engine.RuleDerivation[V, O], read engine.Read[S], key call.Key) bool {
-	ref, ok := owner.Ref(key)
-	return ok && engine.DerivationReadMatchesRef(derivation, read, ref)
 }
 
 func (owner *HotOwner) admits(index coordinate, value call.Value) bool {

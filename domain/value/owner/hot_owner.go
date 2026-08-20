@@ -1,8 +1,6 @@
 package owner
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/value"
 )
@@ -49,50 +47,6 @@ func (issuer *RuleImplementation[O]) LinkCapability() (engine.RuleSlotCapability
 		return engine.RuleSlotCapability{}, false
 	}
 	return engine.LinkCapabilityForSlot(issuer.owner.binding, issuer.slot)
-}
-
-// SummaryReceipt is the one constructor-issued Value summary witness retained
-// by a hot operand. Its Ref vector remains private to Value owner; consumers
-// can only validate the receipt against their exact HotOwner and derivation.
-type SummaryReceipt struct {
-	owner  *HotOwner
-	refs   *engine.ClosedRefs[coordinate]
-	width  uint32
-	digest [32]byte
-}
-
-// ValidForSchema is the narrow source-admission fence used when a Closed
-// operand retains this receipt. It exposes neither refs nor coordinates.
-func (receipt SummaryReceipt) ValidForSchema(schema *value.Schema) bool {
-	return receipt.owner != nil && receipt.owner.schema == schema && receipt.refs != nil && receipt.width != 0
-}
-
-// IssuedBy is the exact HotOwner authority fence used to replay an already
-// admitted operand without issuing a second summary vector.
-func (receipt SummaryReceipt) IssuedBy(owner *HotOwner) bool {
-	return owner != nil && receipt.owner == owner && receipt.ValidForSchema(owner.schema)
-}
-
-// Width is the immutable number of coordinates captured by this receipt.
-func (receipt SummaryReceipt) Width() int { return int(receipt.width) }
-
-// MatchesCoordinates is a cold/admission fence for the exact Closed vector.
-// It rejects equal-width coordinate splices before the receipt enters a hot
-// operand; the hot checker never calls this vector comparison.
-func (receipt SummaryReceipt) MatchesCoordinates(schema *value.Schema, locations []value.Coordinate) bool {
-	if !receipt.ValidForSchema(schema) || len(locations) != int(receipt.width) {
-		return false
-	}
-	keys := make([]uint64, len(locations))
-	for index, location := range locations {
-		raw, ok := schema.CoordinateIndex(location)
-		if !ok {
-			return false
-		}
-		keys[index] = uint64(raw)
-	}
-	sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
-	return engine.SummaryVectorDigest(keys) == receipt.digest
 }
 
 // BindSelectedRuleDirect installs Value's exact-write selected Rule cell at
@@ -341,107 +295,6 @@ func SelectRouteTyped[Tag interface {
 }](owner *HotOwner, context engine.SelectorContext, location value.Coordinate, tag Tag) bool {
 	ref, ok := owner.Ref(location)
 	return ok && engine.SelectRoute(context, ref, tag)
-}
-
-// TargetMatches proves a staged target belongs to this exact Value owner.
-func (owner *HotOwner) TargetMatches(target engine.RuleTarget, location value.Coordinate) bool {
-	ref, ok := owner.Ref(location)
-	return ok && engine.TargetMatchesRef(target, ref)
-}
-
-// ReadMatches authenticates one exact read against this owner's sealed
-// coordinate authority without exporting the private Ref type.
-func ReadMatches[V, O, S any](owner *HotOwner, derivation engine.RuleDerivation[V, O], read engine.Read[S], location value.Coordinate) bool {
-	ref, ok := owner.Ref(location)
-	return ok && engine.DerivationReadMatchesRef(derivation, read, ref)
-}
-
-// SelectionMatches authenticates one exact selected route and preserves the
-// caller's semantic tag type end-to-end.
-func SelectionMatches[V, O, S any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](owner *HotOwner, derivation engine.RuleDerivation[V, O], disposition engine.RuleDisposition[V], read engine.Read[engine.Selection[Tag, S]], ordinal int, location value.Coordinate) bool {
-	ref, ok := owner.Ref(location)
-	return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-}
-
-// NewSummaryRefs starts one Factor-issued summary vector. It is sealed by
-// CloseSummaryRefs and can only be appended through this exact HotOwner.
-func (owner *HotOwner) NewSummaryRefs() *engine.ClosedRefs[coordinate] {
-	implementation, ok := owner.implementationAt()
-	if !ok {
-		return nil
-	}
-	return implementation.NewClosedRefs()
-}
-
-func (owner *HotOwner) AppendSummaryCoordinate(refs *engine.ClosedRefs[coordinate], location value.Coordinate) bool {
-	ref, ok := owner.Ref(location)
-	return ok && refs != nil && refs.Append(ref)
-}
-
-func (owner *HotOwner) CloseSummaryRefs(refs *engine.ClosedRefs[coordinate]) bool {
-	return owner != nil && refs != nil && refs.Close()
-}
-
-// IssueSummaryReceipt seals one exact coordinate vector once during operand
-// admission. The hot checker later consumes only this opaque witness.
-func (owner *HotOwner) IssueSummaryReceipt(locations []value.Coordinate) (SummaryReceipt, bool) {
-	if owner == nil || owner.schema == nil || len(locations) == 0 || uint64(len(locations)) > uint64(^uint32(0)) {
-		return SummaryReceipt{}, false
-	}
-	refs := owner.NewSummaryRefs()
-	if refs == nil {
-		return SummaryReceipt{}, false
-	}
-	for _, location := range locations {
-		if !owner.AppendSummaryCoordinate(refs, location) {
-			return SummaryReceipt{}, false
-		}
-	}
-	if !owner.CloseSummaryRefs(refs) {
-		return SummaryReceipt{}, false
-	}
-	keys := make([]uint64, len(locations))
-	for index, location := range locations {
-		raw, ok := owner.schema.CoordinateIndex(location)
-		if !ok {
-			return SummaryReceipt{}, false
-		}
-		keys[index] = uint64(raw)
-	}
-	sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
-	return SummaryReceipt{owner: owner, refs: refs, width: uint32(len(locations)), digest: engine.SummaryVectorDigest(keys)}, true
-}
-
-// MatchSummaryReceipt authenticates a previously issued receipt against the
-// sealed engine summary proof. This method never rebuilds coordinates or
-// allocates ClosedRefs; the engine owns any canonical-vector comparison.
-func MatchSummaryReceipt[V, O, S any](owner *HotOwner, receipt SummaryReceipt, derivation engine.RuleDerivation[V, O], read engine.Read[S]) bool {
-	return owner != nil && receipt.owner == owner && receipt.ValidForSchema(owner.schema) && engine.DerivationReadMatchesSummaryRefs(derivation, read, receipt.refs)
-}
-
-func summaryRefs(owner *HotOwner, receipt SummaryReceipt) (*engine.ClosedRefs[coordinate], bool) {
-	if owner == nil || !receipt.IssuedBy(owner) {
-		return nil, false
-	}
-	return receipt.refs, true
-}
-
-// SummarySurfaceAdmit is the owner-supplied summary projector the sealed
-// cell invokes while placing one summary read. The returned function
-// extracts the sealed refs; the engine places the surface.
-func SummarySurfaceAdmit[O any](owner *HotOwner, extract func(O) SummaryReceipt) any {
-	if owner == nil || extract == nil {
-		return nil
-	}
-	return func(operand any) (any, bool) {
-		typed, ok := operand.(O)
-		if !ok {
-			return nil, false
-		}
-		return summaryRefs(owner, extract(typed))
-	}
 }
 
 func (owner *HotOwner) admits(index coordinate, fact value.Value) bool {

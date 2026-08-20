@@ -128,6 +128,9 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, schema hea
 	if !specOK || !engine.BindFactor[coordinate](binding, fragment.slot, spec) {
 		return nil, false
 	}
+	if !engine.BindIdentitySummaryReadForFactor[coordinate, heap.Value](binding, fragment.slot, fragment.summaryRead) {
+		return nil, false
+	}
 	return owner, true
 }
 
@@ -185,6 +188,16 @@ func (owner *HotOwner) FactorRef() engine.FactorRef[heap.Value] {
 	return owner.fragment.Ref()
 }
 
+// SummaryRead returns Heap's owner-issued complete-vector summary form. The
+// form is exposed only through this owner so consumers can pair it with the
+// exact hot binding that authenticated its Factor implementation.
+func (owner *HotOwner) SummaryRead() engine.SchemaReadForm[heap.Value] {
+	if owner == nil || owner.fragment == nil {
+		return engine.SchemaReadForm[heap.Value]{}
+	}
+	return owner.fragment.SummaryRead()
+}
+
 // BindExactWriteRule binds a typed Heap-output rule through this exact owner's
 // private Factor slot. Child packages supply only their cold Rule/write proofs
 // and behavior; they cannot choose another output Factor or coordinate type.
@@ -217,7 +230,7 @@ func BindExactReadAndCarryRule[O any](owner *HotOwner, slot *engine.RuleSlot[hea
 // read lane needed by closed allocation directly at its declared ordinals.
 // FactorRefs keep both owner coordinate types private while the engine owns
 // the shared binding cell; no construction transaction is retained.
-func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], exactSlot engine.SchemaReadSlot[EV], exactFactor engine.FactorRef[EV], summarySlot engine.SchemaReadSlot[SV], summaryFactor engine.FactorRef[SV], summaryForm engine.SchemaReadForm[SV], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool), admitSummary any) (*RuleImplementation[O], engine.Read[engine.OrderedCells[EV]], engine.Read[S], bool) {
+func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *engine.RuleSlot[heap.Value, O], exactSlot engine.SchemaReadSlot[EV], exactFactor engine.FactorRef[EV], summarySlot engine.SchemaReadSlot[SV], summaryFactor engine.FactorRef[SV], summaryForm engine.SchemaReadForm[SV], carry engine.SchemaCarrySlot[heap.Value], write engine.SchemaWriteSlot[heap.Value], spec engine.HotRuleSpec[heap.Value, O], carrySpec engine.HotCarrySpec[heap.Value, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (*RuleImplementation[O], engine.Read[engine.OrderedCells[EV]], engine.Read[S], bool) {
 	if owner == nil || owner.binding == nil || owner.fragment == nil || slot == nil {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
@@ -228,7 +241,7 @@ func BindExactAndSummaryReadAndCarry[O, EV, SV, S any](owner *HotOwner, slot *en
 	if !exactOK {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
-	summaryRead, summaryOK := engine.BindSelectedRuleDirectSummaryRead[coordinate, heap.Value, O, SV, S](owner.binding, slot, summarySlot, summaryFactor, summaryForm, admitSummary)
+	summaryRead, summaryOK := engine.BindSelectedRuleDirectSummaryRead[coordinate, heap.Value, O, SV, S](owner.binding, slot, summarySlot, summaryFactor, summaryForm)
 	if !summaryOK {
 		return nil, engine.Read[engine.OrderedCells[EV]]{}, engine.Read[S]{}, false
 	}
@@ -301,62 +314,6 @@ func SelectRouteTyped[Tag interface {
 }](owner *HotOwner, context engine.SelectorContext, key heap.Key, tag Tag) bool {
 	ref, ok := owner.Ref(key)
 	return ok && engine.SelectRoute(context, ref, tag)
-}
-
-// TargetMatches proves a staged target belongs to this exact Heap owner.
-func (owner *HotOwner) TargetMatches(target engine.RuleTarget, key heap.Key) bool {
-	ref, ok := owner.Ref(key)
-	return ok && engine.TargetMatchesRef(target, ref)
-}
-
-// ReadMatches authenticates an exact Heap read through the sealed owner.
-func ReadMatches[V, O, S any](owner *HotOwner, derivation engine.RuleDerivation[V, O], read engine.Read[S], key heap.Key) bool {
-	ref, ok := owner.Ref(key)
-	return ok && engine.DerivationReadMatchesRef(derivation, read, ref)
-}
-
-// SelectionMatches authenticates a typed Heap route selection without
-// exposing the private carrier coordinate.
-func SelectionMatches[V, O, S any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](owner *HotOwner, derivation engine.RuleDerivation[V, O], disposition engine.RuleDisposition[V], read engine.Read[engine.Selection[Tag, S]], ordinal int, key heap.Key) bool {
-	ref, ok := owner.Ref(key)
-	return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-}
-
-// NewRefs begins one exact Heap reference vector owned by this bound Factor.
-// It cannot be used before the binding seals or with a different hot owner.
-func (owner *HotOwner) NewRefs() *engine.ClosedRefs[coordinate] {
-	if owner == nil || owner.binding == nil || owner.fragment == nil {
-		return nil
-	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, heap.Value](owner.binding, owner.fragment.slot)
-	if !ok {
-		return nil
-	}
-	return implementation.NewClosedRefs()
-}
-
-// AppendKey adds one schema-owned Heap key to an owner-issued reference
-// vector. The vector remains opaque to callers and is sealed by CloseRefs.
-func (owner *HotOwner) AppendKey(refs *engine.ClosedRefs[coordinate], key heap.Key) bool {
-	if !owner.ownsRefs(refs) {
-		return false
-	}
-	ref, ok := owner.Ref(key)
-	return ok && refs.Append(ref)
-}
-
-func (owner *HotOwner) CloseRefs(refs *engine.ClosedRefs[coordinate]) bool {
-	return owner.ownsRefs(refs) && refs.Close()
-}
-
-func (owner *HotOwner) ownsRefs(refs *engine.ClosedRefs[coordinate]) bool {
-	if owner == nil || refs == nil || owner.binding == nil || owner.fragment == nil {
-		return false
-	}
-	implementation, ok := engine.FactorImplementationAt[coordinate, heap.Value](owner.binding, owner.fragment.slot)
-	return ok && implementation.OwnsClosedRefs(refs)
 }
 
 func (owner *HotOwner) admits(index coordinate, value heap.Value) bool {
