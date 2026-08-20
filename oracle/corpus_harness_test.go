@@ -359,6 +359,38 @@ func corpusHarnessFixtureRun(t *testing.T, name string, mode corpusHarnessMode) 
 // returned classified instead of raised, so a single-fixture law can fail in
 // place and a walk can group the same verdict.
 func corpusHarnessExecute(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
+	return corpusHarnessExecuteWithPlanCleanup(t, project, mode, true)
+}
+
+// corpusHarnessExecuteDetached runs a fixture for a bulk consumer that keeps
+// only the detached outcome. Unlike corpusHarnessExecute, it owns the plan
+// synchronously: the plan is closed before the outcome is returned, rather
+// than being registered on the caller's t.Cleanup queue. This matters for
+// corpus walks that pass their parent *testing.T to every worker; deferring
+// those plans to the parent would retain one compiled topology per fixture
+// until the entire census ended.
+func corpusHarnessExecuteDetached(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
+	run, class, err := corpusHarnessExecuteWithPlanCleanup(t, project, mode, false)
+	if run == nil || run.plan == nil {
+		return run, class, err
+	}
+	plan := run.plan
+	run.plan = nil
+	if plan.Close() {
+		return run, class, err
+	}
+	closeErr := fmt.Errorf("close compiled fixture plan")
+	if err == nil {
+		return run, "plan-close", closeErr
+	}
+	return run, class, fmt.Errorf("%v; %w", err, closeErr)
+}
+
+// corpusHarnessExecuteWithPlanCleanup is the shared fixture spine. A
+// reusable fixture caller schedules cleanup on its own test; a bulk caller
+// selects synchronous ownership through cleanupPlan=false and must consume
+// only detached fields from the returned run.
+func corpusHarnessExecuteWithPlanCleanup(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode, cleanupPlan bool) (*corpusHarnessRun, string, error) {
 	t.Helper()
 	run := &corpusHarnessRun{project: project}
 	if project.name == "" || project.expectation == nil {
@@ -377,12 +409,12 @@ func corpusHarnessExecute(t testing.TB, project corpusHarnessProject, mode corpu
 		return run, "link", fmt.Errorf("link: %w", err)
 	}
 	run.linked = linked
-	return corpusHarnessExecuteLink(t, run, mode)
+	return corpusHarnessExecuteLink(t, run, mode, cleanupPlan)
 }
 
 // corpusHarnessExecuteLink runs an already sealed Link through the spine. Its
 // caller owns how that Link was constructed; everything after it is shared.
-func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
+func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHarnessMode, cleanupPlan bool) (*corpusHarnessRun, string, error) {
 	t.Helper()
 	if run == nil || run.linked == nil {
 		return run, "link", fmt.Errorf("unavailable sealed Link")
@@ -409,12 +441,16 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		run.plan = plan
 		// A fixture is a sequential acceptance unit. Close the assembled Link
 		// topology on every post-compile path, including policy, solve, report,
-		// and matcher failures; immutable Program artifacts remain cache-owned.
-		t.Cleanup(func() {
-			if !plan.Close() {
-				t.Error("close compiled fixture plan")
-			}
-		})
+		// and matcher failures; the owning ephemeral Workspace releases its
+		// products with the Plan. An explicitly shared Workspace, when used by a
+		// caller outside this spine, retains products until Workspace.Close.
+		if cleanupPlan {
+			t.Cleanup(func() {
+				if !plan.Close() {
+					t.Error("close compiled fixture plan")
+				}
+			})
+		}
 		if mode.execution == corpusHarnessCompileOnly {
 			return run, "", nil
 		}
@@ -620,7 +656,7 @@ func corpusHarnessWalk(t *testing.T, projects []corpusHarnessProject, mode corpu
 				project := projects[index]
 				t.Run(project.name, func(t *testing.T) {
 					allocated := corpusHarnessAllocated(serial)
-					run, class, err := corpusHarnessExecute(t, project, mode)
+					run, class, err := corpusHarnessExecuteDetached(t, project, mode)
 					run.cost.allocated, run.cost.allocationExact = corpusHarnessAllocated(serial)-allocated, serial
 					outcomes[index] = corpusHarnessOutcome{project: project.name, status: run.status, class: class, err: err, cost: run.cost}
 					if err != nil {

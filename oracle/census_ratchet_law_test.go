@@ -162,7 +162,7 @@ func censusRatchetCensus(t *testing.T, projects []corpusHarnessProject) ([4]int,
 				if index >= len(projects) {
 					return
 				}
-				run, class, err := corpusHarnessExecute(t, projects[index], mode)
+				run, class, err := corpusHarnessExecuteDetached(t, projects[index], mode)
 				outcomes[index] = corpusHarnessOutcome{project: projects[index].name, status: run.status, class: class, err: err, cost: run.cost}
 			}
 		}()
