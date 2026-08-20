@@ -185,6 +185,68 @@ func TestSelectedFactorOverlayInstallPublishesOneFrontier(t *testing.T) {
 	}
 }
 
+// TestSelectedFactorOverlayInstallNestedMatchesIndependentDerivation extends
+// the install law over epoch.nested: the counters installSelectedFactorOverlay
+// publishes are not merely present, they are the exact parent-readiness
+// counters a fresh derivation produces over the same deduplicated wake points
+// against the installed overlay topology. The law checks agreement with the
+// production derivation (preparedSelectedOverlayNested) and, independently,
+// a hand-walk of the wake points' ancestor chains coded directly against
+// pointRegion/regions/activeRegions, so the assertion is not tautological
+// with the code under test.
+func TestSelectedFactorOverlayInstallNestedMatchesIndependentDerivation(t *testing.T) {
+	fixture := newSelectedOverlayInstallFixture(t)
+	epoch, overlay := fixture.epoch, fixture.overlay
+
+	if !epoch.installSelectedFactorOverlay(overlay) {
+		t.Fatal("a prepared selected overlay did not install")
+	}
+	wakePoints := append([]int(nil), epoch.postfixPending...)
+	if len(wakePoints) == 0 {
+		t.Fatal("installed epoch has no wake points to derive nesting over")
+	}
+
+	recomputed, ok := preparedSelectedOverlayNested(wakePoints, overlay.pointRegion, overlay.regions, overlay.activeRegions)
+	if !ok {
+		t.Fatal("independent nested derivation over the installed overlay topology did not compute")
+	}
+	if len(recomputed) != len(epoch.nested) {
+		t.Fatalf("recomputed nested width=%d installed=%d", len(recomputed), len(epoch.nested))
+	}
+	for index := range recomputed {
+		if recomputed[index] != epoch.nested[index] {
+			t.Fatalf("recomputed nested[%d]=%d installed=%d", index, recomputed[index], epoch.nested[index])
+		}
+	}
+
+	// Independent hand-walk: climb each wake point's ancestor chain directly
+	// from pointRegion/regions rather than calling preparedSelectedOverlayNested,
+	// and compare the resulting counters against the installed epoch.nested.
+	handNested := make([]int, len(overlay.regions))
+	for _, point := range wakePoints {
+		if point < 0 || point >= len(overlay.pointRegion) {
+			t.Fatalf("wake point %d is out of the installed pointRegion range", point)
+		}
+		region := overlay.pointRegion[point]
+		for region != schedule.NoRegion {
+			parent := overlay.regions[region].parent
+			if parent == schedule.NoRegion {
+				break
+			}
+			handNested[parent]++
+			region = parent
+		}
+	}
+	if len(handNested) != len(epoch.nested) {
+		t.Fatalf("hand-walked nested width=%d installed=%d", len(handNested), len(epoch.nested))
+	}
+	for index := range handNested {
+		if handNested[index] != epoch.nested[index] {
+			t.Fatalf("hand-walked nested[%d]=%d installed=%d", index, handNested[index], epoch.nested[index])
+		}
+	}
+}
+
 func containsEdgeIndex(row []int, edge int) bool {
 	for _, index := range row {
 		if index == edge {
