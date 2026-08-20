@@ -1,4 +1,4 @@
-package artifact
+package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -106,9 +106,6 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, index, CompileReasonRouteGuard)
 		}
 		if _, duplicate := seen[points[index]]; duplicate {
-			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, index, CompileReasonRouteGuard)
-		}
-		if point, known := compiler.pointGeometry[points[index]]; !known || !point.Available() {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, index, CompileReasonRouteGuard)
 		}
 		seen[points[index]] = struct{}{}
@@ -264,13 +261,13 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() CompileFailur
 		literal, literalOK := compiler.input.Source().Keys().Exact(key)
 		location, locationOK := compiler.input.Source().Identity().Span(term)
 		if !termOK || !relationOK || !implicit || owner == 0 || ordinal == 0 || !readOK ||
-			!read.id.Available() || !read.cell.Available() ||
+			!read.ID.Available() || !read.Cell.Available() ||
 			!cellRelationOK || kind != authored.CellGlobal || body != 0 || key == 0 ||
 			!literalOK || literal.Kind != keyspace.LiteralString || literal.String == "" ||
 			!locationOK || !validDiagnosticSpan(location) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
-		payload := diagnosticUnresolvedValueReferenceRow{read: read.id, cell: read.cell, name: literal.String}
+		payload := diagnosticUnresolvedValueReferenceRow{read: read.ID, cell: read.Cell, name: literal.String}
 		row, rowOK := programschema.NewDiagnosticObservationValueReferenceUnresolved(
 			diagnosticObservationID(compiler.input.ContentID(), structure.DiagnosticObservationValueReferenceUnresolved, location, diagnosticBranchConditionRow{}, diagnosticUnresolvedTypeReferenceRow{}, payload, diagnosticTypeConformanceRow{}),
 			location, payload.read, payload.cell, payload.name,
@@ -552,7 +549,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() CompileFailu
 			if !writeOK || !writeRelationOK || writeAssign != term {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
-			declared, declaredOK := artifactDeclaredStaticTypeID(compiler.key.ProgramID(), compiler.input.Static(), target)
+			declared, declaredOK := declaredStaticTypeID(compiler.programID, compiler.input.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := valueRow.MemberAt(position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
@@ -632,7 +629,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Compile
 		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
 			continue
 		}
-		bindID, bindIDOK := compiler.input.StorageBindIDAt(index)
+		bindID, bindIDOK := compiler.diagnosticStorageBindIdentityAt(index)
 		if !bindIDOK || !bindID.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -645,7 +642,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Compile
 			if !cellOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
-			declared, declaredOK := artifactDeclaredStaticTypeID(compiler.key.ProgramID(), compiler.input.Static(), cellTerm)
+			declared, declaredOK := declaredStaticTypeID(compiler.programID, compiler.input.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := valueRow.MemberAt(position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {

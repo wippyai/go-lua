@@ -1,4 +1,4 @@
-package artifact
+package compiler
 
 import (
 	"testing"

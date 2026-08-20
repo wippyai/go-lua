@@ -6,6 +6,7 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/internal/compiler"
 )
 
 const (
@@ -202,7 +203,6 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), predecessorStages: make(map[identity.ContentID]identity.ContentID), localStages: make(map[identity.ContentID]identity.ContentID), computationStages: make(map[identity.ContentID][]computationStage), callStages: make(map[identity.ContentID]callStageSet),
 		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]EnvironmentEdge), environmentRouteDuplicates: make(map[identity.ContentID]struct{}),
-		diagnosticObservationByID: make(map[identity.ContentID]int),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		return nil, failure
@@ -240,9 +240,30 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	if failure := transaction.copyOccurrenceCatalogFailure(); failure.Available() {
 		return nil, failure
 	}
-	if failure := transaction.copyDiagnosticObservationsFailure(); failure.Available() {
-		return nil, failure
+	storageReads := make([]artifactcompiler.StorageRead, transaction.input.Flow().Authored().Storage().Reads().Count())
+	for index := range storageReads {
+		row, rowOK := transaction.storageReadAt(index)
+		if rowOK {
+			storageReads[index] = artifactcompiler.StorageRead{ID: row.id, Cell: row.cell}
+		}
 	}
+	diagnosticPublication, diagnosticFailure := artifactcompiler.CompileDiagnostics(artifactcompiler.Input{
+		Program:        transaction.input,
+		ProgramID:      transaction.key.ProgramID(),
+		Calls:          transaction.calls,
+		CallArguments:  transaction.callArguments,
+		Bodies:         transaction.bodies,
+		Boundaries:     transaction.functionBoundaries,
+		Formals:        transaction.functionFormals,
+		PointIDsBySite: transaction.pointIDsBySite,
+		StorageReads:   storageReads,
+	})
+	if diagnosticFailure.Available() {
+		return nil, artifactDiagnosticFailure(diagnosticFailure)
+	}
+	transaction.diagnosticObservations = diagnosticPublication.DiagnosticObservations
+	transaction.diagnosticEvidence = diagnosticPublication.DiagnosticEvidence
+	transaction.diagnosticPaths = diagnosticPublication.DiagnosticPaths
 	if failure := transaction.copyStaticRowsFailure(); failure.Available() {
 		return nil, failure
 	}
@@ -276,4 +297,40 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 func Compile(input *program.Program, grammar GrammarIdentity, issuance IssuanceDirectory) (*Artifact, bool) {
 	artifact, failure := CompileDetailed(input, grammar, issuance)
 	return artifact, artifact != nil && !failure.Available()
+}
+
+func artifactDiagnosticFailure(failure artifactcompiler.CompileFailure) CompileFailure {
+	if !failure.Available() {
+		return CompileFailure{}
+	}
+	stage := CompileStageInvalid
+	switch failure.Stage() {
+	case artifactcompiler.CompileStageRoutes:
+		stage = CompileStageRoutes
+	case artifactcompiler.CompileStageOccurrences:
+		stage = CompileStageOccurrences
+	}
+	kind := CompileRowInvalid
+	switch failure.RowKind() {
+	case artifactcompiler.CompileRowRoute:
+		kind = CompileRowRoute
+	case artifactcompiler.CompileRowOccurrence:
+		kind = CompileRowOccurrence
+	}
+	reason := CompileReasonInvalid
+	switch failure.Reason() {
+	case artifactcompiler.CompileReasonRouteUnavailable:
+		reason = CompileReasonRouteUnavailable
+	case artifactcompiler.CompileReasonRouteGuard:
+		reason = CompileReasonRouteGuard
+	case artifactcompiler.CompileReasonOccurrenceUnavailable:
+		reason = CompileReasonOccurrenceUnavailable
+	case artifactcompiler.CompileReasonOccurrenceStorageRead:
+		reason = CompileReasonOccurrenceStorageRead
+	case artifactcompiler.CompileReasonOccurrenceCall:
+		reason = CompileReasonOccurrenceCall
+	}
+	row, _ := failure.Row()
+	subrow, _ := failure.Subrow()
+	return compileFailure(stage, kind, row, subrow, reason)
 }
