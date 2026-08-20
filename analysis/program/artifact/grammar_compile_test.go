@@ -35,36 +35,28 @@ func compileKeyProgram(t *testing.T, name string) *program.Program {
 	if err != nil {
 		t.Fatal(err)
 	}
-	staticDraft, err := programstatic.Build(programstatic.Input{Counts: counts})
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatal(err)
-	}
-	staticFinalizer, err := staticDraft.Finalizer()
+	staticComponent, staticView, err := programstatic.Build(programstatic.Input{Counts: counts})
 	if err != nil {
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
 	moduleFinalizer, err := moduleDraft.Finalizer()
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
 	flowDraft, err := flow.Build(flow.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
-	assembly, err := flow.Assemble(sourceFinalizer, staticFinalizer, moduleFinalizer, flowDraft, entry)
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
