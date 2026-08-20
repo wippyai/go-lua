@@ -180,6 +180,24 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			sink.add(bytesField(argument.ID()), bytesField(argument.CallID()), bytesField(argument.TypesID()), bytesField(argument.ReferenceID()), uintField(uint64(argument.Index())))
 		}
 	}
+	callResultCount, callResultsPublished := coldCount(artifact, programschema.CallResultFamily())
+	if !callResultsPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(callResultRowsLawVersion), uintField(uint64(callResultCount)))
+	for index := 0; index < callResultCount; index++ {
+		row, held := coldRow(artifact, programschema.CallResultFamily(), index)
+		value, hasValue := row.ValueID()
+		tail, hasTail := row.ValuesTailID()
+		position, hasPosition := row.Position()
+		multiplicity := row.Multiplicity()
+		count, hasCount := row.ResultCount()
+		open, openOK := row.ResultsOpen()
+		if !held || !row.Available() || hasValue == hasTail || hasPosition != (row.Form() == programschema.CallResultValue) || !multiplicity.Valid() || !openOK || open != (multiplicity == programschema.CallResultMultiplicityOpen) || hasCount != (multiplicity == programschema.CallResultMultiplicityExact) {
+			return identity.ContentID{}
+		}
+		sink.add(bytesField(row.CallID()), bytesField(row.ValuesID()), uintField(uint64(row.Form())), uintField(uint64(multiplicity)), uintField(uint64(count)), boolField(open), boolField(hasValue), bytesField(value), boolField(hasTail), bytesField(tail), boolField(hasPosition), uintField(uint64(position)))
+	}
 	bodyCount, bodiesPublished := coldCount(artifact, programschema.BodyFamily())
 	if !bodiesPublished {
 		return identity.ContentID{}

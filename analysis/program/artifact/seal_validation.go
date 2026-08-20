@@ -11,7 +11,9 @@ import (
 type sealValidationState struct {
 	pointRows      map[identity.ContentID]struct{}
 	valueRows      map[identity.ContentID]struct{}
+	valueRowsByID  map[identity.ContentID]programschema.Values
 	bodyRows       map[identity.ContentID]programschema.Body
+	callRows       map[identity.ContentID]struct{}
 	outcomeRows    map[identity.ContentID]int
 	outcomeCursor  uint32
 	callableBodies int
@@ -132,6 +134,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) boo
 		return false
 	}
 	state.valueRows = make(map[identity.ContentID]struct{}, valuesCount)
+	state.valueRowsByID = make(map[identity.ContentID]programschema.Values, valuesCount)
 	for index := 0; index < valuesCount; index++ {
 		row, held := coldRow(artifact, programschema.ValuesFamily(), index)
 		offset, members, spanOK := row.MemberSpan()
@@ -142,6 +145,7 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) boo
 			return false
 		}
 		state.valueRows[row.ID()] = struct{}{}
+		state.valueRowsByID[row.ID()] = row
 		memberRows := make(map[identity.ContentID]struct{}, members)
 		for position := uint32(0); position < members; position++ {
 			member, memberHeld := coldRow(artifact, programschema.ValuesMemberFamily(), int(offset+position))

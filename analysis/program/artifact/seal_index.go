@@ -20,6 +20,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) bool {
 		return false
 	}
 	seenCalls := make(map[identity.ContentID]struct{}, callCount)
+	state.callRows = make(map[identity.ContentID]struct{}, callCount)
 	seenCallOperands := make(map[identity.ContentID]struct{}, operandCount)
 	seenCallArguments := make(map[identity.ContentID]struct{}, argumentCount)
 	seenCallTypeArguments := make(map[identity.ContentID]struct{}, typeArgumentCount)
@@ -77,10 +78,66 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) bool {
 			seenCallTypeArguments[child.ID()] = struct{}{}
 		}
 		seenCalls[row.ID()] = struct{}{}
+		state.callRows[row.ID()] = struct{}{}
 		operandCursor, argumentCursor, typeArgumentCursor = int(operandStart+operandWidth), int(argumentStart+argumentWidth), int(typeArgumentStart+typeArgumentWidth)
 	}
 	if operandCursor != operandCount || argumentCursor != argumentCount || typeArgumentCursor != typeArgumentCount {
 		return false
+	}
+	callResultCount, callResultsPublished := coldCount(artifact, programschema.CallResultFamily())
+	if !callResultsPublished {
+		return false
+	}
+	seenCallResults := make(map[identity.ContentID]struct{}, callResultCount)
+	for index := 0; index < callResultCount; index++ {
+		row, held := coldRow(artifact, programschema.CallResultFamily(), index)
+		valueID, hasValue := row.ValueID()
+		tailID, hasTail := row.ValuesTailID()
+		position, hasPosition := row.Position()
+		multiplicity := row.Multiplicity()
+		count, hasCount := row.ResultCount()
+		open, openOK := row.ResultsOpen()
+		if !held || !row.Available() || hasValue == hasTail || hasPosition != (row.Form() == programschema.CallResultValue) || !multiplicity.Valid() || !openOK || open != (multiplicity == programschema.CallResultMultiplicityOpen) || hasCount != (multiplicity == programschema.CallResultMultiplicityExact) {
+			return false
+		}
+		if _, known := state.callRows[row.CallID()]; !known {
+			return false
+		}
+		valuesRow, known := state.valueRowsByID[row.ValuesID()]
+		if !known {
+			return false
+		}
+		offset, width, spanOK := valuesRow.MemberSpan()
+		if !spanOK {
+			return false
+		}
+		switch row.Form() {
+		case programschema.CallResultValue:
+			if !hasValue || hasTail || !hasPosition || uint64(position) >= uint64(width) {
+				return false
+			}
+			member, memberHeld := coldRow(artifact, programschema.ValuesMemberFamily(), int(offset+position))
+			if !memberHeld || member.ID() != valueID {
+				return false
+			}
+		case programschema.CallResultValues:
+			if hasValue || !hasTail {
+				return false
+			}
+			if multiplicity == programschema.CallResultMultiplicityExact && count == 0 {
+				return false
+			}
+			tail, tailOK := valuesRow.Tail()
+			if !tailOK || tail.Kind() != programschema.ValuesTailCall || tail.ID() != tailID {
+				return false
+			}
+		default:
+			return false
+		}
+		if _, duplicate := seenCallResults[row.CallID()]; duplicate {
+			return false
+		}
+		seenCallResults[row.CallID()] = struct{}{}
 	}
 	functionCount, functionsPublished := coldCount(artifact, programschema.FunctionBoundaryFamily())
 	if !functionsPublished || functionCount != state.callableBodies {

@@ -12,6 +12,15 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 	}
 	calls := compiler.input.Flow().Authored().Calls().Count()
 	compiler.calls = make([]programschema.Call, 0, calls)
+	compiler.callResults = compiler.callResults[:0]
+	compiler.callResultGeometryComputed = false
+	compiler.callResultGeometryOK = false
+	compiler.callResultGeometryByTerm = nil
+	compiler.callResultGeometryByTerm, compiler.callResultGeometryOK = compiler.buildCallResultGeometryIndex()
+	compiler.callResultGeometryComputed = true
+	if !compiler.callResultGeometryOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
 	compiler.callOperands = compiler.callOperands[:0]
 	compiler.callArguments = compiler.callArguments[:0]
 	compiler.callTypeArguments = compiler.callTypeArguments[:0]
@@ -90,6 +99,13 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		compiler.calls = append(compiler.calls, row)
+		result, resultPresent, resultOK := compiler.callResultGeometry(call.term, call.id)
+		if !resultOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
+		}
+		if resultPresent {
+			compiler.callResults = append(compiler.callResults, result)
+		}
 	}
 	return CompileFailure{}
 }

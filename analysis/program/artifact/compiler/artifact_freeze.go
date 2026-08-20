@@ -322,6 +322,7 @@ func canonicalPublication(compiler *compiler, pointRows []pointDraft) (programsc
 		RegionMembers:                            regionMembers,
 		WTOEvents:                                events,
 		Calls:                                    compiler.calls,
+		CallResults:                              compiler.callResults,
 		CallOperands:                             compiler.callOperands,
 		CallArguments:                            compiler.callArguments,
 		CallTypeArguments:                        compiler.callTypeArguments,

@@ -23,6 +23,10 @@ type compiler struct {
 	values                                   []programschema.Values
 	valuesMembers                            []programschema.ValuesMember
 	calls                                    []programschema.Call
+	callResults                              []programschema.CallResult
+	callResultGeometryComputed               bool
+	callResultGeometryOK                     bool
+	callResultGeometryByTerm                 map[keyspace.Term]callResultGeometryWitness
 	callOperands                             []programschema.CallOperand
 	callArguments                            []programschema.CallArgument
 	callTypeArguments                        []programschema.CallTypeArgument

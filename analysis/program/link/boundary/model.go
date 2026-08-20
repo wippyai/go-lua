@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // Input is the complete construction boundary for the topology component.
@@ -58,6 +59,21 @@ type Values struct{ component *Component }
 // Project; Boundary owns the value-bearing call operand relation.
 type Calls struct{ component *Component }
 
+// CallResult is the exact mounted call/output coordinate selected by one
+// Target outcome/result identity. Its retained row is keyed by
+// ModuleKey+CallID and carries the parent-issued Project Application identity
+// that originated that mounted Call. The Target outcome/result is validated
+// and carried only on this query result, so Boundary never enumerates an
+// Application×Operation×outcome/result product.
+type CallResult struct {
+	component     *Component
+	ordinal       uint32
+	outcomeResult identity.ContentID
+	operation     vocabulary.Operation
+	outcome       uint32
+	result        uint32
+}
+
 // Seed is an opaque Boundary-issued external value identity.  Its ordinal is
 // meaningful only to the exact component that issued it.
 type Seed struct {
@@ -99,10 +115,36 @@ type authority struct {
 	target         *contract.Contract
 	require        vocabulary.Operation
 	valueTable     *valueTable
+	callResults    *callResultTable
 	seedTable      *seedTable
 	moduleRelation identity.ContentID
 	content        identity.ContentID
 	countRows      denominator.CountRows
+}
+
+type callResultKey struct {
+	module identity.ContentID
+	call   identity.ContentID
+}
+
+type callResultRow struct {
+	module        identity.ContentID
+	call          identity.ContentID
+	application   uint32
+	applicationID identity.ContentID
+	values        identity.ContentID
+	value         identity.ContentID
+	tail          identity.ContentID
+	position      uint32
+	form          programschema.CallResultForm
+	multiplicity  programschema.CallResultMultiplicity
+	count         uint32
+}
+
+type callResultTable struct {
+	rows    []callResultRow
+	index   map[callResultKey]uint32
+	content identity.ContentID
 }
 
 type valueTable struct {

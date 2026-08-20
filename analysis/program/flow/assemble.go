@@ -258,6 +258,10 @@ func Assemble(
 	if err != nil {
 		return fail("StaticCheck", err)
 	}
+	callResultAdmissions, callResultAdmissionsOK := deriveCallResultAdmissions(sourceView, authoredLive)
+	if !callResultAdmissionsOK {
+		return fail("Call result geometry", errors.New("authored Values consumer geometry is unavailable or inconsistent"))
+	}
 
 	// Authored Flow commits last. Every consumer above observes the lifecycle-
 	// bound authoredLive view, and no failure after this point can require that
@@ -283,18 +287,19 @@ func Assemble(
 			causal:     causalResult,
 			returns:    returnProjection,
 		},
-		pending:          pendingResult,
-		executable:       executableResult,
-		directFunction:   directFunctionResult,
-		candidates:       candidateResult,
-		accessGeometry:   accessGeometryResult,
-		binaryPrimitives: binaryPrimitivesResult,
-		continuation:     continuationResult,
-		allocationPaths:  allocationPaths,
-		semanticPaths:    pathCertificate,
-		valueSourcePaths: valueSourcePaths,
-		storagePaths:     storagePaths,
-		callPaths:        callPaths,
+		pending:              pendingResult,
+		executable:           executableResult,
+		directFunction:       directFunctionResult,
+		candidates:           candidateResult,
+		accessGeometry:       accessGeometryResult,
+		binaryPrimitives:     binaryPrimitivesResult,
+		continuation:         continuationResult,
+		allocationPaths:      allocationPaths,
+		semanticPaths:        pathCertificate,
+		valueSourcePaths:     valueSourcePaths,
+		storagePaths:         storagePaths,
+		callPaths:            callPaths,
+		callResultAdmissions: callResultAdmissions,
 	}
 	return &Assembly{state: &assemblyState{
 		source: sourceComponent,

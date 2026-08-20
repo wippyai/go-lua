@@ -102,6 +102,50 @@ func (row Program) CallForID(id identity.ContentID) (Call, bool) {
 	return found, found.Available()
 }
 
+// CallResultCount is the sealed width of the authored Call output-geometry
+// family. Statement Calls that discard their results have no row.
+func (row Program) CallResultCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallResultFamily().Count(&row.Frozen, catalog)
+}
+
+// CallResultAt returns one reusable output geometry row by emitted ordinal.
+func (row Program) CallResultAt(index int) (CallResult, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallResult{}, false
+	}
+	return CallResultFamily().At(&row.Frozen, catalog, index)
+}
+
+// CallResultForID resolves the unique output geometry for one existing Call
+// identity. The family remains the sole cold authority; no inverse index is
+// retained beside the publication.
+func (row Program) CallResultForID(id identity.ContentID) (CallResult, bool) {
+	if !row.Available() || !id.Available() {
+		return CallResult{}, false
+	}
+	count, published := row.CallResultCount()
+	if !published {
+		return CallResult{}, false
+	}
+	var found CallResult
+	for index := 0; index < count; index++ {
+		candidate, held := row.CallResultAt(index)
+		if !held || candidate.CallID() != id {
+			continue
+		}
+		if found.Available() {
+			return CallResult{}, false
+		}
+		found = candidate
+	}
+	return found, found.Available()
+}
+
 // CallOperandFor resolves one operand in a call's published child range.
 func (row Program) CallOperandFor(callIndex, childIndex int) (CallOperand, bool) {
 	call, ok := row.CallAt(callIndex)

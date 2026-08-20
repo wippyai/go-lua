@@ -70,6 +70,7 @@ type Publication struct {
 	DiagnosticObservations                   []DiagnosticObservation
 	DiagnosticEvidence                       []DiagnosticEvidence
 	DiagnosticPaths                          []DiagnosticPath
+	CallResults                              []CallResult
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -135,7 +136,8 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog) &&
 		DiagnosticObservationFamily().Put(&builder, publication.DiagnosticObservations, catalog) &&
 		DiagnosticEvidenceFamily().Put(&builder, publication.DiagnosticEvidence, catalog) &&
-		DiagnosticPathFamily().Put(&builder, publication.DiagnosticPaths, catalog)
+		DiagnosticPathFamily().Put(&builder, publication.DiagnosticPaths, catalog) &&
+		CallResultFamily().Put(&builder, publication.CallResults, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false
 	}

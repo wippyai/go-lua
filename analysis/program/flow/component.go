@@ -72,25 +72,26 @@ func (assembly *Assembly) Take() (*source.Component, *Component, *static.Compone
 // immutable Body and Containment results remain because Flow publishes their
 // owner-issued structural queries directly.
 type Component struct {
-	provenance       provenance.Provenance
-	authored         authored.View
-	body             *flowbody.Result
-	containment      *containment.Result
-	outcomes         *outcome.Result
-	ports            *evaluation.Ports
-	programStructure programStructureProjection
-	pending          *evaluation.Pending
-	executable       *executable.Result
-	directFunction   *directfunction.Result
-	candidates       *candidates.Result
-	accessGeometry   *accessgeometry.Result
-	binaryPrimitives *binaryprimitive.Result
-	continuation     *continuation.Result
-	allocationPaths  [keyspace.FamilyCount][]allocationPath
-	semanticPaths    *semanticpath.Certificate
-	valueSourcePaths [keyspace.FamilyCount][]identity.ContentID
-	storagePaths     [keyspace.FamilyCount][]identity.ContentID
-	callPaths        []identity.ContentID
+	provenance           provenance.Provenance
+	authored             authored.View
+	body                 *flowbody.Result
+	containment          *containment.Result
+	outcomes             *outcome.Result
+	ports                *evaluation.Ports
+	programStructure     programStructureProjection
+	pending              *evaluation.Pending
+	executable           *executable.Result
+	directFunction       *directfunction.Result
+	candidates           *candidates.Result
+	accessGeometry       *accessgeometry.Result
+	binaryPrimitives     *binaryprimitive.Result
+	continuation         *continuation.Result
+	allocationPaths      [keyspace.FamilyCount][]allocationPath
+	semanticPaths        *semanticpath.Certificate
+	valueSourcePaths     [keyspace.FamilyCount][]identity.ContentID
+	storagePaths         [keyspace.FamilyCount][]identity.ContentID
+	callPaths            []identity.ContentID
+	callResultAdmissions []callResultAdmission
 }
 
 // programStructureProjection is Flow's sole retained Program-local structural

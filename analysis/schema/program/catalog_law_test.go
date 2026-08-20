@@ -250,6 +250,7 @@ func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
 		{RuleOccurrenceFamily().slot, RuleOccurrenceFamily().name},
 		{StorageCellLifetimeFamily().slot, StorageCellLifetimeFamily().name},
 		{SubjectLivenessFamily().slot, SubjectLivenessFamily().name},
+		{CallResultFamily().slot, CallResultFamily().name},
 	}
 	slots := make(map[uint32]string, len(declared))
 	names := make(map[string]uint32, len(declared))

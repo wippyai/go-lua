@@ -41,8 +41,9 @@ const (
 	occurrenceLawVersion = uint64(12)
 	// v3 records the closed DiagnosticObservation union, including detached
 	// unresolved-reference proof and exact branch payload masks.
-	diagnosticLawVersion = uint64(5)
-	callRowsLawVersion   = uint64(2)
+	diagnosticLawVersion     = uint64(5)
+	callRowsLawVersion       = uint64(2)
+	callResultRowsLawVersion = uint64(2)
 
 	compileKeyDomain      = "analysis/program-artifact/compile-key"
 	artifactIDDomain      = "analysis/program-artifact/artifact"
