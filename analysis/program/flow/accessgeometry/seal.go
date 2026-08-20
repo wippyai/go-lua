@@ -35,7 +35,7 @@ func Seal(
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flow.Cold().ContentID()
+	flowID := flow.ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/accessgeometry: owner identity is unavailable")
 	}

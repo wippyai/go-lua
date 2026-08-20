@@ -391,7 +391,7 @@ func newSealState(
 		return nil, errors.New("program/flow/causal: one or more typed prerequisites are unavailable")
 	}
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flow.Cold().ContentID()
+	flowID := flow.ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() || sourceView.Identity().TermCount() == 0 {
 		return nil, errors.New("program/flow/causal: Source, authored Flow, Static, or Module identity is unavailable")
 	}

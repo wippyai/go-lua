@@ -135,7 +135,7 @@ func certificateTerm(paths *semanticpath.Certificate, sourceID, flowID, staticID
 }
 
 func sealCertificateValueSourcePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
-	sourceID, flowID := sourceView.Identity().ContentID(), view.Cold().ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
 		return [keyspace.FamilyCount][]identity.ContentID{}, errors.New("certificate provenance disagrees")
 	}
@@ -216,7 +216,7 @@ func sealCertificateValueSourcePaths(sourceView source.View, view authored.View,
 	return out, nil
 }
 func sealCertificateStoragePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
-	sourceID, flowID := sourceView.Identity().ContentID(), view.Cold().ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
 		return [keyspace.FamilyCount][]identity.ContentID{}, errors.New("certificate provenance disagrees")
 	}
@@ -241,7 +241,7 @@ func sealCertificateStoragePaths(sourceView source.View, view authored.View, pat
 	return out, nil
 }
 func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Result, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]allocationPath, error) {
-	sourceID, flowID := sourceView.Identity().ContentID(), view.Cold().ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
 		return [keyspace.FamilyCount][]allocationPath{}, errors.New("certificate provenance disagrees")
 	}
@@ -284,7 +284,7 @@ func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Res
 	return out, nil
 }
 func sealCertificateCallPaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([]identity.ContentID, error) {
-	sourceID, flowID := sourceView.Identity().ContentID(), view.Cold().ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
 		return nil, errors.New("certificate provenance disagrees")
 	}

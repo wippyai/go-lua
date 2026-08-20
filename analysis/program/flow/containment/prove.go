@@ -44,7 +44,7 @@ func Prove(
 	// emitter can dereference them. A nil Body and a foreign equal-cardinality
 	// Body/Binding are equally unavailable to this proof.
 	sourceID := preimage.Identity().ContentID()
-	flowID := view.Cold().ContentID()
+	flowID := view.ContentID()
 	if bodies == nil || !body.Matches(bodies, sourceID, flowID) || !binding.Matches(&bindingResult, sourceID, flowID) {
 		return nil, nil, errors.New("program/flow/containment: Body or Binding provenance is unavailable or disagrees with Source or Flow")
 	}
@@ -122,7 +122,7 @@ func liveCounts(preimage source.Preimage, staticView staticquery.View, view auth
 	var counts [keyspace.FamilyCount]uint32
 	identity := preimage.Identity()
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 ||
-		!staticView.Available() || !view.Cold().ContentID().Available() || !moduleView.ContentID().Available() {
+		!staticView.Available() || !view.ContentID().Available() || !moduleView.ContentID().Available() {
 		return counts, errors.New("program/flow/containment: owner view expired")
 	}
 	var total uint64

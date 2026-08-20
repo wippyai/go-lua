@@ -342,7 +342,7 @@ func openPendingFixture(
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.Cold().ContentID(), staticView.ContentID(), moduleView.ContentID())
+		flowView.ContentID(), staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
 		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
@@ -635,7 +635,7 @@ func TestSealPendingProductionRuntimeMatrixBuilds(t *testing.T) {
 				{Kind: keyspace.LiteralString, String: "method"},
 			},
 		})
-	if fixture.pending == nil || !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.Cold().ContentID(), fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID()) {
+	if fixture.pending == nil || !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.ContentID(), fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID()) {
 		t.Fatal("production runtime matrix did not produce matching Pending")
 	}
 }

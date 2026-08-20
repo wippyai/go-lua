@@ -118,14 +118,14 @@ func (component *Component) ContentID() identity.ContentID {
 	if component == nil {
 		return identity.ContentID{}
 	}
-	return component.authored.Cold().ContentID()
+	return component.authored.ContentID()
 }
 
 func (view View) ContentID() identity.ContentID {
 	if !view.available() {
 		return identity.ContentID{}
 	}
-	return view.component.authored.Cold().ContentID()
+	return view.component.authored.ContentID()
 }
 
 func (view View) Provenance() provenance.Provenance {
@@ -136,7 +136,7 @@ func (view View) Provenance() provenance.Provenance {
 }
 
 func (view View) available() bool {
-	return view.component != nil && view.component.authored.Cold().ContentID().Available()
+	return view.component != nil && view.component.authored.ContentID().Available()
 }
 
 // projectionAvailable is the composition fence for Flow's post-assembly
@@ -151,7 +151,7 @@ func (view View) projectionAvailable() bool {
 	fence := component.provenance
 	if !fence.Source.Available() || !fence.Flow.Available() ||
 		!fence.Static.Available() || !fence.Module.Available() ||
-		component.authored.Cold().ContentID() != fence.Flow {
+		component.authored.ContentID() != fence.Flow {
 		return false
 	}
 	if !outcome.Matches(component.outcomes, fence.Source, fence.Flow, fence.Static, fence.Module) ||

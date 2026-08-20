@@ -171,5 +171,5 @@ func (r *Result) matchesOutcomeInputs(sourceView source.View, outcomes *outcome.
 }
 
 func (r *Result) matchesOperationInputs(sourceView source.View, flow authored.View, outcomes *outcome.Result) bool {
-	return r.matchesOutcomeInputs(sourceView, outcomes) && flow.Cold().ContentID() == r.flowID
+	return r.matchesOutcomeInputs(sourceView, outcomes) && flow.ContentID() == r.flowID
 }

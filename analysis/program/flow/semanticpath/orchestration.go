@@ -35,7 +35,7 @@ type derivedPlanes struct {
 func derive(sourceView source.View, cellRoles source.CellRoles, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, sourceID, flowID, staticID, moduleID identity.ContentID) (derivedPlanes, error) {
 	var out derivedPlanes
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() ||
-		sourceView.Identity().ContentID() != sourceID || authoredView.Cold().ContentID() != flowID {
+		sourceView.Identity().ContentID() != sourceID || authoredView.ContentID() != flowID {
 		return out, errors.New("semanticpath: owner identities are unavailable or disagree")
 	}
 	if bodies == nil || !body.Matches(bodies, sourceID, flowID) {

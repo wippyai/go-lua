@@ -276,7 +276,7 @@ func TestSealPendingProductionSharedCellKeyAndBodyReferences(t *testing.T) {
 	if !ok || !keyOK || lensOwner != body || keyOwner != body || fieldKind != kind.FieldName || exactKey != cellKey {
 		t.Fatal("shared Source Key did not agree across Lens and global Cell references")
 	}
-	if !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.Cold().ContentID(), fixture.staticID, fixture.moduleID) {
+	if !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.ContentID(), fixture.staticID, fixture.moduleID) {
 		t.Fatal("shared Cell/Key/Body references prevented genuine SealPending publication")
 	}
 }

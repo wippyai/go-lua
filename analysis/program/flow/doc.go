@@ -30,7 +30,7 @@
 //	                  applies the composition fence before handing the owner
 //	                  out.
 //	the fences        Draft withholds the authored Finalizer, Authored
-//	                  withholds the Cold projection, Outcomes withholds the
+//	                  withholds the authored owner's internal storage, Outcomes withholds the
 //	                  owner's Find join, and Ports withholds the sealed term
 //	                  denominator. Each is a capability this altitude declines
 //	                  to publish, not a copy of an owner's rows.

@@ -24,7 +24,7 @@ func buildResumeProjection(
 	geometryResult *geometry,
 ) (resumeProof, error) {
 	var empty resumeProof
-	if !sourceView.Identity().ContentID().Available() || !flow.Cold().ContentID().Available() ||
+	if !sourceView.Identity().ContentID().Available() || !flow.ContentID().Available() ||
 		bodies == nil || forest == nil || geometryResult == nil {
 		return empty, errors.New("program/flow/sourcecontrol: resume owner is unavailable")
 	}

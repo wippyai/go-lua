@@ -48,8 +48,8 @@ func TestArtifactSectionRoundTripInjectsCountsAndPreservesContentID(t *testing.T
 			}
 			decoded.Counts = test.input.Counts
 			replayed := buildArtifactView(t, decoded)
-			if replayed.Cold().ContentID() != view.Cold().ContentID() {
-				t.Fatalf("replayed ContentID = %x; want %x", replayed.Cold().ContentID(), view.Cold().ContentID())
+			if replayed.ContentID() != view.ContentID() {
+				t.Fatalf("replayed ContentID = %x; want %x", replayed.ContentID(), view.ContentID())
 			}
 		})
 	}

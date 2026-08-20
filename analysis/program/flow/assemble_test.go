@@ -48,7 +48,7 @@ func TestAssembleAlreadyClaimedFlowLeavesSiblingOwnersLive(t *testing.T) {
 		t.Fatalf("Assemble(already claimed) = %#v, %v; want nil assembly and error", assembly, err)
 	}
 	if !preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() ||
-		!moduleView.ContentID().Available() || !flowView.Cold().ContentID().Available() {
+		!moduleView.ContentID().Available() || !flowView.ContentID().Available() {
 		t.Fatal("failed Flow claim consumed an owner held by the winning invocation")
 	}
 	abortClaimedSiblingOwners(t, sourceFinalizer, moduleFinalizer)

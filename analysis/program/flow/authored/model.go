@@ -426,10 +426,15 @@ type Loops struct{ viewAccess }
 type Claims struct{ viewAccess }
 type TypeValues struct{ viewAccess }
 
-// Cold is the immutable, allocation-free identity snapshot of authored Flow.
-// It deliberately retains no component pointer: callers that keep a cold
-// identity must not retain the full authored Flow graph through it.
-type Cold struct{ contentID identity.ContentID }
+// ContentID returns the authored Flow identity while this view is active.
+// Lifecycle-bound views return an unavailable identity after their finalizer
+// reaches a terminal state.
+func (view View) ContentID() identity.ContentID {
+	if !view.active() {
+		return identity.ContentID{}
+	}
+	return view.component.contentID
+}
 
 func (view View) Values() Values         { return Values(view) }
 func (view View) Access() Access         { return Access(view) }
@@ -442,13 +447,3 @@ func (view View) Operators() Operators   { return Operators(view) }
 func (view View) Control() Control       { return Control(view) }
 func (view View) Claims() Claims         { return Claims(view) }
 func (view View) TypeValues() TypeValues { return TypeValues(view) }
-func (view View) Cold() Cold {
-	if !view.active() {
-		return Cold{}
-	}
-	return Cold{contentID: view.component.contentID}
-}
-
-func (c Cold) ContentID() identity.ContentID {
-	return c.contentID
-}
