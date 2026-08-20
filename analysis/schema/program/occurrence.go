@@ -49,11 +49,25 @@ func (kind OccurrenceKind) Valid() bool {
 	return kind >= OccurrencePointAttachment && kind <= OccurrenceOperationPredicateRefinement
 }
 
-// occurrenceOutputOperand is the operand position at which a storage transfer,
-// a storage write and an index read name the value they establish. Those
-// families carry the operation under their own identity, so the output is read
-// from the sealed operand vector instead.
-const occurrenceOutputOperand = 2
+// occurrenceOutputOperand names the operand position at which a family whose
+// own identity is not the value it establishes carries that value. A storage
+// transfer, a storage write and an index read carry the operation under their
+// own identity; an allocation carries its reusable template. Each therefore
+// names the value it establishes in the sealed operand vector instead.
+func occurrenceOutputOperand(kind OccurrenceKind) (int, bool) {
+	switch kind {
+	case OccurrenceStorageBindTransfer, OccurrenceStorageWrite, OccurrenceIndexRead:
+		return 2, true
+	case OccurrenceAllocation:
+		return occurrenceAllocationOutputOperand, true
+	}
+	return 0, false
+}
+
+// occurrenceAllocationOutputOperand is the position at which an allocation
+// names the value it establishes: the owner-issued allocation identity that
+// follows its template.
+const occurrenceAllocationOutputOperand = 1
 
 // SpanResultOccurrence reports whether the family's result identity is the
 // operator's own program-owned span rather than a semantic occurrence.
@@ -127,7 +141,7 @@ func (row Occurrence) Available() bool {
 	if row.kind == OccurrenceStorageRead && row.inputCount != 2 {
 		return false
 	}
-	if outputOperandOccurrence(row.kind) && row.inputCount <= occurrenceOutputOperand {
+	if operand, named := occurrenceOutputOperand(row.kind); named && uint64(row.inputCount) <= uint64(operand) {
 		return false
 	}
 	if row.kind == OccurrencePointAttachment && (row.body.Available() || row.pointCount != 1 || row.inputCount != 1 || row.code != 0) {
@@ -149,12 +163,6 @@ func (row Occurrence) Available() bool {
 		return false
 	}
 	return true
-}
-
-// outputOperandOccurrence reports whether the family names the value it
-// establishes in its operand vector rather than by its own identity.
-func outputOperandOccurrence(kind OccurrenceKind) bool {
-	return kind == OccurrenceStorageBindTransfer || kind == OccurrenceStorageWrite || kind == OccurrenceIndexRead
 }
 
 func (row Occurrence) ID() identity.ContentID {
@@ -223,6 +231,7 @@ func (row OccurrenceInput) InputID() identity.ContentID {
 // carries only placement metadata and the dense parent ordinal.
 type RuleOccurrence struct {
 	key        schema.Key
+	writes     schema.Key
 	occurrence uint32
 	point      identity.ContentID
 	input      identity.ContentID
@@ -231,12 +240,12 @@ type RuleOccurrence struct {
 	route      identity.ContentID
 }
 
-func NewRuleOccurrence(key schema.Key, occurrence uint32, point, input identity.ContentID, stage RuleStage, inputKind RuleInputKind, route identity.ContentID) (RuleOccurrence, bool) {
-	row := RuleOccurrence{key: key, occurrence: occurrence, point: point, input: input, stage: stage, inputKind: inputKind, route: route}
+func NewRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage RuleStage, inputKind RuleInputKind, route identity.ContentID) (RuleOccurrence, bool) {
+	row := RuleOccurrence{key: key, writes: writes, occurrence: occurrence, point: point, input: input, stage: stage, inputKind: inputKind, route: route}
 	return row, row.Available()
 }
 func (row RuleOccurrence) Available() bool {
-	if !row.key.Available() || !row.point.Available() || !row.stage.Valid() || !row.inputKind.Valid() || row.occurrence == ^uint32(0) {
+	if !row.key.Available() || !row.writes.Available() || !row.point.Available() || !row.stage.Valid() || !row.inputKind.Valid() || row.occurrence == ^uint32(0) {
 		return false
 	}
 	if (row.inputKind == RuleInputNone) == row.input.Available() {
@@ -252,6 +261,17 @@ func (row RuleOccurrence) Key() schema.Key {
 		return ""
 	}
 	return row.key
+}
+// Writes is the declared axis this placement's rule writes. Several rules are
+// placed on one occurrence, and only the ones writing an axis establish that
+// axis' result there, so a consumer that reads one axis' result at the points
+// producing it separates the placements by this key rather than by the
+// occurrence they share.
+func (row RuleOccurrence) Writes() schema.Key {
+	if !row.Available() {
+		return ""
+	}
+	return row.writes
 }
 func (row RuleOccurrence) Occurrence() (uint32, bool) { return row.occurrence, row.Available() }
 func (row RuleOccurrence) PointID() identity.ContentID {

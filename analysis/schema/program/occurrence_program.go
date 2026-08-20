@@ -217,22 +217,23 @@ func (row Program) RuleOccurrenceForKeyAt(key string, ordinal int) (RuleOccurren
 // kind vocabulary and the sealed operand vector it is read against.
 //
 // A value-producing kind names its output by its own identity. A storage
-// transfer, a storage write and an index read name theirs in the operand
-// vector instead, because for those families the occurrence identity is the
-// operation, not the value it establishes. Every other kind establishes no
-// value and reports false; the vocabulary is closed, so an unrecognised kind
-// is not a producer.
+// transfer, a storage write, an index read and an allocation name theirs in
+// the operand vector instead, because for those families the occurrence
+// identity is the operation or the reusable template, not the value it
+// establishes. Every other kind establishes no value and reports false; the
+// vocabulary is closed, so an unrecognised kind is not a producer.
 func (row Program) OccurrenceOutputSemanticID(index int) (identity.ContentID, bool) {
 	occurrence, ok := row.OccurrenceAt(index)
 	if !ok {
 		return identity.ContentID{}, false
 	}
+	if operand, named := occurrenceOutputOperand(occurrence.Kind()); named {
+		return row.OccurrenceInputID(index, operand)
+	}
 	switch occurrence.Kind() {
 	case OccurrenceValueSource, OccurrenceFormalEntry, OccurrenceStorageRead,
 		OccurrenceBinaryEquality, OccurrenceBinaryArithmetic, OccurrenceBinaryOrder:
 		return occurrence.ID(), true
-	case OccurrenceStorageBindTransfer, OccurrenceStorageWrite, OccurrenceIndexRead:
-		return row.OccurrenceInputID(index, occurrenceOutputOperand)
 	default:
 		return identity.ContentID{}, false
 	}

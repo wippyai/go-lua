@@ -141,11 +141,11 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 	return true
 }
 
-func (compiler *compiler) appendRuleOccurrence(key schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {
+func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {
 	if compiler == nil || !fitsUint32(len(compiler.ruleOccurrences)) {
 		return false
 	}
-	row, rowOK := programschema.NewRuleOccurrence(key, occurrence, point, input, stage, inputKind, route)
+	row, rowOK := programschema.NewRuleOccurrence(key, writes, occurrence, point, input, stage, inputKind, route)
 	if !rowOK {
 		return false
 	}
@@ -162,7 +162,7 @@ func (compiler *compiler) replaceRuleOccurrenceInput(index int, input identity.C
 	if !occurrenceOK {
 		return false
 	}
-	replaced, replacedOK := programschema.NewRuleOccurrence(row.Key(), occurrence, row.PointID(), input, row.Stage(), row.InputKind(), func() identity.ContentID {
+	replaced, replacedOK := programschema.NewRuleOccurrence(row.Key(), row.Writes(), occurrence, row.PointID(), input, row.Stage(), row.InputKind(), func() identity.ContentID {
 		route, _ := row.PredecessorRouteID()
 		return route
 	}())

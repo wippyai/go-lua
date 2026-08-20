@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -36,30 +37,36 @@ type mountedPopulationCase struct {
 
 func mountedPopulationCases(t *testing.T) []mountedPopulationCase {
 	t.Helper()
-	contract := fixtureContract(t)
 	cases := make([]mountedPopulationCase, 0, len(mountedPopulationFixtures))
 	for _, name := range mountedPopulationFixtures {
-		linked, err := testfixture.SealCorpusProject(contract, fixtureProject(t, name))
-		if err != nil {
-			t.Fatalf("seal fixture %q: %v", name, err)
-		}
-		plan, status, diagnostics := CompileWithDiagnostics(linked)
-		if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
-			t.Fatalf("compile fixture %q = %v diagnostics=%+v", name, status, diagnostics)
-		}
-		t.Cleanup(func() { plan.Close() })
-		// The compiled query plan is instantiated with the runtime topology, so
-		// the replacement receipt has to reach the same seam a solve does.
-		if _, ok := plan.state.instantiateRuntimeTopology(); !ok {
-			t.Fatalf("instantiate runtime topology for fixture %q", name)
-		}
-		rows := make([]mounted.Mount, 0, len(plan.state.artifacts.mounts))
-		for _, mount := range plan.state.artifacts.mounts {
-			rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot})
-		}
-		cases = append(cases, mountedPopulationCase{name: name, linked: linked, state: plan.state, mounts: rows})
+		cases = append(cases, compileMountedPopulationCase(t, name))
 	}
 	return cases
+}
+
+// compileMountedPopulationCase compiles one named corpus fixture to the seam
+// the populations are derived from.
+func compileMountedPopulationCase(t *testing.T, name string) mountedPopulationCase {
+	t.Helper()
+	linked, err := testfixture.SealCorpusProject(fixtureContract(t), fixtureProject(t, name))
+	if err != nil {
+		t.Fatalf("seal fixture %q: %v", name, err)
+	}
+	plan, status, diagnostics := CompileWithDiagnostics(linked)
+	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
+		t.Fatalf("compile fixture %q = %v diagnostics=%+v", name, status, diagnostics)
+	}
+	t.Cleanup(func() { plan.Close() })
+	// The compiled query plan is instantiated with the runtime topology, so
+	// the replacement receipt has to reach the same seam a solve does.
+	if _, ok := plan.state.instantiateRuntimeTopology(); !ok {
+		t.Fatalf("instantiate runtime topology for fixture %q", name)
+	}
+	rows := make([]mounted.Mount, 0, len(plan.state.artifacts.mounts))
+	for _, mount := range plan.state.artifacts.mounts {
+		rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot})
+	}
+	return mountedPopulationCase{name: name, linked: linked, state: plan.state, mounts: rows}
 }
 
 // reversed returns the same mount rows in the opposite order. Every population
@@ -82,7 +89,11 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 	branches := 0
 	for _, testCase := range mountedPopulationCases(t) {
 		t.Run(testCase.name, func(t *testing.T) {
-			census, ok := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.mounts)
+			producerAxes, axesOK := composite.ProducedValueAxes()
+			if !axesOK {
+				t.Fatal("declared produced-value axes")
+			}
+			census, ok := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.mounts, producerAxes)
 			if !ok || !census.Available() {
 				t.Fatalf("seal mounted observation sites: ok=%v available=%v", ok, census.Available())
 			}
@@ -168,7 +179,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 					}
 				}
 			}
-			permuted, permutedOK := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.reversed())
+			permuted, permutedOK := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.reversed(), producerAxes)
 			if !permutedOK || permuted.Count() != census.Count() {
 				t.Fatalf("permuted census = %d sites, want %d", permuted.Count(), census.Count())
 			}

@@ -738,11 +738,11 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		if !held || !occurrenceOK || !inputOK && row.InputKind() != programschema.RuleInputNone || !routeOK && row.InputKind() == programschema.RuleInputPredecessor {
 			return identity.ContentID{}
 		}
-		key := row.Key()
-		if !key.Available() {
+		key, writes := row.Key(), row.Writes()
+		if !key.Available() || !writes.Available() {
 			return identity.ContentID{}
 		}
-		sink.add(keyField(key), uintField(uint64(occurrence)), bytesField(row.PointID()), bytesField(input), uintField(uint64(row.Stage())), uintField(uint64(row.InputKind())), bytesField(route))
+		sink.add(keyField(key), keyField(writes), uintField(uint64(occurrence)), bytesField(row.PointID()), bytesField(input), uintField(uint64(row.Stage())), uintField(uint64(row.InputKind())), bytesField(route))
 	}
 	// The region plane, its member plane and the event bracket sequence are
 	// read out of the sealed cold publication. The member span preserves the

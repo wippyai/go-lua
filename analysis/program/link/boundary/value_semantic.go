@@ -287,6 +287,33 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			}
 		}
 	}
+	// An allocation establishes the table or closure value its constructor
+	// denotes. The occurrence identity Artifact seals for that family is the
+	// reusable template, so the value is named by the owner-issued allocation
+	// identity; publish that inverse here, exactly as a literal names its
+	// ValueSource and a cell names its StorageCell. A non-executable
+	// constructor establishes no value and has no allocation identity.
+	for _, family := range [...]struct {
+		count int
+		at    func(int) (keyspace.Term, bool)
+	}{
+		{p.Flow().Authored().Tables().Count(), p.Flow().Authored().Tables().At},
+		{p.Flow().Authored().Functions().Count(), p.Flow().Authored().Functions().At},
+	} {
+		for index := 0; index < family.count; index++ {
+			term, termOK := family.at(index)
+			if !termOK {
+				return errors.New("link/boundary: malformed semantic Allocation row")
+			}
+			allocationID, allocationOK := p.Flow().AllocationID(term)
+			if !allocationOK {
+				continue
+			}
+			if addTerm("Allocation", allocationID, term, true) != nil {
+				return errors.New("link/boundary: malformed semantic Allocation row")
+			}
+		}
+	}
 	reads := p.Flow().Authored().Storage().Reads()
 	for index := 0; index < reads.Count(); index++ {
 		readID, readTerm, ok := boundaryStorageReadIdentityAt(p, index)

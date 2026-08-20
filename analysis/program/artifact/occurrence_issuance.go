@@ -400,7 +400,7 @@ func (compiler *compiler) appendBaseIssuance(ordinal uint32, finish []identity.C
 		return false
 	}
 	for _, point := range finish {
-		if !compiler.appendRuleOccurrence(issued.Key, ordinal, point, identity.ContentID{}, programschema.RuleStageBase, issued.Input, identity.ContentID{}) {
+		if !compiler.appendRuleOccurrence(issued.Key, issued.Writes, ordinal, point, identity.ContentID{}, programschema.RuleStageBase, issued.Input, identity.ContentID{}) {
 			return false
 		}
 	}
@@ -420,7 +420,7 @@ func (compiler *compiler) appendLocalIssuance(ordinal uint32, geometry occurrenc
 		if issued.Input == programschema.RuleInputEntry {
 			input = geometry.entry[0]
 		}
-		if !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, input, programschema.RuleStageLocal, issued.Input, identity.ContentID{}) {
+		if !compiler.appendRuleOccurrence(issued.Key, issued.Writes, ordinal, stage, input, programschema.RuleStageLocal, issued.Input, identity.ContentID{}) {
 			return false
 		}
 	}
@@ -435,7 +435,7 @@ func (compiler *compiler) appendComputationIssuance(row programschema.Occurrence
 	}
 	for _, base := range finish {
 		stage, stageOK := compiler.localComputationStage(base, issued.Key, row.ID(), left, right)
-		if !stageOK || !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, base, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}) {
+		if !stageOK || !compiler.appendRuleOccurrence(issued.Key, issued.Writes, ordinal, stage, base, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}) {
 			return false
 		}
 	}
@@ -461,7 +461,7 @@ func (compiler *compiler) appendLocalPredecessorIssuance(ordinal uint32, geometr
 		}
 	}
 	stage, stageOK := compiler.predecessorStage(predecessor.to)
-	if !finishMember || !stageOK || !compiler.appendRuleOccurrence(issued.Key, ordinal, stage, predecessor.to, programschema.RuleStageLocal, programschema.RuleInputPredecessor, geometry.route) {
+	if !finishMember || !stageOK || !compiler.appendRuleOccurrence(issued.Key, issued.Writes, ordinal, stage, predecessor.to, programschema.RuleStageLocal, programschema.RuleInputPredecessor, geometry.route) {
 		return false
 	}
 	return true
@@ -483,7 +483,7 @@ func (compiler *compiler) appendCallStageIssuance(ordinal uint32, finish []ident
 		case programschema.RuleStageCallEffect:
 			point, input = stages.effect, stages.summary
 		}
-		if !compiler.appendRuleOccurrence(issued.Key, ordinal, point, input, issued.Stage, programschema.RuleInputFinish, identity.ContentID{}) {
+		if !compiler.appendRuleOccurrence(issued.Key, issued.Writes, ordinal, point, input, issued.Stage, programschema.RuleInputFinish, identity.ContentID{}) {
 			return false
 		}
 	}

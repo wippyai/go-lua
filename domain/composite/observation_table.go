@@ -1,6 +1,8 @@
 package composite
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
@@ -185,6 +187,58 @@ func ObservationIssuance() []IssuedObservation {
 		})
 	}
 	return issued
+}
+
+// ProducedValueAxes is the declared axis set every produced-value observation
+// reads its measured value from: the subjects of the query family each sealed
+// observation names as its producer.
+//
+// A consumer that holds the rule placements of one occurrence separates the
+// ones that establish an observed value from the ones that establish another
+// domain's result by this set. The chain is declared end to end - population
+// names its producing query family, the family names the axes it reads, a rule
+// names the axis it writes - so nothing here is a name this package chose.
+func ProducedValueAxes() ([]schema.Key, bool) {
+	sealRegistry()
+	if registry.sealed == nil {
+		return nil, false
+	}
+	subjects := make(map[schema.Key]struct{})
+	for _, issued := range ObservationIssuance() {
+		if !issued.Producer.Available() {
+			continue
+		}
+		registration, found := queryRegistrationFor(issued.Producer)
+		if !found {
+			return nil, false
+		}
+		for _, subject := range registration.Subjects() {
+			if !subject.Available() {
+				return nil, false
+			}
+			subjects[subject] = struct{}{}
+		}
+	}
+	if len(subjects) == 0 {
+		return nil, false
+	}
+	axes := make([]schema.Key, 0, len(subjects))
+	for subject := range subjects {
+		axes = append(axes, subject)
+	}
+	sort.Slice(axes, func(left, right int) bool { return axes[left] < axes[right] })
+	return axes, true
+}
+
+// queryRegistrationFor resolves one sealed query family by the key its
+// declaration is identified by.
+func queryRegistrationFor(family schema.Key) (*query.Registration, bool) {
+	for _, registration := range registry.queries {
+		if registration != nil && registration.Key() == family {
+			return registration, true
+		}
+	}
+	return nil, false
 }
 
 // ObservationProducerForPopulationKind returns the query family that produces

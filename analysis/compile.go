@@ -676,7 +676,11 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		}
 		result.mounts = append(result.mounts, mountedProgramArtifact{program: program, snapshot: snapshot, template: template, roles: roles, programID: programID, moduleKey: moduleKey})
 	}
-	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), artifactSetMounts(result.mounts))
+	producerAxes, axesOK := composite.ProducedValueAxes()
+	if !axesOK {
+		return nil, false
+	}
+	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), artifactSetMounts(result.mounts), producerAxes)
 	if !sitesOK || !sites.Available() {
 		return nil, false
 	}

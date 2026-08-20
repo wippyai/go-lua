@@ -167,9 +167,21 @@ func (census ObservationSites) At(index int) (ObservationSite, bool) {
 // SealObservationSites derives the census from the sealed ingress snapshots
 // and the Boundary that owns the two Link relations a branch site needs: the
 // mounted span-to-Value and semantic-occurrence-to-Value substitutions.
-func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (ObservationSites, bool) {
-	if boundary == nil || !mountsAvailable(mounts) {
+//
+// producerAxes is the declared axis set a produced-value observation reads its
+// measured value from. Several rules are placed on one occurrence and only the
+// ones writing those axes establish the value the observation measures, so the
+// census is refused rather than guessed when the caller names none.
+func SealObservationSites(boundary *linkboundary.Component, mounts []Mount, producerAxes []schema.Key) (ObservationSites, bool) {
+	if boundary == nil || !mountsAvailable(mounts) || len(producerAxes) == 0 {
 		return ObservationSites{}, false
+	}
+	axes := make(map[schema.Key]struct{}, len(producerAxes))
+	for _, axis := range producerAxes {
+		if !axis.Available() {
+			return ObservationSites{}, false
+		}
+		axes[axis] = struct{}{}
 	}
 	contract, contractOK := boundary.Target()
 	if !contractOK || contract == nil {
@@ -178,7 +190,7 @@ func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (Obs
 	values := boundary.Values()
 	rows := make([]ObservationSite, 0)
 	for _, mount := range mounts {
-		mountRows, mountOK := mountObservationSites(values, contract, mount)
+		mountRows, mountOK := mountObservationSites(values, contract, mount, axes)
 		if !mountOK {
 			return ObservationSites{}, false
 		}
@@ -195,7 +207,7 @@ func SealObservationSites(boundary *linkboundary.Component, mounts []Mount) (Obs
 	return ObservationSites{rows: rows, sealed: true}, true
 }
 
-func mountObservationSites(values linkboundary.Values, contract *contract.Contract, mount Mount) ([]ObservationSite, bool) {
+func mountObservationSites(values linkboundary.Values, contract *contract.Contract, mount Mount, producerAxes map[schema.Key]struct{}) ([]ObservationSite, bool) {
 	var producersByValue map[identity.ContentID][]BranchProducer
 	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)
@@ -218,7 +230,7 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 		case structure.DiagnosticObservationBranchCondition:
 			if producersByValue == nil {
 				var producersOK bool
-				producersByValue, producersOK = mountedValueProducers(values, mount)
+				producersByValue, producersOK = mountedValueProducers(values, mount, producerAxes)
 				if !producersOK {
 					return nil, false
 				}
@@ -278,7 +290,7 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 			}
 			if producersByValue == nil {
 				var producersOK bool
-				producersByValue, producersOK = mountedValueProducers(values, mount)
+				producersByValue, producersOK = mountedValueProducers(values, mount, producerAxes)
 				if !producersOK {
 					return nil, false
 				}
@@ -425,8 +437,13 @@ func anchorBranchProducers(producers []BranchProducer, evidence []identity.Conte
 // identity; Boundary owns both substitutions read against it: a rule whose
 // result is an operator span is rebound through the span relation, and every
 // other value rule through the semantic-occurrence relation.
-func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identity.ContentID][]BranchProducer, bool) {
-	if mount.Snapshot == nil {
+//
+// One occurrence carries every rule placed on it, and a rule that writes
+// another domain's axis observes nothing about the value the occurrence
+// establishes. Only the placements writing a producer axis are producers of it,
+// so an allocation's heap rules stay out of the census its value is read at.
+func mountedValueProducers(values linkboundary.Values, mount Mount, producerAxes map[schema.Key]struct{}) (map[identity.ContentID][]BranchProducer, bool) {
+	if mount.Snapshot == nil || len(producerAxes) == 0 {
 		return nil, false
 	}
 	program := mount.Snapshot.Program()
@@ -444,6 +461,9 @@ func mountedValueProducers(values linkboundary.Values, mount Mount) (map[identit
 		}
 		outputID, produces := program.OccurrenceOutputSemanticID(int(ordinal))
 		if !produces {
+			continue
+		}
+		if _, writesValue := producerAxes[rule.Writes()]; !writesValue {
 			continue
 		}
 		value, valueOK := values.ForMountedSemantic(mount.ModuleKey, outputID)

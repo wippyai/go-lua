@@ -77,8 +77,9 @@ func TestStorageWriteOutputIsItsOperandNotItsOwnIdentity(t *testing.T) {
 	if output == id {
 		t.Fatal("a storage write's output is its own occurrence identity")
 	}
-	if output != operands[occurrenceOutputOperand] {
-		t.Fatalf("storage write output = %s, want operand %d %s", output, occurrenceOutputOperand, operands[occurrenceOutputOperand])
+	operand, named := occurrenceOutputOperand(OccurrenceStorageWrite)
+	if !named || output != operands[operand] {
+		t.Fatalf("storage write output = %s, want operand %d %s", output, operand, operands[operand])
 	}
 }
 
@@ -115,6 +116,7 @@ func TestNonValueProducingOccurrenceKindsPublishNoOutput(t *testing.T) {
 		OccurrenceValueSource: {}, OccurrenceFormalEntry: {}, OccurrenceStorageRead: {},
 		OccurrenceBinaryEquality: {}, OccurrenceBinaryArithmetic: {}, OccurrenceBinaryOrder: {},
 		OccurrenceStorageBindTransfer: {}, OccurrenceStorageWrite: {}, OccurrenceIndexRead: {},
+		OccurrenceAllocation: {},
 	}
 	operands := []identity.ContentID{
 		occurrenceOutputLawID(t, "closed-zero"),
@@ -164,8 +166,12 @@ func TestNonValueProducingOccurrenceKindsPublishNoOutput(t *testing.T) {
 // occurrence whose output is unreadable.
 func TestOperandOutputOccurrenceRequiresItsOutputOperand(t *testing.T) {
 	id := occurrenceOutputLawID(t, "short")
-	for _, kind := range []OccurrenceKind{OccurrenceStorageBindTransfer, OccurrenceStorageWrite, OccurrenceIndexRead} {
-		if _, ok := NewOccurrence(kind, id, occurrenceOutputLawID(t, "body"), 0, 0, 1, 0, occurrenceOutputOperand, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false); ok {
+	for _, kind := range []OccurrenceKind{OccurrenceStorageBindTransfer, OccurrenceStorageWrite, OccurrenceIndexRead, OccurrenceAllocation} {
+		operand, named := occurrenceOutputOperand(kind)
+		if !named {
+			t.Fatalf("kind %d names no output operand", kind)
+		}
+		if _, ok := NewOccurrence(kind, id, occurrenceOutputLawID(t, "body"), 0, 0, 1, 0, uint32(operand), keyspace.FamilyInvalid, keyspace.LiteralValue{}, false); ok {
 			t.Fatalf("kind %d sealed with no output operand", kind)
 		}
 	}
