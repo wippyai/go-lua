@@ -66,7 +66,7 @@ type compiler struct {
 	staticTypeNodeRecordFields               []programschema.StaticTypeNodeRecordField
 	staticTypeNodeReferenceSourceKeys        []programschema.StaticTypeNodeReferenceSourceKey
 	staticTypeNodeReferenceCanonicalKeys     []programschema.StaticTypeNodeReferenceCanonicalKey
-	staticExpressions                        []StaticExpressionRow
+	staticExpressions                        []programschema.StaticExpression
 	staticInputs                             []programschema.StaticInput
 	diagnosticObservationByID                map[identity.ContentID]int
 	pointGeometry                            map[identity.ContentID]Point

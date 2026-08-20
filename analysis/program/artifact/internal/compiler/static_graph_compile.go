@@ -1,12 +1,41 @@
-package artifact
+package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
+
+// CompileStaticGraph emits StaticExpression, StaticInput, and the complete
+// StaticTypeNode family closure directly into the canonical publication planes.
+func CompileStaticGraph(input Input) (programschema.Publication, CompileFailure) {
+	if input.Program == nil || !input.Program.Available() || !input.ProgramID.Available() {
+		return programschema.Publication{}, compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
+	}
+	transaction := compiler{input: input.Program, programID: input.ProgramID}
+	if failure := transaction.copyStaticGraphFailure(); failure.Available() {
+		return programschema.Publication{}, failure
+	}
+	return programschema.Publication{
+		StaticExpressions:                        transaction.staticExpressions,
+		StaticInputs:                             transaction.staticInputs,
+		StaticTypeNodes:                          transaction.staticTypeNodes,
+		StaticTypeNodeUnionMembers:               transaction.staticTypeNodeUnionMembers,
+		StaticTypeNodeIntersectionMembers:        transaction.staticTypeNodeIntersectionMembers,
+		StaticTypeNodeGenericArguments:           transaction.staticTypeNodeGenericArguments,
+		StaticTypeNodeAliasParameters:            transaction.staticTypeNodeAliasParameters,
+		StaticTypeNodeInterfaceExtends:           transaction.staticTypeNodeInterfaceExtends,
+		StaticTypeNodeInterfaceMembers:           transaction.staticTypeNodeInterfaceMembers,
+		StaticTypeNodeTypeFunctionTypeParameters: transaction.staticTypeNodeTypeFunctionTypeParameters,
+		StaticTypeNodeTypeFunctionParameters:     transaction.staticTypeNodeTypeFunctionParameters,
+		StaticTypeNodeTypeFunctionReturns:        transaction.staticTypeNodeTypeFunctionReturns,
+		StaticTypeNodeRecordFields:               transaction.staticTypeNodeRecordFields,
+		StaticTypeNodeReferenceSourceKeys:        transaction.staticTypeNodeReferenceSourceKeys,
+		StaticTypeNodeReferenceCanonicalKeys:     transaction.staticTypeNodeReferenceCanonicalKeys,
+	}, CompileFailure{}
+}
 
 func staticNodeID(owner identity.ContentID, ref staticquery.StaticTypeRef) (id identity.ContentID, ok bool) {
 	if !owner.Available() || ref.Term() == 0 {
@@ -47,12 +76,12 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		return compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
 	view := ownerProgram.Static()
-	programID := compiler.key.ProgramID()
+	programID := compiler.programID
 	if !programID.Available() {
 		programID = ownerProgram.ContentID()
 	}
 	rows := make([]programschema.StaticTypeNode, 0, view.StaticTypes().Count())
-	compiler.staticExpressions = make([]StaticExpressionRow, 0, view.StaticTypes().Count())
+	compiler.staticExpressions = make([]programschema.StaticExpression, 0, view.StaticTypes().Count())
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
 	compiler.staticInputs = make([]programschema.StaticInput, 0, typeOfs.Count())
@@ -86,7 +115,11 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
 		expressionIDs[ref.Term()] = expressionID
-		compiler.staticExpressions = append(compiler.staticExpressions, StaticExpressionRow{id: expressionID, reference: nodeID, owner: owner})
+		expressionRow, expressionRowOK := programschema.NewStaticExpression(expressionID, nodeID, owner)
+		if !expressionRowOK {
+			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
+		}
+		compiler.staticExpressions = append(compiler.staticExpressions, expressionRow)
 	}
 	for inputIndex := 0; inputIndex < typeOfs.Count(); inputIndex++ {
 		sourceTerm, inputOK := typeOfs.At(inputIndex)

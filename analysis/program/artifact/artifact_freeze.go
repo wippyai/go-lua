@@ -192,27 +192,20 @@ func coldLocalTransfers(rows []localTransferDraft) ([]programschema.LocalTransfe
 	return transfers, writes, true
 }
 
-// coldStaticPlanes copies the compiler's remaining local authored-static rows
-// into their canonical families. StaticInput rows are already canonical and
-// enter Publication directly, so they are deliberately absent here.
-func coldStaticPlanes(values []StaticTypeValueRow, expressions []StaticExpressionRow) ([]programschema.StaticTypeValue, []programschema.StaticExpression, bool) {
+// coldStaticTypeValues copies the remaining local authored TypeValue rows
+// into their canonical family. StaticExpression and StaticInput rows are
+// emitted canonically by the static compiler child and enter Publication
+// directly.
+func coldStaticTypeValues(values []StaticTypeValueRow) ([]programschema.StaticTypeValue, bool) {
 	typeValues := make([]programschema.StaticTypeValue, 0, len(values))
 	for _, row := range values {
 		converted, ok := programschema.NewStaticTypeValue(row.id, row.body, row.reference, row.root, row.name)
 		if !ok {
-			return nil, nil, false
+			return nil, false
 		}
 		typeValues = append(typeValues, converted)
 	}
-	staticExpressions := make([]programschema.StaticExpression, 0, len(expressions))
-	for _, row := range expressions {
-		converted, ok := programschema.NewStaticExpression(row.id, row.reference, row.owner)
-		if !ok {
-			return nil, nil, false
-		}
-		staticExpressions = append(staticExpressions, converted)
-	}
-	return typeValues, staticExpressions, true
+	return typeValues, true
 }
 
 // coldRegionPlanes flattens the compiler's nested region rows into the two
@@ -287,7 +280,7 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 	points, pointDecisions, pointsOK := coldPointPlanes(pointRows)
 	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
 	transfers, transferWrites, transfersOK := coldLocalTransfers(compiler.localTransfers)
-	typeValues, staticExpressions, staticOK := coldStaticPlanes(compiler.staticTypeValues, compiler.staticExpressions)
+	typeValues, staticOK := coldStaticTypeValues(compiler.staticTypeValues)
 	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
 	if !heapOK || !indexesOK || !pointsOK || !edgesOK || !transfersOK || !staticOK || !regionsOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
@@ -327,7 +320,7 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		OccurrenceInputs:                         compiler.occurrenceInputs,
 		RuleOccurrences:                          compiler.ruleOccurrences,
 		StaticTypeValues:                         typeValues,
-		StaticExpressions:                        staticExpressions,
+		StaticExpressions:                        compiler.staticExpressions,
 		StaticInputs:                             compiler.staticInputs,
 		StaticTypeNodes:                          compiler.staticTypeNodes,
 		StaticTypeNodeUnionMembers:               compiler.staticTypeNodeUnionMembers,

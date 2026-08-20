@@ -285,9 +285,28 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	if failure := transaction.copyStaticRowsFailure(); failure.Available() {
 		return nil, failure
 	}
-	if failure := transaction.copyStaticGraphFailure(); failure.Available() {
-		return nil, failure
+	staticPublication, staticFailure := artifactcompiler.CompileStaticGraph(artifactcompiler.Input{
+		Program:   transaction.input,
+		ProgramID: transaction.key.ProgramID(),
+	})
+	if staticFailure.Available() {
+		return nil, artifactCompilerFailure(staticFailure)
 	}
+	transaction.staticExpressions = staticPublication.StaticExpressions
+	transaction.staticInputs = staticPublication.StaticInputs
+	transaction.staticTypeNodes = staticPublication.StaticTypeNodes
+	transaction.staticTypeNodeUnionMembers = staticPublication.StaticTypeNodeUnionMembers
+	transaction.staticTypeNodeIntersectionMembers = staticPublication.StaticTypeNodeIntersectionMembers
+	transaction.staticTypeNodeGenericArguments = staticPublication.StaticTypeNodeGenericArguments
+	transaction.staticTypeNodeAliasParameters = staticPublication.StaticTypeNodeAliasParameters
+	transaction.staticTypeNodeInterfaceExtends = staticPublication.StaticTypeNodeInterfaceExtends
+	transaction.staticTypeNodeInterfaceMembers = staticPublication.StaticTypeNodeInterfaceMembers
+	transaction.staticTypeNodeTypeFunctionTypeParameters = staticPublication.StaticTypeNodeTypeFunctionTypeParameters
+	transaction.staticTypeNodeTypeFunctionParameters = staticPublication.StaticTypeNodeTypeFunctionParameters
+	transaction.staticTypeNodeTypeFunctionReturns = staticPublication.StaticTypeNodeTypeFunctionReturns
+	transaction.staticTypeNodeRecordFields = staticPublication.StaticTypeNodeRecordFields
+	transaction.staticTypeNodeReferenceSourceKeys = staticPublication.StaticTypeNodeReferenceSourceKeys
+	transaction.staticTypeNodeReferenceCanonicalKeys = staticPublication.StaticTypeNodeReferenceCanonicalKeys
 	if failure := transaction.deriveArithmeticSummariesFailure(); failure.Available() {
 		return nil, failure
 	}
@@ -323,6 +342,8 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 	}
 	stage := CompileStageInvalid
 	switch failure.Stage() {
+	case artifactcompiler.CompileStageAuthority:
+		stage = CompileStageAuthority
 	case artifactcompiler.CompileStageValues:
 		stage = CompileStageValues
 	case artifactcompiler.CompileStageBodyOutcomes:
@@ -334,6 +355,8 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 	}
 	kind := CompileRowInvalid
 	switch failure.RowKind() {
+	case artifactcompiler.CompileRowAuthority:
+		kind = CompileRowAuthority
 	case artifactcompiler.CompileRowValues:
 		kind = CompileRowValues
 	case artifactcompiler.CompileRowBody:
@@ -349,6 +372,8 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 	}
 	reason := CompileReasonInvalid
 	switch failure.Reason() {
+	case artifactcompiler.CompileReasonProgramUnavailable:
+		reason = CompileReasonProgramUnavailable
 	case artifactcompiler.CompileReasonValuesUnavailable:
 		reason = CompileReasonValuesUnavailable
 	case artifactcompiler.CompileReasonValuesBody:

@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/internal/compiler"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -24,7 +25,7 @@ func (compiler *compiler) valueSubjectID(term keyspace.Term) (identity.ContentID
 		if !programID.Available() {
 			programID = compiler.input.ContentID()
 		}
-		_, spanID, issued, ok := artifactValueSourceIdentityAt(compiler.input, programID, family, int(ordinal-1))
+		_, spanID, issued, ok := artifactcompiler.ValueSourceIdentityAt(compiler.input, programID, family, int(ordinal-1))
 		return spanID, ok && issued == term && spanID.Available()
 	default:
 		spanID, _, _, ok := compiler.input.EvaluationSpan(term)

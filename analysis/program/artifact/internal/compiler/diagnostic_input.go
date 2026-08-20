@@ -24,6 +24,7 @@ type CompileFailure struct {
 type CompileStage string
 
 const (
+	CompileStageAuthority    CompileStage = "authority"
 	CompileStageValues       CompileStage = "values"
 	CompileStageBodyOutcomes CompileStage = "body-outcomes"
 	CompileStageRoutes       CompileStage = "routes"
@@ -33,6 +34,7 @@ const (
 type CompileRowKind string
 
 const (
+	CompileRowAuthority   CompileRowKind = "authority"
 	CompileRowValues      CompileRowKind = "values"
 	CompileRowBody        CompileRowKind = "body"
 	CompileRowOutcome     CompileRowKind = "outcome"
@@ -44,6 +46,7 @@ const (
 type CompileReason string
 
 const (
+	CompileReasonProgramUnavailable     CompileReason = "program-unavailable"
 	CompileReasonValuesUnavailable      CompileReason = "values-unavailable"
 	CompileReasonValuesBody             CompileReason = "values-body"
 	CompileReasonValuesIdentity         CompileReason = "values-identity"
@@ -126,22 +129,37 @@ type Input struct {
 }
 
 type compiler struct {
-	input               *program.Program
-	programID           identity.ContentID
-	values              []programschema.Values
-	valuesMembers       []programschema.ValuesMember
-	bodies              []programschema.Body
-	bodyEntries         []programschema.BodyEntry
-	bodyRoots           []programschema.BodyRoot
-	outcomes            []programschema.Outcome
-	outcomeReturnValues []programschema.OutcomeReturnValue
-	outcomePoints       []programschema.OutcomePoint
-	calls               []programschema.Call
-	callArguments       []programschema.CallArgument
-	boundaries          []programschema.FunctionBoundary
-	formals             []programschema.FunctionFormal
-	pointIDsBySite      map[identity.ContentID][]identity.ContentID
-	storageReads        []StorageRead
+	input                                    *program.Program
+	programID                                identity.ContentID
+	values                                   []programschema.Values
+	valuesMembers                            []programschema.ValuesMember
+	staticExpressions                        []programschema.StaticExpression
+	staticInputs                             []programschema.StaticInput
+	staticTypeNodes                          []programschema.StaticTypeNode
+	staticTypeNodeUnionMembers               []programschema.StaticTypeNodeUnionMember
+	staticTypeNodeIntersectionMembers        []programschema.StaticTypeNodeIntersectionMember
+	staticTypeNodeGenericArguments           []programschema.StaticTypeNodeGenericArgument
+	staticTypeNodeAliasParameters            []programschema.StaticTypeNodeAliasParameter
+	staticTypeNodeInterfaceExtends           []programschema.StaticTypeNodeInterfaceExtend
+	staticTypeNodeInterfaceMembers           []programschema.StaticTypeNodeInterfaceMember
+	staticTypeNodeTypeFunctionTypeParameters []programschema.StaticTypeNodeTypeFunctionTypeParameter
+	staticTypeNodeTypeFunctionParameters     []programschema.StaticTypeNodeTypeFunctionParameter
+	staticTypeNodeTypeFunctionReturns        []programschema.StaticTypeNodeTypeFunctionReturn
+	staticTypeNodeRecordFields               []programschema.StaticTypeNodeRecordField
+	staticTypeNodeReferenceSourceKeys        []programschema.StaticTypeNodeReferenceSourceKey
+	staticTypeNodeReferenceCanonicalKeys     []programschema.StaticTypeNodeReferenceCanonicalKey
+	bodies                                   []programschema.Body
+	bodyEntries                              []programschema.BodyEntry
+	bodyRoots                                []programschema.BodyRoot
+	outcomes                                 []programschema.Outcome
+	outcomeReturnValues                      []programschema.OutcomeReturnValue
+	outcomePoints                            []programschema.OutcomePoint
+	calls                                    []programschema.Call
+	callArguments                            []programschema.CallArgument
+	boundaries                               []programschema.FunctionBoundary
+	formals                                  []programschema.FunctionFormal
+	pointIDsBySite                           map[identity.ContentID][]identity.ContentID
+	storageReads                             []StorageRead
 
 	diagnosticObservations    []programschema.DiagnosticObservation
 	diagnosticEvidence        []programschema.DiagnosticEvidence

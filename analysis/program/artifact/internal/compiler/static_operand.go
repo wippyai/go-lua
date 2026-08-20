@@ -1,4 +1,4 @@
-package artifact
+package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -17,12 +17,12 @@ func artifactStaticOperandAt(input *program.Program, programID identity.ContentI
 	}
 	return input.Static().StaticOperandAt(term, staticquery.StaticOperandResolver{
 		Literal: func(term keyspace.Term) (identity.ContentID, keyspace.LiteralValue, bool) {
-			family, literal, literalOK := sourceLiteral(input, term)
+			family, literal, literalOK := SourceLiteral(input, term)
 			ordinal := keyspace.TermOrdinal(term)
 			if !literalOK || ordinal == 0 {
 				return identity.ContentID{}, keyspace.LiteralValue{}, false
 			}
-			id, _, issued, sourceOK := artifactValueSourceIdentityAt(input, programID, family, int(ordinal-1))
+			id, _, issued, sourceOK := ValueSourceIdentityAt(input, programID, family, int(ordinal-1))
 			return id, literal, sourceOK && issued == term
 		},
 		Claim: func(term keyspace.Term) (keyspace.Term, bool) {
@@ -58,7 +58,7 @@ func artifactStaticTypeValueOperand(input *program.Program, programID identity.C
 	if ordinal == 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
-	sourceID, _, source, sourceOK := artifactValueSourceIdentityAt(input, programID, keyspace.FamilyTypeValue, int(ordinal-1))
+	sourceID, _, source, sourceOK := ValueSourceIdentityAt(input, programID, keyspace.FamilyTypeValue, int(ordinal-1))
 	return sourceID, referenceID, bodyPath, pathOK && sourceOK && source == term
 }
 
@@ -74,7 +74,9 @@ func artifactStaticRuntimeSubjectOperand(input *program.Program, programID ident
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	cellTerm, cellTermOK := input.Flow().Authored().Storage().Cells().At(int(keyspace.TermOrdinal(source) - 1))
-	cellID, cellOK := artifactStorageCellID(programID, input.Flow(), source)
+	_, _, _, cellRelationOK := input.Flow().Authored().Storage().Cells().Get(source)
+	cellID, cellOK := programschema.StorageCellIdentity(programID, source)
+	cellOK = cellRelationOK && cellOK
 	bodyPath, bodyID, bodyOK := input.Flow().BodyContextIDs(owner)
 	readPath, readPathOK := input.Flow().SemanticTermPath(term)
 	_, entryTerm, finishTerm, spanOK := input.EvaluationSpan(term)
