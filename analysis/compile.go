@@ -360,15 +360,11 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.Val
 	if artifacts == nil {
 		return nil, false
 	}
-	mounts := make([]anadiag.MountedCensus, len(artifacts.mounts))
-	for index, mount := range artifacts.mounts {
-		mounts[index] = anadiag.MountedCensus{ModuleKey: mount.ModuleKey, Snapshot: mount.Snapshot}
-	}
 	values := make([]anadiag.ValueCoordinate, len(coordinates))
 	for index, coordinate := range coordinates {
 		values[index] = anadiag.ValueCoordinate{Mount: coordinate.MountID(), ID: coordinate.ID()}
 	}
-	return anadiag.ProjectSites(artifacts.sites, mounts, values, artifacts.declared)
+	return anadiag.ProjectSites(artifacts.sites, artifacts.mounts, values, artifacts.declared)
 }
 
 // sealDeclaredConformanceTypes publishes the declared-type column every

@@ -8,8 +8,8 @@ import (
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -31,12 +31,6 @@ func RowID(role string, mount, artifact, local identity.ContentID) (identity.Con
 	_, _ = hash.Write(artifact[:])
 	_, _ = hash.Write(local[:])
 	return identity.ContentID(hash.Sum(nil)), true
-}
-
-// MountedCensus is one sealed ingress mount the site projector reads.
-type MountedCensus struct {
-	ModuleKey identity.ContentID
-	Snapshot  *ingress.Snapshot
 }
 
 // ValueCoordinate is one Link-substituted Value cell the census joins.
@@ -303,7 +297,7 @@ func (observation Observation) Available() bool {
 
 // ProjectSites materializes mounted observation rows from sealed Snapshot
 // sites. Compile-time reconstruction is not a source.
-func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordinates []ValueCoordinate, declared DeclaredTypes) ([]Observation, bool) {
+func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedArtifact, coordinates []ValueCoordinate, declared DeclaredTypes) ([]Observation, bool) {
 	if !sites.Available() || len(mounts) == 0 {
 		return nil, false
 	}
@@ -322,7 +316,7 @@ func ProjectSites(sites mounted.ObservationSites, mounts []MountedCensus, coordi
 		}
 		coordinateByID[key] = uint32(index)
 	}
-	mountByKey := make(map[identity.ContentID]MountedCensus, len(mounts))
+	mountByKey := make(map[identity.ContentID]programmount.MountedArtifact, len(mounts))
 	for _, mount := range mounts {
 		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.ModuleKey.Available() {
 			return nil, false
