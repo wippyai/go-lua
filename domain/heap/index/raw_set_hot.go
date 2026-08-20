@@ -50,26 +50,6 @@ func SealRawSetProgramRule(rule *RawSetHotRule) (engine.ProgramRule, bool) {
 	return engine.SealProgramRule(implementation)
 }
 
-func (rule *RawSetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {
-	if rule == nil || rule.core == nil || rule.core.topology == nil {
-		return Access{}, false
-	}
-	topology := rule.core.topology
-	mount, mountOK := topology.heap.OccurrenceMountForModule(module)
-	if !mountOK {
-		return Access{}, false
-	}
-	indexAccess, accessOK := mount.IndexAccessForOccurrence(occurrenceID, false)
-	if !accessOK {
-		return Access{}, false
-	}
-	access, accessOK := topology.Access(indexAccess)
-	if !accessOK {
-		return Access{}, false
-	}
-	return access, access.Write()
-}
-
 // BindRawSetHot binds RawSet's r0..r4 read chain, Heap carry, and route write
 // directly at their declared schema ordinals. No construction transaction,
 // cold Owner, Composition Rule, or copied Factor geometry is retained.
@@ -118,7 +98,23 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 }
 
 func (rule *RawSetHotRule) resolveOperand(coords engine.OperandCoords) (Access, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
+	if rule == nil || rule.core == nil || rule.core.topology == nil {
+		return Access{}, false
+	}
+	topology := rule.core.topology
+	mount, mountOK := topology.heap.OccurrenceMountForModule(coords.Mount)
+	if !mountOK {
+		return Access{}, false
+	}
+	indexAccess, accessOK := mount.IndexAccessForOccurrence(coords.Occurrence, false)
+	if !accessOK {
+		return Access{}, false
+	}
+	access, accessOK := topology.Access(indexAccess)
+	if !accessOK {
+		return Access{}, false
+	}
+	return access, access.Write()
 }
 
 func hotRawSetRuntime(values *valueowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) *rawSetRuntime {

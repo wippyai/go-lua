@@ -60,7 +60,12 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
+	if rule == nil || rule.owner == nil || rule.catalog == nil {
+		return source.Root{}, false
+	}
+	mount, mountOK := rule.catalog.ForMount(coords.Mount)
+	root, ok := mount.RootForOccurrence(coords.Occurrence)
+	return root, mountOK && ok && root.FencedTo(rule.owner.Schema())
 }
 
 // AttachCatalog attaches the exact Link-local allocation occurrence issuer to
@@ -72,19 +77,6 @@ func (rule *HotRule) AttachCatalog(catalog *allocationcatalog.Catalog) bool {
 	}
 	rule.catalog = catalog
 	return true
-}
-
-// ReceiptForOccurrence reuses the allocation catalog's exact Root receipt for
-// one mounted occurrence; no new root or allocation shape is created here.
-// The catalog's mount row is the sealed address, so a foreign or unmounted
-// module names no row at all.
-func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Root, bool) {
-	if rule == nil || rule.owner == nil || rule.catalog == nil {
-		return source.Root{}, false
-	}
-	mount, mountOK := rule.catalog.ForMount(module)
-	root, ok := mount.RootForOccurrence(id)
-	return root, mountOK && ok && root.FencedTo(rule.owner.Schema())
 }
 
 func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Root], bool) {

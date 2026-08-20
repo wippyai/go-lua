@@ -122,29 +122,12 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Closed, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-// ReceiptForOccurrence returns the catalog's exact presealed Closed source for
-// one mounted allocation occurrence. The catalog's mount row is the sealed
-// address; a foreign or unmounted module names no row at all.
-func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Closed, bool) {
 	if rule == nil || rule.catalog == nil {
 		return source.Closed{}, false
 	}
-	mount, mountOK := rule.catalog.ForMount(module)
-	closed, ok := mount.ClosedForOccurrence(id)
-	return closed, mountOK && ok && closed.FencedTo(rule.heap, rule.values) && closed.SummaryReceipt().IssuedBy(rule.summaryOwner())
-}
-
-func (rule *HotRule) summaryOwner() *valueowner.HotOwner {
-	if rule == nil || rule.catalog == nil {
-		return nil
-	}
-	// The catalog exact-fences this same owner during BindHot; the typed
-	// implementation callback retains it as well. This helper keeps the
-	// mounted issuance check explicit without exposing catalog internals.
-	return rule.valueOwner
+	mount, mountOK := rule.catalog.ForMount(coords.Mount)
+	closed, ok := mount.ClosedForOccurrence(coords.Occurrence)
+	return closed, mountOK && ok && closed.FencedTo(rule.heap, rule.values) && closed.SummaryReceipt().IssuedBy(rule.valueOwner)
 }
 
 func hotClosedContent(heapSchema heapdomain.Schema, values *valuedomain.Schema, valueOwner *valueowner.HotOwner, candidate source.Closed) (source.Closed, [32]byte, bool) {

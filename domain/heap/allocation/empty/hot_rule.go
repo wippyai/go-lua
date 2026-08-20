@@ -81,28 +81,12 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (source.Root, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-// ReceiptForOccurrence returns the catalog's exact presealed Empty root for
-// one mounted allocation occurrence. The catalog's mount row is the sealed
-// address; a foreign or unmounted module names no row at all.
-func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (source.Root, bool) {
 	if rule == nil || rule.catalog == nil {
 		return source.Root{}, false
 	}
-	mount, mountOK := rule.catalog.ForMount(module)
-	root, ok := mount.RootForOccurrence(id)
-	return root, mountOK && ok && root.Form() == source.FormEmpty && root.FencedTo(rule.catalogHeap())
-}
-
-func (rule *HotRule) catalogHeap() heapdomain.Schema {
-	if rule == nil || rule.catalog == nil {
-		return heapdomain.Schema{}
-	}
-	// Every operand is re-fenced by the exact HotOwner schema in content and
-	// evidence. Retain the same schema explicitly for issuance.
-	return rule.schema
+	mount, mountOK := rule.catalog.ForMount(coords.Mount)
+	root, ok := mount.RootForOccurrence(coords.Occurrence)
+	return root, mountOK && ok && root.Form() == source.FormEmpty && root.FencedTo(rule.schema)
 }
 
 // Implementation returns Heap owner's opaque receipt issuer only after the

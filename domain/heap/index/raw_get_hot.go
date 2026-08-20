@@ -2,7 +2,6 @@ package index
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -44,26 +43,6 @@ func SealRawGetProgramRule(rule *RawGetHotRule) (engine.ProgramRule, bool) {
 		return engine.ProgramRule{}, false
 	}
 	return engine.SealProgramRule(implementation)
-}
-
-func (rule *RawGetHotRule) ReceiptForOccurrence(module, occurrenceID identity.ContentID) (Access, bool) {
-	if rule == nil || rule.core == nil || rule.core.runtime == nil || rule.core.runtime.topology == nil {
-		return Access{}, false
-	}
-	topology := rule.core.runtime.topology
-	mount, mountOK := topology.heap.OccurrenceMountForModule(module)
-	if !mountOK {
-		return Access{}, false
-	}
-	indexAccess, accessOK := mount.IndexAccessForOccurrence(occurrenceID, true)
-	if !accessOK {
-		return Access{}, false
-	}
-	access, accessOK := topology.Access(indexAccess)
-	if !accessOK {
-		return Access{}, false
-	}
-	return access, access.Read()
 }
 
 func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment, topology *Topology, values *valueowner.HotOwner, calls *callowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) (*RawGetHotRule, bool) {
@@ -169,5 +148,21 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 }
 
 func (rule *RawGetHotRule) resolveOperand(coords engine.OperandCoords) (Access, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
+	if rule == nil || rule.core == nil || rule.core.runtime == nil || rule.core.runtime.topology == nil {
+		return Access{}, false
+	}
+	topology := rule.core.runtime.topology
+	mount, mountOK := topology.heap.OccurrenceMountForModule(coords.Mount)
+	if !mountOK {
+		return Access{}, false
+	}
+	indexAccess, accessOK := mount.IndexAccessForOccurrence(coords.Occurrence, true)
+	if !accessOK {
+		return Access{}, false
+	}
+	access, accessOK := topology.Access(indexAccess)
+	if !accessOK {
+		return Access{}, false
+	}
+	return access, access.Read()
 }
