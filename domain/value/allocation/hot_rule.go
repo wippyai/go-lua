@@ -68,18 +68,11 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (operand, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-// ReceiptForOccurrence returns the exact presealed Value allocation operand.
-// The catalog's mount row is the sealed address, so a foreign or unmounted
-// module names no row at all.
-func (rule *HotRule) ReceiptForOccurrence(module, id identity.ContentID) (operand, bool) {
 	if rule == nil || rule.catalog == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return operand{}, false
 	}
-	mount, mountOK := rule.catalog.ForMount(module)
-	key, ok := mount.KeyForOccurrence(id)
+	mount, mountOK := rule.catalog.ForMount(coords.Mount)
+	key, ok := mount.KeyForOccurrence(coords.Occurrence)
 	if !mountOK || !ok {
 		return operand{}, false
 	}

@@ -91,14 +91,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.BinaryArithmetic, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.BinaryArithmetic, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.BinaryArithmetic{}, false
 	}
-	row, ok := rule.owner.Schema().BinaryArithmetic(mount, id)
+	row, ok := rule.owner.Schema().BinaryArithmetic(coords.Mount, coords.Occurrence)
 	return row, ok && rule.owner.Schema().OwnsBinaryArithmetic(row)
 }
 

@@ -70,14 +70,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.PresenceRefinement, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.PresenceRefinement, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.PresenceRefinement{}, false
 	}
-	row, ok := rule.owner.Schema().PresenceRefinement(mount, id)
+	row, ok := rule.owner.Schema().PresenceRefinement(coords.Mount, coords.Occurrence)
 	return row, ok && rule.owner.Schema().OwnsPresenceRefinement(row)
 }
 

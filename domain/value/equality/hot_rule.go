@@ -84,14 +84,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.BinaryEquality, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.BinaryEquality, bool) {
 	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return value.BinaryEquality{}, false
 	}
-	row, ok := rule.owner.Schema().BinaryEquality(mount, id)
+	row, ok := rule.owner.Schema().BinaryEquality(coords.Mount, coords.Occurrence)
 	return row, ok && rule.owner.Schema().OwnsBinaryEquality(row)
 }
 

@@ -76,17 +76,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (value.StorageTransfer, bool) {
-	return rule.ReceiptForOccurrence(coords.Mount, coords.Occurrence)
-}
-
-// ReceiptForOccurrence returns the exact preissued Value storage-transfer
-// operand for one mounted reusable Program occurrence. The mount qualifier is
-// required because equal Program artifacts may be installed more than once.
-func (rule *HotRule) ReceiptForOccurrence(mount, id identity.ContentID) (value.StorageTransfer, bool) {
-	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !mount.Available() || !id.Available() {
+	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil || !coords.Mount.Available() || !coords.Occurrence.Available() {
 		return value.StorageTransfer{}, false
 	}
-	transfer, ok := rule.owner.Schema().StorageTransferForArtifactOccurrence(mount, id)
+	transfer, ok := rule.owner.Schema().StorageTransferForArtifactOccurrence(coords.Mount, coords.Occurrence)
 	return transfer, ok && rule.owner.Schema().OwnsStorageTransfer(transfer)
 }
 
