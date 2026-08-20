@@ -82,7 +82,6 @@ type BodyHotRule struct {
 	all                 []bodyRoute
 	receiptsSealed      bool
 	receipts            []hotBodyOperand
-	finalizationFailure BodyReceiptFinalizationFailure
 }
 
 // BindBodyHot seals the sole body-role route table and binds the exact Call
