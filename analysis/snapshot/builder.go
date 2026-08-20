@@ -45,6 +45,15 @@ var (
 	// the store. Two snapshots of one store at one generation would publish
 	// two different contents under one store revision.
 	ErrStaleGeneration = errors.New("snapshot: derived publication does not advance the generation")
+	// ErrDoubleRowAuthority reports content that states its rows twice, as a
+	// keyed mapping and as an ordinal sequence. One content states one row
+	// set, in the one form its key discipline has.
+	ErrDoubleRowAuthority = errors.New("snapshot: content states its rows both as a mapping and as a sequence")
+	// ErrNonOrdinalKey reports an ordinal sequence offered for a key type
+	// that has no positions, or a sequence longer than its key type can
+	// count. A sequence is addressed by position, so a key that is not a
+	// position addresses none of it.
+	ErrNonOrdinalKey = errors.New("snapshot: sequence content requires a key type that counts its positions")
 )
 
 // Content is what a writer principal hands to a column slot: the rows it
@@ -53,6 +62,24 @@ var (
 // Denominator publishes a column that can report a miss and never a proven
 // absence.
 //
+// A writer states its rows in the one form its key discipline has. Rows is
+// the general form: a mapping from arbitrary keys, whose universe the
+// Members name. Sequence is the form of a writer whose key universe is its
+// own dense position range -- an emitted plane, where a row's key is where
+// the row already is. A sequence states its universe by being one, so it
+// names no members, and stating rows both ways states them twice and is
+// rejected.
+//
+// Which form a content states is what the key universe is, never how the
+// column stores it. The two forms of one row set publish one column that
+// answers identically; what the ordinal form buys is a read that indexes
+// where a keyed read hashes and descends.
+//
+// A sequence of no rows still states a universe -- the empty position range
+// of a plane its writer emitted nothing into -- so the empty sequence and the
+// absent one are different declarations: the writer that has a plane hands
+// over the plane it has.
+//
 // A denominator identity carries its members exactly once. The first column
 // that names an identity declares its membership; a later column names the
 // same identity with no members and is sealed against the very same set,
@@ -60,10 +87,12 @@ var (
 // copy of it. Offering members for an already declared identity is a second
 // membership authority and is rejected.
 //
-// Content is consumed by copy. Neither Rows nor Members becomes the sealed
-// storage, so a later write to either cannot reach a published snapshot.
+// Content is consumed by copy. Neither Rows, Sequence nor Members becomes the
+// sealed storage, so a later write to any of them cannot reach a published
+// snapshot.
 type Content[K comparable, V any] struct {
 	Rows        map[K]V
+	Sequence    []V
 	Denominator identity.ContentID
 	Members     []K
 }
@@ -77,6 +106,12 @@ type builderCore struct {
 	schema     identity.ContentID
 	store      identity.StoreID
 	generation identity.Generation
+	// cold marks the publication that is produced once and never revised. It
+	// is what decides how a dense content is stored: a cold column holds its
+	// sequence, because the only cost it can ever pay again is the read,
+	// while a revisable column holds a persistent trie, because a revision
+	// must cost its change set and a sequence would cost the column.
+	cold bool
 	// columns holds one erased *column[K, V] per dense slot, inherited by
 	// reference from the publication this builder derives from.
 	columns []any
@@ -136,7 +171,7 @@ const coldGeneration = identity.Generation(1)
 // reference across every mount of it, and anchored to a generation that
 // nothing can advance.
 func NewFrozen(schema identity.ContentID, store identity.StoreID) FrozenBuilder {
-	return FrozenBuilder{builderCore: builderCore{schema: schema, store: store, generation: coldGeneration}}
+	return FrozenBuilder{builderCore: builderCore{schema: schema, store: store, generation: coldGeneration, cold: true}}
 }
 
 // NewDelta starts the publication that follows base at generation. It
@@ -209,20 +244,51 @@ func putColumn[K comparable, V any](b *builderCore, ax Axis[K, V], content Conte
 	if !hashable {
 		return fmt.Errorf("%w: slot %d", ErrUnhashableKey, ax.Slot)
 	}
+	positions := len(content.Sequence)
+	dense := content.Sequence != nil
+	if dense {
+		if len(content.Rows) > 0 {
+			return fmt.Errorf("%w: slot %d", ErrDoubleRowAuthority, ax.Slot)
+		}
+		if len(content.Members) > 0 {
+			return fmt.Errorf("%w: slot %d states a sequence and its members", ErrDuplicatePublication, ax.Slot)
+		}
+		if positions > 0 && !plan.ordinal.holds(positions-1) {
+			return fmt.Errorf("%w: slot %d", ErrNonOrdinalKey, ax.Slot)
+		}
+	}
 	if !content.Denominator.Available() && len(content.Members) > 0 {
 		return fmt.Errorf("%w: slot %d", ErrUnprovenMembers, ax.Slot)
 	}
 	if b.authoredAt(ax.Slot) {
 		return fmt.Errorf("%w: slot %d", ErrSlotFilled, ax.Slot)
 	}
-	attached, entry, err := sealDenominator[K](b, plan, content.Denominator, content.Members, ax.Slot)
+	universe := membership[K]{members: content.Members, ordinal: dense, width: positions}
+	attached, entry, err := sealDenominator[K](b, plan, content.Denominator, universe, ax.Slot)
 	if err != nil {
 		return err
 	}
 	b.detach(ax.Slot)
 	b.reserve(ax.Slot)
 	sealed := &column[K, V]{plan: plan, members: attached}
-	if len(content.Rows) > 0 {
+	switch {
+	case dense && b.cold:
+		// The cold publication is never revised, so the rows are held where
+		// their keys already put them and a read indexes rather than hashes.
+		sealed.sequence = true
+		sealed.values = make([]V, positions)
+		copy(sealed.values, content.Sequence)
+	case dense:
+		// The same rows under a revisable lifecycle, whose cost law is the
+		// change set: the sequence names each row's key and the rows are
+		// held persistently.
+		rows := make([]trieEntry[K, V], 0, positions)
+		for index, value := range content.Sequence {
+			key := ordinalKey[K](plan, index)
+			rows = append(rows, trieEntry[K, V]{hash: hashKey(plan, key), key: key, value: value})
+		}
+		sealed.rows = trieBuild(rows, make([]trieEntry[K, V], len(rows)), 0)
+	case len(content.Rows) > 0:
 		rows := make([]trieEntry[K, V], 0, len(content.Rows))
 		for key, value := range content.Rows {
 			rows = append(rows, trieEntry[K, V]{hash: hashKey(plan, key), key: key, value: value})
@@ -427,17 +493,32 @@ func editable[K comparable, V any](b *builderCore, ax Axis[K, V]) (*column[K, V]
 	return stored, nil
 }
 
+// membership is the key universe one content declares: the members it names,
+// or the dense position range it is. A content declares one of them, which is
+// what the two forms of Content state.
+type membership[K comparable] struct {
+	members []K
+	ordinal bool
+	width   int
+}
+
+// declared reports whether this content declares a universe at all. A content
+// that declares none names an identity another content sealed.
+func (universe membership[K]) declared() bool {
+	return universe.ordinal || len(universe.members) > 0
+}
+
 // sealDenominator resolves the denominator a column declares. The first
-// column that names an identity seals its members; a later column names the
+// column that names an identity seals its universe; a later column names the
 // identity alone and is attached to the very set the first sealed, so the
 // membership is stored once and referenced twice.
-func sealDenominator[K comparable](b *builderCore, plan *keyPlan, id identity.ContentID, members []K, slot uint32) (*denominator[K], denominatorEntry, error) {
+func sealDenominator[K comparable](b *builderCore, plan *keyPlan, id identity.ContentID, universe membership[K], slot uint32) (*denominator[K], denominatorEntry, error) {
 	if !id.Available() {
 		return nil, denominatorEntry{}, nil
 	}
 	published, exists := trieLookup(b.denominators, hashKey(identityPlan, id), id)
 	if exists {
-		if len(members) > 0 {
+		if universe.declared() {
 			return nil, denominatorEntry{}, fmt.Errorf("%w: denominator %s", ErrDuplicatePublication, id)
 		}
 		shared, sameKey := published.set.(*denominator[K])
@@ -447,9 +528,17 @@ func sealDenominator[K comparable](b *builderCore, plan *keyPlan, id identity.Co
 		return shared, denominatorEntry{set: published.set, size: published.size, slots: withSlot(published.slots, slot)}, nil
 	}
 	sealed := &denominator[K]{id: id}
-	if len(members) > 0 {
-		covered := make([]trieEntry[K, struct{}], 0, len(members))
-		for _, member := range members {
+	if universe.ordinal {
+		// A position range is stated by its width: the universe of a dense
+		// content is the content, so its membership costs a word whichever
+		// way the rows themselves are stored.
+		sealed.ordinal = true
+		sealed.width = universe.width
+		return sealed, denominatorEntry{set: sealed, size: universe.width, slots: []uint32{slot}}, nil
+	}
+	if len(universe.members) > 0 {
+		covered := make([]trieEntry[K, struct{}], 0, len(universe.members))
+		for _, member := range universe.members {
 			covered = append(covered, trieEntry[K, struct{}]{hash: hashKey(plan, member), key: member})
 		}
 		sealed.members = trieBuild(covered, make([]trieEntry[K, struct{}], len(covered)), 0)

@@ -29,6 +29,10 @@ var keySeed = maphash.MakeSeed()
 // integer, a content identity, a flat struct -- hash in a single memory pass.
 type keyPlan struct {
 	steps []keyStep
+	// ordinal is how this key type converts to and from its own position. A
+	// key type that has positions can address a dense universe by index; one
+	// that has none is only ever addressed by hash.
+	ordinal ordinalPlan
 }
 
 // keyStepKind names how one region of a key contributes to its hash.
@@ -57,11 +61,12 @@ type keyStep struct {
 // by a dynamic type this package cannot see, so a column can never be keyed
 // by one.
 func planFor[K comparable]() (*keyPlan, bool) {
-	steps, derived := planSteps(reflect.TypeOf((*K)(nil)).Elem(), 0, nil)
+	keyType := reflect.TypeOf((*K)(nil)).Elem()
+	steps, derived := planSteps(keyType, 0, nil)
 	if !derived {
 		return nil, false
 	}
-	return &keyPlan{steps: steps}, true
+	return &keyPlan{steps: steps, ordinal: ordinalPlanFor(keyType)}, true
 }
 
 // planSteps appends the schedule of one type at offset to steps.

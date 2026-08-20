@@ -38,9 +38,9 @@
 //
 // # Storage
 //
-// Every published structure -- a column's rows, a denominator's membership,
-// the directory, and the query publication -- is stored in one persistent
-// hash trie. The shape follows from the cost of publishing: an engine
+// A published structure -- a column's rows, a denominator's membership, the
+// directory, and the query publication -- is stored in one persistent hash
+// trie. The shape follows from the cost of publishing: an engine
 // publishes a new snapshot whenever a fact changes, so publication has to be
 // priced by the change set rather than by the state. A trie whose nodes are
 // shared by pointer and copied only along a changed key's path prices it that
@@ -60,6 +60,31 @@
 // a float, and never hashes a struct's padding. Flat keys -- an integer, a
 // content identity, a struct of scalars -- coalesce into a single memory
 // pass, so a read hashes once and then walks a few nodes.
+//
+// # Dense universes
+//
+// One key discipline prices itself out of that shape. A writer that publishes
+// an emitted plane has a key universe that is its own position range: the row
+// at ordinal i is keyed by i, and nothing else is a key. Hashing a position
+// to find where a position already is buys nothing, and the cost is paid by
+// every read of every such column. A Content states that discipline by
+// handing over the sequence itself rather than a mapping, and a universe
+// stated that way costs a width rather than a membership set.
+//
+// What the declaration buys depends on the lifecycle, because the two
+// lifecycles have different cost laws. A cold publication is produced once
+// and never revised, so the only cost it can pay again is the read: it holds
+// the sequence and a read indexes it. A hot publication is revised, and a
+// revision must cost its change set, which a sequence cannot state and a
+// persistent trie can: it holds the same rows in the trie, under the keys
+// their positions name. The declaration is about the key universe, the
+// storage is about the lifecycle, and neither changes what a column answers.
+// The same rows published either way answer the same reads and carry the
+// same identity, which is fixed by an executable law.
+//
+// A contiguous run of a cold sequence is borrowed whole rather than read row
+// by row, which is what a parent row naming its children by offset and count
+// asks for.
 //
 // # Denominators
 //

@@ -46,8 +46,8 @@ func (family Family[V]) Denominator(catalog identity.ContentID) (identity.Conten
 
 // Content seals an emitted sequence into the column's payload. The
 // denominator's membership is that sequence's ordinal range, so the column is
-// total over exactly what it publishes and an ordinal past the end is a
-// proven absence rather than a missing row.
+// total over exactly what it publishes: every ordinal it holds is a row, and
+// an ordinal past the end is outside the universe the family names.
 //
 // A sequence containing an unavailable row seals nothing: a compiled program
 // either proved every row it emitted or it did not compile.
@@ -56,17 +56,17 @@ func (family Family[V]) Content(rows []V, catalog identity.ContentID) (snapshot.
 	if !derived {
 		return snapshot.Content[Ordinal, V]{}, false
 	}
-	sealed := make(map[Ordinal]V, len(rows))
-	members := make([]Ordinal, 0, len(rows))
-	for index, row := range rows {
+	for _, row := range rows {
 		if !row.Available() {
 			return snapshot.Content[Ordinal, V]{}, false
 		}
-		ordinal := Ordinal(index)
-		sealed[ordinal] = row
-		members = append(members, ordinal)
 	}
-	return snapshot.Content[Ordinal, V]{Rows: sealed, Denominator: denominator, Members: members}, true
+	if rows == nil {
+		// An empty plane still publishes a column that is total over the
+		// empty universe, which a sequence states by being one.
+		rows = []V{}
+	}
+	return snapshot.Content[Ordinal, V]{Sequence: rows, Denominator: denominator}, true
 }
 
 // Put seals this family into a publication under construction.
@@ -107,23 +107,13 @@ func (family Family[V]) At(frozen *snapshot.Frozen, catalog identity.ContentID, 
 // Span returns the rows a parent row names by offset and count. A span that
 // runs past the sealed family is not a short read: the parent named rows the
 // publication does not hold, so it reports nothing at all.
+//
+// The rows are borrowed out of the sealed plane rather than copied out of it,
+// so a span costs no allocation however wide it is. Like every value read out
+// of a publication they are transitively immutable, and a caller that needs a
+// mutable form copies them itself.
 func (family Family[V]) Span(frozen *snapshot.Frozen, catalog identity.ContentID, offset, count uint32) ([]V, bool) {
-	width, published := family.Count(frozen, catalog)
-	if !published || uint64(offset)+uint64(count) > uint64(width) {
-		return nil, false
-	}
-	if count == 0 {
-		return nil, true
-	}
-	rows := make([]V, 0, count)
-	for index := uint32(0); index < count; index++ {
-		row, held := family.At(frozen, catalog, int(offset+index))
-		if !held {
-			return nil, false
-		}
-		rows = append(rows, row)
-	}
-	return rows, true
+	return snapshot.ReadSpan(frozen, family.Axis(catalog), offset, count)
 }
 
 // The dense slot each cold family occupies in a compiled program's

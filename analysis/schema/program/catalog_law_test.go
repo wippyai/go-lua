@@ -137,6 +137,52 @@ func TestEmptyCallTargetFamilyIsPublished(t *testing.T) {
 	}
 }
 
+// A parent row names its children by offset and count, and the family answers
+// that with the rows themselves rather than with a copy of them: the plane is
+// sealed contiguously, so a span borrows it and costs no allocation however
+// wide it is. A span that runs past the sealed family is not a short read, and
+// the borrowed rows cannot be grown into the rows that follow them.
+func TestCallTargetFamilySpanBorrowsTheSealedPlane(t *testing.T) {
+	rows := catalogLawFamily()
+	frozen, catalog := sealCatalogLaw(t, rows)
+
+	span, held := CallTargetFamily().Span(&frozen, catalog, 1, 1)
+	if !held || len(span) != 1 || span[0] != rows[1] {
+		t.Fatalf("span = %+v (held %t), want the second emitted row", span, held)
+	}
+	if cap(span) != len(span) {
+		t.Fatalf("span capacity = %d, want %d", cap(span), len(span))
+	}
+	whole, wholeHeld := CallTargetFamily().Span(&frozen, catalog, 0, uint32(len(rows)))
+	if !wholeHeld || len(whole) != len(rows) || &whole[1] != &span[0] {
+		t.Fatal("two spans of one plane borrow one storage")
+	}
+	if empty, emptyHeld := CallTargetFamily().Span(&frozen, catalog, uint32(len(rows)), 0); !emptyHeld || len(empty) != 0 {
+		t.Fatal("the empty span at the end of the plane is a span of no rows")
+	}
+	if _, past := CallTargetFamily().Span(&frozen, catalog, 1, uint32(len(rows))); past {
+		t.Fatal("a span past the sealed family borrowed rows")
+	}
+	foreign, derived := identity.DeriveContentID("cold-law/foreign-span-catalog", nil)
+	if !derived {
+		t.Fatal("foreign catalog")
+	}
+	if _, held := CallTargetFamily().Span(&frozen, foreign, 0, 1); held {
+		t.Fatal("a foreign catalog's axis borrowed rows")
+	}
+
+	var borrowed []CallTarget
+	allocations := testing.AllocsPerRun(1000, func() {
+		borrowed, _ = CallTargetFamily().Span(&frozen, catalog, 0, uint32(len(rows)))
+	})
+	if allocations != 0 {
+		t.Fatalf("span allocations = %v, want 0", allocations)
+	}
+	if len(borrowed) != len(rows) {
+		t.Fatalf("borrowed %d rows, want %d", len(borrowed), len(rows))
+	}
+}
+
 // A cold axis of one catalog reads nothing out of another catalog's
 // publication, which is the property the derived catalog identity exists for.
 func TestCatalogAxisOfAnotherCatalogReadsNothing(t *testing.T) {
@@ -202,6 +248,8 @@ func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
 		{OccurrencePointFamily().slot, OccurrencePointFamily().name},
 		{OccurrenceInputFamily().slot, OccurrenceInputFamily().name},
 		{RuleOccurrenceFamily().slot, RuleOccurrenceFamily().name},
+		{StorageCellLifetimeFamily().slot, StorageCellLifetimeFamily().name},
+		{SubjectLivenessFamily().slot, SubjectLivenessFamily().name},
 	}
 	slots := make(map[uint32]string, len(declared))
 	names := make(map[string]uint32, len(declared))

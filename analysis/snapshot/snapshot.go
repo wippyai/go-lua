@@ -135,10 +135,45 @@ func ReadFrozen[K comparable, V any](f *Frozen, ax Axis[K, V], key K) (V, ReadSt
 	return stored.read(key)
 }
 
+// ReadSpan borrows the rows of the position range [offset, offset+count) out
+// of the cold column ax names. It is the read a consumer of an emitted plane
+// performs: a parent row names a run of child rows by offset and count, and
+// the run is already contiguous in the sealed column.
+//
+// A range that runs past the sealed width is not a short read: the caller
+// named rows the publication does not hold, so it borrows nothing at all.
+// A column that publishes no ordinal sequence -- a keyed column, or a
+// revisable one, neither of which holds its rows contiguously -- answers no
+// span; a consumer reads those one key at a time.
+//
+// The returned slice is the sealed storage itself, borrowed under the same
+// discipline every read borrows under: it is transitively immutable, a
+// reader that needs a mutable form detaches its own copy, and its capacity
+// is its length so an append copies rather than writing into the rows that
+// follow. ReadSpan allocates nothing.
+func ReadSpan[K comparable, V any](f *Frozen, ax Axis[K, V], offset, count uint32) ([]V, bool) {
+	if f == nil {
+		return nil, false
+	}
+	stored, recovered := columnAt[K, V](&f.publication, ax.SchemaID, ax.Slot)
+	if !recovered || !stored.sequence {
+		return nil, false
+	}
+	end := uint64(offset) + uint64(count)
+	if end > uint64(len(stored.values)) {
+		return nil, false
+	}
+	return stored.values[offset:end:end], true
+}
+
 // columnAt performs the shared validation and typed recovery: schema match,
-// slot bound, then the checked recovery that is the column-kind check.
+// slot bound, then the checked recovery that is the column-kind check. The
+// three are the whole fence a read needs. A value that publishes no schema
+// matches no available axis, so the schema comparison already rejects every
+// unpublished value, and the store and the generation identify the
+// publication rather than the address.
 func columnAt[K comparable, V any](s *publication, schema identity.ContentID, slot uint32) (*column[K, V], bool) {
-	if s == nil || !s.Published() || !schema.Available() || schema != s.schema {
+	if s == nil || !schema.Available() || schema != s.schema {
 		return nil, false
 	}
 	if uint64(slot) >= uint64(len(s.columns)) {
