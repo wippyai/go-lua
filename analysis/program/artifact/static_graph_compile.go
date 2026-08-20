@@ -47,13 +47,17 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		return compileFailure(CompileStageAuthority, CompileRowAuthority, -1, -1, CompileReasonProgramUnavailable)
 	}
 	view := ownerProgram.Static()
+	programID := compiler.key.ProgramID()
+	if !programID.Available() {
+		programID = ownerProgram.ContentID()
+	}
 	rows := make([]programschema.StaticTypeNode, 0, view.StaticTypes().Count())
 	compiler.staticExpressions = make([]StaticExpressionRow, 0, view.StaticTypes().Count())
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
 	compiler.staticInputs = make([]programschema.StaticInput, 0, typeOfs.Count())
 	operandRow := func(term keyspace.Term) (staticquery.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
-		operand, ok := ownerProgram.StaticOperandAt(term)
+		operand, ok := artifactStaticOperandAt(ownerProgram, programID, term)
 		if !ok {
 			return staticquery.StaticOperandInvalid, keyspace.LiteralValue{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 		}
@@ -89,7 +93,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		if inputOK {
 			_, operandTerm, inputOK := typeOfs.Get(sourceTerm)
 			if inputOK {
-				frontierID, cursor, frontierOK := ownerProgram.StaticFrontier(sourceTerm)
+				frontierID, cursor, frontierOK := artifactStaticFrontier(ownerProgram, sourceTerm)
 				expressionRef, expressionOK := view.StaticTypes().Ref(sourceTerm)
 				sourceID, sourceOK := staticNodeID(owner, expressionRef)
 				operandID, operandOK := staticquery.OccurrenceID(owner, 1, operandTerm)
@@ -139,7 +143,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		}
 		targetRef, targetRefOK := view.StaticTypes().Ref(targetTerm)
 		targetID, targetIDOK := staticNodeID(owner, targetRef)
-		frontierID, cursor, frontierOK := ownerProgram.StaticFrontier(sourceTerm)
+		frontierID, cursor, frontierOK := artifactStaticFrontier(ownerProgram, sourceTerm)
 		if !targetRefOK || !targetIDOK || !frontierOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, -1, CompileReasonProgramUnavailable)
 		}
