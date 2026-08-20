@@ -212,6 +212,27 @@ func (mount ArtifactMount) Snapshot() *ingress.Snapshot {
 	return mount.snapshot
 }
 
+// ArtifactMountCount returns the sealed Link mount denominator without
+// copying its rows. Consumers that enumerate mounts use Count/At so a hot
+// lookup never allocates an exported slice merely to read owner state.
+func (schema Schema) ArtifactMountCount() int {
+	if !schema.valid() {
+		return 0
+	}
+	return len(schema.owner.artifactOrder)
+}
+
+// ArtifactMountAt returns one owner-issued mount in the Link's canonical
+// order. The row remains authenticated by this exact Heap schema.
+func (schema Schema) ArtifactMountAt(index int) (ArtifactMount, bool) {
+	if !schema.valid() || index < 0 || index >= len(schema.owner.artifactOrder) {
+		return ArtifactMount{}, false
+	}
+	mount := schema.owner.artifactOrder[index]
+	canonical, ok := schema.owner.artifacts[mount.module]
+	return mount, ok && canonical.snapshot == mount.snapshot && canonical.programID == mount.programID && mount.Available()
+}
+
 // ArtifactMounts returns the artifact mounts this schema sealed, in the Link's
 // own mount order. It is Heap's own enumeration of the mount set it admitted,
 // so a consumer that needs the whole list reads it from the sealed owner

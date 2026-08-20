@@ -700,6 +700,18 @@ func TestHeapKeyIDInverseLaws(t *testing.T) {
 	if len(mounts) == 0 || linked == nil || !schema.Valid() {
 		t.Fatal("heap key inverse fixture")
 	}
+	if schema.ArtifactMountCount() != len(mounts) {
+		t.Fatalf("mount denominator=%d, want %d", schema.ArtifactMountCount(), len(mounts))
+	}
+	for index, want := range mounts {
+		got, ok := schema.ArtifactMountAt(index)
+		if !ok || got.Module() != want.Module() || got.ProgramID() != want.ProgramID() || got.Snapshot() != want.Snapshot() {
+			t.Fatalf("mount %d is not the owner-issued row", index)
+		}
+	}
+	if _, ok := schema.ArtifactMountAt(len(mounts)); ok {
+		t.Fatal("mount directory admitted an out-of-range row")
+	}
 
 	ids := make(map[identity.ContentID]Key, schema.KeyCount())
 	for index := 0; index < schema.KeyCount(); index++ {
