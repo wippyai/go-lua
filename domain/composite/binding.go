@@ -23,7 +23,6 @@ const (
 	BindStagePublication
 	BindStageSeal
 	BindStageAllocations
-	BindStageRuntimeContexts
 )
 
 func (stage BindStage) String() string {
@@ -50,8 +49,6 @@ func (stage BindStage) String() string {
 		return "seal"
 	case BindStageAllocations:
 		return "allocations"
-	case BindStageRuntimeContexts:
-		return "runtime-contexts"
 	default:
 		return "none"
 	}
