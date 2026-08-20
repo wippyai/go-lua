@@ -30,6 +30,11 @@ type DbgEngineCounters struct {
 	DropNarrowPhase      uint64
 	DropRestart          uint64
 	DropNarrowFold       uint64
+	CarryRetained        uint64
+	CarryExtended        uint64
+	CarryRebuilt         uint64
+	CarryOpened          uint64
+	CarryInstalls        uint64
 	RefuseReasons        [8]uint64
 	RefuseDirection      [8]uint64
 }

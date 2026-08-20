@@ -221,6 +221,21 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	if !epoch.operands.openable(operands) {
 		return false
 	}
+	// The frontier's per-region change-fact is derived here, against the rows
+	// the runtime still holds, because it is the only place both frontiers are
+	// readable. It is what the tick space and the region episodes are carried
+	// under below; nothing is retained that it does not prove.
+	repointed := make(map[int]struct{}, len(overlay.replacements))
+	for _, replacement := range overlay.replacements {
+		repointed[replacement.index] = struct{}{}
+	}
+	previousOf, carry, classified := regionFrontierCarry(runtime.regions, overlay.regions, runtime.activeRegions, overlay.activeRegions, repointed)
+	if !classified {
+		return false
+	}
+	if len(prepared.regions) != len(overlay.regions) || len(overlay.regionChildren) != len(overlay.regions) || len(carry) != len(overlay.regions) {
+		return false
+	}
 	// An in-place frontier appends into reserved capacity. prepareEdgeBacking
 	// grows the store whenever that capacity is short, so the reslice below is
 	// admitted here rather than assumed across the two calls.
@@ -268,7 +283,18 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	runtime.pointRegion = overlay.pointRegion
 	runtime.activeRegions = overlay.activeRegions
 	runtime.operands = operands
-	epoch.operands.openAdmitted(operands)
+	// The region episodes and the tick space are carried under one change-fact
+	// and nothing after this point may observe one without the other, so the
+	// two refuse through the epoch fail-stop rather than by returning a
+	// half-installed frontier to the caller.
+	regions, carried := epoch.carryRegionEpisodes(prepared.regions, previousOf, carry)
+	if !carried {
+		return epoch.fail()
+	}
+	epoch.regions = regions
+	if !epoch.markCarriedRegionOperands(epoch.operands.openAdmitted(operands, previousOf, carry), carry) {
+		return epoch.fail()
+	}
 	for _, activation := range prepared.pointActivations {
 		// An activation installs a point without publishing a
 		// predecessor-to-successor transition, so it issues no classification.
@@ -278,7 +304,6 @@ func (epoch *executorEpoch) installSelectedFactorOverlay(overlay *preparedSelect
 	for _, activation := range prepared.producerActivations {
 		epoch.producers[activation.index] = activation.state
 	}
-	epoch.regions = prepared.regions
 	epoch.candidatesPending = prepared.candidatesPending
 	epoch.nested = prepared.nested
 	epoch.frames = prepared.frames

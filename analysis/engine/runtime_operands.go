@@ -119,6 +119,144 @@ func (column factorSourceColumn) source(index int) (int, bool) {
 	return column.installed[index].source, true
 }
 
+// operandRow is the one authority for which region row an operand kind is
+// built from. The plane scatters a row in exactly this order, so a reader that
+// compares two frontiers reads the same positions the plane addresses.
+func (region *runtimeRegion) operandRow(kind operandKind) []int {
+	switch kind {
+	case operandExternalProducer:
+		return region.external
+	case operandBackProducer:
+		return region.back
+	case operandExternalEnvironment:
+		return region.environmentExternal
+	case operandBackEnvironment:
+		return region.environmentBack
+	case operandExternalFactor:
+		return region.factorExternal
+	case operandBackFactor:
+		return region.factorBack
+	case operandRegionPoint:
+		return region.points
+	}
+	return nil
+}
+
+// regionRowCarry is the change-fact a re-derived plane carries a region under.
+// Nothing survives a rebuild that this does not prove: it is the sole reason
+// an epoch may keep a tick, an exact row or a retained accumulator across a
+// frontier installation.
+type regionRowCarry uint8
+
+const (
+	// regionRowRetained: every row of this region is the row the previous
+	// frontier sealed. The region kept its operands, so it keeps its ticks and
+	// its episode.
+	regionRowRetained regionRowCarry = iota
+	// regionRowExtended: every previous operand is still at its own position
+	// and the frontier only appended. Adding a join term ascends the row, so a
+	// retained accumulator still bounds it from below; the appended positions
+	// are the ones that read as changed.
+	regionRowExtended
+	// regionRowRebuilt: an operand moved position or changed its source. The
+	// previous row bounds nothing here, so every operand reads as changed and
+	// the evidence axis refuses reuse.
+	regionRowRebuilt
+)
+
+func (carry regionRowCarry) worse(other regionRowCarry) regionRowCarry {
+	if other > carry {
+		return other
+	}
+	return carry
+}
+
+// regionFrontierCarry classifies the regions of an installed frontier against
+// the regions the running epoch was sealed over.
+//
+// A recurrence is named by its head Point, never by its region ordinal: one
+// installation re-derives the schedule, so a newly demanded cycle can take an
+// ordinal an existing region held. previousOf carries that correspondence -
+// one entry per installed region, naming the region it continues or -1 for a
+// region this frontier opens - and carry names what the frontier did to its
+// rows.
+//
+// repointed names the factor edge indexes whose source the frontier moved.
+// Such an edge keeps its row position and its width, so width alone cannot see
+// it; it is the one change a positional comparison must be told about.
+func regionFrontierCarry(previous, next []runtimeRegion, activePrevious, activeNext []bool, repointed map[int]struct{}) ([]int, []regionRowCarry, bool) {
+	if len(activePrevious) != len(previous) || len(activeNext) != len(next) {
+		return nil, nil, false
+	}
+	continues := make(map[int]int, len(previous))
+	for index := range previous {
+		if !activePrevious[index] || !previous[index].active {
+			continue
+		}
+		if _, duplicate := continues[previous[index].head]; duplicate {
+			return nil, nil, false
+		}
+		continues[previous[index].head] = index
+	}
+	previousOf := make([]int, len(next))
+	carries := make([]regionRowCarry, len(next))
+	for index := range next {
+		previousOf[index], carries[index] = -1, regionRowRebuilt
+		if !activeNext[index] {
+			continue
+		}
+		source, continued := continues[next[index].head]
+		if !continued || regionFrontierParentHead(previous, source) != regionFrontierParentHead(next, index) {
+			continue
+		}
+		previousOf[index] = source
+		carry := regionRowRetained
+		for kind := operandKind(0); kind < operandKindCount; kind++ {
+			carry = carry.worse(operandRowCarry(previous[source].operandRow(kind), next[index].operandRow(kind), kind, repointed))
+		}
+		carries[index] = carry
+	}
+	return previousOf, carries, true
+}
+
+// regionFrontierParentHead names one region's enclosing recurrence by the head
+// Point of its parent, so a nesting change is visible across two frontiers
+// whose region ordinals are not the same index space.
+func regionFrontierParentHead(regions []runtimeRegion, index int) int {
+	if index < 0 || index >= len(regions) {
+		return -1
+	}
+	parent := regions[index].parent
+	if parent < 0 || parent >= len(regions) {
+		return -1
+	}
+	return regions[parent].head
+}
+
+// operandRowCarry classifies one row. The frontier only ever appends, so a
+// previous row that is not a prefix of the next one is a reordering, and a
+// reordering invalidates every position the tick space addresses.
+func operandRowCarry(previous, next []int, kind operandKind, repointed map[int]struct{}) regionRowCarry {
+	if len(next) < len(previous) {
+		return regionRowRebuilt
+	}
+	for position, member := range previous {
+		if next[position] != member {
+			return regionRowRebuilt
+		}
+		if kind != operandExternalFactor && kind != operandBackFactor {
+			continue
+		}
+		if _, moved := repointed[member]; moved {
+			return regionRowRebuilt
+		}
+	}
+	if len(next) != len(previous) {
+		return regionRowExtended
+	}
+	return regionRowRetained
+}
+
 // buildOperandPlane counts once and scatters once over the already-sealed
 // region rows. It runs exactly where those rows are built, so a rebuilt
 // activation epoch pays one extra pass over rows it is rebuilding anyway.
@@ -139,9 +277,9 @@ func buildOperandPlane(graph *equation.Graph, producers []runtimeProducer, envir
 	}
 	plane.groupBase[len(producers)] = int32(total)
 	for index, region := range regions {
-		widths := [operandKindCount]int{len(region.external), len(region.back), len(region.environmentExternal), len(region.environmentBack), len(region.factorExternal), len(region.factorBack), len(region.points)}
-		for kind, width := range widths {
-			plane.windows[index*int(operandKindCount)+kind] = int32(total)
+		for kind := operandKind(0); kind < operandKindCount; kind++ {
+			width := len(region.operandRow(kind))
+			plane.windows[index*int(operandKindCount)+int(kind)] = int32(total)
 			if width < 0 || total > operandPlaneMax-width {
 				return nil, false
 			}
@@ -386,29 +524,39 @@ func (state *operandEpoch) openable(plane *operandPlane) bool {
 	return state != nil && plane != nil
 }
 
-// open installs a plane over this epoch. Group input ordinals keep their
-// positions across an activation rebuild, so their accumulated ticks survive;
-// the region suffix is re-derived and starts unmarked, which is exactly the
-// state its freshly opened region episodes read it in.
+// open installs a plane over this epoch. It is the first open of an epoch:
+// no reader has closed an interface epoch yet, so the whole plane starts
+// unmarked. A re-derived frontier goes through reopen, which must carry what
+// its readers already remember.
 func (state *operandEpoch) open(plane *operandPlane) bool {
 	if !state.openable(plane) {
 		return false
 	}
-	state.openAdmitted(plane)
+	_ = state.openAdmitted(plane, nil, nil)
 	return true
 }
 
 // openAdmitted is open's commit half; openable must have admitted the plane.
-func (state *operandEpoch) openAdmitted(plane *operandPlane) {
+//
+// carry is the per-region change-fact of a re-derived frontier, one entry per
+// region, and nil for a first open. Group input ordinals keep their positions
+// across a rebuild, so their ticks are copied whenever the prefix width is
+// unchanged. Region ordinals are re-derived, so their ticks are copied exactly
+// as far as carry proves the row unchanged and stamped at the live clock
+// everywhere else: a stamped operand reads as changed, which is the only
+// fail-closed answer, while a zeroed one would read as unchanged and hide a
+// mark its reader has not yet folded.
+func (state *operandEpoch) openAdmitted(plane *operandPlane, previousOf []int, carry []regionRowCarry) []uint8 {
 	if state.clock < 1 {
 		state.clock = 1
 	}
+	previous := state.plane
 	width := int(plane.groupBase[len(plane.groupBase)-1])
-	retained := state.plane != nil && width == int(state.plane.groupBase[len(state.plane.groupBase)-1]) && width <= len(state.tick) && width <= plane.total
+	retained := previous != nil && width == int(previous.groupBase[len(previous.groupBase)-1]) && width <= len(state.tick) && width <= plane.total
 	ticks := make([]uint64, plane.total)
 	if retained {
 		copy(ticks, state.tick[:width])
-	} else {
+	} else if previous != nil {
 		// The Group input rows moved, so no reader's stamp can be compared
 		// against a tick in the new space. Stamping the whole prefix at the
 		// live clock makes every input read as changed, which is the only
@@ -417,7 +565,48 @@ func (state *operandEpoch) openAdmitted(plane *operandPlane) {
 			ticks[index] = state.clock
 		}
 	}
+	var stamped []uint8
+	if previous != nil {
+		stamped = state.carryRegionTicks(plane, previous, ticks, previousOf, carry)
+	}
 	state.plane, state.tick = plane, ticks
+	return stamped
+}
+
+// carryRegionTicks copies the region half of the tick space into the plane the
+// frontier re-derived. A retained row keeps every tick; an extended row keeps
+// the ticks of the operands it kept and stamps the appended tail; anything
+// else is stamped whole. The returned rows carry one bit per stamped operand
+// kind, which is the mark the region reading that row still owes its evidence
+// axis.
+func (state *operandEpoch) carryRegionTicks(plane, previous *operandPlane, ticks []uint64, previousOf []int, carry []regionRowCarry) []uint8 {
+	stamped := make([]uint8, plane.regions)
+	for region := 0; region < plane.regions; region++ {
+		fact, source := regionRowRebuilt, -1
+		if region < len(carry) && region < len(previousOf) {
+			fact, source = carry[region], previousOf[region]
+		}
+		for kind := operandKind(0); kind < operandKindCount; kind++ {
+			begin, end, ok := plane.regionWindow(region, kind)
+			if !ok {
+				continue
+			}
+			carried := 0
+			if fact != regionRowRebuilt && source >= 0 {
+				if oldBegin, oldEnd, oldOK := previous.regionWindow(source, kind); oldOK && oldEnd <= len(state.tick) && oldEnd-oldBegin <= end-begin {
+					copy(ticks[begin:end], state.tick[oldBegin:oldEnd])
+					carried = oldEnd - oldBegin
+				}
+			}
+			if begin+carried < end {
+				stamped[region] |= 1 << uint(kind)
+			}
+			for ordinal := begin + carried; ordinal < end; ordinal++ {
+				ticks[ordinal] = state.clock
+			}
+		}
+	}
+	return stamped
 }
 
 // advance closes one reader's epoch: the returned stamp is strictly below

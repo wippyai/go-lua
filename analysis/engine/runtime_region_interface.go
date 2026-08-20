@@ -227,6 +227,134 @@ func (epoch *executorEpoch) rememberRegionInterfaces(region int) bool {
 	return true
 }
 
+// carryRegionEpisodes installs the region episodes of one frontier over the
+// episodes the epoch is running. A region the frontier proves unchanged keeps
+// the episode it settled: its operands are the operands it folded, so its
+// exact row, its remember stamp and its retained accumulator all still
+// describe the live recurrence and nothing about the frontier refuses them.
+//
+// Every other continued region opens a new ascent episode, and so does every
+// region nested inside one: a parent that re-ascends may not hold a narrowed
+// descendant, which is the same ownership invariant restartRegion keeps. A
+// region this frontier opens keeps the episode the preparation built for it.
+func (epoch *executorEpoch) carryRegionEpisodes(fresh []regionEpoch, previousOf []int, carry []regionRowCarry) ([]regionEpoch, bool) {
+	count := len(fresh)
+	if epoch == nil || epoch.runtime == nil || len(carry) != count || len(previousOf) != count || len(epoch.runtime.regionChildren) != count {
+		return nil, false
+	}
+	reascend := make([]bool, count)
+	stack := make([]int, 0, count)
+	for index := 0; index < count; index++ {
+		// A region this frontier opens ascends from Init, and one it changed
+		// opens a new ascent episode. Both are roots of the descendant closure
+		// below, because a new region can be nested between an enclosing region
+		// and a region that was already nested inside it.
+		if previousOf[index] < 0 || carry[index] != regionRowRetained {
+			reascend[index], stack = true, append(stack, index)
+		}
+	}
+	for next := 0; next < len(stack); next++ {
+		for _, child := range epoch.runtime.regionChildren[stack[next]] {
+			if child < 0 || child >= count || reascend[child] {
+				continue
+			}
+			reascend[child], stack = true, append(stack, child)
+		}
+	}
+	dbgEngine.CarryInstalls++
+	for index := 0; index < count; index++ {
+		source := previousOf[index]
+		if source < 0 || source >= len(epoch.regions) {
+			dbgEngine.CarryOpened++
+			continue
+		}
+		switch carry[index] {
+		case regionRowRetained:
+			dbgEngine.CarryRetained++
+		case regionRowExtended:
+			dbgEngine.CarryExtended++
+		default:
+			dbgEngine.CarryRebuilt++
+		}
+		fresh[index] = epoch.regions[source]
+		if reascend[index] {
+			epoch.reascendRegionEpisode(&fresh[index])
+		}
+	}
+	return fresh, true
+}
+
+// reascendRegionEpisode opens one new ascent episode over a region the
+// frontier changed. The episode is new, but the row the previous one settled
+// is not thrown away: it is the fold of operands that have not moved, so it is
+// the lower bound the next delta folds onto. Only a narrow episode's exact row
+// carries that way -- an ascent episode's exact row is the discharged one, and
+// only its own raw accumulator is the fold.
+func (epoch *executorEpoch) reascendRegionEpisode(state *regionEpoch) {
+	seed, hasSeed := state.accumulator, state.hasAccumulator && state.phase == phaseAscent
+	if state.phase == phaseNarrow && state.hasExact {
+		seed, hasSeed = state.exact, true
+	}
+	episode := state.episode
+	if episode != ^uint64(0) {
+		episode++
+	}
+	*state = regionEpoch{
+		phase:          phaseAscent,
+		episode:        episode,
+		accumulator:    seed,
+		hasAccumulator: hasSeed,
+		invalid:        true,
+		rememberAt:     epoch.operands.advance(),
+		pending:        change.Classified(),
+	}
+	if epoch.diagnostics != nil {
+		epoch.diagnostics.observeEpisode(episode)
+	}
+}
+
+// markCarriedRegionOperands routes the evidence of the operands a frontier
+// installation stamped. The plane stamps the tick; this is the same mark on
+// the region's own evidence axis, so an installed operand reaches the
+// accumulator through the one classification route a publication uses.
+//
+// An appended operand is a join term the row did not have, so the row ascends
+// and a retained accumulator still bounds it from below. A row whose operands
+// moved position or changed source is classified by nobody, so it reaches the
+// axis unclassified and Admits refuses the reuse.
+func (epoch *executorEpoch) markCarriedRegionOperands(stamped []uint8, carry []regionRowCarry) bool {
+	if epoch == nil || len(stamped) != len(carry) {
+		return false
+	}
+	clock := epoch.operands.clock
+	for region, kinds := range stamped {
+		if kinds == 0 || region >= len(epoch.regions) || !epoch.activeRegion(region) {
+			continue
+		}
+		state := &epoch.regions[region]
+		for kind := operandKind(0); kind < operandKindCount; kind++ {
+			if kinds&(1<<uint(kind)) == 0 {
+				continue
+			}
+			evidence := change.Set{Reasons: change.ChangedFactor, Direction: change.Known | change.Ascends}
+			if carry[region] != regionRowExtended {
+				evidence = change.Set{Reasons: change.ChangedFactor}
+			}
+			switch {
+			case kind.external():
+				state.externalAt = clock
+				state.pending = state.pending.Union(evidence)
+			case kind.back():
+				state.backAt = clock
+				state.pending = state.pending.Union(evidence)
+			default:
+				state.pointsAt = clock
+			}
+		}
+	}
+	return true
+}
+
 func (epoch *executorEpoch) regionSubtree(root int) ([]int, bool) {
 	if epoch == nil || !epoch.activeRegion(root) || len(epoch.runtime.regionChildren) != len(epoch.runtime.regions) {
 		return nil, false
