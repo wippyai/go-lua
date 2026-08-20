@@ -20,6 +20,8 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/result"
+	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
+	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -458,20 +460,21 @@ func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, 
 }
 
 // corpusHarnessResultDefect is the detached public Result contract every mode
-// applies. A Result that cannot name its own source, bodies, roots, values, or
-// effects is not a clean analysis regardless of the mode's own verdict.
-func corpusHarnessResultDefect(result *result.Result, sourceID identity.ContentID) error {
-	if result == nil {
+// applies. A Result that cannot name its own source, bodies, roots, or typed
+// query publications is not a clean analysis regardless of the mode's own
+// verdict.
+func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.ContentID) error {
+	if analysisResult == nil {
 		return fmt.Errorf("nil result")
 	}
-	if !result.ContentID().Available() || !result.SourceID().Available() || result.SourceID() != sourceID {
+	if !analysisResult.ContentID().Available() || !analysisResult.SourceID().Available() || analysisResult.SourceID() != sourceID {
 		return fmt.Errorf("invalid source/content identity")
 	}
-	if result.BodyCount() == 0 {
+	if analysisResult.BodyCount() == 0 {
 		return fmt.Errorf("empty body projection")
 	}
-	for bodyIndex := 0; bodyIndex < result.BodyCount(); bodyIndex++ {
-		body, ok := result.BodyAt(bodyIndex)
+	for bodyIndex := 0; bodyIndex < analysisResult.BodyCount(); bodyIndex++ {
+		body, ok := analysisResult.BodyAt(bodyIndex)
 		if !ok {
 			return fmt.Errorf("body %d is not addressable", bodyIndex)
 		}
@@ -487,18 +490,106 @@ func corpusHarnessResultDefect(result *result.Result, sourceID identity.ContentI
 				return fmt.Errorf("body %d root %d has no detached identity", bodyIndex, rootIndex)
 			}
 		}
-		for valueIndex := 0; valueIndex < body.ValueCount(); valueIndex++ {
-			if id, _, ok := body.ValueAt(valueIndex); !ok || !id.Available() {
-				return fmt.Errorf("body %d value %d has no detached identity", bodyIndex, valueIndex)
+	}
+
+	valueFamily, valueFamilyOK := valuepublication.Open(analysisResult)
+	if !valueFamilyOK {
+		return fmt.Errorf("value publication family unavailable")
+	}
+	effectFamily, effectFamilyOK := effectpublication.Open(analysisResult)
+	if !effectFamilyOK {
+		return fmt.Errorf("effect publication family unavailable")
+	}
+
+	validateBodies := func(family string, queryIndex, bodyCount int, bodyAt func(int) (result.Body, bool)) error {
+		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
+			body, ok := bodyAt(bodyIndex)
+			if !ok {
+				return fmt.Errorf("%s query %d body %d is not readable", family, queryIndex, bodyIndex)
+			}
+			if id, ok := body.ID(); !ok || !id.Available() {
+				return fmt.Errorf("%s query %d body %d has no readable identity", family, queryIndex, bodyIndex)
 			}
 		}
-		if _, _, ok := body.EffectDisposition(); !ok {
-			return fmt.Errorf("body %d effect projection unavailable", bodyIndex)
+		return nil
+	}
+
+	for queryIndex := 0; queryIndex < valueFamily.QueryCount(); queryIndex++ {
+		query, queryOK := valueFamily.QueryAt(queryIndex)
+		if !queryOK {
+			return fmt.Errorf("value query %d is not addressable", queryIndex)
 		}
-		for effectIndex := 0; effectIndex < body.EffectCount(); effectIndex++ {
-			if id, ok := body.EffectAt(effectIndex); !ok || !id.Available() {
-				return fmt.Errorf("body %d effect %d has no detached identity", bodyIndex, effectIndex)
+		if id, ok := query.SiteID(); !ok || !id.Available() {
+			return fmt.Errorf("value query %d has no site identity", queryIndex)
+		}
+		if id, ok := query.MountID(); !ok || !id.Available() {
+			return fmt.Errorf("value query %d has no mount identity", queryIndex)
+		}
+		if id, ok := query.PointID(); !ok || !id.Available() {
+			return fmt.Errorf("value query %d has no point identity", queryIndex)
+		}
+		if err := validateBodies("value", queryIndex, query.BodyCount(), query.BodyAt); err != nil {
+			return err
+		}
+		switch query.Status() {
+		case result.QueryProvenAbsent:
+			// Proven absence is a publication outcome, not a typed payload. It
+			// remains valid without asking the domain facade to decode a cell.
+		case result.QueryHit:
+			summary, summaryOK := query.Summary()
+			if !summaryOK || !summary.Available() {
+				return fmt.Errorf("value query %d summary payload is unreadable", queryIndex)
 			}
+			coordinates := summary.Coordinates()
+			for coordinateIndex := 0; coordinateIndex < summary.CoordinateCount(); coordinateIndex++ {
+				coordinate, coordinateOK := coordinates.Next()
+				id := coordinate.ID()
+				if !coordinateOK || !coordinate.Available() || !id.Available() {
+					return fmt.Errorf("value query %d coordinate %d has no available identity", queryIndex, coordinateIndex)
+				}
+			}
+			if _, trailing := coordinates.Next(); trailing {
+				return fmt.Errorf("value query %d summary has trailing coordinates", queryIndex)
+			}
+		default:
+			return fmt.Errorf("value query %d has invalid publication status", queryIndex)
+		}
+	}
+
+	for queryIndex := 0; queryIndex < effectFamily.QueryCount(); queryIndex++ {
+		query, queryOK := effectFamily.QueryAt(queryIndex)
+		if !queryOK {
+			return fmt.Errorf("effect query %d is not addressable", queryIndex)
+		}
+		if id, ok := query.SiteID(); !ok || !id.Available() {
+			return fmt.Errorf("effect query %d has no site identity", queryIndex)
+		}
+		if id, ok := query.MountID(); !ok || !id.Available() {
+			return fmt.Errorf("effect query %d has no mount identity", queryIndex)
+		}
+		if id, ok := query.PointID(); !ok || !id.Available() {
+			return fmt.Errorf("effect query %d has no point identity", queryIndex)
+		}
+		if err := validateBodies("effect", queryIndex, query.BodyCount(), query.BodyAt); err != nil {
+			return err
+		}
+		switch query.Status() {
+		case result.QueryProvenAbsent:
+			// Proven absence is deliberately left undecoded, just as for the
+			// value family.
+		case result.QueryHit:
+			effect, effectOK := query.Effect()
+			if !effectOK || !effect.Available() {
+				return fmt.Errorf("effect query %d effect payload is unreadable", queryIndex)
+			}
+			for atomIndex := 0; atomIndex < effect.AtomCount(); atomIndex++ {
+				id, atomOK := effect.AtomAt(atomIndex)
+				if !atomOK || !id.Available() {
+					return fmt.Errorf("effect query %d atom %d has no available identity", queryIndex, atomIndex)
+				}
+			}
+		default:
+			return fmt.Errorf("effect query %d has invalid publication status", queryIndex)
 		}
 	}
 	return nil

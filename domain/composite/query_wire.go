@@ -15,10 +15,12 @@ type queryContributor struct {
 	bind    func(*engine.SchemaBinding, query.Cell, query.Subjects) bool
 	recover func(*engine.SchemaBinding, query.Cell) (query.Cell, bool)
 	admit   func(*engine.SchemaBinding, query.Cell, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool)
+	encode  func(engine.Answer) (bool, uint64, []byte, bool)
+	contract engine.CanonicalResultContract
 }
 
 func (contributor queryContributor) complete() bool {
-	return contributor.declare != nil && contributor.bind != nil && contributor.recover != nil && contributor.admit != nil
+	return contributor.declare != nil && contributor.bind != nil && contributor.recover != nil && contributor.admit != nil && contributor.encode != nil && contributor.contract.Available()
 }
 
 func wireQuery[F, R any](
@@ -28,12 +30,17 @@ func wireQuery[F, R any](
 	bind func(*engine.SchemaBinding, query.Binding[F]) bool,
 	recover func(*engine.SchemaBinding, query.Sealed[F]) (R, bool),
 	admit func(R, identity.ContentID, identity.ContentID, identity.ContentID) (engine.ProgramQueryAdmission, bool),
+	encode func(engine.Answer) (bool, uint64, []byte, bool),
 ) (*query.Registration, queryContributor, bool) {
-	if declare == nil || bind == nil || recover == nil || admit == nil {
+	if declare == nil || bind == nil || recover == nil || admit == nil || encode == nil {
 		return nil, queryContributor{}, false
 	}
 	registration, ok := query.New(spec, roles)
 	if !ok {
+		return nil, queryContributor{}, false
+	}
+	contract, contractOK := engine.NewCanonicalResultContract(identity.ContentID(registration.ID()), registration.Freezer())
+	if !contractOK {
 		return nil, queryContributor{}, false
 	}
 	subjects := registration.Subjects()
@@ -78,6 +85,8 @@ func wireQuery[F, R any](
 			}
 			return admit(implementation, id, mount, point)
 		},
+		encode: encode,
+		contract: contract,
 	}
 	return registration, contributor, contributor.complete()
 }

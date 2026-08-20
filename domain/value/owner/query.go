@@ -45,7 +45,7 @@ func (fragment *SummaryQueryFragment) Available() bool {
 // observation this domain owns.
 func QuerySpec() query.Spec {
 	return query.Spec{
-		Family:   "value-summary",
+		Family:   value.SummaryResultFamily,
 		Semantic: "semantic/query/value-summary",
 		Codec:    "semantic/query-result/value-summary",
 		// The summary fold composes coordinatewise, so the family may be
@@ -95,6 +95,17 @@ func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*SummaryQu
 		return nil, false
 	}
 	return engine.SummaryQueryImplementationAt[value.Value, value.ValueSummaryObservation](binding, context.Fragment.slot)
+}
+
+// EncodeQueryAnswer is the value-summary family's one-way public result
+// boundary. Typed engine state is validated and converted to Value's canonical
+// compact payload before Result can retain it.
+func EncodeQueryAnswer(answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
+	observation, readable := engine.AnswerValue[value.ValueSummaryObservation](answer)
+	if !readable {
+		return false, 0, nil, false
+	}
+	return value.EncodeSummaryResult(observation)
 }
 
 // summaryQuerySpec is the family's hot half against one Link's sealed value

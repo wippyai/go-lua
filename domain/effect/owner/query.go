@@ -44,7 +44,7 @@ func (fragment *ExactQueryFragment) Available() bool {
 // effect observation this domain owns.
 func QuerySpec() query.Spec {
 	return query.Spec{
-		Family:   "effect-exact",
+		Family:   factor.ExactResultFamily,
 		Semantic: "semantic/query/effect-exact",
 		Codec:    "semantic/query-result/effect-exact",
 		// An exact read admits no split at all, so the obligation the fold rests
@@ -93,6 +93,16 @@ func RecoverQuery(binding *engine.SchemaBinding, context query.Sealed[*ExactQuer
 		return nil, false
 	}
 	return engine.ExactQueryImplementationAt[factor.Value, factor.EffectObservation](binding, context.Fragment.slot)
+}
+
+// EncodeQueryAnswer is the effect-exact family's one-way public result
+// boundary. The private joined algebra value is discarded by the domain codec.
+func EncodeQueryAnswer(answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
+	observation, readable := engine.AnswerValue[factor.EffectObservation](answer)
+	if !readable {
+		return false, 0, nil, false
+	}
+	return factor.EncodeResult(observation)
 }
 
 // exactQuerySpec is the family's hot half against one Link's sealed effect

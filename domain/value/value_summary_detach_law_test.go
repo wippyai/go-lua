@@ -13,6 +13,7 @@ func TestCloneValueSummaryOwnsBothInteriorPlanes(t *testing.T) {
 		Present: []bool{true, true},
 		Rows:    1,
 		Valid:   true,
+		owner:   schema,
 	}
 	detached := CloneValueSummary(source)
 	if !EqualValueSummary(schema, detached, source) {

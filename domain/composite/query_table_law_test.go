@@ -164,14 +164,17 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer); admitted {
 		t.Fatal("value-summary was admitted without the contributor that folds it")
 	}
-	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission); admitted {
+	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer); admitted {
 		t.Fatal("value-summary was admitted without its owner admission callback")
+	}
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, nil); admitted {
+		t.Fatal("value-summary was admitted without its owner result encoder")
 	}
 }
 

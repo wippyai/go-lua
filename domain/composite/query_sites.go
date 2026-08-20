@@ -26,7 +26,49 @@ type QuerySite struct {
 type QueryPublication struct {
 	Site QuerySite
 	Key  identity.ContentID
+
+	// The encoder is a transient hot-side capability. It converts one borrowed
+	// typed Answer into an owned engine cell and is never retained by Result.
+	contract *engine.CanonicalResultContract
+	encode   func(engine.Answer) (bool, uint64, []byte, bool)
+	ordinal  uint32
 }
+
+// CanonicalCell invokes this sealed family's owner encoder exactly once and
+// closes the typed Answer into an immutable engine-owned cell.
+func (publication QueryPublication) CanonicalCell(answer engine.Answer) (engine.CanonicalResultCell, bool) {
+	if !publication.Key.Available() || publication.contract == nil || !publication.contract.Available() || publication.encode == nil || !answer.Available() {
+		return engine.CanonicalResultCell{}, false
+	}
+	present, rows, payload, encoded := publication.encode(answer)
+	if !encoded {
+		return engine.CanonicalResultCell{}, false
+	}
+	return engine.NewCanonicalResultCell(*publication.contract, present, rows, payload)
+}
+
+func (publication QueryPublication) FamilyID() identity.ContentID {
+	if publication.contract == nil {
+		return identity.ContentID{}
+	}
+	return publication.contract.FamilyID()
+}
+
+func (publication QueryPublication) Codec() identity.SemanticKey {
+	if publication.contract == nil {
+		return identity.SemanticKey{}
+	}
+	return publication.contract.Codec()
+}
+
+func (publication QueryPublication) Contract() engine.CanonicalResultContract {
+	if publication.contract == nil {
+		return engine.CanonicalResultContract{}
+	}
+	return *publication.contract
+}
+
+func (publication QueryPublication) FamilyOrdinal() uint32 { return publication.ordinal }
 
 // SelectedQuerySites derives mount-qualified query identities from semantic
 // occurrences in selected sealed bodies. Non-callable roots are always
@@ -227,6 +269,19 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 	}
 	publications := make([]QueryPublication, 0, len(sites))
 	for _, site := range sites {
+		position, positioned := queryPositionForFamily(site.Family)
+		if !positioned || position < 0 || position >= len(registry.queries) || position >= len(registry.queryContributors) {
+			return nil, false
+		}
+		registration := registry.queries[position]
+		contributor := registry.queryContributors[position]
+		if registration == nil || !contributor.complete() || registration.Key() != site.Family ||
+			registration.Population() != query.PopulationSelectedPoint || registration.Projection() != site.Projection {
+			return nil, false
+		}
+		if !contributor.contract.Available() || contributor.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.contract.Codec() != registration.Freezer() {
+			return nil, false
+		}
 		query, resolved := committed.Query(site.ID)
 		if !resolved {
 			return nil, false
@@ -235,7 +290,7 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 		if !keyed {
 			return nil, false
 		}
-		publications = append(publications, QueryPublication{Site: site, Key: key})
+		publications = append(publications, QueryPublication{Site: site, Key: key, contract: &registry.queryContributors[position].contract, encode: contributor.encode, ordinal: uint32(position + 1)})
 	}
 	return publications, true
 }

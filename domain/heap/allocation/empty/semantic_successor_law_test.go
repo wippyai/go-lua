@@ -8,13 +8,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	analysisresult "github.com/wippyai/go-lua/analysis/result"
+	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
-// Empty self-create is exercised through the mounted receipt assembly.  The
-// closure and table share the same artifact but must retain their distinct
-// ineligible/eligible Heap shapes while the solver carries the result.
-func TestEmptyReceiptSelfCreateRunsThroughMountedSolver(t *testing.T) {
+// Empty self-create is exercised through the mounted receipt assembly. The
+// detached boundary exposes a typed Value publication, while the internal
+// ineligible/eligible Heap distinction remains outside this Result contract.
+func TestEmptyReceiptSelfCreatePublishesReadableValueFamilyThroughMountedSolver(t *testing.T) {
 	linked := emptySuccessorLink(t, `local function make() return {} end; local closure = function() end; return make(), make(), closure`)
 	plan, compileStatus := analysis.Compile(linked)
 	if compileStatus != analysis.CompileComplete || plan == nil {
@@ -26,13 +28,77 @@ func TestEmptyReceiptSelfCreateRunsThroughMountedSolver(t *testing.T) {
 		t.Fatalf("mounted solver status=%v result=%t", solveStatus, result != nil)
 	}
 	body, bodyOK := result.BodyAt(0)
-	if !bodyOK || body.ValueCount() < 3 {
-		t.Fatalf("empty self-create body=%t values=%d", bodyOK, body.ValueCount())
+	if !bodyOK {
+		t.Fatal("empty self-create selected body unavailable")
 	}
-	for index := 0; index < body.ValueCount(); index++ {
-		if _, present, valueOK := body.ValueAt(index); !valueOK || !present {
-			t.Fatalf("empty self-create value[%d]=%t/%t", index, present, valueOK)
+	assertEmptyValuePublicationReadable(t, result, body)
+}
+
+func assertEmptyValuePublicationReadable(t testing.TB, input *analysisresult.Result, selected analysisresult.Body) {
+	t.Helper()
+	bodyID, bodyIDOK := selected.ID()
+	if !bodyIDOK {
+		t.Fatal("empty self-create selected body has no identity")
+	}
+	family, familyOK := valuepublication.Open(input)
+	if !familyOK {
+		t.Fatal("empty self-create value publication family unavailable")
+	}
+	if family.QueryCount() == 0 {
+		t.Fatal("empty self-create value publication has no queries")
+	}
+	selectedBodyReferences := 0
+	for queryIndex := 0; queryIndex < family.QueryCount(); queryIndex++ {
+		query, queryOK := family.QueryAt(queryIndex)
+		if !queryOK {
+			t.Fatalf("empty self-create value query[%d] unavailable", queryIndex)
 		}
+		status := query.Status()
+		if status != analysisresult.QueryHit && status != analysisresult.QueryProvenAbsent {
+			t.Fatalf("empty self-create value query[%d] status=%d", queryIndex, status)
+		}
+		matched := false
+		for bodyIndex := 0; bodyIndex < query.BodyCount(); bodyIndex++ {
+			queryBody, queryBodyOK := query.BodyAt(bodyIndex)
+			if !queryBodyOK {
+				t.Fatalf("empty self-create value query[%d] body[%d] unavailable", queryIndex, bodyIndex)
+			}
+			queryBodyID, queryBodyIDOK := queryBody.ID()
+			if !queryBodyIDOK {
+				t.Fatalf("empty self-create value query[%d] body[%d] has no identity", queryIndex, bodyIndex)
+			}
+			if queryBodyID == bodyID {
+				matched = true
+			}
+		}
+		if matched {
+			selectedBodyReferences++
+		}
+		if status != analysisresult.QueryHit {
+			continue
+		}
+		summary, summaryOK := query.Summary()
+		if !summaryOK || !summary.Available() || !summary.LinkID().Available() || summary.CoordinateCount() == 0 {
+			t.Fatalf("empty self-create value query[%d] summary unavailable or incomplete", queryIndex)
+		}
+		iterator := summary.Coordinates()
+		coordinateCount := 0
+		for {
+			coordinate, coordinateOK := iterator.Next()
+			if !coordinateOK {
+				break
+			}
+			if !coordinate.Available() || !coordinate.ID().Available() {
+				t.Fatalf("empty self-create value query[%d] coordinate unavailable or unidentified", queryIndex)
+			}
+			coordinateCount++
+		}
+		if coordinateCount != summary.CoordinateCount() {
+			t.Fatalf("empty self-create value query[%d] coordinates=%d summary=%d", queryIndex, coordinateCount, summary.CoordinateCount())
+		}
+	}
+	if selectedBodyReferences == 0 {
+		t.Fatalf("empty self-create value publication does not reference selected body %s", bodyID.String())
 	}
 }
 

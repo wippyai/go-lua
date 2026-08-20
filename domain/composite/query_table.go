@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	"github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -15,8 +17,8 @@ import (
 // spelling is the owning domain's; these are the constants a consumer opens a
 // result slot with, and the table's own law holds the two to one name.
 const (
-	QueryFamilyValueSummary schema.Key = "value-summary"
-	QueryFamilyEffectExact  schema.Key = "effect-exact"
+	QueryFamilyValueSummary = value.SummaryResultFamily
+	QueryFamilyEffectExact  = factor.ExactResultFamily
 )
 
 // queryRegistrations is the authored analyzer query inventory: the two families
@@ -43,8 +45,8 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 		contributors = append(contributors, contributor)
 	}
 
-	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission))
-	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission))
+	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer))
+	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer))
 
 	if rejected {
 		return nil, nil, false

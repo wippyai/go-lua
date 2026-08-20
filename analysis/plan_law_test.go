@@ -6,12 +6,14 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -168,21 +170,72 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 	if !shardOK || !programOK || availableExits < 2 {
 		t.Fatalf("literal body exits = %d, want multiple available exits", availableExits)
 	}
-	result, status := Analyze(context.Background(), linked)
-	if status != AnalyzeComplete || result == nil {
-		t.Fatalf("literal zero-row outcome solve = %v/%v", status, result)
+	analysisResult, status := Analyze(context.Background(), linked)
+	if status != AnalyzeComplete || analysisResult == nil {
+		t.Fatalf("literal zero-row outcome solve = %v/%v", status, analysisResult)
 	}
-	row, rowOK := result.BodyAt(0)
-	if !rowOK || row.ValueCount() == 0 {
-		t.Fatal("literal return lost its detached Value identity")
+	row, rowOK := analysisResult.BodyAt(0)
+	bodyID, bodyIDOK := row.ID()
+	if !rowOK || !bodyIDOK || !bodyID.Available() {
+		t.Fatal("literal return lost its detached body identity")
 	}
-	for index := 0; index < row.ValueCount(); index++ {
-		valueID, _, valueOK := row.ValueAt(index)
-		if !valueOK {
-			t.Fatal("literal return Value row")
+	values := linked.Boundary().Values()
+	canonical := make([]identity.ContentID, values.Count())
+	for index := range canonical {
+		value, valueOK := values.At(index)
+		valueID, valueIDOK := values.ID(value)
+		if !valueOK || !valueIDOK || !valueID.Available() {
+			t.Fatalf("canonical ingress Value %d", index)
 		}
-		if !valueID.Available() {
-			t.Fatal("literal return Value identity")
+		canonical[index] = valueID
+	}
+	publication, publicationOK := valuepublication.Open(analysisResult)
+	if !publicationOK {
+		t.Fatal("literal return has no unique typed value publication")
+	}
+	seen := make(map[identity.ContentID]bool, len(canonical))
+	found := false
+	for queryIndex := 0; queryIndex < publication.QueryCount(); queryIndex++ {
+		query, queryOK := publication.QueryAt(queryIndex)
+		if !queryOK || query.Status() != result.QueryHit {
+			continue
+		}
+		reachesBody := false
+		for bodyIndex := 0; bodyIndex < query.BodyCount(); bodyIndex++ {
+			candidate, candidateOK := query.BodyAt(bodyIndex)
+			candidateID, candidateIDOK := candidate.ID()
+			if candidateOK && candidateIDOK && candidateID == bodyID {
+				reachesBody = true
+				break
+			}
+		}
+		if !reachesBody {
+			continue
+		}
+		summary, summaryOK := query.Summary()
+		if !summaryOK || !summary.Available() {
+			t.Fatal("literal return hit has no typed value summary")
+		}
+		iterator := summary.Coordinates()
+		for {
+			coordinate, coordinateOK := iterator.Next()
+			if !coordinateOK {
+				break
+			}
+			if !coordinate.Available() || !coordinate.ID().Available() {
+				t.Fatal("literal return summary coordinate")
+			}
+			seen[coordinate.ID()] = true
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("literal return has no hit value summary reaching its body")
+	}
+	for _, valueID := range canonical {
+		if !seen[valueID] {
+			t.Fatalf("canonical ingress Value %s is absent from the typed Result summary", valueID)
 		}
 	}
 }

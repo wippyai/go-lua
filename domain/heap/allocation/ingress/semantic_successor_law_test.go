@@ -8,13 +8,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	analysisresult "github.com/wippyai/go-lua/analysis/result"
+	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
-// The zero-input ingress must seed the exact WorldZero root in a real
-// assembled solve.  The returned table makes the ingress value observable at
-// the public result boundary without exposing private Heap coordinates.
-func TestIngressReceiptWorldZeroRunsThroughMountedSolver(t *testing.T) {
+// The zero-input ingress runs through the mounted solver and exposes a typed
+// Value publication at the detached result boundary. WorldZero itself is an
+// internal Heap witness, so this law checks only the public receipt shape.
+func TestIngressReceiptPublishesReadableValueFamilyThroughMountedSolver(t *testing.T) {
 	linked := ingressSuccessorLink(t, `return {}`)
 	plan, compileStatus := analysis.Compile(linked)
 	if compileStatus != analysis.CompileComplete || plan == nil {
@@ -26,19 +28,77 @@ func TestIngressReceiptWorldZeroRunsThroughMountedSolver(t *testing.T) {
 		t.Fatalf("mounted solver status=%v result=%t", solveStatus, result != nil)
 	}
 	body, bodyOK := result.BodyAt(0)
-	if !bodyOK || body.ValueCount() == 0 {
-		t.Fatalf("ingress body=%t values=%d", bodyOK, body.ValueCount())
+	if !bodyOK {
+		t.Fatal("ingress selected body unavailable")
 	}
-	present := false
-	for index := 0; index < body.ValueCount(); index++ {
-		_, valuePresent, valueOK := body.ValueAt(index)
-		if !valueOK {
-			t.Fatalf("ingress value[%d] unreadable", index)
+	assertIngressValuePublicationReadable(t, result, body)
+}
+
+func assertIngressValuePublicationReadable(t testing.TB, input *analysisresult.Result, selected analysisresult.Body) {
+	t.Helper()
+	bodyID, bodyIDOK := selected.ID()
+	if !bodyIDOK {
+		t.Fatal("ingress selected body has no identity")
+	}
+	family, familyOK := valuepublication.Open(input)
+	if !familyOK {
+		t.Fatal("ingress value publication family unavailable")
+	}
+	if family.QueryCount() == 0 {
+		t.Fatal("ingress value publication has no queries")
+	}
+	selectedBodyReferences := 0
+	for queryIndex := 0; queryIndex < family.QueryCount(); queryIndex++ {
+		query, queryOK := family.QueryAt(queryIndex)
+		if !queryOK {
+			t.Fatalf("ingress value query[%d] unavailable", queryIndex)
 		}
-		present = present || valuePresent
+		status := query.Status()
+		if status != analysisresult.QueryHit && status != analysisresult.QueryProvenAbsent {
+			t.Fatalf("ingress value query[%d] status=%d", queryIndex, status)
+		}
+		matched := false
+		for bodyIndex := 0; bodyIndex < query.BodyCount(); bodyIndex++ {
+			queryBody, queryBodyOK := query.BodyAt(bodyIndex)
+			if !queryBodyOK {
+				t.Fatalf("ingress value query[%d] body[%d] unavailable", queryIndex, bodyIndex)
+			}
+			queryBodyID, queryBodyIDOK := queryBody.ID()
+			if !queryBodyIDOK {
+				t.Fatalf("ingress value query[%d] body[%d] has no identity", queryIndex, bodyIndex)
+			}
+			if queryBodyID == bodyID {
+				matched = true
+			}
+		}
+		if matched {
+			selectedBodyReferences++
+		}
+		if status != analysisresult.QueryHit {
+			continue
+		}
+		summary, summaryOK := query.Summary()
+		if !summaryOK || !summary.Available() || !summary.LinkID().Available() || summary.CoordinateCount() == 0 {
+			t.Fatalf("ingress value query[%d] summary unavailable or incomplete", queryIndex)
+		}
+		iterator := summary.Coordinates()
+		coordinateCount := 0
+		for {
+			coordinate, coordinateOK := iterator.Next()
+			if !coordinateOK {
+				break
+			}
+			if !coordinate.Available() || !coordinate.ID().Available() {
+				t.Fatalf("ingress value query[%d] coordinate unavailable or unidentified", queryIndex)
+			}
+			coordinateCount++
+		}
+		if coordinateCount != summary.CoordinateCount() {
+			t.Fatalf("ingress value query[%d] coordinates=%d summary=%d", queryIndex, coordinateCount, summary.CoordinateCount())
+		}
 	}
-	if !present {
-		t.Fatal("WorldZero ingress did not publish a present root")
+	if selectedBodyReferences == 0 {
+		t.Fatalf("ingress value publication does not reference selected body %s", bodyID.String())
 	}
 }
 

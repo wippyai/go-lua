@@ -21,6 +21,9 @@ func TestBeginValueSummaryShapesTheSchemaCoordinateWidth(t *testing.T) {
 	if begin.Rows != 0 {
 		t.Fatalf("opening rows = %d, want 0", begin.Rows)
 	}
+	if begin.owner != schema {
+		t.Fatal("opening accumulator lost its exact schema owner")
+	}
 	for index := range begin.Present {
 		if begin.Present[index] {
 			t.Fatalf("coordinate %d opens present", index)

@@ -4,19 +4,13 @@ package result
 // rows into the public Result.
 
 import (
-	"bytes"
-	"sort"
-
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
-	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // artifactResultProjection is an immutable, detached result. Result
@@ -38,7 +32,7 @@ type Projection struct {
 func Detach(
 	geometry Geometry,
 	mounts []Mount,
-	valueSchema *valuedomain.Schema,
+	valueSchema *detachValueSchema,
 	policy *anadiag.DiagnosticPolicy,
 	queries []composite.QueryPublication,
 	published *snapshot.Snapshot,
@@ -89,104 +83,130 @@ func buildDetachedArtifactResult(
 	if !geometry.Valid() || published == nil || !published.Published() || !plan.Available() || native == nil || !native.valid() {
 		return nil, false
 	}
-	values := append([]identity.ContentID(nil), geometry.values...)
 	bodies := make([]resultBody, len(geometry.bodies))
 	for index, body := range geometry.bodies {
-		bodies[index] = resultBody{id: body.id, roots: append([]resultRoot(nil), body.roots...), valuePresence: make([]uint64, resultValueWordCount(len(values)))}
+		bodies[index] = resultBody{id: body.id, roots: append([]resultRoot(nil), body.roots...)}
 	}
-	for _, query := range queries {
-		key := Point{Mount: query.Site.Mount, Point: query.Site.Point}
-		indexes := geometry.PointBodies[key]
-		answer, status := snapshot.Query(published, plan, query.Key)
-		if status == snapshot.ReadProvenAbsent {
-			continue
+	// Geometry is the owner of body membership. Validate every membership row
+	// before any query is detached, including points that happen not to have a
+	// publication in this pass.
+	for _, indexes := range geometry.PointBodies {
+		seen := make(map[int]struct{}, len(indexes))
+		for _, bodyIndex := range indexes {
+			if bodyIndex < 0 || bodyIndex >= len(bodies) {
+				return nil, false
+			}
+			if _, duplicate := seen[bodyIndex]; duplicate {
+				return nil, false
+			}
+			seen[bodyIndex] = struct{}{}
 		}
-		if status != snapshot.ReadHit || !answer.Available() {
+	}
+
+	points := make([]resultPoint, 0)
+	pointOrdinals := make(map[Point]uint32)
+	familiesByOrdinal := make(map[uint32]resultFamily)
+	maxFamilyOrdinal := uint32(0)
+	seenSites := make(map[identity.ContentID]struct{}, len(queries))
+	seenPublicationKeys := make(map[identity.ContentID]struct{}, len(queries))
+	for _, publication := range queries {
+		if !publication.Site.ID.Available() || !publication.Site.Mount.Available() || !publication.Site.Point.Available() ||
+			!publication.Site.Family.Available() || !publication.Key.Available() {
 			return nil, false
 		}
-		switch query.Site.Projection {
-		case queryschema.ProjectionSummary:
-			observation, readable := engine.AnswerValue[valuedomain.ValueSummaryObservation](answer)
-			if !readable || !observation.Valid {
-				return nil, false
-			}
-			count := len(observation.Values)
-			if len(observation.Present) != count || count != len(geometry.values) || observation.Rows > 1 {
-				return nil, false
-			}
-			if observation.Rows == 0 {
-				continue
-			}
-			if len(indexes) == 0 {
-				for _, present := range observation.Present {
-					if present {
-						return nil, false
-					}
-				}
-				continue
-			}
-			for _, bodyIndex := range indexes {
-				if bodyIndex < 0 || bodyIndex >= len(bodies) || len(observation.Present) != len(values) {
+		familyOrdinal := publication.FamilyOrdinal()
+		if familyOrdinal == 0 || uint64(familyOrdinal) > uint64(len(queries)) {
+			return nil, false
+		}
+		contract := publication.Contract()
+		if !contract.Available() {
+			return nil, false
+		}
+		if _, duplicate := seenSites[publication.Site.ID]; duplicate {
+			return nil, false
+		}
+		if _, duplicate := seenPublicationKeys[publication.Key]; duplicate {
+			return nil, false
+		}
+		seenSites[publication.Site.ID] = struct{}{}
+		seenPublicationKeys[publication.Key] = struct{}{}
+
+		pointKey := Point{Mount: publication.Site.Mount, Point: publication.Site.Point}
+		pointOrdinal, pointKnown := pointOrdinals[pointKey]
+		if !pointKnown {
+			indexes := geometry.PointBodies[pointKey]
+			bodyOrdinals := make([]uint32, len(indexes))
+			for index, bodyIndex := range indexes {
+				if bodyIndex < 0 || bodyIndex >= len(bodies) || uint64(bodyIndex+1) > uint64(^uint32(0)) {
 					return nil, false
 				}
-				for valueIndex, present := range observation.Present {
-					if present && !setResultValuePresent(bodies[bodyIndex].valuePresence, valueIndex) {
-						return nil, false
-					}
-				}
+				bodyOrdinals[index] = uint32(bodyIndex + 1)
 			}
-		case queryschema.ProjectionExact:
-			observation, readable := engine.AnswerValue[effectfactor.EffectObservation](answer)
-			if !readable || !observation.Valid {
+			if uint64(len(points)+1) > uint64(^uint32(0)) {
 				return nil, false
 			}
-			if observation.Rows == 0 {
-				continue
+			pointOrdinal = uint32(len(points) + 1)
+			pointOrdinals[pointKey] = pointOrdinal
+			points = append(points, resultPoint{mount: pointKey.Mount, point: pointKey.Point, bodies: bodyOrdinals})
+		}
+
+		family, familyKnown := familiesByOrdinal[familyOrdinal]
+		if !familyKnown {
+			family = resultFamily{ordinal: familyOrdinal, key: publication.Site.Family, contract: contract}
+			familiesByOrdinal[familyOrdinal] = family
+			if familyOrdinal > maxFamilyOrdinal {
+				maxFamilyOrdinal = familyOrdinal
 			}
-			if len(indexes) == 0 {
-				if observation.Present {
-					return nil, false
-				}
-				continue
-			}
-			if observation.Rows != 1 {
+		} else if family.key != publication.Site.Family || family.contract != contract {
+			return nil, false
+		}
+
+		answer, status := snapshot.Query(published, plan, publication.Key)
+		row := resultQuery{site: publication.Site.ID, key: publication.Key, point: pointOrdinal}
+		switch status {
+		case snapshot.ReadProvenAbsent:
+			row.status = QueryProvenAbsent
+		case snapshot.ReadHit:
+			if !answer.Available() {
 				return nil, false
 			}
-			for _, bodyIndex := range indexes {
-				bodies[bodyIndex].effectPresent = bodies[bodyIndex].effectPresent || observation.Present
-				bodies[bodyIndex].effectTop = bodies[bodyIndex].effectTop || observation.Top
-				if !observation.Top {
-					bodies[bodyIndex].effects = appendUniqueIDs(bodies[bodyIndex].effects, observation.Atoms)
-				}
+			// CanonicalCell is the sole owner callback and is intentionally
+			// invoked exactly once for each hit.
+			cell, encoded := publication.CanonicalCell(answer)
+			if !encoded {
+				return nil, false
 			}
+			row.status, row.cell = QueryHit, cell
 		default:
 			return nil, false
 		}
-	}
-	for index := range bodies {
-		if bodies[index].effectTop {
-			bodies[index].effects = nil
-		} else {
-			sort.Slice(bodies[index].effects, func(left, right int) bool {
-				return bytes.Compare(bodies[index].effects[left][:], bodies[index].effects[right][:]) < 0
-			})
+		if !row.valid(points, family.contract) {
+			return nil, false
 		}
+		family.queries = append(family.queries, row)
+		familiesByOrdinal[familyOrdinal] = family
 	}
-	content, ok := analysisResultIDWithPublication(geometry.source, values, bodies, native)
+	if maxFamilyOrdinal == 0 {
+		return nil, false
+	}
+	families := make([]resultFamily, int(maxFamilyOrdinal))
+	for ordinal := uint32(1); ordinal <= maxFamilyOrdinal; ordinal++ {
+		family, present := familiesByOrdinal[ordinal]
+		if !present || family.ordinal != ordinal || len(family.queries) == 0 {
+			return nil, false
+		}
+		families[ordinal-1] = family
+	}
+	content, ok := analysisResultIDWithPublication(geometry.source, bodies, points, families, native)
 	if !ok {
 		return nil, false
 	}
-	result := &Result{source: geometry.source, content: content, values: values, bodies: bodies, native: native}
+	result := &Result{source: geometry.source, content: content, bodies: bodies, points: points, families: families, native: native}
 	if !result.validPayload() {
 		return nil, false
 	}
 	result.sealed = true
 	return result, true
-}
-
-type Point struct {
-	Mount identity.ContentID
-	Point identity.ContentID
 }
 
 type artifactResultBody struct {
@@ -201,25 +221,6 @@ func appendUniqueInt(values []int, value int) []int {
 		}
 	}
 	return append(values, value)
-}
-
-func appendUniqueIDs(values, additions []identity.ContentID) []identity.ContentID {
-	for _, addition := range additions {
-		if !addition.Available() {
-			continue
-		}
-		seen := false
-		for _, value := range values {
-			if value == addition {
-				seen = true
-				break
-			}
-		}
-		if !seen {
-			values = append(values, addition)
-		}
-	}
-	return values
 }
 
 func mountedResultID(role string, mount, artifact, local identity.ContentID) (identity.ContentID, bool) {

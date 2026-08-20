@@ -12,6 +12,10 @@ type ValueSummaryObservation struct {
 	Present []bool
 	Rows    uint32
 	Valid   bool
+	// owner is the exact schema that opened this transient engine answer.
+	// It is deliberately not part of the detached wire result: the encoded
+	// answer carries only the owner's Link identity and coordinate identities.
+	owner *Schema
 }
 
 // BeginValueSummary starts the fold state for the summary Value query. The
@@ -25,6 +29,7 @@ func BeginValueSummary(schema *Schema) ValueSummaryObservation {
 		Values:  make([]Value, schema.CoordinateCount()),
 		Present: make([]bool, schema.CoordinateCount()),
 		Valid:   true,
+		owner:   schema,
 	}
 }
 
@@ -42,7 +47,7 @@ func AccumulateValueSummary(schema *Schema, result ValueSummaryObservation, cell
 // published rows reaches it directly. One fold law serves both, so the answer a
 // published column folds to is the answer the solve folded.
 func AccumulateValueSummaryRows(schema *Schema, result ValueSummaryObservation, count int, at func(index int) (Value, bool, bool)) (ValueSummaryObservation, bool) {
-	if schema == nil || !result.Valid || at == nil || count == 0 || len(result.Values) != count || len(result.Present) != count {
+	if schema == nil || result.owner != schema || !summaryObservationOwned(schema, result) || at == nil || count == 0 || count != schema.CoordinateCount() || len(result.Values) != count || len(result.Present) != count {
 		return ValueSummaryObservation{}, false
 	}
 	for index := range result.Values {
@@ -52,6 +57,9 @@ func AccumulateValueSummaryRows(schema *Schema, result ValueSummaryObservation, 
 		}
 		if !present {
 			continue
+		}
+		if !schema.owns(value) {
+			return ValueSummaryObservation{}, false
 		}
 		if !result.Present[index] {
 			result.Values[index], result.Present[index] = value, true
@@ -83,7 +91,7 @@ func CloneValueSummary(input ValueSummaryObservation) ValueSummaryObservation {
 }
 
 func EqualValueSummary(schema *Schema, left, right ValueSummaryObservation) bool {
-	if schema == nil || left.Valid != right.Valid || left.Rows != right.Rows || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) {
+	if schema == nil || left.owner != schema || right.owner != schema || !summaryObservationOwned(schema, left) || !summaryObservationOwned(schema, right) || left.Valid != right.Valid || left.Rows != right.Rows || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) {
 		return false
 	}
 	for index := range left.Values {
@@ -95,7 +103,7 @@ func EqualValueSummary(schema *Schema, left, right ValueSummaryObservation) bool
 }
 
 func FingerprintValueSummary(schema *Schema, value ValueSummaryObservation) uint64 {
-	if schema == nil {
+	if schema == nil || value.owner != schema || !summaryObservationOwned(schema, value) {
 		return 0
 	}
 	result := uint64(value.Rows) << 32
@@ -109,4 +117,32 @@ func FingerprintValueSummary(schema *Schema, value ValueSummaryObservation) uint
 		result ^= 1 << 63
 	}
 	return result
+}
+
+// summaryObservationOwned checks the canonical in-memory fold invariant.
+// The query engine supplies the owner separately from its coordinate cells;
+// retaining that exact pointer prevents an equal-content foreign Schema from
+// entering a running fold or a frozen result.
+func summaryObservationOwned(schema *Schema, observation ValueSummaryObservation) bool {
+	if schema == nil || observation.owner != schema || !observation.Valid || len(observation.Values) == 0 || len(observation.Values) != len(observation.Present) || len(observation.Values) != schema.CoordinateCount() || observation.Rows > 1 {
+		return false
+	}
+	any := false
+	for index, present := range observation.Present {
+		if !present {
+			continue
+		}
+		if !schema.owns(observation.Values[index]) {
+			return false
+		}
+		any = true
+	}
+	return observation.Rows == summaryRowsForPresence(any)
+}
+
+func summaryRowsForPresence(present bool) uint32 {
+	if present {
+		return 1
+	}
+	return 0
 }

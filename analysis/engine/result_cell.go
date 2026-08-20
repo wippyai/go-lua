@@ -6,9 +6,65 @@ import (
 )
 
 const (
-	canonicalResultCellDomain  = "engine/result-cell"
-	canonicalResultCellVersion = 1
+	canonicalResultContractDomain  = "engine/result-contract"
+	canonicalResultContractVersion = 1
+	canonicalResultCellDomain      = "engine/result-cell"
+	canonicalResultCellVersion     = 1
 )
+
+// CanonicalResultContract is the immutable identity contract for one query
+// result family and codec. It is created at publication time and shared by
+// every result cell encoded under that registration.
+type CanonicalResultContract struct {
+	family  identity.ContentID
+	codec   identity.SemanticKey
+	content identity.ContentID
+}
+
+// NewCanonicalResultContract seals the registration identity used by result
+// cells. The codec version is part of the contract identity: changing the
+// interpretation of an unchanged codec digest therefore cannot reuse old
+// result cells.
+func NewCanonicalResultContract(family identity.ContentID, codec identity.SemanticKey) (CanonicalResultContract, bool) {
+	if !family.Available() || !codec.Available() {
+		return CanonicalResultContract{}, false
+	}
+	digest := codec.Digest()
+	content := framedContentID(canonicalResultContractDomain, canonicalResultContractVersion, func(writer *canonical.DigestWriter) bool {
+		return writer.Bytes(family[:]) == nil &&
+			writer.Bytes(digest[:]) == nil &&
+			writer.Uint(codec.Version()) == nil
+	})
+	if !content.Available() {
+		return CanonicalResultContract{}, false
+	}
+	return CanonicalResultContract{family: family, codec: codec, content: content}, true
+}
+
+func (contract CanonicalResultContract) Available() bool {
+	return contract.content.Available()
+}
+
+func (contract CanonicalResultContract) FamilyID() identity.ContentID {
+	if !contract.Available() {
+		return identity.ContentID{}
+	}
+	return contract.family
+}
+
+func (contract CanonicalResultContract) Codec() identity.SemanticKey {
+	if !contract.Available() {
+		return identity.SemanticKey{}
+	}
+	return contract.codec
+}
+
+func (contract CanonicalResultContract) ContentID() identity.ContentID {
+	if !contract.Available() {
+		return identity.ContentID{}
+	}
+	return contract.content
+}
 
 // CanonicalResultCell is the domain-blind, transitively immutable result of
 // encoding one query answer. A domain validates its typed Answer and emits the
@@ -20,31 +76,27 @@ const (
 // copy. Construction performs the one ownership copy from the encoder's mutable
 // scratch buffer and precomputes ContentID once.
 type CanonicalResultCell struct {
-	family  identity.ContentID
-	codec   identity.SemanticKey
-	content identity.ContentID
-	payload string
-	rows    uint64
-	present bool
+	contract identity.ContentID
+	content  identity.ContentID
+	payload  string
+	rows     uint64
+	present  bool
 }
 
-// NewCanonicalResultCell seals one owner-encoded query answer. family and
-// codec are the identities from the sealed query registration, not identities
-// supplied by the answer. Presence and row cardinality remain independent
+// NewCanonicalResultCell seals one owner-encoded query answer against a
+// publication contract. Presence and row cardinality remain independent
 // domain semantics and both enter the canonical identity.
-func NewCanonicalResultCell(family identity.ContentID, codec identity.SemanticKey, present bool, rows uint64, payload []byte) (CanonicalResultCell, bool) {
-	if !family.Available() || !codec.Available() {
+func NewCanonicalResultCell(contract CanonicalResultContract, present bool, rows uint64, payload []byte) (CanonicalResultCell, bool) {
+	if !contract.Available() {
 		return CanonicalResultCell{}, false
 	}
-	digest := codec.Digest()
+	contractID := contract.ContentID()
 	presence := uint64(0)
 	if present {
 		presence = 1
 	}
 	content := framedContentID(canonicalResultCellDomain, canonicalResultCellVersion, func(writer *canonical.DigestWriter) bool {
-		return writer.Bytes(family[:]) == nil &&
-			writer.Bytes(digest[:]) == nil &&
-			writer.Uint(codec.Version()) == nil &&
+		return writer.Bytes(contractID[:]) == nil &&
 			writer.Uint(presence) == nil &&
 			writer.Count(rows) == nil &&
 			writer.Bytes(payload) == nil
@@ -53,7 +105,7 @@ func NewCanonicalResultCell(family identity.ContentID, codec identity.SemanticKe
 		return CanonicalResultCell{}, false
 	}
 	return CanonicalResultCell{
-		family: family, codec: codec, content: content,
+		contract: contractID, content: content,
 		payload: string(payload), rows: rows, present: present,
 	}, true
 }
@@ -65,32 +117,11 @@ func (cell CanonicalResultCell) Available() bool {
 	return cell.content.Available()
 }
 
-func (cell CanonicalResultCell) FamilyID() identity.ContentID {
+func (cell CanonicalResultCell) ContractID() identity.ContentID {
 	if !cell.Available() {
 		return identity.ContentID{}
 	}
-	return cell.family
-}
-
-func (cell CanonicalResultCell) Codec() identity.SemanticKey {
-	if !cell.Available() {
-		return identity.SemanticKey{}
-	}
-	return cell.codec
-}
-
-func (cell CanonicalResultCell) CodecID() identity.ContentID {
-	if !cell.Available() {
-		return identity.ContentID{}
-	}
-	return identity.ContentID(cell.codec.Digest())
-}
-
-func (cell CanonicalResultCell) CodecVersion() uint64 {
-	if !cell.Available() {
-		return 0
-	}
-	return cell.codec.Version()
+	return cell.contract
 }
 
 func (cell CanonicalResultCell) ContentID() identity.ContentID {
@@ -110,8 +141,8 @@ func (cell CanonicalResultCell) RowCount() uint64 {
 }
 
 // Payload returns a zero-copy immutable binary string. Domain decoders must
-// first match FamilyID and the complete versioned Codec identity; unlike
-// []byte, the returned value cannot mutate the sealed cell.
+// first match the complete versioned contract identity; unlike []byte, the
+// returned value cannot mutate the sealed cell.
 func (cell CanonicalResultCell) Payload() string {
 	if !cell.Available() {
 		return ""
