@@ -1,5 +1,7 @@
 package identity
 
+import "sync/atomic"
+
 // StoreID is the identity of one live solver-store instance. It is
 // process-local by construction: it distinguishes two stores that exist at
 // the same time, and says nothing about two stores in different processes.
@@ -11,6 +13,32 @@ type StoreID uint64
 
 // Available reports whether id names a store. The zero StoreID names none.
 func (id StoreID) Available() bool { return id != 0 }
+
+// storeIDs is the process-wide authority for live store identity. StoreID is
+// deliberately not content-derived, and independent package-local counters
+// would be allowed to issue the same identity to different stores.
+var storeIDs atomic.Uint64
+
+// IssueStore issues a fresh process-local identity for one store. Exhaustion
+// fails closed instead of wrapping and reusing a live identity.
+func IssueStore() (StoreID, bool) {
+	return issueStore(&storeIDs)
+}
+
+func issueStore(ids *atomic.Uint64) (StoreID, bool) {
+	if ids == nil {
+		return 0, false
+	}
+	for {
+		current := ids.Load()
+		if current == ^uint64(0) {
+			return 0, false
+		}
+		if ids.CompareAndSwap(current, current+1) {
+			return StoreID(current + 1), true
+		}
+	}
+}
 
 // Generation is a store revision fence. A store advances its Generation
 // whenever a published slot's meaning can have changed, so a holder of a

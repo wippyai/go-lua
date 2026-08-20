@@ -4,8 +4,6 @@ package analysis
 // products; runtime assemble lives in analyze.go.
 
 import (
-	"sync/atomic"
-
 	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -31,8 +29,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
-
-var compositionStores atomic.Uint64
 
 func diagnosticRuleForMountedRole(binding *composite.ProgramBinding, role engine.RuleSlotCapability) anadiag.AnalyzeDiagnosticRule {
 	rules := binding.Rules()
@@ -199,14 +195,6 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	return inputs, binding, anadiag.ProgramBindingFailureNone, composite.MountFailure{}, composite.BindFailure{}
 }
 
-func nextCompositionStore() (identity.StoreID, bool) {
-	n := compositionStores.Add(1)
-	if n == 0 {
-		return 0, false
-	}
-	return identity.StoreID(n), true
-}
-
 // publishComposition writes the Link-lifetime StorageEngine prefix. ChannelSelect
 // occupies snapshot slot 0, so a select-only column seals without factor facts.
 func (state *compiledState) publishComposition(source *link.Link) bool {
@@ -214,7 +202,7 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 		return false
 	}
 	schemaID, schemaOK := composite.PublicationSchema()
-	store, storeOK := nextCompositionStore()
+	store, storeOK := identity.IssueStore()
 	if !schemaOK || !storeOK || !schemaID.Available() {
 		return false
 	}

@@ -1,6 +1,54 @@
 package identity
 
-import "testing"
+import (
+	"sync"
+	"sync/atomic"
+	"testing"
+)
+
+func TestStoreIdentityHasOneConcurrentProcessAuthority(t *testing.T) {
+	const count = 128
+	issued := make(chan StoreID, count)
+	var group sync.WaitGroup
+	for index := 0; index < count; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			id, ok := IssueStore()
+			if !ok {
+				t.Errorf("IssueStore refused a live process store")
+				return
+			}
+			issued <- id
+		}()
+	}
+	group.Wait()
+	close(issued)
+	seen := make(map[StoreID]struct{}, count)
+	for id := range issued {
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("StoreID %d was issued twice", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != count {
+		t.Fatalf("issued stores = %d, want %d", len(seen), count)
+	}
+}
+
+func TestStoreIdentityExhaustionNeverWraps(t *testing.T) {
+	var ids atomic.Uint64
+	ids.Store(^uint64(0) - 1)
+	last, lastOK := issueStore(&ids)
+	if !lastOK || last != StoreID(^uint64(0)) {
+		t.Fatalf("last StoreID = %d/%v", last, lastOK)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if id, ok := issueStore(&ids); ok || id.Available() {
+			t.Fatalf("exhausted StoreID attempt %d = %d/%v", attempt, id, ok)
+		}
+	}
+}
 
 func TestGenerationOrdering(t *testing.T) {
 	cases := []struct {

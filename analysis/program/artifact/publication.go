@@ -1,16 +1,10 @@
 package artifact
 
 import (
-	"sync/atomic"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
-
-// coldStores issues the runtime store identity for each independently sealed
-// immutable publication. Store identity is deliberately not content-derived.
-var coldStores atomic.Uint64
 
 // Publish seals one canonical Program publication as an immutable Artifact.
 // Publication is the only row store crossing the compiler boundary: Publish
@@ -23,7 +17,11 @@ func Publish(key CompileKey, publication programschema.Publication, counts denom
 	if !catalogOK {
 		return nil, false
 	}
-	frozen, sealed := publication.Seal(catalog, identity.StoreID(coldStores.Add(1)))
+	store, storeOK := identity.IssueStore()
+	if !storeOK {
+		return nil, false
+	}
+	frozen, sealed := publication.Seal(catalog, store)
 	if !sealed {
 		return nil, false
 	}
