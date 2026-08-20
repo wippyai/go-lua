@@ -302,12 +302,16 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	unknown := numericSummaryState{unknown: true}
 	numeric := func(mask uint8) numericSummaryState { return numericSummaryState{mask: mask} }
 
-	types := make(map[identity.ContentID]StaticTypeNodeRow, len(compiler.staticTypeNodes))
+	types := make(map[identity.ContentID]programschema.StaticTypeNode, len(compiler.staticTypeNodes))
 	for _, row := range compiler.staticTypeNodes {
 		if !row.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 		}
 		types[row.ID()] = row
+	}
+	unionMembers := make(map[identity.ContentID][]programschema.StaticTypeNodeUnionMember)
+	for _, child := range compiler.staticTypeNodeUnionMembers {
+		unionMembers[child.ParentID()] = append(unionMembers[child.ParentID()], child)
 	}
 	var typeMask func(identity.ContentID, map[identity.ContentID]bool) (uint8, bool)
 	typeMask = func(id identity.ContentID, visiting map[identity.ContentID]bool) (uint8, bool) {
@@ -318,7 +322,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		visiting[id] = true
 		defer delete(visiting, id)
 		switch row.Kind() {
-		case StaticNodePrimitive:
+		case programschema.StaticNodePrimitive:
 			switch statictypes.PrimitiveKind(row.LiteralKind()) {
 			case statictypes.PrimitiveInteger:
 				return numericIntegerMask, true
@@ -327,7 +331,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			default:
 				return 0, false
 			}
-		case StaticNodeLiteral:
+		case programschema.StaticNodeLiteral:
 			switch row.Exact().Kind {
 			case keyspace.LiteralInteger:
 				return numericIntegerMask, true
@@ -336,24 +340,33 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			default:
 				return 0, false
 			}
-		case StaticNodeAlias, StaticNodeReference:
-			if row.ChildCount() != 1 {
-				return 0, false
-			}
-			child, childOK := row.ChildAt(0)
+		case programschema.StaticNodeAlias:
+			child, childOK := row.AliasTarget()
 			if !childOK {
 				return 0, false
 			}
 			return typeMask(child, visiting)
-		case StaticNodeUnion:
-			if row.ChildCount() == 0 {
+		case programschema.StaticNodeReference:
+			child, childOK := row.ReferenceTarget()
+			if !childOK {
+				return 0, false
+			}
+			return typeMask(child, visiting)
+		case programschema.StaticNodeUnion:
+			_, count, spanOK := row.UnionMemberSpan()
+			if !spanOK || count == 0 {
 				return 0, false
 			}
 			var mask uint8
-			for index := 0; index < row.ChildCount(); index++ {
-				child, childOK := row.ChildAt(index)
+			members := unionMembers[row.ID()]
+			if len(members) != int(count) {
+				return 0, false
+			}
+			for index := uint32(0); index < count; index++ {
+				childRow := members[index]
+				child := childRow.ChildID()
 				childMask, numericOK := typeMask(child, visiting)
-				if !childOK || !numericOK {
+				if !childRow.Available() || childRow.ParentID() != row.ID() || !numericOK {
 					return 0, false
 				}
 				mask |= childMask

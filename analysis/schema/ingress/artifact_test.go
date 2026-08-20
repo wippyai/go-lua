@@ -32,7 +32,7 @@ func TestIngressPublicTypesDoNotEmbedProgramArtifact(t *testing.T) {
 		"Region": true, "Event": true, "RulePlacement": true, "BodyTransport": true,
 		"Call": true, "CallOperand": true, "CallTarget": true, "CallArgument": true,
 		"HeapAllocation": true, "HeapField": true, "HeapIndex": true,
-		"Values": true, "ValuesMember": true, "ValuesTail": true, "StaticTypeValue": true, "StaticTypeNode": true,
+		"Values": true, "ValuesMember": true, "ValuesTail": true, "StaticTypeValue": true,
 		"StaticTypeArgument":    true,
 		"Occurrence":            true,
 		"DiagnosticObservation": true,

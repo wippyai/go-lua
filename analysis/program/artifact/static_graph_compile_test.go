@@ -13,6 +13,7 @@ import (
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -71,7 +72,7 @@ func canonicalPathStaticReferenceProgram(t *testing.T) *program.Program {
 		_ = sourceFinalizer.Abort()
 		t.Fatal("canonical reference fixture coordinate unavailable")
 	}
-	staticDraft, err := programstatic.Build(programstatic.Input{
+	staticComponent, staticView, err := programstatic.Build(programstatic.Input{
 		Counts: counts,
 		References: staticrefs.Input{TypeRef: []staticrefs.TypeRef{{
 			Resolution: staticrefs.CanonicalPath,
@@ -86,31 +87,23 @@ func canonicalPathStaticReferenceProgram(t *testing.T) *program.Program {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("static.Build canonical reference fixture: %v", err)
 	}
-	staticFinalizer, err := staticDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("static.Finalizer canonical reference fixture: %v", err)
-	}
 	moduleDraft, err := imports.Build(imports.Input{})
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Build canonical reference fixture: %v", err)
 	}
 	moduleFinalizer, err := moduleDraft.Finalizer()
 	if err != nil {
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Finalizer canonical reference fixture: %v", err)
 	}
 	flowDraft, err := flow.Build(flow.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
-		_ = staticFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("flow.Build canonical reference fixture: %v", err)
 	}
-	assembly, err := flow.Assemble(sourceFinalizer, staticFinalizer, moduleFinalizer, flowDraft, body)
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, body)
 	if err != nil {
 		t.Fatalf("flow.Assemble canonical reference fixture: %v", err)
 	}
@@ -134,15 +127,20 @@ local value: Missing = { x = 1 }
 return value
 `)
 	seenUnresolved := false
-	for index := 0; index < unresolved.StaticTypeNodeCount(); index++ {
-		row, rowOK := unresolved.StaticTypeNodeAt(index)
+	program := unresolved.Program()
+	count, countOK := program.StaticTypeNodeCount()
+	if !countOK {
+		t.Fatal("unresolved Program static graph unavailable")
+	}
+	for index := 0; index < count; index++ {
+		row, rowOK := program.StaticTypeNodeAt(index)
 		if !rowOK {
 			t.Fatalf("unresolved StaticTypeNodeAt(%d)", index)
 		}
-		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
+		if row.Kind() != programschema.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
 			continue
 		}
-		if row.ChildCount() != 0 {
+		if _, targetOK := row.ReferenceTarget(); targetOK {
 			t.Fatal("unresolved reference retained a target child")
 		}
 		seenUnresolved = true
@@ -157,15 +155,20 @@ local value: Declared = { x = 1 }
 return value
 `)
 	seenResolved := false
-	for index := 0; index < resolved.StaticTypeNodeCount(); index++ {
-		row, rowOK := resolved.StaticTypeNodeAt(index)
+	program = resolved.Program()
+	count, countOK = program.StaticTypeNodeCount()
+	if !countOK {
+		t.Fatal("resolved Program static graph unavailable")
+	}
+	for index := 0; index < count; index++ {
+		row, rowOK := program.StaticTypeNodeAt(index)
 		if !rowOK {
 			t.Fatalf("resolved StaticTypeNodeAt(%d)", index)
 		}
-		if row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
+		if row.Kind() != programschema.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
 			continue
 		}
-		if row.ChildCount() == 0 {
+		if _, targetOK := row.ReferenceTarget(); !targetOK {
 			t.Fatal("sealed artifact admitted a targetless resolved static reference")
 		}
 		seenResolved = true

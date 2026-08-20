@@ -171,15 +171,19 @@ return add
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile declared formal artifact: %s", failure.Error())
 	}
-	staticNodes := make(map[identity.ContentID]struct{}, artifact.StaticTypeNodeCount())
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		node, nodeOK := artifact.StaticTypeNodeAt(index)
+	program := summaryProgram(t, artifact)
+	staticCount, staticPublished := program.StaticTypeNodeCount()
+	if !staticPublished {
+		t.Fatal("StaticTypeNode family unavailable")
+	}
+	staticNodes := make(map[identity.ContentID]struct{}, staticCount)
+	for index := 0; index < staticCount; index++ {
+		node, nodeOK := program.StaticTypeNodeAt(index)
 		if !nodeOK {
 			t.Fatalf("StaticTypeNodeAt(%d)", index)
 		}
 		staticNodes[node.ID()] = struct{}{}
 	}
-	program := summaryProgram(t, artifact)
 	boundaryCount, boundaryPublished := program.FunctionBoundaryCount()
 	var boundary programschema.FunctionBoundary
 	for index := 0; boundaryPublished && index < boundaryCount; index++ {

@@ -121,18 +121,6 @@ func (artifact *Artifact) staticTypeValueRowAt(index int) (StaticTypeValueRow, b
 	return row, row.Available()
 }
 
-func (artifact *Artifact) StaticTypeNodeCount() int {
-	if !artifact.Available() {
-		return 0
-	}
-	return len(artifact.staticTypeNodes)
-}
-func (artifact *Artifact) StaticTypeNodeAt(index int) (StaticTypeNodeRow, bool) {
-	if !artifact.Available() || index < 0 || index >= len(artifact.staticTypeNodes) {
-		return StaticTypeNodeRow{}, false
-	}
-	return artifact.staticTypeNodes[index], true
-}
 func (artifact *Artifact) StaticExpressionCount() int {
 	if !artifact.Available() {
 		return 0

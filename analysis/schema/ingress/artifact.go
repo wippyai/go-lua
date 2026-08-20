@@ -48,14 +48,13 @@ const (
 // once from a ProgramArtifact. Accessors read these columns; they never hold
 // or reopen the owner.
 type Snapshot struct {
-	artifactID      identity.ContentID
-	programID       identity.ContentID
-	schemaID        identity.ContentID
-	frozen          snapshotstore.Frozen
-	coldCatalog     identity.ContentID
-	vocabulary      structure.Table
-	bodyExits       [][]identity.ContentID
-	staticTypeNodes []StaticTypeNode
+	artifactID  identity.ContentID
+	programID   identity.ContentID
+	schemaID    identity.ContentID
+	frozen      snapshotstore.Frozen
+	coldCatalog identity.ContentID
+	vocabulary  structure.Table
+	bodyExits   [][]identity.ContentID
 }
 
 func (snapshot *Snapshot) Available() bool {
@@ -380,29 +379,6 @@ func (snapshot *Snapshot) StaticTypeValueAt(index int) (StaticTypeValue, bool) {
 		return StaticTypeValue{}, false
 	}
 	return StaticTypeValue{row: row}, true
-}
-func (snapshot *Snapshot) StaticTypeNodeCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	return len(snapshot.staticTypeNodes)
-}
-func (snapshot *Snapshot) StaticTypeNodeAt(index int) (StaticTypeNode, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.staticTypeNodes) {
-		return StaticTypeNode{}, false
-	}
-	return snapshot.staticTypeNodes[index], true
-}
-func (snapshot *Snapshot) StaticTypeNodeForID(id identity.ContentID) (StaticTypeNode, bool) {
-	if !snapshot.Available() || !id.Available() {
-		return StaticTypeNode{}, false
-	}
-	for _, row := range snapshot.staticTypeNodes {
-		if row.ID() == id {
-			return row, row.Available()
-		}
-	}
-	return StaticTypeNode{}, false
 }
 func (snapshot *Snapshot) StaticTypeArgumentCount() int {
 	if !snapshot.Available() {
@@ -765,21 +741,6 @@ func (row StaticTypeValue) RootID() identity.ContentID      { return row.row.Roo
 func (row StaticTypeValue) Name() string                    { return row.row.Name() }
 func (row StaticTypeValue) Available() bool                 { return row.row.Available() }
 
-type StaticTypeNode struct {
-	id      identity.ContentID
-	owner   identity.ContentID
-	kind    uint8
-	literal uint8
-}
-
-func (row StaticTypeNode) ID() identity.ContentID    { return row.id }
-func (row StaticTypeNode) Owner() identity.ContentID { return row.owner }
-func (row StaticTypeNode) Kind() uint8               { return row.kind }
-func (row StaticTypeNode) LiteralKind() uint8        { return row.literal }
-func (row StaticTypeNode) Available() bool {
-	return row.id.Available() && row.owner.Available()
-}
-
 type StaticTypeArgument struct {
 	row programschema.CallTypeArgument
 }
@@ -1011,16 +972,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 			uint64(argumentOffset)+uint64(argumentWidth) > uint64(argumentCount) {
 			return nil, false
 		}
-	}
-	snapshot.staticTypeNodes = make([]StaticTypeNode, 0, artifact.StaticTypeNodeCount())
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || !row.Available() {
-			return nil, false
-		}
-		snapshot.staticTypeNodes = append(snapshot.staticTypeNodes, StaticTypeNode{
-			id: row.ID(), owner: row.Owner(), kind: uint8(row.Kind()), literal: row.LiteralKind(),
-		})
 	}
 	return snapshot, snapshot.Available()
 }

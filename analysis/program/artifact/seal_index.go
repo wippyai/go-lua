@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -219,22 +218,27 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}
-	seenStaticNodes := make(map[identity.ContentID]struct{}, len(artifact.staticTypeNodes))
-	for index, row := range artifact.staticTypeNodes {
+	typeNodeCount, typeNodesPublished := coldCount(artifact, programschema.StaticTypeNodeFamily())
+	if !typeNodesPublished {
+		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	seenStaticNodes := make(map[identity.ContentID]struct{}, typeNodeCount)
+	for index := 0; index < typeNodeCount; index++ {
+		row, held := coldRow(artifact, programschema.StaticTypeNodeFamily(), index)
 		// A TypeRefUnresolved is a complete Static leaf: Static sealed its
 		// targetless disposition and ProgramArtifact retained its exact lexical
 		// proof as a DiagnosticObservation. All other references must retain
 		// their resolved/canonical target edge.
-		zeroChildAllowed := row.Kind() == StaticNodePrimitive || row.Kind() == StaticNodeLiteral || row.Kind() == StaticNodeUnknown || row.Kind() == StaticNodeTypeParam || row.Kind() == StaticNodeInterface || row.Kind() == StaticNodeTypeFunction ||
-			row.Kind() == StaticNodeReference && row.Resolution() == uint8(staticrefs.Unresolved)
-		if !row.Available() || row.ChildCount() == 0 && !zeroChildAllowed || row.Kind() == StaticNodeTypeOf && !row.operand.Available() {
+		_, operandAvailable := row.OperandID()
+		if !held || !row.Available() || row.Kind() == programschema.StaticNodeTypeOf && !operandAvailable {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		if _, duplicate := seenStaticNodes[row.id]; duplicate {
+		if _, duplicate := seenStaticNodes[row.ID()]; duplicate {
 			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		seenStaticNodes[row.id] = struct{}{}
+		seenStaticNodes[row.ID()] = struct{}{}
 	}
+
 	for functionIndex := 0; functionIndex < functionCount; functionIndex++ {
 		function, functionHeld := coldRow(artifact, programschema.FunctionBoundaryFamily(), functionIndex)
 		formalOffset, formalWidth, formalSpanOK := function.FormalSpan()
@@ -254,16 +258,21 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) Compil
 			}
 		}
 	}
-	for index, row := range artifact.staticTypeNodes {
-		for childIndex := 0; childIndex < row.ChildCount(); childIndex++ {
-			child, ok := row.ChildAt(childIndex)
-			if !ok {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex, CompileReasonOccurrenceUnavailable)
-			}
+	for index := 0; index < typeNodeCount; index++ {
+		row, held := coldRow(artifact, programschema.StaticTypeNodeFamily(), index)
+		if !held {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		children, childrenOK := artifact.canonicalStaticNodeChildren(row, true)
+		if !childrenOK {
+			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		for _, child := range children {
 			if _, exists := seenStaticNodes[child]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, childIndex, CompileReasonOccurrenceUnavailable)
+				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 		}
+
 	}
 	expressionCount, expressionsPublished := coldCount(artifact, programschema.StaticExpressionFamily())
 	if !expressionsPublished {

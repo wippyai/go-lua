@@ -5,9 +5,11 @@ import (
 	"context"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -21,19 +23,19 @@ end
 local p: LocalPoint = {x = 1}
 return p
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeReference || row.Resolution() != uint8(staticrefs.Unresolved) {
 			continue
 		}
 		found++
-		if row.ChildCount() != 0 {
-			t.Fatalf("unresolved reference retained %d target children", row.ChildCount())
+		if _, targetOK := row.ReferenceTarget(); targetOK {
+			t.Fatal("unresolved reference retained a target child")
 		}
 		value, resolved := authority.Resolve(row.ID())
 		if !resolved || value != typ.Unknown {
@@ -55,21 +57,18 @@ type DeclaredPoint = {x: number}
 local p: DeclaredPoint = {x = 1}
 return p
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() != uint8(staticrefs.Declaration) {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeReference || row.Resolution() != uint8(staticrefs.Declaration) {
 			continue
 		}
 		found++
-		if row.ChildCount() != 1 {
-			t.Fatalf("declaration reference retained %d target children, want 1", row.ChildCount())
-		}
-		childID, childOK := row.ChildAt(0)
+		childID, childOK := row.ReferenceTarget()
 		if !childOK {
 			t.Fatal("declaration reference sole child unavailable")
 		}
@@ -91,15 +90,15 @@ interface Service
   function empty<T: string>(value: T): ()
 end
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var found [2]bool
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeTypeFunction {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeTypeFunction {
 			continue
 		}
 		known := row.ReturnsKnown()
@@ -167,6 +166,18 @@ func compileArtifactForAuthorityTest(t testing.TB, source string) *programartifa
 	return artifact
 }
 
+func authorityProgram(artifact *programartifact.Artifact) programschema.Program {
+	if artifact == nil {
+		return programschema.Program{}
+	}
+	return artifact.Program()
+}
+
+func authorityStaticNodeCount(artifact *programartifact.Artifact) int {
+	count, _ := authorityProgram(artifact).StaticTypeNodeCount()
+	return count
+}
+
 func TestArtifactAuthorityAliasCyclesPreserveInnerAliases(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -197,15 +208,15 @@ type C = A
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			artifact := compileArtifactForAuthorityTest(t, testCase.source)
-			authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+			authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 			if err != nil {
 				t.Fatal(err)
 			}
 			values := make(map[string]typ.Type, len(testCase.graph))
-			rows := make(map[string]programartifact.StaticTypeNodeRow, len(testCase.graph))
-			for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-				row, ok := artifact.StaticTypeNodeAt(index)
-				if !ok || row.Kind() != programartifact.StaticNodeAlias {
+			rows := make(map[string]programschema.StaticTypeNode, len(testCase.graph))
+			for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+				row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+				if !ok || row.Kind() != programschema.StaticNodeAlias {
 					continue
 				}
 				value, resolved := authority.Resolve(row.ID())
@@ -265,14 +276,14 @@ local c: Counter = {
 }
 return c
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	interior := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeReference || row.Resolution() == uint8(staticrefs.Unresolved) {
 			continue
 		}
 		interior++
@@ -300,14 +311,14 @@ local function identity<T>(x: T): T
 end
 return identity
 `)
-	authority, err := typeauthority.SealArtifactRows(artifact.CompileKey().ProgramID(), []*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealProgramRows(artifact.CompileKey().ProgramID(), []programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	formals := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeTypeParam {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeTypeParam {
 			continue
 		}
 		formals++
@@ -339,14 +350,14 @@ local function route(primary: Missing<number>): number
 end
 return route
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	applications := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeGeneric {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeGeneric {
 			continue
 		}
 		applications++
@@ -371,14 +382,14 @@ local function route(primary: Plain<number>): number
 end
 return route
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	applications := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeGeneric {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeGeneric {
 			continue
 		}
 		applications++
@@ -401,7 +412,7 @@ func TestArtifactAuthorityMutualDeclarationCycleHasOneCanonicalIdentity(t *testi
 type A = { next: B }
 type B = { next: A }
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,9 +421,9 @@ type B = { next: A }
 		encoded      []byte
 	}
 	var entries []entry
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || row.Kind() != programartifact.StaticNodeRecord {
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeRecord {
 			continue
 		}
 		value, resolved := authority.Resolve(row.ID())
@@ -450,14 +461,14 @@ local c: Counter = {
 }
 return c
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	identities := make(map[programartifact.StaticNodeKind]string, 2)
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
-		if !ok || (row.Kind() != programartifact.StaticNodeAlias && row.Kind() != programartifact.StaticNodeRecord) {
+	identities := make(map[programschema.StaticNodeKind]string, 2)
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || (row.Kind() != programschema.StaticNodeAlias && row.Kind() != programschema.StaticNodeRecord) {
 			continue
 		}
 		value, resolved := authority.Resolve(row.ID())
@@ -476,9 +487,9 @@ return c
 	if len(identities) != 2 {
 		t.Fatalf("fixture published %d of the two declaration/interior rows", len(identities))
 	}
-	if identities[programartifact.StaticNodeAlias] != identities[programartifact.StaticNodeRecord] {
+	if identities[programschema.StaticNodeAlias] != identities[programschema.StaticNodeRecord] {
 		t.Fatalf("declaration and interior entries of one fixed point carry two identities:\n  alias  = %q\n  record = %q",
-			identities[programartifact.StaticNodeAlias], identities[programartifact.StaticNodeRecord])
+			identities[programschema.StaticNodeAlias], identities[programschema.StaticNodeRecord])
 	}
 }
 
@@ -498,14 +509,14 @@ type Node = Text | Group
 local n: Node = {kind = "text", value = "a"}
 return n
 `)
-	authority, err := typeauthority.SealArtifacts([]*programartifact.Artifact{artifact})
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	structural := make(map[string]map[string]struct{})
 	recursions := 0
-	for index := 0; index < artifact.StaticTypeNodeCount(); index++ {
-		row, ok := artifact.StaticTypeNodeAt(index)
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
 		if !ok {
 			continue
 		}
@@ -541,5 +552,236 @@ return n
 			split = append(split, bytes)
 		}
 		t.Fatalf("one fixed point carries %d structural identities:\n  erased = %q\n  %q", len(exact), erased, split)
+	}
+}
+
+// A member of a mutually recursive declaration group is only closed for the
+// entry it was materialized from: its binder sits at that entry. A resolution
+// that reaches the group through two different members therefore has to
+// materialize each of them at its own entry, otherwise the second member
+// carries a binder occurrence whose binder lives under the first and the
+// composed value is an open term that no consumer can encode and read back.
+func TestArtifactAuthorityGroupReachedAtTwoInteriorEntriesStaysClosed(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type A = { next: B }
+type B = { next: A }
+type Pair = { left: A, right: B }
+local p: Pair = {left = {next = {next = nil}}, right = {next = nil}}
+return p
+`)
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	standalone := make(map[string][]byte, 2)
+	var pair *typ.Record
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok {
+			continue
+		}
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved {
+			continue
+		}
+		if row.Kind() == programschema.StaticNodeAlias && (row.Name() == "A" || row.Name() == "B") {
+			encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+			if encodeErr != nil {
+				t.Fatalf("declaration %q has no canonical identity: %v", row.Name(), encodeErr)
+			}
+			standalone[row.Name()] = encoded
+		}
+		if record, isRecord := value.(*typ.Record); isRecord && len(record.Fields) == 2 && record.Fields[0].Name == "left" {
+			pair = record
+		}
+	}
+	if pair == nil || len(standalone) != 2 {
+		t.Fatalf("fixture published pair=%v declarations=%d, want the group and both declarations", pair != nil, len(standalone))
+	}
+	for _, field := range pair.Fields {
+		if !typ.IsGraphClosed(field.Type) {
+			t.Fatalf("field %q is not a closed graph: %s", field.Name, field.Type)
+		}
+	}
+	left, leftErr := typ.EncodeCanonical(context.Background(), pair.Fields[0].Type)
+	right, rightErr := typ.EncodeCanonical(context.Background(), pair.Fields[1].Type)
+	if leftErr != nil || rightErr != nil {
+		t.Fatalf("pair members have no canonical identity: %v / %v", leftErr, rightErr)
+	}
+	if !bytes.Equal(left, standalone["A"]) {
+		t.Fatalf("member reached first carries an identity its declaration does not:\n  %s\n  %s",
+			pair.Fields[0].Type, string(standalone["A"]))
+	}
+	if !bytes.Equal(right, standalone["B"]) {
+		t.Fatalf("member reached second carries an identity its declaration does not:\n  %s\n  %s",
+			pair.Fields[1].Type, string(standalone["B"]))
+	}
+	if !typ.TypeEquals(pair.Fields[0].Type, pair.Fields[1].Type) {
+		t.Fatalf("two entries of one fixed point are not one type:\n  left  = %s\n  right = %s",
+			pair.Fields[0].Type, pair.Fields[1].Type)
+	}
+}
+
+// A reference is a transparent edge of the type graph: it owns no value and
+// never carries a binder. Resolution entered at an interior reference and
+// resolution entered at the declaration it names are therefore one type - one
+// binder spelling and one canonical identity across resolutions, and one node
+// within a resolution.
+func TestArtifactAuthorityInteriorEntryPointsNameOneType(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type Counter = {
+    count: number,
+    increment: (self: Counter) -> number
+}
+local c: Counter = {
+    count = 0,
+    increment = function(self: Counter): number
+        return self.count
+    end
+}
+return c
+`)
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var declaration identity.ContentID
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if ok && row.Kind() == programschema.StaticNodeAlias && row.Name() == "Counter" {
+			declaration = row.ID()
+		}
+	}
+	declared, ok := authority.Resolve(declaration)
+	if !ok {
+		t.Fatal("declaration row did not resolve")
+	}
+	declaredBytes, declaredErr := typ.EncodeCanonical(context.Background(), declared)
+	if declaredErr != nil {
+		t.Fatalf("declaration has no canonical identity: %v", declaredErr)
+	}
+	references := 0
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok || row.Kind() != programschema.StaticNodeReference {
+			continue
+		}
+		target, targetOK := row.ReferenceTarget()
+		if !targetOK || target != declaration {
+			continue
+		}
+		references++
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved {
+			t.Fatalf("reference row %d did not resolve", index)
+		}
+		if value.String() != declared.String() {
+			t.Fatalf("interior entry spells a second binder:\n  reference   = %s\n  declaration = %s", value, declared)
+		}
+		encoded, encodeErr := typ.EncodeCanonical(context.Background(), value)
+		if encodeErr != nil || !bytes.Equal(encoded, declaredBytes) {
+			t.Fatalf("interior entry carries a second identity: %v", encodeErr)
+		}
+	}
+	if references == 0 {
+		t.Fatal("fixture published no reference to the recursive declaration")
+	}
+	recursive, recursiveOK := declared.(*typ.Recursive)
+	if !recursiveOK {
+		t.Fatalf("declaration = %T, want *typ.Recursive", declared)
+	}
+	record, recordOK := recursive.Body.(*typ.Record)
+	if !recordOK {
+		t.Fatalf("declaration body = %T, want *typ.Record", recursive.Body)
+	}
+	occurrences := 0
+	for _, field := range record.Fields {
+		function, functionOK := field.Type.(*typ.Function)
+		if !functionOK {
+			continue
+		}
+		for _, param := range function.Params {
+			if param.Type == typ.Type(recursive) {
+				occurrences++
+			}
+		}
+	}
+	if occurrences == 0 {
+		t.Fatal("interior reference did not materialize as the declaration's own node")
+	}
+}
+
+// A declaration group that instantiates a generic declared in the same group
+// still publishes one sealed declaration. No value reachable from a resolution
+// carries an unbound binder or an unwritten generic body.
+func TestArtifactAuthorityPublishesNoUnwrittenBody(t *testing.T) {
+	artifact := compileArtifactForAuthorityTest(t, `
+type List<T> = { head: T, tail: List<T> }
+local x: List<number> = {head = 1}
+return x
+`)
+	authority, err := typeauthority.SealPrograms([]programschema.Program{authorityProgram(artifact)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generics, instantiations := 0, 0
+	for index := 0; index < authorityStaticNodeCount(artifact); index++ {
+		row, ok := authorityProgram(artifact).StaticTypeNodeAt(index)
+		if !ok {
+			continue
+		}
+		value, resolved := authority.Resolve(row.ID())
+		if !resolved {
+			continue
+		}
+		seen := make(map[typ.Type]bool)
+		var walk func(typ.Type)
+		walk = func(current typ.Type) {
+			if current == nil || seen[current] {
+				return
+			}
+			seen[current] = true
+			switch node := current.(type) {
+			case *typ.Generic:
+				if node.Body == nil {
+					t.Fatalf("row %d publishes generic %q with an unwritten body", index, node.Name)
+				}
+				generics++
+				for _, param := range node.TypeParams {
+					walk(param)
+				}
+				walk(node.Body)
+			case *typ.Recursive:
+				if node.Body == nil {
+					t.Fatalf("row %d publishes an unbound binder %q", index, node.Name)
+				}
+				walk(node.Body)
+			case *typ.Instantiated:
+				instantiations++
+				walk(node.Generic)
+				for _, arg := range node.TypeArgs {
+					walk(arg)
+				}
+			case *typ.Record:
+				for _, field := range node.Fields {
+					walk(field.Type)
+				}
+			case *typ.Function:
+				for _, param := range node.Params {
+					walk(param.Type)
+				}
+				for _, result := range node.Returns {
+					walk(result)
+				}
+			case *typ.TypeParam:
+				walk(node.Constraint)
+			case *typ.Alias:
+				walk(node.Target)
+			}
+		}
+		walk(value)
+	}
+	if generics == 0 || instantiations == 0 {
+		t.Fatalf("fixture published generics=%d instantiations=%d, want both", generics, instantiations)
 	}
 }

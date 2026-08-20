@@ -2,9 +2,67 @@ package artifact
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
+
+type staticNodeDigestChildRow interface {
+	programschema.Row
+	ParentID() identity.ContentID
+	ChildID() identity.ContentID
+	Position() uint32
+}
+
+type staticNodeDigestMetadata struct {
+	key      keyspace.Key
+	text     string
+	optional bool
+	kind     uint8
+}
+
+// addStaticNodeChildFamily replays one typed dense child span into the
+// historical identity stream. The family remains generic only at this
+// transport boundary; each caller supplies a distinct schema family.
+func addStaticNodeChildFamily[V staticNodeDigestChildRow](sink *digestSink, artifact *Artifact, parent identity.ContentID, offset, count uint32, family programschema.Family[V]) bool {
+	sink.add(uintField(uint64(count)))
+	for position := uint32(0); position < count; position++ {
+		child, ok := family.At(&artifact.frozen, artifact.coldCatalog, int(offset+position))
+		if !ok || !child.Available() || child.ParentID() != parent || child.Position() != position {
+			return false
+		}
+		sink.add(bytesField(child.ChildID()))
+	}
+	return true
+}
+
+func addStaticNodeReadonlyFamily[V staticNodeDigestChildRow](sink *digestSink, artifact *Artifact, parent identity.ContentID, offset, count uint32, family programschema.Family[V], readonly func(V) bool) bool {
+	sink.add(uintField(uint64(count)))
+	for position := uint32(0); position < count; position++ {
+		child, ok := family.At(&artifact.frozen, artifact.coldCatalog, int(offset+position))
+		if !ok || !child.Available() || child.ParentID() != parent || child.Position() != position {
+			return false
+		}
+		sink.add(boolField(readonly(child)))
+	}
+	return true
+}
+
+func staticNodeMetadataSpan[V staticNodeDigestChildRow](artifact *Artifact, parent identity.ContentID, offset, count uint32, family programschema.Family[V], read func(V) staticNodeDigestMetadata) ([]staticNodeDigestMetadata, bool) {
+	rows := make([]staticNodeDigestMetadata, 0, count)
+	for position := uint32(0); position < count; position++ {
+		child, ok := family.At(&artifact.frozen, artifact.coldCatalog, int(offset+position))
+		if !ok || !child.Available() || child.ParentID() != parent || child.Position() != position {
+			return nil, false
+		}
+		metadata := read(child)
+		if metadata.key == 0 {
+			return nil, false
+		}
+		rows = append(rows, metadata)
+	}
+	return rows, true
+}
 
 func artifactID(artifact *Artifact) identity.ContentID {
 	sink := newDigestSink(artifactIDDomain, artifactFormat)
@@ -458,72 +516,129 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		}
 		sink.add(bytesField(row.ID()), bytesField(row.BodyPathID()), bytesField(row.ReferenceID()), bytesField(row.RootID()), field{bytes: []byte(row.Name()), kind: fieldBytes})
 	}
-	sink.add(uintField(uint64(len(artifact.staticTypeNodes))))
-	for _, row := range artifact.staticTypeNodes {
-		exact := row.exact
-		sink.add(bytesField(row.id), bytesField(row.owner), uintField(uint64(row.kind)), field{bytes: []byte(row.name), kind: fieldBytes}, uintField(uint64(row.key)), uintField(uint64(row.literal)), uintField(row.bits), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, boolField(row.flag), uintField(uint64(row.resolution)), uintField(uint64(row.assertParam)), bytesField(row.declaration), bytesField(row.operand), bytesField(row.scope), bytesField(row.assertionNarrow), uintField(uint64(row.assertionCoordinate[0])), uintField(uint64(row.assertionCoordinate[1])), uintField(uint64(row.assertionCoordinate[2])), uintField(uint64(row.assertionCoordinate[3])), bytesField(row.typeFunctionVariadic), uintField(uint64(len(row.aliasParams))))
-		for _, child := range row.aliasParams {
-			sink.add(bytesField(child))
+	typeNodeCount, typeNodesPublished := coldCount(artifact, programschema.StaticTypeNodeFamily())
+	if !typeNodesPublished {
+		return identity.ContentID{}
+	}
+	sink.add(uintField(uint64(typeNodeCount)))
+	// Replay the historical StaticTypeNode preimage from the canonical parent
+	// and typed child/metadata families. The order and fields below are kept
+	// byte-for-byte identical to the former artifact-local row walk; spans are
+	// storage only and never enter this digest.
+	for index := 0; index < typeNodeCount; index++ {
+		row, held := coldRow(artifact, programschema.StaticTypeNodeFamily(), index)
+		if !held || !row.Available() {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(row.interfaceExtends))))
-		for _, child := range row.interfaceExtends {
-			sink.add(bytesField(child))
+		exact := row.Exact()
+		sink.add(bytesField(row.ID()), bytesField(row.Owner()), uintField(uint64(row.Kind())), field{bytes: []byte(row.Name()), kind: fieldBytes}, uintField(uint64(row.Key())), uintField(uint64(row.LiteralKind())), uintField(row.Bits()), uintField(uint64(exact.Kind)), boolField(exact.Bool), uintField(uint64(exact.Integer)), uintField(exact.FloatBits), field{bytes: []byte(exact.String), kind: fieldBytes}, boolField(row.Flag()), uintField(uint64(row.Resolution())), uintField(uint64(row.AssertionParam())))
+		declaration, _ := row.DeclarationOwner()
+		operand, _ := row.OperandID()
+		scope, _ := row.ScopeID()
+		narrow, _ := row.AssertionNarrowID()
+		variadic, _ := row.TypeFunctionVariadic()
+		c0, c1, c2, c3 := row.AssertionCoordinate()
+		sink.add(bytesField(declaration), bytesField(operand), bytesField(scope), bytesField(narrow), uintField(uint64(c0)), uintField(uint64(c1)), uintField(uint64(c2)), uintField(uint64(c3)), bytesField(variadic))
+		aliasOffset, aliasCount, aliasOK := row.AliasParameterSpan()
+		extendOffset, extendCount, extendOK := row.InterfaceExtendSpan()
+		memberOffset, memberCount, memberOK := row.InterfaceMemberSpan()
+		typeParamOffset, typeParamCount, typeParamOK := row.TypeFunctionTypeParameterSpan()
+		parameterOffset, parameterCount, parameterOK := row.TypeFunctionParameterSpan()
+		returnOffset, returnCount, returnOK := row.TypeFunctionReturnSpan()
+		recordOffset, recordCount, recordOK := row.RecordFieldSpan()
+		if !aliasOK || !extendOK || !memberOK || !typeParamOK || !parameterOK || !returnOK || !recordOK {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(row.interfaceMemberTypes))))
-		for _, child := range row.interfaceMemberTypes {
-			sink.add(bytesField(child))
+		if !addStaticNodeChildFamily(&sink, artifact, row.ID(), aliasOffset, aliasCount, programschema.StaticTypeNodeAliasParameterFamily()) ||
+			!addStaticNodeChildFamily(&sink, artifact, row.ID(), extendOffset, extendCount, programschema.StaticTypeNodeInterfaceExtendFamily()) ||
+			!addStaticNodeChildFamily(&sink, artifact, row.ID(), memberOffset, memberCount, programschema.StaticTypeNodeInterfaceMemberFamily()) ||
+			!addStaticNodeChildFamily(&sink, artifact, row.ID(), typeParamOffset, typeParamCount, programschema.StaticTypeNodeTypeFunctionTypeParameterFamily()) ||
+			!addStaticNodeChildFamily(&sink, artifact, row.ID(), parameterOffset, parameterCount, programschema.StaticTypeNodeTypeFunctionParameterFamily()) ||
+			!addStaticNodeChildFamily(&sink, artifact, row.ID(), returnOffset, returnCount, programschema.StaticTypeNodeTypeFunctionReturnFamily()) {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(row.typeFunctionTypeParams))))
-		for _, child := range row.typeFunctionTypeParams {
-			sink.add(bytesField(child))
+		fieldReadonlyCount := uint32(0)
+		if row.Kind() == programschema.StaticNodeRecord {
+			fieldReadonlyCount = recordCount
+		} else if row.Kind() == programschema.StaticNodeInterface {
+			fieldReadonlyCount = memberCount
 		}
-		sink.add(uintField(uint64(len(row.typeFunctionParams))))
-		for _, child := range row.typeFunctionParams {
-			sink.add(bytesField(child))
-		}
-		sink.add(uintField(uint64(len(row.typeFunctionReturns))))
-		for _, child := range row.typeFunctionReturns {
-			sink.add(bytesField(child))
-		}
-		sink.add(uintField(uint64(len(row.fieldReadonly))))
-		for _, readonly := range row.fieldReadonly {
-			sink.add(boolField(readonly))
-		}
-		sink.add(uintField(uint64(len(row.keys))))
-		for _, key := range row.keys {
-			sink.add(uintField(uint64(key)))
-		}
-		for index := range row.keys {
-			text := ""
-			if index < len(row.texts) {
-				text = row.texts[index]
+		if row.Kind() == programschema.StaticNodeRecord {
+			if !addStaticNodeReadonlyFamily(&sink, artifact, row.ID(), recordOffset, fieldReadonlyCount, programschema.StaticTypeNodeRecordFieldFamily(), func(field programschema.StaticTypeNodeRecordField) bool { return field.Readonly() }) {
+				return identity.ContentID{}
 			}
-			sink.add(field{bytes: []byte(text), kind: fieldBytes})
-			optional := false
-			if index < len(row.optional) {
-				optional = row.optional[index]
+		} else if row.Kind() == programschema.StaticNodeInterface {
+			if !addStaticNodeReadonlyFamily(&sink, artifact, row.ID(), memberOffset, fieldReadonlyCount, programschema.StaticTypeNodeInterfaceMemberFamily(), func(field programschema.StaticTypeNodeInterfaceMember) bool { return field.Readonly() }) {
+				return identity.ContentID{}
 			}
-			memberKind := uint8(0)
-			if index < len(row.memberKinds) {
-				memberKind = row.memberKinds[index]
-			}
-			sink.add(boolField(optional), uintField(uint64(memberKind)))
+		} else {
+			sink.add(uintField(uint64(fieldReadonlyCount)))
 		}
-		sink.add(uintField(uint64(len(row.segments))))
-		for _, segment := range row.segments {
+		var metadata []staticNodeDigestMetadata
+		var metadataOK bool
+		switch row.Kind() {
+		case programschema.StaticNodeRecord:
+			metadata, metadataOK = staticNodeMetadataSpan(artifact, row.ID(), recordOffset, recordCount, programschema.StaticTypeNodeRecordFieldFamily(), func(field programschema.StaticTypeNodeRecordField) staticNodeDigestMetadata {
+				return staticNodeDigestMetadata{key: field.Key(), text: field.Text(), optional: field.Optional()}
+			})
+		case programschema.StaticNodeInterface:
+			metadata, metadataOK = staticNodeMetadataSpan(artifact, row.ID(), memberOffset, memberCount, programschema.StaticTypeNodeInterfaceMemberFamily(), func(member programschema.StaticTypeNodeInterfaceMember) staticNodeDigestMetadata {
+				return staticNodeDigestMetadata{key: member.Key(), text: member.Text(), optional: member.Optional(), kind: member.KindCode()}
+			})
+		case programschema.StaticNodeTypeFunction:
+			metadata, metadataOK = staticNodeMetadataSpan(artifact, row.ID(), parameterOffset, parameterCount, programschema.StaticTypeNodeTypeFunctionParameterFamily(), func(parameter programschema.StaticTypeNodeTypeFunctionParameter) staticNodeDigestMetadata {
+				return staticNodeDigestMetadata{key: parameter.Key(), text: parameter.Text()}
+			})
+		default:
+			metadataOK = true
+		}
+		if !metadataOK {
+			return identity.ContentID{}
+		}
+		sink.add(uintField(uint64(len(metadata))))
+		for _, item := range metadata {
+			sink.add(uintField(uint64(item.key)))
+		}
+		for _, item := range metadata {
+			sink.add(field{bytes: []byte(item.text), kind: fieldBytes}, boolField(item.optional), uintField(uint64(item.kind)))
+		}
+		segmentCount := row.SegmentCount()
+		sink.add(uintField(uint64(segmentCount)))
+		for n := 0; n < segmentCount; n++ {
+			segment, segmentOK := row.SegmentAt(n)
+			if !segmentOK {
+				return identity.ContentID{}
+			}
 			sink.add(uintField(uint64(segment)))
 		}
-		sink.add(boolField(row.returnsKnown))
-		sink.add(uintField(uint64(len(row.sourceKeys))))
-		for _, key := range row.sourceKeys {
-			sink.add(uintField(uint64(key)))
+		sink.add(boolField(row.ReturnsKnown()))
+		sourceOffset, sourceCount, sourceOK := row.ReferenceSourceKeySpan()
+		canonicalOffset, canonicalCount, canonicalOK := row.ReferenceCanonicalKeySpan()
+		if !sourceOK || !canonicalOK {
+			return identity.ContentID{}
 		}
-		sink.add(uintField(uint64(len(row.canonicalKeys))))
-		for _, key := range row.canonicalKeys {
-			sink.add(uintField(uint64(key)))
+		sink.add(uintField(uint64(sourceCount)))
+		for n := uint32(0); n < sourceCount; n++ {
+			key, keyOK := programschema.StaticTypeNodeReferenceSourceKeyFamily().At(&artifact.frozen, artifact.coldCatalog, int(sourceOffset+n))
+			if !keyOK || key.ParentID() != row.ID() {
+				return identity.ContentID{}
+			}
+			sink.add(uintField(uint64(key.Key())))
 		}
-		sink.add(uintField(uint64(len(row.children))))
-		for _, child := range row.children {
+		sink.add(uintField(uint64(canonicalCount)))
+		for n := uint32(0); n < canonicalCount; n++ {
+			key, keyOK := programschema.StaticTypeNodeReferenceCanonicalKeyFamily().At(&artifact.frozen, artifact.coldCatalog, int(canonicalOffset+n))
+			if !keyOK || key.ParentID() != row.ID() {
+				return identity.ContentID{}
+			}
+			sink.add(uintField(uint64(key.Key())))
+		}
+		childRows, childOK := artifact.canonicalStaticNodeChildren(row, false)
+		if !childOK {
+			return identity.ContentID{}
+		}
+		sink.add(uintField(uint64(len(childRows))))
+		for _, child := range childRows {
 			sink.add(bytesField(child))
 		}
 	}

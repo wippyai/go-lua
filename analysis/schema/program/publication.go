@@ -15,48 +15,61 @@ import (
 // declaration with no field here would seal nothing, so the catalog and the
 // publication cannot drift apart.
 type Publication struct {
-	CallTargets            []CallTarget
-	HeapAllocations        []HeapAllocation
-	HeapFields             []HeapField
-	Values                 []Values
-	ValuesMembers          []ValuesMember
-	HeapIndexes            []HeapIndex
-	Occurrences            []Occurrence
-	OccurrencePoints       []OccurrencePoint
-	OccurrenceInputs       []OccurrenceInput
-	RuleOccurrences        []RuleOccurrence
-	ExactScalarSummaries   []ExactScalarSummary
-	ArithmeticSummaries    []ArithmeticSummary
-	UnarySummaries         []UnarySummary
-	Points                 []Point
-	PointDecisions         []PointDecision
-	Calls                  []Call
-	CallOperands           []CallOperand
-	CallArguments          []CallArgument
-	CallTypeArguments      []CallTypeArgument
-	EnvironmentEdges       []EnvironmentEdge
-	EnvironmentResets      []EnvironmentReset
-	StaticTypeValues       []StaticTypeValue
-	StaticExpressions      []StaticExpression
-	StaticInputs           []StaticInput
-	Regions                []Region
-	RegionMembers          []RegionMember
-	WTOEvents              []WTOEvent
-	Bodies                 []Body
-	BodyEntries            []BodyEntry
-	BodyRoots              []BodyRoot
-	Outcomes               []Outcome
-	OutcomeReturnValues    []OutcomeReturnValue
-	OutcomePoints          []OutcomePoint
-	FunctionBoundaries     []FunctionBoundary
-	FunctionFormals        []FunctionFormal
-	FunctionVarargs        []FunctionVararg
-	FunctionCaptures       []FunctionCapture
-	LocalTransfers         []LocalTransfer
-	LocalTransferWrites    []LocalTransferWrite
-	DiagnosticObservations []DiagnosticObservation
-	DiagnosticEvidence     []DiagnosticEvidence
-	DiagnosticPaths        []DiagnosticPath
+	CallTargets                              []CallTarget
+	HeapAllocations                          []HeapAllocation
+	HeapFields                               []HeapField
+	Values                                   []Values
+	ValuesMembers                            []ValuesMember
+	HeapIndexes                              []HeapIndex
+	Occurrences                              []Occurrence
+	OccurrencePoints                         []OccurrencePoint
+	OccurrenceInputs                         []OccurrenceInput
+	RuleOccurrences                          []RuleOccurrence
+	ExactScalarSummaries                     []ExactScalarSummary
+	ArithmeticSummaries                      []ArithmeticSummary
+	UnarySummaries                           []UnarySummary
+	Points                                   []Point
+	PointDecisions                           []PointDecision
+	Calls                                    []Call
+	CallOperands                             []CallOperand
+	CallArguments                            []CallArgument
+	CallTypeArguments                        []CallTypeArgument
+	EnvironmentEdges                         []EnvironmentEdge
+	EnvironmentResets                        []EnvironmentReset
+	StaticTypeValues                         []StaticTypeValue
+	StaticExpressions                        []StaticExpression
+	StaticInputs                             []StaticInput
+	StaticTypeNodes                          []StaticTypeNode
+	StaticTypeNodeUnionMembers               []StaticTypeNodeUnionMember
+	StaticTypeNodeIntersectionMembers        []StaticTypeNodeIntersectionMember
+	StaticTypeNodeGenericArguments           []StaticTypeNodeGenericArgument
+	StaticTypeNodeAliasParameters            []StaticTypeNodeAliasParameter
+	StaticTypeNodeInterfaceExtends           []StaticTypeNodeInterfaceExtend
+	StaticTypeNodeInterfaceMembers           []StaticTypeNodeInterfaceMember
+	StaticTypeNodeTypeFunctionTypeParameters []StaticTypeNodeTypeFunctionTypeParameter
+	StaticTypeNodeTypeFunctionParameters     []StaticTypeNodeTypeFunctionParameter
+	StaticTypeNodeTypeFunctionReturns        []StaticTypeNodeTypeFunctionReturn
+	StaticTypeNodeRecordFields               []StaticTypeNodeRecordField
+	StaticTypeNodeReferenceSourceKeys        []StaticTypeNodeReferenceSourceKey
+	StaticTypeNodeReferenceCanonicalKeys     []StaticTypeNodeReferenceCanonicalKey
+	Regions                                  []Region
+	RegionMembers                            []RegionMember
+	WTOEvents                                []WTOEvent
+	Bodies                                   []Body
+	BodyEntries                              []BodyEntry
+	BodyRoots                                []BodyRoot
+	Outcomes                                 []Outcome
+	OutcomeReturnValues                      []OutcomeReturnValue
+	OutcomePoints                            []OutcomePoint
+	FunctionBoundaries                       []FunctionBoundary
+	FunctionFormals                          []FunctionFormal
+	FunctionVarargs                          []FunctionVararg
+	FunctionCaptures                         []FunctionCapture
+	LocalTransfers                           []LocalTransfer
+	LocalTransferWrites                      []LocalTransferWrite
+	DiagnosticObservations                   []DiagnosticObservation
+	DiagnosticEvidence                       []DiagnosticEvidence
+	DiagnosticPaths                          []DiagnosticPath
 }
 
 // Seal publishes every family of this catalog into one frozen store. The
@@ -92,6 +105,19 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		StaticTypeValueFamily().Put(&builder, publication.StaticTypeValues, catalog) &&
 		StaticExpressionFamily().Put(&builder, publication.StaticExpressions, catalog) &&
 		StaticInputFamily().Put(&builder, publication.StaticInputs, catalog) &&
+		StaticTypeNodeFamily().Put(&builder, publication.StaticTypeNodes, catalog) &&
+		StaticTypeNodeUnionMemberFamily().Put(&builder, publication.StaticTypeNodeUnionMembers, catalog) &&
+		StaticTypeNodeIntersectionMemberFamily().Put(&builder, publication.StaticTypeNodeIntersectionMembers, catalog) &&
+		StaticTypeNodeGenericArgumentFamily().Put(&builder, publication.StaticTypeNodeGenericArguments, catalog) &&
+		StaticTypeNodeAliasParameterFamily().Put(&builder, publication.StaticTypeNodeAliasParameters, catalog) &&
+		StaticTypeNodeInterfaceExtendFamily().Put(&builder, publication.StaticTypeNodeInterfaceExtends, catalog) &&
+		StaticTypeNodeInterfaceMemberFamily().Put(&builder, publication.StaticTypeNodeInterfaceMembers, catalog) &&
+		StaticTypeNodeTypeFunctionTypeParameterFamily().Put(&builder, publication.StaticTypeNodeTypeFunctionTypeParameters, catalog) &&
+		StaticTypeNodeTypeFunctionParameterFamily().Put(&builder, publication.StaticTypeNodeTypeFunctionParameters, catalog) &&
+		StaticTypeNodeTypeFunctionReturnFamily().Put(&builder, publication.StaticTypeNodeTypeFunctionReturns, catalog) &&
+		StaticTypeNodeRecordFieldFamily().Put(&builder, publication.StaticTypeNodeRecordFields, catalog) &&
+		StaticTypeNodeReferenceSourceKeyFamily().Put(&builder, publication.StaticTypeNodeReferenceSourceKeys, catalog) &&
+		StaticTypeNodeReferenceCanonicalKeyFamily().Put(&builder, publication.StaticTypeNodeReferenceCanonicalKeys, catalog) &&
 		RegionFamily().Put(&builder, publication.Regions, catalog) &&
 		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
 		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog) &&

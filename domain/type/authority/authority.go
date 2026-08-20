@@ -1,5 +1,5 @@
 // Package typeauthority owns the detached static-type directory assembled
-// from sealed ProgramArtifact rows.  Programs and Links are construction
+// from canonical sealed Program rows. Programs and Links are construction
 // inputs to the compiler, never data retained by this package's authority.
 package typeauthority
 
@@ -9,11 +9,11 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
-// StaticTypeRef is the exact detached ProgramArtifact node coordinate.  It
+// StaticTypeRef is the exact canonical Program node coordinate. It
 // carries no dense Term compatibility token: the node is the Program-issued
 // static reference content identity used by every mounted substitution.
 type StaticTypeRef struct {
@@ -33,7 +33,7 @@ type entry struct {
 	ref StaticTypeRef
 }
 
-// Authority is immutable after SealArtifactRows. All semantic materialization
+// Authority is immutable after SealProgramRows. All semantic materialization
 // is delegated to the detached ArtifactAuthority; no Program, Flow, Link, or
 // authored Term is reachable from this object.
 type Authority struct {
@@ -44,28 +44,32 @@ type Authority struct {
 	artifact      *ArtifactAuthority
 }
 
-// SealArtifactRows constructs the selector directory directly from reusable
-// ProgramArtifact rows. Rows are sorted by owner and row identity so the
+// SealProgramRows constructs the selector directory directly from canonical
+// Program rows. Rows are sorted by owner and row identity so the
 // selector assignment is deterministic and independent of mount order.
-func SealArtifactRows(linkID identity.ContentID, artifacts []*programartifact.Artifact) (*Authority, error) {
+func SealProgramRows(linkID identity.ContentID, programs []programschema.Program) (*Authority, error) {
 	if !linkID.Available() {
-		return nil, errors.New("typeauthority: unavailable artifact link identity")
+		return nil, errors.New("typeauthority: unavailable program link identity")
 	}
-	artifact, err := SealArtifacts(artifacts)
+	artifact, err := SealPrograms(programs)
 	if err != nil {
 		return nil, err
 	}
 	type rowEntry struct{ owner, node identity.ContentID }
 	rows := make([]rowEntry, 0)
-	for _, item := range artifacts {
-		if item == nil || !item.Available() {
-			return nil, errors.New("typeauthority: unavailable artifact")
+	for _, program := range programs {
+		if !program.Available() {
+			return nil, errors.New("typeauthority: unavailable program")
 		}
-		owner := item.CompileKey().ProgramID()
-		for i := 0; i < item.StaticTypeNodeCount(); i++ {
-			row, ok := item.StaticTypeNodeAt(i)
+		owner := program.ProgramID
+		count, countOK := program.StaticTypeNodeCount()
+		if !countOK {
+			return nil, errors.New("typeauthority: unavailable program static graph")
+		}
+		for i := 0; i < count; i++ {
+			row, ok := program.StaticTypeNodeAt(i)
 			if !ok || !row.Available() || row.Owner() != owner {
-				return nil, errors.New("typeauthority: malformed artifact row")
+				return nil, errors.New("typeauthority: malformed program row")
 			}
 			rows = append(rows, rowEntry{owner: owner, node: row.ID()})
 		}
@@ -77,11 +81,11 @@ func SealArtifactRows(linkID identity.ContentID, artifacts []*programartifact.Ar
 		return bytes.Compare(rows[i].node[:], rows[j].node[:]) < 0
 	})
 	// An unannotated Program lawfully contributes no static type nodes. The
-	// artifact set itself is still non-empty and owner-validated by
-	// SealArtifacts; an empty selector directory is therefore a complete
+	// program set itself is still non-empty and owner-validated by
+	// SealPrograms; an empty selector directory is therefore a complete
 	// authority, not an unavailable one.
 	if uint64(len(rows)) >= uint64(^uint32(0)) {
-		return nil, errors.New("typeauthority: invalid artifact selector range")
+		return nil, errors.New("typeauthority: invalid program selector range")
 	}
 	a := &Authority{
 		linkID: linkID, artifact: artifact, entries: make([]entry, len(rows)),

@@ -28,7 +28,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -104,14 +104,18 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
-	artifactTypes := make([]*programartifact.Artifact, 0, len(state.artifacts.byProgram))
+	programs := make([]programschema.Program, 0, len(state.artifacts.byProgram))
 	for _, artifact := range state.artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
-		artifactTypes = append(artifactTypes, artifact)
+		compiled := artifact.Program()
+		if !compiled.Available() {
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
+		}
+		programs = append(programs, compiled)
 	}
-	types, typesErr := typeauthority.SealArtifactRows(state.sourceID, artifactTypes)
+	types, typesErr := typeauthority.SealProgramRows(state.sourceID, programs)
 	if typesErr != nil {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
@@ -435,14 +439,18 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 	if artifacts == nil || !artifacts.sites.Available() || len(artifacts.byProgram) == 0 {
 		return false
 	}
-	rows := make([]*programartifact.Artifact, 0, len(artifacts.byProgram))
+	programs := make([]programschema.Program, 0, len(artifacts.byProgram))
 	for _, artifact := range artifacts.byProgram {
 		if artifact == nil || !artifact.Available() {
 			return false
 		}
-		rows = append(rows, artifact)
+		compiled := artifact.Program()
+		if !compiled.Available() {
+			return false
+		}
+		programs = append(programs, compiled)
 	}
-	types, typesErr := typeauthority.SealArtifacts(rows)
+	types, typesErr := typeauthority.SealPrograms(programs)
 	if typesErr != nil || types == nil {
 		return false
 	}
