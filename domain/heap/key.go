@@ -67,22 +67,20 @@ func (key Key) Kind() RootKind {
 
 func (kind AllocationKind) Valid() bool { return kind == AllocationTable || kind == AllocationClosure }
 
-// FreshResult returns the exact creation occurrence selected by this Key.
-// Program aggregates return false. Its target Call coordinate remains opaque:
-// Heap never reissues or exposes the raw Program Term.
-func (key Key) FreshResultID() (identity.ContentID, int, uint32, uint32, bool) {
+// FreshResultID returns the exact Target creation occurrence selected by this
+// Key: its source ApplicationID, owner-issued OutcomeResultID, and fresh
+// ordinal. Program aggregates return false. Heap never reconstructs or
+// exposes operation-local outcome/result coordinates; callers that need the
+// inverse must ask the owning Target Contract to resolve OutcomeResultID.
+func (key Key) FreshResultID() (applicationID identity.ContentID, outcomeResultID identity.ContentID, ordinal uint32, ok bool) {
 	if !key.valid() || key.Kind() != RootAllocation {
-		return identity.ContentID{}, 0, 0, 0, false
+		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
-	root, ok := key.owner.rootAt(key.slot)
-	if !ok {
-		return identity.ContentID{}, 0, 0, 0, false
+	root, ok := key.owner.freshRoot(key.slot)
+	if !ok || !root.Available() {
+		return identity.ContentID{}, identity.ContentID{}, 0, false
 	}
-	row := root.fresh
-	if !row.applicationID.Available() || !row.kinds.Valid() {
-		return identity.ContentID{}, 0, 0, 0, false
-	}
-	return row.applicationID, int(row.outcome), row.result, row.ordinal, true
+	return root.ApplicationID, root.OutcomeResultID, root.Ordinal, true
 }
 
 // BootID returns the detached actor-local bootstrap root identity selected by

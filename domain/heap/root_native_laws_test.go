@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	fresh "github.com/wippyai/go-lua/domain/heap/internal/fresh"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
 
@@ -25,13 +26,13 @@ func TestHeapRuntimeKindUnionMapping(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := freshRootKinds(test.kind)
+			got, ok := fresh.KindsFor(test.kind)
 			if !ok || got != runtimekind.Bit(test.want) {
 				t.Fatalf("FreshKind(%v)=%b/%v, want %b/true", test.kind, got, ok, runtimekind.Bit(test.want))
 			}
 		})
 	}
-	if _, ok := freshRootKinds(schematype.FreshClassInvalid); ok {
+	if _, ok := fresh.KindsFor(schematype.FreshClassInvalid); ok {
 		t.Fatal("invalid FreshKind entered Heap runtime vocabulary")
 	}
 }

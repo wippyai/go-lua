@@ -15,7 +15,8 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
-	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	fresh "github.com/wippyai/go-lua/domain/heap/internal/fresh"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -132,7 +133,7 @@ func (issuer OccurrenceMount) AllocationCount() int {
 		return 0
 	}
 	program := issuer.mount.snapshot.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	count, published := programschema.HeapAllocationFamily().Count(&program.Frozen, catalog)
 	if !program.Available() || !catalogOK || !published {
 		return 0
@@ -148,7 +149,7 @@ func (issuer OccurrenceMount) AllocationAt(index int) (identity.ContentID, Key, 
 		return identity.ContentID{}, Key{}, false
 	}
 	program := issuer.mount.snapshot.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	count, countOK := programschema.HeapAllocationFamily().Count(&program.Frozen, catalog)
 	if !program.Available() || !catalogOK || !countOK || index < 0 || index >= count {
 		return identity.ContentID{}, Key{}, false
@@ -179,7 +180,7 @@ func (issuer OccurrenceMount) AllocationOrdinal(id identity.ContentID) (int, boo
 	}
 	ordinal := int(row.allocation.artifactRow - 1)
 	program := issuer.mount.snapshot.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	count, published := programschema.HeapAllocationFamily().Count(&program.Frozen, catalog)
 	return ordinal, program.Available() && catalogOK && published && ordinal < count
 }
@@ -338,14 +339,7 @@ type schema struct {
 	roots            []rootRow // physical Program roots followed by Boot roots
 	programRootCount uint32
 	bootIndex        map[identity.ContentID]uint32
-	freshTemplates   []freshTemplate
-	freshByKey       map[freshTemplateKey]uint32
-	freshSets        []freshTemplateSet
-	freshSetValues   []freshSetValue
-	freshApps        []identity.ContentID
-	freshAppSets     []uint32
-	freshOffsets     []uint64
-	freshCount       uint64
+	fresh            *fresh.Catalog
 	// atomicKeys is the exact finite universe of selectors that may become
 	// Partition exceptions. atomMaskCounts compresses that universe by its
 	// owner-derived possible-kind mask for the fixed-coordinate rank law.
@@ -438,7 +432,6 @@ func (owner *heapBuilder) sealHost() *linkhost.Component {
 type rootRow struct {
 	kind          RootKind
 	allocation    allocationSource
-	fresh         freshSource
 	bootID        identity.ContentID
 	bootImmutable bool
 	// bootContentID and bootValue are the sealed Heap-owned bootstrap row.
@@ -511,25 +504,6 @@ type allocationSource struct {
 	allocationID identity.ContentID
 	artifactRow  uint32
 	rootValueID  identity.ContentID
-}
-
-// freshSource is a virtual exact fresh creation coordinate.
-type freshSource struct {
-	applicationID identity.ContentID
-	outcome       uint32
-	result        uint32
-	ordinal       uint32
-	kinds         runtimekind.Set
-}
-
-type freshTemplateKey struct{ outcome, result, ordinal uint32 }
-type freshTemplate struct {
-	freshTemplateKey
-}
-type freshTemplateSet struct{ start, end uint32 }
-type freshSetValue struct {
-	template uint32
-	kinds    runtimekind.Set
 }
 
 // exactKeyRow is Heap's detached exact-key universe.  Link's canonical
@@ -707,9 +681,11 @@ func SealWithArtifacts(source *link.Link, mounts []ArtifactMount) (Schema, SealF
 		return Schema{}, SealFailureProgramAllocations
 	}
 	owner.programRootCount = uint32(len(owner.roots))
-	if !builder.addTargetFreshResults() {
+	freshCatalog, freshOK := fresh.Build(source)
+	if !freshOK {
 		return Schema{}, SealFailureFreshResults
 	}
+	owner.fresh = freshCatalog
 	if owner.rootCount() > uint64(^uint32(0)) {
 		return Schema{}, SealFailureProgramRootsOverflow
 	}
@@ -768,7 +744,7 @@ func newArtifactSchemaOwner(source *link.Link, mounts []ArtifactMount) (*heapBui
 		}
 		ordered = append(ordered, mount)
 	}
-	owner := &schema{linkOwner: linkOwner, artifactOrder: ordered, bootIndex: make(map[identity.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), dynamicSlots: make(map[identity.ContentID]uint32), freshByKey: make(map[freshTemplateKey]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
+	owner := &schema{linkOwner: linkOwner, artifactOrder: ordered, bootIndex: make(map[identity.ContentID]uint32), exactSlots: make(map[uint32]uint32), exactIndex: make(map[keyspace.LiteralValue]uint32), payloadIndex: make(map[payloadRow]uint32), localSlots: make(map[rootSlot]struct{}), bootEntries: make(map[rootSlot]bootEntryRow), bootInitials: make(map[rootPayload]bootEntryRow)}
 	builder := &heapBuilder{schema: owner, seal: heapSealContext{project: source.Project(), boundary: source.Boundary(), host: source.Host()}}
 	return builder, byModule, SealFailureNone
 }
@@ -800,7 +776,7 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 			return false
 		}
 		program := artifact.Program()
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		allocationCount, allocationsPublished := programschema.HeapAllocationFamily().Count(&program.Frozen, catalog)
 		valuesCount, valuesPublished := programschema.ValuesFamily().Count(&program.Frozen, catalog)
 		if !program.Available() || !catalogOK || !allocationsPublished || !valuesPublished {
@@ -946,7 +922,7 @@ func (owner *heapBuilder) addArtifactIndexes(mounts map[identity.ContentID]Artif
 			return false
 		}
 		program := artifact.Program()
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		indexCount, indexesPublished := programschema.HeapIndexFamily().Count(&program.Frozen, catalog)
 		if !program.Available() || !catalogOK || !indexesPublished {
 			return false
@@ -1019,130 +995,31 @@ func (owner *heapBuilder) addArtifactIndexes(mounts map[identity.ContentID]Artif
 	return true
 }
 
-// addTargetFreshResults factorizes fresh roots.  It stores global Target
-// templates and one interned eligible-template set per Call Application; a
-// Key decodes its `(Application,outcome,result,ordinal)` source on demand.
-// No Application×template rows are retained.
-func (owner *heapBuilder) addTargetFreshResults() bool {
-	if owner == nil || owner.sealProject() == nil {
-		return false
+// freshCount returns the catalog-owned fresh-root denominator without scanning
+// Heap Keys or reconstructing Target/Application products.
+func (owner *schema) freshCount() uint64 {
+	if owner == nil || owner.fresh == nil {
+		return 0
 	}
-	contract, ok := owner.sealBoundary().Target()
-	if !ok || contract == nil {
-		return false
-	}
-	for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
-		operation, operationOK := contract.Operations.OperationAt(operationIndex)
-		if !operationOK {
-			return false
-		}
-		for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
-			for freshIndex := 0; freshIndex < contract.Operations.FreshResultCount(operation, outcome); freshIndex++ {
-				result, ordinal, kind, freshOK := contract.Operations.FreshResultAt(operation, outcome, freshIndex)
-				key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}
-				if !freshOK {
-					return false
-				}
-				_, heapKind := freshRootKinds(kind)
-				if !heapKind {
-					continue
-				}
-				if prior := owner.freshByKey[key]; prior != 0 {
-					continue
-				}
-				owner.freshTemplates = append(owner.freshTemplates, freshTemplate{freshTemplateKey: key})
-				owner.freshByKey[key] = uint32(len(owner.freshTemplates))
-			}
-		}
-	}
-	if len(owner.freshTemplates) == 0 {
-		return true
-	}
-	for applicationIndex := 0; applicationIndex < owner.sealProject().Applications().Calls().Count(); applicationIndex++ {
-		application, applicationOK := owner.sealProject().Applications().Calls().At(applicationIndex)
-		if !applicationOK {
-			return false
-		}
-		selected := make(map[uint32]runtimekind.Set)
-		for operationIndex := 0; operationIndex < contract.Operations.OperationCount(); operationIndex++ {
-			operation, operationOK := contract.Operations.OperationAt(operationIndex)
-			if !operationOK {
-				return false
-			}
-			if !owner.sealBoundary().ApplicationOperationAvailable(contract, application, operation) {
-				continue
-			}
-			for outcome := 0; outcome < contract.Operations.OutcomeCount(operation); outcome++ {
-				for freshIndex := 0; freshIndex < contract.Operations.FreshResultCount(operation, outcome); freshIndex++ {
-					result, ordinal, kind, freshOK := contract.Operations.FreshResultAt(operation, outcome, freshIndex)
-					key := freshTemplateKey{outcome: uint32(outcome), result: result, ordinal: ordinal}
-					if !freshOK {
-						return false
-					}
-					mask, heapKind := freshRootKinds(kind)
-					if !heapKind {
-						continue
-					}
-					template := owner.freshByKey[key]
-					if template == 0 {
-						return false
-					}
-					selected[template] |= mask
-				}
-			}
-		}
-		if len(selected) == 0 {
-			continue
-		}
-		values := make([]freshSetValue, 0, len(selected))
-		for template, kinds := range selected {
-			values = append(values, freshSetValue{template: template, kinds: kinds})
-		}
-		sort.Slice(values, func(i, j int) bool { return values[i].template < values[j].template })
-		set := uint32(0)
-		for index, candidate := range owner.freshSets {
-			if int(candidate.end-candidate.start) != len(values) {
-				continue
-			}
-			equal := true
-			for offset, value := range values {
-				stored := owner.freshSetValues[candidate.start+uint32(offset)]
-				if stored != value {
-					equal = false
-					break
-				}
-			}
-			if equal {
-				set = uint32(index + 1)
-				break
-			}
-		}
-		if set == 0 {
-			start := uint32(len(owner.freshSetValues))
-			owner.freshSetValues = append(owner.freshSetValues, values...)
-			owner.freshSets = append(owner.freshSets, freshTemplateSet{start: start, end: uint32(len(owner.freshSetValues))})
-			set = uint32(len(owner.freshSets))
-		}
-		applicationID, applicationOK := owner.sealProject().ApplicationID(application)
-		if !applicationOK || !applicationID.Available() {
-			return false
-		}
-		owner.freshApps = append(owner.freshApps, applicationID)
-		owner.freshAppSets = append(owner.freshAppSets, set)
-		if owner.freshCount > ^uint64(0)-uint64(len(values)) {
-			return false
-		}
-		owner.freshCount += uint64(len(values))
-		owner.freshOffsets = append(owner.freshOffsets, owner.freshCount)
-	}
-	return true
+	return owner.fresh.Count()
 }
 
-func (owner *schema) rootCount() uint64 { return uint64(len(owner.roots)) + owner.freshCount }
+func (owner *schema) freshRoot(slot uint32) (fresh.Root, bool) {
+	if owner == nil || owner.fresh == nil || slot <= owner.programRootCount {
+		return fresh.Root{}, false
+	}
+	index := uint64(slot) - uint64(owner.programRootCount) - 1
+	if index >= owner.fresh.Count() {
+		return fresh.Root{}, false
+	}
+	return owner.fresh.At(index)
+}
 
-// rootAt decodes the virtual fresh interval without allocating or retaining
-// an Application×template row. Physical rows are Program allocations followed
-// by Boot roots; Key slots place fresh roots between them.
+func (owner *schema) rootCount() uint64 { return uint64(len(owner.roots)) + owner.freshCount() }
+
+// rootAt validates one Heap slot and returns its physical row shape. Fresh
+// rows are owned by the internal catalog; their semantic columns are queried
+// directly from that catalog by fresh-root accessors.
 func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 	if owner == nil || slot == 0 || uint64(slot) > owner.rootCount() {
 		return rootRow{}, false
@@ -1151,34 +1028,14 @@ func (owner *schema) rootAt(slot uint32) (rootRow, bool) {
 		return owner.roots[slot-1], true
 	}
 	freshStart := uint64(owner.programRootCount) + 1
-	if uint64(slot) >= freshStart && uint64(slot) < freshStart+owner.freshCount {
-		ordinal := uint64(slot) - freshStart
-		appIndex := sort.Search(len(owner.freshOffsets), func(index int) bool { return owner.freshOffsets[index] > ordinal })
-		if appIndex >= len(owner.freshApps) || appIndex >= len(owner.freshAppSets) {
-			return rootRow{}, false
+	if uint64(slot) >= freshStart {
+		freshIndex := uint64(slot) - freshStart
+		if freshIndex < owner.freshCount() {
+			_, freshOK := owner.freshRoot(slot)
+			return rootRow{kind: RootAllocation}, freshOK
 		}
-		start := uint64(0)
-		if appIndex > 0 {
-			start = owner.freshOffsets[appIndex-1]
-		}
-		setID := owner.freshAppSets[appIndex]
-		if setID == 0 || int(setID) > len(owner.freshSets) {
-			return rootRow{}, false
-		}
-		set := owner.freshSets[setID-1]
-		local := ordinal - start
-		if local >= uint64(set.end-set.start) {
-			return rootRow{}, false
-		}
-		setValue := owner.freshSetValues[set.start+uint32(local)]
-		templateID := setValue.template
-		if templateID == 0 || int(templateID) > len(owner.freshTemplates) {
-			return rootRow{}, false
-		}
-		template := owner.freshTemplates[templateID-1]
-		return rootRow{kind: RootAllocation, fresh: freshSource{applicationID: owner.freshApps[appIndex], outcome: template.outcome, result: template.result, ordinal: template.ordinal, kinds: setValue.kinds}}, true
 	}
-	bootIndex := uint64(slot) - owner.freshCount
+	bootIndex := uint64(slot) - owner.freshCount()
 	if bootIndex == 0 || bootIndex > uint64(len(owner.roots)) {
 		return rootRow{}, false
 	}
@@ -1203,7 +1060,7 @@ func (owner *heapBuilder) addBootRoot(root linkhost.BootRoot, rootID identity.Co
 		return false
 	}
 	owner.roots = append(owner.roots, rootRow{kind: RootBoot, bootID: rootID, bootImmutable: immutable})
-	virtual := uint64(len(owner.roots)) + owner.freshCount
+	virtual := uint64(len(owner.roots)) + owner.freshCount()
 	if virtual > uint64(^uint32(0)) {
 		return false
 	}
@@ -1651,7 +1508,7 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 			return false
 		}
 		program := mount.Snapshot().Program()
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		allocation, allocationOK := programschema.HeapAllocationFamily().At(&program.Frozen, catalog, int(row.allocation.artifactRow-1))
 		sealed, sealedOK := sealedAllocationForm(allocation.Form())
 		if !program.Available() || !catalogOK || !allocationOK || allocation.ID() != row.allocation.allocationID || !sealedOK || sealed != row.allocation.form {
@@ -1673,7 +1530,7 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 			return false
 		}
 		program := mount.Snapshot().Program()
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		allocation, allocationOK := programschema.HeapAllocationFamily().At(&program.Frozen, catalog, int(root.allocation.artifactRow-1))
 		fieldOffset, fieldCount, fieldsOK := allocation.FieldSpan()
 		fieldIndex := int(row.artifactRow - 1)
@@ -1803,9 +1660,9 @@ func (owner *schema) rootRuntimeKinds(root uint32) (runtimekind.Set, bool) {
 	case RootAllocation:
 		// Virtual fresh results deliberately share the allocation root carrier:
 		// they admit Recent/Summary materialization but have no Program
-		// allocation proof. Their Target-derived kind set is sealed in rootAt.
-		if row.fresh.applicationID.Available() {
-			return row.fresh.kinds, row.fresh.kinds.Valid()
+		// allocation proof. Their Target-derived kind set is owned by Catalog.
+		if freshRoot, freshOK := owner.freshRoot(root); freshOK {
+			return freshRoot.Kinds, freshRoot.Kinds.Valid() && freshRoot.Kinds&^runtimekind.NonNil == 0
 		}
 		switch row.allocation.kind {
 		case AllocationTable:
@@ -1815,26 +1672,6 @@ func (owner *schema) rootRuntimeKinds(root uint32) (runtimekind.Set, bool) {
 		default:
 			return 0, false
 		}
-	default:
-		return 0, false
-	}
-}
-
-func freshRootKinds(kind schematype.FreshClass) (runtimekind.Set, bool) {
-	switch kind {
-	case schematype.FreshClassTable:
-		return runtimekind.Bit(runtimekind.Table), true
-	case schematype.FreshClassFunction:
-		return runtimekind.Bit(runtimekind.Function), true
-	case schematype.FreshClassThread:
-		return runtimekind.Bit(runtimekind.Thread), true
-	case schematype.FreshClassUserdata:
-		return runtimekind.Bit(runtimekind.Userdata), true
-	case schematype.FreshClassError, schematype.FreshClassReflection:
-		// Error and reflection are fresh reference roots with no finer Heap
-		// shape vocabulary. Preserve their production identity as the
-		// conservative Userdata runtime family rather than dropping the root.
-		return runtimekind.Bit(runtimekind.Userdata), true
 	default:
 		return 0, false
 	}
@@ -2072,6 +1909,41 @@ func (schema Schema) KeyCount() int {
 	return int(count)
 }
 
+// FreshCount returns the exact Target fresh-root denominator owned by this
+// Heap schema. It does not scan Keys or reconstruct a Project/Target product.
+func (schema Schema) FreshCount() int {
+	if !schema.valid() || schema.owner.fresh == nil {
+		return 0
+	}
+	count := schema.owner.fresh.Count()
+	if count > uint64(^uint(0)>>1) {
+		return 0
+	}
+	return int(count)
+}
+
+// FreshAt returns the owner-issued Key and its stable KeyID for one fresh
+// root in Catalog order. The catalog owns the Target source row; Heap remains
+// the only issuer of the aggregate Key and its content identity.
+func (schema Schema) FreshAt(index int) (identity.ContentID, Key, bool) {
+	if !schema.valid() || schema.owner.fresh == nil || index < 0 || uint64(index) >= schema.owner.fresh.Count() {
+		return identity.ContentID{}, Key{}, false
+	}
+	if _, freshOK := schema.owner.fresh.At(uint64(index)); !freshOK {
+		return identity.ContentID{}, Key{}, false
+	}
+	slot := uint64(schema.owner.programRootCount) + uint64(index) + 1
+	if slot > uint64(^uint32(0)) {
+		return identity.ContentID{}, Key{}, false
+	}
+	key := Key{owner: schema.owner, slot: uint32(slot)}
+	if !schema.OwnsKey(key) {
+		return identity.ContentID{}, Key{}, false
+	}
+	id, idOK := schema.KeyID(key)
+	return id, key, idOK
+}
+
 // KeyAt returns one owner-issued private dense selector for an exact root.
 func (schema Schema) KeyAt(index int) (Key, bool) {
 	if !schema.valid() || index < 0 || uint64(index) >= schema.owner.rootCount() || uint64(index) >= uint64(^uint32(0)) {
@@ -2282,7 +2154,7 @@ func (schema Schema) ArtifactAllocationForKey(key Key) (programschema.HeapAlloca
 		return programschema.HeapAllocation{}, false
 	}
 	program := artifact.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	allocation, allocationOK := programschema.HeapAllocationFamily().At(&program.Frozen, catalog, int(root.allocation.artifactRow-1))
 	sealed, sealedOK := sealedAllocationForm(allocation.Form())
 	if !program.Available() || !catalogOK || !allocationOK || allocation.ID() != allocationID || !sealedOK || sealed != form || allocation.Role() == 0 {
@@ -2315,7 +2187,7 @@ func (schema Schema) ArtifactFieldFor(field Field) (programschema.HeapField, boo
 		return programschema.HeapField{}, false
 	}
 	program := mount.Snapshot().Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	offset, count, spanOK := allocation.FieldSpan()
 	index := int(row.artifactRow - 1)
 	if !catalogOK || !spanOK || index < 0 || uint64(index) >= uint64(count) {
@@ -2347,7 +2219,7 @@ func (schema Schema) ArtifactValuesForField(field Field) (programschema.Program,
 	if !program.Available() || !valuesID.Available() || physical.valuesRow == 0 {
 		return programschema.Program{}, programschema.Values{}, false
 	}
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	values, valuesOK := programschema.ValuesFamily().At(&program.Frozen, catalog, int(physical.valuesRow-1))
 	return program, values, catalogOK && valuesOK && values.ID() == valuesID
 }
