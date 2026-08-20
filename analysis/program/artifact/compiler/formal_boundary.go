@@ -75,11 +75,11 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 
 		captureOffset := uint32(len(compiler.functionCaptures))
 		for position := 0; position < function.CaptureCount(); position++ {
-			captureID, innerID, outerID, innerStorageID, outerStorageID, innerBodyID, outerBodyID, captureOK := artifactFunctionCaptureAt(programID, flowView, function, position)
+			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := artifactFunctionCaptureAt(flowView, function, position)
 			if !captureOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
-			capture, captureSealed := programschema.NewFunctionCapture(captureID, innerID, outerID, innerStorageID, outerStorageID, innerBodyID, outerBodyID, uint32(position))
+			capture, captureSealed := programschema.NewFunctionCapture(captureID, innerID, outerID, innerBodyID, outerBodyID, uint32(position))
 			if !captureSealed {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
@@ -142,9 +142,9 @@ func artifactStorageCellID(programID identity.ContentID, view flow.View, term ke
 // artifactFunctionCaptureAt joins one ordered Flow capture pair. Both Body
 // paths are already sealed by Flow; the scalar equations remain byte-for-byte
 // identical to the former Program projection.
-func artifactFunctionCaptureAt(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerStorageID, outerStorageID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
+func artifactFunctionCaptureAt(view flow.View, boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
 	if index < 0 {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	pair, pairOK := boundary.CaptureAt(index)
 	bodyTerm, bodyTermOK := boundary.Body()
@@ -154,17 +154,12 @@ func artifactFunctionCaptureAt(programID identity.ContentID, view flow.View, bou
 	outerBody, outerBodyOK := boundaries.ForBody(pair.OuterBody)
 	if !pairOK || pair.Inner == 0 || pair.Outer == 0 || !bodyTermOK || !bodyOK || !innerBodyOK || !outerBodyOK ||
 		!boundaries.OwnsBody(body) || !boundaries.OwnsBody(innerBody) || !boundaries.OwnsBody(outerBody) || !innerBody.Equal(body) || outerBody.Equal(innerBody) {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	innerBodyID, innerBodyOK = view.BodyPath(pair.InnerBody)
 	outerBodyID, outerBodyOK = view.BodyPath(pair.OuterBody)
 	if !innerBodyOK || !outerBodyOK || !innerBodyID.Available() || !outerBodyID.Available() {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	innerStorageID, innerStorageOK := artifactStorageCellID(programID, view, pair.Inner)
-	outerStorageID, outerStorageOK := artifactStorageCellID(programID, view, pair.Outer)
-	if !innerStorageOK || !outerStorageOK || !innerStorageID.Available() || !outerStorageID.Available() {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	innerID = artifactCallableCellID(innerBodyID, callableCellCaptureInner, uint64(index))
 	outerID = artifactCallableCellID(outerBodyID, callableCellCaptureOuter, uint64(index))
@@ -172,7 +167,7 @@ func artifactFunctionCaptureAt(programID identity.ContentID, view flow.View, bou
 		return writer.Bytes(innerBodyID[:]) == nil && writer.Bytes(outerBodyID[:]) == nil &&
 			writer.Uint(uint64(index)) == nil && writer.Bytes(innerID[:]) == nil && writer.Bytes(outerID[:]) == nil
 	})
-	return id, innerID, outerID, innerStorageID, outerStorageID, innerBodyID, outerBodyID, id.Available() && innerID.Available() && innerStorageID.Available() && outerStorageID.Available() && outerID.Available()
+	return id, innerID, outerID, innerBodyID, outerBodyID, id.Available() && innerID.Available() && outerID.Available()
 }
 
 func artifactCallableCellID(bodyPath identity.ContentID, role, index uint64) identity.ContentID {
