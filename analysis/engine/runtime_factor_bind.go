@@ -220,8 +220,8 @@ func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64
 	return equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: local}
 }
 
-func exactWriteReceiptSurface(receipt factorRuntimeBinding, local uint64) equation.Surface {
-	return equation.Surface{Factor: receipt.semanticKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
+func exactWriteSurface(binding factorRuntimeBinding, local uint64) equation.Surface {
+	return equation.Surface{Factor: binding.semanticKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
 }
 
 func matchesFactorReadShape(schema *Schema, ordinal uint64, surface equation.Surface, kind readFormKind) bool {

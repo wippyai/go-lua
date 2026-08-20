@@ -197,7 +197,7 @@ func (bound *boundFactor[K, V]) stagedTarget(ref exactRef) (carrier.Target, fact
 	if target == (carrier.Target{}) || target.Mode() != carrier.StrongTarget {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
-	targetRaw, proven := exactWriteLocal(bound.implementation.binding, exactWriteReceiptSurface(bound.implementation.binding, raw+1))
+	targetRaw, proven := exactWriteLocal(bound.implementation.binding, exactWriteSurface(bound.implementation.binding, raw+1))
 	if !proven || targetRaw != raw {
 		return carrier.Target{}, factorRuntimeBinding{}, 0, false
 	}
