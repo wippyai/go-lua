@@ -8,7 +8,7 @@ import (
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -337,8 +337,13 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 			return nil, false
 		}
 		program := mount.Snapshot.Program()
-		observationIndex, observationOK := diagnosticObservationIndex(program, site.Local)
-		observation, observationHeld := program.DiagnosticObservationAt(observationIndex)
+		cold, coldOK := program.ColdState()
+		view, viewOK := programdiagnostic.NewView(cold)
+		if !coldOK || !viewOK {
+			return nil, false
+		}
+		observationIndex, observationOK := diagnosticObservationIndex(view, site.Local)
+		observation, observationHeld := view.DiagnosticObservationAt(observationIndex)
 		observationOK = observationOK && observationHeld
 		if !observationOK || observation.Kind() != site.Kind {
 			return nil, false
@@ -355,15 +360,15 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 		switch site.Kind {
 		case structure.DiagnosticObservationBranchCondition:
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
-			points, pointsOK := programDiagnosticEvidence(program, observationIndex)
+			points, pointsOK := programDiagnosticEvidence(view, observationIndex)
 			producers, producersOK := siteProducers(site)
 			if !valueOK || !pointsOK || !producersOK || uint64(valueIndex) >= uint64(len(coordinates)) {
 				return nil, false
 			}
 			row.Branch = Branch{Points: append([]identity.ContentID(nil), points...), Producers: producers, ValueIndex: valueIndex}
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			path, pathOK := programDiagnosticPath(program, observationIndex)
-			name, nameOK := program.DiagnosticPathName(observationIndex)
+			path, pathOK := programDiagnosticPath(view, observationIndex)
+			name, nameOK := view.DiagnosticPathName(observationIndex)
 			if !pathOK || !nameOK || !observation.StaticReferenceID().Available() {
 				return nil, false
 			}
@@ -380,7 +385,7 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 				return nil, false
 			}
 			position, positionOK := observation.Position()
-			points, pointsOK := programDiagnosticEvidence(program, observationIndex)
+			points, pointsOK := programDiagnosticEvidence(view, observationIndex)
 			producers, producersOK := siteProducers(site)
 			valueIndex, valueOK := coordinateByID[valueKey{mount: site.Mount, id: site.ValueID}]
 			declaredMay, target, declaredOK := declaredMay(declared, observation.DeclaredStaticTypeID())
@@ -426,16 +431,16 @@ func siteProducers(site mounted.ObservationSite) ([]Producer, bool) {
 	return producers, true
 }
 
-func diagnosticObservationIndex(program programschema.Program, id identity.ContentID) (int, bool) {
-	if !program.Available() || !id.Available() {
+func diagnosticObservationIndex(view programdiagnostic.View, id identity.ContentID) (int, bool) {
+	if !view.Available() || !id.Available() {
 		return 0, false
 	}
-	count, published := program.DiagnosticObservationCount()
+	count, published := view.DiagnosticObservationCount()
 	if !published {
 		return 0, false
 	}
 	for index := 0; index < count; index++ {
-		row, held := program.DiagnosticObservationAt(index)
+		row, held := view.DiagnosticObservationAt(index)
 		if held && row.ID() == id {
 			return index, true
 		}
@@ -443,8 +448,8 @@ func diagnosticObservationIndex(program programschema.Program, id identity.Conte
 	return 0, false
 }
 
-func programDiagnosticEvidence(program programschema.Program, observationIndex int) ([]identity.ContentID, bool) {
-	row, held := program.DiagnosticObservationAt(observationIndex)
+func programDiagnosticEvidence(view programdiagnostic.View, observationIndex int) ([]identity.ContentID, bool) {
+	row, held := view.DiagnosticObservationAt(observationIndex)
 	if !held {
 		return nil, false
 	}
@@ -454,7 +459,7 @@ func programDiagnosticEvidence(program programschema.Program, observationIndex i
 	}
 	points := make([]identity.ContentID, count)
 	for index := uint32(0); index < count; index++ {
-		child, childOK := program.DiagnosticEvidenceAt(int(offset + index))
+		child, childOK := view.DiagnosticEvidenceAt(int(offset + index))
 		if !childOK || !child.Available() {
 			return nil, false
 		}
@@ -463,8 +468,8 @@ func programDiagnosticEvidence(program programschema.Program, observationIndex i
 	return points, true
 }
 
-func programDiagnosticPath(program programschema.Program, observationIndex int) ([]string, bool) {
-	row, held := program.DiagnosticObservationAt(observationIndex)
+func programDiagnosticPath(view programdiagnostic.View, observationIndex int) ([]string, bool) {
+	row, held := view.DiagnosticObservationAt(observationIndex)
 	if !held {
 		return nil, false
 	}
@@ -474,7 +479,7 @@ func programDiagnosticPath(program programschema.Program, observationIndex int) 
 	}
 	path := make([]string, count)
 	for index := uint32(0); index < count; index++ {
-		child, childOK := program.DiagnosticPathAt(int(offset + index))
+		child, childOK := view.DiagnosticPathAt(int(offset + index))
 		if !childOK || !child.Available() {
 			return nil, false
 		}
@@ -483,12 +488,16 @@ func programDiagnosticPath(program programschema.Program, observationIndex int) 
 	return path, true
 }
 
-func diagnosticObservationSite(site programschema.DiagnosticObservationSite) schemadiag.Site {
+func diagnosticObservationSite(site programdiagnostic.DiagnosticObservationSite) schemadiag.Site {
 	switch site {
-	case programschema.DiagnosticObservationSiteCallArgument:
+	case programdiagnostic.DiagnosticObservationSiteCallArgument:
 		return schemadiag.SiteCallArgument
-	case programschema.DiagnosticObservationSiteAssignment:
+	case programdiagnostic.DiagnosticObservationSiteAssignment:
 		return schemadiag.SiteAssignment
+	case programdiagnostic.DiagnosticObservationSiteMember:
+		return schemadiag.SiteMember
+	case programdiagnostic.DiagnosticObservationSiteMemberAbsent:
+		return schemadiag.SiteMemberAbsent
 	default:
 		return schemadiag.SiteNone
 	}

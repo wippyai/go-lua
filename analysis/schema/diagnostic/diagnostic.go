@@ -195,6 +195,12 @@ const (
 	SiteNone Site = iota
 	SiteAssignment
 	SiteCallArgument
+	// SiteMember is one established constructor member measured against the
+	// declared node its key, index, or map position resolves to.
+	SiteMember
+	// SiteMemberAbsent is one required declared field the constructor's
+	// established key set does not supply.
+	SiteMemberAbsent
 	siteLimit
 )
 
