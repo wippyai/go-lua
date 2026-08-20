@@ -29,10 +29,13 @@ type Target struct {
 // from a raw Program term or turn Call's dense target layout into a second
 // semantic vocabulary.
 type Body struct {
-	owner   *Algebra
-	module  identity.ContentID
-	receipt bodyReceipt
-	context identity.ContentID
+	owner      *Algebra
+	module     identity.ContentID
+	artifactID identity.ContentID
+	programID  identity.ContentID
+	bodyPath   identity.ContentID
+	formalID   identity.ContentID
+	context    identity.ContentID
 }
 
 // Bodies is Call's one global executable-function-body view.  It carries
@@ -145,10 +148,16 @@ func (capability Target) Body() (Body, bool) {
 		return Body{}, false
 	}
 	row := capability.owner.targets[capability.selector-1]
-	if row.key.kind != targetBody || !row.key.moduleKey.Available() || !row.bodyContext.Available() || !row.body.valid() {
+	if row.key.kind != targetBody || !row.key.moduleKey.Available() || !row.bodyContext.Available() ||
+		!row.programID.Available() || !row.bodyPath.Available() || !row.formalID.Available() {
 		return Body{}, false
 	}
-	body := Body{owner: capability.owner, module: row.key.moduleKey, receipt: row.body, context: row.bodyContext}
+	body := Body{
+		owner: capability.owner, module: row.key.moduleKey,
+		artifactID: row.artifactID, programID: row.programID,
+		bodyPath: row.bodyPath, formalID: row.formalID,
+		context: row.bodyContext,
+	}
 	return body, body.Valid()
 }
 
@@ -156,7 +165,8 @@ func (capability Target) Body() (Body, bool) {
 // the Algebra that issued it.  The check includes the canonical target map,
 // so a package-internal forged Body cannot cross the owner fence.
 func (body Body) Valid() bool {
-	if body.owner == nil || !body.owner.Valid() || !body.module.Available() || !body.context.Available() || !body.receipt.valid() || body.receipt.bodyContext != body.context {
+	if body.owner == nil || !body.owner.Valid() || !body.module.Available() || !body.context.Available() ||
+		!body.programID.Available() || !body.bodyPath.Available() || !body.formalID.Available() {
 		return false
 	}
 	selector := body.owner.targetIndex[targetKey{kind: targetBody, moduleKey: body.module, bodyContext: body.context}]
@@ -164,7 +174,9 @@ func (body Body) Valid() bool {
 		return false
 	}
 	row := body.owner.targets[selector-1]
-	return row.key.kind == targetBody && row.key.moduleKey == body.module && row.bodyContext == body.context && row.body == body.receipt
+	return row.key.kind == targetBody && row.key.moduleKey == body.module && row.bodyContext == body.context &&
+		row.artifactID == body.artifactID && row.programID == body.programID &&
+		row.bodyPath == body.bodyPath && row.formalID == body.formalID
 }
 
 // Same proves exact body-capability identity.  Equal source terms from
@@ -176,13 +188,13 @@ func (body Body) Same(other Body) bool {
 
 // ContentID returns the portable identity of the exact Program body target.
 // It is derived from the sealed Program content and body term, never from
-// Call's selector or any raw target ordinal.  This is the identity used by
+// Call's selector or any raw target ordinal. This is the identity used by
 // body-call Rule operands and cold derivation evidence.
 func (body Body) ContentID() (identity.ContentID, bool) {
 	if !body.Valid() {
 		return identity.ContentID{}, false
 	}
-	return body.receipt.formalID, body.receipt.formalID.Available()
+	return body.formalID, body.formalID.Available()
 }
 
 // ModuleKey returns Project's already-issued mount identity for this exact
@@ -197,17 +209,17 @@ func (body Body) ModuleKey() (identity.ContentID, bool) {
 
 // ArtifactID returns the mounted reusable artifact identity copied at seal.
 func (body Body) ArtifactID() (identity.ContentID, bool) {
-	return body.receipt.artifactID, body.Valid() && body.receipt.artifactID.Available()
+	return body.artifactID, body.Valid() && body.artifactID.Available()
 }
 
-// ProgramID returns the source identity used to issue this body receipt.
+// ProgramID returns the source identity attached to this body row.
 func (body Body) ProgramID() (identity.ContentID, bool) {
-	return body.receipt.programID, body.Valid() && body.receipt.programID.Available()
+	return body.programID, body.Valid() && body.programID.Available()
 }
 
 // BodyPath returns the artifact body identity; it is not a dense ordinal.
 func (body Body) BodyPath() (identity.ContentID, bool) {
-	return body.receipt.bodyPath, body.Valid() && body.receipt.bodyPath.Available()
+	return body.bodyPath, body.Valid() && body.bodyPath.Available()
 }
 
 // Operation projects the exact sealed target operation of one known seed

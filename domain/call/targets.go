@@ -47,28 +47,15 @@ type MountedArtifact struct {
 	Snapshot *ingress.Snapshot
 }
 
-// bodyReceipt is the compact seal-time projection of a Program body. It is
-// deliberately data-only: no Program, Body, Flow, or Link
-// proof survives in Call's target rows.
-type bodyReceipt struct {
-	artifactID  identity.ContentID
-	programID   identity.ContentID
-	bodyPath    identity.ContentID
-	formalID    identity.ContentID
-	bodyContext identity.ContentID
-}
-
-func (receipt bodyReceipt) valid() bool {
-	return receipt.programID.Available() && receipt.bodyPath.Available() &&
-		receipt.formalID.Available() && receipt.bodyContext.Available()
-}
-
 type targetRow struct {
 	key             targetKey
 	role            TargetRoleID
 	functionContext identity.ContentID
 	bodyContext     identity.ContentID
-	body            bodyReceipt
+	artifactID      identity.ContentID
+	programID       identity.ContentID
+	bodyPath        identity.ContentID
+	formalID        identity.ContentID
 	seedOperation   vocabulary.Operation
 	seedFormalID    identity.ContentID
 	seedKind        uint8
@@ -118,9 +105,13 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
 				return false
 			}
-			receipt := bodyReceipt{artifactID: mount.ArtifactID, programID: programID, bodyPath: target.Body, formalID: target.Formal, bodyContext: target.Context}
 			key := targetKey{kind: targetBody, moduleKey: mount.ModuleKey, bodyContext: target.Context}
-			if !receipt.valid() || algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{key: key, functionContext: target.Function, bodyContext: target.Context, body: receipt}) {
+			if !programID.Available() || !target.Body.Available() || !target.Formal.Available() || !target.Context.Available() ||
+				algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{
+				key: key, functionContext: target.Function, bodyContext: target.Context,
+				artifactID: mount.ArtifactID, programID: programID,
+				bodyPath: target.Body, formalID: target.Formal,
+			}) {
 				return false
 			}
 			if algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.Allocation}].valid() {
@@ -170,7 +161,8 @@ func (algebra *Algebra) appendTarget(row targetRow) bool {
 	functionKey := functionTargetKey{}
 	if row.key.kind == targetBody {
 		functionKey = functionTargetKey{moduleKey: row.key.moduleKey, functionContext: row.functionContext}
-		if !row.functionContext.Available() || !row.bodyContext.Available() || !row.body.valid() || row.body.bodyContext != row.bodyContext || algebra.functionIndex[functionKey].valid() {
+		if !row.functionContext.Available() || !row.bodyContext.Available() || !row.programID.Available() ||
+			!row.bodyPath.Available() || !row.formalID.Available() || algebra.functionIndex[functionKey].valid() {
 			return false
 		}
 	}
@@ -202,7 +194,7 @@ func (algebra *Algebra) roleIDForTarget(row targetRow) (TargetRoleID, bool) {
 		if !moduleID.Available() || !row.bodyContext.Available() {
 			return TargetRoleID{}, false
 		}
-		formalID := row.body.formalID
+		formalID := row.formalID
 		if !formalID.Available() {
 			return TargetRoleID{}, false
 		}
