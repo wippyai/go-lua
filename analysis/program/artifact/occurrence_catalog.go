@@ -359,7 +359,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
 			member, ok := values.MemberAt(memberIndex)
 			memberTerm, memberTermOK := authoredValues.Member(term, memberIndex)
-			memberID, memberIDOK := compiler.input.ValueSubjectID(memberTerm)
+			memberID, memberIDOK := compiler.valueSubjectID(memberTerm)
 			if !ok || !memberTermOK || !memberIDOK ||
 				!compiler.appendOccurrence(programschema.OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberID}, uint64(memberIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, memberIndex, CompileReasonOccurrenceValues)

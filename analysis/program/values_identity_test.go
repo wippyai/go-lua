@@ -13,9 +13,6 @@ func TestValuesIdentityQueriesDoNotCreateRowsForUnknownTerms(t *testing.T) {
 	}
 	unknown := keyspace.MakeTerm(keyspace.FamilyValues, 1)
 	flowView := published.Flow()
-	if id, ok := published.ValueSubjectID(unknown); ok || id.Available() {
-		t.Fatalf("ValueSubjectID(unknown) = %x/%v; want unavailable", id, ok)
-	}
 	if id, ok := flowView.ValuesOccurrenceID(unknown); ok || id.Available() {
 		t.Fatalf("ValuesOccurrenceID(unknown) = %x/%v; want unavailable", id, ok)
 	}

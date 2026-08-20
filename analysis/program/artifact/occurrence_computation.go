@@ -114,8 +114,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.input.ValueSubjectID(operation.Left)
-		rightID, rightOK := compiler.input.ValueSubjectID(operation.Right)
+		leftID, leftOK := compiler.valueSubjectID(operation.Left)
+		rightID, rightOK := compiler.valueSubjectID(operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryArithmetic(operation.Op) ||
@@ -143,8 +143,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.input.ValueSubjectID(operation.Left)
-		rightID, rightOK := compiler.input.ValueSubjectID(operation.Right)
+		leftID, leftOK := compiler.valueSubjectID(operation.Left)
+		rightID, rightOK := compiler.valueSubjectID(operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK ||
@@ -186,8 +186,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.input.ValueSubjectID(operation.Left)
-		rightID, rightOK := compiler.input.ValueSubjectID(operation.Right)
+		leftID, leftOK := compiler.valueSubjectID(operation.Left)
+		rightID, rightOK := compiler.valueSubjectID(operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryOrder(operation.Op) ||
@@ -216,7 +216,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, op, operand, rowOK := unaries.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		operandID, operandOK := compiler.input.ValueSubjectID(operand)
+		operandID, operandOK := compiler.valueSubjectID(operand)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
@@ -243,8 +243,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, op, left, right, rowOK := selects.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.input.ValueSubjectID(left)
-		rightID, rightOK := compiler.input.ValueSubjectID(right)
+		leftID, leftOK := compiler.valueSubjectID(left)
+		rightID, rightOK := compiler.valueSubjectID(right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
@@ -267,7 +267,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, operand, claimKind, rowOK := claims.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		operandID, operandOK := compiler.input.ValueSubjectID(operand)
+		operandID, operandOK := compiler.valueSubjectID(operand)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||

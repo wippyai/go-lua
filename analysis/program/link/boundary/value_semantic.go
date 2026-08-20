@@ -277,8 +277,8 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
 		keyspace.FamilyFloat, keyspace.FamilyString, keyspace.FamilyTypeValue,
 	} {
-		for index := 0; index < p.ValueSourceCount(family); index++ {
-			sourceID, _, sourceTerm, ok := p.ValueSourceIDAt(family, index)
+		for index := 0; index < boundaryValueSourceCount(p, family); index++ {
+			sourceID, _, sourceTerm, ok := boundaryValueSourceIdentityAt(p, family, index)
 			if !ok {
 				continue
 			}
