@@ -200,14 +200,14 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 // program. It is total over the graph: every Group's members become rows, so
 // the sealed program describes the whole compiled program and a later demand
 // revision selects from it rather than rebuilding it.
-func bindRuntimeProgram(bindingState *schemaBindingState, bindingAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*runtimeProgram, []memberFold, bool) {
-	if bindingState == nil || bindingAuthority == nil || bindingState.phase != schemaBindingSealed || bindingState.authority != bindingAuthority || bindingState.schema == nil || !bindingState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
+func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow) (*runtimeProgram, []memberFold, bool) {
+	if schema == nil || !schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || factors == nil {
 		return nil, nil, false
 	}
-	if graph.CompositionID() != bindingState.schema.coldID() {
+	if graph.CompositionID() != schema.coldID() {
 		return nil, nil, false
 	}
-	records, owners, factorsOK := bindProgramFactorTable(runtime, factors)
+	records, owners, factorsOK := bindProgramFactorTable(schema, runtime, factors)
 	if !factorsOK {
 		return nil, nil, false
 	}
@@ -276,7 +276,7 @@ func bindRuntimeProgram(bindingState *schemaBindingState, bindingAuthority *sche
 	if len(byMember) != 0 {
 		return nil, nil, false
 	}
-	program, sealed := sealRuntimeProgram(rows, spans, records, owners, append([]runtimeQuery(nil), queries...), append([]runtimeObservation(nil), observations...))
+	program, sealed := sealRuntimeProgram(schema, graph, runtime, rows, spans, records, owners, append([]queryRow(nil), queries...), append([]observationRow(nil), observations...))
 	if !sealed {
 		return nil, nil, false
 	}
@@ -286,25 +286,25 @@ func bindRuntimeProgram(bindingState *schemaBindingState, bindingAuthority *sche
 // assembleProgramRuntime is the one entry from attached drafts to an
 // executable runtime. It seals the program first and assembles from it, so the
 // drafts are unreachable the moment this call returns.
-func assembleProgramRuntime(state *schemaBindingState, authority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []runtimeQuery, observations []runtimeObservation) (*solverRuntime, bool) {
-	program, folds, bound := bindRuntimeProgram(state, authority, graph, runtime, factors, drafts, queries, observations)
+func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow) (*solverRuntime, bool) {
+	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations)
 	if !bound {
 		return nil, false
 	}
-	return assembleRuntimeOwned(state, authority, graph, runtime, program, folds)
+	return assembleRuntimeOwned(graph, runtime, program, folds)
 }
 
-// bindProgramFactorTable orders the bound Factors by canonical key so the dense
-// owner index is a property of the program rather than of a map walk.
-func bindProgramFactorTable(runtime *carrier.Composition, factors map[composition.Key]runtimeFactor) ([]factorRecord, []runtimeFactor, bool) {
-	keys := make([]composition.Key, 0, len(factors))
-	for key := range factors {
-		keys = append(keys, key)
+// bindProgramFactorTable places every Factor at its Schema ordinal. This makes
+// the program's factor ordinal a direct address shared by query rows, rule
+// rows, and the sealed Schema instead of an independently sorted owner table.
+func bindProgramFactorTable(schema *Schema, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor) ([]factorRecord, []runtimeFactor, bool) {
+	if schema == nil || !schema.Available() || runtime == nil || len(factors) != schemaFactorCount(schema) {
+		return nil, nil, false
 	}
-	sort.Slice(keys, func(left, right int) bool { return lessRuntimeKey(keys[left], keys[right]) })
-	records := make([]factorRecord, 0, len(keys))
-	owners := make([]runtimeFactor, 0, len(keys))
-	for _, key := range keys {
+	records := make([]factorRecord, schemaFactorCount(schema))
+	owners := make([]runtimeFactor, schemaFactorCount(schema))
+	for ordinal := range records {
+		key := schema.factorSemanticAt(uint64(ordinal))
 		factor := factors[key]
 		slot, slotOK := shape.Slot(0), false
 		if factor != nil {
@@ -313,8 +313,11 @@ func bindProgramFactorTable(runtime *carrier.Composition, factors map[compositio
 		if !key.Available() || factor == nil || compositionKeyOf(factor.semantic()) != key || !slotOK || slot < 0 || int(slot) >= runtime.Count() {
 			return nil, nil, false
 		}
-		records = append(records, factorRecord{key: key, slot: slot, owner: int32(len(owners))})
-		owners = append(owners, factor)
+		if ordinal > 0 && !lessRuntimeKey(records[ordinal-1].key, key) {
+			return nil, nil, false
+		}
+		records[ordinal] = factorRecord{key: key, slot: slot, owner: int32(ordinal)}
+		owners[ordinal] = factor
 	}
 	return records, owners, true
 }

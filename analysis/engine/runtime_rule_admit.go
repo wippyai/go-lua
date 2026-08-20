@@ -165,7 +165,7 @@ func resolveDeclaredRuleInstance(schema *Schema, authority *schemaBindingAuthori
 func declaredSummaryMappings(surfaces declaredRuleSurfaces) []RuleReadSurface {
 	var mapped []RuleReadSurface
 	for _, read := range surfaces.reads {
-		if read.summary == nil || (read.summary.binding == nil) == (read.summary.proof == nil) {
+		if read.summary == nil || (read.summary.state == nil) == (read.summary.proof == nil) {
 			continue
 		}
 		mapped = append(mapped, read)

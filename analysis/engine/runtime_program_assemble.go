@@ -55,7 +55,7 @@ type MountedRuleAdmission struct {
 // constructor resolves the Point it is anchored at.
 type programQueryAdmit interface {
 	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool)
-	bindProgramQuery(plane *programPlane, query equation.Query) (runtimeQuery, bool)
+	bindProgramQuery(plane *programPlane, query equation.Query) (queryRow, bool)
 }
 
 // ProgramQueryAdmission is one mounted query row to admit.

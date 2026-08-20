@@ -299,7 +299,7 @@ func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) bind(boun
 	factorKey := binding.origin.state.schema.factorSemanticAt(binding.origin.factorIndex())
 	runtime, present := factors[factorKey]
 	targetProvider, targetOK := runtime.(stagedTargetProvider[RV])
-	if !present || !targetOK || targetProvider.stagedFactorTarget() == nil || !targetProvider.stagedFactorReceiptMatches(binding.origin) {
+	if !present || !targetOK || targetProvider.stagedFactorTarget() == nil {
 		return false
 	}
 	surface, surfaceOK := member.ReadAt(int(binding.origin.readOrdinal))

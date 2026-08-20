@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
+	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -27,11 +28,14 @@ func TestExactObservationDerivesCommittedExactWriteCoordinate(t *testing.T) {
 			}
 		}
 	}
-	if len(fixture.solver.runtime.observations) != len(fixture.observations) {
+	program := fixture.solver.runtime.program
+	if program.observationCount() != len(fixture.observations) {
 		t.Fatal("observation runtime/table cardinality diverged")
 	}
-	for index, observation := range fixture.solver.runtime.observations {
-		if observation == nil || observation.observationID() != fixture.observations[index].ID || !graph.OwnsPoint(observation.observationPoint()) {
+	for index := 0; index < program.observationCount(); index++ {
+		observation, observed := program.observationAt(index)
+		point, pointOK := graph.PointAt(schedule.Node(observation.point))
+		if !observed || observation.id != fixture.observations[index].ID || !pointOK || !graph.OwnsPoint(point) {
 			t.Fatalf("observation %d lost its committed point or public ID", index)
 		}
 	}

@@ -376,17 +376,19 @@ func beginSolvedPublication(solver *Solver, epoch *executorEpoch, generation ide
 }
 
 func declaredQueryKeys(runtime *solverRuntime) ([]identity.ContentID, bool) {
-	if runtime == nil {
+	if runtime == nil || runtime.program == nil || runtime.graph == nil {
 		return nil, false
 	}
-	keys := make([]identity.ContentID, 0, len(runtime.queries))
-	seen := make(map[identity.ContentID]struct{}, len(runtime.queries))
-	for _, declared := range runtime.queries {
-		if declared == nil {
+	keys := make([]identity.ContentID, 0, runtime.program.queryCount())
+	seen := make(map[identity.ContentID]struct{}, runtime.program.queryCount())
+	for index := 0; index < runtime.program.queryCount(); index++ {
+		row, rowOK := runtime.program.queryAt(index)
+		declared, declaredOK := runtime.graph.QueryAt(index)
+		if !rowOK || !declaredOK || !row.valid() {
 			return nil, false
 		}
-		key, keyed := declared.PublicationKey()
-		if !keyed {
+		key := solvedRowKey(declared.Key())
+		if !key.Available() {
 			return nil, false
 		}
 		if _, duplicate := seen[key]; duplicate {
@@ -399,16 +401,17 @@ func declaredQueryKeys(runtime *solverRuntime) ([]identity.ContentID, bool) {
 }
 
 func declaredObservationKeys(runtime *solverRuntime) ([]identity.ContentID, bool) {
-	if runtime == nil {
+	if runtime == nil || runtime.program == nil {
 		return nil, false
 	}
-	keys := make([]identity.ContentID, 0, len(runtime.observations))
-	seen := make(map[identity.ContentID]struct{}, len(runtime.observations))
-	for _, declared := range runtime.observations {
-		if declared == nil {
+	keys := make([]identity.ContentID, 0, runtime.program.observationCount())
+	seen := make(map[identity.ContentID]struct{}, runtime.program.observationCount())
+	for index := 0; index < runtime.program.observationCount(); index++ {
+		declared, ok := runtime.program.observationAt(index)
+		if !ok || !declared.valid() {
 			return nil, false
 		}
-		key := declared.observationID()
+		key := declared.id
 		if !key.Available() {
 			return nil, false
 		}

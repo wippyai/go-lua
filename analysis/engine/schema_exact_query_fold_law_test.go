@@ -41,8 +41,9 @@ func TestSchemaExactQueryFoldPreservesCanonicalMultiplicity(t *testing.T) {
 	if !ok || implementation == nil {
 		t.Fatal("exact query fold implementation")
 	}
-	begin, accumulate, _, _, ok := implementation.accumulator()
-	if !ok || begin == nil || accumulate == nil {
+	row, rowOK := implementation.sealedRow()
+	begin, accumulate := row.projection.begin, row.projection.accumulate
+	if !rowOK || begin == nil || accumulate == nil {
 		t.Fatal("exact query fold authority")
 	}
 	result := begin()

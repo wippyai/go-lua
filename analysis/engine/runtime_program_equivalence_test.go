@@ -69,7 +69,7 @@ func TestProgramRowExecutionMatchesDraftExecution(t *testing.T) {
 // is all-or-nothing and a valid committed program exposes the resulting sealed
 // table without a recoverable draft phase.
 func TestSealRuntimeProgramTakesOneValidityDecision(t *testing.T) {
-	if program, ok := sealRuntimeProgram([]memberRow{{memberIndex: 0}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil); ok || program != nil {
+	if program, ok := sealRuntimeProgram(nil, nil, nil, []memberRow{{memberIndex: 0}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil); ok || program != nil {
 		t.Fatal("invalid runtime row published a program")
 	}
 	fixture := newReceiptQueryMatrixFixture(t, 2, nil, nil)

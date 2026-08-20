@@ -38,7 +38,7 @@ func TestSchemaSummaryQueryBindsExactFormAndRejectsDuplicate(t *testing.T) {
 		t.Fatal("summary query form did not seal")
 	}
 	implementation, ok := SummaryQueryImplementationAt[uint64, uint64](binding, query)
-	if !ok || implementation == nil || !implementation.binding.valid() {
+	if row, rowOK := implementation.sealedRow(); !ok || implementation == nil || !rowOK || row == nil {
 		t.Fatal("summary query implementation lost its sealed form")
 	}
 	duplicateSchema, duplicateFactor, duplicateForm, duplicateQuery := summaryQueryLawSchema(t)
@@ -77,7 +77,9 @@ func TestSummaryQueryPublishesItsDeclaredForm(t *testing.T) {
 		t.Fatal("summary query binding")
 	}
 	implementation, ok := SummaryQueryImplementationAt[uint64, uint64](binding, query)
-	if !ok || implementation == nil || implementation.binding.normalizer != compositionKeyOf(coldKey(954_002)) {
+	row, rowOK := implementation.sealedRow()
+	projection, projectionOK := schema.queryProjectionShapeAt(row.ordinal, 0)
+	if !ok || implementation == nil || !rowOK || !projectionOK || projection.Normalizer != compositionKeyOf(coldKey(954_002)) {
 		t.Fatal("summary query implementation retained a foreign form")
 	}
 	surface := equation.Surface{Factor: compositionKeyOf(coldKey(954_001)), Form: equation.SurfaceReadSummary, Local: 1, Semantic: compositionKeyOf(coldKey(954_002)), Normalizer: compositionKeyOf(coldKey(954_002))}

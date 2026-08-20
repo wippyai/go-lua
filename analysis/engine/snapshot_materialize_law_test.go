@@ -225,7 +225,7 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	if published.Columns() != solvedStoreColumns || published.Queries().Len() != solvedAxisCount {
 		t.Fatalf("published columns/queries = %d/%d, want %d/%d", published.Columns(), published.Queries().Len(), solvedStoreColumns, solvedAxisCount)
 	}
-	if len(solver.runtime.queries) == 0 {
+	if solver.runtime.program.queryCount() == 0 {
 		t.Fatal("the query fixture declares no query row")
 	}
 
@@ -238,8 +238,12 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 		t.Fatalf("state reader = %#v/%t", borrowed, readable)
 	}
 	plan := openAnswerColumn(t, &published, materialized.QueryFamily())
-	for _, declared := range solver.runtime.queries {
-		key := solvedRowKey(declared.query().Key())
+	for index := 0; index < solver.runtime.program.queryCount(); index++ {
+		declared, declaredOK := solver.runtime.graph.QueryAt(index)
+		if !declaredOK {
+			t.Fatal("declared query row unavailable")
+		}
+		key := solvedRowKey(declared.Key())
 		answer, status := snapshot.Query(&published, plan, key)
 		if status != snapshot.ReadHit || !answer.Available() {
 			t.Fatalf("query row %s = %v/%t, want hit", key, status, answer.Available())
@@ -253,13 +257,17 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 	// The observation axis of this solve declares no row, so it publishes an
 	// empty result column: it is openable and answers nothing.
 	empty := openAnswerColumn(t, &published, materialized.ObservationFamily())
-	if _, status := snapshot.Query(&published, empty, solvedRowKey(solver.runtime.queries[0].query().Key())); status != snapshot.ReadMiss {
+	firstQuery, firstQueryOK := solver.runtime.graph.QueryAt(0)
+	if !firstQueryOK {
+		t.Fatal("first query row unavailable")
+	}
+	if _, status := snapshot.Query(&published, empty, solvedRowKey(firstQuery.Key())); status != snapshot.ReadMiss {
 		t.Fatalf("empty observation column status = %v, want miss", status)
 	}
 
 	observationSolver, observation, observationState, observationMaterialized := materializedObservationFixture(t)
 	observationPublished := observationMaterialized.Snapshot()
-	if len(observationSolver.runtime.observations) == 0 {
+	if observationSolver.runtime.program.observationCount() == 0 {
 		t.Fatal("the observation fixture declares no observation row")
 	}
 	observationBorrowed, observationReadable := testSnapshotObservationValue[uint64](observationSolver, observationState, observation.ID)
@@ -267,8 +275,12 @@ func TestSnapshotMaterializePublishesEveryStateReader(t *testing.T) {
 		t.Fatalf("observation state reader = %#v/%t", observationBorrowed, observationReadable)
 	}
 	observationPlan := openAnswerColumn(t, &observationPublished, observationMaterialized.ObservationFamily())
-	for _, declared := range observationSolver.runtime.observations {
-		key := declared.observationID()
+	for index := 0; index < observationSolver.runtime.program.observationCount(); index++ {
+		declared, declaredOK := observationSolver.runtime.program.observationAt(index)
+		if !declaredOK {
+			t.Fatal("declared observation row unavailable")
+		}
+		key := declared.id
 		answer, status := snapshot.Query(&observationPublished, observationPlan, key)
 		if status != snapshot.ReadHit || !answer.Available() {
 			t.Fatalf("observation row %s = %v/%t, want hit", key, status, answer.Available())
@@ -294,7 +306,11 @@ func TestSnapshotMaterializeAnswersFourOutcomes(t *testing.T) {
 	solver, _, state, materialized := materializedQueryFixture(t)
 	published := materialized.Snapshot()
 	plan := openAnswerColumn(t, &published, materialized.QueryFamily())
-	key := solvedRowKey(solver.runtime.queries[0].query().Key())
+	firstQuery, firstQueryOK := solver.runtime.graph.QueryAt(0)
+	if !firstQueryOK {
+		t.Fatal("first query row unavailable")
+	}
+	key := solvedRowKey(firstQuery.Key())
 
 	if _, status := snapshot.Query(&published, plan, key); status != snapshot.ReadHit {
 		t.Fatalf("declared answered row = %v, want hit", status)
@@ -424,8 +440,12 @@ func assertEqualAnswers(t *testing.T, solver *Solver, left, right *snapshot.Snap
 	t.Helper()
 	leftQueries := openAnswerColumn(t, left, materialized.QueryFamily())
 	rightQueries := openAnswerColumn(t, right, materialized.QueryFamily())
-	for _, declared := range solver.runtime.queries {
-		key := solvedRowKey(declared.query().Key())
+	for index := 0; index < solver.runtime.program.queryCount(); index++ {
+		declared, declaredOK := solver.runtime.graph.QueryAt(index)
+		if !declaredOK {
+			t.Fatal("declared query row unavailable")
+		}
+		key := solvedRowKey(declared.Key())
 		leftAnswer, leftStatus := snapshot.Query(left, leftQueries, key)
 		rightAnswer, rightStatus := snapshot.Query(right, rightQueries, key)
 		if leftStatus != rightStatus || !leftAnswer.Equal(rightAnswer) || leftAnswer.Fingerprint() != rightAnswer.Fingerprint() {
@@ -434,8 +454,12 @@ func assertEqualAnswers(t *testing.T, solver *Solver, left, right *snapshot.Snap
 	}
 	leftObservations := openAnswerColumn(t, left, materialized.ObservationFamily())
 	rightObservations := openAnswerColumn(t, right, materialized.ObservationFamily())
-	for _, declared := range solver.runtime.observations {
-		key := declared.observationID()
+	for index := 0; index < solver.runtime.program.observationCount(); index++ {
+		declared, declaredOK := solver.runtime.program.observationAt(index)
+		if !declaredOK {
+			t.Fatal("declared observation row unavailable")
+		}
+		key := declared.id
 		leftAnswer, leftStatus := snapshot.Query(left, leftObservations, key)
 		rightAnswer, rightStatus := snapshot.Query(right, rightObservations, key)
 		if leftStatus != rightStatus || !leftAnswer.Equal(rightAnswer) || leftAnswer.Fingerprint() != rightAnswer.Fingerprint() {
@@ -593,7 +617,11 @@ func TestSnapshotMaterializeReadAllocatesNothing(t *testing.T) {
 	solver, _, _, materialized := materializedQueryFixture(t)
 	published := materialized.Snapshot()
 	family := materialized.QueryFamily()
-	key := solvedRowKey(solver.runtime.queries[0].query().Key())
+	firstQuery, firstQueryOK := solver.runtime.graph.QueryAt(0)
+	if !firstQueryOK {
+		t.Fatal("first query row unavailable")
+	}
+	key := solvedRowKey(firstQuery.Key())
 
 	read := func() {
 		sinkAnswerPlan, sinkAnswerOpened = snapshot.OpenQuery[identity.ContentID, Answer](&published, family)

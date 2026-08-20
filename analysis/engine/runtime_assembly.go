@@ -85,13 +85,9 @@ type runtimeRegion struct {
 }
 
 type solverRuntime struct {
-	// bindingState/bindingAuthority are the SchemaBinding-native runtime
-	// authority. Assembly never fabricates a cold declaration owner.
-	bindingState     *schemaBindingState
-	bindingAuthority *schemaBindingAuthority
-	topology         *equation.Topology
-	carrier          *carrier.Composition
-	graph            *equation.Graph
+	topology *equation.Topology
+	carrier  *carrier.Composition
+	graph    *equation.Graph
 	// program is the sealed row model: the member rows the executor folds, the
 	// Factor records the overlay resolves, and the query and observation tables
 	// the result readers project.
@@ -112,14 +108,9 @@ type solverRuntime struct {
 	factorIncoming      [][]int
 	overlay             runtimeStructuralOverlay
 	demand              *demand.Plan
-	queries             []runtimeQuery
-	// observations are optional solve-local read-only projections. They are
-	// attached after the reusable topology is committed, never participate in
-	// demand or rule execution, and are empty on the ordinary solve path.
-	observations  []runtimeObservation
-	pointScopes   []carrier.Scope
-	pointInitials []support.Mask
-	regions       []runtimeRegion
+	pointScopes         []carrier.Scope
+	pointInitials       []support.Mask
+	regions             []runtimeRegion
 	// operands is the sealed transpose of the recurrence and Group-input
 	// operand rows. It is re-derived wherever those rows are, and it is the
 	// sole authority for which reader a published value makes stale.
@@ -203,22 +194,18 @@ func (origin runtimeFactorOrigin) available() bool {
 // Every member answer it needs has already been taken by the binder: the folds
 // carry the Group aggregates, the program carries the rows, and no draft
 // reaches this pass.
-func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, runtime *carrier.Composition, program *runtimeProgram, folds []memberFold) (*solverRuntime, bool) {
-	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || runtime == nil || runtime.Guards() == nil || !program.valid() || len(folds) != graph.GroupCount() || program.groupCount() != graph.GroupCount() {
-		return nil, false
-	}
-	schema := receiptState.schema
-	if schema == nil || graph.CompositionID() != schema.coldID() {
+func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, program *runtimeProgram, folds []memberFold) (*solverRuntime, bool) {
+	if graph == nil || runtime == nil || runtime.Guards() == nil || !program.valid() || len(folds) != graph.GroupCount() || program.groupCount() != graph.GroupCount() {
 		return nil, false
 	}
 	observationPoints := make([]equation.Point, program.observationCount())
 	for index := range observationPoints {
 		observation, observed := program.observationAt(index)
-		if !observed || observation == nil {
+		if !observed {
 			return nil, false
 		}
-		point := observation.observationPoint()
-		if !graph.OwnsPoint(point) {
+		point, pointOK := graph.PointAt(schedule.Node(observation.point))
+		if !pointOK || !graph.OwnsPoint(point) {
 			return nil, false
 		}
 		observationPoints[index] = point
@@ -437,34 +424,14 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 		}
 	}
 	sealedDemand := demandPlan.Seal(selected)
-	validQueries := validateRuntimeQueries(receiptState, receiptAuthority, graph, program)
-	if !sealedDemand || !validQueries {
+	if !sealedDemand {
 		return nil, false
 	}
 	dependencyEdges, dependencyAt, dependencyOK := runtimeStaticDependencyEdges(graph)
 	if !dependencyOK {
 		return nil, false
 	}
-	// queries and observations stay beside the program while the typed result
-	// readers still project them directly; the program's tables are the same
-	// rows and become the sole readers when those projections are replaced.
-	queries := make([]runtimeQuery, program.queryCount())
-	for index := range queries {
-		row, present := program.queryAt(index)
-		if !present {
-			return nil, false
-		}
-		queries[index] = row
-	}
-	observations := make([]runtimeObservation, program.observationCount())
-	for index := range observations {
-		row, present := program.observationAt(index)
-		if !present {
-			return nil, false
-		}
-		observations[index] = row
-	}
-	assembled := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, queries: queries, observations: observations, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
+	assembled := &solverRuntime{carrier: runtime, graph: graph, program: program, points: points, producers: producers, environments: environments, factorEdges: factorEdges, environmentIncoming: environmentIncoming, factorIncoming: factorIncoming, overlay: runtimeStructuralOverlay{staticOrigins: staticOrigins, originAt: make(map[runtimeFactorOrigin]int), directAt: make(map[int]equation.SelectedStructuralFactorEdge), factorOutgoing: factorOutgoing, dependencyEdges: dependencyEdges, dependencyAt: dependencyAt, reindexes: plans, latePlans: make(map[composition.Key]carrier.ReindexPlan), generation: 1}, demand: demandPlan, pointScopes: pointScopes, pointInitials: pointInitials, regions: regions, regionChildren: regionChildren, pointRegion: pointRegion, activePoints: activePoints, activeRegions: activeRegions}
 	operands, planed := buildOperandPlane(graph, producers, environments, installedFactorSources(factorEdges), regions)
 	if !planed {
 		return nil, false
@@ -476,27 +443,4 @@ func assembleRuntimeOwned(receiptState *schemaBindingState, receiptAuthority *sc
 	}
 	assembled.publication = plan
 	return assembled, true
-}
-
-func validateRuntimeQueries(receiptState *schemaBindingState, receiptAuthority *schemaBindingAuthority, graph *equation.Graph, program *runtimeProgram) bool {
-	if receiptState == nil || receiptAuthority == nil || receiptState.phase != schemaBindingSealed || receiptState.authority != receiptAuthority || receiptState.schema == nil || !receiptState.schema.Available() || graph == nil || !program.valid() || program.queryCount() != graph.QueryCount() {
-		return false
-	}
-	schema := receiptState.schema
-	if schema == nil || graph.CompositionID() != schema.coldID() {
-		return false
-	}
-	ownerRuntime := &solverRuntime{bindingState: receiptState, bindingAuthority: receiptAuthority, graph: graph}
-	for index := 0; index < program.queryCount(); index++ {
-		row, present := program.queryAt(index)
-		identity, identityOK := graph.QueryAt(index)
-		if !present || !identityOK || row == nil || !graph.OwnsQuery(row.query()) || !row.query().Key().Available() || row.query().Key() != identity.Key() || row.query().Family() != identity.Family() {
-			return false
-		}
-		owner := row.queryOwner()
-		if owner == nil || !owner.validQueryOwner(ownerRuntime, identity) {
-			return false
-		}
-	}
-	return true
 }

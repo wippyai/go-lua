@@ -29,7 +29,7 @@ import (
 //
 // The table itself stays in graph order, because that is the order the assembled
 // runtime reads it in.
-func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, bound map[composition.Key]runtimeQuery) ([]runtimeQuery, bool) {
+func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, bound map[composition.Key]queryRow) ([]queryRow, bool) {
 	if graph == nil || bound == nil {
 		return nil, false
 	}
@@ -47,7 +47,7 @@ func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, b
 	if len(published) != count {
 		return nil, false
 	}
-	queries := make([]runtimeQuery, count)
+	queries := make([]queryRow, count)
 	for index := 0; index < count; index++ {
 		declared, indexed := graph.QueryAt(index)
 		if !indexed || !declared.Key().Available() {
@@ -57,7 +57,7 @@ func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, b
 			return nil, false
 		}
 		row, present := bound[declared.Key()]
-		if !present || row == nil || row.query().Key() != declared.Key() {
+		if !present || !row.valid() {
 			return nil, false
 		}
 		queries[index] = row
@@ -71,13 +71,13 @@ func bindProgramQueryTable(addressed []composition.Key, graph *equation.Graph, b
 // many distinct identities the construction admitted; requiring one row per
 // admitted identity is what makes every issued ordinal address a row of the
 // sealed program rather than a position past its end.
-func bindProgramObservationTable(bound []runtimeObservation, published int) ([]runtimeObservation, bool) {
+func bindProgramObservationTable(bound []observationRow, published int) ([]observationRow, bool) {
 	if published < 0 || len(bound) != published {
 		return nil, false
 	}
-	observations := append([]runtimeObservation(nil), bound...)
+	observations := append([]observationRow(nil), bound...)
 	for _, observation := range observations {
-		if observation == nil {
+		if !observation.valid() {
 			return nil, false
 		}
 	}

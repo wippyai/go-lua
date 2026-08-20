@@ -72,7 +72,7 @@ func (committed *CommittedProgram) Seal(observations []ProgramObservationAdmissi
 	if observationFailure != observationSealFailureNone {
 		return nil, observationFailure.Failure(), false
 	}
-	runtime, assembled := assembleProgramRuntime(committed.state, committed.authority, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed)
+	runtime, assembled := assembleProgramRuntime(committed.state.schema, committed.graph, plane.carrier, plane.byKey, drafts, queries, observed)
 	if !assembled || runtime == nil {
 		return nil, ProgramStageFailure(ProgramSealStageProgramSeal), false
 	}
@@ -131,8 +131,8 @@ func (committed *CommittedProgram) declaredMember(declared programMemberBinding)
 
 // bindQueryRows mints one runtime query per declared query row, keyed by the
 // canonical query key the published table is addressed by.
-func (committed *CommittedProgram) bindQueryRows(plane *programPlane) (map[composition.Key]runtimeQuery, bool) {
-	bound := make(map[composition.Key]runtimeQuery, len(committed.queries))
+func (committed *CommittedProgram) bindQueryRows(plane *programPlane) (map[composition.Key]queryRow, bool) {
+	bound := make(map[composition.Key]queryRow, len(committed.queries))
 	for _, declared := range committed.queries {
 		if declared.admit == nil {
 			return nil, false
@@ -145,7 +145,7 @@ func (committed *CommittedProgram) bindQueryRows(plane *programPlane) (map[compo
 			return nil, false
 		}
 		row, ok := declared.admit.bindProgramQuery(plane, query.identity)
-		if !ok || row == nil || row.query().Key() != query.identity.Key() {
+		if !ok || !row.valid() {
 			return nil, false
 		}
 		bound[query.identity.Key()] = row
@@ -157,7 +157,7 @@ func (committed *CommittedProgram) bindQueryRows(plane *programPlane) (map[compo
 // inventory order: the ordinal an observation answers on is its position here.
 // The member-output point index is built once and only when an inventory asks
 // for it.
-func (committed *CommittedProgram) bindObservationRows(plane *programPlane, observations []ProgramObservationAdmission) ([]runtimeObservation, observationSealFailure) {
+func (committed *CommittedProgram) bindObservationRows(plane *programPlane, observations []ProgramObservationAdmission) ([]observationRow, observationSealFailure) {
 	if len(observations) == 0 {
 		return nil, observationSealFailureNone
 	}
@@ -165,7 +165,7 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 	if !indexed {
 		return nil, observationSealFailurePoint
 	}
-	rows := make([]runtimeObservation, 0, len(observations))
+	rows := make([]observationRow, 0, len(observations))
 	admitted := make(map[identity.ContentID]struct{}, len(observations))
 	for _, declared := range observations {
 		if declared.admit == nil || !declared.ID.Available() {
@@ -183,7 +183,7 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 			return nil, observationSealFailureDuplicate
 		}
 		row, ok := declared.admit.bindProgramObservation(plane, declared.ID, member.member, point)
-		if !ok || row == nil {
+		if !ok || !row.valid() {
 			return nil, observationSealFailureFactor
 		}
 		admitted[declared.ID] = struct{}{}

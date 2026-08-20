@@ -49,18 +49,9 @@ type stagedFactor[V any] interface {
 // runtime state; the bound Factor remains the sole staged target authority.
 type stagedTargetProvider[V any] interface {
 	stagedFactorTarget() stagedFactor[V]
-	stagedFactorReceiptMatches(*schemaRuleReadOrigin) bool
 }
 
 func (factor *boundFactor[K, V]) stagedFactorTarget() stagedFactor[V] { return factor }
-
-func (factor *boundFactor[K, V]) stagedFactorReceiptMatches(origin *schemaRuleReadOrigin) bool {
-	ordinal, ordinalOK := origin.factorOrdinal()
-	if factor == nil || factor.implementation == nil || !ordinalOK || !factor.implementation.binding.valid() || factor.implementation.binding.state != origin.state || factor.implementation.binding.ordinal != ordinal {
-		return false
-	}
-	return factor.implementation.binding.authority == origin.state.authority
-}
 
 // stagedReadRuntime is one dynamic exact-read node. It has no candidate
 // vector: the locator sees only declared predecessor observations and emits

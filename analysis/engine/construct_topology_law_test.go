@@ -140,8 +140,8 @@ func TestConstructedTopologyRefusesUnsitedDeclaration(t *testing.T) {
 // query/observation row cardinality tied to the graph's sealed tables.
 func TestConstructedOwnerDeclaredTablesArePublished(t *testing.T) {
 	fixture := newObservedReceiptQueryMatrixFixture(t, 4, nil, nil)
-	if len(fixture.graph.queries) != fixture.graph.graph.QueryCount() || len(fixture.solver.runtime.observations) != len(fixture.observations) {
-		t.Fatalf("owner tables queries=%d/%d observations=%d/%d", len(fixture.graph.queries), fixture.graph.graph.QueryCount(), len(fixture.solver.runtime.observations), len(fixture.observations))
+	if len(fixture.graph.queries) != fixture.graph.graph.QueryCount() || fixture.solver.runtime.program.observationCount() != len(fixture.observations) {
+		t.Fatalf("program tables queries=%d/%d observations=%d/%d", len(fixture.graph.queries), fixture.graph.graph.QueryCount(), fixture.solver.runtime.program.observationCount(), len(fixture.observations))
 	}
 }
 
@@ -217,9 +217,15 @@ func TestConstructedActivationPlaneRefusesUnshapedTrigger(t *testing.T) {
 // order to the current sealed table binder.
 func TestConstructedQueryTableIsAddressedInDeclaredOrder(t *testing.T) {
 	fixture := newReceiptQueryMatrixFixture(t, 7, nil, nil)
-	bound := make(map[composition.Key]runtimeQuery, len(fixture.solver.runtime.queries))
-	for _, row := range fixture.solver.runtime.queries {
-		bound[row.query().Key()] = row
+	program := fixture.solver.runtime.program
+	bound := make(map[composition.Key]queryRow, program.queryCount())
+	for index := 0; index < program.queryCount(); index++ {
+		row, rowOK := program.queryAt(index)
+		query, queryOK := fixture.graph.graph.QueryAt(index)
+		if !rowOK || !queryOK {
+			t.Fatal("sealed query table row")
+		}
+		bound[query.Key()] = row
 	}
 	rows, ok := bindProgramQueryTable(fixture.addressed, fixture.graph.graph, bound)
 	if !ok || len(rows) != len(fixture.addressed) {

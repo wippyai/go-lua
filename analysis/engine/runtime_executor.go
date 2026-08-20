@@ -512,35 +512,29 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 			return nil, SolveIncomplete
 		}
 		nextCompletion := publication.generation
-		for _, query := range runtime.queries {
+		for index := 0; index < runtime.program.queryCount(); index++ {
 			if epoch.canceled() {
 				epoch.incomplete()
 				epoch.discard()
 				return nil, SolveCanceled
 			}
-			owner := query.queryOwner()
-			if owner == nil || !owner.validQueryOwner(runtime, query.query()) || !query.query().Key().Available() {
+			row, rowOK := runtime.program.queryAt(index)
+			query, queryOK := runtime.graph.QueryAt(index)
+			if !rowOK || !queryOK || !query.Key().Available() || row.point < 0 || int(row.point) >= len(epoch.points) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
-			point := query.query().Point()
-			pointIndex, indexed := runtime.graph.PointIndex(point)
-			if !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
-				epoch.incomplete()
-				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
-				return nil, SolveIncomplete
-			}
-			held, heldOK := publication.readPoint(epoch, pointIndex)
+			point := query.Point()
+			held, heldOK := publication.readPoint(epoch, int(row.point))
 			if !heldOK {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			result, ok := query.materialize(epoch.work, held.State())
+			value, queryPhase, ok := runtime.program.materializeQuery(index, epoch.work, held.State())
 			if !ok {
 				if epoch.canceled() {
 					epoch.incomplete()
@@ -549,7 +543,9 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 				}
 				epoch.incomplete()
 				epoch.discard()
-				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
+				if report != nil {
+					report.record(SolveFailureReasonQuery, queryPhase, reportedSemanticKey(point.Key()), identity.SemanticKey{}, identity.SemanticKey{}, identity.SemanticKey{})
+				}
 				return nil, SolveIncomplete
 			}
 			if epoch.canceled() {
@@ -557,50 +553,47 @@ func (solver *Solver) solve(ctx context.Context, report *SolveReport, diagnostic
 				epoch.discard()
 				return nil, SolveCanceled
 			}
-			key, keyed := query.PublicationKey()
-			var value frozenValue
-			if result != nil {
-				value = result.value
-				if value != nil && !value.rowPresent() {
-					value = nil
-				}
+			key := solvedRowKey(query.Key())
+			if value != nil && !value.rowPresent() {
+				value = nil
 			}
-			if result == nil || result.owner != owner || result.key != query.query().Key() || !keyed || !publication.writeQuery(key, value) {
+			if !key.Available() || !publication.writeQuery(key, value) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
 		}
-		for _, observation := range runtime.observations {
+		for index := 0; index < runtime.program.observationCount(); index++ {
 			if epoch.canceled() {
 				epoch.incomplete()
 				epoch.discard()
 				return nil, SolveCanceled
 			}
-			if observation == nil {
+			observation, observed := runtime.program.observationAt(index)
+			if !observed || !observation.valid() || observation.point < 0 || int(observation.point) >= len(epoch.points) {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, identity.SemanticKey{})
 				return nil, SolveIncomplete
 			}
-			owner, id, point := observation.observationOwner(), observation.observationID(), observation.observationPoint()
-			pointIndex, indexed := runtime.graph.PointIndex(point)
-			if owner == nil || !owner.valid(runtime) || !id.Available() || !indexed || pointIndex < 0 || pointIndex >= len(epoch.points) {
+			id := observation.id
+			point, pointOK := runtime.graph.PointAt(schedule.Node(observation.point))
+			if !id.Available() || !pointOK {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			held, heldOK := publication.readPoint(epoch, pointIndex)
+			held, heldOK := publication.readPoint(epoch, int(observation.point))
 			if !heldOK {
 				epoch.incomplete()
 				epoch.discard()
 				reportFailureQuery(report, SolveFailureReasonQuery, reportedSemanticKey(point.Key()))
 				return nil, SolveIncomplete
 			}
-			result, observationPhase, ok := observation.materializeObservation(epoch.work, held.State())
-			if !ok || result == nil || result.owner != owner || result.id != id || result.value == nil || !publication.writeObservation(id, result.value) {
+			value, observationPhase, ok := runtime.program.materializeObservation(index, epoch.work, held.State())
+			if !ok || value == nil || !publication.writeObservation(id, value) {
 				if epoch.canceled() {
 					epoch.incomplete()
 					epoch.discard()

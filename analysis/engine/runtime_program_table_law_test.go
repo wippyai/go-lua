@@ -9,26 +9,30 @@ import (
 func TestProgramQueryTableResolvesEveryDeclaredQueryToOnePublishedRow(t *testing.T) {
 	fixture := newReceiptQueryMatrixFixture(t, 5, nil, nil)
 	program := fixture.graph
-	bound := make(map[composition.Key]runtimeQuery, len(fixture.solver.runtime.queries))
-	for _, row := range fixture.solver.runtime.queries {
-		if row == nil || !row.query().Key().Available() {
+	runtimeProgram := fixture.solver.runtime.program
+	bound := make(map[composition.Key]queryRow, runtimeProgram.queryCount())
+	for index := 0; index < runtimeProgram.queryCount(); index++ {
+		row, rowOK := runtimeProgram.queryAt(index)
+		query, queryOK := program.graph.QueryAt(index)
+		if !rowOK || !queryOK || !query.Key().Available() {
 			t.Fatal("sealed query row is unavailable")
 		}
-		bound[row.query().Key()] = row
+		bound[query.Key()] = row
 	}
 	rows, ok := bindProgramQueryTable(fixture.addressed, program.graph, bound)
 	if !ok || len(rows) != program.graph.QueryCount() {
 		t.Fatalf("query table rows=%d ok=%t graph=%d", len(rows), ok, program.graph.QueryCount())
 	}
 	seen := make(map[composition.Key]struct{}, len(rows))
-	for _, row := range rows {
-		if row == nil || row.query().Key() == (composition.Key{}) {
+	for index, row := range rows {
+		query, queryOK := program.graph.QueryAt(index)
+		if !row.valid() || !queryOK || query.Key() == (composition.Key{}) {
 			t.Fatal("query table published an empty row")
 		}
-		if _, duplicate := seen[row.query().Key()]; duplicate {
+		if _, duplicate := seen[query.Key()]; duplicate {
 			t.Fatal("two query ordinals resolve to one row")
 		}
-		seen[row.query().Key()] = struct{}{}
+		seen[query.Key()] = struct{}{}
 	}
 	if _, ok := bindProgramQueryTable(append([]composition.Key(nil), fixture.addressed[:len(fixture.addressed)-1]...), program.graph, bound); ok {
 		t.Fatal("query table accepted a missing published key")
@@ -42,20 +46,21 @@ func TestProgramQueryTableResolvesEveryDeclaredQueryToOnePublishedRow(t *testing
 
 func TestProgramObservationTableResolvesEveryIdentityToOneDenseOrdinal(t *testing.T) {
 	fixture := newObservedReceiptQueryMatrixFixture(t, 3, nil, nil)
-	bound := append([]runtimeObservation(nil), fixture.solver.runtime.observations...)
+	program := fixture.solver.runtime.program
+	bound := append([]observationRow(nil), program.observationTable...)
 	rows, ok := bindProgramObservationTable(bound, len(bound))
 	if !ok || len(rows) != len(fixture.observations) {
 		t.Fatalf("observation table rows=%d ok=%t admissions=%d", len(rows), ok, len(fixture.observations))
 	}
 	for index, row := range rows {
-		if row == nil || row.observationID() != fixture.observationIDs[index] {
+		if !row.valid() || row.id != fixture.observationIDs[index] {
 			t.Fatalf("observation ordinal %d resolved the wrong row", index)
 		}
 	}
 	if _, ok := bindProgramObservationTable(bound[:len(bound)-1], len(bound)); ok {
 		t.Fatal("observation table accepted a truncated dense inventory")
 	}
-	if _, ok := bindProgramObservationTable(append(bound, nil), len(bound)+1); ok {
+	if _, ok := bindProgramObservationTable(append(bound, observationRow{}), len(bound)+1); ok {
 		t.Fatal("observation table accepted a nil row")
 	}
 }

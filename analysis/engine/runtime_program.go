@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // memberExec is the one hot per-member entry point. It is minted at bind time
@@ -49,6 +50,44 @@ type factorRecord struct {
 	owner int32
 }
 
+// queryExec is the typed projection compiled from one sealed Schema query
+// row. runtimeProgram supplies the direct Factor handle and Unit; no graph or
+// binding owner is captured by the closure.
+type queryExec func(*carrier.Work, carrier.State, runtimeFactor, carrier.Unit) (frozenValue, solveBoundary, bool)
+
+// queryRow is the whole live query plan. Schema ordinals select its declared
+// family and factor, point is a store-local dense graph handle, and Unit is the
+// Factor-issued read contract for the graph surface.
+type queryRow struct {
+	queryOrdinal  uint64
+	factorOrdinal uint64
+	point         int32
+	unit          carrier.Unit
+	exec          queryExec
+}
+
+func (row queryRow) valid() bool {
+	_, unitOK := row.unit.Slot()
+	return row.point >= 0 && unitOK && row.exec != nil
+}
+
+// observationRow is a solve-local projection request over the same sealed
+// query family. Its publication identity is explicit because observations do
+// not occupy the graph's query table.
+type observationRow struct {
+	id            identity.ContentID
+	queryOrdinal  uint64
+	factorOrdinal uint64
+	point         int32
+	unit          carrier.Unit
+	exec          queryExec
+}
+
+func (row observationRow) valid() bool {
+	_, unitOK := row.unit.Slot()
+	return row.id.Available() && row.point >= 0 && unitOK && row.exec != nil
+}
+
 func (record factorRecord) valid() bool {
 	return record.key.Available() && record.slot >= 0 && record.owner >= 0
 }
@@ -71,16 +110,16 @@ type runtimeProgram struct {
 	groupSpans       []memberSpan
 	factorTable      []factorRecord
 	factorOwners     []runtimeFactor
-	queryTable       []runtimeQuery
-	observationTable []runtimeObservation
+	queryTable       []queryRow
+	observationTable []observationRow
 	programSealed    bool
 }
 
 // sealRuntimeProgram is the sole Seal and the sole writer of a runtimeProgram.
 // It takes the one program-level validity decision: either every table is
 // mutually consistent and the program is sealed, or no program exists.
-func sealRuntimeProgram(rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []runtimeQuery, observations []runtimeObservation) (*runtimeProgram, bool) {
-	if len(factors) != len(owners) {
+func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, rows []memberRow, spans []memberSpan, factors []factorRecord, owners []runtimeFactor, queries []queryRow, observations []observationRow) (*runtimeProgram, bool) {
+	if schema == nil || !schema.Available() || graph == nil || runtime == nil || graph.CompositionID() != schema.coldID() || len(factors) != len(owners) || len(factors) != schemaFactorCount(schema) || len(queries) != graph.QueryCount() {
 		return nil, false
 	}
 	next := int32(0)
@@ -110,17 +149,31 @@ func sealRuntimeProgram(rows []memberRow, spans []memberSpan, factors []factorRe
 		if owner != nil {
 			slot, slotOK = owner.runtimeSlot()
 		}
-		if !record.valid() || int(record.owner) != index || owner == nil || !slotOK || slot != record.slot || compositionKeyOf(owner.semantic()) != record.key {
+		if !record.valid() || int(record.owner) != index || owner == nil || !slotOK || slot != record.slot || compositionKeyOf(owner.semantic()) != record.key || schema.factorSemanticAt(uint64(index)) != record.key || index > 0 && !lessRuntimeKey(factors[index-1].key, record.key) {
 			return nil, false
 		}
 	}
-	for _, query := range queries {
-		if query == nil {
+	for index, row := range queries {
+		query, queryOK := graph.QueryAt(index)
+		point, pointOK := graph.PointIndex(query.Point())
+		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || row.queryOrdinal >= schema.queryCount() || row.factorOrdinal >= uint64(len(factors)) || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
+			return nil, false
+		}
+		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
+		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
+		unitSlot, unitOK := row.unit.Slot()
+		if !shapeOK || !projectionOK || shape.ProjectionCount != 1 || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
 			return nil, false
 		}
 	}
-	for _, observation := range observations {
-		if observation == nil {
+	for _, row := range observations {
+		if !row.valid() || int(row.point) >= graph.PointCount() || row.queryOrdinal >= schema.queryCount() || row.factorOrdinal >= uint64(len(factors)) {
+			return nil, false
+		}
+		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
+		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
+		unitSlot, unitOK := row.unit.Slot()
+		if !shapeOK || !projectionOK || shape.ProjectionCount != 1 || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
 			return nil, false
 		}
 	}
@@ -245,11 +298,23 @@ func (program *runtimeProgram) queryCount() int {
 	return len(program.queryTable)
 }
 
-func (program *runtimeProgram) queryAt(index int) (runtimeQuery, bool) {
+func (program *runtimeProgram) queryAt(index int) (queryRow, bool) {
 	if !program.valid() || index < 0 || index >= len(program.queryTable) {
-		return nil, false
+		return queryRow{}, false
 	}
 	return program.queryTable[index], true
+}
+
+func (program *runtimeProgram) materializeQuery(index int, work *carrier.Work, state carrier.State) (frozenValue, solveBoundary, bool) {
+	row, ok := program.queryAt(index)
+	if !ok {
+		return nil, refused(SolveFailureFamilyObservation, "query-row"), false
+	}
+	factor, ok := program.factorOwnerAt(int32(row.factorOrdinal))
+	if !ok {
+		return nil, refused(SolveFailureFamilyObservation, "factor-row"), false
+	}
+	return row.exec(work, state, factor, row.unit)
 }
 
 func (program *runtimeProgram) observationCount() int {
@@ -259,9 +324,21 @@ func (program *runtimeProgram) observationCount() int {
 	return len(program.observationTable)
 }
 
-func (program *runtimeProgram) observationAt(index int) (runtimeObservation, bool) {
+func (program *runtimeProgram) observationAt(index int) (observationRow, bool) {
 	if !program.valid() || index < 0 || index >= len(program.observationTable) {
-		return nil, false
+		return observationRow{}, false
 	}
 	return program.observationTable[index], true
+}
+
+func (program *runtimeProgram) materializeObservation(index int, work *carrier.Work, state carrier.State) (frozenValue, solveBoundary, bool) {
+	row, ok := program.observationAt(index)
+	if !ok {
+		return nil, refused(SolveFailureFamilyObservation, "observation-row"), false
+	}
+	factor, ok := program.factorOwnerAt(int32(row.factorOrdinal))
+	if !ok {
+		return nil, refused(SolveFailureFamilyObservation, "factor-row"), false
+	}
+	return row.exec(work, state, factor, row.unit)
 }

@@ -10,7 +10,7 @@ import (
 // implementation lives on the sealed query cell that materializes the answer;
 // the inventory states the coordinates and the committed program binds them.
 type programObservationAdmit interface {
-	bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (runtimeObservation, bool)
+	bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool)
 }
 
 // ProgramObservationAdmission is one optional observation to bind: the
@@ -51,23 +51,14 @@ func NewExactObservationAdmission[V, R any](implementation *ExactQueryImplementa
 	return admission, admission.Available()
 }
 
-// bindProgramObservation mints one summary observation row. The owner is
-// derived from the sealed query cell, so an inventory cannot name a query
-// authority the implementation does not carry.
-func (implementation *SummaryQueryImplementation[V, R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (runtimeObservation, bool) {
-	owner, ok := implementation.observationOwner()
-	if !ok {
-		return nil, false
-	}
-	return bindSummaryObservationRuntime[V, R](plane, implementation, id, member, point, owner)
+// bindProgramObservation lowers one optional observation to a runtimeProgram
+// row using the query implementation's sealed schema row.
+func (implementation *SummaryQueryImplementation[V, R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool) {
+	return bindSummaryObservationRow(plane, implementation, id, member, point)
 }
 
-func (implementation *ExactQueryImplementation[V, R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (runtimeObservation, bool) {
-	owner, ok := implementation.observationOwner()
-	if !ok {
-		return nil, false
-	}
-	return bindExactObservationRuntime[V, R](plane, implementation, id, member, point, owner)
+func (implementation *ExactQueryImplementation[V, R]) bindProgramObservation(plane *programPlane, id identity.ContentID, member equation.RuleMember, point equation.Point) (observationRow, bool) {
+	return bindExactObservationRow(plane, implementation, id, member, point)
 }
 
 // observationSealFailure is the closed generic admission predicate

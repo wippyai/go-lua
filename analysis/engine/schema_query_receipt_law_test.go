@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
@@ -13,11 +14,13 @@ func TestSchemaExactQueryOwnsOneProjectionAndBinding(t *testing.T) {
 		t.Fatal("exact query binding did not seal")
 	}
 	implementation, ok := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	if !ok || implementation == nil || !implementation.binding.valid() || implementation.binding.factor != compositionKeyOf(coldKey(948_001)) {
+	row, rowOK := implementation.sealedRow()
+	projection, projectionOK := schema.queryProjectionShapeAt(row.ordinal, 0)
+	if !ok || implementation == nil || !rowOK || !projectionOK || projection.Factor != compositionKeyOf(coldKey(948_001)) {
 		t.Fatal("exact query implementation lost its sealed factor authority")
 	}
-	project, projectOK := implementation.projector()
-	if !projectOK || project == nil || project(OrderedCells[uint64]{}) != 0 {
+	project := row.projection.project
+	if project == nil || project(OrderedCells[uint64]{}) != 0 {
 		t.Fatal("exact query implementation did not retain one projector")
 	}
 }
@@ -71,10 +74,13 @@ func TestCommittedExactQueryPublishesOneEvidenceSurface(t *testing.T) {
 	if !keyed || !key.Available() {
 		t.Fatal("committed exact query publication key")
 	}
-	for _, row := range fixture.solver.runtime.queries {
-		if row != nil && row.query().Key() == identity.Key() {
-			typed, typedOK := row.(*receiptQueryRuntime[uint64, uint64])
-			if !typedOK || typed.surface.Form != equation.SurfaceReadExact || typed.surface.Factor != surface.Factor {
+	program := fixture.solver.runtime.program
+	for index := 0; index < program.queryCount(); index++ {
+		row, rowOK := program.queryAt(index)
+		graphQuery, graphQueryOK := fixture.graph.graph.QueryAt(index)
+		if rowOK && graphQueryOK && graphQuery.Key() == identity.Key() {
+			projection, projectionOK := fixture.graph.state.schema.queryProjectionShapeAt(row.queryOrdinal, 0)
+			if !projectionOK || projection.Kind != composition.QueryFactorExact || projection.Factor != surface.Factor || row.factorOrdinal >= uint64(program.factorCount()) {
 				t.Fatal("runtime exact query evidence diverged from committed surface")
 			}
 			return
@@ -95,14 +101,14 @@ func TestProgramExactQueryEvidenceRejectsForeignBindingAndGraph(t *testing.T) {
 	if !queryOK || !planeOK || plane == nil || implementation == nil {
 		t.Fatal("exact query evidence plane")
 	}
-	if joined, accepted := bindReceiptExactQuery[uint64, uint64](plane, implementation, query.identity); !accepted || joined == nil {
+	if joined, accepted := implementation.bindProgramQuery(plane, query.identity); !accepted || !joined.valid() {
 		t.Fatal("canonical exact query evidence refused")
 	}
 	foreign := newReceiptQueryMatrixFixture(t, 1, nil, nil)
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](plane, foreign.queryImplementations[0], query.identity); accepted {
+	if _, accepted := foreign.queryImplementations[0].bindProgramQuery(plane, query.identity); accepted {
 		t.Fatal("equal-shaped foreign exact query binding entered the program plane")
 	}
-	if _, accepted := bindReceiptExactQuery[uint64, uint64](plane, implementation, equation.Query{}); accepted {
+	if _, accepted := implementation.bindProgramQuery(plane, equation.Query{}); accepted {
 		t.Fatal("unavailable/foreign exact query identity entered the program plane")
 	}
 }

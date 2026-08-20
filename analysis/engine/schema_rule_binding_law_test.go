@@ -632,7 +632,7 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
 	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
 	mapped := declaredSummaryMappings(surfaces)
-	if !programOK || !declaredOK || !surfacesOK || len(mapped) != 1 || mapped[0].summary == nil || mapped[0].summary.proof != implementation.binding.proof || mapped[0].summary.binding != nil {
+	if !programOK || !declaredOK || !surfacesOK || len(mapped) != 1 || mapped[0].summary == nil || mapped[0].summary.proof != implementation.binding.proof || mapped[0].summary.state != nil {
 		t.Fatal("summary ProgramRule mapping")
 	}
 	summaries, appended := appendDeclaredSummary(nil, mapped[0].summary, binding.state, binding.state.authority)

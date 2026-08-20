@@ -10,10 +10,6 @@ import (
 // return immutable row bundles of these values; construction folds those rows
 // into the sealed equation topology.
 
-type summarySurfaceBinding interface {
-	boundTopologySummarySurface() (*schemaBindingState, *schemaBindingAuthority, composition.Key, composition.Key, bool)
-}
-
 func validateSummarySurface(mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) bool {
 	if mapping == nil {
 		return false
@@ -28,8 +24,9 @@ func validateSummarySurface(mapping *ruleSummaryMapping, state *schemaBindingSta
 		}
 		shape, shapeOK := mapping.proof.schema.ruleReadShapeAt(mapping.proof.ordinal, mapping.read)
 		bindingState, bindingAuthority, factor, normalizer, ok = mapping.proof.state, mapping.proof.bindingAuthority, shape.Factor, shape.Semantic, shapeOK
-	} else if mapping.binding != nil {
-		bindingState, bindingAuthority, factor, normalizer, ok = mapping.binding.boundTopologySummarySurface()
+	} else if mapping.state != nil {
+		bindingState, bindingAuthority, factor, normalizer = mapping.state, mapping.authority, mapping.factor, mapping.normalizer
+		ok = factor.Available() && normalizer.Available()
 	}
 	surface := mapping.surface
 	return ok && bindingState == state && bindingAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
@@ -50,11 +47,14 @@ type RuleReadSurface struct {
 }
 
 type ruleSummaryMapping struct {
-	binding summarySurfaceBinding
-	proof   *ruleRuntimeProof
-	read    uint64
-	surface equation.Surface
-	keys    []uint64
+	state      *schemaBindingState
+	authority  *schemaBindingAuthority
+	factor     composition.Key
+	normalizer composition.Key
+	proof      *ruleRuntimeProof
+	read       uint64
+	surface    equation.Surface
+	keys       []uint64
 }
 
 type RuleWriteSurface struct {
