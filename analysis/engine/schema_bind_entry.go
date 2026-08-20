@@ -101,17 +101,18 @@ func BindFactor[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot *Factor
 		state.poisonLocked()
 		return false
 	}
-	cell := &schemaFactorBindingCell[K, V]{ordinal: ordinal, schema: state.schema, impl: &FactorImplementation[K, V]{state: state, algebra: algebra, descriptor: factorRuntimeDescriptor{schema: state.schema, state: state, ordinal: ordinal, semantic: state.schema.factorSemanticAt(ordinal), keyEnd: spec.KeyEnd, algebra: algebra}}, forms: make([]schemaFactorFormBinding, formCount)}
+	cell := &schemaFactorBindingCell[K, V]{state: state, ordinal: ordinal, schema: state.schema, forms: make([]schemaFactorFormBinding, formCount)}
+	cell.impl = &FactorImplementation[K, V]{row: cell, ordinal: ordinal, algebra: algebra}
 	cell.exactRead = &schemaFactorFormCell[K, V]{schema: state.schema, ordinal: ordinal, kind: SchemaFormReadExact, factor: cell, algebra: algebra}
 	cell.exactWrite = &schemaFactorFormCell[K, V]{schema: state.schema, ordinal: ordinal, kind: SchemaFormWriteExact, factor: cell, algebra: algebra}
 	state.factors[ordinal] = cell
 	return true
 }
 
-// BindRule admits the sole receipt-native Rule lane currently implemented.
+// BindRule binds the sole direct Rule lane currently implemented.
 // The output argument is a FactorSlot because FactorImplementationAt is only
 // issued after the complete Binding seals; the slot resolves to that exact
-// typed Factor cell during Seal and runtime receipt construction.
+// typed Factor cell during Seal and runtime member construction.
 func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], projectWrite func(O) (uint64, bool)) bool {
 	state := bindingState(binding)
 	if state == nil {
@@ -119,7 +120,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -154,16 +155,12 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 		return false
 	}
 	cell := &schemaRuleBindingCellImpl[K, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
-	if !cell.schemaRuleComplete() {
-		state.poisonLocked()
-		return false
-	}
+	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite}
 	state.rules[ruleOrdinal] = cell
 	return true
 }
 
-// BindRuleWithCarry admits the receipt-native one-write/one-carry lane. The
+// BindRuleWithCarry binds the direct one-write/one-carry lane. The
 // carry token is the sole source of input, Factor, and transform identity;
 // HotCarrySpec supplies only the typed executable transform when the sealed
 // token declares one.
@@ -174,7 +171,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -199,11 +196,6 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 		state.poisonLocked()
 		return false
 	}
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
-		state.poisonLocked()
-		return false
-	}
 	outputOrdinal, outputOK := output.Ordinal()
 	if !outputOK || outputOrdinal >= uint64(len(state.factors)) || state.schema.factorSemanticAt(outputOrdinal) != shape.Output {
 		state.poisonLocked()
@@ -218,18 +210,14 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 	cell.impl = &ruleHotImplementation[K, V, O]{
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
-		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite,
-	}
-	if !cell.schemaRuleComplete() {
-		state.poisonLocked()
-		return false
+		operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite,
 	}
 	state.rules[ruleOrdinal] = cell
 	return true
 }
 
 // BindRuleWithExactReadAndCarry binds the one exact-read/one-carry/one-exact
-// write receipt lane. The sealed read and carry capabilities remain the sole
+// write lane. The sealed read and carry capabilities remain the sole
 // source of their input, Factor, and transform identities; this method adds no
 // parallel structural representation.
 func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | ~uint64, RV any](binding *SchemaBinding, slot *RuleSlot[V, O], readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], carry SchemaCarrySlot[V], write SchemaWriteSlot[V], output *FactorSlot[V], spec HotRuleSpec[V, O], carrySpec HotCarrySpec[V, O], projectRead func(O) (uint64, bool), projectWrite func(O) (uint64, bool)) (Read[OrderedCells[RV]], bool) {
@@ -239,7 +227,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -259,11 +247,6 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
-		state.poisonLocked()
-		return Read[OrderedCells[RV]]{}, false
-	}
 	outputOrdinal, outputOK := output.Ordinal()
 	readFactorOrdinal, readFactorOK := readFactor.Ordinal()
 	if !outputOK || !readFactorOK || outputOrdinal >= uint64(len(state.factors)) || readFactorOrdinal >= uint64(len(state.factors)) || state.schema.factorSemanticAt(outputOrdinal) != shape.Output || state.schema.factorSemanticAt(readFactorOrdinal) != readShape.Factor {
@@ -272,32 +255,32 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 	}
 	outputCell, outputTyped := state.factors[outputOrdinal].(*schemaFactorBindingCell[OK, V])
 	readCell, readTyped := state.factors[readFactorOrdinal].(*schemaFactorBindingCell[RK, RV])
-	if !outputTyped || !readTyped || outputCell == nil || readCell == nil || outputCell.impl == nil || readCell.impl == nil || outputCell.impl.algebra == nil || readCell.impl.algebra == nil || outputCell.impl.state != state || readCell.impl.state != state {
+	if !outputTyped || !readTyped || outputCell == nil || readCell == nil || outputCell.impl == nil || readCell.impl == nil || outputCell.impl.algebra == nil || readCell.impl.algebra == nil || outputCell.state != state || readCell.state != state {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
 	cell := &schemaRuleBindingCellImpl[OK, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0}
-	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
+	row, rowOK := compileSchemaRuleReadRow(state, cell, ruleOrdinal, 0, nil, 0)
+	if !rowOK || row.factorOrdinal != readFactorOrdinal || !readCell.schemaFactorReadComplete(state, row) {
+		state.poisonLocked()
+		return Read[OrderedCells[RV]]{}, false
+	}
+	read := Read[OrderedCells[RV]]{row: row, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
+	readBinding := &schemaExactRuleReadBinding[RK, RV]{row: row, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
 	cell.impl = &ruleHotImplementation[OK, V, O]{
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[OK, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
 		reads:          []schemaRuleReadBinding{readBinding},
-		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer,
+		operandContent: spec.OperandContent, fold: spec.Fold,
 		projectWrite: projectWrite,
-	}
-	if !cell.schemaRuleComplete() {
-		state.poisonLocked()
-		return Read[OrderedCells[RV]]{}, false
 	}
 	state.rules[ruleOrdinal] = cell
 	return read, true
 }
 
-// RuleImplementationAt issues a receipt-native typed Rule implementation
-// only after the shared Binding has sealed. The returned value is a snapshot;
-// its authority is rechecked when it is attached to an execution member.
+// RuleImplementationAt issues the typed sealed Rule row only after the shared
+// Binding has sealed. Its cell and ordinal are checked again when attached to
+// an execution member.
 func RuleImplementationAt[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleSlot[V, O]) (*RuleImplementation[K, V, O], bool) {
 	state := bindingState(binding)
 	if state == nil {
@@ -313,22 +296,18 @@ func RuleImplementationAt[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding,
 		return nil, false
 	}
 	cell, ok := state.rules[ordinal].(*schemaRuleBindingCellImpl[K, V, O])
-	if !ok || cell == nil || !cell.schemaRuleComplete() {
+	if !ok || cell == nil || !cell.sealedRuleComplete() {
 		return nil, false
 	}
-	output, ok := cell.impl.output.sealedImplementation(state, state.authority)
-	if !ok {
+	output, outputOK := cell.impl.output.sealedImplementation(state, state.authority)
+	if !outputOK || output == nil || !factorRowAvailable(output.row) {
 		return nil, false
 	}
-	proof, ok := newSchemaRuleRuntimeProof(state, state.authority, ordinal)
-	if !ok || proof == nil || !output.binding.valid() {
+	implementation := &RuleImplementation[K, V, O]{cell: cell, ordinal: ordinal, output: output.row}
+	if _, valid := implementation.sealedRuleCell(); !valid {
 		return nil, false
 	}
-	receipt := ruleRuntimeBinding[K, V, O]{state: state, authority: state.authority, cell: cell, proof: proof, output: output.binding, issued: true}
-	if !receipt.valid() {
-		return nil, false
-	}
-	return &RuleImplementation[K, V, O]{binding: receipt}, true
+	return implementation, true
 }
 
 func FactorImplementationAt[K ~uint32 | ~uint64, V any](binding *SchemaBinding, slot *FactorSlot[V]) (*FactorImplementation[K, V], bool) {

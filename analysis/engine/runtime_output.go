@@ -12,32 +12,27 @@ import (
 type outputAccess[V any] struct {
 	begin          func(*ruleExecution) outputSession
 	stage          func(*ruleExecution, identity.Generation, int, V) bool
-	stageTransform func(*ruleExecution, identity.Generation, int) bool
 	noCandidate    func(*ruleExecution, identity.Generation, int) bool
+	routePreflight func(*ruleExecution, identity.Generation, int, int, uint64) bool
 	stageSelection func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
 	noSelection    func(*ruleExecution, identity.Generation, int, routeOutputBatch[V]) bool
-	derivation     func(outputSession) ([]RuleDisposition[V], bool)
 }
 
-// routeOutputBatch is assembled synchronously by StageSelection. It retains
-// the canonical selected ordinal and its owner-issued exact Ref together with
-// the route-local value, so output application never has an unpaired V path.
+// routeOutputBatch is fully materialized synchronously by StageSelection. It
+// retains only canonical ordinal-aligned owner-issued Refs and values; no
+// domain callback or frame capability survives into output application.
 type routeOutputBatch[V any] struct {
 	read        int
 	selectionID uint64
-	count       int
-	// at is consumed in canonical Selection order by the Factor-owned route
-	// sink. It keeps Ref/tag-derived output values paired without allocating
-	// a per-row Ref×value staging plane.
-	at func(int) (exactRef, V, bool)
+	refs        []exactRef
+	values      []V
 }
 
 type outputSession interface {
-	accept(*RuleEvidence) (carrier.Patch, bool)
+	publish() (carrier.Patch, bool)
 	discard()
 	complete() bool
 	hasStaged() bool
-	settled(int) bool
 }
 
 // outputRuntime is the private per-row staged-target projection. Direct
@@ -65,16 +60,16 @@ func (runtime *outputRuntime) routeRead() (uint64, bool) {
 type outputWriteRuntime struct {
 	// routeRead is the one-based staged read ordinal consumed by a route batch.
 	// Zero is the ordinary direct/static target form.
-	routeRead     uint64
-	direct        carrier.Target
-	directBinding factorRuntimeBinding
-	directRaw     uint64
+	routeRead uint64
+	direct    carrier.Target
+	directRow schemaFactorBinding
+	directRaw uint64
 }
 
 type resolvedRuleTarget struct {
-	target  carrier.Target
-	binding factorRuntimeBinding
-	raw     uint64
+	target carrier.Target
+	row    schemaFactorBinding
+	raw    uint64
 }
 
 func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]resolvedRuleTarget, bool) {
@@ -86,10 +81,10 @@ func (runtime *outputRuntime) targets(execution *ruleExecution, row int) ([]reso
 		if !execution.product.requireCheckpoint() {
 			return nil, false
 		}
-		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !write.directBinding.valid() || write.directRaw >= write.directBinding.keyLimit() || write.direct.Mode() != carrier.StrongTarget {
+		if write.routeRead != 0 || write.direct == (carrier.Target{}) || !factorRowAvailable(write.directRow) || write.directRaw >= write.directRow.schemaFactorAlgebra().KeyEnd() || write.direct.Mode() != carrier.StrongTarget {
 			return nil, false
 		}
-		result = append(result, resolvedRuleTarget{target: write.direct, binding: write.directBinding, raw: write.directRaw})
+		result = append(result, resolvedRuleTarget{target: write.direct, row: write.directRow, raw: write.directRaw})
 	}
 	return result, true
 }
@@ -99,7 +94,7 @@ type typedOutput[K ~uint32 | ~uint64, V any] struct {
 	binding      *factbinding.Binding[K, V]
 	targets      func(*ruleExecution, int) ([]resolvedRuleTarget, bool)
 	routeRead    uint64
-	routeTarget  func(exactRef) (carrier.Target, factorRuntimeBinding, uint64, bool)
+	routeTarget  func(exactRef) (carrier.Target, schemaFactorBinding, uint64, bool)
 	patch        *factbinding.Patch[K, V]
 	transform    typedCarryTransform[K, V]
 	routeScratch []V
@@ -107,11 +102,9 @@ type typedOutput[K ~uint32 | ~uint64, V any] struct {
 	// It is allocated only when a transfer settles its first row, and records
 	// the sole legal outcome for that row: a staged value or an explicit empty
 	// successor. It is not a fact plane and never escapes the execution.
-	disposition  []outputDisposition
-	staged       bool
-	dispositions []RuleDisposition[V]
-	proofCount   int
-	closed       bool
+	disposition []outputDisposition
+	staged      bool
+	closed      bool
 }
 
 // typedCarryTransform is a Factor-owned map plus the immutable, precompiled
@@ -206,19 +199,19 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 			}
 			return true
 		},
-		stageTransform: func(execution *ruleExecution, epoch identity.Generation, row int) bool {
-			if execution == nil || execution.owner != owner {
-				return false
-			}
-			typed, ok := execution.output.(*typedOutput[K, V])
-			return ok && typed.stageTransform(execution, epoch, row)
-		},
 		noCandidate: func(execution *ruleExecution, epoch identity.Generation, row int) bool {
 			if execution == nil || execution.owner != owner {
 				return false
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.noCandidate(execution, epoch, row)
+		},
+		routePreflight: func(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID uint64) bool {
+			if execution == nil || execution.owner != owner {
+				return false
+			}
+			typed, ok := execution.output.(*typedOutput[K, V])
+			return ok && typed.validRouteToken(execution, epoch, row, read, selectionID)
 		},
 		stageSelection: func(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
 			if execution == nil || execution.owner != owner {
@@ -233,19 +226,6 @@ func newTypedOutputAccess[K ~uint32 | ~uint64, V any](output *boundFactor[K, V],
 			}
 			typed, ok := execution.output.(*typedOutput[K, V])
 			return ok && typed.noSelection(execution, epoch, row, batch)
-		},
-		derivation: func(session outputSession) ([]RuleDisposition[V], bool) {
-			typed, ok := session.(*typedOutput[K, V])
-			if !ok || typed.execution == nil || typed.execution.product == nil || !typed.execution.product.requireCheckpoint() {
-				return nil, false
-			}
-			if typed.proofCount != len(typed.dispositions) {
-				return nil, false
-			}
-			// Targets came from sealed cold assembly and RuleTarget exposes only
-			// equality. The derivation can share their immutable backing rather
-			// than copying every target vector per executed row.
-			return typed.dispositions, true
 		},
 	}, true
 }
@@ -270,10 +250,10 @@ func (output *typedOutput[K, V]) applyCarryTransform(execution *ruleExecution, w
 }
 
 func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.Generation, row int, value V) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
-	if output.routeRead != 0 || output.targets == nil || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+	if output.routeRead != 0 || output.targets == nil || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
 	targets, ok := output.targets(execution, row)
@@ -305,48 +285,11 @@ func (output *typedOutput[K, V]) stage(execution *ruleExecution, epoch identity.
 	}
 	output.disposition[row] = outputStaged
 	output.staged = true
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		if output.dispositions == nil {
-			output.dispositions = make([]RuleDisposition[V], len(execution.product.values))
-		}
-		resolved := make([]RuleTarget, len(targets))
-		for index, target := range targets {
-			resolved[index] = RuleTarget{target: target.target, targetBinding: target.binding, targetRaw: target.raw}
-		}
-		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionStaged, value: value, guard: RuleGuard{mask: when}, targets: resolved, carryTransform: output.transform.semantic, row: ruleResultRow{index: row}, ordinal: row}
-		output.proofCount++
-	}
-	return true
-}
-
-// stageTransform settles one row whose only semantic effect is its declared
-// transformed carry.  It exists so a transform-only Rule has no sentinel
-// write or parallel carry publication path.
-func (output *typedOutput[K, V]) stageTransform(execution *ruleExecution, epoch identity.Generation, row int) bool {
-	if output == nil || output.closed || !output.transform.active() || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
-		return false
-	}
-	when, ok := execution.product.rows.At(row)
-	if !ok || !when.Valid() || !output.applyCarryTransform(execution, when) {
-		return false
-	}
-	if output.disposition == nil {
-		output.disposition = make([]outputDisposition, len(execution.product.values))
-	}
-	output.disposition[row] = outputStaged
-	output.staged = true
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		if output.dispositions == nil {
-			output.dispositions = make([]RuleDisposition[V], len(execution.product.values))
-		}
-		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionStaged, guard: RuleGuard{mask: when}, carryTransform: output.transform.semantic, transformOnly: true, row: ruleResultRow{index: row}, ordinal: row}
-		output.proofCount++
-	}
 	return true
 }
 
 func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch identity.Generation, row int) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset {
 		return false
 	}
 	if output.routeRead != 0 {
@@ -360,76 +303,65 @@ func (output *typedOutput[K, V]) noCandidate(execution *ruleExecution, epoch ide
 		output.disposition = make([]outputDisposition, len(execution.product.values))
 	}
 	output.disposition[row] = outputNoCandidate
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		if output.dispositions == nil {
-			output.dispositions = make([]RuleDisposition[V], len(execution.product.values))
-		}
-		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionNoCandidate, guard: RuleGuard{mask: when}, row: ruleResultRow{index: row}, ordinal: row}
-		output.proofCount++
-	}
 	return true
 }
 
-func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
-	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() ||
+func (output *typedOutput[K, V]) validRouteToken(execution *ruleExecution, epoch identity.Generation, row, read int, selectionID uint64) bool {
+	if output == nil || output.closed || output.execution != execution || execution == nil || !execution.active.Holds(epoch) || execution.product == nil || !execution.product.requireCheckpoint() ||
 		output.routeRead == 0 || output.routeTarget == nil || row != execution.product.current || row < 0 || row >= len(execution.product.values) || output.disposition != nil && output.disposition[row] != outputUnset ||
-		batch.read < 0 || uint64(batch.read)+1 != output.routeRead || batch.selectionID == 0 || batch.count < 0 || batch.count > 0 && batch.at == nil {
+		read < 0 || uint64(read)+1 != output.routeRead || selectionID == 0 {
 		return false
 	}
 	actual, ok := execution.product.readID(row, int(output.routeRead-1))
-	return ok && actual == batch.selectionID
+	return ok && actual == selectionID
+}
+
+func (output *typedOutput[K, V]) validRouteBatch(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
+	return len(batch.refs) == len(batch.values) && output.validRouteToken(execution, epoch, row, batch.read, batch.selectionID)
 }
 
 // stageSelection applies one complete selected-route batch. It authenticates
-// every Ref against the output Factor, retains every ordinal pair as evidence,
+// every Ref against the output Factor, retains every ordinal pair in the batch,
 // then groups equal exact targets and delegates their reduction to the
 // Factor's admitted Join before a single strong Set per target.
 func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
-	if !output.validRouteBatch(execution, epoch, row, batch) || batch.count == 0 || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+	if !output.validRouteBatch(execution, epoch, row, batch) || len(batch.refs) == 0 {
 		return false
 	}
 	when, ok := execution.product.rows.At(row)
 	if !ok || !when.Valid() {
 		return false
 	}
+	routes := make([]resolvedRuleTarget, len(batch.refs))
+	for ordinal := range batch.refs {
+		ref := batch.refs[ordinal]
+		current, row, raw, resolved := output.routeTarget(ref)
+		if ref == nil || !resolved || current == (carrier.Target{}) || !factorRowAvailable(row) || raw >= row.schemaFactorAlgebra().KeyEnd() || current.Mode() != carrier.StrongTarget || !execution.product.requireCheckpoint() || ordinal > 0 && current.Less(routes[ordinal-1].target) {
+			return false
+		}
+		routes[ordinal] = resolvedRuleTarget{target: current, row: row, raw: raw}
+	}
+	// Every domain value and owner-issued Ref is now materialized, authenticated,
+	// and proven to follow canonical target order. Only this engine-owned phase
+	// may open and mutate the transaction-local Patch.
 	if !output.applyCarryTransform(execution, when) || !output.beginPatch(execution) {
 		return false
 	}
-	var pairs []RuleOutput[V]
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		pairs = make([]RuleOutput[V], 0, batch.count)
-	}
-	var target carrier.Target
-	begin := 0
-	for ordinal := 0; ordinal < batch.count; ordinal++ {
-		ref, value, available := batch.at(ordinal)
-		current, binding, raw, resolved := output.routeTarget(ref)
-		if !available || !resolved || current == (carrier.Target{}) || !binding.valid() || raw >= binding.keyLimit() || current.Mode() != carrier.StrongTarget {
-			return false
-		}
-		if pairs != nil {
-			pairs = append(pairs, RuleOutput[V]{target: RuleTarget{target: current, targetBinding: binding, targetRaw: raw}, value: value, ordinal: ordinal})
-		}
-		if ordinal == 0 {
-			target, begin = current, ordinal
-			output.routeScratch = append(output.routeScratch[:0], value)
-			continue
-		}
+	target := routes[0].target
+	output.routeScratch = append(output.routeScratch[:0], batch.values[0])
+	for ordinal := 1; ordinal < len(batch.refs); ordinal++ {
+		current := routes[ordinal].target
 		if current.Same(target) {
-			output.routeScratch = append(output.routeScratch, value)
+			output.routeScratch = append(output.routeScratch, batch.values[ordinal])
 			continue
 		}
-		// SelectRoute is canonical Unit→tag order and this Factor's target
-		// universe is declared in the same exact-key order. A decreasing target
-		// therefore proves a broken route-to-target correspondence rather than
-		// asking the hot path to repair it with a sort.
-		if current.Less(target) || !execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch) {
+		if !execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch) {
 			return false
 		}
-		target, begin = current, ordinal
-		output.routeScratch = append(output.routeScratch[:0], value)
+		target = current
+		output.routeScratch = append(output.routeScratch[:0], batch.values[ordinal])
 	}
-	if begin < batch.count && (!execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch)) {
+	if !execution.product.requireCheckpoint() || !output.patch.WriteJoined(target, when, output.routeScratch) {
 		return false
 	}
 	if output.disposition == nil {
@@ -437,18 +369,11 @@ func (output *typedOutput[K, V]) stageSelection(execution *ruleExecution, epoch 
 	}
 	output.disposition[row] = outputStaged
 	output.staged = true
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		if output.dispositions == nil {
-			output.dispositions = make([]RuleDisposition[V], len(execution.product.values))
-		}
-		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionStaged, guard: RuleGuard{mask: when}, outputs: pairs, carryTransform: output.transform.semantic, row: ruleResultRow{index: row}, ordinal: row}
-		output.proofCount++
-	}
 	return true
 }
 
 func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch identity.Generation, row int, batch routeOutputBatch[V]) bool {
-	if !output.validRouteBatch(execution, epoch, row, batch) || batch.count != 0 || execution.owner != nil && execution.owner.requiresDerivation() && row != output.proofCount {
+	if !output.validRouteBatch(execution, epoch, row, batch) || len(batch.refs) != 0 {
 		return false
 	}
 	when, ok := execution.product.rows.At(row)
@@ -459,13 +384,6 @@ func (output *typedOutput[K, V]) noSelection(execution *ruleExecution, epoch ide
 		output.disposition = make([]outputDisposition, len(execution.product.values))
 	}
 	output.disposition[row] = outputNoCandidate
-	if execution.owner != nil && execution.owner.requiresDerivation() {
-		if output.dispositions == nil {
-			output.dispositions = make([]RuleDisposition[V], len(execution.product.values))
-		}
-		output.dispositions[row] = RuleDisposition[V]{kind: RuleDispositionNoCandidate, guard: RuleGuard{mask: when}, row: ruleResultRow{index: row}, ordinal: row}
-		output.proofCount++
-	}
 	return true
 }
 
@@ -485,9 +403,6 @@ func (output *typedOutput[K, V]) complete() bool {
 			return false
 		}
 	}
-	if output.execution.owner != nil && output.execution.owner.requiresDerivation() && (len(output.dispositions) != rows || output.proofCount != rows) {
-		return false
-	}
 	return true
 }
 
@@ -495,12 +410,8 @@ func (output *typedOutput[K, V]) hasStaged() bool {
 	return output != nil && output.staged
 }
 
-func (output *typedOutput[K, V]) settled(row int) bool {
-	return output != nil && output.execution != nil && output.execution.product != nil && row == output.execution.product.current && row >= 0 && row < len(output.disposition) && output.disposition[row] != outputUnset
-}
-
-func (output *typedOutput[K, V]) accept(evidence *RuleEvidence) (carrier.Patch, bool) {
-	if output == nil || output.closed || output.execution == nil || output.execution.failed.Load() || !evidence.consume() {
+func (output *typedOutput[K, V]) publish() (carrier.Patch, bool) {
+	if output == nil || output.closed || output.execution == nil || output.execution.failed.Load() {
 		return carrier.Patch{}, false
 	}
 	output.closed = true

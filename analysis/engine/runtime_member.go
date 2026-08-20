@@ -1,4 +1,4 @@
-// runtime_member.go binds the Rule and activation members and proves their schema geometry.
+// runtime_member.go binds the Rule and activation members and validates their schema geometry.
 
 package engine
 
@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
+	"github.com/wippyai/go-lua/analysis/engine/internal/lifetime"
+	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // runtimeMember is one typed attachment for a graph-owned RuleMember. It has
@@ -38,8 +40,6 @@ type runtimeMember interface {
 type memberResult struct {
 	patch       carrier.Patch
 	wrote       bool
-	retained    support.Mask
-	hasSupport  bool
 	activations []equation.AcceptedMember
 	reads       []demand.Observation
 	boundary    solveBoundary
@@ -47,29 +47,51 @@ type memberResult struct {
 }
 
 type boundRuleMember[V, O any] struct {
-	value          equation.RuleMember
-	rule           *boundRule[V, O]
-	slot           shape.Slot
-	hasSlot        bool
-	carry          []int
-	outputTargets  []carrier.Target
-	allTargets     []carrier.Target
-	narrowEligible bool
-	routeOwner     runtimeFactor
-	outputWrite    bool
+	value equation.RuleMember
+	// cell+ordinal are the canonical sealed Rule owner identity. Geometry is
+	// validated during construction; execution only compares this address.
+	cell               schemaRuleBindingCell
+	ordinal            uint64
+	outputKey          composition.Key
+	expectedReadCount  uint64
+	fold               func(Frame[V, O]) RuleResult[V]
+	operand            O
+	reads              []readRuntime
+	output             outputAccess[V]
+	routeTransform     bool
+	carrySemantic      identity.SemanticKey
+	transformedTargets []carrier.Target
+	carryApply         func(V) (V, bool)
+	nextEpoch          lifetime.GenerationSequence
+	slot               shape.Slot
+	hasSlot            bool
+	carry              []int
+	outputTargets      []carrier.Target
+	allTargets         []carrier.Target
+	narrowEligible     bool
+	routeOwner         runtimeFactor
+	outputWrite        bool
 }
 
-func (bound *boundRuleMember[V, O]) member() equation.RuleMember { return bound.value }
+func (bound *boundRuleMember[V, O]) member() equation.RuleMember {
+	if bound == nil {
+		return equation.RuleMember{}
+	}
+	return bound.value
+}
 
 func (bound *boundRuleMember[V, O]) outputSlot() (shape.Slot, bool) {
-	return bound.slot, bound != nil && bound.rule != nil && bound.hasSlot
+	if bound == nil {
+		return 0, false
+	}
+	return bound.slot, bound.cell != nil && bound.ordinal == bound.cell.schemaRuleOrdinal() && bound.hasSlot
 }
 
 func (bound *boundRuleMember[V, O]) factorKey() (composition.Key, bool) {
-	if bound == nil || bound.rule == nil || bound.rule.proof == nil || !bound.rule.proof.valid() || !bound.rule.proof.output.Available() {
+	if bound == nil || bound.cell == nil || bound.ordinal != bound.cell.schemaRuleOrdinal() || !bound.outputKey.Available() {
 		return composition.Key{}, false
 	}
-	return bound.rule.proof.output, true
+	return bound.outputKey, true
 }
 
 func (bound *boundRuleMember[V, O]) carries() []int {
@@ -80,17 +102,11 @@ func (bound *boundRuleMember[V, O]) carries() []int {
 }
 
 func (bound *boundRuleMember[V, O]) initialReads() []demand.Observation {
-	if bound == nil || bound.rule == nil {
-		return nil
-	}
-	return bound.rule.initialReads()
+	return bound.initialRuleReads()
 }
 
 func (bound *boundRuleMember[V, O]) dynamicReads() []demand.DynamicRead {
-	if bound == nil || bound.rule == nil {
-		return nil
-	}
-	return bound.rule.dynamicReads()
+	return bound.dynamicRuleReads()
 }
 
 func (bound *boundRuleMember[V, O]) targets() []carrier.Target {
@@ -131,16 +147,16 @@ func (bound *boundRuleMember[V, O]) routeNarrow() bool {
 func (bound *boundRuleMember[V, O]) writesOutput() bool { return bound != nil && bound.outputWrite }
 
 func (bound *boundRuleMember[V, O]) execute(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
-	if bound == nil || bound.rule == nil {
+	if bound == nil {
 		return memberResult{boundary: refused(SolveFailureFamilyExecution, "preflight")}
 	}
-	patch, reads, wrote, ok, boundary := bound.rule.execute(work, base, inputs, within)
+	patch, reads, wrote, ok, boundary := bound.executeRule(work, base, inputs, within)
 	return memberResult{patch: patch, wrote: wrote, reads: reads, boundary: boundary, valid: ok}
 }
 
-// bindSchemaRuleMember attaches the sealed zero-read Rule lane to the
-// existing boundRule/Access executor. It intentionally has no declaration Rule or
-// declaration argument: the private ruleRuntimeProof is the sole identity.
+// bindSchemaRuleMember attaches a sealed Rule lane to the canonical
+// boundRuleMember/Access executor. Geometry is checked against the sealed
+// owner cell and its canonical ordinal while the runtime member is built.
 type schemaRuleMemberGeometry interface {
 	Rule() composition.Key
 	OperandFamily() composition.Key
@@ -151,8 +167,8 @@ type schemaRuleMemberGeometry interface {
 	WriteRouteRead(int) (uint64, bool)
 }
 
-func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, bool) {
-	if proof == nil || !proof.valid() || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
+func exactSchemaRuleMemberGeometry[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBindingCellImpl[K, V, O], ordinal uint64, member schemaRuleMemberGeometry) (equation.Surface, bool) {
+	if cell == nil || cell.ordinal != ordinal || !cell.sealedRuleComplete() || member == nil || member.Rule() != cell.impl.ruleSemantic || member.OperandFamily() != cell.impl.operandFamily || uint64(member.ReadCount()) != uint64(len(cell.impl.reads)) || member.WriteCount() != 1 || cell.impl.writeMode != directRuleWriteExact {
 		return equation.Surface{}, false
 	}
 	if _, dynamic := member.ActivationMember(); dynamic {
@@ -160,15 +176,19 @@ func exactSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Local == 0 || !routeOK || route != 0 {
+	if !surfaceOK || surface.Factor != cell.impl.output.schemaFactorSemanticKey() || surface.Form != equation.SurfaceWriteExact || surface.Mode != equation.TargetModeStrong || surface.Local == 0 || !routeOK || route != 0 {
 		return equation.Surface{}, false
 	}
 	return surface, true
 }
 
-func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMemberGeometry) (equation.Surface, uint64, bool) {
-	read, routed := proof.routeWriteAt(0)
-	if proof == nil || !proof.valid() || !routed || member == nil || member.Rule() != proof.semantic || member.OperandFamily() != proof.operandFamily || uint64(member.ReadCount()) != proof.reads || member.WriteCount() != 1 {
+func routeSchemaRuleMemberGeometry[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBindingCellImpl[K, V, O], ordinal uint64, member schemaRuleMemberGeometry) (equation.Surface, uint64, bool) {
+	if cell == nil || cell.ordinal != ordinal || !cell.sealedRuleComplete() || member == nil || member.Rule() != cell.impl.ruleSemantic || member.OperandFamily() != cell.impl.operandFamily || uint64(member.ReadCount()) != uint64(len(cell.impl.reads)) || member.WriteCount() != 1 || cell.impl.writeMode != directRuleWriteRoute || cell.impl.routeRead == 0 || cell.impl.routeRead > uint64(len(cell.impl.reads)) {
+		return equation.Surface{}, 0, false
+	}
+	read := cell.impl.routeRead - 1
+	row := cell.schemaRuleReadAt(read)
+	if row == nil || row.owner != cell || row.ownerOrdinal != ordinal || row.readOrdinal != read || row.kind != composition.ReadSelect || row.factor != cell.impl.output.schemaFactorSemanticKey() || row.semantic != row.factor || row.normalizer.Available() || len(row.dependencies) == 0 {
 		return equation.Surface{}, 0, false
 	}
 	if _, dynamic := member.ActivationMember(); dynamic {
@@ -176,7 +196,7 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 	}
 	surface, surfaceOK := member.WriteAt(0)
 	route, routeOK := member.WriteRouteRead(0)
-	if !surfaceOK || surface.Factor != proof.output || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() || !routeOK || route != read+1 {
+	if !surfaceOK || surface.Factor != cell.impl.output.schemaFactorSemanticKey() || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() || !routeOK || route != cell.impl.routeRead {
 		return equation.Surface{}, 0, false
 	}
 	return surface, route, true
@@ -189,81 +209,95 @@ func routeSchemaRuleMemberGeometry(proof *ruleRuntimeProof, member schemaRuleMem
 // Attachment ledgers and duplicate rejection belong to the caller that keeps
 // them; a bind is the same operation whether it happens at construction or when
 // an activation revision replays it against a later graph.
-func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O) (runtimeMember, bool) {
+func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, implementation *RuleImplementation[K, V, O], member equation.RuleMember, declared declaredRuleOperand) (runtimeMember, bool) {
 	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.graph == nil || plane.carrier == nil || plane.byKey == nil {
 		return nil, false
 	}
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.state != plane.runtime.state || implementation.binding.authority != plane.runtime.authority {
+	cell, cellOK := implementation.sealedRuleCell()
+	if !cellOK || cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
 		return nil, false
 	}
 	if !plane.runtime.graph.OwnsMember(member) || !member.Key().Available() {
 		return nil, false
 	}
-	output, present := plane.byKey[implementation.binding.proof.output]
+	output, present := plane.byKey[implementation.output.schemaFactorSemanticKey()]
 	if !present || output == nil {
 		return nil, false
 	}
-	row, ok := bindSchemaRuleMember(implementation, member, operand, output, plane.byKey)
+	if !declared.Available() {
+		return nil, false
+	}
+	canonical, typed := declared.value.(O)
+	if !typed || declared.digest == [32]byte{} || !member.Operand().Available() {
+		return nil, false
+	}
+	expected, expectedOK := operandEntityForContent(declared.digest)
+	if !expectedOK || member.Operand().Entity() != expected {
+		return nil, false
+	}
+	row, ok := bindSchemaRuleMember(implementation, member, canonical, declared.digest, output, plane.byKey)
 	if !ok || row == nil || row.member().Key() != member.Key() {
 		return nil, false
 	}
 	return row, true
 }
 
-func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
-	if implementation == nil || !implementation.binding.valid() || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
+func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, content [32]byte, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
+	cell, cellOK := implementation.sealedRuleCell()
+	if !cellOK || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false
 	}
-	binding := implementation.binding
-	proof := binding.proof
-	hot := binding.cell.impl
-	if proof == nil || hot == nil {
+	hot := cell.impl
+	if hot == nil {
 		return nil, false
 	}
-	shape, shapeOK := proof.schema.ruleShapeAt(proof.ordinal)
-	if !shapeOK || shape.OutputKind != composition.FactorOutput || shape.CarryCount > 1 || shape.WriteCount != 1 || uint64(len(hot.reads)) != shape.ReadCount || shape.CarryCount == 0 && hot.carry != nil || shape.CarryCount == 1 && hot.carry == nil {
+	if !cell.sealedRuleComplete() || hot.writeMode == 0 || hot.output == nil || hot.carryPresent && hot.carryApply == nil && hot.carryTransform.Available() {
 		return nil, false
 	}
+	outputKey := hot.output.schemaFactorSemanticKey()
 	boundOutput, outputOK := output.(*boundFactor[K, V])
-	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !boundOutput.implementation.binding.valid() || !factorAddressMatches(boundOutput.implementation.binding, binding.output) || boundOutput.implementation.binding.semanticKey() != shape.Output {
+	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !factorRowAvailable(boundOutput.implementation.row) || boundOutput.implementation.row != implementation.output || boundOutput.implementation.row.schemaFactorSemanticKey() != outputKey {
 		return nil, false
 	}
-	surface, memberOK := exactSchemaRuleMemberGeometry(proof, member)
-	_, routeRead, routeOK := routeSchemaRuleMemberGeometry(proof, member)
+	surface, memberOK := exactSchemaRuleMemberGeometry(cell, implementation.ordinal, member)
+	_, routeRead, routeOK := routeSchemaRuleMemberGeometry(cell, implementation.ordinal, member)
 	if !memberOK && !routeOK {
 		return nil, false
 	}
 	var target carrier.Target
-	var targetBinding factorRuntimeBinding
+	var targetRow schemaFactorBinding
 	var targetRaw uint64
 	if memberOK {
 		var targetOK, targetAddressOK bool
 		target, targetOK = output.writeTarget(surface)
-		targetRaw, targetAddressOK = exactWriteLocal(boundOutput.implementation.binding, surface)
+		targetRaw, targetAddressOK = exactWriteLocal(boundOutput.implementation.row, surface)
 		if !targetOK || !targetAddressOK {
 			return nil, false
 		}
-		targetBinding = boundOutput.implementation.binding
+		targetRow = boundOutput.implementation.row
 	} else if !output.hasRouteUniverse() {
 		return nil, false
 	}
-	canonical, content, contentOK := hot.operandContent(operand)
-	if !contentOK || content == [32]byte{} || !member.Operand().Available() {
+	if content == [32]byte{} || !member.Operand().Available() {
 		return nil, false
 	}
 	expected, expectedOK := operandEntityForContent(content)
-	entity := OperandEntity{key: member.Operand().Entity()}
+	entity := operandEntity{key: member.Operand().Entity()}
 	if !expectedOK || entity.key != expected {
 		return nil, false
 	}
-	anchor, anchorOK := semanticKeyFromComposition(member.Key())
-	if !anchorOK {
-		return nil, false
+	bound := &boundRuleMember[V, O]{
+		value:             member,
+		cell:              cell,
+		ordinal:           implementation.ordinal,
+		outputKey:         outputKey,
+		expectedReadCount: uint64(len(hot.reads)),
+		fold:              hot.fold,
+		operand:           operand,
 	}
-	bound := &boundRule[V, O]{proof: proof, admission: hot.admission, anchor: anchor, operandContent: content, transfer: hot.transfer, operand: canonical}
 	projection := &outputRuntime{writes: make([]outputWriteRuntime, 1)}
 	if memberOK {
-		projection.writes[0] = outputWriteRuntime{direct: target, directBinding: targetBinding, directRaw: targetRaw}
+		projection.writes[0] = outputWriteRuntime{direct: target, directRow: targetRow, directRaw: targetRaw}
 	} else {
 		projection.writes[0] = outputWriteRuntime{routeRead: routeRead}
 	}
@@ -273,14 +307,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		allTargets = append(allTargets, target)
 	}
 	carryRouteScope := false
-	if hot.carry != nil {
-		carryShape, carryOK := hot.carry.shape()
-		if !carryOK || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs {
-			return nil, false
-		}
-		if carryShape.Input > uint64(^uint(0)>>1) {
-			return nil, false
-		}
+	if hot.carryPresent {
 		// A carry closure that reaches a route write has no finite exact target
 		// vector: a routed write names its concrete target only at execution.
 		// The member claims the output Factor's route universe on top of the
@@ -297,23 +324,23 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		for _, carryTarget := range carryTargets {
 			allTargets = appendUniqueTarget(allTargets, carryTarget)
 		}
-		carryIndexes = []int{int(carryShape.Input)}
-		if carryShape.Transform.Available() {
-			if hot.carry.apply == nil {
+		carryIndexes = []int{int(hot.carryInput)}
+		if hot.carryTransform.Available() {
+			if hot.carryApply == nil {
 				return nil, false
 			}
-			carrySemantic, carrySemanticOK := semanticKeyFromComposition(carryShape.Transform)
+			carrySemantic, carrySemanticOK := semanticKeyFromComposition(hot.carryTransform)
 			if !carrySemanticOK {
 				return nil, false
 			}
 			bound.carrySemantic = carrySemantic
-			bound.carryTargets = carryTargets
+			bound.transformedTargets = carryTargets
 			// The transformed carry maps the route universe through the same
 			// terminal as its exact closure, so the Factor-owned route
 			// transform closure joins the member's carry transform.
 			bound.routeTransform = carryRouteScope
 			bound.carryApply = func(value V) (V, bool) {
-				return hot.carry.apply(operand, value)
+				return hot.carryApply(operand, value)
 			}
 		}
 	}
@@ -328,7 +355,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 		}
 	}
 	if routeOK || carryRouteScope {
-		bound.routeScope = output
+		bound.routeOwner = output
 	}
 	slot, slotOK := output.runtimeSlot()
 	if !slotOK {
@@ -338,18 +365,30 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	if memberOK {
 		outputTargets = []carrier.Target{target}
 	}
-	return &boundRuleMember[V, O]{rule: bound, slot: slot, hasSlot: true, carry: carryIndexes, outputTargets: outputTargets, allTargets: allTargets, narrowEligible: output.supports(carrier.Narrow), routeOwner: bound.routeScope, outputWrite: true, value: member}, true
+	bound.slot = slot
+	bound.hasSlot = true
+	bound.carry = carryIndexes
+	bound.outputTargets = outputTargets
+	bound.allTargets = allTargets
+	bound.narrowEligible = output.supports(carrier.Narrow)
+	bound.outputWrite = true
+	return bound, true
 }
 
 // boundActivationMember is an output-free member in the same Group
-// transaction as Factors and support pruning.  Its selection is returned to
-// the executor; it has no second evaluation or publication route.
+// transaction as Factors. Its selection is returned to the executor; it has
+// no second evaluation or publication route.
 type boundActivationMember struct {
 	value equation.RuleMember
 	rule  *compiledActivationRule
 }
 
-func (bound *boundActivationMember) member() equation.RuleMember { return bound.value }
+func (bound *boundActivationMember) member() equation.RuleMember {
+	if bound == nil {
+		return equation.RuleMember{}
+	}
+	return bound.value
+}
 
 func (bound *boundActivationMember) outputSlot() (shape.Slot, bool) { return 0, false }
 
@@ -395,22 +434,27 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 
 // bindActivationMember attaches one graph-owned activation Member to a
 // sealed activation implementation. The Schema binding performs
-// the exact Schema/family/trigger checks; this adapter adds only the Member
-// anchor and returns the same runtime member consumed by the existing epoch
-// executor.
+// the exact Schema/family/trigger checks; this bind adds only the Member anchor
+// and returns the runtime member consumed by the epoch executor.
 func bindActivationMember(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
-	if implementation == nil || !implementation.binding.valid() || !member.Key().Available() || topology == nil || graph == nil ||
-		!topology.OwnsComposition(implementation.binding.proof.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
-		!trigger.Available() || trigger != member.Key() || member.Rule() != implementation.binding.proof.semantic ||
-		member.OperandFamily() != implementation.binding.proof.operandFamily || uint64(member.ReadCount()) != implementation.binding.proof.reads || member.WriteCount() != 0 || factors == nil {
+	cell, cellOK := implementation.sealedActivationCell()
+	if !cellOK || !cell.schemaRuleComplete() || !member.Key().Available() || topology == nil || graph == nil ||
+		!topology.OwnsComposition(cell.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
+		!trigger.Available() || trigger != member.Key() || factors == nil {
+		return nil, false
+	}
+	shape, shapeOK := cell.schema.ruleShapeAt(implementation.ordinal)
+	semantic := cell.schema.ruleSemanticAt(implementation.ordinal)
+	if !shapeOK || !semantic.Available() || member.Rule() != semantic ||
+		member.OperandFamily() != shape.OperandFamily || uint64(member.ReadCount()) != shape.ReadCount || member.WriteCount() != 0 {
 		return nil, false
 	}
 	compiled, ok := compileActivationRule(implementation, topology, trigger, graph)
 	if !ok {
 		return nil, false
 	}
-	hot := implementation.binding.cell.impl
-	if hot == nil || uint64(len(hot.reads)) != implementation.binding.proof.reads {
+	hot := cell.impl
+	if hot == nil || uint64(len(hot.reads)) != shape.ReadCount {
 		return nil, false
 	}
 	for _, read := range hot.reads {
@@ -418,7 +462,7 @@ func bindActivationMember(member equation.RuleMember, implementation *Activation
 			return nil, false
 		}
 	}
-	if uint64(len(compiled.reads)) != implementation.binding.proof.reads {
+	if uint64(len(compiled.reads)) != shape.ReadCount {
 		return nil, false
 	}
 	anchor, anchorOK := semanticKeyFromComposition(member.Key())

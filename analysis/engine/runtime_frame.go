@@ -1,4 +1,4 @@
-// runtime_frame.go exposes the public row API: Row, the product session and the staging verbs.
+// runtime_frame.go owns the private product session and exposes the opaque Fold frame/result API.
 
 package engine
 
@@ -12,21 +12,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// Row is an opaque, synchronous product row. Its support and typed values
-// remain inside the private product session; it expires when Transfer returns.
-type Row struct {
-	session *productSession
-	epoch   identity.Generation
-	index   int
-}
-
 type readRuntime interface {
 	inputPort() int
 	refine(*productSession, int) bool
 	observations() []demand.Observation
 	dynamicReads() []demand.DynamicRead
-	exactAddress() (factorRuntimeBinding, uint64, bool)
-	summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool)
+	exactAddress() (schemaFactorBinding, uint64, bool)
+	summaryAddress() (schemaFactorBinding, uint64, []uint64, [32]byte, bool)
 }
 
 type productRow = provenanceRow
@@ -43,8 +35,8 @@ type productSession struct {
 	live      bool
 	started   atomic.Bool
 	ready     bool
-	// current is the one Product row whose callback owns the synchronous row
-	// capability. It is -1 outside that callback; a Row never grants access to
+	// current is the one Product row whose Fold owns the synchronous frame
+	// capability. It is -1 outside that callback; a Frame never grants access to
 	// a prior or future region while a transfer is still running.
 	current int
 }
@@ -59,14 +51,14 @@ type readSession interface {
 }
 
 func (session *productSession) valid(execution *ruleExecution, epoch identity.Generation) bool {
-	return session != nil && session.live && session.execution == execution && execution != nil && execution.active.holds(epoch) && session.work != nil && session.work.Checkpoint()
+	return session != nil && session.live && session.execution == execution && execution != nil && execution.active.Holds(epoch) && session.work != nil && session.work.Checkpoint()
 }
 
 // checkpoint samples the one carrier-owned epoch probe. Product owns no
 // second cancellation authority; it merely stops its private rows before a
 // Rule callback, patch, or evidence can escape.
 func (session *productSession) checkpoint() bool {
-	return session != nil && session.execution != nil && session.work != nil && session.execution.active.holds(session.execution.epoch) && session.work.Checkpoint()
+	return session != nil && session.execution != nil && session.work != nil && session.execution.active.Holds(session.execution.epoch) && session.work.Checkpoint()
 }
 
 func (session *productSession) requireCheckpoint() bool {
@@ -113,11 +105,11 @@ func newProductSession(execution *ruleExecution, reads []readRuntime, work *carr
 	if !execution.base.State().Support().SameHandle(within) {
 		return nil, false
 	}
-	session := &productSession{execution: execution, work: work, inputs: append([]carrier.State(nil), inputs...), reads: append([]readRuntime(nil), reads...), sessions: make([]readSession, len(reads)), live: true, current: -1}
+	session := &productSession{execution: execution, work: work, inputs: inputs, reads: reads, sessions: make([]readSession, len(reads)), live: true, current: -1}
 	if support.Empty(within) {
 		// An unreachable group is a valid zero-row product. It retains no
 		// observation frame and cannot stage a patch, but still lets the
-		// monomorphic Transfer confirm its own no-row behavior.
+		// Fold is not invoked for a zero-row Product.
 		session.ready = true
 		return session, true
 	}
@@ -148,50 +140,36 @@ func newProductSession(execution *ruleExecution, reads []readRuntime, work *carr
 	return session, true
 }
 
-// Product invokes a bound Rule's declared product once. There is no ambient
-// State path: a stale Access, duplicate Product, or escaped Row fails closed.
-func Product[V, O any](access Access[V, O], visit func(Row) bool) bool {
-	session := access.execution
-	if session == nil || access.owner == nil || session.owner != access.owner || !session.active.holds(access.epoch) || session.product == nil || visit == nil {
-		return false
+func validFrame[V, O any](frame Frame[V, O]) bool {
+	execution := frame.execution
+	return execution != nil && frame.owner != nil && execution.owner == frame.owner && execution.active.Holds(frame.epoch) && execution.product != nil && execution.product.ready && execution.product.current == frame.row && frame.row >= 0 && frame.row < len(execution.product.values) && execution.product.requireCheckpoint()
+}
+
+func poisonFrame[V, O any](frame Frame[V, O]) {
+	if frame.execution != nil {
+		frame.execution.failed.Store(true)
 	}
-	product := session.product
-	if !product.valid(session, access.epoch) || !product.ready || !product.started.CompareAndSwap(false, true) {
-		session.failed.Store(true)
-		return false
-	}
-	for index := 0; index < product.rows.Count(); index++ {
-		product.current = index
-		visited := visit(Row{session: product, epoch: access.epoch, index: index})
-		settled := session.output == nil || session.output.settled(index)
-		product.current = -1
-		if !product.requireCheckpoint() || !visited || !settled || !product.requireCheckpoint() {
-			session.failed.Store(true)
-			return false
-		}
-	}
-	return true
 }
 
 // ReadValue reaches only the type witness installed at cold declaration. The
 // matching E runtime is checked first, so a typed Read from another rule or a
 // stale row cannot be used as an erased observation channel.
-func ReadValue[V, O, S any](access Access[V, O], row Row, read Read[S]) (S, bool) {
+func ReadValue[V, O, S any](frame Frame[V, O], read Read[S]) (S, bool) {
 	var zero S
-	execution := access.execution
-	if execution == nil || execution.owner == nil || access.owner != execution.owner || !execution.active.holds(access.epoch) || execution.product == nil || !execution.product.requireCheckpoint() || !read.matchesRuntimeOwner(execution.owner) || row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) || read.index >= len(row.session.reads) || row.session.reads[read.index] == nil {
+	execution := frame.execution
+	if !validFrame(frame) || !read.matchesRuntimeOwner(execution.owner) || read.index < 0 || read.index >= len(execution.product.reads) || execution.product.reads[read.index] == nil {
 		if execution != nil {
 			execution.failed.Store(true)
 		}
 		return zero, false
 	}
-	id, found := row.session.readID(row.index, read.index)
+	id, found := execution.product.readID(frame.row, read.index)
 	if !found {
 		execution.failed.Store(true)
 		return zero, false
 	}
-	value, ok := read.resolve(row.session, read.index, id)
-	if !ok || !row.session.requireCheckpoint() {
+	value, ok := read.resolve(execution.product, read.index, id)
+	if !ok || !execution.product.requireCheckpoint() {
 		execution.failed.Store(true)
 		return zero, false
 	}
@@ -201,7 +179,7 @@ func ReadValue[V, O, S any](access Access[V, O], row Row, read Read[S]) (S, bool
 // readID resolves a row's exact identity for one declared read. Before the
 // final freeze it follows only the persistent prefix; afterwards it reads the
 // read-major column directly. The latter is the path exposed to Product and
-// RuleAdmission callbacks.
+// domain callbacks.
 func (session *productSession) readID(row, read int) (uint64, bool) {
 	if session == nil || row < 0 || row >= len(session.values) || read < 0 || read >= len(session.reads) {
 		return 0, false
@@ -250,16 +228,14 @@ func (session *productSession) observations() []demand.Observation {
 	return result
 }
 
-// StageValue is the only typed output mutation capability. It cannot select a
-// target, support region, predecessor, or Factor slot.
-func StageValue[V, O any](access Access[V, O], row Row, value V) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stage == nil || !access.output.stage(access.execution, access.epoch, row.index, value) {
-		if access.execution != nil {
-			access.execution.failed.Store(true)
-		}
-		return false
+// Staged returns one direct candidate value. It does not select or mutate the
+// output target; the sealed member plan owns publication geometry.
+func Staged[V, O any](frame Frame[V, O], value V) RuleResult[V] {
+	if !validFrame(frame) {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	return true
+	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultStaged, value: value}
 }
 
 // StageSelection is the sole route-output capability. It consumes every
@@ -267,82 +243,85 @@ func StageValue[V, O any](access Access[V, O], row Row, value V) bool {
 // row batch of authenticated target/value pairs. A transfer cannot select a
 // different Ref, omit a nonempty route, or send a value through the ordinary
 // StageValue path.
-func StageSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S], derive func(Tag, S) (V, bool)) bool {
-	if derive == nil || !validSelection(access, row, selection) || selection.count == nil || selection.at == nil || selection.route == nil {
-		poisonSelection(access)
-		return false
+func Routed[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S], derive func(Tag, S) (V, bool)) RuleResult[V] {
+	if derive == nil || !validSelection(frame, selection) || selection.count == nil || selection.at == nil || selection.route == nil {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	count, ok := selection.count(row.index)
+	count, ok := selection.count(frame.row)
 	if !ok || count <= 0 {
-		poisonSelection(access)
-		return false
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	batch := routeOutputBatch[V]{
-		read: selection.read, selectionID: selection.selectionID, count: count,
-		at: func(ordinal int) (exactRef, V, bool) {
-			var zero V
-			tag, value, valueOK := selection.at(row.index, ordinal)
-			ref, refOK := selection.route(row.index, ordinal)
-			output, outputOK := derive(tag, value)
-			if !valueOK || !refOK || ref == nil || !outputOK {
-				return nil, zero, false
-			}
-			return ref, output, true
-		},
+	if frame.owner.output.routePreflight == nil {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.stageSelection == nil || !access.output.stageSelection(access.execution, access.epoch, row.index, batch) {
-		if access.execution != nil {
-			access.execution.failed.Store(true)
+	refs := make([]exactRef, count)
+	values := make([]V, count)
+	for ordinal := 0; ordinal < count; ordinal++ {
+		if !validSelection(frame, selection) || !frame.execution.product.requireCheckpoint() || !frame.owner.output.routePreflight(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID) {
+			poisonFrame(frame)
+			return RuleResult[V]{}
 		}
-		return false
+		tag, value, valueOK := selection.at(frame.row, ordinal)
+		ref, refOK := selection.route(frame.row, ordinal)
+		if !valueOK || !refOK || ref == nil {
+			poisonFrame(frame)
+			return RuleResult[V]{}
+		}
+		output, outputOK := derive(tag, value)
+		if !outputOK {
+			poisonFrame(frame)
+			return RuleResult[V]{}
+		}
+		if !validSelection(frame, selection) || !frame.execution.product.requireCheckpoint() || !frame.owner.output.routePreflight(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID) {
+			poisonFrame(frame)
+			return RuleResult[V]{}
+		}
+		refs[ordinal], values[ordinal] = ref, output
 	}
-	return true
+	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultRouted, route: routeOutputBatch[V]{
+		read: selection.read, selectionID: selection.selectionID,
+		refs: refs, values: values,
+	}}
 }
 
 // NoSelection settles an explicitly empty route selection. It is separate
 // from NoCandidate because the empty proof is the same authenticated
 // Selection that would otherwise have carried all exact route targets.
-func NoSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S]) bool {
-	if !validSelection(access, row, selection) || selection.count == nil || selection.route == nil {
-		poisonSelection(access)
-		return false
+func NoSelection[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S]) RuleResult[V] {
+	if !validSelection(frame, selection) || selection.count == nil || selection.route == nil || frame.owner.output.routePreflight == nil {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	count, ok := selection.count(row.index)
-	if !ok || count != 0 {
-		poisonSelection(access)
-		return false
+	count, ok := selection.count(frame.row)
+	if !ok || count != 0 || !frame.owner.output.routePreflight(frame.execution, frame.epoch, frame.row, selection.read, selection.selectionID) {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	batch := routeOutputBatch[V]{read: selection.read, selectionID: selection.selectionID, count: 0}
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noSelection == nil || !access.output.noSelection(access.execution, access.epoch, row.index, batch) {
-		if access.execution != nil {
-			access.execution.failed.Store(true)
-		}
-		return false
-	}
-	return true
+	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultRouted, route: routeOutputBatch[V]{read: selection.read, selectionID: selection.selectionID}}
 }
 
 // NoCandidate settles one Product row with an explicit empty successor. It
 // is not a sparse write of Default or Bottom: it publishes no Fact update.
 // Like StageValue, it is row-, owner-, and epoch-fenced, and a row may take
 // exactly one of the two dispositions.
-func NoCandidate[V, O any](access Access[V, O], row Row) bool {
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) || access.execution.product == nil || row.session != access.execution.product || row.epoch != access.epoch || row.index != access.execution.product.current || access.output.noCandidate == nil || !access.output.noCandidate(access.execution, access.epoch, row.index) {
-		if access.execution != nil {
-			access.execution.failed.Store(true)
-		}
-		return false
+func NoCandidate[V, O any](frame Frame[V, O]) RuleResult[V] {
+	if !validFrame(frame) {
+		poisonFrame(frame)
+		return RuleResult[V]{}
 	}
-	return true
+	return RuleResult[V]{execution: frame.execution, epoch: frame.epoch, row: frame.row, kind: ruleResultNoCandidate}
 }
 
 // Operand returns the typed immutable instance payload installed by the cold
 // compiler. It is unavailable outside a live transfer frame and cannot be
 // retained as a capability to a later solve.
-func Operand[V, O any](access Access[V, O]) (O, bool) {
+func Operand[V, O any](frame Frame[V, O]) (O, bool) {
 	var zero O
-	if access.execution == nil || access.owner == nil || access.execution.owner != access.owner || !access.execution.active.holds(access.epoch) {
+	if !validFrame(frame) {
 		return zero, false
 	}
-	return access.owner.operand, true
+	return frame.owner.operand, true
 }

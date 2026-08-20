@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"sort"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/internal/canonical"
@@ -26,45 +25,30 @@ type Measure[K ~uint32 | ~uint64, V any] struct {
 // Ref is only a cold identity capability. It is not a Program handle, an
 // equation coordinate, or a runtime binding handle.
 type Ref[K ~uint32 | ~uint64] struct {
-	binding factorRuntimeBinding
-	raw     K
-	_       [0]func()
+	row schemaFactorBinding
+	raw K
+	_   [0]func()
 }
 
 type exactRef interface {
-	factorBinding() factorRuntimeBinding
+	factorRow() schemaFactorBinding
 	rawAddress() uint64
 }
 
-func (ref Ref[K]) factorBinding() factorRuntimeBinding { return ref.binding }
-func (ref Ref[K]) rawAddress() uint64                  { return uint64(ref.raw) }
-
-// ClosedRefs is one Factor-issued, seal-once vector of exact Ref
-// capabilities. It deliberately exposes append/close rather than raw
-// coordinates: callers with an owner-private K can construct it by type
-// inference, while only Assembly later reads its canonical Ref vector.
-type ClosedRefs[K ~uint32 | ~uint64] struct {
-	binding factorRuntimeBinding
-	digest  [32]byte
-	refs    []Ref[K]
-	closed  bool
-}
-
-func (refs *ClosedRefs[K]) validIssuer() bool {
-	return refs != nil && refs.binding.valid()
-}
+func (ref Ref[K]) factorRow() schemaFactorBinding { return ref.row }
+func (ref Ref[K]) rawAddress() uint64             { return uint64(ref.raw) }
 
 const (
 	summaryVectorDigestDomain         = "analysis/engine/summary-vector"
 	summaryVectorDigestVersion uint64 = 2
 )
 
-// SummaryVectorDigest is the immutable evidence digest for a canonical key
+// summaryVectorDigest is the immutable identity digest for a canonical key
 // vector. Its preimage is framed under its own domain and records the key
 // width and the vector length ahead of the keys, so a vector of a different
 // key type, of a different length, or from another identity space can never
 // reach the same digest.
-func SummaryVectorDigest[K ~uint32 | ~uint64](keys []K) [32]byte {
+func summaryVectorDigest[K ~uint32 | ~uint64](keys []K) [32]byte {
 	digest, ok := framedDigest(summaryVectorDigestDomain, summaryVectorDigestVersion, func(writer *canonical.DigestWriter) bool {
 		if writer.Uint(summaryKeyWidth[K]()) != nil || writer.Count(uint64(len(keys))) != nil {
 			return false
@@ -90,53 +74,6 @@ func summaryKeyWidth[K ~uint32 | ~uint64]() uint64 {
 		return 32
 	}
 	return 64
-}
-
-// Append records one exact Ref from this vector's sole issuing Factor. It is
-// legal only before Close; duplicates are rejected before they can alter the
-// canonical summary set.
-func (refs *ClosedRefs[K]) Append(ref Ref[K]) bool {
-	if refs == nil || refs.closed || !refs.binding.valid() || !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyLimit() {
-		return false
-	}
-	for _, present := range refs.refs {
-		if present.raw == ref.raw {
-			return false
-		}
-	}
-	refs.refs = append(refs.refs, ref)
-	return true
-}
-
-// Close fixes one immutable canonical Ref order. It is intentionally
-// idempotence-free: a vector has one admission episode and any second close
-// is rejected rather than treated as a parallel construction path.
-func (refs *ClosedRefs[K]) Close() bool {
-	if refs == nil || refs.closed || !refs.binding.valid() || len(refs.refs) == 0 {
-		return false
-	}
-	for _, ref := range refs.refs {
-		if !factorAddressMatches(refs.binding, ref.binding) || uint64(ref.raw) >= refs.binding.keyLimit() {
-			return false
-		}
-	}
-	sort.Slice(refs.refs, func(left, right int) bool { return refs.refs[left].raw < refs.refs[right].raw })
-	for index := 1; index < len(refs.refs); index++ {
-		if refs.refs[index-1].raw >= refs.refs[index].raw {
-			return false
-		}
-	}
-	keys := make([]uint64, len(refs.refs))
-	for index, ref := range refs.refs {
-		keys[index] = uint64(ref.raw)
-	}
-	digest := SummaryVectorDigest(keys)
-	if digest == ([32]byte{}) {
-		return false
-	}
-	refs.digest = digest
-	refs.closed = true
-	return true
 }
 
 // OrderedCells is the typed, read-only Factor observation handed to an E

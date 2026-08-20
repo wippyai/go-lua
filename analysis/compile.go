@@ -93,8 +93,19 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if state == nil || source == nil || !compilation.Available() || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
-	types := state.artifacts.types
-	if types == nil || types.LinkID() != state.sourceID {
+	programs := make([]programschema.Program, 0, len(state.artifacts.products))
+	for _, product := range state.artifacts.products {
+		if product.Artifact == nil || !product.Artifact.Available() {
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
+		}
+		compiled := product.Artifact.Program()
+		if !compiled.Available() {
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
+		}
+		programs = append(programs, compiled)
+	}
+	types, typesErr := typeauthority.SealProgramRows(state.sourceID, programs)
+	if typesErr != nil {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
 	if len(state.artifacts.mounts) == 0 {
@@ -282,10 +293,6 @@ type compiledArtifactSet struct {
 	sites              mounted.ObservationSites
 	selectApplications []selectapply.Application
 	selectHandlers     []selectapply.Handler
-	// types is the one immutable Type Authority issued from the canonical
-	// mounted Program rows. Static binding and diagnostic projection consume
-	// this product; neither consumer may reseal the same graph.
-	types *typeauthority.Authority
 	// declared is the declared-type column of the sealed conformance sites.
 	// It is derived once here because this is the first place holding both the
 	// artifact type rows and the sites measured against them.
@@ -315,7 +322,22 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.Val
 // judgment from collapsing every non-primitive declaration to the whole
 // runtime vocabulary.
 func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
-	if artifacts == nil || artifacts.types == nil || !artifacts.sites.Available() || len(artifacts.products) == 0 {
+	if artifacts == nil || !artifacts.sites.Available() || len(artifacts.products) == 0 {
+		return false
+	}
+	programs := make([]programschema.Program, 0, len(artifacts.products))
+	for _, product := range artifacts.products {
+		if product.Artifact == nil || !product.Artifact.Available() {
+			return false
+		}
+		compiled := product.Artifact.Program()
+		if !compiled.Available() {
+			return false
+		}
+		programs = append(programs, compiled)
+	}
+	types, typesErr := typeauthority.SealPrograms(programs)
+	if typesErr != nil || types == nil {
 		return false
 	}
 	snapshots := make(map[identity.ContentID]*ingress.Snapshot, len(artifacts.mounts))
@@ -349,7 +371,7 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 		if _, projected := declared[declaredID]; projected {
 			continue
 		}
-		row, rowOK := declaredTypeProjection(artifacts.types, declaredID)
+		row, rowOK := declaredTypeProjection(types, declaredID)
 		if !rowOK {
 			return false
 		}
@@ -365,10 +387,9 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 // families that graph admits. A declaration the authority cannot resolve
 // admits the whole vocabulary, which is the same abstention the judgment
 // already gives an unnarrowed declaration.
-func declaredTypeProjection(types *typeauthority.Authority, declared identity.ContentID) (anadiag.DeclaredType, bool) {
-	ref, referenced := types.FindByReferenceID(declared)
-	value, resolved := types.Resolve(ref)
-	if !referenced || !resolved || value == nil {
+func declaredTypeProjection(types *typeauthority.ArtifactAuthority, declared identity.ContentID) (anadiag.DeclaredType, bool) {
+	value, resolved := types.Resolve(declared)
+	if !resolved || value == nil {
 		return anadiag.DeclaredType{May: runtimekind.All, Spelling: typkind.Unknown.String()}, true
 	}
 	row := anadiag.DeclaredType{May: staticdomain.MayRuntimeKinds(value), Spelling: declaredTypeSpelling(value)}
@@ -458,22 +479,6 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		return nil, false
 	}
 	result.sites = sites
-	programs := make([]programschema.Program, 0, len(result.products))
-	for _, product := range result.products {
-		if product.Artifact == nil || !product.Artifact.Available() {
-			return nil, false
-		}
-		compiled := product.Artifact.Program()
-		if !compiled.Available() {
-			return nil, false
-		}
-		programs = append(programs, compiled)
-	}
-	types, typesErr := typeauthority.SealProgramRows(source.ContentID(), programs)
-	if typesErr != nil || types == nil {
-		return nil, false
-	}
-	result.types = types
 	if !result.sealDeclaredConformanceTypes() {
 		return nil, false
 	}

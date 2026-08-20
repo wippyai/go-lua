@@ -1,4 +1,4 @@
-// schema_rule_binding.go binds Rules: hot specs, carry, read origin and direct sealed cells.
+// schema_rule_binding.go binds Rules: hot specs, carry, compiled read rows and direct sealed cells.
 
 package engine
 
@@ -12,8 +12,7 @@ import (
 // cannot restate semantic keys or output shape here.
 type HotRuleSpec[V, O any] struct {
 	OperandContent func(O) (O, [32]byte, bool)
-	Admission      RuleAdmission[V, O]
-	Transfer       func(Access[V, O]) bool
+	Fold           func(Frame[V, O]) RuleResult[V]
 }
 
 // HotCarrySpec is the executable half of one declared whole-Factor carry.
@@ -29,16 +28,27 @@ type HotCarrySpec[V, O any] struct {
 // not receive a copy of these callbacks: the sealed cell binding is the
 // sole path back to this exact implementation.
 type ruleHotImplementation[K ~uint32 | ~uint64, V, O any] struct {
-	state           *schemaBindingState
-	rule            *RuleSlot[V, O]
-	write           SchemaWriteSlot[V]
-	output          *schemaFactorBindingCell[K, V]
-	carry           *schemaRuleCarryBinding[K, V, O]
-	reads           []schemaRuleReadBinding
+	state  *schemaBindingState
+	rule   *RuleSlot[V, O]
+	write  SchemaWriteSlot[V]
+	output *schemaFactorBindingCell[K, V]
+	carry  *schemaRuleCarryBinding[K, V, O]
+	reads  []schemaRuleReadBinding
+	// The fields below are populated exactly once by SchemaBinding.Seal after
+	// every open Rule validation has succeeded.  They are the sealed Rule's
+	// direct geometry; the draft Rule/write/carry handles above are then
+	// cleared and cannot participate in runtime admission.
+	ruleSemantic    composition.Key
+	operandFamily   composition.Key
+	writeMode       directRuleWriteMode
+	routeRead       uint64
+	carryPresent    bool
+	carryInput      uint64
+	carryTransform  composition.Key
+	carryApply      func(O, V) (V, bool)
 	operandContent  func(O) (O, [32]byte, bool)
 	operandResolver func(OperandCoords) (O, bool)
-	admission       RuleAdmission[V, O]
-	transfer        func(Access[V, O]) bool
+	fold            func(Frame[V, O]) RuleResult[V]
 	projectWrite    func(O) (uint64, bool)
 }
 
@@ -55,100 +65,138 @@ type schemaRuleCarryBinding[K ~uint32 | ~uint64, V, O any] struct {
 }
 
 func (carry *schemaRuleCarryBinding[K, V, O]) complete(state *schemaBindingState, ruleCell schemaRuleBindingCell, ruleOrdinal uint64, output *schemaFactorBindingCell[K, V]) bool {
-	if carry == nil || state == nil || ruleCell == nil || output == nil || carry.state != state || carry.cell != ruleCell || carry.ordinal != ruleOrdinal || carry.slot.cell == nil || carry.slot.cell.schema != state.schema || carry.slot.cell.ordinal>>32 != ruleOrdinal || uint64(uint32(carry.slot.cell.ordinal)) != 0 || carry.factor != output || output.schema != state.schema || output.impl == nil || output.impl.state != state {
+	if carry == nil || state == nil || ruleCell == nil || output == nil || carry.state != state || carry.cell != ruleCell || carry.ordinal != ruleOrdinal || carry.slot.cell == nil || carry.slot.cell.schema != state.schema || carry.slot.cell.ordinal>>32 != ruleOrdinal || uint64(uint32(carry.slot.cell.ordinal)) != 0 || carry.factor != output || output.schema != state.schema || output.impl == nil || output.state != state {
 		return false
 	}
 	shape, ok := state.schema.ruleShapeAt(ruleOrdinal)
 	carryShape, carryOK := state.schema.ruleCarryShapeAt(ruleOrdinal, 0)
-	if !ok || !carryOK || shape.CarryCount != 1 || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs || carry.factor.ordinal >= uint64(len(state.factors)) || state.factors[carry.factor.ordinal] != carry.factor || state.schema.factorSemanticAt(carry.factor.ordinal) != shape.Output {
+	if !ok || !carryOK || shape.CarryCount != 1 || carryShape.Factor != shape.Output || carryShape.Input >= shape.Inputs || !schemaRuleInputFitsInt(carryShape.Input) || carry.factor.ordinal >= uint64(len(state.factors)) || state.factors[carry.factor.ordinal] != carry.factor || state.schema.factorSemanticAt(carry.factor.ordinal) != shape.Output {
 		return false
 	}
 	return (carryShape.Transform.Available() && carry.apply != nil) || (!carryShape.Transform.Available() && carry.apply == nil)
 }
 
-func (carry *schemaRuleCarryBinding[K, V, O]) shape() (composition.RuleCarryShape, bool) {
-	if carry == nil || carry.state == nil || carry.cell == nil {
-		return composition.RuleCarryShape{}, false
+// schemaRuleReadRow is the one immutable compiled geometry row for a typed
+// Rule read. It replaces the former Origin, which repeatedly reopened Schema
+// to recover the same shape. The existing sealed Rule/activation cell is the
+// owner; no Schema, binding state, draft slot, or form handle is retained.
+// The only retained form value is the existing sealed summary-form cell needed
+// by a summary normalizer; no Schema or mutable construction handle crosses
+// into the row. A returned Read and its existing ruleHotImplementation.reads
+// entry share this exact pointer.
+type schemaRuleReadRow struct {
+	owner          schemaRuleBindingCell
+	ownerOrdinal   uint64
+	readOrdinal    uint64
+	input          uint64
+	kind           composition.ReadKind
+	factorOrdinal  uint64
+	factor         composition.Key
+	semantic       composition.Key
+	normalizer     composition.Key
+	dependencies   []uint64
+	summaryForm    schemaFactorFormBinding
+	summaryOrdinal uint64
+}
+
+func (row *schemaRuleReadRow) ownerState() *schemaBindingState {
+	if row == nil || row.owner == nil {
+		return nil
 	}
-	return carry.state.schema.ruleCarryShapeAt(carry.ordinal, 0)
+	return row.owner.schemaRuleBindingState()
 }
 
-// schemaRuleReadOrigin is the non-generic owner proof retained by a typed
-// Read. It names one exact canonical read cell but no equation surface or
-// carrier Unit. The latter are introduced only by the graph-owned member.
-type schemaRuleReadOrigin struct {
-	state       *schemaBindingState
-	cell        schemaRuleBindingCell
-	ruleOrdinal uint64
-	readOrdinal uint64
-	formOrdinal uint64
+func (row *schemaRuleReadRow) live(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
+	return row != nil && state != nil && cell != nil && row.owner == cell && row.ownerOrdinal == ordinal && schemaRuleInputFitsInt(row.readOrdinal) && cell.schemaRuleOrdinal() == ordinal && cell.schemaRuleBindingState() == state
 }
 
-func (origin *schemaRuleReadOrigin) shape() (composition.RuleReadShape, bool) {
-	if origin == nil || origin.state == nil || origin.state.schema == nil {
-		return composition.RuleReadShape{}, false
-	}
-	return origin.state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
-}
-
-func (origin *schemaRuleReadOrigin) factorOrdinal() (uint64, bool) {
-	shape, ok := origin.shape()
-	if !ok {
-		return 0, false
-	}
-	return origin.state.schema.factorOrdinalOf(shape.Factor)
-}
-
-func (origin *schemaRuleReadOrigin) factorIndex() uint64 {
-	ordinal, _ := origin.factorOrdinal()
-	return ordinal
-}
-
-func (origin *schemaRuleReadOrigin) inputOrdinal() uint64 {
-	shape, _ := origin.shape()
-	return shape.Input
-}
-
-func (origin *schemaRuleReadOrigin) readKind() composition.ReadKind {
-	shape, _ := origin.shape()
-	return shape.Kind
-}
-
-func (origin *schemaRuleReadOrigin) semanticKey() composition.Key {
-	shape, _ := origin.shape()
-	return shape.Semantic
-}
-
-func (origin *schemaRuleReadOrigin) dependencyCount() uint64 {
-	shape, _ := origin.shape()
-	return shape.DependencyCount
-}
-
-func (origin *schemaRuleReadOrigin) matches(proof *ruleRuntimeProof, ordinal uint64) bool {
-	if origin == nil || proof == nil || ordinal != origin.readOrdinal || origin.state == nil || origin.cell == nil || origin.state.phase != schemaBindingSealed || origin.state.authority == nil || proof.state != origin.state || proof.schema != origin.state.schema || proof.bindingAuthority != origin.state.authority || proof.ordinal != origin.ruleOrdinal || origin.ruleOrdinal >= uint64(len(origin.state.rules)) || origin.state.rules[origin.ruleOrdinal] != origin.cell || origin.cell.schemaBindingSchema() != origin.state.schema || !origin.cell.schemaRuleProofMatches(proof) {
+func (row *schemaRuleReadRow) sealed() bool {
+	state := row.ownerState()
+	if state == nil || !row.live(state, row.owner, row.ownerOrdinal) || state.phase != schemaBindingSealed || state.authority == nil || row.ownerOrdinal >= uint64(len(state.rules)) {
 		return false
 	}
-	shape, ok := origin.state.schema.ruleReadShapeAt(origin.ruleOrdinal, origin.readOrdinal)
-	factor, factorOK := origin.factorOrdinal()
-	if !ok || !factorOK || shape.Factor != origin.state.schema.factorSemanticAt(factor) || proof.schema.ruleSemanticAt(proof.ordinal) != proof.semantic {
+	return state.rules[row.ownerOrdinal] == row.owner
+}
+
+// The compiled row is also the staged selector seam. This avoids a second
+// selector wrapper containing a duplicate read/dependency vector.
+func (row *schemaRuleReadRow) selectorReadIndex() int {
+	if row == nil || !schemaRuleInputFitsInt(row.readOrdinal) {
+		return -1
+	}
+	return int(row.readOrdinal)
+}
+
+func (row *schemaRuleReadRow) selectorDeclaresRead(index int) bool {
+	if row == nil || index < 0 {
 		return false
 	}
-	if shape.Kind == composition.ReadSelect {
-		return shape.DependencyCount != 0 && shape.Semantic == shape.Factor && proof.selectedReadAt(origin.readOrdinal)
-	}
-	if shape.Kind == composition.ReadSummary {
-		if shape.DependencyCount != 0 {
-			return false
+	for _, dependency := range row.dependencies {
+		if dependency == uint64(index) {
+			return true
 		}
-		form, formOK := origin.state.schema.factorFormShapeAt(factor, origin.formOrdinal)
-		return formOK && summaryReadRowKind(form.Kind) && form.Semantic == shape.Semantic && shape.Semantic == shape.Normalizer && proof.summaryReadAt(origin.readOrdinal)
 	}
-	return shape.Kind == composition.ReadExact && !shape.Semantic.Available() && shape.DependencyCount == 0
+	return false
+}
+
+func (row *schemaRuleReadRow) selectorDependencyCount() int {
+	if row == nil {
+		return 0
+	}
+	return len(row.dependencies)
+}
+
+func compileSchemaRuleReadRow(state *schemaBindingState, owner schemaRuleBindingCell, ruleOrdinal, readOrdinal uint64, summaryForm schemaFactorFormBinding, summaryOrdinal uint64) (*schemaRuleReadRow, bool) {
+	if state == nil || state.phase != schemaBindingOpen || state.schema == nil || owner == nil || owner.schemaBindingSchema() != state.schema || owner.schemaRuleOrdinal() != ruleOrdinal || !schemaRuleInputFitsInt(readOrdinal) {
+		return nil, false
+	}
+	shape, shapeOK := state.schema.ruleReadShapeAt(ruleOrdinal, readOrdinal)
+	factorOrdinal, factorOK := state.schema.factorOrdinalOf(shape.Factor)
+	ruleShape, ruleOK := state.schema.ruleShapeAt(ruleOrdinal)
+	if !shapeOK || !factorOK || !ruleOK || factorOrdinal >= uint64(len(state.factors)) || state.factors[factorOrdinal] == nil || shape.Input >= ruleShape.Inputs || !schemaRuleInputFitsInt(shape.Input) || !schemaRuleInputFitsInt(shape.DependencyCount) {
+		return nil, false
+	}
+	row := &schemaRuleReadRow{
+		owner: owner, ownerOrdinal: ruleOrdinal, readOrdinal: readOrdinal,
+		input: shape.Input, kind: shape.Kind, factorOrdinal: factorOrdinal,
+		factor: shape.Factor, semantic: shape.Semantic, normalizer: shape.Normalizer,
+	}
+	switch shape.Kind {
+	case composition.ReadExact:
+		if shape.Semantic.Available() || shape.Normalizer.Available() || shape.DependencyCount != 0 || summaryForm != nil {
+			return nil, false
+		}
+	case composition.ReadSelect:
+		if shape.Semantic != shape.Factor || shape.Normalizer.Available() || shape.DependencyCount == 0 || summaryForm != nil || !validReadDependencies(state.schema, ruleOrdinal, readOrdinal, shape.DependencyCount) {
+			return nil, false
+		}
+		row.dependencies = make([]uint64, int(shape.DependencyCount))
+		for index := range row.dependencies {
+			dependency, dependencyOK := state.schema.ruleReadDependencyAt(ruleOrdinal, readOrdinal, uint64(index))
+			if !dependencyOK {
+				return nil, false
+			}
+			row.dependencies[index] = dependency
+		}
+	case composition.ReadSummary:
+		if !shape.Semantic.Available() || shape.Normalizer != shape.Semantic || shape.DependencyCount != 0 || summaryForm == nil {
+			return nil, false
+		}
+		formShape, formOK := state.schema.factorFormShapeAt(factorOrdinal, summaryOrdinal)
+		if !formOK || !summaryReadRowKind(formShape.Kind) || formShape.Semantic != shape.Semantic || summaryForm.schemaBindingSchema() != state.schema {
+			return nil, false
+		}
+		row.summaryForm, row.summaryOrdinal = summaryForm, summaryOrdinal
+	default:
+		return nil, false
+	}
+	return row, true
 }
 
 type schemaRuleReadBinding interface {
 	complete(*schemaBindingState, schemaRuleBindingCell, uint64) bool
 	bind(readBinding, equation.RuleMember, map[composition.Key]runtimeFactor) bool
+	readRow() *schemaRuleReadRow
 	projectLocal(any) (uint64, bool)
 	exactAdmitFactor() schemaFactorBinding
 }
@@ -159,6 +207,14 @@ const (
 	directRuleWriteExact directRuleWriteMode = iota + 1
 	directRuleWriteRoute
 )
+
+// schemaRuleInputFitsInt is the single admission bound for a declared Rule
+// input that will cross into the runtime's int-indexed read/carry lanes. The
+// bound is checked while the cold shape and draft handles are still present;
+// sealed cells retain only the already-safe scalar.
+func schemaRuleInputFitsInt(input uint64) bool {
+	return input <= uint64(^uint(0)>>1)
+}
 
 // bindSelectedRuleDirectCell installs the final Rule cell for one direct
 // ordinal lane. Its cold shape selects the carry/write geometry; every read
@@ -171,7 +227,7 @@ func bindSelectedRuleDirectCell[K ~uint32 | ~uint64, V, O any](binding *SchemaBi
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil || (writeMode != directRuleWriteExact && writeMode != directRuleWriteRoute) || carryRequired && (carry.cell == nil || carry.cell.schema != state.schema) {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || (writeMode != directRuleWriteExact && writeMode != directRuleWriteRoute) || writeMode == directRuleWriteExact && projectWrite == nil || carryRequired && (carry.cell == nil || carry.cell.schema != state.schema) {
 		state.poisonLocked()
 		return false
 	}
@@ -214,11 +270,6 @@ func bindSelectedRuleDirectCell[K ~uint32 | ~uint64, V, O any](binding *SchemaBi
 			return false
 		}
 	}
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
-		state.poisonLocked()
-		return false
-	}
 	outputOrdinal, outputOK := factorRefOrdinal(output, state.schema)
 	if !outputOK || outputOrdinal >= uint64(len(state.factors)) || state.schema.factorSemanticAt(outputOrdinal) != shape.Output {
 		state.poisonLocked()
@@ -238,7 +289,7 @@ func bindSelectedRuleDirectCell[K ~uint32 | ~uint64, V, O any](binding *SchemaBi
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          carryBinding,
 		reads:          make([]schemaRuleReadBinding, int(shape.ReadCount)),
-		operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer,
+		operandContent: spec.OperandContent, fold: spec.Fold,
 		projectWrite: projectWrite,
 	}
 	state.rules[ruleOrdinal] = cell
@@ -321,14 +372,14 @@ func BindSelectedRuleDirectExactRead[K ~uint32 | ~uint64, V, O, RV any](binding 
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: cell.ordinal, readOrdinal: readOrdinal}
-	read := Read[OrderedCells[RV]]{origin: origin, index: int(readOrdinal), resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	if !factorCell.schemaFactorReadComplete(state, origin) {
+	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
+	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
+	read := Read[OrderedCells[RV]]{row: row, index: int(readOrdinal), resolve: resolveTypedRead[RV, OrderedCells[RV]]}
 	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueExactRuleReadBinding[RV]{
-		origin: origin, factor: factorCell, read: read,
+		row: row, factor: factorCell, read: read,
 		projector: projectExactLocal(project),
 	}
 	return read, true
@@ -358,13 +409,13 @@ func BindSelectedRuleDirectSelectedRead[K ~uint32 | ~uint64, V, O, RV any, Tag s
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: cell.ordinal, readOrdinal: readOrdinal}
-	read := Read[Selection[Tag, OrderedCells[RV]]]{origin: origin, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
-	if !factorCell.schemaFactorReadComplete(state, origin) {
+	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
+	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
-	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSelectedRuleReadBinding[RV, Tag]{origin: origin, factor: factorCell, read: read, locate: locate}
+	read := Read[Selection[Tag, OrderedCells[RV]]]{row: row, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSelectedRuleReadBinding[RV, Tag]{row: row, factor: factorCell, read: read, locate: locate}
 	return read, true
 }
 
@@ -392,13 +443,13 @@ func BindSelectedRuleDirectOperandRead[K ~uint32 | ~uint64, V, O, RV any, Tag se
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: cell.ordinal, readOrdinal: readOrdinal}
-	read := Read[Selection[Tag, OrderedCells[RV]]]{origin: origin, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
-	if !factorCell.schemaFactorReadComplete(state, origin) {
+	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, nil, 0)
+	if !rowOK || row.factorOrdinal != factorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
 		state.poisonLocked()
 		return Read[Selection[Tag, OrderedCells[RV]]]{}, false
 	}
-	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]{origin: origin, factor: factorCell, read: read, locateOperand: locate}
+	read := Read[Selection[Tag, OrderedCells[RV]]]{row: row, index: int(readOrdinal), resolve: resolveTypedSelection[RV, OrderedCells[RV], Tag]}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]{row: row, factor: factorCell, read: read, locateOperand: locate}
 	return read, true
 }
 
@@ -406,7 +457,7 @@ func BindSelectedRuleDirectOperandRead[K ~uint32 | ~uint64, V, O, RV any, Tag se
 // direct Rule cell at its packed cold ordinal. The sealed Rule row supplies
 // the summary semantic and zero-dependency geometry; the Factor form supplies
 // the typed normalizer and closed summary row. No read is appended.
-func BindSelectedRuleDirectSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], form SchemaReadForm[RV], admit any) (Read[S], bool) {
+func BindSelectedRuleDirectSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](binding *SchemaBinding, rule *RuleSlot[V, O], slot SchemaReadSlot[RV], factor FactorRef[RV], form SchemaReadForm[RV]) (Read[S], bool) {
 	state := bindingState(binding)
 	if state == nil {
 		return Read[S]{}, false
@@ -430,13 +481,13 @@ func BindSelectedRuleDirectSummaryRead[K ~uint32 | ~uint64, V, O, RV, S any](bin
 		return Read[S]{}, false
 	}
 	formCell, formOK := factorCell.schemaFactorFormAt(formOrdinal).(schemaOpaqueSummaryRuleReadForm[RV, S])
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: cell.ordinal, readOrdinal: readOrdinal, formOrdinal: formOrdinal}
-	read := Read[S]{origin: origin, index: int(readOrdinal), resolve: resolveTypedRead[RV, S]}
-	if !formOK || !formCell.schemaSummaryRuleReadComplete(state, origin) {
+	row, rowOK := compileSchemaRuleReadRow(state, cell, cell.ordinal, readOrdinal, formCell, formOrdinal)
+	if !formOK || !rowOK || row.factorOrdinal != factorOrdinal || !formCell.schemaSummaryRuleReadComplete(state, row) {
 		state.poisonLocked()
 		return Read[S]{}, false
 	}
-	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSummaryRuleReadBinding[RV, S]{origin: origin, form: formCell, read: read, admit: admit}
+	read := Read[S]{row: row, index: int(readOrdinal), resolve: resolveTypedRead[RV, S]}
+	cell.impl.reads[int(readOrdinal)] = &schemaOpaqueSummaryRuleReadBinding[RV, S]{row: row, form: formCell, read: read}
 	return read, true
 }
 
@@ -450,7 +501,7 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor.cell == nil || readFactor.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || !spec.Admission.valid() || spec.Transfer == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor.cell == nil || readFactor.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -467,11 +518,6 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
-		state.poisonLocked()
-		return Read[OrderedCells[RV]]{}, false
-	}
 	outputOrdinal, outputOK := factorRefOrdinal(output, state.schema)
 	readFactorOrdinal, readFactorOK := factorRefOrdinal(readFactor, state.schema)
 	if !outputOK || !readFactorOK || outputOrdinal >= uint64(len(state.factors)) || readFactorOrdinal >= uint64(len(state.factors)) || state.schema.factorSemanticAt(outputOrdinal) != shape.Output || state.schema.factorSemanticAt(readFactorOrdinal) != readShape.Factor {
@@ -480,19 +526,19 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	}
 	outputCell, outputTyped := state.factors[outputOrdinal].(*schemaFactorBindingCell[OK, V])
 	readCell := state.factors[readFactorOrdinal]
-	if !outputTyped || outputCell == nil || readCell == nil || outputCell.impl == nil || readCell.schemaFactorSchema() != state.schema || outputCell.impl.algebra == nil || !readCell.schemaFactorReadComplete(state, &schemaRuleReadOrigin{state: state, ruleOrdinal: ruleOrdinal, readOrdinal: 0}) || outputCell.impl.state != state {
+	if !outputTyped || outputCell == nil || readCell == nil || outputCell.impl == nil || readCell.schemaFactorSchema() != state.schema || outputCell.impl.algebra == nil || outputCell.state != state {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
 	cell := &schemaRuleBindingCellImpl[OK, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0}
-	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	readBinding := &schemaOpaqueExactRuleReadBinding[RV]{origin: origin, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
-	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, admission: spec.Admission, transfer: spec.Transfer, projectWrite: projectWrite}
-	if !cell.schemaRuleComplete() {
+	row, rowOK := compileSchemaRuleReadRow(state, cell, ruleOrdinal, 0, nil, 0)
+	if !rowOK || row.factorOrdinal != readFactorOrdinal || !readCell.schemaFactorReadComplete(state, row) {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
+	read := Read[OrderedCells[RV]]{row: row, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
+	readBinding := &schemaOpaqueExactRuleReadBinding[RV]{row: row, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
+	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite}
 	state.rules[ruleOrdinal] = cell
 	return read, true
 }

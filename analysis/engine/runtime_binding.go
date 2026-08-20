@@ -34,14 +34,22 @@ type runtimeBinding struct {
 	validated bool                 // newRuntimeBinding checked the dense atom catalog once
 }
 
-// newRuntimeBinding derives dense atoms in the Graph catalog order.
+// newRuntimeBinding derives dense atoms in the Graph catalog order from the
+// exact sealed Binding state. The state is the retained owner of ordinary and
+// activation cells; a Schema alone cannot authorize the runtime catalog.
 // Atom numbers are implementation-local dense ranks; equation Decisions stay
 // the only semantic identity.
-func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, bool) {
-	if schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
+func newRuntimeBinding(state *schemaBindingState, graph *equation.Graph) (*runtimeBinding, bool) {
+	if state == nil {
 		return nil, false
 	}
-	catalog, catalogOK := buildGraphBindingCatalog(schema, graph)
+	state.mu.Lock()
+	schema, authority, sealed := state.schema, state.authority, state.phase == schemaBindingSealed && state.authority != nil
+	state.mu.Unlock()
+	if !sealed || schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
+		return nil, false
+	}
+	catalog, catalogOK := buildGraphBindingCatalog(state, graph)
 	if !catalogOK || catalog == nil {
 		return nil, false
 	}
@@ -60,7 +68,7 @@ func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, 
 	if err != nil || manager == nil {
 		return nil, false
 	}
-	return &runtimeBinding{schema: schema, graph: graph, guards: manager, catalog: catalog, validated: true}, true
+	return &runtimeBinding{schema: schema, state: state, authority: authority, graph: graph, guards: manager, catalog: catalog, validated: true}, true
 }
 
 // newSealedRuntimeBinding is the pre-fenced constructor for the callback-free
@@ -70,21 +78,7 @@ func newRuntimeBinding(schema *Schema, graph *equation.Graph) (*runtimeBinding, 
 // itself, because that state is the retained input an activation revision
 // rebinds from.
 func newSealedRuntimeBinding(state *schemaBindingState, graph *equation.Graph) (*runtimeBinding, bool) {
-	if state == nil {
-		return nil, false
-	}
-	state.mu.Lock()
-	schema, authority, sealed := state.schema, state.authority, state.phase == schemaBindingSealed && state.authority != nil
-	state.mu.Unlock()
-	if !sealed {
-		return nil, false
-	}
-	runtime, ok := newRuntimeBinding(schema, graph)
-	if !ok || runtime == nil {
-		return nil, false
-	}
-	runtime.state, runtime.authority = state, authority
-	return runtime, true
+	return newRuntimeBinding(state, graph)
 }
 
 func (binding *runtimeBinding) valid() bool {
@@ -92,13 +86,6 @@ func (binding *runtimeBinding) valid() bool {
 	// complete decision/atom correspondence is proved above once; rewalking it
 	// for every Factor would turn cold binding into F×Decision work.
 	return binding != nil && binding.validated && binding.schema != nil && binding.schema.Available() && binding.graph != nil && binding.graph.CompositionID() == binding.schema.coldID() && binding.guards != nil && binding.state != nil && binding.authority != nil && binding.state.authority == binding.authority && binding.state.schema == binding.schema && binding.state.phase == schemaBindingSealed
-}
-
-func (binding *runtimeBinding) pinBinding(receipt factorRuntimeBinding) bool {
-	if binding == nil || !receipt.valid() || receipt.state.schema != binding.schema {
-		return false
-	}
-	return binding.state == receipt.state && binding.authority == receipt.authority
 }
 
 // takeFactorUses consumes one typed binder's cold graph partition. It is a

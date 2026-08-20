@@ -52,30 +52,28 @@ type carryTargetRow struct {
 }
 
 func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImplementation[K, V], runtime *runtimeBinding) (*boundFactor[K, V], bool) {
-	if implementation == nil || implementation.algebra == nil || !implementation.descriptor.valid() || runtime == nil || !runtime.valid() {
+	if implementation == nil || !factorRowAvailable(implementation.row) || implementation.algebra == nil || runtime == nil || !runtime.valid() {
 		return nil, false
 	}
-	descriptor := implementation.descriptor
-	receipt := implementation.binding
-	if !receipt.valid() {
+	row := implementation.row
+	state := row.schemaFactorBindingState()
+	schema := row.schemaFactorSchema()
+	semantic := row.schemaFactorSemanticKey()
+	if state == nil || schema == nil || state != runtime.state || schema != runtime.schema || row.schemaFactorOrdinal() != implementation.ordinal || row.schemaFactorAlgebra() != implementation.algebra || !semantic.Available() {
 		return nil, false
 	}
-	if !runtime.pinBinding(receipt) {
+	if runtime.graph.CompositionID() != schema.coldID() {
 		return nil, false
 	}
-	descriptor = factorRuntimeDescriptor{schema: receipt.state.schema, state: receipt.state, ordinal: receipt.ordinal, semantic: receipt.semanticKey(), keyEnd: receipt.keyLimit(), algebra: receipt.algebra}
-	if runtime.graph.CompositionID() != descriptor.schema.coldID() {
+	index, indexed := schema.cold.FactorIndex(semantic)
+	if !indexed || index != implementation.ordinal {
 		return nil, false
 	}
-	index, indexed := descriptor.schema.cold.FactorIndex(descriptor.semantic)
-	if !indexed || index != descriptor.ordinal {
-		return nil, false
-	}
-	uses, taken := runtime.takeFactorUses(descriptor.semantic)
+	uses, taken := runtime.takeFactorUses(semantic)
 	if !taken {
 		return nil, false
 	}
-	catalog, catalogOK := collectFactorGraphCatalog[K, V](descriptor, runtime.graph, uses)
+	catalog, catalogOK := collectFactorGraphCatalog[K, V](implementation, runtime.graph, uses)
 	if !catalogOK {
 		return nil, false
 	}
@@ -175,7 +173,7 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 			}
 		}
 		for _, surface := range catalog.strongWrites {
-			unit, present := bound.reads[equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: surface.Local}]
+			unit, present := bound.reads[equation.Surface{Factor: semantic, Form: equation.SurfaceReadExact, Local: surface.Local}]
 			if !present {
 				return false
 			}
@@ -216,12 +214,12 @@ func bindFactorFromGraph[K ~uint32 | ~uint64, V any](implementation *FactorImple
 	return bound, true
 }
 
-func exactReadDescriptorSurface(descriptor factorRuntimeDescriptor, local uint64) equation.Surface {
-	return equation.Surface{Factor: descriptor.semantic, Form: equation.SurfaceReadExact, Local: local}
+func exactReadSurface(row schemaFactorBinding, local uint64) equation.Surface {
+	return equation.Surface{Factor: row.schemaFactorSemanticKey(), Form: equation.SurfaceReadExact, Local: local}
 }
 
-func exactWriteSurface(binding factorRuntimeBinding, local uint64) equation.Surface {
-	return equation.Surface{Factor: binding.semanticKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
+func exactWriteSurface(row schemaFactorBinding, local uint64) equation.Surface {
+	return equation.Surface{Factor: row.schemaFactorSemanticKey(), Form: equation.SurfaceWriteExact, Local: local, Mode: equation.TargetModeStrong}
 }
 
 func matchesFactorReadShape(schema *Schema, ordinal uint64, surface equation.Surface, kind readFormKind) bool {
@@ -272,11 +270,15 @@ func summaryReadFormFold(schema *Schema, ordinal uint64, semantic composition.Ke
 // occurrence surface, summary key row, weak cover, and selector target; the
 // Factor owns only the typed conversion from raw key to K and the carrier
 // declarations. There is no caller-supplied materialization language.
-func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRuntimeDescriptor, graph *equation.Graph, uses graphFactorUses) (factorGraphCatalog[K], bool) {
-	if descriptor.schema == nil || !descriptor.schema.Available() || descriptor.algebra == nil || graph == nil {
+func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *FactorImplementation[K, V], graph *equation.Graph, uses graphFactorUses) (factorGraphCatalog[K], bool) {
+	if implementation == nil || !factorRowAvailable(implementation.row) || implementation.algebra == nil || graph == nil {
 		return factorGraphCatalog[K]{}, false
 	}
-	key := descriptor.semantic
+	row := implementation.row
+	schema := row.schemaFactorSchema()
+	key := row.schemaFactorSemanticKey()
+	keyEnd := implementation.algebra.KeyEnd()
+	state := row.schemaFactorBindingState()
 	exact := make(map[equation.Surface]struct{})
 	summaries := make(map[summaryUnitKey][]K)
 	aliases := make(map[equation.Surface]summaryUnitKey)
@@ -287,17 +289,17 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 
 	var collectRead func(equation.Surface) bool
 	collectSummary := func(surface equation.Surface) bool {
-		if !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, surface, summaryReadForm) || surface.Mode != equation.TargetModeNone {
+		if !matchesFactorReadShape(schema, implementation.ordinal, surface, summaryReadForm) || surface.Mode != equation.TargetModeNone {
 			return false
 		}
 		// The fold is read from the declared cold form the surface names, so a
 		// summary can never acquire a fold from the Rule or Query that reads it.
-		distributive, foldOK := summaryReadFormFold(descriptor.schema, descriptor.ordinal, surface.Semantic)
+		distributive, foldOK := summaryReadFormFold(schema, implementation.ordinal, surface.Semantic)
 		if !foldOK {
 			return false
 		}
 		representative, represented := graph.SummaryRepresentative(surface)
-		if !represented || !matchesFactorReadShape(descriptor.schema, descriptor.ordinal, representative, summaryReadForm) {
+		if !represented || !matchesFactorReadShape(schema, implementation.ordinal, representative, summaryReadForm) {
 			return false
 		}
 		keyRange, ranged := graph.SummaryKeyRange(representative)
@@ -308,7 +310,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		keys := make([]K, count)
 		for index := range keys {
 			raw, present := keyRange.At(index)
-			if !present || raw >= descriptor.keyEnd {
+			if !present || raw >= keyEnd {
 				return false
 			}
 			keys[index] = K(raw)
@@ -323,7 +325,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		summaries[unit] = keys
 		aliases[surface] = unit
 		if _, present := aliases[representative]; !present {
-			representativeDistributive, representativeFoldOK := summaryReadFormFold(descriptor.schema, descriptor.ordinal, representative.Semantic)
+			representativeDistributive, representativeFoldOK := summaryReadFormFold(schema, implementation.ordinal, representative.Semantic)
 			if !representativeFoldOK {
 				return false
 			}
@@ -342,7 +344,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		}
 		switch surface.Form {
 		case equation.SurfaceReadExact:
-			if surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > descriptor.keyEnd {
+			if surface.Semantic.Available() || surface.Normalizer.Available() || surface.Local == 0 || surface.Local > keyEnd {
 				return false
 			}
 			exact[surface] = struct{}{}
@@ -381,11 +383,11 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		}
 		switch surface.Mode {
 		case equation.TargetModeStrong:
-			if surface.Local == 0 || surface.Local > descriptor.keyEnd {
+			if surface.Local == 0 || surface.Local > keyEnd {
 				return false
 			}
 			strong[surface] = struct{}{}
-			exact[exactReadDescriptorSurface(descriptor, surface.Local)] = struct{}{}
+			exact[exactReadSurface(row, surface.Local)] = struct{}{}
 			return true
 		case equation.TargetModeWeak:
 			return collectWeak(surface)
@@ -394,37 +396,36 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](descriptor factorRunt
 		}
 	}
 	for _, use := range uses.reads {
-		readShape, readOK := use.rule.read(uint64(use.index))
-		if use.rule == nil || use.index < 0 || !readOK || readShape.Factor != key {
+		row := use.row
+		if use.index < 0 || row == nil || state == nil || !row.sealed() || row.ownerState() != state || row.ownerOrdinal >= uint64(len(state.rules)) || row.readOrdinal != uint64(use.index) || row.factor != key {
 			return factorGraphCatalog[K]{}, false
 		}
 		if use.surface.Form == equation.SurfaceReadSelect {
 			// A ReadSelect names its target Factor only. Exact Ref routes are
 			// chosen row-locally by the staged locator; no target Unit or
 			// candidate vector is present in the graph catalog.
-			if readShape.Kind != composition.ReadSelect || readShape.DependencyCount == 0 ||
-				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Normalizer.Available() || !use.surface.LocalAvailable() {
+			if row.kind != composition.ReadSelect || len(row.dependencies) == 0 ||
+				use.surface.Mode != equation.TargetModeNone || use.surface.Semantic != key || use.surface.Semantic != row.semantic || use.surface.Normalizer.Available() || !use.surface.LocalAvailable() {
 				return factorGraphCatalog[K]{}, false
 			}
 			dynamicRead = true
 			continue
 		}
-		if readShape.DependencyCount != 0 || !collectRead(use.surface) {
+		if len(row.dependencies) != 0 || use.surface.Form == equation.SurfaceReadExact && row.kind != composition.ReadExact || use.surface.Form == equation.SurfaceReadSummary && row.kind != composition.ReadSummary || !collectRead(use.surface) {
 			return factorGraphCatalog[K]{}, false
 		}
 	}
 	for _, use := range uses.writes {
-		writeShape, writeOK := use.rule.write(uint64(use.index))
-		if use.rule == nil || use.index < 0 || !writeOK || writeShape.Factor != key {
+		if use.index < 0 || !use.surface.Available() || use.surface.Factor != key {
 			return factorGraphCatalog[K]{}, false
 		}
-		switch writeShape.Kind {
-		case composition.WriteExact:
-			if writeShape.Route != 0 || !collectTarget(use.surface) {
+		switch {
+		case use.routeRead == 0 && use.surface.Form == equation.SurfaceWriteExact:
+			if !collectTarget(use.surface) {
 				return factorGraphCatalog[K]{}, false
 			}
-		case composition.WriteRoute:
-			if writeShape.Route == 0 || use.surface.Form != equation.SurfaceWriteRoute || use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() {
+		case use.routeRead != 0 && use.surface.Form == equation.SurfaceWriteRoute:
+			if use.surface.Mode != equation.TargetModeNone || use.surface.Semantic.Available() || use.surface.Normalizer.Available() {
 				return factorGraphCatalog[K]{}, false
 			}
 			routeWrite = true

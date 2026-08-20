@@ -11,28 +11,15 @@ import (
 // into the sealed equation topology.
 
 func validateSummarySurface(mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) bool {
-	if mapping == nil {
+	if mapping == nil || mapping.state == nil || mapping.authority == nil || mapping.state != state || mapping.authority != authority {
 		return false
 	}
-	var bindingState *schemaBindingState
-	var bindingAuthority *schemaBindingAuthority
-	var factor, normalizer composition.Key
-	var ok bool
-	if mapping.proof != nil {
-		if !mapping.proof.summaryReadAt(mapping.read) {
-			return false
-		}
-		shape, shapeOK := mapping.proof.schema.ruleReadShapeAt(mapping.proof.ordinal, mapping.read)
-		bindingState, bindingAuthority, factor, normalizer, ok = mapping.proof.state, mapping.proof.bindingAuthority, shape.Factor, shape.Semantic, shapeOK
-	} else if mapping.state != nil {
-		bindingState, bindingAuthority, factor, normalizer = mapping.state, mapping.authority, mapping.factor, mapping.normalizer
-		ok = factor.Available() && normalizer.Available()
-	}
+	factor, normalizer := mapping.factor, mapping.normalizer
 	surface := mapping.surface
-	return ok && bindingState == state && bindingAuthority == authority && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
+	return factor.Available() && normalizer.Available() && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
 }
 
-// RuleReadSurface and RuleWriteSurface are owner-issued sealed coordinate
+// RuleReadSurface and ruleWriteSurface are owner-issued sealed coordinate
 // values. The Ref factory preserves the originating Binding authority and
 // declaration folding rejects foreign/equal-but-distinct refs.
 type RuleReadSurface struct {
@@ -51,92 +38,67 @@ type ruleSummaryMapping struct {
 	authority  *schemaBindingAuthority
 	factor     composition.Key
 	normalizer composition.Key
-	proof      *ruleRuntimeProof
-	read       uint64
 	surface    equation.Surface
 	keys       []uint64
 }
 
-type RuleWriteSurface struct {
+type ruleWriteSurface struct {
 	value     equation.Surface
 	authority *schemaBindingAuthority
-	proof     *ruleRuntimeProof
-	write     uint64
 	anchored  bool
 }
 
 func ExactReadSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleReadSurface, bool) {
-	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
+	row := ref.row
+	if !factorRowAvailable(row) || uint64(ref.raw) >= row.schemaFactorAlgebra().KeyEnd() {
 		return RuleReadSurface{}, false
 	}
-	return RuleReadSurface{value: equation.Surface{Factor: ref.binding.semanticKey(), Form: equation.SurfaceReadExact, Local: uint64(ref.raw) + 1}, authority: ref.binding.authority}, true
+	return RuleReadSurface{value: equation.Surface{Factor: row.schemaFactorSemanticKey(), Form: equation.SurfaceReadExact, Local: uint64(ref.raw) + 1}, authority: row.schemaFactorBindingState().authority}, true
 }
 
-func ExactWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (RuleWriteSurface, bool) {
-	if !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
-		return RuleWriteSurface{}, false
+func exactRuleWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (ruleWriteSurface, bool) {
+	row := ref.row
+	if !factorRowAvailable(row) || uint64(ref.raw) >= row.schemaFactorAlgebra().KeyEnd() {
+		return ruleWriteSurface{}, false
 	}
-	return RuleWriteSurface{value: equation.Surface{Factor: ref.binding.semanticKey(), Form: equation.SurfaceWriteExact, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong}, authority: ref.binding.authority}, true
+	return ruleWriteSurface{value: equation.Surface{Factor: row.schemaFactorSemanticKey(), Form: equation.SurfaceWriteExact, Local: uint64(ref.raw) + 1, Mode: equation.TargetModeStrong}, authority: row.schemaFactorBindingState().authority}, true
 }
 
-// SummaryReadSurface consumes a sealed ClosedRefs vector and the exact
-// implementation-issued summary proof. Semantic/normalizer identity is read
-// from Schema, never supplied by the caller. The refs digest is the surface
-// coordinate at full width, so two distinct key vectors always name two
-// distinct summary surfaces.
-func SummaryReadSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, read uint64, refs *ClosedRefs[K]) (RuleReadSurface, bool) {
-	if proof == nil || !proof.summaryReadAt(read) || refs == nil || !refs.closed || !refs.binding.valid() || refs.binding.authority != proof.bindingAuthority {
+// summaryReadSurface materializes a summary surface from the compiled read
+// row and source-owned dense Value keys. The key-vector digest is the surface
+// coordinate at full width, so two distinct vectors always name two distinct
+// summary surfaces.
+func summaryReadSurface(state *schemaBindingState, authority *schemaBindingAuthority, row *schemaRuleReadRow, keys []uint64) (RuleReadSurface, bool) {
+	if state == nil || state.schema == nil || authority == nil || state.authority != authority || state.phase != schemaBindingSealed || row == nil || !row.sealed() || len(keys) == 0 {
 		return RuleReadSurface{}, false
 	}
-	shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
-	if !shapeOK || refs.binding.semanticKey() != shape.Factor {
+	if row.ownerState() != state || row.kind != composition.ReadSummary || len(row.dependencies) != 0 || !row.factor.Available() || !row.semantic.Available() || row.semantic != row.normalizer {
 		return RuleReadSurface{}, false
 	}
-	surface := equation.Surface{Factor: refs.binding.semanticKey(), Form: equation.SurfaceReadSummary, Content: refs.digest, Semantic: shape.Semantic, Normalizer: shape.Semantic}
+	digest := summaryVectorDigest(keys)
+	if digest == ([32]byte{}) {
+		return RuleReadSurface{}, false
+	}
+	surface := equation.Surface{Factor: row.factor, Form: equation.SurfaceReadSummary, Content: digest, Semantic: row.semantic, Normalizer: row.normalizer}
 	if !surface.Available() {
 		return RuleReadSurface{}, false
 	}
 	return RuleReadSurface{
 		value:     surface,
-		authority: refs.binding.authority,
+		authority: authority,
 		summary: &ruleSummaryMapping{
-			proof:   proof,
-			read:    read,
-			surface: surface,
-			keys: func() []uint64 {
-				keys := make([]uint64, len(refs.refs))
-				for index, ref := range refs.refs {
-					keys[index] = uint64(ref.raw)
-				}
-				return keys
-			}(),
+			state: state, authority: authority,
+			factor: row.factor, normalizer: row.semantic,
+			surface: surface, keys: append([]uint64(nil), keys...),
 		},
 	}, true
 }
 
-// SelectedReadSurface consumes the sealed selected-read schema proof and one
-// exact output Ref. Dependencies are exact owner surfaces for the declared
-// predecessor reads; their order is checked against the sealed Schema.
-func SelectedReadSurface[K ~uint32 | ~uint64](proof *ruleRuntimeProof, read uint64, ref Ref[K], dependencies []RuleReadSurface) (RuleReadSurface, bool) {
-	if proof == nil || !proof.selectedReadAt(read) || proof.bindingAuthority == nil || ref.binding.authority != nil && ref.binding.authority != proof.bindingAuthority || !ref.binding.valid() || uint64(ref.raw) >= ref.binding.keyLimit() {
-		return RuleReadSurface{}, false
+func validSelectedDependencyRow(row *schemaRuleReadRow, surface equation.Surface) bool {
+	if row == nil {
+		return false
 	}
-	readShape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
-	if !shapeOK || len(dependencies) != int(readShape.DependencyCount) || ref.binding.semanticKey() != readShape.Factor {
-		return RuleReadSurface{}, false
-	}
-	for index, dependency := range dependencies {
-		readIndex, ok := proof.schema.ruleReadDependencyAt(proof.ordinal, read, uint64(index))
-		shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, readIndex)
-		if !ok || !shapeOK || dependency.authority != proof.bindingAuthority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
-			return RuleReadSurface{}, false
-		}
-	}
-	return RuleReadSurface{value: equation.Surface{Factor: readShape.Factor, Form: equation.SurfaceReadSelect, Local: uint64(ref.raw) + 1, Semantic: readShape.Factor}, authority: ref.binding.authority}, true
-}
-
-func validSelectedDependencySurface(shape composition.RuleReadShape, surface equation.Surface) bool {
-	switch shape.Kind {
+	switch row.kind {
 	case composition.ReadExact:
 		return surface.Form == equation.SurfaceReadExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
 	case composition.ReadSelect:
@@ -149,11 +111,11 @@ func validSelectedDependencySurface(shape composition.RuleReadShape, surface equ
 // anchoredSelectedContent mints the content coordinate of one mounted
 // selected read. The preimage is length-framed under its own domain, so no
 // pair of distinct anchors shares an encoding.
-func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Operand, proof *ruleRuntimeProof, read uint64) ([32]byte, bool) {
+func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Operand, ordinal, read uint64) ([32]byte, bool) {
 	var writer canonical.DigestWriter
 	if writer.Reset(anchoredSelectedSurfaceDomain, anchoredSurfaceVersion) != nil ||
 		!writeAnchor(&writer, occurrence, operand) ||
-		writer.Uint(proof.ordinal) != nil || writer.Uint(read) != nil ||
+		writer.Uint(ordinal) != nil || writer.Uint(read) != nil ||
 		writer.Finish() != nil {
 		return [32]byte{}, false
 	}
@@ -162,11 +124,11 @@ func anchoredSelectedContent(occurrence equation.Occurrence, operand equation.Op
 }
 
 // anchoredRouteContent is the route-write sibling of anchoredSelectedContent.
-func anchoredRouteContent(occurrence equation.Occurrence, operand equation.Operand, proof *ruleRuntimeProof, write, read uint64) ([32]byte, bool) {
+func anchoredRouteContent(occurrence equation.Occurrence, operand equation.Operand, ordinal, write, read uint64) ([32]byte, bool) {
 	var writer canonical.DigestWriter
 	if writer.Reset(anchoredRouteSurfaceDomain, anchoredSurfaceVersion) != nil ||
 		!writeAnchor(&writer, occurrence, operand) ||
-		writer.Uint(proof.ordinal) != nil || writer.Uint(write) != nil || writer.Uint(read) != nil ||
+		writer.Uint(ordinal) != nil || writer.Uint(write) != nil || writer.Uint(read) != nil ||
 		writer.Finish() != nil {
 		return [32]byte{}, false
 	}

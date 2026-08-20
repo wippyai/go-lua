@@ -16,10 +16,10 @@ type typedReadRuntime[K ~uint32 | ~uint64, V, S any] struct {
 	input         int
 	binding       *factbinding.Binding[K, V]
 	unit          carrier.Unit
-	exactFactor   factorRuntimeBinding
+	exactFactor   schemaFactorBinding
 	exactRaw      uint64
 	exact         bool
-	summaryFactor factorRuntimeBinding
+	summaryFactor schemaFactorBinding
 	summaryForm   uint64
 	summaryKeys   []uint64
 	summaryDigest [32]byte
@@ -147,12 +147,12 @@ func (runtime *stagedReadRuntime[V, S, Tag]) dynamicReads() []demand.DynamicRead
 	return []demand.DynamicRead{{Input: uint64(runtime.input), Slot: slot}}
 }
 
-func (*stagedReadRuntime[V, S, Tag]) exactAddress() (factorRuntimeBinding, uint64, bool) {
-	return factorRuntimeBinding{}, 0, false
+func (*stagedReadRuntime[V, S, Tag]) exactAddress() (schemaFactorBinding, uint64, bool) {
+	return nil, 0, false
 }
 
-func (*stagedReadRuntime[V, S, Tag]) summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool) {
-	return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
+func (*stagedReadRuntime[V, S, Tag]) summaryAddress() (schemaFactorBinding, uint64, []uint64, [32]byte, bool) {
+	return nil, 0, nil, [32]byte{}, false
 }
 
 func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, index int) bool {
@@ -413,16 +413,16 @@ func (session *typedStagedSelectionSession[V, S, Tag]) close() {
 
 func (runtime *typedReadRuntime[K, V, S]) inputPort() int { return runtime.input }
 
-func (runtime *typedReadRuntime[K, V, S]) exactAddress() (factorRuntimeBinding, uint64, bool) {
+func (runtime *typedReadRuntime[K, V, S]) exactAddress() (schemaFactorBinding, uint64, bool) {
 	if runtime == nil || !runtime.exact {
-		return factorRuntimeBinding{}, 0, false
+		return nil, 0, false
 	}
 	return runtime.exactFactor, runtime.exactRaw, true
 }
 
-func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (factorRuntimeBinding, uint64, []uint64, [32]byte, bool) {
+func (runtime *typedReadRuntime[K, V, S]) summaryAddress() (schemaFactorBinding, uint64, []uint64, [32]byte, bool) {
 	if runtime == nil || !runtime.summary {
-		return factorRuntimeBinding{}, 0, nil, [32]byte{}, false
+		return nil, 0, nil, [32]byte{}, false
 	}
 	return runtime.summaryFactor, runtime.summaryForm, runtime.summaryKeys, runtime.summaryDigest, true
 }
@@ -646,7 +646,7 @@ func resolveTypedSelection[V, S any, Tag selectionTag](session *productSession, 
 		return Selection[Tag, S]{}, false
 	}
 	epoch := session.execution.epoch
-	if !session.execution.active.holds(epoch) {
+	if !session.execution.active.Holds(epoch) {
 		return Selection[Tag, S]{}, false
 	}
 	return Selection[Tag, S]{

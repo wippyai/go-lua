@@ -4,20 +4,18 @@ import "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 
 // HotActivationSpec is the Link-local implementation half of one cold
 // SchemaActivationRuleSlot. The slot supplies semantic shape and activation
-// family; this value supplies only the typed admission and evaluator callback.
-// The callback is retained behind the sealed receipt and is never exposed as a
+// family; this value supplies only the typed fold callback.
+// The callback is retained behind the sealed cell and is never exposed as a
 // mutable rule registry.
 type HotActivationSpec struct {
-	Admission RuleAdmission[ActivationResult, ruleUnit]
-	Run       func(Activation) bool
+	Fold func(ActivationFrame) ActivationResult
 }
 
 type activationHotImplementation struct {
-	state     *schemaBindingState
-	rule      *SchemaActivationRuleSlot
-	reads     []schemaRuleReadBinding
-	admission RuleAdmission[ActivationResult, ruleUnit]
-	run       func(Activation) bool
+	state *schemaBindingState
+	rule  *SchemaActivationRuleSlot
+	reads []schemaRuleReadBinding
+	fold  func(ActivationFrame) ActivationResult
 }
 
 type schemaActivationRuleBindingCell struct {
@@ -27,7 +25,7 @@ type schemaActivationRuleBindingCell struct {
 	impl    *activationHotImplementation
 }
 
-// schemaActivationFamilyBindingCell is the immutable receipt marker for one
+// schemaActivationFamilyBindingCell is the immutable binding marker for one
 // cold activation family. A family has no callback; its exact canonical slot
 // is nevertheless inventoried so Binding.Seal cannot publish a Rule without
 // the corresponding family authority.
@@ -61,16 +59,26 @@ func (cell *schemaActivationRuleBindingCell) schemaRuleOrdinal() uint64 {
 	return cell.ordinal
 }
 
+func (cell *schemaActivationRuleBindingCell) schemaRuleBindingState() *schemaBindingState {
+	if cell == nil {
+		return nil
+	}
+	return cell.state
+}
+
+func (cell *schemaActivationRuleBindingCell) schemaRuleReadAt(index uint64) *schemaRuleReadRow {
+	if cell == nil || cell.impl == nil || index >= uint64(len(cell.impl.reads)) || cell.impl.reads[index] == nil {
+		return nil
+	}
+	return cell.impl.reads[index].readRow()
+}
+
 func (cell *schemaActivationRuleBindingCell) schemaRuleComplete() bool {
-	if cell == nil || cell.state == nil || cell.schema == nil || cell.state.schema != cell.schema || cell.impl == nil || cell.impl.state != cell.state || cell.impl.rule == nil || cell.impl.rule.cell == nil || cell.impl.rule.cell.schema != cell.schema || cell.impl.admission.valid() == false || cell.impl.run == nil {
+	if cell == nil || cell.state == nil || cell.schema == nil || cell.state.schema != cell.schema || cell.impl == nil || cell.impl.state != cell.state || cell.impl.rule == nil || cell.impl.rule.cell == nil || cell.impl.rule.cell.schema != cell.schema || cell.impl.fold == nil {
 		return false
 	}
 	shape, ok := cell.schema.ruleShapeAt(cell.ordinal)
 	if !ok || shape.OutputKind != composition.StructuralOutput || shape.CarryCount != 0 || shape.WriteCount != 0 || shape.ActivationCount != 1 || uint64(len(cell.impl.reads)) != shape.ReadCount {
-		return false
-	}
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !admissionOK || cell.impl.admission.kind != coldAdmission.kind || cell.impl.admission.identity != coldAdmission.identity {
 		return false
 	}
 	ruleOrdinal, ruleOK := cell.impl.rule.Ordinal()
@@ -85,18 +93,6 @@ func (cell *schemaActivationRuleBindingCell) schemaRuleComplete() bool {
 	return true
 }
 
-func (cell *schemaActivationRuleBindingCell) schemaRuleProofMatches(proof *ruleRuntimeProof) bool {
-	if cell == nil || proof == nil || cell.state == nil || cell.impl == nil || cell.schema != proof.schema || cell.ordinal != proof.ordinal || cell.state != proof.state || cell.state.authority != proof.bindingAuthority {
-		return false
-	}
-	shape, ok := cell.schema.ruleShapeAt(cell.ordinal)
-	if !ok || shape.OutputKind != composition.StructuralOutput || shape.CarryCount != proof.carries || shape.WriteCount != proof.writes || shape.Inputs != proof.inputs || shape.ReadCount != proof.reads || shape.ActivationCount != 1 || proof.output.Available() {
-		return false
-	}
-	admission, admitted := coldRuleAdmission(shape.Admission)
-	return admitted && admission == proof.admission && cell.impl.admission.kind == admission.kind && cell.impl.admission.identity == admission.identity && cell.schema.ruleSemanticAt(cell.ordinal) == proof.semantic
-}
-
 // BindActivationRule binds a zero-read activation Rule. Exact reads use
 // BindActivationRuleWithExactRead below; both APIs consume only the exact
 // SchemaActivationRuleSlot and never reconstruct a cold row.
@@ -107,7 +103,7 @@ func BindActivationRule(binding *SchemaBinding, slot *SchemaActivationRuleSlot, 
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || !spec.Admission.valid() || spec.Run == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || spec.Fold == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -117,8 +113,7 @@ func BindActivationRule(binding *SchemaBinding, slot *SchemaActivationRuleSlot, 
 		return false
 	}
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ReadCount != 0 || shape.CarryCount != 0 || shape.WriteCount != 0 || shape.ActivationCount != 1 || !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
+	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ReadCount != 0 || shape.CarryCount != 0 || shape.WriteCount != 0 || shape.ActivationCount != 1 {
 		state.poisonLocked()
 		return false
 	}
@@ -127,7 +122,7 @@ func BindActivationRule(binding *SchemaBinding, slot *SchemaActivationRuleSlot, 
 		return false
 	}
 	cell := &schemaActivationRuleBindingCell{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	cell.impl = &activationHotImplementation{state: state, rule: slot, admission: spec.Admission, run: spec.Run}
+	cell.impl = &activationHotImplementation{state: state, rule: slot, fold: spec.Fold}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return false
@@ -137,8 +132,8 @@ func BindActivationRule(binding *SchemaBinding, slot *SchemaActivationRuleSlot, 
 }
 
 // BindActivationRuleWithExactRead binds the first typed activation read lane.
-// The returned Read is receipt-owned and can be resolved only by a future
-// receipt-native activation execution carrying the matching Rule proof.
+// The returned Read is cell-owned and can be resolved only by the matching
+// sealed activation execution.
 func BindActivationRuleWithExactRead[RK ~uint32 | ~uint64, RV any](binding *SchemaBinding, slot *SchemaActivationRuleSlot, readSlot SchemaReadSlot[RV], readFactor *FactorSlot[RV], spec HotActivationSpec) (Read[OrderedCells[RV]], bool) {
 	state := bindingState(binding)
 	if state == nil {
@@ -146,7 +141,7 @@ func BindActivationRuleWithExactRead[RK ~uint32 | ~uint64, RV any](binding *Sche
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || !spec.Admission.valid() || spec.Run == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || spec.Fold == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -158,8 +153,7 @@ func BindActivationRuleWithExactRead[RK ~uint32 | ~uint64, RV any](binding *Sche
 	}
 	shape, shapeOK := state.schema.ruleShapeAt(ruleOrdinal)
 	readShape, readOK := state.schema.ruleReadShapeAt(ruleOrdinal, 0)
-	coldAdmission, admissionOK := coldRuleAdmission(shape.Admission)
-	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 0 || shape.ActivationCount != 1 || !readOK || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 || !admissionOK || spec.Admission.kind != coldAdmission.kind || spec.Admission.identity != coldAdmission.identity {
+	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ReadCount != 1 || shape.CarryCount != 0 || shape.WriteCount != 0 || shape.ActivationCount != 1 || !readOK || readShape.Kind != composition.ReadExact || readShape.Input >= shape.Inputs || readShape.DependencyCount != 0 {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -173,15 +167,19 @@ func BindActivationRuleWithExactRead[RK ~uint32 | ~uint64, RV any](binding *Sche
 		return Read[OrderedCells[RV]]{}, false
 	}
 	factorCell, factorTyped := state.factors[ruleFactorOrdinal].(*schemaFactorBindingCell[RK, RV])
-	if !factorTyped || factorCell == nil || factorCell.impl == nil || factorCell.impl.algebra == nil || factorCell.impl.state != state {
+	if !factorTyped || factorCell == nil || factorCell.impl == nil || factorCell.impl.algebra == nil || factorCell.state != state {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
 	cell := &schemaActivationRuleBindingCell{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	origin := &schemaRuleReadOrigin{state: state, cell: cell, ruleOrdinal: ruleOrdinal, readOrdinal: 0}
-	read := Read[OrderedCells[RV]]{origin: origin, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
-	readBinding := &schemaExactRuleReadBinding[RK, RV]{origin: origin, factor: factorCell, read: read}
-	cell.impl = &activationHotImplementation{state: state, rule: slot, reads: []schemaRuleReadBinding{readBinding}, admission: spec.Admission, run: spec.Run}
+	row, rowOK := compileSchemaRuleReadRow(state, cell, ruleOrdinal, 0, nil, 0)
+	if !rowOK || row.factorOrdinal != ruleFactorOrdinal || !factorCell.schemaFactorReadComplete(state, row) {
+		state.poisonLocked()
+		return Read[OrderedCells[RV]]{}, false
+	}
+	read := Read[OrderedCells[RV]]{row: row, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
+	readBinding := &schemaExactRuleReadBinding[RK, RV]{row: row, factor: factorCell, read: read}
+	cell.impl = &activationHotImplementation{state: state, rule: slot, reads: []schemaRuleReadBinding{readBinding}, fold: spec.Fold}
 	if !cell.schemaRuleComplete() {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
@@ -205,27 +203,33 @@ func bindActivationFamilyLocked(state *schemaBindingState, key composition.Key) 
 	return ok && family.activationComplete(state.schema, ordinal)
 }
 
-// ActivationRuleImplementation is an opaque sealed receipt. Its callback,
-// reads, schema cell, and authority remain private to the engine runtime.
+// ActivationRuleImplementation is the sealed typed activation row. The cell
+// owns the callback and exact Binding state; ordinal is retained alongside it
+// so every consumer addresses the same canonical row without a copied proof or
+// authority tuple.
 type ActivationRuleImplementation struct {
-	binding activationRuleRuntimeBinding
+	cell    *schemaActivationRuleBindingCell
+	ordinal uint64
 }
 
-type activationRuleRuntimeBinding struct {
-	state     *schemaBindingState
-	authority *schemaBindingAuthority
-	cell      *schemaActivationRuleBindingCell
-	proof     *ruleRuntimeProof
-	issued    bool
+// sealedActivationCell is the lightweight execution fence for an issued
+// activation row. Full cold-shape validation belongs to the open bind and
+// construction paths; the implementation itself retains only the typed cell
+// and its canonical ordinal.
+func (implementation *ActivationRuleImplementation) sealedActivationCell() (*schemaActivationRuleBindingCell, bool) {
+	if implementation == nil || implementation.cell == nil || implementation.ordinal != implementation.cell.ordinal {
+		return nil, false
+	}
+	cell := implementation.cell
+	if cell.state == nil || cell.schema == nil || cell.state.schema != cell.schema || cell.state.phase != schemaBindingSealed || cell.state.authority == nil {
+		return nil, false
+	}
+	return cell, true
 }
 
-func (receipt activationRuleRuntimeBinding) valid() bool {
-	return receipt.issued && receipt.state != nil && receipt.authority != nil && receipt.cell != nil && receipt.proof != nil && receipt.state.phase == schemaBindingSealed && receipt.state.authority == receipt.authority && receipt.cell.state == receipt.state && receipt.cell.schema == receipt.state.schema && receipt.proof.state == receipt.state && receipt.proof.bindingAuthority == receipt.authority && receipt.proof.ordinal == receipt.cell.ordinal && receipt.proof.valid() && receipt.cell.schemaRuleComplete() && receipt.cell.schemaRuleProofMatches(receipt.proof)
-}
-
-// ActivationRuleImplementationAt issues a fresh receipt only from the exact
-// sealed SchemaBinding and slot. Equal Schema IDs backed by another Binding
-// cannot pass the state/authority fence.
+// ActivationRuleImplementationAt issues a typed implementation only from the
+// exact sealed SchemaBinding and canonical slot row. The returned cell carries
+// that Binding state into the later foreign-plane fences.
 func ActivationRuleImplementationAt(binding *SchemaBinding, slot *SchemaActivationRuleSlot) (*ActivationRuleImplementation, bool) {
 	state := bindingState(binding)
 	if state == nil {
@@ -241,16 +245,8 @@ func ActivationRuleImplementationAt(binding *SchemaBinding, slot *SchemaActivati
 		return nil, false
 	}
 	cell, ok := state.rules[ordinal].(*schemaActivationRuleBindingCell)
-	if !ok || cell == nil || !cell.schemaRuleComplete() {
+	if !ok || cell == nil || cell.state != state || cell.schema != state.schema || !cell.schemaRuleComplete() {
 		return nil, false
 	}
-	proof, ok := newSchemaRuleRuntimeProof(state, state.authority, ordinal)
-	if !ok {
-		return nil, false
-	}
-	receipt := activationRuleRuntimeBinding{state: state, authority: state.authority, cell: cell, proof: proof, issued: true}
-	if !receipt.valid() {
-		return nil, false
-	}
-	return &ActivationRuleImplementation{binding: receipt}, true
+	return &ActivationRuleImplementation{cell: cell, ordinal: ordinal}, true
 }
