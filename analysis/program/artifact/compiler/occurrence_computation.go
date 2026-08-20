@@ -299,7 +299,13 @@ func (compiler *compiler) copyComputations() CompileFailure {
 			!compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) || !valuesOK || !values.Available() || !valuesID.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		points := append(compiler.pointIDs(entry), compiler.pointIDs(finish)...)
+		entryPoints := compiler.pointIDs(entry)
+		finishPoints := compiler.pointIDs(finish)
+		if len(entryPoints) == 0 || len(finishPoints) == 0 ||
+			!compiler.recordOccurrenceSpan(programschema.OccurrenceReturnBoundary, span.ContextID(), entryPoints, finishPoints) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
+		}
+		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
 		if !compiler.appendOccurrence(programschema.OccurrenceReturnBoundary, span.ContextID(), body.PathID(), points, []identity.ContentID{valuesID}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
