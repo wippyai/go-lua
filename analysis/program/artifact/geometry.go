@@ -1,6 +1,6 @@
 package artifact
 
-// AllocationRole is the receipt column for one authored allocation family.
+// AllocationRole is the immutable column for one authored allocation family.
 // Compile copies it from Flow once; retained rows never re-export Flow types.
 type AllocationRole uint8
 
@@ -14,7 +14,7 @@ func (role AllocationRole) Valid() bool {
 	return role == AllocationTable || role == AllocationClosure
 }
 
-// AllocationForm is the receipt column for one allocation's constructor
+// AllocationForm is the immutable column for one allocation's constructor
 // geometry. Ordinals match the occurrence Code the compiler writes.
 type AllocationForm uint8
 
