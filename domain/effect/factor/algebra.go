@@ -118,13 +118,6 @@ type MountedArtifact struct {
 	Snapshot  *ingress.Snapshot
 }
 
-type bodyRootReceipt struct {
-	moduleKey identity.ContentID
-	programID identity.ContentID
-	bodyID    identity.ContentID
-	contextID identity.ContentID
-}
-
 // MountedCall is Effect's detached, exact ordinary-call placement receipt.
 // It is issued only from the cold Link census and contains neither Project
 // nor Program proof.  The opaque slot is authenticated by its issuing
@@ -760,7 +753,7 @@ func (a *Algebra) Fingerprint(value Value) uint64 {
 }
 
 func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCallRef]artifactCallRow, bool) {
-	receipts := make([]bodyRootReceipt, 0)
+	rows := make([]rootRow, 0)
 	artifactCalls := make(map[mountedCallRef]artifactCallRow)
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
@@ -785,7 +778,7 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 			if !ok || !body.ID().Available() || !body.ContextID().Available() {
 				return nil, false
 			}
-			receipts = append(receipts, bodyRootReceipt{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), contextID: body.ContextID()})
+			rows = append(rows, rootRow{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), context: body.ContextID()})
 		}
 		for index := 0; index < mount.Snapshot.CallCount(); index++ {
 			call, callOK := mount.Snapshot.CallAt(index)
@@ -799,31 +792,31 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 			artifactCalls[ref] = artifactCallRow{programID: programID, bodyID: call.BodyID()}
 		}
 	}
-	ordered := append([]bodyRootReceipt(nil), receipts...)
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].moduleKey != ordered[j].moduleKey {
-			return lessID(ordered[i].moduleKey, ordered[j].moduleKey)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].moduleKey != rows[j].moduleKey {
+			return lessID(rows[i].moduleKey, rows[j].moduleKey)
 		}
-		if ordered[i].bodyID != ordered[j].bodyID {
-			return lessID(ordered[i].bodyID, ordered[j].bodyID)
+		if rows[i].bodyID != rows[j].bodyID {
+			return lessID(rows[i].bodyID, rows[j].bodyID)
 		}
-		return lessID(ordered[i].contextID, ordered[j].contextID)
+		return lessID(rows[i].context, rows[j].context)
 	})
-	for _, receipt := range ordered {
-		if !receipt.programID.Available() || !receipt.bodyID.Available() || !receipt.contextID.Available() || !receipt.moduleKey.Available() {
+	for _, row := range rows {
+		if !row.programID.Available() || !row.bodyID.Available() || !row.context.Available() || !row.moduleKey.Available() {
 			return nil, false
 		}
-		contextRef := rootContextRef{module: receipt.moduleKey, context: receipt.contextID}
-		bodyRef := rootBodyRef{module: receipt.moduleKey, bodyID: receipt.bodyID}
-		mountedRef := rootMountedBodyRef{moduleKey: receipt.moduleKey, bodyID: receipt.bodyID}
+		contextRef := rootContextRef{module: row.moduleKey, context: row.context}
+		bodyRef := rootBodyRef{module: row.moduleKey, bodyID: row.bodyID}
+		mountedRef := rootMountedBodyRef{moduleKey: row.moduleKey, bodyID: row.bodyID}
 		if a.rootContextIndex[contextRef] != 0 || a.rootBodyIndex[bodyRef] != 0 || a.rootMountedBodyIndex[mountedRef] != 0 || uint64(len(a.roots)) >= uint64(math.MaxUint32) {
 			return nil, false
 		}
-		id := effectRootID(receipt.programID, receipt.moduleKey, receipt.contextID)
+		id := effectRootID(row.programID, row.moduleKey, row.context)
 		if !id.Available() {
 			return nil, false
 		}
-		a.roots = append(a.roots, rootRow{moduleKey: receipt.moduleKey, programID: receipt.programID, bodyID: receipt.bodyID, context: receipt.contextID, id: id})
+		row.id = id
+		a.roots = append(a.roots, row)
 		slot := uint32(len(a.roots))
 		a.rootContextIndex[contextRef] = slot
 		a.rootBodyIndex[bodyRef] = slot

@@ -47,23 +47,6 @@ type MountedArtifact struct {
 	Snapshot *ingress.Snapshot
 }
 
-type bodyTargetReceipt struct {
-	moduleKey       identity.ContentID
-	artifactID      identity.ContentID
-	programID       identity.ContentID
-	allocationID    identity.ContentID
-	bodyPath        identity.ContentID
-	bodyContext     identity.ContentID
-	functionContext identity.ContentID
-	formalID        identity.ContentID
-}
-
-func (receipt bodyTargetReceipt) valid() bool {
-	return receipt.moduleKey.Available() && receipt.artifactID.Available() &&
-		receipt.programID.Available() && receipt.allocationID.Available() && receipt.bodyPath.Available() &&
-		receipt.bodyContext.Available() && receipt.functionContext.Available() && receipt.formalID.Available()
-}
-
 // bodyReceipt is the compact seal-time projection of a Program body. It is
 // deliberately data-only: no Program, Body, Flow, or Link
 // proof survives in Call's target rows.
@@ -95,7 +78,6 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 	if algebra == nil || boundary == nil {
 		return false
 	}
-	receipts := make([]bodyTargetReceipt, 0)
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))
 	for _, mount := range mounts {
 		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() {
@@ -136,22 +118,16 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
 				return false
 			}
-			receipts = append(receipts, bodyTargetReceipt{moduleKey: mount.ModuleKey, artifactID: mount.ArtifactID, programID: programID, allocationID: target.Allocation, bodyPath: target.Body, bodyContext: target.Context, functionContext: target.Function, formalID: target.Formal})
+			receipt := bodyReceipt{artifactID: mount.ArtifactID, programID: programID, bodyPath: target.Body, formalID: target.Formal, bodyContext: target.Context}
+			key := targetKey{kind: targetBody, moduleKey: mount.ModuleKey, bodyContext: target.Context}
+			if !receipt.valid() || algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{key: key, functionContext: target.Function, bodyContext: target.Context, body: receipt}) {
+				return false
+			}
+			if algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.Allocation}].valid() {
+				return false
+			}
+			algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.Allocation}] = selector(len(algebra.targets))
 		}
-	}
-	for _, issued := range receipts {
-		if !issued.valid() {
-			return false
-		}
-		receipt := bodyReceipt{artifactID: issued.artifactID, programID: issued.programID, bodyPath: issued.bodyPath, formalID: issued.formalID, bodyContext: issued.bodyContext}
-		key := targetKey{kind: targetBody, moduleKey: issued.moduleKey, bodyContext: issued.bodyContext}
-		if !receipt.valid() || algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{key: key, functionContext: issued.functionContext, bodyContext: issued.bodyContext, body: receipt}) {
-			return false
-		}
-		if algebra.allocationIndex[allocationTargetKey{moduleKey: issued.moduleKey, allocationID: issued.allocationID}].valid() {
-			return false
-		}
-		algebra.allocationIndex[allocationTargetKey{moduleKey: issued.moduleKey, allocationID: issued.allocationID}] = selector(len(algebra.targets))
 	}
 	// Executable function bodies are the sole body-target prefix.  Retaining
 	// its width lets the public Bodies cursor reuse Call's canonical target
