@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -50,7 +51,7 @@ func compileKeyProgram(t *testing.T, name string) *program.Program {
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
-	flowDraft, err := flow.Build(flow.Input{Counts: counts})
+	flowDraft, err := flow.Build(authored.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
