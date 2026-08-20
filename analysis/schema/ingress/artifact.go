@@ -54,7 +54,6 @@ type Snapshot struct {
 	frozen      snapshotstore.Frozen
 	coldCatalog identity.ContentID
 	vocabulary  structure.Table
-	bodyExits   [][]identity.ContentID
 }
 
 func (snapshot *Snapshot) Available() bool {
@@ -232,27 +231,6 @@ func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
 		return Event{}, false
 	}
 	return Event{row: row, kind: kind}, true
-}
-func (snapshot *Snapshot) BodyTransportCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count, published := coldCount(snapshot.coldView(), programschema.BodyFamily())
-	if !published || count != len(snapshot.bodyExits) {
-		return 0
-	}
-	return count
-}
-func (snapshot *Snapshot) BodyTransportAt(index int) (BodyTransport, bool) {
-	if !snapshot.Available() || index < 0 || index >= len(snapshot.bodyExits) {
-		return BodyTransport{}, false
-	}
-	view := snapshot.coldView()
-	body, held := coldRow(view, programschema.BodyFamily(), index)
-	if !held {
-		return BodyTransport{}, false
-	}
-	return BodyTransport{body: body, view: view, exits: snapshot.bodyExits[index]}, true
 }
 func (snapshot *Snapshot) CallArgumentCount() int {
 	if !snapshot.Available() {
@@ -553,34 +531,6 @@ func (row Event) Kind() EventKind              { return row.kind }
 func (row Event) RegionID() identity.ContentID { return row.row.RegionID() }
 func (row Event) PointID() identity.ContentID  { return row.row.PointID() }
 
-// BodyTransport is the ingress-specific engine template projection for one
-// body: its canonical entry memberships joined with the vocabulary-filtered
-// exit memberships computed during Lower. The Body row and entries are read
-// from the cold publication; only the derived exit set is retained here.
-type BodyTransport struct {
-	body  programschema.Body
-	view  coldView
-	exits []identity.ContentID
-}
-
-func (row BodyTransport) BodyID() identity.ContentID { return row.body.ID() }
-func (row BodyTransport) EntryCount() int            { return row.body.EntryCount() }
-func (row BodyTransport) EntryAt(index int) (identity.ContentID, bool) {
-	offset, count, ok := row.body.EntrySpan()
-	if !ok || index < 0 || uint64(index) >= uint64(count) {
-		return identity.ContentID{}, false
-	}
-	entry, held := coldRow(row.view, programschema.BodyEntryFamily(), int(offset)+index)
-	return entry.PointID(), held && entry.BodyID() == row.body.ID()
-}
-func (row BodyTransport) ExitCount() int { return len(row.exits) }
-func (row BodyTransport) ExitAt(index int) (identity.ContentID, bool) {
-	if index < 0 || index >= len(row.exits) {
-		return identity.ContentID{}, false
-	}
-	return row.exits[index], true
-}
-
 type CallOperand struct{ row programschema.CallOperand }
 
 func (row CallOperand) ID() identity.ContentID      { return row.row.ID() }
@@ -811,46 +761,6 @@ func projectEvent(vocabulary structure.Table, ordinal uint16) (EventKind, bool) 
 	return kind, kind != EventInvalid
 }
 
-func acceptedOutcome(vocabulary structure.Table, kind programschema.OutcomeKind) bool {
-	member, ok := vocabulary.At(structure.CategoryOutcome, uint16(kind))
-	return ok && member.Accepted()
-}
-
-func lowerBodyExits(view coldView, vocabulary structure.Table, body programschema.Body) ([]identity.ContentID, bool) {
-	seen := make(map[identity.ContentID]struct{})
-	var exits []identity.ContentID
-	outcomeOffset, outcomeCount, spanOK := body.OutcomeSpan()
-	if !spanOK {
-		return nil, false
-	}
-	for outcomeIndex := uint32(0); outcomeIndex < outcomeCount; outcomeIndex++ {
-		outcome, ok := coldRow(view, programschema.OutcomeFamily(), int(outcomeOffset+outcomeIndex))
-		if !ok || outcome.BodyID() != body.ID() {
-			return nil, false
-		}
-		if !acceptedOutcome(vocabulary, outcome.Kind()) {
-			continue
-		}
-		pointOffset, pointCount, pointsOK := outcome.PointSpan()
-		if !pointsOK {
-			return nil, false
-		}
-		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
-			child, childOK := coldRow(view, programschema.OutcomePointFamily(), int(pointOffset+pointIndex))
-			point := child.PointID()
-			if !childOK || child.OutcomeID() != outcome.ID() || !point.Available() {
-				return nil, false
-			}
-			if _, duplicate := seen[point]; duplicate {
-				continue
-			}
-			seen[point] = struct{}{}
-			exits = append(exits, point)
-		}
-	}
-	return exits, true
-}
-
 // Lower projects one sealed artifact through the sealed structural vocabulary
 // into closed columns. The returned snapshot retains no owner pointer.
 func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Snapshot, bool) {
@@ -930,22 +840,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		if !parentOK || uint64(parent) >= uint64(occurrenceCount) {
 			return nil, false
 		}
-	}
-	bodyCount, bodiesPublished := coldCount(snapshot.coldView(), programschema.BodyFamily())
-	if !bodiesPublished {
-		return nil, false
-	}
-	snapshot.bodyExits = make([][]identity.ContentID, 0, bodyCount)
-	for index := 0; index < bodyCount; index++ {
-		row, ok := coldRow(snapshot.coldView(), programschema.BodyFamily(), index)
-		if !ok {
-			return nil, false
-		}
-		exits, exitsOK := lowerBodyExits(snapshot.coldView(), vocabulary, row)
-		if !exitsOK {
-			return nil, false
-		}
-		snapshot.bodyExits = append(snapshot.bodyExits, exits)
 	}
 	// Every published call must name operand and argument spans the two child
 	// planes actually hold. The admission is stated once here over the

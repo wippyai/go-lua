@@ -68,8 +68,9 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	program := snapshot.Program()
+	bodyCount, bodiesPublished := program.BodyCount()
 	transferCount, transfersPublished := program.LocalTransferCount()
-	if !program.Available() || !transfersPublished {
+	if !program.Available() || !bodiesPublished || !transfersPublished {
 		return nil, nil, false
 	}
 	usedKeys := make(map[schema.Key]struct{})
@@ -103,7 +104,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: ruleCount, Bodies: snapshot.BodyTransportCount(),
+		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: ruleCount, Bodies: bodyCount,
 	})
 	if !specOK || !spec.InstallStageLaws(laws) {
 		return nil, nil, false
@@ -228,25 +229,52 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			return nil, nil, false
 		}
 	}
-	for index := 0; index < snapshot.BodyTransportCount(); index++ {
-		row, rowOK := snapshot.BodyTransportAt(index)
-		if !rowOK {
+	for index := 0; index < bodyCount; index++ {
+		row, rowOK := program.BodyAt(index)
+		if !rowOK || !row.Available() {
 			return nil, nil, false
 		}
-		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: row.BodyID()})
+		body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: row.ID()})
 		if !bodyOK {
 			return nil, nil, false
 		}
 		for inner := 0; inner < row.EntryCount(); inner++ {
-			point, pointOK := row.EntryAt(inner)
+			entry, entryOK := program.BodyEntryFor(index, inner)
+			point, pointOK := entry.PointID(), entryOK
 			if !pointOK || !spec.AddBodyEntry(body, point) {
 				return nil, nil, false
 			}
 		}
-		for inner := 0; inner < row.ExitCount(); inner++ {
-			point, pointOK := row.ExitAt(inner)
-			if !pointOK || !spec.AddBodyExit(body, point) {
+		seen := make(map[identity.ContentID]struct{})
+		outcomeOffset, outcomeCount, outcomesOK := row.OutcomeSpan()
+		if !outcomesOK {
+			return nil, nil, false
+		}
+		for outcomeIndex := uint32(0); outcomeIndex < outcomeCount; outcomeIndex++ {
+			outcome, outcomeOK := program.BodyOutcomeFor(index, int(outcomeIndex))
+			if !outcomeOK || !acceptedOutcome(vocabulary, outcome.Kind()) {
+				if !outcomeOK {
+					return nil, nil, false
+				}
+				continue
+			}
+			_, pointCount, pointsOK := outcome.PointSpan()
+			if !pointsOK {
 				return nil, nil, false
+			}
+			for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
+				child, childOK := program.OutcomePointFor(int(outcomeOffset+outcomeIndex), int(pointIndex))
+				point := child.PointID()
+				if !childOK || child.OutcomeID() != outcome.ID() || !point.Available() {
+					return nil, nil, false
+				}
+				if _, duplicate := seen[point]; duplicate {
+					continue
+				}
+				seen[point] = struct{}{}
+				if !spec.AddBodyExit(body, point) {
+					return nil, nil, false
+				}
 			}
 		}
 	}
@@ -328,4 +356,9 @@ func eventKind(kind ingress.EventKind) (rows.ArtifactEventKind, bool) {
 		return rows.ArtifactEventInvalid, false
 	}
 	return rows.ArtifactEventKind(kind), true
+}
+
+func acceptedOutcome(vocabulary structure.Table, kind programschema.OutcomeKind) bool {
+	member, ok := vocabulary.At(structure.CategoryOutcome, uint16(kind))
+	return ok && member.Accepted()
 }
