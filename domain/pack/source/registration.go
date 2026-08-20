@@ -59,14 +59,6 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 	return BindHot(context.Fragment, context.Authorities.PackAuthority(), context.Authorities.PackSchema())
 }
 
-// FinalizeRule has no Pack-local occurrence lifecycle. Source results and
-// their mounted inverse are sealed by pack.Schema; this hook only preserves
-// the existing schema composition slot until the composite catalog removes
-// its optional finalizer field.
-func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	return context.Rule != nil
-}
-
 // StructureSpecs is this package's contribution to the analyzer's semantic
 // role vocabulary: the three roles its rule is identified by. A role is
 // declared where it is used, so the row and the reference that names it are one
