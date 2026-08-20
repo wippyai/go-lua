@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
@@ -144,8 +143,8 @@ return use(1)`)
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
-	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program, record.Artifacts[0].Snapshot)
-	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Program, record.Artifacts[0].Snapshot)
+	points := selectedCallableOccurrencePoints(t, record.Artifacts[0].Program)
+	callee, sibling := selectedDirectCalleeAndSibling(t, record.Artifacts[0].Program)
 	if !callee.Available() || !sibling.Available() {
 		t.Fatal("fixture lost the direct callee or its unused sibling")
 	}
@@ -213,7 +212,7 @@ func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	}
 }
 
-func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program, snapshot *ingress.Snapshot) map[identity.ContentID]map[identity.ContentID]struct{} {
+func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program) map[identity.ContentID]map[identity.ContentID]struct{} {
 	t.Helper()
 	points := make(map[identity.ContentID]map[identity.ContentID]struct{})
 	bodyCount, bodiesPublished := program.BodyCount()
@@ -227,13 +226,12 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 		}
 		points[body.ID()] = make(map[identity.ContentID]struct{})
 	}
-	canonical := snapshot.Program()
-	occurrenceCount, occurrencesPublished := canonical.OccurrenceCount()
+	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
 	if !occurrencesPublished {
 		t.Fatal("cold occurrence family")
 	}
 	for index := 0; index < occurrenceCount; index++ {
-		occurrence, occurrenceOK := canonical.OccurrenceAt(index)
+		occurrence, occurrenceOK := program.OccurrenceAt(index)
 		body, bodyOK := occurrence.BodyID()
 		if !occurrenceOK || !bodyOK {
 			continue
@@ -244,7 +242,7 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 		}
 		_, pointCount, pointSpanOK := occurrence.PointSpan()
 		for pointIndex := 0; pointIndex < int(pointCount); pointIndex++ {
-			point, pointOK := canonical.OccurrencePointID(index, pointIndex)
+			point, pointOK := program.OccurrencePointID(index, pointIndex)
 			if !pointSpanOK || !pointOK {
 				t.Fatal("occurrence point")
 			}
@@ -254,7 +252,7 @@ func selectedCallableOccurrencePoints(t *testing.T, program programmount.Program
 	return points
 }
 
-func selectedDirectCalleeAndSibling(t *testing.T, program programmount.Program, snapshot *ingress.Snapshot) (identity.ContentID, identity.ContentID) {
+func selectedDirectCalleeAndSibling(t *testing.T, program programmount.Program) (identity.ContentID, identity.ContentID) {
 	t.Helper()
 	rootBodies := make(map[identity.ContentID]struct{})
 	callable := make(map[identity.ContentID]struct{})
@@ -274,8 +272,12 @@ func selectedDirectCalleeAndSibling(t *testing.T, program programmount.Program, 
 		}
 	}
 	var callee identity.ContentID
-	for index := 0; index < snapshot.CallCount(); index++ {
-		call, callOK := snapshot.CallAt(index)
+	callCount, callsPublished := program.CallCount()
+	if !callsPublished {
+		t.Fatal("cold Call family")
+	}
+	for index := 0; index < callCount; index++ {
+		call, callOK := program.CallAt(index)
 		target, targetOK := call.DirectTargetBody()
 		if !callOK || !targetOK {
 			continue

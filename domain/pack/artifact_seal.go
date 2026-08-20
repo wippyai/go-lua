@@ -303,18 +303,18 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 			return nil, false
 		}
 		seenModules[mount.module] = struct{}{}
-		artifact := mount.snapshot
 		mountedProgram := mount.Program()
 		if !mountedProgram.Available() {
 			return nil, false
 		}
 		catalog, catalogOK := programschema.CatalogID(mountedProgram.Program.SchemaID)
+		valuesCount, valuesPublished := programschema.ValuesFamily().Count(&mountedProgram.Program.Frozen, catalog)
 		heapIndexCount, heapIndexesPublished := programschema.HeapIndexFamily().Count(&mountedProgram.Program.Frozen, catalog)
-		if !catalogOK || !heapIndexesPublished {
+		if !catalogOK || !valuesPublished || !heapIndexesPublished {
 			return nil, false
 		}
-		for i := 0; i < artifact.ValuesCount(); i++ {
-			row, ok := artifact.ValuesAt(i)
+		for i := 0; i < valuesCount; i++ {
+			row, ok := programschema.ValuesFamily().At(&mountedProgram.Program.Frozen, catalog, i)
 			if !ok {
 				return nil, false
 			}
@@ -471,9 +471,15 @@ func mountedArtifactMatchesLink(source *link.Link, index int, mount ArtifactMoun
 }
 
 func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
-	state, artifact := schema.state, mount.snapshot
-	for i := 0; i < artifact.ValuesCount(); i++ {
-		row, ok := artifact.ValuesAt(i)
+	state := schema.state
+	program := mount.Program().Program
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&program.Frozen, catalog)
+	if !program.Available() || !catalogOK || !valuesPublished {
+		return false
+	}
+	for i := 0; i < valuesCount; i++ {
+		row, ok := programschema.ValuesFamily().At(&program.Frozen, catalog, i)
 		if !ok {
 			return false
 		}
@@ -487,8 +493,12 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 			return false
 		}
 		out := valuesRow{root: root, moduleKey: mount.module, occurrenceID: row.ID(), port: port}
-		for member := 0; member < row.MemberCount(); member++ {
-			m, memberOK := row.MemberAt(member)
+		memberOffset, memberCount, membersOK := row.MemberSpan()
+		if !membersOK {
+			return false
+		}
+		for member := 0; member < int(memberCount); member++ {
+			m, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset)+member)
 			endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{mount.module, m.ID()}]
 			if !memberOK || !endpointOK {
 				return false
@@ -509,7 +519,7 @@ func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 	return true
 }
 
-func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail ingress.ValuesTail) (Port, bool) {
+func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail programschema.ValuesTail) (Port, bool) {
 	state := schema.state
 	id := tail.ID()
 	endpoint, endpointOK := state.semanticEndpoints[artifactValuesKey{module, id}]
@@ -523,9 +533,9 @@ func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail ing
 	}
 	kind := TailProducerInvalid
 	switch tail.Kind() {
-	case uint8(programschema.ValuesTailCall):
+	case programschema.ValuesTailCall:
 		kind = TailProducerCall
-	case uint8(programschema.ValuesTailVararg):
+	case programschema.ValuesTailVararg:
 		kind = TailProducerVararg
 	default:
 		return Port{}, false
@@ -855,18 +865,27 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		state.semanticEndpoints[key] = endpoint
 		return true
 	}
-	artifact := mount.snapshot
 	program := mount.Program()
 	if !program.Available() {
 		return false
 	}
-	for i := 0; i < artifact.ValuesCount(); i++ {
-		row, ok := artifact.ValuesAt(i)
+	canonical := program.Program
+	catalog, catalogOK := programschema.CatalogID(canonical.SchemaID)
+	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&canonical.Frozen, catalog)
+	if !catalogOK || !valuesPublished {
+		return false
+	}
+	for i := 0; i < valuesCount; i++ {
+		row, ok := programschema.ValuesFamily().At(&canonical.Frozen, catalog, i)
 		if !ok {
 			return false
 		}
-		for j := 0; j < row.MemberCount(); j++ {
-			member, ok := row.MemberAt(j)
+		memberOffset, memberCount, membersOK := row.MemberSpan()
+		if !membersOK {
+			return false
+		}
+		for j := 0; j < int(memberCount); j++ {
+			member, ok := programschema.ValuesMemberFamily().At(&canonical.Frozen, catalog, int(memberOffset)+j)
 			if !ok || !add(member.ID()) {
 				return false
 			}

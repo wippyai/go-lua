@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // keyKind is the closed source-sum discriminator.  It is deliberately kept
@@ -75,13 +75,12 @@ type mountedCallOccurrenceRef struct {
 	callID   identity.ContentID
 }
 
-// mountedArtifactCallIndex is construction-only.  Project owns the mounted
-// application relation, while Artifact owns the reusable authored-call rows;
-// this index joins their scalar CallID values once per mount and dies before
-// Algebra is published.
+// mountedArtifactCallIndex is construction-only. Project owns the mounted
+// application relation, while Program owns the reusable authored-call rows;
+// call identities are resolved by scanning that canonical family and no
+// secondary call directory survives into Algebra.
 type mountedArtifactCallIndex struct {
-	snapshot *ingress.Snapshot
-	byID     map[identity.ContentID]int
+	program programschema.Program
 }
 
 // NewWithMountedArtifacts builds Call from Link-owned boundary/key facts plus
@@ -137,19 +136,23 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 			!programOK || !programID.Available() || artifactProgramID != programID {
 			return nil, false
 		}
-		callRows := make(map[identity.ContentID]int, snapshot.CallCount())
-		for callIndex := 0; callIndex < snapshot.CallCount(); callIndex++ {
-			call, callOK := snapshot.CallAt(callIndex)
+		program := snapshot.Program()
+		callCount, callsPublished := program.CallCount()
+		if !program.Available() || !callsPublished {
+			return nil, false
+		}
+		for callIndex := 0; callIndex < callCount; callIndex++ {
+			call, callOK := program.CallAt(callIndex)
 			callID := call.ID()
 			if !callOK || !callID.Available() {
 				return nil, false
 			}
-			if _, duplicate := callRows[callID]; duplicate {
+			published, publishedOK := program.CallForID(callID)
+			if !publishedOK || published.ID() != callID {
 				return nil, false
 			}
-			callRows[callID] = callIndex
 		}
-		artifactCalls[moduleID] = mountedArtifactCallIndex{snapshot: snapshot, byID: callRows}
+		artifactCalls[moduleID] = mountedArtifactCallIndex{program: program}
 		algebra.mountModules = append(algebra.mountModules, moduleID)
 		algebra.mountModuleIndex[moduleID] = uint32(len(algebra.mountModules))
 		require, requireOK := boundary.Seeds().ScopedLoader(shard)
@@ -173,13 +176,13 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 		applicationID, moduleID, callID, identityOK := project.Applications().Calls().MountedIdentity(application)
 		issuedCallID := mounted.CallID()
 		shard, shardOK := mounted.Mount()
-		callSnapshot, callIndex, callIndexOK := mountedArtifactCallAt(artifactCalls, moduleID, callID)
-		call := ingress.Call{}
+		callProgram, callIndex, callIndexOK := mountedArtifactCallAt(artifactCalls, moduleID, callID)
+		call := programschema.Call{}
 		callRowOK := false
 		if callIndexOK {
-			call, callRowOK = callSnapshot.CallAt(callIndex)
+			call, callRowOK = callProgram.CallAt(callIndex)
 		}
-		calleeOperand, calleeOperandOK := mountedCalleeOperand(callSnapshot, callIndex, call)
+		calleeOperand, calleeOperandOK := mountedCalleeOperand(callProgram, callIndex, call)
 		callee, calleeOK := boundary.Values().ForMountedSemantic(moduleID, calleeOperand.ValueID())
 		if !calleeOK {
 			callee, calleeOK = boundary.Values().ForMountedSpan(moduleID, calleeOperand.SpanID())
@@ -205,34 +208,48 @@ func NewWithMountedArtifacts(source *link.Link, mounts []MountedArtifact) (*Alge
 	return algebra, true
 }
 
-func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (*ingress.Snapshot, int, bool) {
+func mountedArtifactCallAt(index map[identity.ContentID]mountedArtifactCallIndex, moduleID, callID identity.ContentID) (programschema.Program, int, bool) {
 	if index == nil || !moduleID.Available() || !callID.Available() {
-		return nil, 0, false
+		return programschema.Program{}, 0, false
 	}
 	mount, mountOK := index[moduleID]
-	if !mountOK || mount.snapshot == nil || mount.byID == nil {
-		return nil, 0, false
+	if !mountOK || !mount.program.Available() {
+		return programschema.Program{}, 0, false
 	}
-	callIndex, callOK := mount.byID[callID]
-	return mount.snapshot, callIndex, callOK
+	callCount, callsPublished := mount.program.CallCount()
+	if !callsPublished {
+		return programschema.Program{}, 0, false
+	}
+	callIndex := -1
+	for index := 0; index < callCount; index++ {
+		call, callOK := mount.program.CallAt(index)
+		if !callOK || call.ID() != callID {
+			continue
+		}
+		if callIndex >= 0 {
+			return programschema.Program{}, 0, false
+		}
+		callIndex = index
+	}
+	return mount.program, callIndex, callIndex >= 0
 }
 
-func mountedCalleeOperand(snapshot *ingress.Snapshot, callIndex int, call ingress.Call) (ingress.CallOperand, bool) {
-	if snapshot == nil || callIndex < 0 || !call.ID().Available() {
-		return ingress.CallOperand{}, false
+func mountedCalleeOperand(program programschema.Program, callIndex int, call programschema.Call) (programschema.CallOperand, bool) {
+	if !program.Available() || callIndex < 0 || !call.ID().Available() {
+		return programschema.CallOperand{}, false
 	}
-	var callee ingress.CallOperand
+	var callee programschema.CallOperand
 	calleeOK := false
 	for operandIndex := 0; operandIndex < call.OperandCount(); operandIndex++ {
-		operand, operandOK := call.OperandAt(operandIndex)
+		operand, operandOK := program.CallOperandFor(callIndex, operandIndex)
 		if !operandOK || operand.CallID() != call.ID() {
-			return ingress.CallOperand{}, false
+			return programschema.CallOperand{}, false
 		}
-		if !operand.Callee() {
+		if operand.Kind() != programschema.CallOperandCallee {
 			continue
 		}
 		if calleeOK {
-			return ingress.CallOperand{}, false
+			return programschema.CallOperand{}, false
 		}
 		callee, calleeOK = operand, true
 	}

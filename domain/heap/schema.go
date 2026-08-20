@@ -769,12 +769,13 @@ func (owner *heapBuilder) addArtifactAllocations(mounts map[identity.ContentID]A
 		program := artifact.Program()
 		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
 		allocationCount, allocationsPublished := programschema.HeapAllocationFamily().Count(&program.Frozen, catalog)
-		if !program.Available() || !catalogOK || !allocationsPublished {
+		valuesCount, valuesPublished := programschema.ValuesFamily().Count(&program.Frozen, catalog)
+		if !program.Available() || !catalogOK || !allocationsPublished || !valuesPublished {
 			return false
 		}
-		valuesRows := make(map[identity.ContentID]uint32, artifact.ValuesCount())
-		for valuesIndex := 0; valuesIndex < artifact.ValuesCount(); valuesIndex++ {
-			values, valuesOK := artifact.ValuesAt(valuesIndex)
+		valuesRows := make(map[identity.ContentID]uint32, valuesCount)
+		for valuesIndex := 0; valuesIndex < valuesCount; valuesIndex++ {
+			values, valuesOK := programschema.ValuesFamily().At(&program.Frozen, catalog, valuesIndex)
 			if !valuesOK || !values.ID().Available() || uint64(valuesIndex) >= uint64(^uint32(0)) {
 				return false
 			}
@@ -1597,7 +1598,7 @@ func (owner *heapBuilder) sealOccurrenceInverses() bool {
 		if catalogOK && fieldsOK && fieldIndex >= 0 && uint64(fieldIndex) < uint64(fieldCount) {
 			field, fieldOK = programschema.HeapFieldFamily().At(&program.Frozen, catalog, int(fieldOffset)+fieldIndex)
 		}
-		values, valuesOK := mount.Snapshot().ValuesAt(int(row.valuesRow - 1))
+		values, valuesOK := programschema.ValuesFamily().At(&program.Frozen, catalog, int(row.valuesRow-1))
 		if !allocationOK || !fieldOK || !valuesOK || allocation.ID() != row.allocationID || field.ID() != row.fieldID || values.ID() != field.ValuesID() {
 			return false
 		}
@@ -2228,27 +2229,28 @@ func (schema Schema) ArtifactFieldFor(field Field) (programschema.HeapField, boo
 // ArtifactValuesForField returns the exact ProgramArtifact Values denominator
 // named by a sealed field descriptor. The join is the Values semantic ID, not
 // an authored Term or a dense artifact position.
-func (schema Schema) ArtifactValuesForField(field Field) (ingress.Values, bool) {
+func (schema Schema) ArtifactValuesForField(field Field) (programschema.Program, programschema.Values, bool) {
 	if !schema.ownsField(field) {
-		return ingress.Values{}, false
+		return programschema.Program{}, programschema.Values{}, false
 	}
 	fieldRow, fieldOK := schema.ArtifactFieldFor(field)
 	physical := schema.owner.fields[field.index-1]
 	root, rootOK := schema.owner.rootAt(physical.root)
 	if !fieldOK || !rootOK || root.kind != RootAllocation {
-		return ingress.Values{}, false
+		return programschema.Program{}, programschema.Values{}, false
 	}
 	mount, mountOK := schema.owner.artifacts[root.allocation.module]
 	if !mountOK || !mount.Available() || mount.programID != root.allocation.programID {
-		return ingress.Values{}, false
+		return programschema.Program{}, programschema.Values{}, false
 	}
-	artifact := mount.Snapshot()
+	program := mount.Snapshot().Program()
 	valuesID := fieldRow.ValuesID()
-	if artifact == nil || !valuesID.Available() || physical.valuesRow == 0 {
-		return ingress.Values{}, false
+	if !program.Available() || !valuesID.Available() || physical.valuesRow == 0 {
+		return programschema.Program{}, programschema.Values{}, false
 	}
-	values, valuesOK := artifact.ValuesAt(int(physical.valuesRow - 1))
-	return values, valuesOK && values.ID() == valuesID
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	values, valuesOK := programschema.ValuesFamily().At(&program.Frozen, catalog, int(physical.valuesRow-1))
+	return program, values, catalogOK && valuesOK && values.ID() == valuesID
 }
 
 func (schema Schema) SlotForField(field Field) (Slot, bool) {

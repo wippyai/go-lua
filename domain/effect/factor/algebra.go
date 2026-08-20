@@ -780,8 +780,12 @@ func (a *Algebra) sealMountedArtifacts(mounts []MountedArtifact) (map[mountedCal
 			}
 			rows = append(rows, rootRow{moduleKey: mount.ModuleKey, programID: programID, bodyID: body.ID(), context: body.ContextID()})
 		}
-		for index := 0; index < mount.Snapshot.CallCount(); index++ {
-			call, callOK := mount.Snapshot.CallAt(index)
+		callCount, callsPublished := program.CallCount()
+		if !callsPublished {
+			return nil, false
+		}
+		for index := 0; index < callCount; index++ {
+			call, callOK := program.CallAt(index)
 			if !callOK || !call.ID().Available() || !call.BodyID().Available() {
 				return nil, false
 			}

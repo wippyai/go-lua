@@ -394,19 +394,19 @@ func (schema *valueBuilder) sealComputationRows() bool {
 			case programschema.OccurrenceCall:
 				// The runtime-kind rule consumes only the sealed geometry of a
 				// strict unary plain call. Join the occurrence to the existing
-				// ingress Call directory by its parent-issued ID; do not infer
-				// call shape from occurrence inputs or reconstruct Program data.
-				call, callOK := artifact.CallForID(row.ID())
+				// canonical Program call family by its parent-issued ID; do not
+				// infer call shape from occurrence inputs or reconstruct Program data.
+				call, callOK := program.CallForID(row.ID())
 				if !callOK {
 					return false
 				}
 				// Calls outside the strict unary plain shape are valid calls,
 				// but are not RuntimeKindCall operands. Their own Call domain
 				// rules continue to interpret them.
-				if call.Form() == uint8(programschema.CallFormMethod) || call.ArgumentCount() != 1 {
+				if call.Form() == programschema.CallFormMethod || call.ArgumentCount() != 1 {
 					continue
 				}
-				if call.Form() != uint8(programschema.CallFormPlain) {
+				if call.Form() != programschema.CallFormPlain {
 					return false
 				}
 				if _, hasReceiver := call.ReceiverID(); hasReceiver {
@@ -415,7 +415,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if _, hasTail := call.TailID(); hasTail {
 					continue
 				}
-				argument, argumentOK := call.ArgumentAt(0)
+				argument, argumentOK := program.CallArgumentForID(call.ID(), 0)
 				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || !argument.MemberID().Available() {
 					return false
 				}
@@ -443,9 +443,9 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				op := flowkind.BinaryOp(row.Code() & 0xff)
 				truth := row.Code()&(1<<8) != 0
 				rowOK := sourceOK && targetOK && operandOK && routeOK
-				call, callOK := artifact.CallForID(sourceCallID)
+				call, callOK := program.CallForID(sourceCallID)
 				if !rowOK || !routeID.Available() || !callOK || call.ID() != sourceCallID ||
-					call.Form() != uint8(programschema.CallFormPlain) || call.ArgumentCount() != 1 {
+					call.Form() != programschema.CallFormPlain || call.ArgumentCount() != 1 {
 					return false
 				}
 				if _, hasReceiver := call.ReceiverID(); hasReceiver {
@@ -454,7 +454,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if _, hasTail := call.TailID(); hasTail {
 					return false
 				}
-				argument, argumentOK := call.ArgumentAt(0)
+				argument, argumentOK := program.CallArgumentForID(call.ID(), 0)
 				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || argument.MemberID() != targetID {
 					return false
 				}

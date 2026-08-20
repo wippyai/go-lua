@@ -77,6 +77,31 @@ func (row Program) CallAt(index int) (Call, bool) {
 	return CallFamily().At(&row.Frozen, catalog, index)
 }
 
+// CallForID resolves the unique authored Call carrying one existing
+// owner-issued identity. The call family remains the sole authority; this is
+// a cold scan and does not retain an inverse directory beside the publication.
+func (row Program) CallForID(id identity.ContentID) (Call, bool) {
+	if !row.Available() || !id.Available() {
+		return Call{}, false
+	}
+	count, published := row.CallCount()
+	if !published {
+		return Call{}, false
+	}
+	var found Call
+	for index := 0; index < count; index++ {
+		candidate, held := row.CallAt(index)
+		if !held || candidate.ID() != id {
+			continue
+		}
+		if found.Available() {
+			return Call{}, false
+		}
+		found = candidate
+	}
+	return found, found.Available()
+}
+
 // CallOperandFor resolves one operand in a call's published child range.
 func (row Program) CallOperandFor(callIndex, childIndex int) (CallOperand, bool) {
 	call, ok := row.CallAt(callIndex)
@@ -109,6 +134,32 @@ func (row Program) CallArgumentFor(callIndex, childIndex int) (CallArgument, boo
 		return CallArgument{}, false
 	}
 	return CallArgumentFamily().At(&row.Frozen, catalog, int(offset)+childIndex)
+}
+
+// CallArgumentForID resolves one actual argument by its parent Call identity
+// and child position. The dense Call and CallArgument families remain the
+// only authorities; no ingress-side lookup or copied argument row is kept.
+func (row Program) CallArgumentForID(callID identity.ContentID, childIndex int) (CallArgument, bool) {
+	if !row.Available() || !callID.Available() || childIndex < 0 {
+		return CallArgument{}, false
+	}
+	count, published := row.CallCount()
+	if !published {
+		return CallArgument{}, false
+	}
+	var found CallArgument
+	for callIndex := 0; callIndex < count; callIndex++ {
+		call, held := row.CallAt(callIndex)
+		if !held || call.ID() != callID {
+			continue
+		}
+		argument, argumentOK := row.CallArgumentFor(callIndex, childIndex)
+		if !argumentOK || found.Available() {
+			return CallArgument{}, false
+		}
+		found = argument
+	}
+	return found, found.Available()
 }
 
 // CallTypeArgumentFor resolves one static type argument in a call's published child range.

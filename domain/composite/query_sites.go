@@ -86,7 +86,7 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 		if !mount.Available() {
 			return nil, false
 		}
-		snapshot := mount.Snapshot
+		program := mount.Program
 		bodyEntries := make(map[identity.ContentID][]identity.ContentID)
 		callable := make(map[identity.ContentID]struct{})
 		rootBodies := make(map[identity.ContentID][]identity.ContentID)
@@ -127,8 +127,12 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 		}
 		for changed := true; changed; {
 			changed = false
-			for callIndex := 0; callIndex < snapshot.CallCount(); callIndex++ {
-				call, callOK := snapshot.CallAt(callIndex)
+			callCount, callsPublished := program.CallCount()
+			if !callsPublished {
+				return nil, false
+			}
+			for callIndex := 0; callIndex < callCount; callIndex++ {
+				call, callOK := program.CallAt(callIndex)
 				target, targetOK := call.DirectTargetBody()
 				if !callOK || !targetOK {
 					continue
@@ -147,7 +151,6 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 				changed = true
 			}
 		}
-		program := snapshot.Program()
 		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
 		pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
 		if !program.Available() || !catalogOK || !pointsPublished {

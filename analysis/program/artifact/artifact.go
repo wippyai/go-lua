@@ -56,6 +56,15 @@ func (artifact *Artifact) Program() programschema.Program {
 	return programschema.Program{Frozen: artifact.frozen, ArtifactID: artifact.id, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.SchemaDigest()}
 }
 
+// CountRows returns the immutable Program denominator rows frozen into this
+// artifact. The rows are keyed by schema EntryID and contain no owner payload.
+func (artifact *Artifact) CountRows() denominator.CountRows {
+	if !artifact.Available() {
+		return denominator.CountRows{}
+	}
+	return artifact.counts
+}
+
 // coldCount and coldRow read one cold family out of this artifact's sealed
 // publication. They are the artifact-internal spelling of the family accessors
 // and deliberately do not gate on Available: the seal validation walks read

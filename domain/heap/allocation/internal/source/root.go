@@ -10,6 +10,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -264,11 +265,13 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 	for index := 0; index < fieldCount; index++ {
 		field, fieldOK := schema.FieldAt(root.key, index)
 		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
-		values, valuesOK := schema.ArtifactValuesForField(field)
-		member, memberOK := values.MemberAt(0)
+		program, values, valuesOK := schema.ArtifactValuesForField(field)
+		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		memberOffset, memberCount, memberSpanOK := values.MemberSpan()
+		member, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
 		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
 		_, width, finalOpen, geometryOK := descriptor.Values()
-		if !fieldOK || !descriptorOK || !valuesOK || !geometryOK || finalOpen || width != 1 || values.MemberCount() != 1 || !memberOK || !valueRefOK {
+		if !fieldOK || !descriptorOK || !valuesOK || !program.Available() || !catalogOK || !memberSpanOK || memberCount != 1 || !geometryOK || finalOpen || width != 1 || !memberOK || !valueRefOK {
 			return nil, nil, false
 		}
 		switch descriptor.Kind() {
@@ -329,12 +332,14 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		slot, slotOK := schema.SlotForField(field)
 		payload, payloadOK := schema.PayloadForField(field)
 		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
-		values, valuesOK := schema.ArtifactValuesForField(field)
-		member, memberOK := values.MemberAt(0)
+		program, values, valuesOK := schema.ArtifactValuesForField(field)
+		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		memberOffset, memberCount, memberSpanOK := values.MemberSpan()
+		member, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
 		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
 		payloadModule, payloadValues, payloadOffset, payloadSourceOK := payload.Source()
 		_, width, finalOpen, geometryOK := descriptor.Values()
-		if !fieldOK || !slotOK || !payloadOK || !descriptorOK || !valuesOK || !geometryOK || finalOpen || width != 1 || values.MemberCount() != 1 || !memberOK || !valueRefOK || !payloadSourceOK || payloadModule != module || payloadValues != descriptor.ValuesID() || payloadOffset != 0 {
+		if !fieldOK || !slotOK || !payloadOK || !descriptorOK || !valuesOK || !program.Available() || !catalogOK || !memberSpanOK || memberCount != 1 || !geometryOK || finalOpen || width != 1 || !memberOK || !valueRefOK || !payloadSourceOK || payloadModule != module || payloadValues != descriptor.ValuesID() || payloadOffset != 0 {
 			return nil, nil, false
 		}
 		kind := KeyExact
