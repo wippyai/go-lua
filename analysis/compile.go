@@ -534,13 +534,8 @@ func declaredTypeSpelling(value typ.Type) string {
 
 type artifactCacheState struct {
 	sync.Mutex
-	entries map[artifactCacheKey]*artifactCacheEntry
+	entries map[identity.ContentID]*artifactCacheEntry
 }
-
-// artifactCacheKey is the complete Program compiler identity, not merely a
-// Program/schema pair. A new grammar or compiler law therefore cannot alias
-// an immutable artifact compiled under a prior contract.
-type artifactCacheKey = identity.ContentID
 
 type artifactCacheEntry struct {
 	ready    chan struct{}
@@ -554,7 +549,7 @@ type artifactCacheEntry struct {
 // globalArtifactCache owns the reusable sealed ProgramArtifact together with
 // its owner-neutral Engine template and the sealed ingress snapshot they
 // were projected from. No payload retains Link authority.
-var globalArtifactCache = artifactCacheState{entries: make(map[artifactCacheKey]*artifactCacheEntry)}
+var globalArtifactCache = artifactCacheState{entries: make(map[identity.ContentID]*artifactCacheEntry)}
 
 func cachedProgramArtifact(input *program.Program, compilation composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
 	compileKey, keyOK := composite.NewArtifactCompileKey(input, compilation)
