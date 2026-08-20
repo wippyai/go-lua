@@ -57,13 +57,16 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 }
 
 func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	catalog := context.Rule.Catalog()
-	return catalog != nil && catalog.FencedTo(context.Authorities.ValueSchema())
+	schema := context.Authorities.ValueSchema()
+	return context.Rule != nil && context.Rule.owner != nil && schema != nil &&
+		context.Rule.owner.Schema() == schema
 }
 
 func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
-	catalog := hot.Catalog()
-	return catalog, catalog != nil
+	if hot == nil || hot.owner == nil || hot.owner.Schema() == nil {
+		return nil, false
+	}
+	return hot, true
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

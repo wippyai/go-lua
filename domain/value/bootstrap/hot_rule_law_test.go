@@ -24,7 +24,7 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
+func TestHotBootstrapRuleBindsCanonicalGlobalAndRejectsForeignOperand(t *testing.T) {
 	local := bootstrapFixture(t, "local bootstrap")
 	foreign := bootstrapFixture(t, "foreign bootstrap")
 
@@ -48,24 +48,21 @@ func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
 		t.Fatal("bootstrap typed Rule issuer")
 	}
 	if resolved, ok := valueowner.ResolveRuleImplementation(issuer); !ok || resolved == nil {
-		t.Fatal("bootstrap sealed receipt")
-	}
-	if catalog := rule.Catalog(); catalog == nil || catalog.Count() != local.schema.GlobalBootstrapResultCount() {
-		t.Fatal("bootstrap catalog")
+		t.Fatal("bootstrap sealed rule")
 	}
 	localID, localOK := local.schema.GlobalBootstrapResultIDAt(0)
 	foreignID, foreignOK := foreign.schema.GlobalBootstrapResultIDAt(0)
 	if !localOK || !foreignOK || localID == foreignID {
 		t.Fatal("bootstrap global identities")
 	}
-	if receipt, ok := rule.Catalog().ReceiptForID(localID); !ok || receipt != localID {
-		t.Fatal("local bootstrap receipt rejected")
+	if receipt, ok := local.schema.GlobalBootstrapResultForID(localID); !ok || receipt == nil {
+		t.Fatal("local bootstrap result rejected")
 	}
-	if receipt, ok := rule.Catalog().ReceiptForID(foreignID); ok || receipt != (identity.ContentID{}) {
-		t.Fatal("foreign bootstrap receipt crossed Value owner")
+	if receipt, ok := local.schema.GlobalBootstrapResultForID(foreignID); ok || receipt != nil {
+		t.Fatal("foreign bootstrap result crossed Value owner")
 	}
-	if receipt, ok := rule.Catalog().ReceiptForID(identity.ContentID{}); ok || receipt != (identity.ContentID{}) {
-		t.Fatal("zero bootstrap receipt accepted")
+	if receipt, ok := local.schema.GlobalBootstrapResultForID(identity.ContentID{}); ok || receipt != nil {
+		t.Fatal("zero bootstrap result accepted")
 	}
 
 	foreignOwner, foreignRule, foreignBinding := bind(foreign)

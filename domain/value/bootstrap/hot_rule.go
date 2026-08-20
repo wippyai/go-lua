@@ -12,7 +12,6 @@ import (
 // authorities consulted by the typed callbacks.
 type HotRule struct {
 	implementation *valueowner.RuleImplementation[identity.ContentID]
-	catalog        *Catalog
 	owner          *valueowner.HotOwner
 }
 
@@ -57,11 +56,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	catalog, catalogOK := SealCatalog(schema)
-	if !catalogOK {
-		return nil, false
-	}
-	rule := &HotRule{implementation: implementation, catalog: catalog, owner: owner}
+	rule := &HotRule{implementation: implementation, owner: owner}
 	if !implementation.InstallOperandResolver(rule.resolveOperand) {
 		return nil, false
 	}
@@ -69,20 +64,31 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (identity.ContentID, bool) {
-	if rule == nil || rule.catalog == nil {
+	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
 		return identity.ContentID{}, false
 	}
-	return rule.catalog.ReceiptForID(coords.Occurrence)
+	receipt, ok := rule.owner.Schema().GlobalBootstrapResultForID(coords.Occurrence)
+	if !ok {
+		return identity.ContentID{}, false
+	}
+	return receipt.ID()
 }
 
-// Catalog returns Value/bootstrap's immutable Link-global operand directory.
-// It is exposed as an opaque owner-issued substitution authority; no Host
-// mapping is reconstructed by consumers.
-func (rule *HotRule) Catalog() *Catalog {
-	if rule == nil {
-		return nil
+// Count implements the Link occurrence denominator from Value's canonical
+// sealed schema. It retains no copied IDs or lookup state.
+func (rule *HotRule) Count() int {
+	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
+		return 0
 	}
-	return rule.catalog
+	return rule.owner.Schema().GlobalBootstrapResultCount()
+}
+
+// IDAt projects the canonical Value global-binding order for Link admission.
+func (rule *HotRule) IDAt(index int) (identity.ContentID, bool) {
+	if rule == nil || rule.owner == nil || rule.owner.Schema() == nil {
+		return identity.ContentID{}, false
+	}
+	return rule.owner.Schema().GlobalBootstrapResultIDAt(index)
 }
 
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.ContentID], bool) {
