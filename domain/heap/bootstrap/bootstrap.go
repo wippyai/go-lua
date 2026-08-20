@@ -16,20 +16,13 @@ import (
 // coexist within its one WorldExact object and must never be emitted as
 // sibling whole-world alternatives for Factor Join to reconcile.
 type Root struct {
-	receipt *rootReceipt
-}
-
-type rootAuthority struct{ marker byte }
-
-type rootReceipt struct {
-	authority *rootAuthority
-	schema    heapdomain.Schema
-	key       heapdomain.Key
-	kind      heapdomain.RootKind
-	entries   []heapdomain.BootEntry
-	id        identity.ContentID
-	value     heapdomain.Value
-	admitted  bool
+	schema   heapdomain.Schema
+	key      heapdomain.Key
+	kind     heapdomain.RootKind
+	entries  []heapdomain.BootEntry
+	id       identity.ContentID
+	value    heapdomain.Value
+	admitted bool
 }
 
 // NewRoot aggregates every canonical BootEntry for key in a deterministic
@@ -78,37 +71,32 @@ func NewRoot(schema heapdomain.Schema, key heapdomain.Key) (Root, bool) {
 	if !valueOK {
 		return Root{}, false
 	}
-	return Root{receipt: &rootReceipt{
-		authority: &rootAuthority{marker: 1}, schema: schema, key: key, kind: heapdomain.RootBoot,
+	return Root{
+		schema: schema, key: key, kind: heapdomain.RootBoot,
 		entries: entries, id: id, value: value, admitted: true,
-	}}, true
+	}, true
 }
 
 func (root Root) ID() (identity.ContentID, bool) {
-	if root.receipt == nil || root.receipt.authority == nil || root.receipt.authority.marker != 1 || !root.receipt.id.Available() {
+	if !root.id.Available() {
 		return identity.ContentID{}, false
 	}
-	return root.receipt.id, true
+	return root.id, true
 }
 
 func (root Root) fencedTo(schema heapdomain.Schema) bool {
-	receipt := root.receipt
-	return receipt != nil && receipt.authority != nil && receipt.authority.marker == 1 && schema.Valid() &&
-		receipt.schema == schema && receipt.kind == heapdomain.RootBoot && receipt.id.Available()
+	return schema.Valid() && root.schema == schema && root.kind == heapdomain.RootBoot && root.id.Available()
 }
 
 func (root Root) entryCount() int {
-	if root.receipt == nil {
-		return 0
-	}
-	return len(root.receipt.entries)
+	return len(root.entries)
 }
 
 func (root Root) keyValue() (heapdomain.Key, bool) {
-	if root.receipt == nil || root.receipt.authority == nil || root.receipt.authority.marker != 1 {
+	if !root.id.Available() || root.kind != heapdomain.RootBoot {
 		return heapdomain.Key{}, false
 	}
-	return root.receipt.key, true
+	return root.key, true
 }
 
 func compareID(left, right identity.ContentID) int {
@@ -144,10 +132,10 @@ func contentForSchema(schema heapdomain.Schema, root Root) (Root, [32]byte, bool
 }
 
 func resultForSchema(schema heapdomain.Schema, root Root) (heapdomain.Key, heapdomain.Value, bool) {
-	if !root.fencedTo(schema) || root.receipt == nil || !root.receipt.admitted {
+	if !root.fencedTo(schema) || !root.admitted {
 		return heapdomain.Key{}, heapdomain.Value{}, false
 	}
-	return root.receipt.key, root.receipt.value, true
+	return root.key, root.value, true
 }
 
 func buildRootValue(schema heapdomain.Schema, key heapdomain.Key, entries []heapdomain.BootEntry) (heapdomain.Value, bool) {
