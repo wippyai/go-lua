@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
@@ -16,10 +17,13 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 		t.Fatal("sealed mount")
 	}
 	mount := record.Artifacts[0]
-	if mount.Snapshot.PointCount() == 0 {
+	program := mount.Snapshot.Program()
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
+	if !program.Available() || !catalogOK || !pointsPublished || pointCount == 0 {
 		t.Fatal("fixture issued no sealed points")
 	}
-	point, pointOK := mount.Snapshot.PointAt(0)
+	point, pointOK := programschema.PointFamily().At(&program.Frozen, catalog, 0)
 	pointID := point.ID()
 	if !pointOK || !pointID.Available() {
 		t.Fatal("sealed point")

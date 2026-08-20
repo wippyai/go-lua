@@ -8,7 +8,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
-	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -131,43 +130,6 @@ func TestProgramVocabularyIsTheSealedTable(t *testing.T) {
 		spelled(t, table, structure.CategoryIssuanceStage, uint16(member.ordinal), member.spelling)
 	}
 	counted(t, table, structure.CategoryIssuanceStage, uint16(programschema.RuleStageCallEffect), "programschema.RuleStageCallEffect")
-}
-
-// TestIngressVocabularyIsTheSealedTable pins the ingress boundary spellings.
-// Ingress projects an artifact row's ordinal through the sealed table, so this
-// law is what makes that projection an identity rather than a translation.
-func TestIngressVocabularyIsTheSealedTable(t *testing.T) {
-	table := sealedVocabulary(t)
-	for _, member := range []struct {
-		key      schema.Key
-		ordinal  ingress.StructuralArm
-		spelling string
-	}{
-		{"arm/local", ingress.StructuralArmLocal, "ingress.StructuralArmLocal"},
-		{"arm/resume", ingress.StructuralArmResume, "ingress.StructuralArmResume"},
-		{"arm/select-true", ingress.StructuralArmTrue, "ingress.StructuralArmTrue"},
-		{"arm/select-false", ingress.StructuralArmFalse, "ingress.StructuralArmFalse"},
-		{"arm/tail", ingress.StructuralArmTail, "ingress.StructuralArmTail"},
-		{"arm/throw", ingress.StructuralArmThrow, "ingress.StructuralArmThrow"},
-		{"arm/yield", ingress.StructuralArmYield, "ingress.StructuralArmYield"},
-		{"arm/cancel", ingress.StructuralArmCancel, "ingress.StructuralArmCancel"},
-	} {
-		pinned(t, table, structure.CategoryArm, uint16(member.ordinal), member.key, member.spelling)
-	}
-	counted(t, table, structure.CategoryArm, uint16(ingress.StructuralArmCancel), "ingress.StructuralArmCancel")
-
-	for _, member := range []struct {
-		key      schema.Key
-		ordinal  ingress.EventKind
-		spelling string
-	}{
-		{"event/enter", ingress.EventEnter, "ingress.EventEnter"},
-		{"event/point", ingress.EventPoint, "ingress.EventPoint"},
-		{"event/exit", ingress.EventExit, "ingress.EventExit"},
-	} {
-		pinned(t, table, structure.CategoryEvent, uint16(member.ordinal), member.key, member.spelling)
-	}
-	counted(t, table, structure.CategoryEvent, uint16(ingress.EventExit), "ingress.EventExit")
 }
 
 // TestEngineArtifactVocabularyIsTheSealedTable pins the engine boundary

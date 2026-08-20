@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
@@ -146,9 +147,15 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 				changed = true
 			}
 		}
-		pointIDs := make(map[identity.ContentID]struct{}, snapshot.PointCount())
-		for index := 0; index < snapshot.PointCount(); index++ {
-			point, ok := snapshot.PointAt(index)
+		program := snapshot.Program()
+		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
+		if !program.Available() || !catalogOK || !pointsPublished {
+			return nil, false
+		}
+		pointIDs := make(map[identity.ContentID]struct{}, pointCount)
+		for index := 0; index < pointCount; index++ {
+			point, ok := programschema.PointFamily().At(&program.Frozen, catalog, index)
 			if !ok || !point.ID().Available() {
 				return nil, false
 			}
@@ -156,7 +163,6 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 		}
 		observed := make(map[identity.ContentID]struct{})
 		observedBodies := make(map[identity.ContentID]struct{}, len(selectedBodies))
-		program := snapshot.Program()
 		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
 		if !occurrencesPublished {
 			return nil, false
@@ -198,8 +204,8 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 				observed[entry] = struct{}{}
 			}
 		}
-		for index := 0; index < snapshot.PointCount(); index++ {
-			point, ok := snapshot.PointAt(index)
+		for index := 0; index < pointCount; index++ {
+			point, ok := programschema.PointFamily().At(&program.Frozen, catalog, index)
 			if !ok || !point.ID().Available() {
 				return nil, false
 			}

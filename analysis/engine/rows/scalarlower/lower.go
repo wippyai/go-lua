@@ -68,9 +68,19 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	program := snapshot.Program()
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
 	bodyCount, bodiesPublished := program.BodyCount()
 	transferCount, transfersPublished := program.LocalTransferCount()
-	if !program.Available() || !bodiesPublished || !transfersPublished {
+	pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
+	_, pointDecisionsPublished := programschema.PointDecisionFamily().Count(&program.Frozen, catalog)
+	edgeCount, edgesPublished := programschema.EnvironmentEdgeFamily().Count(&program.Frozen, catalog)
+	_, resetsPublished := programschema.EnvironmentResetFamily().Count(&program.Frozen, catalog)
+	regionCount, regionsPublished := programschema.RegionFamily().Count(&program.Frozen, catalog)
+	_, regionMembersPublished := programschema.RegionMemberFamily().Count(&program.Frozen, catalog)
+	eventCount, eventsPublished := programschema.WTOEventFamily().Count(&program.Frozen, catalog)
+	if !program.Available() || !catalogOK || !bodiesPublished || !transfersPublished ||
+		!pointsPublished || !pointDecisionsPublished || !edgesPublished || !resetsPublished ||
+		!regionsPublished || !regionMembersPublished || !eventsPublished {
 		return nil, nil, false
 	}
 	usedKeys := make(map[schema.Key]struct{})
@@ -104,7 +114,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	spec, specOK := rows.NewArtifactScalarSpec(snapshot.ArtifactID(), snapshot.ProgramID(), snapshot.SchemaID(), rows.ArtifactScalarCapacity{
-		Roles: len(usedKeys), Points: snapshot.PointCount(), Edges: snapshot.StructuralEdgeCount(), Transfers: transferCount, Regions: snapshot.RegionCount(), Events: snapshot.EventCount(), Rules: ruleCount, Bodies: bodyCount,
+		Roles: len(usedKeys), Points: pointCount, Edges: edgeCount, Transfers: transferCount, Regions: regionCount, Events: eventCount, Rules: ruleCount, Bodies: bodyCount,
 	})
 	if !specOK || !spec.InstallStageLaws(laws) {
 		return nil, nil, false
@@ -128,8 +138,8 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		directory.bindings = append(directory.bindings, roleBinding{key: key, scalar: role})
 		directory.byKey[key] = role
 	}
-	for index := 0; index < snapshot.PointCount(); index++ {
-		row, rowOK := snapshot.PointAt(index)
+	for index := 0; index < pointCount; index++ {
+		row, rowOK := programschema.PointFamily().At(&program.Frozen, catalog, index)
 		if !rowOK || !row.ID().Available() {
 			return nil, nil, false
 		}
@@ -137,15 +147,19 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		if !pointOK {
 			return nil, nil, false
 		}
+		decisionOffset, _, decisionsOK := row.DecisionSpan()
+		if !decisionsOK {
+			return nil, nil, false
+		}
 		for inner := 0; inner < row.DecisionCount(); inner++ {
-			decision, decisionOK := row.DecisionAt(inner)
-			if !decisionOK || !spec.AddPointDecision(point, decision) {
+			decision, decisionOK := programschema.PointDecisionFamily().At(&program.Frozen, catalog, int(decisionOffset)+inner)
+			if !decisionOK || !spec.AddPointDecision(point, decision.ID()) {
 				return nil, nil, false
 			}
 		}
 	}
-	for index := 0; index < snapshot.StructuralEdgeCount(); index++ {
-		row, rowOK := snapshot.StructuralEdgeAt(index)
+	for index := 0; index < edgeCount; index++ {
+		row, rowOK := programschema.EnvironmentEdgeFamily().At(&program.Frozen, catalog, index)
 		if !rowOK {
 			return nil, nil, false
 		}
@@ -157,17 +171,21 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		if guarded != decisionOK || guarded != truthOK || hasMu != hasReset {
 			return nil, nil, false
 		}
-		arm, armOK := structuralArm(row.Arm())
-		if !armOK {
+		arm := rows.ArtifactStructuralArm(row.Arm())
+		if !arm.Valid() {
 			return nil, nil, false
 		}
 		edge, edgeOK := spec.AddEdge(rows.ArtifactScalarEdge{ID: row.ID(), From: row.From(), To: row.To(), Route: row.RouteID(), Guard: guard, Decision: decision, Component: row.ComponentID(), Mu: mu, Reset: reset, Arm: arm, Guarded: guarded, Truth: truth, HasReset: hasReset})
 		if !edgeOK {
 			return nil, nil, false
 		}
+		resetOffset, _, resetSpanOK := row.ResetSpan()
+		if !resetSpanOK {
+			return nil, nil, false
+		}
 		for inner := 0; inner < row.ResetCount(); inner++ {
-			resetPoint, resetOK := row.ResetAt(inner)
-			if !resetOK || !spec.AddEdgeReset(edge, resetPoint) {
+			resetPoint, resetOK := programschema.EnvironmentResetFamily().At(&program.Frozen, catalog, int(resetOffset)+inner)
+			if !resetOK || !spec.AddEdgeReset(edge, resetPoint.ID()) {
 				return nil, nil, false
 			}
 		}
@@ -190,29 +208,34 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 			}
 		}
 	}
-	for index := 0; index < snapshot.RegionCount(); index++ {
-		row, rowOK := snapshot.RegionAt(index)
+	for index := 0; index < regionCount; index++ {
+		row, rowOK := programschema.RegionFamily().At(&program.Frozen, catalog, index)
 		if !rowOK {
 			return nil, nil, false
 		}
-		region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: row.ID(), Head: row.Head(), Parent: row.ParentID(), Cyclic: row.Cyclic()})
+		memberOffset, _, membersOK := row.MemberSpan()
+		head, headOK := programschema.RegionMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
+		if !membersOK || !headOK {
+			return nil, nil, false
+		}
+		region, regionOK := spec.AddRegion(rows.ArtifactScalarRegion{ID: row.ID(), Head: head.ID(), Parent: row.ParentID(), Cyclic: row.Cyclic()})
 		if !regionOK {
 			return nil, nil, false
 		}
 		for inner := 0; inner < row.MemberCount(); inner++ {
-			member, memberOK := row.MemberAt(inner)
-			if !memberOK || !spec.AddRegionMember(region, member) {
+			member, memberOK := programschema.RegionMemberFamily().At(&program.Frozen, catalog, int(memberOffset)+inner)
+			if !memberOK || !spec.AddRegionMember(region, member.ID()) {
 				return nil, nil, false
 			}
 		}
 	}
-	for index := 0; index < snapshot.EventCount(); index++ {
-		row, rowOK := snapshot.EventAt(index)
+	for index := 0; index < eventCount; index++ {
+		row, rowOK := programschema.WTOEventFamily().At(&program.Frozen, catalog, index)
 		if !rowOK {
 			return nil, nil, false
 		}
-		kind, kindOK := eventKind(row.Kind())
-		if !kindOK || !spec.AddEvent(rows.ArtifactScalarEvent{Kind: kind, Region: row.RegionID(), Point: row.PointID()}) {
+		kind := rows.ArtifactEventKind(row.Kind())
+		if kind < rows.ArtifactEventEnter || kind > rows.ArtifactEventExit || !spec.AddEvent(rows.ArtifactScalarEvent{Kind: kind, Region: row.RegionID(), Point: row.PointID()}) {
 			return nil, nil, false
 		}
 	}
@@ -342,20 +365,6 @@ func ruleStage(stage uint8) (rows.ArtifactRuleStage, bool) {
 		return rows.ArtifactRuleStageInvalid, false
 	}
 	return converted, true
-}
-
-func structuralArm(arm ingress.StructuralArm) (rows.ArtifactStructuralArm, bool) {
-	if !arm.Valid() {
-		return rows.ArtifactStructuralArmInvalid, false
-	}
-	return rows.ArtifactStructuralArm(arm), true
-}
-
-func eventKind(kind ingress.EventKind) (rows.ArtifactEventKind, bool) {
-	if kind < ingress.EventEnter || kind > ingress.EventExit {
-		return rows.ArtifactEventInvalid, false
-	}
-	return rows.ArtifactEventKind(kind), true
 }
 
 func acceptedOutcome(vocabulary structure.Table, kind programschema.OutcomeKind) bool {

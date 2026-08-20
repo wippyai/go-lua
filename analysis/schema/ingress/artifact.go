@@ -11,39 +11,6 @@ import (
 	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-// StructuralArm and EventKind are the boundary spellings of two sealed
-// structural vocabularies. Their ordinals are the vocabulary's declared
-// ordinals, pinned there by the declaration surface's own laws, so a projection
-// below is a lookup of the sealed member rather than a translation between two
-// catalogs.
-
-// StructuralArm is the neutral structural-edge arm vocabulary.
-type StructuralArm uint8
-
-const (
-	StructuralArmInvalid StructuralArm = iota
-	StructuralArmLocal
-	StructuralArmResume
-	StructuralArmTrue
-	StructuralArmFalse
-	StructuralArmTail
-	StructuralArmThrow
-	StructuralArmYield
-	StructuralArmCancel
-)
-
-func (arm StructuralArm) Valid() bool { return arm >= StructuralArmLocal && arm <= StructuralArmCancel }
-
-// EventKind is the neutral bracket-stream vocabulary.
-type EventKind uint8
-
-const (
-	EventInvalid EventKind = iota
-	EventEnter
-	EventPoint
-	EventExit
-)
-
 // Snapshot is the sealed ingress receipt: closed identity columns projected
 // once from a ProgramArtifact. Accessors read these columns; they never hold
 // or reopen the owner.
@@ -53,11 +20,10 @@ type Snapshot struct {
 	schemaID    identity.ContentID
 	frozen      snapshotstore.Frozen
 	coldCatalog identity.ContentID
-	vocabulary  structure.Table
 }
 
 func (snapshot *Snapshot) Available() bool {
-	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && snapshot.frozen.Published() && snapshot.coldCatalog.Available() && vocabularyAuthority(snapshot.vocabulary)
+	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && snapshot.frozen.Published() && snapshot.coldCatalog.Available()
 }
 
 func vocabularyAuthority(vocabulary structure.Table) bool {
@@ -140,97 +106,6 @@ func (snapshot *Snapshot) Program() programschema.Program {
 		Frozen: snapshot.frozen, ArtifactID: snapshot.artifactID,
 		ProgramID: snapshot.programID, SchemaID: snapshot.schemaID,
 	}
-}
-func (snapshot *Snapshot) PointCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count, published := coldCount(snapshot.coldView(), programschema.PointFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-func (snapshot *Snapshot) PointAt(index int) (Point, bool) {
-	if !snapshot.Available() {
-		return Point{}, false
-	}
-	view := snapshot.coldView()
-	row, held := coldRow(view, programschema.PointFamily(), index)
-	if !held {
-		return Point{}, false
-	}
-	return Point{row: row, view: view}, true
-}
-func (snapshot *Snapshot) StructuralEdgeCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count, published := coldCount(snapshot.coldView(), programschema.EnvironmentEdgeFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-func (snapshot *Snapshot) StructuralEdgeAt(index int) (StructuralEdge, bool) {
-	if !snapshot.Available() {
-		return StructuralEdge{}, false
-	}
-	view := snapshot.coldView()
-	row, held := coldRow(view, programschema.EnvironmentEdgeFamily(), index)
-	if !held {
-		return StructuralEdge{}, false
-	}
-	arm, armOK := projectArm(snapshot.vocabulary, uint16(row.Arm()))
-	if !armOK {
-		return StructuralEdge{}, false
-	}
-	return StructuralEdge{row: row, view: view, arm: arm}, true
-}
-func (snapshot *Snapshot) RegionCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count, published := coldCount(snapshot.coldView(), programschema.RegionFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-func (snapshot *Snapshot) RegionAt(index int) (Region, bool) {
-	if !snapshot.Available() {
-		return Region{}, false
-	}
-	view := snapshot.coldView()
-	row, held := coldRow(view, programschema.RegionFamily(), index)
-	if !held {
-		return Region{}, false
-	}
-	return Region{row: row, view: view}, true
-}
-func (snapshot *Snapshot) EventCount() int {
-	if !snapshot.Available() {
-		return 0
-	}
-	count, published := coldCount(snapshot.coldView(), programschema.WTOEventFamily())
-	if !published {
-		return 0
-	}
-	return count
-}
-func (snapshot *Snapshot) EventAt(index int) (Event, bool) {
-	if !snapshot.Available() {
-		return Event{}, false
-	}
-	row, held := coldRow(snapshot.coldView(), programschema.WTOEventFamily(), index)
-	if !held {
-		return Event{}, false
-	}
-	kind, kindOK := projectEvent(snapshot.vocabulary, uint16(row.Kind()))
-	if !kindOK {
-		return Event{}, false
-	}
-	return Event{row: row, kind: kind}, true
 }
 func (snapshot *Snapshot) CallArgumentCount() int {
 	if !snapshot.Available() {
@@ -328,107 +203,6 @@ func (snapshot *Snapshot) ValuesAt(index int) (Values, bool) {
 	}
 	return Values{row: row, view: view}, true
 }
-
-type Point struct {
-	row  programschema.Point
-	view coldView
-}
-
-func (row Point) ID() identity.ContentID { return row.row.ID() }
-func (row Point) Initial() bool          { return row.row.Initial() }
-func (row Point) DecisionCount() int     { return row.row.DecisionCount() }
-func (row Point) DecisionAt(index int) (identity.ContentID, bool) {
-	offset, count, spanOK := row.row.DecisionSpan()
-	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
-		return identity.ContentID{}, false
-	}
-	decision, held := coldRow(row.view, programschema.PointDecisionFamily(), int(offset)+index)
-	if !held {
-		return identity.ContentID{}, false
-	}
-	return decision.ID(), true
-}
-
-type StructuralEdge struct {
-	row  programschema.EnvironmentEdge
-	view coldView
-	arm  StructuralArm
-}
-
-func (row StructuralEdge) ID() identity.ContentID          { return row.row.ID() }
-func (row StructuralEdge) From() identity.ContentID        { return row.row.From() }
-func (row StructuralEdge) To() identity.ContentID          { return row.row.To() }
-func (row StructuralEdge) RouteID() identity.ContentID     { return row.row.RouteID() }
-func (row StructuralEdge) ComponentID() identity.ContentID { return row.row.ComponentID() }
-func (row StructuralEdge) Arm() StructuralArm              { return row.arm }
-func (row StructuralEdge) GuardID() (identity.ContentID, bool) {
-	guard, guarded := row.row.GuardID()
-	return guard, guarded && guard.Available()
-}
-func (row StructuralEdge) DecisionID() (identity.ContentID, bool) {
-	decision, guarded := row.row.DecisionID()
-	return decision, guarded && decision.Available()
-}
-func (row StructuralEdge) Truth() (bool, bool) { return row.row.Truth() }
-func (row StructuralEdge) MuPathID() (identity.ContentID, bool) {
-	mu, _ := row.row.MuPathID()
-	return mu, mu.Available()
-}
-func (row StructuralEdge) ResetDigest() (identity.ContentID, bool) {
-	reset, hasReset := row.row.ResetDigest()
-	return reset, hasReset && reset.Available()
-}
-func (row StructuralEdge) ResetCount() int { return row.row.ResetCount() }
-func (row StructuralEdge) ResetAt(index int) (identity.ContentID, bool) {
-	offset, count, spanOK := row.row.ResetSpan()
-	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
-		return identity.ContentID{}, false
-	}
-	witness, held := coldRow(row.view, programschema.EnvironmentResetFamily(), int(offset)+index)
-	if !held {
-		return identity.ContentID{}, false
-	}
-	return witness.ID(), true
-}
-
-type Region struct {
-	row  programschema.Region
-	view coldView
-}
-
-func (row Region) ID() identity.ContentID { return row.row.ID() }
-func (row Region) Head() identity.ContentID {
-	head, held := row.MemberAt(0)
-	if !held {
-		return identity.ContentID{}
-	}
-	return head
-}
-func (row Region) ParentID() identity.ContentID { return row.row.ParentID() }
-func (row Region) Cyclic() bool                 { return row.row.Cyclic() }
-func (row Region) MemberCount() int             { return row.row.MemberCount() }
-func (row Region) MemberAt(index int) (identity.ContentID, bool) {
-	offset, count, spanOK := row.row.MemberSpan()
-	if !spanOK || index < 0 || uint64(index) >= uint64(count) {
-		return identity.ContentID{}, false
-	}
-	member, held := coldRow(row.view, programschema.RegionMemberFamily(), int(offset)+index)
-	if !held {
-		return identity.ContentID{}, false
-	}
-	return member.ID(), true
-}
-
-// Event is one order bracket read out of the published plane. Its kind is the
-// sealed structural vocabulary's member, projected at the read site.
-type Event struct {
-	row  programschema.WTOEvent
-	kind EventKind
-}
-
-func (row Event) Kind() EventKind              { return row.kind }
-func (row Event) RegionID() identity.ContentID { return row.row.RegionID() }
-func (row Event) PointID() identity.ContentID  { return row.row.PointID() }
 
 type CallOperand struct{ row programschema.CallOperand }
 
@@ -545,24 +319,6 @@ func (row Values) Tail() (ValuesTail, bool) {
 	return ValuesTail{row: tail}, present
 }
 
-func projectArm(vocabulary structure.Table, ordinal uint16) (StructuralArm, bool) {
-	member, ok := vocabulary.At(structure.CategoryArm, ordinal)
-	if !ok {
-		return StructuralArmInvalid, false
-	}
-	arm := StructuralArm(member.Ordinal())
-	return arm, arm.Valid()
-}
-
-func projectEvent(vocabulary structure.Table, ordinal uint16) (EventKind, bool) {
-	member, ok := vocabulary.At(structure.CategoryEvent, ordinal)
-	if !ok {
-		return EventInvalid, false
-	}
-	kind := EventKind(member.Ordinal())
-	return kind, kind != EventInvalid
-}
-
 // Lower projects one sealed artifact through the sealed structural vocabulary
 // into closed columns. The returned snapshot retains no owner pointer.
 func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Snapshot, bool) {
@@ -580,7 +336,6 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		schemaID:    program.SchemaID,
 		frozen:      program.Frozen,
 		coldCatalog: coldCatalog,
-		vocabulary:  vocabulary,
 	}
 	// Every published route arm must name a member of the sealed structural
 	// vocabulary. The admission is stated once here over the published plane;
@@ -594,7 +349,7 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		if !held {
 			return nil, false
 		}
-		if _, armOK := projectArm(vocabulary, uint16(row.Arm())); !armOK {
+		if _, armOK := vocabulary.At(structure.CategoryArm, uint16(row.Arm())); !armOK {
 			return nil, false
 		}
 	}
@@ -611,7 +366,7 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		if !held {
 			return nil, false
 		}
-		if _, kindOK := projectEvent(vocabulary, uint16(row.Kind())); !kindOK {
+		if _, kindOK := vocabulary.At(structure.CategoryEvent, uint16(row.Kind())); !kindOK {
 			return nil, false
 		}
 	}
