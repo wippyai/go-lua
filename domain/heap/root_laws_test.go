@@ -695,6 +695,63 @@ func TestHeapOccurrenceInverseLaws(t *testing.T) {
 	}
 }
 
+func TestHeapKeyIDInverseLaws(t *testing.T) {
+	linked, schema, mounts := compactHeapFixture(t, "key_id_inverse", compactHeapSource, nil)
+	if len(mounts) == 0 || linked == nil || !schema.Valid() {
+		t.Fatal("heap key inverse fixture")
+	}
+
+	ids := make(map[identity.ContentID]Key, schema.KeyCount())
+	for index := 0; index < schema.KeyCount(); index++ {
+		key, keyOK := schema.KeyAt(index)
+		id, idOK := schema.KeyID(key)
+		inverse, inverseOK := schema.KeyForID(id)
+		if !keyOK || !key.Valid() || !idOK || !id.Available() || !inverseOK || inverse != key || !schema.OwnsKey(inverse) {
+			t.Fatalf("KeyID inverse %d: key=%v/%v id=%v/%v inverse=%v/%v", index, key, keyOK, id, idOK, inverse, inverseOK)
+		}
+		if prior, duplicate := ids[id]; duplicate {
+			t.Fatalf("non-injective KeyID: %v and %v", prior, key)
+		}
+		ids[id] = key
+		resolvedID, resolvedIDOK := inverse.ContentID()
+		if !resolvedIDOK || resolvedID != id {
+			t.Fatalf("inverse changed KeyID at %d: %v/%v", index, resolvedID, resolvedIDOK)
+		}
+	}
+	if len(ids) != schema.KeyCount() {
+		t.Fatalf("KeyID inverse coverage=%d, roots=%d", len(ids), schema.KeyCount())
+	}
+	if _, ok := schema.KeyForID(identity.ContentID{}); ok {
+		t.Fatal("zero KeyID redeemed")
+	}
+	unknown, unknownOK := identity.DeriveContentID("heap-key-inverse-unknown", []byte("not-a-sealed-key"))
+	if !unknownOK || !unknown.Available() {
+		t.Fatal("unknown KeyID fixture")
+	}
+	if _, ok := schema.KeyForID(unknown); ok {
+		t.Fatal("unknown KeyID redeemed")
+	}
+
+	// Re-sealing the same Link preserves Heap content identity and therefore
+	// preserves the KeyID relation, while the returned Keys remain fenced to
+	// their respective Schema owners.
+	resealed, failure := SealWithArtifacts(linked, mounts)
+	if failure != heapdomain.SealFailureNone || !resealed.Valid() || resealed.ContentID() != schema.ContentID() {
+		t.Fatalf("re-seal identity: failure=%v valid=%v id=%v/%v", failure, resealed.Valid(), resealed.ContentID(), schema.ContentID())
+	}
+	for id, original := range ids {
+		resolved, resolvedOK := resealed.KeyForID(id)
+		if !resolvedOK || !resealed.OwnsKey(resolved) || resolved == original {
+			t.Fatalf("re-sealed owner fence for %v: key=%v/%v", id, resolved, resolvedOK)
+		}
+		originalIndex, originalIndexOK := schema.KeyIndex(original)
+		resolvedIndex, resolvedIndexOK := resealed.KeyIndex(resolved)
+		if !originalIndexOK || !resolvedIndexOK || originalIndex != resolvedIndex {
+			t.Fatalf("re-sealed KeyID index for %v: %d/%v vs %d/%v", id, originalIndex, originalIndexOK, resolvedIndex, resolvedIndexOK)
+		}
+	}
+}
+
 func TestHeapInitializerPartitionAndMetatableLaws(t *testing.T) {
 	_, schema, _ := compactHeapFixture(t, "compact_initializer", compactHeapSource, nil)
 	key := compactAllocationKeys(t, schema, 1)[0]

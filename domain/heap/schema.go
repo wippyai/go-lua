@@ -260,6 +260,7 @@ const (
 	SealFailureFinishPresentContainments
 	SealFailureFinishWidenRanks
 	SealFailureFinishContentID
+	SealFailureFinishKeyInverse
 )
 
 func (failure SealFailure) String() string {
@@ -302,6 +303,8 @@ func (failure SealFailure) String() string {
 		return "finish-widen-ranks"
 	case SealFailureFinishContentID:
 		return "finish-content-id"
+	case SealFailureFinishKeyInverse:
+		return "finish-key-inverse"
 	default:
 		return "unknown"
 	}
@@ -358,7 +361,11 @@ type schema struct {
 	// selector for the exact owner-fenced Program tuple.
 	programAllocationOrdinals map[programAllocationOccurrence]uint32
 	indexAccessOrdinals       map[indexAccessOccurrence]uint32
-	artifacts                 map[identity.ContentID]ArtifactMount
+	// keyByID is Heap's one sealed inverse for its owner-issued KeyID. It is
+	// populated only after ContentID and every root row have sealed; values are
+	// dense Key selectors, never a second identity or source representation.
+	keyByID   map[identity.ContentID]uint32
+	artifacts map[identity.ContentID]ArtifactMount
 	// artifactOrder is the same sealed mount set in the Link's own mount
 	// order. The map answers by module; this answers "which mounts, in which
 	// order", so a consumer never carries a second copy of the mount list.
@@ -1543,7 +1550,54 @@ func (owner *heapBuilder) finishWithFailure() SealFailure {
 	if !owner.sealBootRows() {
 		return SealFailureBootProjection
 	}
+	if !owner.sealKeyIDInverse() {
+		return SealFailureFinishKeyInverse
+	}
 	return SealFailureNone
+}
+
+// sealKeyIDInverse proves the complete KeyID relation once, after all root
+// rows are admitted and Heap's content identity is known. Every sealed root
+// contributes exactly one ID, duplicate IDs reject the seal, and a second
+// totality pass verifies that every root is redeemable through the inverse.
+// Hot callers therefore perform one map lookup and never scan Heap roots.
+func (owner *heapBuilder) sealKeyIDInverse() bool {
+	if owner == nil || owner.keyByID != nil || !owner.id.Available() {
+		return false
+	}
+	count := owner.rootCount()
+	if count > uint64(^uint32(0)) || count > uint64(^uint(0)>>1) {
+		return false
+	}
+	ownerSchema := Schema{owner: owner.schema}
+	inverse := make(map[identity.ContentID]uint32, int(count))
+	for index := uint64(0); index < count; index++ {
+		slot := uint32(index + 1)
+		key := Key{owner: owner.schema, slot: slot}
+		id, idOK := ownerSchema.KeyID(key)
+		if !idOK || !id.Available() {
+			return false
+		}
+		if _, duplicate := inverse[id]; duplicate {
+			return false
+		}
+		inverse[id] = slot
+	}
+	if uint64(len(inverse)) != count {
+		return false
+	}
+	for id, slot := range inverse {
+		if slot == 0 {
+			return false
+		}
+		key := Key{owner: owner.schema, slot: slot}
+		canonical, canonicalOK := ownerSchema.KeyID(key)
+		if !canonicalOK || canonical != id || !key.valid() {
+			return false
+		}
+	}
+	owner.keyByID = inverse
+	return true
 }
 
 // sealOccurrenceInverses derives the two exact occurrence indexes from the
@@ -2077,6 +2131,22 @@ func (schema Schema) KeyID(key Key) (identity.ContentID, bool) {
 	binary.BigEndian.PutUint64(payload[32:40], 0x686561702d6b6579) // "heap-key"
 	binary.BigEndian.PutUint64(payload[40:48], uint64(key.slot))
 	return sha256.Sum256(payload[:]), true
+}
+
+// KeyForID redeems one Heap KeyID through the sealed owner inverse. The
+// returned coordinate is always issued by this exact Schema; unknown,
+// unavailable, and foreign IDs receive no fallback or root scan.
+func (schema Schema) KeyForID(id identity.ContentID) (Key, bool) {
+	if !schema.valid() || !id.Available() || schema.owner.keyByID == nil {
+		return Key{}, false
+	}
+	slot, ok := schema.owner.keyByID[id]
+	if !ok || slot == 0 {
+		return Key{}, false
+	}
+	key := Key{owner: schema.owner, slot: slot}
+	canonical, canonicalOK := schema.KeyID(key)
+	return key, canonicalOK && canonical == id
 }
 
 // KeyForBootID admits one existing detached bootstrap semantic ID into the
