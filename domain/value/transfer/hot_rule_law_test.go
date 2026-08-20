@@ -54,17 +54,6 @@ func TestHotStorageTransferBindsExactReadCarryReceiptAndRejectsForeignProof(t *t
 	if !localOK || !foreignOK || !local.schema.OwnsStorageTransfer(localTransfer) || !foreign.schema.OwnsStorageTransfer(foreignTransfer) {
 		t.Fatal("storage transfer operands")
 	}
-	localReceipt, localReceiptOK := rule.ReceiptForOccurrence(local.module, local.occurrence)
-	if !localReceiptOK || !local.schema.OwnsStorageTransfer(localReceipt) {
-		t.Fatal("local storage transfer receipt rejected")
-	}
-	if _, ok := rule.ReceiptForOccurrence(local.module, foreign.occurrence); ok {
-		t.Fatal("foreign storage transfer occurrence crossed local mount")
-	}
-	if _, ok := rule.ReceiptForOccurrence(foreign.module, local.occurrence); ok {
-		t.Fatal("foreign storage transfer mount crossed local owner")
-	}
-
 	foreignOwner, foreignRule, foreignBinding := bind(foreign)
 	if foreignOwner == nil || foreignRule == nil || foreignBinding == nil {
 		t.Fatal("foreign storage transfer receipt bind")

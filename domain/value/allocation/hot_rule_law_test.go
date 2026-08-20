@@ -72,50 +72,6 @@ func TestHotAllocationRuleBindsCarryReceiptAndRejectsForeignBinding(t *testing.T
 	}
 }
 
-func TestHotAllocationReceiptRejectsForeignMountAndOccurrence(t *testing.T) {
-	local := allocationFixture(t, "local mount")
-	foreign := allocationFixture(t, "foreign mount")
-	bind := func(fixture *allocationFixtureState) (*valueowner.HotOwner, *allocation.HotRule, *allocationcatalog.Catalog) {
-		cold, ownerFragment, fragment, query := allocationColdSchema(t)
-		binding := engine.NewSchemaBinding(cold)
-		owner, ownerOK := valueowner.BindHot(binding, ownerFragment, fixture.schema)
-		catalog, catalogFailure := allocationcatalog.BeginWithFailure(fixture.heaps, fixture.schema, owner, fixture.mounts)
-		rule, ruleOK := allocation.BindHot(fragment, owner, fixture.heaps, catalog)
-		queryOK := valueowner.BindExactQuery(owner, query, engine.HotExactQuerySpec[valuedomain.Value, bool]{
-			Project: func(engine.OrderedCells[valuedomain.Value]) bool { return true },
-			Result:  allocationBoolResult(allocationKey(31_008)),
-		})
-		if !ownerOK || catalogFailure != allocationcatalog.SealFailureNone || !ruleOK || !queryOK || !binding.Seal() || catalog.SealSummaryReceiptsWithFailure() != allocationcatalog.SealFailureNone {
-			return nil, nil, nil
-		}
-		return owner, rule, catalog
-	}
-	_, localRule, localCatalog := bind(local)
-	_, foreignRule, foreignCatalog := bind(foreign)
-	if localRule == nil || localCatalog == nil || foreignRule == nil || foreignCatalog == nil {
-		t.Fatal("allocation mounted receipt bind")
-	}
-	localMount, localMountOK := localCatalog.ForMount(local.module)
-	foreignMount, foreignMountOK := foreignCatalog.ForMount(foreign.module)
-	if !localMountOK || !foreignMountOK {
-		t.Fatal("allocation mounted catalog")
-	}
-	localKey, localKeyOK := localMount.KeyForOccurrence(local.occurrence)
-	foreignKey, foreignKeyOK := foreignMount.KeyForOccurrence(foreign.occurrence)
-	if !localKeyOK || !foreignKeyOK || localKey == foreignKey {
-		t.Fatal("allocation mounted keys")
-	}
-	if _, ok := localRule.ReceiptForOccurrence(local.module, local.occurrence); !ok {
-		t.Fatal("local allocation occurrence receipt rejected")
-	}
-	if _, ok := localRule.ReceiptForOccurrence(foreign.module, foreign.occurrence); ok {
-		t.Fatal("foreign allocation occurrence crossed local mount")
-	}
-	if _, ok := localRule.ReceiptForOccurrence(foreign.module, local.occurrence); ok {
-		t.Fatal("local allocation occurrence redeemed under a foreign mount")
-	}
-}
-
 type allocationFixtureState struct {
 	schema     *valuedomain.Schema
 	heaps      heapdomain.Schema

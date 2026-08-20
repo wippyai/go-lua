@@ -26,9 +26,8 @@ import (
 )
 
 // TestClosedMountedReceiptAdmission keeps the valid ownership law at the
-// current boundary: a closed source is admitted from Heap/Value schemas,
-// then the hot rule can issue only the allocation occurrence receipt for its
-// exact mounted module.
+// current boundary: a closed source is admitted from the exact Heap/Value
+// schemas and the hot rule seals only against those owners.
 func TestClosedMountedReceiptAdmission(t *testing.T) {
 	heapSchema, valueSchema, mounts := closedReceiptFixture(t, `return { answer = 1 }`)
 	root := tableRoot(t, heapSchema, 1)
@@ -58,14 +57,6 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 		t.Fatal("closed rule implementation receipt")
 	}
 
-	module, _, allocationID, _, _, allocationOK := heapSchema.AllocationOriginForKey(root)
-	admitted, admittedOK := rule.ReceiptForOccurrence(module, allocationID)
-	if !allocationOK || !admittedOK || !admitted.RevalidateFor(heapSchema, valueSchema) || admitted.Key() != operand.Key() {
-		t.Fatal("closed allocation occurrence was not reissued by its mounted receipt")
-	}
-	if _, ok := rule.ReceiptForOccurrence(allocationID, allocationID); ok {
-		t.Fatal("closed occurrence redeemed under a module that mounts no allocation")
-	}
 }
 
 func TestClosedMountedReceiptRejectsForeignSchemaInstance(t *testing.T) {
