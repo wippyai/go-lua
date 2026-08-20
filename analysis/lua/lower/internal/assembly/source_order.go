@@ -14,7 +14,8 @@ func (c *Collector) Body(span source.Span) keyspace.Term {
 	if term == 0 {
 		return 0
 	}
-	c.source.AddBody(term)
+	c.source.Bodies = append(c.source.Bodies, source.BodySource{Body: term})
+	c.bodies = append(c.bodies, false)
 	return term
 }
 
@@ -38,10 +39,13 @@ func (c *Collector) SetBody(body keyspace.Term, terms ...keyspace.Term) bool {
 		}
 		seen[term] = struct{}{}
 	}
-	if !c.source.SetBody(body, copyTerms) {
+	at := int(keyspace.TermOrdinal(body) - 1)
+	if at < 0 || at >= len(c.source.Bodies) || at >= len(c.bodies) || c.bodies[at] {
 		c.fail(errors.New("program/lower/collector: Body filled more than once or out of order"))
 		return false
 	}
+	c.source.Bodies[at].Terms = copyTerms
+	c.bodies[at] = true
 	return true
 }
 
@@ -49,7 +53,17 @@ func sourceBodyTermSeen(c *Collector, term keyspace.Term) bool {
 	if c == nil {
 		return false
 	}
-	return c.source.BodyTermSeen(term)
+	for index, row := range c.source.Bodies {
+		if index >= len(c.bodies) || !c.bodies[index] {
+			continue
+		}
+		for _, existing := range row.Terms {
+			if existing == term {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SetEntry fixes the one top-level Body. It is a scalar construction fact;
@@ -61,10 +75,11 @@ func (c *Collector) SetEntry(body keyspace.Term) bool {
 	if !validBody(c, body) {
 		return rejectMutation(c, errors.New("program/lower/collector: invalid Entry Body"))
 	}
-	if c.source.Entry() != 0 {
+	if c.entry != 0 {
 		return rejectMutation(c, errors.New("program/lower/collector: Entry already assigned"))
 	}
-	return c.source.SetEntry(body)
+	c.entry = body
+	return true
 }
 
 // Entry returns the scalar entry Body while construction remains local. It
@@ -73,7 +88,7 @@ func (c *Collector) Entry() keyspace.Term {
 	if c == nil || c.err != nil {
 		return 0
 	}
-	return c.source.Entry()
+	return c.entry
 }
 
 // BindCells records Source's authored Cell order for one Bind. The evaluated
@@ -87,7 +102,7 @@ func (c *Collector) BindCells(bind keyspace.Term, cells []keyspace.Term) bool {
 		return rejectMutation(c, errors.New("program/lower/collector: invalid Bind order owner"))
 	}
 	at := int(keyspace.TermOrdinal(bind) - 1)
-	if at != c.source.BindCount() {
+	if at != len(c.source.Binds) {
 		return rejectMutation(c, errors.New("program/lower/collector: Bind order is not dense"))
 	}
 	bindRow, ok := c.flow.BindAt(at)
@@ -105,7 +120,7 @@ func (c *Collector) BindCells(bind keyspace.Term, cells []keyspace.Term) bool {
 		}
 		seen[cell] = struct{}{}
 	}
-	c.source.AddBind(bind, cells)
+	c.source.Binds = append(c.source.Binds, source.BindCells{Bind: bind, Cells: append([]keyspace.Term(nil), cells...)})
 	return true
 }
 
@@ -119,7 +134,7 @@ func (c *Collector) FunctionFormals(function keyspace.Term, formals []keyspace.T
 		return rejectMutation(c, errors.New("program/lower/collector: invalid Function formal owner"))
 	}
 	at := int(keyspace.TermOrdinal(function) - 1)
-	if at != c.source.FunctionCount() {
+	if at != len(c.source.Functions) {
 		return rejectMutation(c, errors.New("program/lower/collector: Function formal order is not dense"))
 	}
 	functionRow, ok := c.flow.FunctionAt(at)
@@ -137,7 +152,7 @@ func (c *Collector) FunctionFormals(function keyspace.Term, formals []keyspace.T
 		}
 		seen[formal] = struct{}{}
 	}
-	c.source.AddFunction(function, formals)
+	c.source.Functions = append(c.source.Functions, source.FunctionFormals{Function: function, Formals: append([]keyspace.Term(nil), formals...)})
 	return true
 }
 
@@ -145,7 +160,21 @@ func sourceCellAlreadyOrdered(c *Collector, cell keyspace.Term) bool {
 	if c == nil {
 		return false
 	}
-	return c.source.CellAlreadyOrdered(cell)
+	for _, row := range c.source.Binds {
+		for _, existing := range row.Cells {
+			if existing == cell {
+				return true
+			}
+		}
+	}
+	for _, row := range c.source.Functions {
+		for _, existing := range row.Formals {
+			if existing == cell {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // localCellAdmission is the Collector-side row proof for a lexical Cell.

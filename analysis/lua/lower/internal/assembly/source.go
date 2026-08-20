@@ -40,7 +40,7 @@ func (c *Collector) mint(family keyspace.Family, span source.Span) keyspace.Term
 		return 0
 	}
 	c.counts[family] = uint32(ordinal)
-	c.spans[family] = append(c.spans[family], span)
+	c.source.Families[family-1].Spans = append(c.source.Families[family-1].Spans, span)
 	return term
 }
 
@@ -51,10 +51,14 @@ func (c *Collector) addExact(raw keyspace.LiteralValue) bool {
 	if c == nil || c.err != nil || c.terminal {
 		return false
 	}
-	if err := c.source.AddExact(raw); err != nil {
-		c.fail(err)
+	if !validRawExactCandidate(raw) {
+		c.fail(errors.New("program/lower/collector: invalid exact-key candidate"))
 		return false
 	}
+	if raw.String != "" {
+		raw.String = string([]byte(raw.String))
+	}
+	c.source.ExactAtoms = append(c.source.ExactAtoms, raw)
 	return true
 }
 
@@ -75,7 +79,7 @@ func validRawExactCandidate(value keyspace.LiteralValue) bool {
 
 func (c *Collector) fillReservedImport(ordinal uint32, span source.Span) keyspace.Term {
 	if c == nil || c.err != nil || c.terminal || ordinal == 0 || ordinal > c.counts[keyspace.FamilyImport] ||
-		ordinal-1 >= uint32(len(c.spans[keyspace.FamilyImport])) ||
+		ordinal-1 >= uint32(len(c.source.Families[keyspace.FamilyImport-1].Spans)) ||
 		!validSpan(c, span) {
 		if c != nil && c.err == nil {
 			c.fail(errors.New("program/lower/collector: invalid reserved Import"))
@@ -83,11 +87,12 @@ func (c *Collector) fillReservedImport(ordinal uint32, span source.Span) keyspac
 		return 0
 	}
 	at := ordinal - 1
-	if !c.source.FillImport(ordinal, span) {
+	if c.imports[at] {
 		c.fail(errors.New("program/lower/collector: reserved Import filled more than once"))
 		return 0
 	}
-	c.spans[keyspace.FamilyImport][at] = span
+	c.imports[at] = true
+	c.source.Families[keyspace.FamilyImport-1].Spans[at] = span
 	return keyspace.MakeTerm(keyspace.FamilyImport, ordinal)
 }
 
@@ -106,8 +111,22 @@ func validBody(c *Collector, body keyspace.Term) bool {
 		return false
 	}
 	ordinal := keyspace.TermOrdinal(body) - 1
-	row, ok := c.source.BodyAt(int(ordinal))
+	row, ok := sourceBodyAt(c, int(ordinal))
 	return ok && row.Body == body
+}
+
+func sourceBodyAt(c *Collector, index int) (source.BodySource, bool) {
+	if c == nil || index < 0 || index >= len(c.source.Bodies) {
+		return source.BodySource{}, false
+	}
+	return c.source.Bodies[index], true
+}
+
+func sourceFaultAt(c *Collector, index int) (source.ControlFault, bool) {
+	if c == nil || index < 0 || index >= len(c.source.Faults) {
+		return source.ControlFault{}, false
+	}
+	return c.source.Faults[index], true
 }
 
 func validFamilyTerm(c *Collector, term keyspace.Term, family keyspace.Family) bool {
@@ -145,7 +164,7 @@ func sourceDirectTermOwner(c *Collector, term keyspace.Term) (keyspace.Term, boo
 		keyspace.FamilyBreak, keyspace.FamilyGoto, keyspace.FamilyLabel:
 		return c.flow.OwnerAt(keyspace.TermFamily(term), index)
 	case keyspace.FamilyControlFault:
-		if row, ok := c.source.FaultAt(index); ok {
+		if row, ok := sourceFaultAt(c, index); ok {
 			return row.Owner, true
 		}
 	case keyspace.FamilyTypeAlias, keyspace.FamilyTypeInterface:

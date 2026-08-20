@@ -19,7 +19,7 @@ func (c *Collector) ControlFault(span source.Span, owner keyspace.Term, kind sou
 	if term == 0 {
 		return 0
 	}
-	c.source.AddFault(source.ControlFault{Owner: owner, Kind: kind, Label: label, Blocker: blocker})
+	c.source.Faults = append(c.source.Faults, source.ControlFault{Owner: owner, Kind: kind, Label: label, Blocker: blocker})
 	return term
 }
 

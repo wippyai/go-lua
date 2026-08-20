@@ -67,11 +67,10 @@ func (c *Collector) Publish() (*program.Program, error) {
 		return nil, primary
 	}
 
-	sourceInput, entry, err := materializeSourceInput(c)
-	if err != nil {
-		return fail("Source materialization", err)
+	if err := validateSourceInput(c); err != nil {
+		return fail("Source validation", err)
 	}
-	sourceDraft, err := source.Build(sourceInput)
+	sourceDraft, err := source.Build(c.source)
 	if err != nil {
 		return fail("Source build", err)
 	}
@@ -135,6 +134,7 @@ func (c *Collector) Publish() (*program.Program, error) {
 	if err != nil {
 		return fail("Flow build", err)
 	}
+	entry := c.entry
 
 	// The Collector scratch is no longer needed once all owner inputs and
 	// drafts are local. Flow owns cleanup for every claimed owner from here.
@@ -150,17 +150,86 @@ func (c *Collector) Publish() (*program.Program, error) {
 	return published, nil
 }
 
-// materializeSourceInput is deliberately private to the terminal transaction.
-// It validates the complete Source denominator and then returns a borrowed
-// view over Collector-owned rows for the immediate synchronous source.Build
-// call. Publish has already closed the serial Collector construction cursor;
-// this view is neither published nor safe for concurrent mutation.
-func materializeSourceInput(c *Collector) (source.Input, keyspace.Term, error) {
+// validateSourceInput closes the Lua lowering construction boundary before
+// Source.Build consumes the canonical Input directly. It checks only the
+// census/transaction obligations that are not represented by Input itself;
+// Source remains the authority for row ownership and semantic validation.
+func validateSourceInput(c *Collector) error {
 	if c == nil {
-		return source.Input{}, 0, errors.New("program/lower/collector: nil collector")
+		return errors.New("program/lower/collector: nil collector")
 	}
 	if !c.terminal || c.err != nil {
-		return source.Input{}, 0, errors.New("program/lower/collector: Source materialization outside terminal publication")
+		return errors.New("program/lower/collector: Source validation outside terminal publication")
 	}
-	return c.source.Materialize(c.name, c.spans, c.counts, c.module.Complete())
+	if c.source.Name == "" || c.entry == 0 || len(c.source.Bodies) == 0 {
+		return errors.New("program/lower/collector: incomplete Source construction")
+	}
+	if keyspace.TermFamily(c.entry) != keyspace.FamilyBody || keyspace.TermOrdinal(c.entry) == 0 ||
+		keyspace.TermOrdinal(c.entry) > c.counts[keyspace.FamilyBody] {
+		return errors.New("program/lower/collector: Entry is not a known Body")
+	}
+	if !c.module.Complete() {
+		return errors.New("program/lower/collector: incomplete Module census")
+	}
+	if c.counts[keyspace.FamilyInvalid] != 0 {
+		return errors.New("program/lower/collector: invalid Source family denominator")
+	}
+	if len(c.imports) != int(c.counts[keyspace.FamilyImport]) {
+		return errors.New("program/lower/collector: incomplete reserved Import")
+	}
+	for _, filled := range c.imports {
+		if !filled {
+			return errors.New("program/lower/collector: incomplete reserved Import")
+		}
+	}
+	rows := []struct {
+		family keyspace.Family
+		got    int
+		name   string
+	}{
+		{keyspace.FamilyNil, len(c.source.Nil), "Nil"},
+		{keyspace.FamilyBool, len(c.source.Bool), "Bool"},
+		{keyspace.FamilyInteger, len(c.source.Integer), "Integer"},
+		{keyspace.FamilyFloat, len(c.source.Float), "Float"},
+		{keyspace.FamilyString, len(c.source.String), "String"},
+		{keyspace.FamilyBody, len(c.source.Bodies), "Body"},
+		{keyspace.FamilyBind, len(c.source.Binds), "Bind"},
+		{keyspace.FamilyFunction, len(c.source.Functions), "Function"},
+		{keyspace.FamilyKey, len(c.source.Keys), "Key"},
+		{keyspace.FamilyControlFault, len(c.source.Faults), "ControlFault"},
+	}
+	for _, row := range rows {
+		if row.got != int(c.counts[row.family]) {
+			return fmt.Errorf("program/lower/collector: Source %s row count %d disagrees with census %d", row.name, row.got, c.counts[row.family])
+		}
+	}
+	if c.source.CellSpellings != nil && len(c.source.CellSpellings) != int(c.counts[keyspace.FamilyCell]) {
+		return fmt.Errorf("program/lower/collector: Source Cell spelling rows %d disagree with census %d", len(c.source.CellSpellings), c.counts[keyspace.FamilyCell])
+	}
+	var previousCall keyspace.Term
+	for _, row := range c.source.CallSpellings {
+		if keyspace.TermFamily(row.Call) != keyspace.FamilyCall || keyspace.TermOrdinal(row.Call) == 0 ||
+			keyspace.TermOrdinal(row.Call) > c.counts[keyspace.FamilyCall] || row.Name == "" || previousCall >= row.Call {
+			return errors.New("program/lower/collector: invalid Source Call spelling row")
+		}
+		previousCall = row.Call
+	}
+	if len(c.source.Families) != int(keyspace.FamilyCount-1) {
+		return errors.New("program/lower/collector: incomplete Source family spans")
+	}
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		row := c.source.Families[family-1]
+		if row.Family != family || len(row.Spans) != int(c.counts[family]) {
+			return fmt.Errorf("program/lower/collector: Source %v span count %d disagrees with census %d", family, len(row.Spans), c.counts[family])
+		}
+	}
+	if len(c.bodies) != len(c.source.Bodies) {
+		return errors.New("program/lower/collector: incomplete Body construction")
+	}
+	for _, filled := range c.bodies {
+		if !filled {
+			return errors.New("program/lower/collector: unfilled Body")
+		}
+	}
+	return nil
 }

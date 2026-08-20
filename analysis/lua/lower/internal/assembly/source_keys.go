@@ -23,7 +23,7 @@ func (c *Collector) Name(span source.Span, owner keyspace.Term, text string) key
 	if term == 0 {
 		return 0
 	}
-	c.source.AddKey(source.NameKey(owner, text))
+	c.source.Keys = append(c.source.Keys, source.NameKey(owner, text))
 	return term
 }
 
@@ -41,6 +41,6 @@ func (c *Collector) List(span source.Span, owner keyspace.Term, ordinal int64) k
 	if term == 0 {
 		return 0
 	}
-	c.source.AddKey(source.ListKey(owner, ordinal))
+	c.source.Keys = append(c.source.Keys, source.ListKey(owner, ordinal))
 	return term
 }

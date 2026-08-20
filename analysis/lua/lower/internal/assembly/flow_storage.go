@@ -23,10 +23,15 @@ func (c *Collector) Cell(span source.Span, body keyspace.Term, name string) keys
 		c.fail(err)
 		return 0
 	}
-	if !c.source.SetCellSpelling(term, name) {
+	ordinal := int(keyspace.TermOrdinal(term))
+	if ordinal <= 0 || ordinal > int(keyspace.MaxTermOrdinal) {
 		c.fail(errors.New("program/lower/collector: could not attach Cell spelling"))
 		return 0
 	}
+	if len(c.source.CellSpellings) < ordinal {
+		c.source.CellSpellings = append(c.source.CellSpellings, make([]source.CellSpelling, ordinal-len(c.source.CellSpellings))...)
+	}
+	c.source.CellSpellings[ordinal-1] = source.CellSpelling{Cell: term, Name: string([]byte(name))}
 	return term
 }
 

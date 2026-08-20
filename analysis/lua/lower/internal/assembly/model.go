@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	flowrows "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/flow"
 	moduleowner "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/module"
-	sourcerows "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/source"
 	staticrows "github.com/wippyai/go-lua/analysis/lua/lower/internal/assembly/static"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -32,11 +31,19 @@ var errCollectorTerminal = errors.New("program/lower/collector: collector is ter
 type Collector struct {
 	name   string
 	counts [keyspace.FamilyCount]uint32
-	spans  [keyspace.FamilyCount][]source.Span
-	source sourcerows.Rows
-	flow   flowrows.Rows
-	static staticrows.Rows
-	module moduleowner.Rows
+	// source is the canonical Program Source input assembled in place at the
+	// lowering boundary.  Lua lowering appends the existing Source row types
+	// directly; there is no owner-local row mirror or materialization adapter.
+	source source.Input
+	// These markers are construction control state, not a second Source row
+	// vocabulary. They prove one-shot fills for census Imports and Body order
+	// before the canonical Input is handed to source.Build.
+	imports []bool
+	bodies  []bool
+	entry   keyspace.Term
+	flow    flowrows.Rows
+	static  staticrows.Rows
+	module  moduleowner.Rows
 	// err is the first construction failure, if any. terminal is the
 	// lifecycle bit: a successful Publish is terminal with a nil err, while a
 	// rejected mutation is terminal with its exact first err. Keeping these
@@ -63,8 +70,15 @@ func New(name string, moduleImports int, globals bind.GlobalCensus) *Collector {
 	// ordinals are fixed before lowering starts and their spans are filled
 	// by the module lane as each census row is encountered.
 	c.counts[keyspace.FamilyImport] = uint32(moduleImports)
-	c.spans[keyspace.FamilyImport] = make([]source.Span, moduleImports)
-	c.source = sourcerows.New(moduleImports)
+	c.source = source.Input{
+		Name:     name,
+		Families: make([]source.FamilySpans, int(keyspace.FamilyCount-1)),
+	}
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		c.source.Families[family-1] = source.FamilySpans{Family: family}
+	}
+	c.source.Families[keyspace.FamilyImport-1].Spans = make([]source.Span, moduleImports)
+	c.imports = make([]bool, moduleImports)
 	if err := c.reserveGlobalCells(globals); err != nil {
 		c.fail(err)
 		return c
@@ -107,8 +121,10 @@ func terminalize(c *Collector) {
 	}
 	c.name = ""
 	c.counts = [keyspace.FamilyCount]uint32{}
-	c.spans = [keyspace.FamilyCount][]source.Span{}
-	c.source.Reset()
+	c.source = source.Input{}
+	c.imports = nil
+	c.bodies = nil
+	c.entry = 0
 	c.flow.Reset()
 	c.static = staticrows.Rows{}
 	c.module.Reset()

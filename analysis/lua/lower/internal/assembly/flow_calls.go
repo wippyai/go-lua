@@ -19,9 +19,12 @@ func (c *Collector) DeclareCall(span source.Span, owner, callee, receiver, actua
 		c.fail(err)
 		return 0
 	}
-	if name != "" && !c.source.AddCallSpelling(term, name) {
-		c.fail(errors.New("program/lower/collector: could not attach Call spelling"))
-		return 0
+	if name != "" {
+		if n := len(c.source.CallSpellings); n > 0 && c.source.CallSpellings[n-1].Call >= term {
+			c.fail(errors.New("program/lower/collector: could not attach Call spelling"))
+			return 0
+		}
+		c.source.CallSpellings = append(c.source.CallSpellings, source.CallSpelling{Call: term, Name: string([]byte(name))})
 	}
 	// Call declaration atomically coordinates its executable row with the one
 	// Static contract sidecar; Static remains the sidecar owner.

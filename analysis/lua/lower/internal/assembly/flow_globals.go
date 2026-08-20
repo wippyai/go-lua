@@ -29,7 +29,7 @@ func (c *Collector) reserveGlobalCells(census bind.GlobalCensus) error {
 	}
 
 	c.counts[keyspace.FamilyCell] = uint32(count)
-	c.spans[keyspace.FamilyCell] = make([]source.Span, count)
+	c.source.Families[keyspace.FamilyCell-1].Spans = make([]source.Span, count)
 	if !c.flow.InitGlobalCells(count) {
 		return fmt.Errorf("program/lower/collector: global Cell storage overflow %d", count)
 	}
@@ -44,11 +44,19 @@ func (c *Collector) reserveGlobalCells(census bind.GlobalCensus) error {
 		if err != nil {
 			return fmt.Errorf("program/lower/collector: global %q origin: %w", cell.Name(), err)
 		}
-		c.spans[keyspace.FamilyCell][index] = span
+		c.source.Families[keyspace.FamilyCell-1].Spans[index] = span
 		if !c.flow.SetCell(index, authored.Cell{Kind: authored.CellGlobal}) {
 			return fmt.Errorf("program/lower/collector: global Cell storage slot %d", index)
 		}
-		if !c.source.SetCellSpelling(keyspace.MakeTerm(keyspace.FamilyCell, cell.Ordinal()), cell.Name()) {
+		ordinal := int(cell.Ordinal())
+		if ordinal <= 0 || ordinal > int(keyspace.MaxTermOrdinal) {
+			return fmt.Errorf("program/lower/collector: global Cell spelling slot %d", index)
+		}
+		if len(c.source.CellSpellings) < ordinal {
+			c.source.CellSpellings = append(c.source.CellSpellings, make([]source.CellSpelling, ordinal-len(c.source.CellSpellings))...)
+		}
+		c.source.CellSpellings[ordinal-1] = source.CellSpelling{Cell: keyspace.MakeTerm(keyspace.FamilyCell, cell.Ordinal()), Name: cell.Name()}
+		if c.source.CellSpellings[ordinal-1].Cell == 0 {
 			return fmt.Errorf("program/lower/collector: global Cell spelling slot %d", index)
 		}
 		if !c.addExact(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: cell.Name()}) {

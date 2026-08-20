@@ -17,7 +17,7 @@ func (c *Collector) Nil(span source.Span, owner keyspace.Term) keyspace.Term {
 	if term == 0 {
 		return 0
 	}
-	c.source.AddNil(owner)
+	c.source.Nil = append(c.source.Nil, source.NilLiteral{Owner: owner})
 	return term
 }
 
@@ -29,7 +29,7 @@ func (c *Collector) Bool(span source.Span, owner keyspace.Term, value bool) keys
 	if term == 0 {
 		return 0
 	}
-	c.source.AddBool(owner, value)
+	c.source.Bool = append(c.source.Bool, source.BoolLiteral{Owner: owner, Value: value})
 	return term
 }
 
@@ -41,7 +41,7 @@ func (c *Collector) Integer(span source.Span, owner keyspace.Term, value int64) 
 	if term == 0 {
 		return 0
 	}
-	c.source.AddInteger(owner, value)
+	c.source.Integer = append(c.source.Integer, source.IntegerLiteral{Owner: owner, Value: value})
 	return term
 }
 
@@ -53,7 +53,7 @@ func (c *Collector) FloatBits(span source.Span, owner keyspace.Term, bits uint64
 	if term == 0 {
 		return 0
 	}
-	c.source.AddFloat(owner, bits)
+	c.source.Float = append(c.source.Float, source.FloatLiteral{Owner: owner, Bits: bits})
 	return term
 }
 
@@ -71,7 +71,7 @@ func (c *Collector) String(span source.Span, owner keyspace.Term, value string) 
 	if term == 0 {
 		return 0
 	}
-	c.source.AddString(owner, value)
+	c.source.String = append(c.source.String, source.StringLiteral{Owner: owner, Value: string([]byte(value))})
 	return term
 }
 
@@ -82,7 +82,33 @@ func (c *Collector) exactLiteral(term keyspace.Term) (keyspace.LiteralValue, boo
 	if c == nil || c.err != nil || !validTermInCounts(c, term) {
 		return keyspace.LiteralValue{}, false
 	}
-	return c.source.ExactLiteral(term)
+	if term == 0 {
+		return keyspace.LiteralValue{}, false
+	}
+	ordinal := keyspace.TermOrdinal(term)
+	if ordinal == 0 {
+		return keyspace.LiteralValue{}, false
+	}
+	switch keyspace.TermFamily(term) {
+	case keyspace.FamilyBool:
+		if int(ordinal) <= len(c.source.Bool) {
+			return keyspace.LiteralValue{Kind: keyspace.LiteralBool, Bool: c.source.Bool[ordinal-1].Value}, true
+		}
+	case keyspace.FamilyInteger:
+		if int(ordinal) <= len(c.source.Integer) {
+			return keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: c.source.Integer[ordinal-1].Value}, true
+		}
+	case keyspace.FamilyFloat:
+		if int(ordinal) <= len(c.source.Float) {
+			value := keyspace.LiteralValue{Kind: keyspace.LiteralFloat, FloatBits: c.source.Float[ordinal-1].Bits}
+			return value, validRawExactCandidate(value)
+		}
+	case keyspace.FamilyString:
+		if int(ordinal) <= len(c.source.String) {
+			return keyspace.LiteralValue{Kind: keyspace.LiteralString, String: c.source.String[ordinal-1].Value}, true
+		}
+	}
+	return keyspace.LiteralValue{}, false
 }
 
 // unaryNegExact applies the closed static FieldExact UnaryNeg grammar to an
