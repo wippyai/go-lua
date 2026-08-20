@@ -108,8 +108,7 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if typesErr != nil {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
-	sealed := state.artifacts.mounts
-	if len(sealed) == 0 {
+	if len(state.artifacts.mounts) == 0 {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	staticMounts := make([]staticdomain.MountedProgram, len(state.artifacts.mounts))
@@ -130,9 +129,6 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
 		staticMounts[index] = staticdomain.MountedProgram{Program: published.Program.Program, ModuleID: published.ModuleKey, NamespaceID: published.ModuleKey}
-		if index >= len(sealed) || sealed[index].ModuleKey != published.ModuleKey || sealed[index].Snapshot != published.Snapshot {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
-		}
 		snapshot := published.Snapshot
 		program := snapshot.Program()
 		typeValueCount, typeValuesPublished := program.StaticTypeValueCount()
@@ -170,10 +166,9 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	// input. Every axis that owns its mount seals its own Link authority from
 	// it and from the peers it declared an edge to, so no per-domain mount row
 	// is constructed here.
-	artifactRows := sealed
 	inputs, mountFailure := composite.MountLink(composite.LinkInputs{
 		Source:          source,
-		Artifacts:       artifactRows,
+		Artifacts:       state.artifacts.mounts,
 		StaticAuthority: static,
 	})
 	// Topology and the activation catalog are derivations over several sealed
@@ -192,8 +187,8 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 
 // publishComposition writes the Link-lifetime StorageEngine prefix. ChannelSelect
 // occupies snapshot slot 0, so a select-only column seals without factor facts.
-func (state *compiledState) publishComposition(source *link.Link) bool {
-	if state == nil || source == nil || state.binding == nil || state.binding.SchemaBinding() == nil {
+func (state *compiledState) publishComposition() bool {
+	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil {
 		return false
 	}
 	schemaID, schemaOK := composite.PublicationSchema()
@@ -205,24 +200,10 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	if !minted || !write.Available() {
 		return false
 	}
-	mounts := source.Project().Mounts()
-	var apps []selectapply.Application
-	var handlers []selectapply.Handler
-	for index := 0; index < mounts.Count(); index++ {
-		shard, shardOK := mounts.At(index)
-		prog, progOK := mounts.Program(shard)
-		if !shardOK || !progOK || prog == nil {
-			return false
-		}
-		progApps := selectapply.Apply(prog)
-		apps = append(apps, progApps...)
-		handlers = append(handlers, selectapply.Handlers(prog, progApps)...)
-	}
+	apps := state.artifacts.selectApplications
+	handlers := state.artifacts.selectHandlers
 	mountWrite, mountMinted := engine.MintColumnWrite[identity.ContentID, programmount.Program](state.binding.SchemaBinding(), programmount.OutputKey, programmount.AxisKey)
 	if !mountMinted || !mountWrite.Available() {
-		return false
-	}
-	if state.artifacts == nil {
 		return false
 	}
 	denominator, denominatorOK := programmount.DenominatorID(state.sourceID)
@@ -307,9 +288,11 @@ func compileValueCoordinates(source *link.Link) ([]result.ValueCoordinate, bool)
 }
 
 type compiledArtifactSet struct {
-	mounts   []programmount.MountedArtifact
-	products map[identity.ContentID]analysisworkspace.ArtifactProduct
-	sites    mounted.ObservationSites
+	mounts             []programmount.MountedArtifact
+	products           map[identity.ContentID]analysisworkspace.ArtifactProduct
+	sites              mounted.ObservationSites
+	selectApplications []selectapply.Application
+	selectHandlers     []selectapply.Handler
 	// declared is the declared-type column of the sealed conformance sites.
 	// It is derived once here because this is the first place holding both the
 	// artifact type rows and the sites measured against them.
@@ -454,12 +437,14 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		if !shardOK || !programOK || mounted == nil || !moduleOK || !moduleKey.Available() {
 			return nil, false
 		}
-		input := mounted
-		programID := input.ContentID()
-		if !input.Available() || !programID.Available() {
+		programID := mounted.ContentID()
+		if !mounted.Available() || !programID.Available() {
 			return nil, false
 		}
-		product, compiled := products.Compile(input, compilation)
+		applications := selectapply.Apply(mounted)
+		result.selectApplications = append(result.selectApplications, applications...)
+		result.selectHandlers = append(result.selectHandlers, selectapply.Handlers(mounted, applications)...)
+		product, compiled := products.Compile(mounted, compilation)
 		if !compiled {
 			return nil, false
 		}

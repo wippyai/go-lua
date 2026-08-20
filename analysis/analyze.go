@@ -180,7 +180,7 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	state.binding = binding
-	if !state.publishComposition(source) {
+	if !state.publishComposition() {
 		state.release()
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
@@ -366,13 +366,10 @@ func (state *compiledState) ordinaryRuntimeSolver() (*engine.Solver, bool) {
 	return state.ordinary, state.ordinaryOK
 }
 
-// Runtime seal phases run in this order against one committed program. The
-// ordinal names the phase inside the engine's compile-family site identity, so
-// an incomplete runtime binding reports which phase rejected.
-const (
-	runtimeSealPhaseWitness uint64 = iota + 1
-	runtimeSealPhasePublications
-)
+// Runtime publication retains its established phase ordinal. The bootstrap
+// witness was already consumed by committed-program construction and is not
+// re-derived at solve time.
+const runtimeSealPhasePublications uint64 = 2
 
 // buildRuntimeSolver is the sole runtime binding path. Ordinary solves retain
 // its result through ordinaryRuntimeSolver; diagnostic-policy solves invoke it
@@ -390,10 +387,6 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 		return nil, nil, engine.SolveFailure{}, false
 	}
 	binding := state.binding
-	_, witnessOK := linkBootstrapWitness(state, binding)
-	if !witnessOK {
-		return nil, nil, engine.ProgramSealFailure(runtimeSealPhaseWitness), false
-	}
 	publications, published := binding.QueryPublications(state.committed, state.querySites)
 	if !published || len(publications) != len(state.querySites) {
 		return nil, nil, engine.ProgramSealFailure(runtimeSealPhasePublications), false
