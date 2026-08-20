@@ -392,7 +392,6 @@ type Schema struct {
 	// directly from coordinates; no parallel source-ID directory is retained.
 	sourceSeedMounts     []sourceSeedMount
 	sourceSeedMountIndex map[identity.ContentID]uint32
-	sourceValuesSealed   bool
 	exactKeys            map[keyspace.LiteralValue]keyspace.LiteralValue
 	literalSources       map[identity.ContentID]literalSourceRow
 
@@ -1624,7 +1623,7 @@ func (schema *Schema) storedProjectionOrderValid() bool {
 // Dynamic coordinates retain the zero Value and are still produced only by
 // their eventual Rule.
 func (schema *valueBuilder) sealSourceValues() bool {
-	if schema == nil || schema.sealProject() == nil || schema.potential == 0 || schema.sourceValuesSealed || schema.formalSources == nil {
+	if schema == nil || schema.sealProject() == nil || schema.potential == 0 || schema.formalSources == nil {
 		return false
 	}
 	for subject, row := range schema.coordinates {
@@ -1669,7 +1668,10 @@ func (schema *valueBuilder) sealSourceValues() bool {
 		}
 		schema.coordinates[subject] = row
 	}
-	schema.sourceValuesSealed = true
+	// These directories exist only to construct source atoms and immutable
+	// source values. No published query reads them after this phase.
+	schema.literalSources = nil
+	schema.exactKeys = nil
 	return true
 }
 
