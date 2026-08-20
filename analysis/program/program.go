@@ -63,7 +63,7 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 		return nil, errInvalidAssembly
 	}
 
-	sourceID := sourceComponent.Cold().ContentID()
+	sourceID := sourceComponent.ContentID()
 	flowID := flowComponent.ContentID()
 	staticID := staticComponent.ContentID()
 	moduleID := moduleComponent.View().ContentID()

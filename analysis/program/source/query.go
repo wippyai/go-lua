@@ -35,17 +35,15 @@ func (c *Component) View() View {
 	return View{authority: c.authority}
 }
 
-// Cold returns the immutable identity snapshot without retaining the Source
-// owner or any finalization/derived-position storage.
-func (c *Component) Cold() Cold {
+// ContentID returns the immutable authored Source identity directly from its
+// canonical owner. Final derived positions and Outcome coordinates never
+// create a second Source identity.
+func (c *Component) ContentID() identity.ContentID {
 	if c == nil || c.authority == nil {
-		return Cold{}
+		return identity.ContentID{}
 	}
-	return Cold{contentID: c.authority.content}
+	return c.authority.content
 }
-
-// ContentID is the authored Source identity exposed by the cold snapshot.
-func (c Cold) ContentID() identity.ContentID { return c.contentID }
 
 func (v View) Identity() Identity { return Identity{authority: v.authority} }
 func (v View) Order() Order       { return Order{authority: v.authority} }

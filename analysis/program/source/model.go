@@ -542,11 +542,6 @@ type Preimage struct{ state *draftState }
 // Component is the immutable Source owner published by Program root.
 type Component struct{ authority *authority }
 
-// Cold is the allocation-free Source identity snapshot. It intentionally
-// retains only the authored ContentID; final derived positions and Outcome
-// coordinates never create a second identity or keep the Source graph alive.
-type Cold struct{ contentID identity.ContentID }
-
 // View is the direct Source capability; subviews partition its owner surface.
 type View struct{ authority *authority }
 type Identity struct {

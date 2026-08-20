@@ -12,7 +12,7 @@ func TestContentIdentityChangesOnlyForAuthoredSourceRows(t *testing.T) {
 	derivedInput, derivedIndex := sourceFixture(1)
 	derivedIndex.OutcomeOrigins = []keyspace.Term{keyspace.MakeTerm(keyspace.FamilyBody, 1)}
 	derived := finalizeSource(t, derivedInput, derivedIndex)
-	if got, want := derived.Cold().ContentID(), base.Cold().ContentID(); got != want {
+	if got, want := derived.ContentID(), base.ContentID(); got != want {
 		t.Fatalf("derived outcome changed authored ContentID: %x != %x", got, want)
 	}
 	changedInput, changedIndex := sourceFixture(1)
@@ -23,7 +23,7 @@ func TestContentIdentityChangesOnlyForAuthoredSourceRows(t *testing.T) {
 		}
 	}
 	changed := finalizeSource(t, changedInput, changedIndex)
-	if changed.Cold().ContentID() == base.Cold().ContentID() {
+	if changed.ContentID() == base.ContentID() {
 		t.Fatal("authored source name did not change ContentID")
 	}
 }
@@ -61,7 +61,7 @@ func TestDebugSpellingsAreSourceOwnedAndContentAddressed(t *testing.T) {
 	changedInput.CellSpellings = append([]CellSpelling(nil), input.CellSpellings...)
 	changedInput.CellSpellings[0].Name = "renamed"
 	changed := finalizeSource(t, changedInput, index)
-	if changed.Cold().ContentID() == component.Cold().ContentID() {
+	if changed.ContentID() == component.ContentID() {
 		t.Fatal("authored Cell spelling did not change Source ContentID")
 	}
 }

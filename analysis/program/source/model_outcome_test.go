@@ -2,9 +2,7 @@ package source
 
 import (
 	"testing"
-	"unsafe"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -106,31 +104,6 @@ func TestSourceRejectsMalformedOutcomeOriginAndPosition(t *testing.T) {
 	}
 	if _, err := commitSource(draft, index); err == nil {
 		t.Fatal("Finalize accepted an Outcome Position.Term")
-	}
-}
-
-func TestSourceColdContainsOnlyContentID(t *testing.T) {
-	if got, want := unsafe.Sizeof(Cold{}), unsafe.Sizeof(identity.ContentID{}); got != want {
-		t.Fatalf("Cold size = %d, want ContentID size %d", got, want)
-	}
-	input, index := sourceFixture(1)
-	draft, err := Build(input)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	component, err := commitSource(draft, index)
-	if err != nil {
-		t.Fatalf("Finalize: %v", err)
-	}
-	cold := component.Cold()
-	if got, want := cold.ContentID(), component.View().Identity().ContentID(); got != want {
-		t.Fatalf("Cold ContentID = %x, want %x", got, want)
-	}
-	if got := testing.AllocsPerRun(1000, func() { _ = cold.ContentID() }); got != 0 {
-		t.Fatalf("Cold.ContentID allocations = %f, want 0", got)
-	}
-	if got := (Cold{}).ContentID(); got.Available() {
-		t.Fatal("zero Cold exposed identity")
 	}
 }
 
