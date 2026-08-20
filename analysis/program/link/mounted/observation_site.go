@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -164,6 +165,27 @@ func (census ObservationSites) At(index int) (ObservationSite, bool) {
 	return census.rows[index], true
 }
 
+// mountedArtifactsAvailable admits the one canonical mount population used by
+// every observation-site projection. The module key is the Link coordinate,
+// while the embedded Program and Snapshot authenticate the cold content it
+// names; no second mount row is created for the census.
+func mountedArtifactsAvailable(mounts []programmount.MountedArtifact) bool {
+	if len(mounts) == 0 {
+		return false
+	}
+	seen := make(map[identity.ContentID]struct{}, len(mounts))
+	for _, mount := range mounts {
+		if !mount.Available() {
+			return false
+		}
+		if _, duplicate := seen[mount.ModuleKey]; duplicate {
+			return false
+		}
+		seen[mount.ModuleKey] = struct{}{}
+	}
+	return true
+}
+
 // SealObservationSites derives the census from the sealed ingress snapshots
 // and the Boundary that owns the two Link relations a branch site needs: the
 // mounted span-to-Value and semantic-occurrence-to-Value substitutions.
@@ -172,8 +194,8 @@ func (census ObservationSites) At(index int) (ObservationSite, bool) {
 // measured value from. Several rules are placed on one occurrence and only the
 // ones writing those axes establish the value the observation measures, so the
 // census is refused rather than guessed when the caller names none.
-func SealObservationSites(boundary *linkboundary.Component, mounts []Mount, producerAxes []schema.Key) (ObservationSites, bool) {
-	if boundary == nil || !mountsAvailable(mounts) || len(producerAxes) == 0 {
+func SealObservationSites(boundary *linkboundary.Component, mounts []programmount.MountedArtifact, producerAxes []schema.Key) (ObservationSites, bool) {
+	if boundary == nil || !mountedArtifactsAvailable(mounts) || len(producerAxes) == 0 {
 		return ObservationSites{}, false
 	}
 	axes := make(map[schema.Key]struct{}, len(producerAxes))
@@ -207,7 +229,7 @@ func SealObservationSites(boundary *linkboundary.Component, mounts []Mount, prod
 	return ObservationSites{rows: rows, sealed: true}, true
 }
 
-func mountObservationSites(values linkboundary.Values, contract *contract.Contract, mount Mount, producerAxes map[schema.Key]struct{}) ([]ObservationSite, bool) {
+func mountObservationSites(values linkboundary.Values, contract *contract.Contract, mount programmount.MountedArtifact, producerAxes map[schema.Key]struct{}) ([]ObservationSite, bool) {
 	var producersByValue map[identity.ContentID][]BranchProducer
 	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)
@@ -371,7 +393,7 @@ func diagnosticPathComponents(program programschema.Program, observationIndex in
 func branchProducers(
 	values linkboundary.Values,
 	producersByValue map[identity.ContentID][]BranchProducer,
-	mount Mount,
+	mount programmount.MountedArtifact,
 	observation programschema.DiagnosticObservation,
 	evidence []identity.ContentID,
 ) ([]BranchProducer, []identity.ContentID, identity.ContentID, bool) {
@@ -398,7 +420,7 @@ func branchProducers(
 // carries the value's semantic occurrence, so the substitution is the same one
 // a branch condition takes; the span relation answers the values a target
 // binds by operator span rather than by occurrence.
-func conformanceValueID(values linkboundary.Values, mount Mount, measuredID, spanID identity.ContentID) (identity.ContentID, bool) {
+func conformanceValueID(values linkboundary.Values, mount programmount.MountedArtifact, measuredID, spanID identity.ContentID) (identity.ContentID, bool) {
 	if mount.Snapshot == nil || !measuredID.Available() || !spanID.Available() {
 		return identity.ContentID{}, false
 	}
@@ -442,7 +464,7 @@ func anchorBranchProducers(producers []BranchProducer, evidence []identity.Conte
 // another domain's axis observes nothing about the value the occurrence
 // establishes. Only the placements writing a producer axis are producers of it,
 // so an allocation's heap rules stay out of the census its value is read at.
-func mountedValueProducers(values linkboundary.Values, mount Mount, producerAxes map[schema.Key]struct{}) (map[identity.ContentID][]BranchProducer, bool) {
+func mountedValueProducers(values linkboundary.Values, mount programmount.MountedArtifact, producerAxes map[schema.Key]struct{}) (map[identity.ContentID][]BranchProducer, bool) {
 	if mount.Snapshot == nil || len(producerAxes) == 0 {
 		return nil, false
 	}

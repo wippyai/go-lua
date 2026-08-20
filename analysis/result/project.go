@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -32,7 +33,7 @@ type Projection struct {
 // projection never reopens Link, Program, Source, or Flow to recover them.
 func Detach(
 	geometry Geometry,
-	mounts []Mount,
+	mounts []programmount.MountedArtifact,
 	valueSchema *valuedomain.Schema,
 	policy *anadiag.DiagnosticPolicy,
 	queries []composite.QueryPublication,
@@ -264,7 +265,7 @@ type GeometryBody struct {
 
 func Project(
 	sourceID identity.ContentID,
-	mounts []Mount,
+	mounts []programmount.MountedArtifact,
 	coordinates []ValueCoordinate,
 	observations []anadiag.Observation,
 ) (Geometry, bool) {
@@ -304,26 +305,26 @@ func Project(
 	artifactIDs := make(map[identity.ContentID]identity.ContentID, len(mounts))
 	bodyIndexes := make(map[artifactResultBody]int)
 	for _, mount := range mounts {
-		if !mount.Valid() {
+		if !mount.Available() {
 			return Geometry{}, false
 		}
-		if _, duplicate := artifactIDs[mount.program.ModuleKey]; duplicate {
+		if _, duplicate := artifactIDs[mount.ModuleKey]; duplicate {
 			return Geometry{}, false
 		}
-		artifactID := mount.snapshot.ArtifactID()
-		artifactIDs[mount.program.ModuleKey] = artifactID
+		artifactID := mount.Snapshot.ArtifactID()
+		artifactIDs[mount.ModuleKey] = artifactID
 		localBodies := make(map[identity.ContentID]int)
-		bodyCount, bodiesPublished := mount.program.BodyCount()
+		bodyCount, bodiesPublished := mount.Program.BodyCount()
 		if !bodiesPublished {
 			return Geometry{}, false
 		}
 		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-			body, bodyOK := mount.program.BodyAt(bodyIndex)
+			body, bodyOK := mount.Program.BodyAt(bodyIndex)
 			if !bodyOK || !body.ID().Available() {
 				return Geometry{}, false
 			}
-			key := artifactResultBody{mount: mount.program.ModuleKey, body: body.ID()}
-			id, idOK := mountedResultID("body", mount.program.ModuleKey, artifactID, body.ID())
+			key := artifactResultBody{mount: mount.ModuleKey, body: body.ID()}
+			id, idOK := mountedResultID("body", mount.ModuleKey, artifactID, body.ID())
 			if !idOK {
 				return Geometry{}, false
 			}
@@ -338,12 +339,12 @@ func Project(
 			roots := make([]resultRoot, body.RootCount())
 			seenRoots := make(map[identity.ContentID]struct{}, len(roots))
 			for rootIndex := range roots {
-				root, rootOK := mount.program.BodyRootFor(bodyIndex, rootIndex)
+				root, rootOK := mount.Program.BodyRootFor(bodyIndex, rootIndex)
 				family := keyspace.Family(root.Family())
 				if !rootOK || !root.Available() || family == keyspace.FamilyInvalid {
 					return Geometry{}, false
 				}
-				rootID, rootIDOK := mountedResultID("root", mount.program.ModuleKey, artifactID, root.ID())
+				rootID, rootIDOK := mountedResultID("root", mount.ModuleKey, artifactID, root.ID())
 				if !rootIDOK {
 					return Geometry{}, false
 				}
@@ -359,16 +360,16 @@ func Project(
 			}
 			entryBody := localBodies[body.ID()]
 			for entryIndex := 0; entryIndex < body.EntryCount(); entryIndex++ {
-				entryRow, entryOK := mount.program.BodyEntryFor(bodyIndex, entryIndex)
+				entryRow, entryOK := mount.Program.BodyEntryFor(bodyIndex, entryIndex)
 				entry := entryRow.PointID()
 				if !entryOK || !entry.Available() {
 					continue
 				}
-				pointKey := Point{Mount: mount.program.ModuleKey, Point: entry}
+				pointKey := Point{Mount: mount.ModuleKey, Point: entry}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], entryBody)
 			}
 		}
-		program := mount.program.Program
+		program := mount.Program.Program
 		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
 		if !occurrencesPublished {
 			return Geometry{}, false
@@ -396,7 +397,7 @@ func Project(
 				if !pointOK || !pointRow.Available() || !point.Available() {
 					return Geometry{}, false
 				}
-				pointKey := Point{Mount: mount.program.ModuleKey, Point: point}
+				pointKey := Point{Mount: mount.ModuleKey, Point: point}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], mapped)
 			}
 		}

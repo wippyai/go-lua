@@ -6,7 +6,6 @@ package analysis
 import (
 	"sync/atomic"
 
-	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -22,7 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/result"
@@ -104,12 +102,12 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
-	programs := make([]programschema.Program, 0, len(state.artifacts.byProgram))
-	for _, artifact := range state.artifacts.byProgram {
-		if artifact == nil || !artifact.Available() {
+	programs := make([]programschema.Program, 0, len(state.artifacts.products))
+	for _, product := range state.artifacts.products {
+		if product.Artifact == nil || !product.Artifact.Available() {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
-		compiled := artifact.Program()
+		compiled := product.Artifact.Program()
 		if !compiled.Available() {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
@@ -119,8 +117,8 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if typesErr != nil {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
-	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
-	if !sealedOK {
+	sealed := state.artifacts.mounts
+	if len(sealed) == 0 {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	staticMounts := make([]staticdomain.MountedProgram, len(state.artifacts.mounts))
@@ -130,20 +128,21 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	// this loop retains only the Link-local semantic-value substitution Static
 	// must consume while it seals its own authority.
 	for index, published := range state.artifacts.mounts {
-		if !published.valid() {
+		if !published.Available() {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
-		artifact, have := state.artifacts.byProgram[published.programID]
+		product, have := state.artifacts.products[published.ProgramID]
+		artifact := product.Artifact
 		if !have || artifact == nil || !artifact.Available() ||
-			published.snapshot.ArtifactID() != artifact.ID() ||
-			artifact.CompileKey().ProgramID() != published.programID {
+			published.Snapshot.ArtifactID() != artifact.ID() ||
+			artifact.CompileKey().ProgramID() != published.ProgramID {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
-		staticMounts[index] = staticdomain.MountedProgram{Program: published.program.Program, ModuleID: published.moduleKey, NamespaceID: published.moduleKey}
-		if index >= len(sealed) || sealed[index].ModuleKey != published.moduleKey || sealed[index].Snapshot != published.snapshot {
+		staticMounts[index] = staticdomain.MountedProgram{Program: published.Program.Program, ModuleID: published.ModuleKey, NamespaceID: published.ModuleKey}
+		if index >= len(sealed) || sealed[index].ModuleKey != published.ModuleKey || sealed[index].Snapshot != published.Snapshot {
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
-		snapshot := published.snapshot
+		snapshot := published.Snapshot
 		program := snapshot.Program()
 		typeValueCount, typeValuesPublished := program.StaticTypeValueCount()
 		if !program.Available() || !typeValuesPublished {
@@ -154,13 +153,13 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 			if !rowOK {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 			}
-			value, valueOK := staticValues.ForMountedSemantic(published.moduleKey, row.ID())
+			value, valueOK := staticValues.ForMountedSemantic(published.ModuleKey, row.ID())
 			valueID, valueIDOK := staticValues.ID(value)
 			if !valueOK || !valueIDOK || !valueID.Available() {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 			}
 			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
-				ModuleID: published.moduleKey, SemanticID: row.ID(), ValueID: valueID,
+				ModuleID: published.ModuleKey, SemanticID: row.ID(), ValueID: valueID,
 			})
 		}
 	}
@@ -249,7 +248,7 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	}
 	directoryRows := make([]programmount.Program, len(state.artifacts.mounts))
 	for index, mount := range state.artifacts.mounts {
-		directoryRows[index] = mount.program
+		directoryRows[index] = mount.Program
 	}
 	directory, directoryOK := programmount.Content(directoryRows, denominator)
 	if !directoryOK {
@@ -285,49 +284,11 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	return true
 }
 
-// linkArtifactRows projects the Link's private mount records onto the neutral
-// artifact view the mount phase consumes. Each row carries the compile-time
-// snapshot pointer.
-func linkArtifactRows(mounts []mountedProgramArtifact) ([]programmount.MountedArtifact, bool) {
-	if len(mounts) == 0 {
-		return nil, false
-	}
-	rows := make([]programmount.MountedArtifact, len(mounts))
-	for index, mounted := range mounts {
-		if !mounted.valid() {
-			return nil, false
-		}
-		row := programmount.MountedArtifact{Program: mounted.program, Snapshot: mounted.snapshot}
-		if !row.Available() {
-			return nil, false
-		}
-		rows[index] = row
-	}
-	return rows, true
-}
-
-// mountedProgramArtifact is the compile-time snapshot plus the exact Link
-// substitution needed to place that Program occurrence in a Link. The
-// snapshot and template are shared by ProgramID; the mount row is never
-// shared. The owner-handoff ProgramArtifact lives on compiledArtifactSet.byProgram.
-type mountedProgramArtifact struct {
-	// program is this mount's entry in the Link's mount directory: the
-	// artifact's frozen cold publication under the module key it is mounted
-	// at. Families that have moved onto the cold publication are read through
-	// it; the ingress view below still carries the families that have not.
-	program   programmount.Program
-	snapshot  *ingress.Snapshot
-	template  *rows.ArtifactScalarTemplate
-	roles     *scalarlower.RoleDirectory
-	programID identity.ContentID
-	moduleKey identity.ContentID
-}
-
 // projectAuthenticatesMounts states that this published mount set is exactly
 // the live Project's mount set: same count, same order, and each row's Program
 // and module identity reissued from the Project's own shard. It is the sole
 // place a Shard is opened during construction, and no shard survives it.
-func projectAuthenticatesMounts(source *link.Link, published []mountedProgramArtifact) bool {
+func projectAuthenticatesMounts(source *link.Link, published []programmount.MountedArtifact) bool {
 	if source == nil || source.Project() == nil || len(published) == 0 {
 		return false
 	}
@@ -339,7 +300,7 @@ func projectAuthenticatesMounts(source *link.Link, published []mountedProgramArt
 		shard, shardOK := mounts.At(index)
 		mounted, mountedOK := mounts.Program(shard)
 		module, moduleOK := source.Project().ModuleKey(shard)
-		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.valid() || mounted.ContentID() != mount.programID || module != mount.moduleKey {
+		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.Available() || mounted.ContentID() != mount.ProgramID || module != mount.ModuleKey {
 			return false
 		}
 	}
@@ -385,24 +346,10 @@ func compileValueCoordinates(source *link.Link) ([]result.ValueCoordinate, bool)
 	return rows, true
 }
 
-func (mount mountedProgramArtifact) valid() bool {
-	if mount.snapshot == nil || !mount.snapshot.Available() ||
-		mount.template == nil || !mount.template.Available() || mount.roles == nil ||
-		!mount.programID.Available() || !mount.moduleKey.Available() {
-		return false
-	}
-	schemaID := mount.snapshot.SchemaID()
-	return mount.snapshot.ProgramID() == mount.programID &&
-		mount.snapshot.ArtifactID().Available() &&
-		mount.template.ArtifactID() == mount.snapshot.ArtifactID() &&
-		mount.template.ProgramID() == mount.programID &&
-		mount.template.SchemaID() == schemaID
-}
-
 type compiledArtifactSet struct {
-	mounts    []mountedProgramArtifact
-	byProgram map[identity.ContentID]*programartifact.Artifact
-	sites     mounted.ObservationSites
+	mounts   []programmount.MountedArtifact
+	products map[identity.ContentID]analysisworkspace.ArtifactProduct
+	sites    mounted.ObservationSites
 	// declared is the declared-type column of the sealed conformance sites.
 	// It is derived once here because this is the first place holding both the
 	// artifact type rows and the sites measured against them.
@@ -415,7 +362,7 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.Val
 	}
 	mounts := make([]anadiag.MountedCensus, len(artifacts.mounts))
 	for index, mount := range artifacts.mounts {
-		mounts[index] = anadiag.MountedCensus{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot}
+		mounts[index] = anadiag.MountedCensus{ModuleKey: mount.ModuleKey, Snapshot: mount.Snapshot}
 	}
 	values := make([]anadiag.ValueCoordinate, len(coordinates))
 	for index, coordinate := range coordinates {
@@ -436,15 +383,15 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.Val
 // judgment from collapsing every non-primitive declaration to the whole
 // runtime vocabulary.
 func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
-	if artifacts == nil || !artifacts.sites.Available() || len(artifacts.byProgram) == 0 {
+	if artifacts == nil || !artifacts.sites.Available() || len(artifacts.products) == 0 {
 		return false
 	}
-	programs := make([]programschema.Program, 0, len(artifacts.byProgram))
-	for _, artifact := range artifacts.byProgram {
-		if artifact == nil || !artifact.Available() {
+	programs := make([]programschema.Program, 0, len(artifacts.products))
+	for _, product := range artifacts.products {
+		if product.Artifact == nil || !product.Artifact.Available() {
 			return false
 		}
-		compiled := artifact.Program()
+		compiled := product.Artifact.Program()
 		if !compiled.Available() {
 			return false
 		}
@@ -456,10 +403,10 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 	}
 	snapshots := make(map[identity.ContentID]*ingress.Snapshot, len(artifacts.mounts))
 	for _, mount := range artifacts.mounts {
-		if !mount.valid() {
+		if !mount.Available() {
 			return false
 		}
-		snapshots[mount.moduleKey] = mount.snapshot
+		snapshots[mount.ModuleKey] = mount.Snapshot
 	}
 	declared := make(anadiag.DeclaredTypes)
 	for index := 0; index < artifacts.sites.Count(); index++ {
@@ -543,7 +490,7 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 	if mounts.Count() == 0 {
 		return nil, false
 	}
-	result := &compiledArtifactSet{mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
+	result := &compiledArtifactSet{mounts: make([]programmount.MountedArtifact, 0, mounts.Count()), products: make(map[identity.ContentID]analysisworkspace.ArtifactProduct)}
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
 		mounted, programOK := mounts.Program(shard)
@@ -560,9 +507,9 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		if !compiled {
 			return nil, false
 		}
-		artifact, snapshot, template, roles := product.Artifact, product.Snapshot, product.Template, product.Roles
-		if _, held := result.byProgram[programID]; !held {
-			result.byProgram[programID] = artifact
+		artifact, snapshot := product.Artifact, product.Snapshot
+		if _, held := result.products[programID]; !held {
+			result.products[programID] = product
 		}
 		compiledProgram := artifact.Program()
 		catalog, catalogOK := programschema.CatalogID(compiledProgram.SchemaID)
@@ -576,13 +523,17 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		if !program.Available() {
 			return nil, false
 		}
-		result.mounts = append(result.mounts, mountedProgramArtifact{program: program, snapshot: snapshot, template: template, roles: roles, programID: programID, moduleKey: moduleKey})
+		mount := programmount.MountedArtifact{Program: program, Snapshot: snapshot}
+		if !mount.Available() {
+			return nil, false
+		}
+		result.mounts = append(result.mounts, mount)
 	}
 	producerAxes, axesOK := composite.ProducedValueAxes()
 	if !axesOK {
 		return nil, false
 	}
-	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), artifactSetMounts(result.mounts), producerAxes)
+	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), result.mounts, producerAxes)
 	if !sitesOK || !sites.Available() {
 		return nil, false
 	}
@@ -591,12 +542,4 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		return nil, false
 	}
 	return result, true
-}
-
-func artifactSetMounts(rows []mountedProgramArtifact) []mounted.Mount {
-	mounts := make([]mounted.Mount, len(rows))
-	for index, row := range rows {
-		mounts[index] = mounted.Mount{ModuleKey: row.moduleKey, Snapshot: row.snapshot}
-	}
-	return mounts
 }

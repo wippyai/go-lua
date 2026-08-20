@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
@@ -32,7 +33,7 @@ type mountedPopulationCase struct {
 	linked *link.Link
 	plan   *Plan
 	state  *compiledState
-	mounts []mounted.Mount
+	mounts []programmount.MountedArtifact
 }
 
 // compileMountedPopulationCase compiles one named corpus fixture to the seam
@@ -56,18 +57,15 @@ func compileMountedPopulationCase(t *testing.T, name string) mountedPopulationCa
 		plan.Close()
 		t.Fatalf("instantiate runtime topology for fixture %q", name)
 	}
-	rows := make([]mounted.Mount, 0, len(plan.state.artifacts.mounts))
-	for _, mount := range plan.state.artifacts.mounts {
-		rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot})
-	}
+	rows := append([]programmount.MountedArtifact(nil), plan.state.artifacts.mounts...)
 	return mountedPopulationCase{linked: linked, plan: plan, state: plan.state, mounts: rows}
 }
 
 // reversed returns the same mount rows in the opposite order. Every population
 // claims to be a function of sealed content alone, so deriving one from a
 // permuted input must produce the identical column.
-func (testCase mountedPopulationCase) reversed() []mounted.Mount {
-	rows := make([]mounted.Mount, len(testCase.mounts))
+func (testCase mountedPopulationCase) reversed() []programmount.MountedArtifact {
+	rows := make([]programmount.MountedArtifact, len(testCase.mounts))
 	for index, mount := range testCase.mounts {
 		rows[len(rows)-1-index] = mount
 	}

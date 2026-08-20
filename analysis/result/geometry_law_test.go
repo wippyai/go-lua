@@ -28,7 +28,7 @@ func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 	if !coordinateOK {
 		t.Fatal("value coordinate")
 	}
-	artifactID := mount.snapshot.ArtifactID()
+	artifactID := mount.Snapshot.ArtifactID()
 	observation := anadiag.Observation{
 		ID: observationID(2), Mount: module, Artifact: artifactID, Local: observationID(3),
 		Kind:     structure.DiagnosticObservationTypeConformance,
@@ -43,7 +43,7 @@ func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 			}},
 		},
 	}
-	geometry, projected := Project(resultGeometryID(9), []Mount{mount}, []ValueCoordinate{coordinate}, []anadiag.Observation{observation})
+	geometry, projected := Project(resultGeometryID(9), []programmount.MountedArtifact{mount}, []ValueCoordinate{coordinate}, []anadiag.Observation{observation})
 	if !projected || !geometry.Valid() {
 		t.Fatal("result geometry projection")
 	}
@@ -67,7 +67,7 @@ func resultGeometryID(seed byte) identity.ContentID {
 
 func observationID(seed byte) identity.ContentID { return resultGeometryID(seed + 16) }
 
-func resultGeometryMount(t *testing.T) (Mount, identity.ContentID) {
+func resultGeometryMount(t *testing.T) (programmount.MountedArtifact, identity.ContentID) {
 	t.Helper()
 	const text = "return 1\n"
 	contract, err := testfixture.StandardLibraryTarget()
@@ -104,8 +104,8 @@ func resultGeometryMount(t *testing.T) (Mount, identity.ContentID) {
 		t.Fatal("lower geometry snapshot")
 	}
 	mountedProgram := programmount.Program{ModuleKey: module, Program: snapshot.Program()}
-	mount, mounted := NewMount(snapshot, mountedProgram)
-	if !mounted {
+	mount := programmount.MountedArtifact{Program: mountedProgram, Snapshot: snapshot}
+	if !mount.Available() {
 		t.Fatal("mount geometry snapshot")
 	}
 	return mount, module

@@ -62,10 +62,10 @@ func TestCompiledPlanDuplicateMountsReuseArtifactAndFreshenResults(t *testing.T)
 		t.Fatalf("duplicate-mount compile = %v/%v", status, plan)
 	}
 	artifacts := plan.state.artifacts
-	sharedArtifact := artifacts.byProgram[shared.ContentID()]
-	if len(artifacts.mounts) != 2 || len(artifacts.byProgram) != 1 ||
-		sharedArtifact == nil || artifacts.mounts[0].snapshot != artifacts.mounts[1].snapshot ||
-		artifacts.mounts[0].moduleKey == artifacts.mounts[1].moduleKey {
+	sharedProduct := artifacts.products[shared.ContentID()]
+	if len(artifacts.mounts) != 2 || len(artifacts.products) != 1 ||
+		sharedProduct.Artifact == nil || artifacts.mounts[0].Snapshot != artifacts.mounts[1].Snapshot ||
+		artifacts.mounts[0].ModuleKey == artifacts.mounts[1].ModuleKey {
 		t.Fatal("duplicate mounts did not reuse one Program artifact with distinct Link substitutions")
 	}
 	result, solveStatus := plan.Solve(context.Background())
@@ -103,29 +103,23 @@ func TestCompiledMountsCarrySealedSnapshot(t *testing.T) {
 		t.Fatalf("mounts = %d", len(mounts))
 	}
 	for index, mount := range mounts {
-		if !mount.valid() {
+		if !mount.Available() {
 			t.Fatalf("mount %d is not valid", index)
 		}
-		if mount.snapshot == nil || !mount.snapshot.Available() {
+		if mount.Snapshot == nil || !mount.Snapshot.Available() {
 			t.Fatalf("mount %d carries no sealed snapshot", index)
 		}
-		artifact := plan.state.artifacts.byProgram[mount.programID]
+		product := plan.state.artifacts.products[mount.ProgramID]
+		artifact := product.Artifact
 		if artifact == nil || !artifact.Available() ||
-			mount.snapshot.ArtifactID() != artifact.ID() ||
-			mount.snapshot.ProgramID() != mount.programID ||
-			mount.snapshot.SchemaID() != artifact.CompileKey().SchemaDigest() {
+			mount.Snapshot.ArtifactID() != artifact.ID() ||
+			mount.Snapshot.ProgramID() != mount.ProgramID ||
+			mount.Snapshot.SchemaID() != artifact.CompileKey().SchemaDigest() {
 			t.Fatalf("mount %d snapshot identities do not match the compile product", index)
 		}
 	}
-	if mounts[0].snapshot != mounts[1].snapshot {
+	if mounts[0].Snapshot != mounts[1].Snapshot {
 		t.Fatal("duplicate Program mounts did not share the compile-time snapshot")
-	}
-	sealed, sealedOK := linkArtifactRows(mounts)
-	if !sealedOK || len(sealed) != 2 {
-		t.Fatalf("linkArtifactRows = %v/%d", sealedOK, len(sealed))
-	}
-	if sealed[0].Snapshot != mounts[0].snapshot || sealed[1].Snapshot != mounts[1].snapshot {
-		t.Fatal("linkArtifactRows minted a new snapshot instead of projecting the compile-time view")
 	}
 }
 
@@ -154,11 +148,11 @@ func TestCompiledPlanProgramChangeInvalidatesOnlyChangedArtifact(t *testing.T) {
 	}
 	stableID := stable.ContentID()
 	changedID := changed.ContentID()
-	firstStable := first.state.artifacts.byProgram[stableID]
-	secondStable := second.state.artifacts.byProgram[stableID]
-	secondChanged := second.state.artifacts.byProgram[changedID]
-	if !stableID.Available() || !changedID.Available() || stableID == changedID || firstStable == nil ||
-		firstStable != secondStable || secondChanged == nil || secondChanged == secondStable {
+	firstStable := first.state.artifacts.products[stableID]
+	secondStable := second.state.artifacts.products[stableID]
+	secondChanged := second.state.artifacts.products[changedID]
+	if !stableID.Available() || !changedID.Available() || stableID == changedID || firstStable.Artifact == nil ||
+		firstStable.Artifact != secondStable.Artifact || secondChanged.Artifact == nil || secondChanged.Artifact == secondStable.Artifact {
 		t.Fatal("Program artifact cache failed stable reuse or changed-Program invalidation")
 	}
 	if result, status := second.Solve(context.Background()); status != AnalyzeComplete || result == nil || result.BodyCount() != 2 {

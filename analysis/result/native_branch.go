@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -21,7 +22,7 @@ import (
 // and diagnostic policy never enter this producer.
 func buildNativeBranchPublication(
 	geometry Geometry,
-	mounts []Mount,
+	mounts []programmount.MountedArtifact,
 	selected []anadiag.ObservationKey,
 	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,

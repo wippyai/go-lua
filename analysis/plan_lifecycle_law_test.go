@@ -105,12 +105,13 @@ return ephemeral_workspace_probe`, contract)
 		t.Fatalf("first convenience compile = %v/%v", firstStatus, first)
 	}
 	firstWorkspace := first.workspace
-	firstArtifact := first.state.artifacts.byProgram[mounted.ContentID()]
+	firstProduct := first.state.artifacts.products[mounted.ContentID()]
+	firstArtifact := firstProduct.Artifact
 	firstMount := first.state.artifacts.mounts[0]
 	firstWorkspace.lifecycleMu.Lock()
 	owned := firstWorkspace.ephemeral && firstWorkspace.closing && !firstWorkspace.closed && firstWorkspace.plans == 1 && firstWorkspace.artifacts != nil
 	firstWorkspace.lifecycleMu.Unlock()
-	if !owned || firstArtifact == nil || firstMount.snapshot == nil || firstMount.template == nil || firstMount.roles == nil {
+	if !owned || firstArtifact == nil || firstMount.Snapshot == nil || firstProduct.Template == nil || firstProduct.Roles == nil {
 		t.Fatal("convenience Plan did not own one live ephemeral Workspace product")
 	}
 	if !first.Close() {
@@ -128,12 +129,13 @@ return ephemeral_workspace_probe`, contract)
 		t.Fatalf("second convenience compile = %v/%v", secondStatus, second)
 	}
 	defer second.Close()
-	secondArtifact := second.state.artifacts.byProgram[mounted.ContentID()]
+	secondProduct := second.state.artifacts.products[mounted.ContentID()]
+	secondArtifact := secondProduct.Artifact
 	secondMount := second.state.artifacts.mounts[0]
-	if secondArtifact == nil || secondArtifact == firstArtifact || secondMount.snapshot == firstMount.snapshot || secondMount.template == firstMount.template || secondMount.roles == firstMount.roles {
+	if secondArtifact == nil || secondArtifact == firstArtifact || secondMount.Snapshot == firstMount.Snapshot || secondProduct.Template == firstProduct.Template || secondProduct.Roles == firstProduct.Roles {
 		t.Fatal("unrelated convenience Compiles shared one Workspace product")
 	}
-	if secondArtifact.ID() != firstArtifact.ID() || secondMount.snapshot.ArtifactID() != firstMount.snapshot.ArtifactID() || secondMount.template.ArtifactID() != firstMount.template.ArtifactID() {
+	if secondArtifact.ID() != firstArtifact.ID() || secondMount.Snapshot.ArtifactID() != firstMount.Snapshot.ArtifactID() || secondProduct.Template.ArtifactID() != firstProduct.Template.ArtifactID() {
 		t.Fatal("ephemeral Workspace boundary changed immutable product identity")
 	}
 }
@@ -171,12 +173,13 @@ return retained_cache_probe`, contract)
 	if firstStatus != CompileComplete || first == nil || first.state == nil || first.state.artifacts == nil {
 		t.Fatalf("first compile = %v/%v diagnostics=%+v", firstStatus, first, firstDiagnostics)
 	}
-	firstArtifact := first.state.artifacts.byProgram[mounted.ContentID()]
+	firstProduct := first.state.artifacts.products[mounted.ContentID()]
+	firstArtifact := firstProduct.Artifact
 	if len(first.state.artifacts.mounts) == 0 {
 		t.Fatal("first compile retained no mounted artifact")
 	}
-	firstTemplate := first.state.artifacts.mounts[0].template
-	firstRoles := first.state.artifacts.mounts[0].roles
+	firstTemplate := firstProduct.Template
+	firstRoles := firstProduct.Roles
 	if firstArtifact == nil || !first.Close() {
 		t.Fatal("first Plan did not retain a closable cached artifact")
 	}
@@ -185,11 +188,12 @@ return retained_cache_probe`, contract)
 		t.Fatalf("second compile = %v/%v", secondStatus, second)
 	}
 	defer second.Close()
-	secondArtifact := second.state.artifacts.byProgram[mounted.ContentID()]
+	secondProduct := second.state.artifacts.products[mounted.ContentID()]
+	secondArtifact := secondProduct.Artifact
 	if len(second.state.artifacts.mounts) == 0 {
 		t.Fatal("second compile retained no mounted artifact")
 	}
-	if secondArtifact != firstArtifact || second.state.artifacts.mounts[0].template != firstTemplate || second.state.artifacts.mounts[0].roles != firstRoles {
+	if secondArtifact != firstArtifact || secondProduct.Template != firstTemplate || secondProduct.Roles != firstRoles {
 		t.Fatal("sequential Workspace Compile→Plan.Close→Compile did not reuse the immutable product")
 	}
 }
@@ -235,7 +239,8 @@ return concurrent_cache_probe`, contract)
 		if statuses[index] != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 			t.Fatalf("concurrent Compile[%d] = %v/%v", index, statuses[index], plan)
 		}
-		gotArtifact := plan.state.artifacts.byProgram[programID]
+		gotProduct := plan.state.artifacts.products[programID]
+		gotArtifact := gotProduct.Artifact
 		if len(plan.state.artifacts.mounts) == 0 {
 			t.Fatalf("concurrent Compile[%d] retained no mounted artifact", index)
 		}
@@ -247,7 +252,7 @@ return concurrent_cache_probe`, contract)
 		} else if artifact != gotArtifact {
 			t.Fatal("concurrent Workspace Compile did not join one immutable artifact product")
 		}
-		gotTemplate := plan.state.artifacts.mounts[0].template
+		gotTemplate := gotProduct.Template
 		if gotTemplate == nil {
 			t.Fatalf("concurrent Compile[%d] template unavailable", index)
 		}
@@ -284,9 +289,11 @@ func TestWorkspaceChangedFullKeyDoesNotAlias(t *testing.T) {
 	if !receiptOK || !grammarOK || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
 		t.Fatal("changed Program did not issue a distinct full compiler key")
 	}
-	leftArtifact := leftPlan.state.artifacts.byProgram[leftInput.ContentID()]
-	rightArtifact := rightPlan.state.artifacts.byProgram[rightInput.ContentID()]
-	if leftArtifact == nil || rightArtifact == nil || leftArtifact == rightArtifact || leftPlan.state.artifacts.mounts[0].template == nil || rightPlan.state.artifacts.mounts[0].template == nil || leftPlan.state.artifacts.mounts[0].template == rightPlan.state.artifacts.mounts[0].template {
+	leftProduct := leftPlan.state.artifacts.products[leftInput.ContentID()]
+	rightProduct := rightPlan.state.artifacts.products[rightInput.ContentID()]
+	leftArtifact := leftProduct.Artifact
+	rightArtifact := rightProduct.Artifact
+	if leftArtifact == nil || rightArtifact == nil || leftArtifact == rightArtifact || leftProduct.Template == nil || rightProduct.Template == nil || leftProduct.Template == rightProduct.Template {
 		t.Fatal("changed full compiler key aliased one immutable artifact/template")
 	}
 }
@@ -322,12 +329,14 @@ return shared_template_probe(43)`
 		t.Fatal("independent template mount cardinality")
 	}
 	leftMount, rightMount := left.state.artifacts.mounts[0], right.state.artifacts.mounts[0]
-	leftArtifact := left.state.artifacts.byProgram[leftMount.programID]
-	rightArtifact := right.state.artifacts.byProgram[rightMount.programID]
-	if leftArtifact == nil || leftArtifact != rightArtifact || leftMount.template == nil || leftMount.template != rightMount.template || leftMount.roles == nil || leftMount.roles != rightMount.roles {
+	leftProduct := left.state.artifacts.products[leftMount.ProgramID]
+	rightProduct := right.state.artifacts.products[rightMount.ProgramID]
+	leftArtifact := leftProduct.Artifact
+	rightArtifact := rightProduct.Artifact
+	if leftArtifact == nil || leftArtifact != rightArtifact || leftProduct.Template == nil || leftProduct.Template != rightProduct.Template || leftProduct.Roles == nil || leftProduct.Roles != rightProduct.Roles {
 		t.Fatal("equal Programs in independent Links did not share one content-addressed template")
 	}
-	leftBoundaryCount, leftBoundariesPublished := leftMount.program.FunctionBoundaryCount()
+	leftBoundaryCount, leftBoundariesPublished := leftMount.Program.FunctionBoundaryCount()
 	if !leftBoundariesPublished || leftBoundaryCount == 0 {
 		t.Fatalf("shared Program function interfaces = %d/%v", leftBoundaryCount, leftBoundariesPublished)
 	}
@@ -352,20 +361,20 @@ return shared_template_probe(43)`
 	// The function declaration interface is owned by program/artifact. Both
 	// Links resolve it through the one shared content-addressed Artifact, so
 	// the interface outlives every Link-local release/replay.
-	rightBoundaryCount, rightBoundariesPublished := rightMount.program.FunctionBoundaryCount()
+	rightBoundaryCount, rightBoundariesPublished := rightMount.Program.FunctionBoundaryCount()
 	if !rightBoundariesPublished || leftBoundaryCount != rightBoundaryCount {
 		t.Fatal("independent Links did not share one function declaration authority")
 	}
 	programCaptures, programVarargs := 0, 0
-	bodyCount, bodiesPublished := leftMount.program.BodyCount()
+	bodyCount, bodiesPublished := leftMount.Program.BodyCount()
 	if !bodiesPublished {
 		t.Fatal("shared cold Body family unavailable")
 	}
 	for index := 0; index < leftBoundaryCount; index++ {
-		reusable, reusableOK := leftMount.program.FunctionBoundaryAt(index)
+		reusable, reusableOK := leftMount.Program.FunctionBoundaryAt(index)
 		bodyOutcomes := 0
 		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-			body, bodyOK := leftMount.program.BodyAt(bodyIndex)
+			body, bodyOK := leftMount.Program.BodyAt(bodyIndex)
 			if bodyOK && body.ID() == reusable.BodyID() {
 				bodyOutcomes = body.OutcomeCount()
 				break
@@ -375,19 +384,19 @@ return shared_template_probe(43)`
 			t.Fatalf("function interface[%d] is incomplete", index)
 		}
 		for position := 0; position < reusable.FormalCount(); position++ {
-			port, portOK := leftMount.program.FunctionFormalFor(index, position)
+			port, portOK := leftMount.Program.FunctionFormalFor(index, position)
 			if !portOK || !port.ID().Available() || !port.CellID().Available() || !port.StorageCellID().Available() {
 				t.Fatalf("function formal[%d,%d] is incomplete", index, position)
 			}
 		}
-		if vararg, varargOK := leftMount.program.FunctionVarargFor(index, 0); varargOK {
+		if vararg, varargOK := leftMount.Program.FunctionVarargFor(index, 0); varargOK {
 			if !vararg.ID().Available() || !vararg.CellID().Available() {
 				t.Fatalf("function vararg[%d] is incomplete", index)
 			}
 			programVarargs++
 		}
 		for position := 0; position < reusable.CaptureCount(); position++ {
-			capture, captureOK := leftMount.program.FunctionCaptureFor(index, position)
+			capture, captureOK := leftMount.Program.FunctionCaptureFor(index, position)
 			if !captureOK || !capture.ID().Available() || capture.InnerCellID() == capture.OuterCellID() ||
 				!capture.InnerBodyID().Available() || !capture.OuterBodyID().Available() || capture.InnerBodyID() == capture.OuterBodyID() {
 				t.Fatalf("function capture[%d,%d] lost reusable direction", index, position)
@@ -424,8 +433,8 @@ func TestWorkspaceProductsReuseAcrossMountPermutation(t *testing.T) {
 	second := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "right", Program: rightProg}, {Name: "left", Program: leftProg},
 	}))
-	if first.byProgram[leftProg.ContentID()] == nil || first.byProgram[leftProg.ContentID()] != second.byProgram[leftProg.ContentID()] ||
-		first.byProgram[rightProg.ContentID()] == nil || first.byProgram[rightProg.ContentID()] != second.byProgram[rightProg.ContentID()] {
+	if first.products[leftProg.ContentID()].Artifact == nil || first.products[leftProg.ContentID()].Artifact != second.products[leftProg.ContentID()].Artifact ||
+		first.products[rightProg.ContentID()].Artifact == nil || first.products[rightProg.ContentID()].Artifact != second.products[rightProg.ContentID()].Artifact {
 		t.Fatal("mount permutation did not reuse Workspace products")
 	}
 }
@@ -442,11 +451,11 @@ func TestWorkspaceProductsInvalidateOnlyReplacedSibling(t *testing.T) {
 	changed := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: replacement}, {Name: "right", Program: rightProg},
 	}))
-	if base.byProgram[leftProg.ContentID()] == nil || changed.byProgram[replacement.ContentID()] == nil ||
-		base.byProgram[leftProg.ContentID()] == changed.byProgram[replacement.ContentID()] {
+	if base.products[leftProg.ContentID()].Artifact == nil || changed.products[replacement.ContentID()].Artifact == nil ||
+		base.products[leftProg.ContentID()].Artifact == changed.products[replacement.ContentID()].Artifact {
 		t.Fatal("replaced sibling reused the previous artifact")
 	}
-	if base.byProgram[rightProg.ContentID()] == nil || base.byProgram[rightProg.ContentID()] != changed.byProgram[rightProg.ContentID()] {
+	if base.products[rightProg.ContentID()].Artifact == nil || base.products[rightProg.ContentID()].Artifact != changed.products[rightProg.ContentID()].Artifact {
 		t.Fatal("unrelated sibling lost its Workspace product")
 	}
 }
@@ -477,7 +486,7 @@ func TestWorkspaceProductsReuseAcrossActorRename(t *testing.T) {
 	}
 	first := compileArtifactSet(t, workspace, seal("actor"))
 	second := compileArtifactSet(t, workspace, seal("other-actor"))
-	if first.byProgram[prog.ContentID()] == nil || first.byProgram[prog.ContentID()] != second.byProgram[prog.ContentID()] {
+	if first.products[prog.ContentID()].Artifact == nil || first.products[prog.ContentID()].Artifact != second.products[prog.ContentID()].Artifact {
 		t.Fatal("actor rename did not reuse the Workspace product")
 	}
 }

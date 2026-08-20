@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -52,7 +53,7 @@ type compiledState struct {
 	// mounts and geometry are the detached result projection admitted during
 	// Workspace compilation. Solve only reads these immutable owner values; it
 	// must not reopen the Link or replay the mounted observation census.
-	mounts            []result.Mount
+	mounts            []programmount.MountedArtifact
 	geometry          result.Geometry
 	binding           *composite.ProgramBinding
 	committed         *engine.CommittedProgram
@@ -138,7 +139,8 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	observations, observationsOK := artifacts.observationCensus(values)
-	mounts, mountsOK := resultMounts(artifacts.mounts)
+	mounts := artifacts.mounts
+	mountsOK := len(mounts) != 0
 	geometry, resultOK := result.Geometry{}, false
 	if mountsOK && observationsOK {
 		geometry, resultOK = result.Project(source.ContentID(), mounts, values, observations)
@@ -513,30 +515,15 @@ func (state *compiledState) release() {
 	})
 }
 
-func resultMounts(mounts []mountedProgramArtifact) ([]result.Mount, bool) {
-	if len(mounts) == 0 {
-		return nil, false
-	}
-	out := make([]result.Mount, len(mounts))
-	for index, mount := range mounts {
-		row, ok := result.NewMount(mount.snapshot, mount.program)
-		if !ok {
-			return nil, false
-		}
-		out[index] = row
-	}
-	return out, true
-}
-
 func (state *compiledState) admit() bool {
 	if state == nil || state.artifacts == nil || !state.sourceID.Available() {
 		return false
 	}
-	if len(state.artifacts.mounts) == 0 || len(state.artifacts.byProgram) == 0 {
+	if len(state.artifacts.mounts) == 0 || len(state.artifacts.products) == 0 {
 		return false
 	}
 	for _, mount := range state.artifacts.mounts {
-		if !mount.valid() {
+		if !mount.Available() {
 			return false
 		}
 	}
@@ -584,22 +571,31 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	inputs := make([]engine.MountedProgramArtifact, 0, len(state.artifacts.mounts))
 	rolesByArtifact := make(map[identity.ContentID][]engine.MountedProgramRole, len(state.artifacts.mounts))
 	for _, mount := range state.artifacts.mounts {
-		if !mount.valid() {
+		if !mount.Available() {
 			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 		}
-		artifactID := mount.snapshot.ArtifactID()
+		artifactID := mount.Snapshot.ArtifactID()
 		roles, have := rolesByArtifact[artifactID]
 		if !have {
-			bound, boundOK := mountedProgramRoles(mount.roles, binding)
+			product, productOK := state.artifacts.products[mount.ProgramID]
+			if !productOK {
+				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
+			}
+			bound, boundOK := mountedProgramRoles(product.Roles, binding)
 			if !boundOK {
 				return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 			}
 			roles = bound
 			rolesByArtifact[artifactID] = roles
 		}
-		inputs = append(inputs, engine.MountedProgramArtifact{Template: mount.template, Roles: roles, Module: mount.moduleKey})
+		product, productOK := state.artifacts.products[mount.ProgramID]
+		if !productOK || product.Template == nil || !product.Template.Available() {
+			return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageMount, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
+		}
+		inputs = append(inputs, engine.MountedProgramArtifact{Template: product.Template, Roles: roles, Module: mount.ModuleKey})
 	}
-	sealed, sealedOK := linkArtifactRows(state.artifacts.mounts)
+	sealed := state.artifacts.mounts
+	sealedOK := len(sealed) != 0
 	rules := binding.Rules()
 	if !sealedOK || rules == nil {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBinding, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
