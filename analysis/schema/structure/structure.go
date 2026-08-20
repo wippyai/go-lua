@@ -6,7 +6,7 @@
 // Three of these catalogs are projected across package boundaries. The arm
 // catalog has one semantic owner in Flow's BoundaryArmKind; ingress and engine
 // expose scalar projections of that owner. The event catalog is
-// programartifact.WTOEventKind,
+// the canonical Program WTO-event ordinal,
 // ingress.EventKind, and the solver schedule's own EventKind; the outcome
 // catalog is cold.OutcomeKind, of which ingress accepts a subset.
 // Event and outcome projections have to agree for the analyzer to be correct,

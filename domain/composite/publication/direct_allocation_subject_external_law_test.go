@@ -126,12 +126,9 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if !selectorOK || !otherSelectorOK {
 		t.Fatal("direct allocation fixed selectors")
 	}
-	frozen, catalog, coldPublished := artifact.ColdPublication()
-	coldProgram := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+	coldProgram := artifact.Program()
+	catalog, catalogOK := programschema.CatalogID(coldProgram.SchemaID)
+	if !coldProgram.Available() || !catalogOK || !catalog.Available() {
 		t.Fatal("direct allocation cold program")
 	}
 	callCount, callsOK := coldProgram.CallCount()

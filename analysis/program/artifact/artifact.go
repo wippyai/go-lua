@@ -7,9 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-// Artifact is immutable after Compile succeeds. Its fields are the sealed
-// owner columns copied from Program; consumers access them through the
-// owner-named row surfaces in this package.
+// Artifact is immutable after Compile succeeds. It owns one sealed canonical
+// Program publication; consumers read that publication through Program.
 type Artifact struct {
 	key CompileKey
 	id  identity.ContentID

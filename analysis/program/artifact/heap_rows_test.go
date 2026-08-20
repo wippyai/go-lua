@@ -77,17 +77,18 @@ return run
 			if failure.Available() || artifact == nil || !artifact.Available() {
 				t.Fatalf("compile %s: %s", fixture.name, failure.Error())
 			}
-			frozen, catalog, coldPublished := artifact.ColdPublication()
-			if !coldPublished {
+			program := artifact.Program()
+			catalog, coldPublished := programschema.CatalogID(program.SchemaID)
+			if !program.Available() || !coldPublished {
 				t.Fatalf("compile %s: cold publication unavailable", fixture.name)
 			}
 			reads, writes := 0, 0
-			indexCount, indexPublished := programschema.HeapIndexFamily().Count(&frozen, catalog)
+			indexCount, indexPublished := programschema.HeapIndexFamily().Count(&program.Frozen, catalog)
 			if !indexPublished {
 				t.Fatalf("compile %s: heap index family unavailable", fixture.name)
 			}
 			for index := 0; index < indexCount; index++ {
-				row, rowOK := programschema.HeapIndexFamily().At(&frozen, catalog, index)
+				row, rowOK := programschema.HeapIndexFamily().At(&program.Frozen, catalog, index)
 				if !rowOK || !row.Available() {
 					t.Fatalf("heap index row %d unavailable", index)
 				}

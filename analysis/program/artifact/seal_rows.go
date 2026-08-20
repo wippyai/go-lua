@@ -90,23 +90,27 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) bool {
 		return false
 	}
 	for index := 0; index < edgeCount; index++ {
-		row, held := artifact.environmentEdgeRowAt(index)
-		if !held {
+		row, held := coldRow(artifact, programschema.EnvironmentEdgeFamily(), index)
+		resetOffset, resetCount, spanOK := row.ResetSpan()
+		if !held || !spanOK {
 			return false
 		}
-		if _, exists := state.pointRows[row.from]; !exists {
+		if _, exists := state.pointRows[row.From()]; !exists {
 			return false
 		}
-		if _, exists := state.pointRows[row.to]; !exists {
+		if _, exists := state.pointRows[row.To()]; !exists {
 			return false
 		}
-		for resetIndex, reset := range row.resets {
-			if !reset.Available() {
+		var previousReset identity.ContentID
+		for resetIndex := uint32(0); resetIndex < resetCount; resetIndex++ {
+			reset, resetHeld := coldRow(artifact, programschema.EnvironmentResetFamily(), int(resetOffset+resetIndex))
+			if !resetHeld {
 				return false
 			}
-			if resetIndex != 0 && !contentIDBefore(row.resets[resetIndex-1], reset) {
+			if resetIndex != 0 && !contentIDBefore(previousReset, reset.ID()) {
 				return false
 			}
+			previousReset = reset.ID()
 		}
 	}
 	localTransferCount, localTransfersPublished := coldCount(artifact, programschema.LocalTransferFamily())
@@ -152,30 +156,34 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) bool {
 	}
 	regionRows := make(map[identity.ContentID]struct{}, regionCount)
 	for index := 0; index < regionCount; index++ {
-		row, held := artifact.regionRowAt(index)
-		if !held {
+		row, held := coldRow(artifact, programschema.RegionFamily(), index)
+		memberOffset, memberCount, spanOK := row.MemberSpan()
+		if !held || !spanOK {
 			return false
 		}
-		if _, exists := regionRows[row.id]; exists {
+		if _, exists := regionRows[row.ID()]; exists {
 			return false
 		}
-		regionRows[row.id] = struct{}{}
-		if _, exists := state.pointRows[row.members[0]]; !exists {
-			return false
-		}
-		for memberIndex, member := range row.members {
-			if _, exists := state.pointRows[member]; !exists || memberIndex != 0 && member == row.members[memberIndex-1] {
+		regionRows[row.ID()] = struct{}{}
+		var previousMember identity.ContentID
+		for memberIndex := uint32(0); memberIndex < memberCount; memberIndex++ {
+			member, memberHeld := coldRow(artifact, programschema.RegionMemberFamily(), int(memberOffset+memberIndex))
+			if !memberHeld {
 				return false
 			}
+			if _, exists := state.pointRows[member.ID()]; !exists || memberIndex != 0 && member.ID() == previousMember {
+				return false
+			}
+			previousMember = member.ID()
 		}
 	}
 	for index := 0; index < regionCount; index++ {
-		row, held := artifact.regionRowAt(index)
+		row, held := coldRow(artifact, programschema.RegionFamily(), index)
 		if !held {
 			return false
 		}
-		if row.parent.Available() {
-			if _, exists := regionRows[row.parent]; !exists {
+		if row.ParentID().Available() {
+			if _, exists := regionRows[row.ParentID()]; !exists {
 				return false
 			}
 		}
@@ -185,15 +193,15 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) bool {
 		return false
 	}
 	for index := 0; index < eventCount; index++ {
-		event, held := artifact.wtoEventRowAt(index)
+		event, held := coldRow(artifact, programschema.WTOEventFamily(), index)
 		if !held {
 			return false
 		}
-		if event.kind == WTOEventPoint {
-			if _, exists := state.pointRows[event.point]; !exists {
+		if event.Kind() == programschema.WTOEventPoint {
+			if _, exists := state.pointRows[event.PointID()]; !exists {
 				return false
 			}
-		} else if _, exists := regionRows[event.region]; !exists {
+		} else if _, exists := regionRows[event.RegionID()]; !exists {
 			return false
 		}
 	}

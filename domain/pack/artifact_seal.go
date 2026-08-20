@@ -308,6 +308,11 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		if !mountedProgram.Available() {
 			return nil, false
 		}
+		catalog, catalogOK := programschema.CatalogID(mountedProgram.Program.SchemaID)
+		heapIndexCount, heapIndexesPublished := programschema.HeapIndexFamily().Count(&mountedProgram.Program.Frozen, catalog)
+		if !catalogOK || !heapIndexesPublished {
+			return nil, false
+		}
 		for i := 0; i < artifact.ValuesCount(); i++ {
 			row, ok := artifact.ValuesAt(i)
 			if !ok {
@@ -317,8 +322,8 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 				maximum = row.MemberCount() + 1
 			}
 		}
-		for i := 0; i < artifact.HeapIndexCount(); i++ {
-			row, ok := artifact.HeapIndexAt(i)
+		for i := 0; i < heapIndexCount; i++ {
+			row, ok := programschema.HeapIndexFamily().At(&mountedProgram.Program.Frozen, catalog, i)
 			if !ok {
 				return nil, false
 			}

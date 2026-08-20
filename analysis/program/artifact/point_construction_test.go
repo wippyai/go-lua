@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -27,7 +28,11 @@ return loop
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("point construction failed: %s", failure.Error())
 	}
-	if artifact.WTOEventCount() == 0 || artifact.RegionCount() == 0 {
-		t.Fatalf("WTO schedule = events:%d regions:%d", artifact.WTOEventCount(), artifact.RegionCount())
+	program := artifact.Program()
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	eventCount, eventsPublished := programschema.WTOEventFamily().Count(&program.Frozen, catalog)
+	regionCount, regionsPublished := programschema.RegionFamily().Count(&program.Frozen, catalog)
+	if !program.Available() || !catalogOK || !eventsPublished || !regionsPublished || eventCount == 0 || regionCount == 0 {
+		t.Fatalf("WTO schedule = events:%d regions:%d", eventCount, regionCount)
 	}
 }

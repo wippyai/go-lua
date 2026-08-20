@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/domain/composite"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
@@ -81,23 +80,23 @@ func counted(t *testing.T, table structure.Table, category structure.Category, l
 	}
 }
 
-// TestArtifactVocabularyIsTheSealedTable pins the artifact-owned spellings.
-// The artifact compiles these ordinals at load, so this law is what keeps its
+// TestProgramVocabularyIsTheSealedTable pins the Program-owned spellings.
+// The Program compiles these ordinals at load, so this law is what keeps its
 // numbering and the declaration's the same numbering.
-func TestArtifactVocabularyIsTheSealedTable(t *testing.T) {
+func TestProgramVocabularyIsTheSealedTable(t *testing.T) {
 	table := sealedVocabulary(t)
 	for _, member := range []struct {
 		key      schema.Key
-		ordinal  programartifact.WTOEventKind
+		ordinal  uint8
 		spelling string
 	}{
-		{"event/enter", programartifact.WTOEventEnter, "programartifact.WTOEventEnter"},
-		{"event/point", programartifact.WTOEventPoint, "programartifact.WTOEventPoint"},
-		{"event/exit", programartifact.WTOEventExit, "programartifact.WTOEventExit"},
+		{"event/enter", programschema.WTOEventEnter, "programschema.WTOEventEnter"},
+		{"event/point", programschema.WTOEventPoint, "programschema.WTOEventPoint"},
+		{"event/exit", programschema.WTOEventExit, "programschema.WTOEventExit"},
 	} {
 		pinned(t, table, structure.CategoryEvent, uint16(member.ordinal), member.key, member.spelling)
 	}
-	counted(t, table, structure.CategoryEvent, uint16(programartifact.WTOEventExit), "programartifact.WTOEventExit")
+	counted(t, table, structure.CategoryEvent, uint16(programschema.WTOEventExit), "programschema.WTOEventExit")
 
 	for _, member := range []struct {
 		key      schema.Key

@@ -206,15 +206,15 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) bool {
 	}
 	seenStaticValues := make(map[identity.ContentID]struct{}, typeValueCount)
 	for index := 0; index < typeValueCount; index++ {
-		row, held := artifact.staticTypeValueRowAt(index)
+		row, held := coldRow(artifact, programschema.StaticTypeValueFamily(), index)
 		if !held {
 			return false
 		}
-		if _, duplicate := seenStaticValues[row.id]; duplicate {
+		if _, duplicate := seenStaticValues[row.ID()]; duplicate {
 			return false
 		}
-		seenStaticValues[row.id] = struct{}{}
-		if _, exists := state.bodyRows[row.body]; !exists {
+		seenStaticValues[row.ID()] = struct{}{}
+		if _, exists := state.bodyRows[row.BodyPathID()]; !exists {
 			return false
 		}
 	}
@@ -280,15 +280,15 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) bool {
 	}
 	seenStaticExpressions := make(map[identity.ContentID]struct{}, expressionCount)
 	for index := 0; index < expressionCount; index++ {
-		row, held := artifact.staticExpressionRowAt(index)
+		row, held := coldRow(artifact, programschema.StaticExpressionFamily(), index)
 		if !held {
 			return false
 		}
-		if _, duplicate := seenStaticExpressions[row.id]; duplicate {
+		if _, duplicate := seenStaticExpressions[row.ID()]; duplicate {
 			return false
 		}
-		seenStaticExpressions[row.id] = struct{}{}
-		if _, exists := seenStaticNodes[row.reference]; !exists {
+		seenStaticExpressions[row.ID()] = struct{}{}
+		if _, exists := seenStaticNodes[row.ReferenceID()]; !exists {
 			return false
 		}
 	}

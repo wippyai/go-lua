@@ -379,9 +379,14 @@ return guard
 	if !baseToStorage || !storageToOrder {
 		t.Fatalf("full local chain base->storage/order = %v/%v", baseToStorage, storageToOrder)
 	}
+	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	edgeCount, edgesPublished := programschema.EnvironmentEdgeFamily().Count(&program.Frozen, catalog)
+	if !catalogOK || !edgesPublished {
+		t.Fatal("environment-edge family is unpublished")
+	}
 	continuation := false
-	for index := 0; index < artifact.EnvironmentEdgeCount(); index++ {
-		edge, ok := artifact.EnvironmentEdgeAt(index)
+	for index := 0; index < edgeCount; index++ {
+		edge, ok := programschema.EnvironmentEdgeFamily().At(&program.Frozen, catalog, index)
 		continuation = continuation || ok && edge.From() == orderPoint
 	}
 	if !continuation {

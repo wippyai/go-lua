@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -255,13 +254,19 @@ return run
 				t.Fatal("rule-occurrence family is unpublished")
 			}
 
-			rank := make(map[identity.ContentID]int, artifact.PointCount())
-			for eventIndex := 0; eventIndex < artifact.WTOEventCount(); eventIndex++ {
-				event, eventOK := artifact.WTOEventAt(eventIndex)
-				if !eventOK {
+			catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+			pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
+			eventCount, eventsPublished := programschema.WTOEventFamily().Count(&program.Frozen, catalog)
+			if !catalogOK || !pointsPublished || !eventsPublished {
+				t.Fatal("WTO families are unpublished")
+			}
+			rank := make(map[identity.ContentID]int, pointCount)
+			for eventIndex := 0; eventIndex < eventCount; eventIndex++ {
+				event, eventOK := programschema.WTOEventFamily().At(&program.Frozen, catalog, eventIndex)
+				if !eventOK || !event.Available() {
 					t.Fatalf("WTO event %d unavailable", eventIndex)
 				}
-				if event.Kind() == programartifact.WTOEventPoint {
+				if event.Kind() == programschema.WTOEventPoint {
 					rank[event.PointID()] = len(rank)
 				}
 			}

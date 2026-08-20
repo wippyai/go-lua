@@ -42,22 +42,26 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) boo
 		return false
 	}
 	state.pointRows = make(map[identity.ContentID]struct{}, pointCount)
-	previous := Point{}
+	var previous identity.ContentID
 	for index := 0; index < pointCount; index++ {
-		row, held := artifact.pointRowAt(index)
-		if !held {
+		row, held := coldRow(artifact, programschema.PointFamily(), index)
+		decisionOffset, decisionCount, spanOK := row.DecisionSpan()
+		if !held || !spanOK {
 			return false
 		}
-		if !pointsOrdered(previous, row, index == 0) {
+		if index > 0 && !contentIDBefore(previous, row.ID()) {
 			return false
 		}
-		previous = row
-		for decisionIndex, decision := range row.decisions {
-			if !decision.Available() || decisionIndex > 0 && !contentIDBefore(row.decisions[decisionIndex-1], decision) {
+		previous = row.ID()
+		var priorDecision identity.ContentID
+		for decisionIndex := uint32(0); decisionIndex < decisionCount; decisionIndex++ {
+			decision, decisionHeld := coldRow(artifact, programschema.PointDecisionFamily(), int(decisionOffset+decisionIndex))
+			if !decisionHeld || decisionIndex > 0 && !contentIDBefore(priorDecision, decision.ID()) {
 				return false
 			}
+			priorDecision = decision.ID()
 		}
-		state.pointRows[row.id] = struct{}{}
+		state.pointRows[row.ID()] = struct{}{}
 	}
 	diagnosticCount, diagnosticsPublished := coldCount(artifact, programschema.DiagnosticObservationFamily())
 	evidenceCount, evidencePublished := coldCount(artifact, programschema.DiagnosticEvidenceFamily())
@@ -321,13 +325,6 @@ func (artifact *Artifact) validateSealFoundation(state *sealValidationState) boo
 	}
 
 	return true
-}
-
-// pointsOrdered states the point plane's order law over the adjacent pair the
-// seal holds. The plane is read one row at a time out of the publication, so
-// the law is stated over successive rows rather than over a retained slice.
-func pointsOrdered(previous, current Point, first bool) bool {
-	return first || contentIDBefore(previous.id, current.id)
 }
 
 func contentIDBefore(left, right identity.ContentID) bool {

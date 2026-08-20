@@ -87,16 +87,14 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		if !vocabularyOK || !lowered {
 			t.Fatalf("lower artifact %d", index)
 		}
-		frozen, catalog, coldOK := artifact.ColdPublication()
-		if !coldOK || !catalog.Available() {
+		compiledProgram := artifact.Program()
+		catalog, catalogOK := programschema.CatalogID(compiledProgram.SchemaID)
+		if !compiledProgram.Available() || compiledProgram.ProgramID != programID || !catalogOK || !catalog.Available() {
 			t.Fatalf("artifact %d publishes no cold value", index)
 		}
 		program := programmount.Program{
 			ModuleKey: module,
-			Program: programschema.Program{
-				Frozen: frozen, ArtifactID: artifact.ID(),
-				ProgramID: programID, SchemaID: artifact.CompileKey().SchemaDigest(),
-			},
+			Program:   compiledProgram,
 		}
 		if !program.Available() {
 			t.Fatalf("mount row %d unavailable", index)

@@ -110,12 +110,9 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 	if !ok || schema == nil {
 		t.Fatal("seal selector Pack")
 	}
-	frozen, catalog, coldPublished := artifact.ColdPublication()
-	coldProgram := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+	coldProgram := artifact.Program()
+	catalog, catalogOK := programschema.CatalogID(coldProgram.SchemaID)
+	if !coldProgram.Available() || !catalogOK || !catalog.Available() {
 		t.Fatal("selector cold program")
 	}
 	callCount, callsOK := coldProgram.CallCount()

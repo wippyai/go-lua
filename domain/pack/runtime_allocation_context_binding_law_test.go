@@ -79,12 +79,9 @@ func runtimeContextBindingSchema(t testing.TB, contract *contract.Contract, oper
 	if !packOK || packSchema == nil || heapFailure != heapdomain.SealFailureNone || !heapSchema.Valid() {
 		t.Fatal("binding schemas")
 	}
-	frozen, catalog, coldPublished := artifact.ColdPublication()
-	coldProgram := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !coldPublished || !catalog.Available() || !coldProgram.Available() {
+	coldProgram := artifact.Program()
+	catalog, catalogOK := programschema.CatalogID(coldProgram.SchemaID)
+	if !coldProgram.Available() || !catalogOK || !catalog.Available() {
 		t.Fatal("binding cold program")
 	}
 	callCount, callsOK := coldProgram.CallCount()

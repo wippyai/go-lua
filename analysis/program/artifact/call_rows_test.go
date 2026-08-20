@@ -29,12 +29,9 @@ return identity(1)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call fixture did not compile: %s", failure.Error())
 	}
-	frozen, catalog, coldPublished := artifact.ColdPublication()
-	program := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
-	if !coldPublished || !catalog.Available() || !program.Available() {
+	program := artifact.Program()
+	catalog, coldPublished := programschema.CatalogID(program.SchemaID)
+	if !program.Available() || !coldPublished || !catalog.Available() {
 		t.Fatal("call rows cold program")
 	}
 	callCount, callsOK := program.CallCount()

@@ -24,11 +24,8 @@ return identity(1)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call occurrence compilation failed: %s", failure.Error())
 	}
-	frozen, catalog, coldPublished := artifact.ColdPublication()
-	program := programschema.Program{
-		Frozen: frozen, ArtifactID: artifact.ID(),
-		ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-	}
+	program := artifact.Program()
+	catalog, coldPublished := programschema.CatalogID(program.SchemaID)
 	callCount, callsOK := program.CallCount()
 	if !coldPublished || !catalog.Available() || !callsOK || !program.Available() || callCount == 0 {
 		t.Fatal("call occurrence compilation published no call family")

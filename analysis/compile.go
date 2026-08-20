@@ -145,8 +145,13 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
 		snapshot := published.snapshot
-		for rowIndex := 0; rowIndex < snapshot.StaticTypeValueCount(); rowIndex++ {
-			row, rowOK := snapshot.StaticTypeValueAt(rowIndex)
+		program := snapshot.Program()
+		typeValueCount, typeValuesPublished := program.StaticTypeValueCount()
+		if !program.Available() || !typeValuesPublished {
+			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
+		}
+		for rowIndex := 0; rowIndex < typeValueCount; rowIndex++ {
+			row, rowOK := program.StaticTypeValueAt(rowIndex)
 			if !rowOK {
 				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 			}
@@ -659,16 +664,14 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		if _, held := result.byProgram[programID]; !held {
 			result.byProgram[programID] = artifact
 		}
-		frozen, catalog, coldOK := artifact.ColdPublication()
-		if !coldOK || !catalog.Available() {
+		compiledProgram := artifact.Program()
+		catalog, catalogOK := programschema.CatalogID(compiledProgram.SchemaID)
+		if !compiledProgram.Available() || !catalogOK || !catalog.Available() {
 			return nil, false
 		}
 		program := programmount.Program{
 			ModuleKey: moduleKey,
-			Program: programschema.Program{
-				Frozen: frozen, ArtifactID: artifact.ID(),
-				ProgramID: programID, SchemaID: schemaID,
-			},
+			Program:   compiledProgram,
 		}
 		if !program.Available() {
 			return nil, false

@@ -29,16 +29,17 @@ func MustLower(t testing.TB, artifact *programartifact.Artifact) *ingress.Snapsh
 // hand and drifting from what Available accepts.
 func MustMount(t testing.TB, artifact *programartifact.Artifact, module identity.ContentID) programmount.Program {
 	t.Helper()
-	frozen, catalog, published := artifact.ColdPublication()
-	if !published || !catalog.Available() {
+	if artifact == nil || !artifact.Available() {
+		t.Fatal("artifact is unavailable")
+	}
+	compiled := artifact.Program()
+	catalog, published := programschema.CatalogID(compiled.SchemaID)
+	if !compiled.Available() || !published || !catalog.Available() {
 		t.Fatal("artifact publishes no cold value")
 	}
 	row := programmount.Program{
 		ModuleKey: module,
-		Program: programschema.Program{
-			Frozen: frozen, ArtifactID: artifact.ID(),
-			ProgramID: artifact.CompileKey().ProgramID(), SchemaID: artifact.CompileKey().SchemaDigest(),
-		},
+		Program:   compiled,
 	}
 	if !row.Available() {
 		t.Fatal("mount directory row unavailable")
