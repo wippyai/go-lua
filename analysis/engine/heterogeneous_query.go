@@ -118,7 +118,7 @@ func SummaryQueryProjection[V, R any](form SchemaReadForm[V], fold QueryProjecti
 			return heterogeneousProjection[R]{}, false
 		}
 		keys, keysOK := factorCell.schemaFactorSummaryKeys()
-		if !keysOK || len(keys) == 0 {
+		if !keysOK {
 			return heterogeneousProjection[R]{}, false
 		}
 		return heterogeneousProjection[R]{
@@ -158,7 +158,7 @@ type heterogeneousProjection[R any] struct {
 }
 
 func (projection heterogeneousProjection[R]) valid(schema *Schema) bool {
-	return schema != nil && projection.factor.Available() && projection.factorOrdinal < uint64(schemaFactorCount(schema)) && projection.kind != composition.QuerySupport && projection.bindRuntime != nil && schema.factorSemanticAt(projection.factorOrdinal) == projection.factor && (projection.kind == composition.QueryFactorExact && !projection.normalizer.Available() || projection.kind == composition.QueryFactorSummary && projection.normalizer.Available() && len(projection.summaryKeys) != 0)
+	return schema != nil && projection.factor.Available() && projection.factorOrdinal < uint64(schemaFactorCount(schema)) && projection.kind != composition.QuerySupport && projection.bindRuntime != nil && schema.factorSemanticAt(projection.factorOrdinal) == projection.factor && (projection.kind == composition.QueryFactorExact && !projection.normalizer.Available() || projection.kind == composition.QueryFactorSummary && projection.normalizer.Available())
 }
 
 // heterogeneousProjectionRunner is prepared once while a committed program
@@ -501,7 +501,7 @@ func bindHeterogeneousObservationRow[R any](plane *programPlane, id identity.Con
 			}
 		} else {
 			surface = equation.Surface{Factor: projection.factor, Form: equation.SurfaceReadSummary, Semantic: projection.normalizer, Normalizer: projection.normalizer, Local: 1}
-			if !surface.Available() || len(projection.summaryKeys) == 0 {
+			if !surface.Available() {
 				return observationRow{}, false
 			}
 			keyRange, ranged := plane.runtime.graph.SummaryKeyRange(surface)

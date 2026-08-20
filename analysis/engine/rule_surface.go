@@ -19,6 +19,24 @@ func validateSummarySurface(mapping *ruleSummaryMapping, state *schemaBindingSta
 	return factor.Available() && normalizer.Available() && surface.Available() && surface.Factor == factor && surface.Form == equation.SurfaceReadSummary && surface.Semantic == normalizer && surface.Normalizer == normalizer && surface.Mode == equation.TargetModeNone
 }
 
+// summaryKeysAllowed admits an empty vector only for the one schema Factor
+// whose sealed algebra has no coordinates. Empty is therefore an optional
+// summary domain, never a caller-minted neutral coordinate.
+func summaryKeysAllowed(state *schemaBindingState, factor composition.Key, keys []uint64) bool {
+	if len(keys) != 0 {
+		return true
+	}
+	if state == nil || state.schema == nil {
+		return false
+	}
+	ordinal, ok := state.schema.factorOrdinalOf(factor)
+	if !ok || ordinal >= uint64(len(state.factors)) {
+		return false
+	}
+	row, ok := state.factors[ordinal].(schemaFactorBinding)
+	return ok && row.schemaFactorAlgebra() != nil && row.schemaFactorAlgebra().KeyEnd() == 0
+}
+
 // RuleReadSurface and ruleWriteSurface are owner-issued sealed coordinate
 // values. The Ref factory preserves the originating Binding authority and
 // declaration folding rejects foreign/equal-but-distinct refs.
@@ -69,7 +87,7 @@ func exactRuleWriteSurface[K ~uint32 | ~uint64](ref Ref[K]) (ruleWriteSurface, b
 // coordinate at full width, so two distinct vectors always name two distinct
 // summary surfaces.
 func summaryReadSurface(state *schemaBindingState, authority *schemaBindingAuthority, row *schemaRuleReadRow, keys []uint64) (RuleReadSurface, bool) {
-	if state == nil || state.schema == nil || authority == nil || state.authority != authority || state.phase != schemaBindingSealed || row == nil || !row.sealed() || len(keys) == 0 {
+	if state == nil || state.schema == nil || authority == nil || state.authority != authority || state.phase != schemaBindingSealed || row == nil || !row.sealed() || !summaryKeysAllowed(state, row.factor, keys) {
 		return RuleReadSurface{}, false
 	}
 	if row.ownerState() != state || row.kind != composition.ReadSummary || len(row.dependencies) != 0 || !row.factor.Available() || !row.semantic.Available() || row.semantic != row.normalizer {

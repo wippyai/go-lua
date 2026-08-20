@@ -8,8 +8,8 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-// HotRule is the receipt-native mounted return escape. Value issues the
-// return-boundary operand; Placement owns the selected route-write cell.
+// HotRule is the mounted return escape. Value owns the return-boundary
+// operand; Placement owns the selected route-write cell.
 type HotRule struct {
 	implementation *placementowner.RuleImplementation[operand]
 	owner          *placementowner.HotOwner
