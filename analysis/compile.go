@@ -93,11 +93,6 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	if state == nil || source == nil || !compilation.Available() || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
 		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
-	// A Shard is a cold Project coordinate. It is reissued only while Link is
-	// live, to authenticate this mount set against the Project.
-	if !projectAuthenticatesMounts(source, state.artifacts.mounts) {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
-	}
 	programs := make([]programschema.Program, 0, len(state.artifacts.products))
 	for _, product := range state.artifacts.products {
 		if product.Artifact == nil || !product.Artifact.Available() {
@@ -269,29 +264,6 @@ func (state *compiledState) publishComposition(source *link.Link) bool {
 	state.composition = sealed
 	state.selectSites = sites
 	state.selectHandlers = handlers
-	return true
-}
-
-// projectAuthenticatesMounts states that this published mount set is exactly
-// the live Project's mount set: same count, same order, and each row's Program
-// and module identity reissued from the Project's own shard. It is the sole
-// place a Shard is opened during construction, and no shard survives it.
-func projectAuthenticatesMounts(source *link.Link, published []programmount.MountedArtifact) bool {
-	if source == nil || source.Project() == nil || len(published) == 0 {
-		return false
-	}
-	mounts := source.Project().Mounts()
-	if mounts.Count() != len(published) {
-		return false
-	}
-	for index, mount := range published {
-		shard, shardOK := mounts.At(index)
-		mounted, mountedOK := mounts.Program(shard)
-		module, moduleOK := source.Project().ModuleKey(shard)
-		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !mount.Available() || mounted.ContentID() != mount.ProgramID || module != mount.ModuleKey {
-			return false
-		}
-	}
 	return true
 }
 
