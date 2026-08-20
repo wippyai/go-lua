@@ -42,7 +42,8 @@ const (
 // and one lazily-built ordinary runtime solver. Repeated ordinary solves read
 // that solver's completed immutable State.
 type Plan struct {
-	state *compiledState
+	state     *compiledState
+	workspace *Workspace
 }
 
 type compiledState struct {
@@ -72,7 +73,7 @@ type compiledState struct {
 }
 
 func Compile(source *link.Link) (*Plan, CompileStatus) {
-	plan, status, _ := CompileWithDiagnostics(source)
+	plan, status, _ := newWorkspace(true).compileWithDiagnostics(source)
 	return plan, status
 }
 
@@ -80,8 +81,32 @@ func Compile(source *link.Link) (*Plan, CompileStatus) {
 // construction boundary on failure. It shares Compile's production path;
 // diagnostics are scalar-only and cannot alter admission or topology.
 func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.AnalyzeDiagnostics) {
+	return newWorkspace(true).compileWithDiagnostics(source)
+}
+
+// Compile compiles one Link in this Workspace. Equal immutable Program
+// products are reused across this Workspace's Compile calls until Close.
+func (workspace *Workspace) Compile(source *link.Link) (*Plan, CompileStatus) {
+	plan, status, _ := workspace.compileWithDiagnostics(source)
+	return plan, status
+}
+
+// CompileWithDiagnostics is Workspace.Compile with its closed construction
+// boundary. Diagnostics do not change product identity or cache admission.
+func (workspace *Workspace) CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.AnalyzeDiagnostics) {
+	return workspace.compileWithDiagnostics(source)
+}
+
+func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.AnalyzeDiagnostics) {
 	var diagnostics anadiag.AnalyzeDiagnostics
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseSetup)
+	products, workspaceOK := workspace.beginCompile()
+	if !workspaceOK {
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonInvalidPlan)
+		return nil, CompileInvalid, diagnostics
+	}
+	planned := false
+	defer func() { workspace.finishCompile(planned) }()
 	if source == nil || !source.ContentID().Available() {
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonInvalidPlan)
 		return nil, CompileInvalid, diagnostics
@@ -93,7 +118,7 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	artifacts, artifactsOK := compileProgramArtifacts(source, compilation)
+	artifacts, artifactsOK := compileProgramArtifacts(products, source, compilation)
 	if !artifactsOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureArtifacts
 		diagnostics.FailCurrentPhase()
@@ -143,8 +168,9 @@ func CompileWithDiagnostics(source *link.Link) (*Plan, CompileStatus, anadiag.An
 		return nil, CompileUnsupported, diagnostics
 	}
 	state.admitted = true
-	plan := &Plan{state: state}
+	plan := &Plan{state: state, workspace: workspace}
 	runtime.SetFinalizer(plan, func(value *Plan) { _ = value.Close() })
+	planned = true
 	// No runtime Point, candidate, demand, or WTO authority exists yet. The
 	// first Solve owns the sole transition from this cold Plan to an immutable
 	// shared runtime topology.
@@ -379,11 +405,11 @@ func (plan *Plan) SourceID() identity.ContentID {
 	return state.sourceID
 }
 
-// Close releases this Plan's assembled topology and domain bindings. The
-// compile-time snapshot, template, and owner-handoff bag remain in the
-// content-addressed cache: closing a Plan must not force a later equivalent
-// Link to recompile or Lower them. It is terminal; the finalizer is only a
-// leak safety net.
+// Close releases this Plan's assembled topology and domain bindings, then
+// returns its product lease to the owning Workspace. An explicit Workspace may
+// reuse those immutable products until Workspace.Close; a convenience Plan's
+// private Workspace releases them immediately. Close is terminal; the
+// finalizer is only a leak safety net.
 func (plan *Plan) Close() bool {
 	if plan == nil || plan.state == nil {
 		return false
@@ -401,6 +427,11 @@ func (plan *Plan) Close() bool {
 	state.closed = true
 	state.lifecycleMu.Unlock()
 	state.release()
+	workspace := plan.workspace
+	plan.workspace = nil
+	if workspace != nil {
+		workspace.releasePlan()
+	}
 	runtime.SetFinalizer(plan, nil)
 	return true
 }
@@ -443,15 +474,21 @@ func (state *compiledState) release() {
 	state.closing = true
 	state.lifecycleMu.Unlock()
 	state.releaseOnce.Do(func() {
-		// The global content-addressed cache owns successful immutable artifacts.
-		// A closed Plan must not keep a second strong mount set alive.
+		// Workspace owns reusable immutable products. A closed Plan must not keep
+		// a second strong mount set or any Link-local authority alive.
 		state.artifacts = nil
 		state.committed = committedProgramGraph{}
 		state.querySites = nil
 		state.queryPublications = nil
 		state.ordinary = nil
+		state.ordinaryOK = false
 		state.coordinates = nil
 		state.binding = nil
+		state.composition = snapshot.Snapshot{}
+		state.selectSites = nil
+		state.selectHandlers = nil
+		state.runtimeDetail = assembleDiagnostic{}
+		state.runtimeOK = false
 		state.admitted = false
 	})
 }
@@ -519,10 +556,21 @@ func (state *compiledState) admit() bool {
 }
 
 func Analyze(ctx context.Context, source *link.Link) (*result.Result, AnalyzeStatus) {
+	return newWorkspace(true).analyze(ctx, source)
+}
+
+// Analyze compiles and solves one Link while retaining reusable immutable
+// products in this Workspace for later calls. The per-run Plan is always
+// closed before Analyze returns.
+func (workspace *Workspace) Analyze(ctx context.Context, source *link.Link) (*result.Result, AnalyzeStatus) {
+	return workspace.analyze(ctx, source)
+}
+
+func (workspace *Workspace) analyze(ctx context.Context, source *link.Link) (*result.Result, AnalyzeStatus) {
 	if ctx == nil || source == nil || !source.ContentID().Available() {
 		return nil, AnalyzeInvalid
 	}
-	plan, status := Compile(source)
+	plan, status := workspace.Compile(source)
 	switch status {
 	case CompileInvalid:
 		return nil, AnalyzeInvalid

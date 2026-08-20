@@ -1,10 +1,9 @@
 package analysis
 
-// compile.go is the Compile path: reusable artifact cache, scalar template
-// lowering, and Link-local binding. Runtime assemble lives in analyze.go.
+// compile.go is the Link-local compile path. Workspace owns reusable Program
+// products; runtime assemble lives in analyze.go.
 
 import (
-	"sync"
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
@@ -21,10 +20,9 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typ"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
-	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -538,87 +536,11 @@ func declaredTypeSpelling(value typ.Type) string {
 	return typ.UnwrapStructuralWrappers(value).Kind().String()
 }
 
-type artifactCacheState struct {
-	sync.Mutex
-	entries map[identity.ContentID]*artifactCacheEntry
-}
-
-type artifactCacheEntry struct {
-	ready    chan struct{}
-	artifact *programartifact.Artifact
-	snapshot *ingress.Snapshot
-	template *rows.ArtifactScalarTemplate
-	roles    *scalarlower.RoleDirectory
-	complete bool
-}
-
-// globalArtifactCache owns the reusable sealed ProgramArtifact together with
-// its owner-neutral Engine template and the sealed ingress snapshot they
-// were projected from. No payload retains Link authority.
-var globalArtifactCache = artifactCacheState{entries: make(map[identity.ContentID]*artifactCacheEntry)}
-
-func cachedProgramArtifact(input *program.Program, compilation composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
-	grammar, grammarOK := composite.ArtifactGrammar(compilation)
-	compileKey, keyOK := programartifact.NewCompileKey(input, grammar)
-	programID := input.ContentID()
-	if !grammarOK || !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !compilation.Available() {
-		return nil, nil, nil, nil, false
-	}
-	schemaID := compileKey.SchemaDigest()
-	if !schemaID.Available() {
-		return nil, nil, nil, nil, false
-	}
-	key := compileKey.ID()
-	globalArtifactCache.Lock()
-	entry := globalArtifactCache.entries[key]
-	if entry == nil {
-		entry = &artifactCacheEntry{ready: make(chan struct{})}
-		globalArtifactCache.entries[key] = entry
-		globalArtifactCache.Unlock()
-
-		issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-		artifact, failure := artifactcompiler.CompileDetailed(input, grammar, issuance)
-		compiled := issuanceOK && artifact != nil && !failure.Available()
-		var snapshot *ingress.Snapshot
-		var template *rows.ArtifactScalarTemplate
-		var roles *scalarlower.RoleDirectory
-		if compiled {
-			structural, structuralOK := composite.StructureVocabulary()
-			var lowered bool
-			snapshot, lowered = ingress.Lower(artifact, structural)
-			compiled = structuralOK && lowered
-			if compiled {
-				template, roles, compiled = scalarlower.Lower(snapshot, structural)
-			}
-		}
-		valid := compiled && artifact != nil && artifact.Available() && artifact.CompileKey().ID() == key && artifact.CompileKey().ProgramID() == programID && artifact.CompileKey().SchemaDigest() == schemaID && snapshot != nil && snapshot.Available() && snapshot.ArtifactID() == artifact.ID() && snapshot.ProgramID() == programID && snapshot.SchemaID() == schemaID && template != nil && template.Available() && template.ArtifactID() == artifact.ID() && template.ProgramID() == programID && template.SchemaID() == schemaID && roles != nil
-		globalArtifactCache.Lock()
-		if valid {
-			entry.artifact = artifact
-			entry.snapshot = snapshot
-			entry.template = template
-			entry.roles = roles
-		}
-		entry.complete = valid
-		close(entry.ready)
-		if !valid {
-			delete(globalArtifactCache.entries, key)
-		}
-		globalArtifactCache.Unlock()
-		return artifact, snapshot, template, roles, valid
-	}
-	ready := entry.ready
-	globalArtifactCache.Unlock()
-	<-ready
-	valid := entry.complete && entry.artifact != nil && entry.artifact.Available() && entry.artifact.CompileKey().ID() == key && entry.artifact.CompileKey().ProgramID() == programID && entry.artifact.CompileKey().SchemaDigest() == schemaID && entry.snapshot != nil && entry.snapshot.Available() && entry.snapshot.ArtifactID() == entry.artifact.ID() && entry.snapshot.ProgramID() == programID && entry.snapshot.SchemaID() == schemaID && entry.template != nil && entry.template.Available() && entry.template.ArtifactID() == entry.artifact.ID() && entry.template.ProgramID() == programID && entry.template.SchemaID() == schemaID && entry.roles != nil
-	return entry.artifact, entry.snapshot, entry.template, entry.roles, valid
-}
-
 // compileProgramArtifacts compiles each distinct ProgramID once and records
 // every mounted occurrence's exact Link substitution. No Link/domain/runtime
-// authority enters the reusable artifact cache.
-func compileProgramArtifacts(source *link.Link, compilation composite.Compilation) (*compiledArtifactSet, bool) {
-	if source == nil || !source.ContentID().Available() || !compilation.Available() || source.Project() == nil {
+// authority enters the Workspace-owned artifact directory.
+func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link.Link, compilation composite.Compilation) (*compiledArtifactSet, bool) {
+	if products == nil || source == nil || !source.ContentID().Available() || !compilation.Available() || source.Project() == nil {
 		return nil, false
 	}
 	mounts := source.Project().Mounts()
@@ -626,13 +548,6 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		return nil, false
 	}
 	result := &compiledArtifactSet{mounts: make([]mountedProgramArtifact, 0, mounts.Count()), byProgram: make(map[identity.ContentID]*programartifact.Artifact)}
-	type cachedProduct struct {
-		artifact *programartifact.Artifact
-		snapshot *ingress.Snapshot
-		template *rows.ArtifactScalarTemplate
-		roles    *scalarlower.RoleDirectory
-	}
-	products := make(map[identity.ContentID]cachedProduct)
 	for index := 0; index < mounts.Count(); index++ {
 		shard, shardOK := mounts.At(index)
 		mounted, programOK := mounts.Program(shard)
@@ -645,22 +560,11 @@ func compileProgramArtifacts(source *link.Link, compilation composite.Compilatio
 		if !input.Available() || !programID.Available() {
 			return nil, false
 		}
-		product, compiled := products[programID]
-		artifact, snapshot, template, roles := product.artifact, product.snapshot, product.template, product.roles
+		product, compiled := products.Compile(input, compilation)
 		if !compiled {
-			artifact, snapshot, template, roles, compiled = cachedProgramArtifact(input, compilation)
-			if !compiled {
-				return nil, false
-			}
-			products[programID] = cachedProduct{artifact: artifact, snapshot: snapshot, template: template, roles: roles}
-		}
-		schemaID := identity.ContentID{}
-		if snapshot != nil {
-			schemaID = snapshot.SchemaID()
-		}
-		if artifact == nil || !artifact.Available() || snapshot == nil || !snapshot.Available() || template == nil || !template.Available() || roles == nil || !schemaID.Available() || artifact.CompileKey().ProgramID() != programID || artifact.CompileKey().SchemaDigest() != schemaID || snapshot.ArtifactID() != artifact.ID() || snapshot.ProgramID() != programID || template.ArtifactID() != artifact.ID() || template.ProgramID() != programID || template.SchemaID() != schemaID {
 			return nil, false
 		}
+		artifact, snapshot, template, roles := product.Artifact, product.Snapshot, product.Template, product.Roles
 		if _, held := result.byProgram[programID]; !held {
 			result.byProgram[programID] = artifact
 		}

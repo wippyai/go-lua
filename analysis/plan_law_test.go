@@ -126,14 +126,22 @@ func TestCompiledMountsCarrySealedSnapshot(t *testing.T) {
 func TestCompiledPlanProgramChangeInvalidatesOnlyChangedArtifact(t *testing.T) {
 	stable := planLawProgram(t, `return 1`)
 	changed := planLawProgram(t, `return 2`)
-	first, firstStatus := Compile(planLawMountedLink(t, []linkproject.Module{
+	workspace := NewWorkspace()
+	defer workspace.Close()
+	first, firstStatus := workspace.Compile(planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: stable},
 		{Name: "right", Program: stable},
 	}))
-	second, secondStatus := Compile(planLawMountedLink(t, []linkproject.Module{
+	if first != nil {
+		defer first.Close()
+	}
+	second, secondStatus := workspace.Compile(planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: stable},
 		{Name: "right", Program: changed},
 	}))
+	if second != nil {
+		defer second.Close()
+	}
 	if firstStatus != CompileComplete || secondStatus != CompileComplete || first == nil || second == nil ||
 		first.state == nil || second.state == nil || first.state.artifacts == nil || second.state.artifacts == nil {
 		t.Fatal("incremental artifact fixtures did not compile")

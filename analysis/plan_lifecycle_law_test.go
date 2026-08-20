@@ -48,29 +48,126 @@ func TestPlanCloseWaitsForActiveSolveLease(t *testing.T) {
 	}
 }
 
-func TestArtifactCacheSurvivesSequentialPlanClose(t *testing.T) {
+func TestWorkspaceCloseWaitsForAdmittedCompileAndPlanThenReleasesProducts(t *testing.T) {
+	workspace := NewWorkspace()
+	plan, status := workspace.Compile(planLawLink(t))
+	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
+		t.Fatalf("Workspace.Compile = %v/%v", status, plan)
+	}
+	if products, admitted := workspace.beginCompile(); !admitted || products == nil {
+		t.Fatal("failed to admit concurrent Workspace compile")
+	}
+	closed := make(chan bool, 1)
+	go func() { closed <- workspace.Close() }()
+	select {
+	case <-closed:
+		t.Error("Workspace.Close returned while a compile and Plan were active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if !plan.Close() {
+		t.Error("active Workspace Plan did not close")
+	}
+	select {
+	case <-closed:
+		t.Error("Workspace.Close returned while an admitted compile was active")
+	case <-time.After(20 * time.Millisecond):
+	}
+	workspace.finishCompile(false)
+	select {
+	case ok := <-closed:
+		if !ok {
+			t.Error("Workspace.Close failed after its Plan and compile closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Workspace.Close did not complete after all owned work closed")
+	}
+	workspace.lifecycleMu.Lock()
+	released := workspace.closed && workspace.artifacts == nil && workspace.compiles == 0 && workspace.plans == 0
+	workspace.lifecycleMu.Unlock()
+	if !released || plan.workspace != nil || plan.state.artifacts != nil {
+		t.Fatal("closed Workspace retained compiler products or its closed Plan")
+	}
+	if next, nextStatus := workspace.Compile(planLawLink(t)); next != nil || nextStatus != CompileInvalid {
+		t.Fatalf("closed Workspace.Compile = %v/%v", nextStatus, next)
+	}
+}
+
+func TestConvenienceCompileReleasesItsEphemeralWorkspaceWithPlan(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
+	linked := mustLink(t, `local ephemeral_workspace_probe = 13
+return ephemeral_workspace_probe`, contract)
+	mounted := planLifecycleInput(t, linked)
+	first, firstStatus := Compile(linked)
+	if firstStatus != CompileComplete || first == nil || first.state == nil || first.state.artifacts == nil || first.workspace == nil {
+		t.Fatalf("first convenience compile = %v/%v", firstStatus, first)
+	}
+	firstWorkspace := first.workspace
+	firstArtifact := first.state.artifacts.byProgram[mounted.ContentID()]
+	firstMount := first.state.artifacts.mounts[0]
+	firstWorkspace.lifecycleMu.Lock()
+	owned := firstWorkspace.ephemeral && firstWorkspace.closing && !firstWorkspace.closed && firstWorkspace.plans == 1 && firstWorkspace.artifacts != nil
+	firstWorkspace.lifecycleMu.Unlock()
+	if !owned || firstArtifact == nil || firstMount.snapshot == nil || firstMount.template == nil || firstMount.roles == nil {
+		t.Fatal("convenience Plan did not own one live ephemeral Workspace product")
+	}
+	if !first.Close() {
+		t.Fatal("first convenience Plan did not close")
+	}
+	firstWorkspace.lifecycleMu.Lock()
+	released := firstWorkspace.closed && firstWorkspace.artifacts == nil && firstWorkspace.plans == 0 && firstWorkspace.compiles == 0
+	firstWorkspace.lifecycleMu.Unlock()
+	if !released || first.workspace != nil || first.state.artifacts != nil || first.state.binding != nil || first.state.ordinary != nil || first.state.composition.Published() || first.state.selectSites != nil || first.state.selectHandlers != nil {
+		t.Fatal("Plan.Close retained its ephemeral Workspace or compiler products")
+	}
+
+	second, secondStatus := Compile(linked)
+	if secondStatus != CompileComplete || second == nil || second.state == nil || second.state.artifacts == nil {
+		t.Fatalf("second convenience compile = %v/%v", secondStatus, second)
+	}
+	defer second.Close()
+	secondArtifact := second.state.artifacts.byProgram[mounted.ContentID()]
+	secondMount := second.state.artifacts.mounts[0]
+	if secondArtifact == nil || secondArtifact == firstArtifact || secondMount.snapshot == firstMount.snapshot || secondMount.template == firstMount.template || secondMount.roles == firstMount.roles {
+		t.Fatal("unrelated convenience Compiles shared one Workspace product")
+	}
+	if secondArtifact.ID() != firstArtifact.ID() || secondMount.snapshot.ArtifactID() != firstMount.snapshot.ArtifactID() || secondMount.template.ArtifactID() != firstMount.template.ArtifactID() {
+		t.Fatal("ephemeral Workspace boundary changed immutable product identity")
+	}
+}
+
+func TestConvenienceAnalyzeReleasesEphemeralProductsAfterDetach(t *testing.T) {
+	workspace := newWorkspace(true)
+	result, status := workspace.analyze(context.Background(), planLawLink(t))
+	if status != AnalyzeComplete || result == nil {
+		t.Fatalf("convenience Analyze = %v/%v", status, result)
+	}
+	workspace.lifecycleMu.Lock()
+	released := workspace.ephemeral && workspace.closed && workspace.artifacts == nil && workspace.compiles == 0 && workspace.plans == 0
+	workspace.lifecycleMu.Unlock()
+	if !released {
+		t.Fatal("convenience Analyze retained its ephemeral compiler products after Result detachment")
+	}
+}
+
+func TestWorkspaceReusesProductsAcrossSequentialPlanClose(t *testing.T) {
+	contract, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := NewWorkspace()
+	defer workspace.Close()
 	linked := mustLink(t, `local retained_cache_probe = 17
 return retained_cache_probe`, contract)
-	receipt, ok := composite.Global()
-	if !ok || !receipt.Available() {
-		t.Fatal("global schema unavailable")
-	}
 	mounts := linked.Project().Mounts()
 	shard, shardOK := mounts.At(0)
 	mounted, mountedOK := mounts.Program(shard)
 	if !shardOK || !mountedOK || mounted == nil {
 		t.Fatal("probe mount unavailable")
 	}
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	compileKey, keyOK := programartifact.NewCompileKey(mounted, grammar)
-	if !grammarOK || !keyOK || !compileKey.Available() {
-		t.Fatal("compile key unavailable")
-	}
-	first, firstStatus, firstDiagnostics := CompileWithDiagnostics(linked)
+	first, firstStatus, firstDiagnostics := workspace.CompileWithDiagnostics(linked)
 	if firstStatus != CompileComplete || first == nil || first.state == nil || first.state.artifacts == nil {
 		t.Fatalf("first compile = %v/%v diagnostics=%+v", firstStatus, first, firstDiagnostics)
 	}
@@ -83,7 +180,7 @@ return retained_cache_probe`, contract)
 	if firstArtifact == nil || !first.Close() {
 		t.Fatal("first Plan did not retain a closable cached artifact")
 	}
-	second, secondStatus := Compile(linked)
+	second, secondStatus := workspace.Compile(linked)
 	if secondStatus != CompileComplete || second == nil || second.state == nil || second.state.artifacts == nil {
 		t.Fatalf("second compile = %v/%v", secondStatus, second)
 	}
@@ -93,23 +190,19 @@ return retained_cache_probe`, contract)
 		t.Fatal("second compile retained no mounted artifact")
 	}
 	if secondArtifact != firstArtifact || second.state.artifacts.mounts[0].template != firstTemplate || second.state.artifacts.mounts[0].roles != firstRoles {
-		t.Fatal("sequential Compile→Close→Compile did not reuse the immutable artifact/template")
-	}
-	globalArtifactCache.Lock()
-	entry := globalArtifactCache.entries[compileKey.ID()]
-	globalArtifactCache.Unlock()
-	if entry == nil || !entry.complete || entry.artifact != firstArtifact || entry.template != firstTemplate || entry.roles != firstRoles {
-		t.Fatal("successful artifact/template cache entry was not retained independently of Plan lifetime")
+		t.Fatal("sequential Workspace Compile→Plan.Close→Compile did not reuse the immutable product")
 	}
 }
 
-func TestArtifactCacheConcurrentCompileSharesOneImmutableEntry(t *testing.T) {
+func TestWorkspaceConcurrentCompileSharesOneImmutableProduct(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
 	linked := mustLink(t, `local concurrent_cache_probe = 31
 return concurrent_cache_probe`, contract)
+	workspace := NewWorkspace()
+	defer workspace.Close()
 	const workers = 8
 	plans := make([]*Plan, workers)
 	statuses := make([]CompileStatus, workers)
@@ -118,7 +211,7 @@ return concurrent_cache_probe`, contract)
 	for index := range plans {
 		go func(index int) {
 			defer wait.Done()
-			plans[index], statuses[index] = Compile(linked)
+			plans[index], statuses[index] = workspace.Compile(linked)
 		}(index)
 	}
 	wait.Wait()
@@ -152,7 +245,7 @@ return concurrent_cache_probe`, contract)
 		if artifact == nil {
 			artifact = gotArtifact
 		} else if artifact != gotArtifact {
-			t.Fatal("concurrent Compile did not join one immutable artifact cache entry")
+			t.Fatal("concurrent Workspace Compile did not join one immutable artifact product")
 		}
 		gotTemplate := plan.state.artifacts.mounts[0].template
 		if gotTemplate == nil {
@@ -161,20 +254,22 @@ return concurrent_cache_probe`, contract)
 		if template == nil {
 			template = gotTemplate
 		} else if template != gotTemplate {
-			t.Fatal("concurrent Compile did not join one immutable template cache entry")
+			t.Fatal("concurrent Workspace Compile did not join one immutable template")
 		}
 	}
 }
 
-func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
+func TestWorkspaceChangedFullKeyDoesNotAlias(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
 	left := mustLink(t, `return 101`, contract)
 	right := mustLink(t, `return 102`, contract)
-	leftPlan, leftStatus := Compile(left)
-	rightPlan, rightStatus := Compile(right)
+	workspace := NewWorkspace()
+	defer workspace.Close()
+	leftPlan, leftStatus := workspace.Compile(left)
+	rightPlan, rightStatus := workspace.Compile(right)
 	if leftStatus != CompileComplete || rightStatus != CompileComplete || leftPlan == nil || rightPlan == nil {
 		t.Fatalf("changed-key compile = %v/%v %v/%v", leftStatus, leftPlan, rightStatus, rightPlan)
 	}
@@ -196,7 +291,7 @@ func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
 	}
 }
 
-func TestArtifactTemplateReusesAcrossIndependentEqualProgramsAndLinks(t *testing.T) {
+func TestWorkspaceReusesTemplateAcrossIndependentEqualProgramsAndLinks(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
@@ -214,8 +309,10 @@ return shared_template_probe(43)`
 	if leftLink == rightLink {
 		t.Fatal("independent Link fixtures aliased")
 	}
-	left, leftStatus := Compile(leftLink)
-	right, rightStatus := Compile(rightLink)
+	workspace := NewWorkspace()
+	defer workspace.Close()
+	left, leftStatus := workspace.Compile(leftLink)
+	right, rightStatus := workspace.Compile(rightLink)
 	if leftStatus != CompileComplete || rightStatus != CompileComplete || left == nil || right == nil {
 		t.Fatalf("independent compile = %v/%v %v/%v", leftStatus, left, rightStatus, right)
 	}
@@ -306,9 +403,9 @@ return shared_template_probe(43)`
 	}
 }
 
-func compileArtifactSet(t *testing.T, linked *link.Link) *compiledArtifactSet {
+func compileArtifactSet(t *testing.T, workspace *Workspace, linked *link.Link) *compiledArtifactSet {
 	t.Helper()
-	plan, status := Compile(linked)
+	plan, status := workspace.Compile(linked)
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 		t.Fatalf("compile = %v/%v", status, plan)
 	}
@@ -316,29 +413,33 @@ func compileArtifactSet(t *testing.T, linked *link.Link) *compiledArtifactSet {
 	return plan.state.artifacts
 }
 
-func TestArtifactCacheReusesAcrossMountPermutation(t *testing.T) {
+func TestWorkspaceProductsReuseAcrossMountPermutation(t *testing.T) {
+	workspace := NewWorkspace()
+	t.Cleanup(func() { _ = workspace.Close() })
 	leftProg := planLawProgram(t, `return 11`)
 	rightProg := planLawProgram(t, `return 22`)
-	first := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+	first := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: leftProg}, {Name: "right", Program: rightProg},
 	}))
-	second := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+	second := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "right", Program: rightProg}, {Name: "left", Program: leftProg},
 	}))
 	if first.byProgram[leftProg.ContentID()] == nil || first.byProgram[leftProg.ContentID()] != second.byProgram[leftProg.ContentID()] ||
 		first.byProgram[rightProg.ContentID()] == nil || first.byProgram[rightProg.ContentID()] != second.byProgram[rightProg.ContentID()] {
-		t.Fatal("mount permutation did not reuse cached artifacts")
+		t.Fatal("mount permutation did not reuse Workspace products")
 	}
 }
 
-func TestArtifactCacheInvalidatesOnlyReplacedSibling(t *testing.T) {
+func TestWorkspaceProductsInvalidateOnlyReplacedSibling(t *testing.T) {
+	workspace := NewWorkspace()
+	t.Cleanup(func() { _ = workspace.Close() })
 	leftProg := planLawProgram(t, `return 11`)
 	rightProg := planLawProgram(t, `return 22`)
 	replacement := planLawProgram(t, `return 33`)
-	base := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+	base := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: leftProg}, {Name: "right", Program: rightProg},
 	}))
-	changed := compileArtifactSet(t, planLawMountedLink(t, []linkproject.Module{
+	changed := compileArtifactSet(t, workspace, planLawMountedLink(t, []linkproject.Module{
 		{Name: "left", Program: replacement}, {Name: "right", Program: rightProg},
 	}))
 	if base.byProgram[leftProg.ContentID()] == nil || changed.byProgram[replacement.ContentID()] == nil ||
@@ -346,16 +447,18 @@ func TestArtifactCacheInvalidatesOnlyReplacedSibling(t *testing.T) {
 		t.Fatal("replaced sibling reused the previous artifact")
 	}
 	if base.byProgram[rightProg.ContentID()] == nil || base.byProgram[rightProg.ContentID()] != changed.byProgram[rightProg.ContentID()] {
-		t.Fatal("unrelated sibling lost its cached artifact")
+		t.Fatal("unrelated sibling lost its Workspace product")
 	}
 }
 
-func TestArtifactCacheReusesAcrossActorRename(t *testing.T) {
+func TestWorkspaceProductsReuseAcrossActorRename(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
 	prog := planLawProgram(t, `return 7`)
+	workspace := NewWorkspace()
+	t.Cleanup(func() { _ = workspace.Close() })
 	seal := func(actor string) *link.Link {
 		t.Helper()
 		linked, err := link.Seal(&link.Spec{
@@ -372,10 +475,10 @@ func TestArtifactCacheReusesAcrossActorRename(t *testing.T) {
 		}
 		return linked
 	}
-	first := compileArtifactSet(t, seal("actor"))
-	second := compileArtifactSet(t, seal("other-actor"))
+	first := compileArtifactSet(t, workspace, seal("actor"))
+	second := compileArtifactSet(t, workspace, seal("other-actor"))
 	if first.byProgram[prog.ContentID()] == nil || first.byProgram[prog.ContentID()] != second.byProgram[prog.ContentID()] {
-		t.Fatal("actor rename did not reuse the cached artifact")
+		t.Fatal("actor rename did not reuse the Workspace product")
 	}
 }
 
