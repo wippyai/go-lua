@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	analysisresult "github.com/wippyai/go-lua/analysis/result"
-	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
+	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -40,7 +40,7 @@ func assertEmptyValuePublicationReadable(t testing.TB, input *analysisresult.Res
 	if !bodyIDOK {
 		t.Fatal("empty self-create selected body has no identity")
 	}
-	family, familyOK := valuepublication.Open(input)
+	family, familyOK := input.FamilyByKey(value.SummaryResultFamily)
 	if !familyOK {
 		t.Fatal("empty self-create value publication family unavailable")
 	}
@@ -77,8 +77,9 @@ func assertEmptyValuePublicationReadable(t testing.TB, input *analysisresult.Res
 		if status != analysisresult.QueryHit {
 			continue
 		}
-		summary, summaryOK := query.Summary()
-		if !summaryOK || !summary.Available() || !summary.LinkID().Available() || summary.CoordinateCount() == 0 {
+		cell, cellOK := query.Cell()
+		summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || !summaryOK || !summary.Available() || !summary.LinkID().Available() || summary.CoordinateCount() == 0 {
 			t.Fatalf("empty self-create value query[%d] summary unavailable or incomplete", queryIndex)
 		}
 		iterator := summary.Coordinates()

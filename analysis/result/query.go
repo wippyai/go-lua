@@ -71,6 +71,25 @@ func (result *Result) FamilyAt(index int) (Family, bool) {
 	return Family{owner: result, ordinal: uint32(index + 1)}, true
 }
 
+// FamilyByKey returns the unique query family whose authored publication key
+// matches key. A missing key and an ambiguous key are both rejected so callers
+// cannot silently select one family from a malformed multi-family result.
+func (result *Result) FamilyByKey(key schema.Key) (Family, bool) {
+	if !result.valid() || !key.Available() {
+		return Family{}, false
+	}
+	var selected Family
+	matches := 0
+	for index, candidate := range result.families {
+		if candidate.key != key {
+			continue
+		}
+		matches++
+		selected = Family{owner: result, ordinal: uint32(index + 1)}
+	}
+	return selected, matches == 1
+}
+
 func (family Family) row() (resultFamily, bool) {
 	if family.owner == nil || !family.owner.valid() || family.ordinal == 0 || uint64(family.ordinal) > uint64(len(family.owner.families)) {
 		return resultFamily{}, false

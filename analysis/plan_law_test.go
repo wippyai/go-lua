@@ -2,7 +2,6 @@ package analysis
 
 import (
 	"context"
-	"github.com/wippyai/go-lua/analysis/result"
 	"sync"
 	"testing"
 
@@ -13,7 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
+	"github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -197,7 +197,7 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 		}
 		canonical[index] = valueID
 	}
-	publication, publicationOK := valuepublication.Open(analysisResult)
+	publication, publicationOK := analysisResult.FamilyByKey(value.SummaryResultFamily)
 	if !publicationOK {
 		t.Fatal("literal return has no unique typed value publication")
 	}
@@ -220,8 +220,9 @@ func TestCompiledPlanZeroRowOutcomeDoesNotMaskLiteralReturn(t *testing.T) {
 		if !reachesBody {
 			continue
 		}
-		summary, summaryOK := query.Summary()
-		if !summaryOK || !summary.Available() {
+		cell, cellOK := query.Cell()
+		summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
+		if !cellOK || !summaryOK || !summary.Available() {
 			t.Fatal("literal return hit has no typed value summary")
 		}
 		iterator := summary.Coordinates()

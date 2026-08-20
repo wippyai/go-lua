@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	analysisresult "github.com/wippyai/go-lua/analysis/result"
-	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
+	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -86,7 +86,7 @@ func closedPublishedValuePresence(t testing.TB, input *analysisresult.Result, se
 	if !bodyIDOK {
 		t.Fatal("closed selected body has no identity")
 	}
-	family, familyOK := valuepublication.Open(input)
+	family, familyOK := input.FamilyByKey(value.SummaryResultFamily)
 	if !familyOK {
 		t.Fatal("closed value publication family unavailable")
 	}
@@ -111,8 +111,9 @@ func closedPublishedValuePresence(t testing.TB, input *analysisresult.Result, se
 			if queryBodyID != bodyID {
 				continue
 			}
-			summary, summaryOK := query.Summary()
-			if !summaryOK {
+			cell, cellOK := query.Cell()
+			summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
+			if !cellOK || !summaryOK {
 				t.Fatalf("closed value query[%d] summary unavailable", queryIndex)
 			}
 			iterator := summary.Coordinates()

@@ -204,6 +204,28 @@ func TestArtifactResultFamilyContractsAndCellsRemainDistinct(t *testing.T) {
 	}
 }
 
+func TestArtifactResultFamilyByKeyRequiresOneUniqueFamily(t *testing.T) {
+	tables := artifactResultLawBaseTables(t)
+	result := artifactResultLawResult(t, tables)
+	family, familyOK := result.FamilyByKey(schema.Key("law/first"))
+	if !familyOK || family.Key() != schema.Key("law/first") {
+		t.Fatalf("FamilyByKey(unique) = %q/%t, want law/first/true", family.Key(), familyOK)
+	}
+	if _, familyOK := result.FamilyByKey(schema.Key("law/missing")); familyOK {
+		t.Fatal("FamilyByKey(missing) accepted an unknown family")
+	}
+	if _, familyOK := result.FamilyByKey(""); familyOK {
+		t.Fatal("FamilyByKey(empty) accepted an unavailable key")
+	}
+
+	duplicate := artifactResultLawCloneTables(tables)
+	duplicate.families[1].key = duplicate.families[0].key
+	duplicateResult := artifactResultLawResult(t, duplicate)
+	if _, familyOK := duplicateResult.FamilyByKey(duplicate.families[0].key); familyOK {
+		t.Fatal("FamilyByKey(duplicate) selected an ambiguous family")
+	}
+}
+
 func TestArtifactResultNormalizedIdentityIsStableAndComplete(t *testing.T) {
 	base := artifactResultLawBaseTables(t)
 	first := artifactResultLawIDFor(t, base)

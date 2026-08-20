@@ -20,8 +20,8 @@ import (
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/result"
-	effectpublication "github.com/wippyai/go-lua/domain/effect/publication"
-	valuepublication "github.com/wippyai/go-lua/domain/value/publication"
+	"github.com/wippyai/go-lua/domain/effect/factor"
+	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -528,11 +528,11 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 		}
 	}
 
-	valueFamily, valueFamilyOK := valuepublication.Open(analysisResult)
+	valueFamily, valueFamilyOK := analysisResult.FamilyByKey(value.SummaryResultFamily)
 	if !valueFamilyOK {
 		return fmt.Errorf("value publication family unavailable")
 	}
-	effectFamily, effectFamilyOK := effectpublication.Open(analysisResult)
+	effectFamily, effectFamilyOK := analysisResult.FamilyByKey(factor.ExactResultFamily)
 	if !effectFamilyOK {
 		return fmt.Errorf("effect publication family unavailable")
 	}
@@ -572,8 +572,9 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// Proven absence is a publication outcome, not a typed payload. It
 			// remains valid without asking the domain facade to decode a cell.
 		case result.QueryHit:
-			summary, summaryOK := query.Summary()
-			if !summaryOK || !summary.Available() {
+			cell, cellOK := query.Cell()
+			summary, summaryOK := value.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
+			if !cellOK || !summaryOK || !summary.Available() {
 				return fmt.Errorf("value query %d summary payload is unreadable", queryIndex)
 			}
 			coordinates := summary.Coordinates()
@@ -614,8 +615,9 @@ func corpusHarnessResultDefect(analysisResult *result.Result, sourceID identity.
 			// Proven absence is deliberately left undecoded, just as for the
 			// value family.
 		case result.QueryHit:
-			effect, effectOK := query.Effect()
-			if !effectOK || !effect.Available() {
+			cell, cellOK := query.Cell()
+			effect, effectOK := factor.DecodeResult(cell.Present(), cell.RowCount(), cell.Payload())
+			if !cellOK || !effectOK || !effect.Available() {
 				return fmt.Errorf("effect query %d effect payload is unreadable", queryIndex)
 			}
 			for atomIndex := 0; atomIndex < effect.AtomCount(); atomIndex++ {
