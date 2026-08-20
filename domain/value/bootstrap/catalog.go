@@ -81,9 +81,3 @@ func (catalog *Catalog) ReceiptForID(id identity.ContentID) (identity.ContentID,
 	}
 	return id, true
 }
-
-// GlobalBindingForID is an explicit alias for callers attaching a bootstrap
-// receipt; it keeps the catalog's operand vocabulary visible at the API edge.
-func (catalog *Catalog) GlobalBindingForID(id identity.ContentID) (identity.ContentID, bool) {
-	return catalog.ReceiptForID(id)
-}

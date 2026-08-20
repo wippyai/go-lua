@@ -244,17 +244,3 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 	}
 	return true
 }
-
-// SourceResultFor returns the already-issued receipt for a canonical source
-// value. This is an issuance-time lookup; hot callbacks retain the receipt in
-// SourceSeed and never call this method.
-func (schema *Schema) SourceResultForID(id identity.ContentID) (*SourceResult, bool) {
-	if schema == nil || !id.Available() {
-		return nil, false
-	}
-	row, ok := schema.coordinates[id]
-	if !ok || !row.sourceResult.validFor(schema, id) {
-		return nil, false
-	}
-	return row.sourceResult, true
-}

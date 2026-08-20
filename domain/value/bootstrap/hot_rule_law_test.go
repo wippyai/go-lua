@@ -58,13 +58,13 @@ func TestHotBootstrapRuleBindsReceiptAndRejectsForeignOperand(t *testing.T) {
 	if !localOK || !foreignOK || localID == foreignID {
 		t.Fatal("bootstrap global identities")
 	}
-	if receipt, ok := rule.ReceiptForID(localID); !ok || receipt != localID {
+	if receipt, ok := rule.Catalog().ReceiptForID(localID); !ok || receipt != localID {
 		t.Fatal("local bootstrap receipt rejected")
 	}
-	if receipt, ok := rule.ReceiptForID(foreignID); ok || receipt != (identity.ContentID{}) {
+	if receipt, ok := rule.Catalog().ReceiptForID(foreignID); ok || receipt != (identity.ContentID{}) {
 		t.Fatal("foreign bootstrap receipt crossed Value owner")
 	}
-	if receipt, ok := rule.ReceiptForID(identity.ContentID{}); ok || receipt != (identity.ContentID{}) {
+	if receipt, ok := rule.Catalog().ReceiptForID(identity.ContentID{}); ok || receipt != (identity.ContentID{}) {
 		t.Fatal("zero bootstrap receipt accepted")
 	}
 

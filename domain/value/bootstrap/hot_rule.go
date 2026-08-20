@@ -69,7 +69,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (identity.ContentID, bool) {
-	return rule.ReceiptForOccurrence(coords.Occurrence)
+	if rule == nil || rule.catalog == nil {
+		return identity.ContentID{}, false
+	}
+	return rule.catalog.ReceiptForID(coords.Occurrence)
 }
 
 // Catalog returns Value/bootstrap's immutable Link-global operand directory.
@@ -80,21 +83,6 @@ func (rule *HotRule) Catalog() *Catalog {
 		return nil
 	}
 	return rule.catalog
-}
-
-// ReceiptForID returns the exact preissued GlobalBinding for one Host-global
-// identity in O(1).
-func (rule *HotRule) ReceiptForID(id identity.ContentID) (identity.ContentID, bool) {
-	if rule == nil || rule.catalog == nil {
-		return identity.ContentID{}, false
-	}
-	return rule.catalog.ReceiptForID(id)
-}
-
-// ReceiptForOccurrence is the narrow attachment spelling used by artifact
-// receipt assembly. Value bootstrap IDs are stable Host-global identities.
-func (rule *HotRule) ReceiptForOccurrence(id identity.ContentID) (identity.ContentID, bool) {
-	return rule.ReceiptForID(id)
 }
 
 func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.ContentID], bool) {

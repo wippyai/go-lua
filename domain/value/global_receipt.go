@@ -67,14 +67,6 @@ func (schema *Schema) GlobalBootstrapResultForID(id identity.ContentID) (*Global
 	return result, ok && result.Owns(schema)
 }
 
-func (schema *Schema) GlobalBootstrapResultForReceiptID(id identity.ContentID) (*GlobalBootstrapResult, bool) {
-	if schema == nil || !id.Available() || schema.globalResults == nil {
-		return nil, false
-	}
-	result, ok := schema.globalResults[id]
-	return result, ok && result != nil && result.schema == schema && result.id == id
-}
-
 // GlobalBootstrapResultCount and GlobalBootstrapResultIDAt expose the exact
 // sealed receipt directory. They never reopen Host globals after Value seal.
 func (schema *Schema) GlobalBootstrapResultCount() int {

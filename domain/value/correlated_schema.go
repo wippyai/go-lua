@@ -388,8 +388,8 @@ type Schema struct {
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
 	// sourceSeedMounts is the sealed, Link-qualified mounted source directory.
-	// SourceSeedForValueID and SourceResultForID resolve canonical source rows
-	// directly from coordinates; no parallel source-ID directory is retained.
+	// SourceSeedForValueID resolves canonical source rows directly from
+	// coordinates; no parallel source-ID directory is retained.
 	sourceSeedMounts     []sourceSeedMount
 	sourceSeedMountIndex map[identity.ContentID]uint32
 	exactKeys            map[keyspace.LiteralValue]keyspace.LiteralValue
