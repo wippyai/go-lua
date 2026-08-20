@@ -7,29 +7,26 @@ import (
 )
 
 // Mount is one compile-time ingress snapshot and its canonical self-describing
-// cold Program row. Result projection reads structural rows from Snapshot and
-// Program-owned summaries from Program; the module key is carried by Program.
+// cold Program row. Result projection reads structural rows from the snapshot
+// and Program-owned summaries from the program; the module key is carried by
+// the program.
 type Mount struct {
-	Snapshot *ingress.Snapshot
-	Program  programmount.Program
+	snapshot *ingress.Snapshot
+	program  programmount.Program
 }
 
-// NewMount admits one sealed ingress snapshot at a module key.
-func NewMount(snapshot *ingress.Snapshot, moduleKey identity.ContentID) (Mount, bool) {
-	if snapshot == nil || !snapshot.Available() || !moduleKey.Available() {
-		return Mount{}, false
-	}
-	program, programOK := programmount.ProgramFromSnapshot(snapshot, moduleKey)
-	if !programOK {
-		return Mount{}, false
-	}
-	return Mount{Snapshot: snapshot, Program: program}, true
+// NewMount admits one sealed ingress snapshot together with the canonical
+// mount row already issued for it. The program is retained exactly as issued;
+// Result does not rederive a mount row from neutral ingress and a module key.
+func NewMount(snapshot *ingress.Snapshot, program programmount.Program) (Mount, bool) {
+	mount := Mount{snapshot: snapshot, program: program}
+	return mount, mount.Valid()
 }
 
 // Valid reports a sealed ingress snapshot and matching canonical cold Program.
 func (mount Mount) Valid() bool {
-	return mount.Snapshot != nil && mount.Snapshot.Available() && mount.Program.Available() &&
-		mount.Snapshot.ArtifactID() == mount.Program.ArtifactID && mount.Snapshot.ProgramID() == mount.Program.ProgramID && mount.Snapshot.SchemaID() == mount.Program.SchemaID
+	return mount.snapshot != nil && mount.snapshot.Available() && mount.program.Available() &&
+		mount.snapshot.ArtifactID() == mount.program.ArtifactID && mount.snapshot.ProgramID() == mount.program.ProgramID && mount.snapshot.SchemaID() == mount.program.SchemaID
 }
 
 // ValueCoordinate is the Link substitution for one Value factor coordinate.

@@ -278,7 +278,12 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	projection, detached := result.Detach(geometry, resultMounts(state.artifacts.mounts), binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
+	mounts, mountsOK := resultMounts(state.artifacts.mounts)
+	if !mountsOK {
+		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
+		return nil, nil, AnalyzeIncomplete, diagnostics
+	}
+	projection, detached := result.Detach(geometry, mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
 		Published: &state.composition,
 		Sites:     state.selectSites,
 		Handlers:  state.selectHandlers,
@@ -451,12 +456,19 @@ func (state *compiledState) release() {
 	})
 }
 
-func resultMounts(mounts []mountedProgramArtifact) []result.Mount {
+func resultMounts(mounts []mountedProgramArtifact) ([]result.Mount, bool) {
+	if len(mounts) == 0 {
+		return nil, false
+	}
 	out := make([]result.Mount, len(mounts))
 	for index, mount := range mounts {
-		out[index] = result.Mount{Snapshot: mount.snapshot, Program: mount.program}
+		row, ok := result.NewMount(mount.snapshot, mount.program)
+		if !ok {
+			return nil, false
+		}
+		out[index] = row
 	}
-	return out
+	return out, true
 }
 
 func resultCoordinates(coordinates []compiledValueCoordinate) ([]result.ValueCoordinate, bool) {
@@ -483,7 +495,11 @@ func (state *compiledState) resultGeometry() (result.Geometry, bool) {
 	if !coordinatesOK {
 		return result.Geometry{}, false
 	}
-	return result.Project(state.sourceID, resultMounts(state.artifacts.mounts), coordinates, observations)
+	mounts, mountsOK := resultMounts(state.artifacts.mounts)
+	if !mountsOK {
+		return result.Geometry{}, false
+	}
+	return result.Project(state.sourceID, mounts, coordinates, observations)
 }
 
 func (state *compiledState) admit() bool {

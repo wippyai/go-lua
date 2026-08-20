@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -26,7 +27,7 @@ func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 	if !coordinateOK {
 		t.Fatal("value coordinate")
 	}
-	artifactID := mount.Snapshot.ArtifactID()
+	artifactID := mount.snapshot.ArtifactID()
 	observation := anadiag.Observation{
 		ID: observationID(2), Mount: module, Artifact: artifactID, Local: observationID(3),
 		Kind:     structure.DiagnosticObservationTypeConformance,
@@ -96,7 +97,8 @@ func resultGeometryMount(t *testing.T) (Mount, identity.ContentID) {
 	if !vocabularyOK || !lowered || snapshot == nil || !snapshot.Available() {
 		t.Fatal("lower geometry snapshot")
 	}
-	mount, mounted := NewMount(snapshot, module)
+	mountedProgram := programmount.Program{ModuleKey: module, Program: snapshot.Program()}
+	mount, mounted := NewMount(snapshot, mountedProgram)
 	if !mounted {
 		t.Fatal("mount geometry snapshot")
 	}

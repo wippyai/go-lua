@@ -14,43 +14,43 @@ func appendNativeArtifactSummaryRows(rows *[]nativePublicationRow, seen map[iden
 		return false
 	}
 	for _, mount := range mounts {
-		if mount.Snapshot == nil || !mount.Snapshot.Available() || !mount.Program.Available() || !mount.Snapshot.ArtifactID().Available() || mount.Program.ArtifactID != mount.Snapshot.ArtifactID() {
+		if mount.snapshot == nil || !mount.snapshot.Available() || !mount.program.Available() || !mount.snapshot.ArtifactID().Available() || mount.program.ArtifactID != mount.snapshot.ArtifactID() {
 			return false
 		}
-		exactCount, exactPublished := mount.Program.ExactScalarSummaryCount()
-		arithmeticCount, arithmeticPublished := mount.Program.ArithmeticSummaryCount()
-		unaryCount, unaryPublished := mount.Program.UnarySummaryCount()
+		exactCount, exactPublished := mount.program.ExactScalarSummaryCount()
+		arithmeticCount, arithmeticPublished := mount.program.ArithmeticSummaryCount()
+		unaryCount, unaryPublished := mount.program.UnarySummaryCount()
 		if !exactPublished || !arithmeticPublished || !unaryPublished {
 			return false
 		}
 		for summaryIndex := 0; summaryIndex < exactCount; summaryIndex++ {
-			summary, summaryOK := mount.Program.ExactScalarSummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
+			summary, summaryOK := mount.program.ExactScalarSummaryAt(summaryIndex)
+			occurrence, occurrenceOK := mount.program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID {
 				return false
 			}
-			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, mount.Program.Program, summary.OccurrenceID())
-			if !pointOK || !appendNativeStaticScalarRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID, point) {
+			point, pointOK := exactNativeScalarRulePoint(mount.snapshot, mount.program.Program, summary.OccurrenceID())
+			if !pointOK || !appendNativeStaticScalarRows(rows, seen, summary, mount.program.ModuleKey, mount.snapshot.ArtifactID(), bodyID, point) {
 				return false
 			}
 		}
 		for summaryIndex := 0; summaryIndex < arithmeticCount; summaryIndex++ {
-			summary, summaryOK := mount.Program.ArithmeticSummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
+			summary, summaryOK := mount.program.ArithmeticSummaryAt(summaryIndex)
+			occurrence, occurrenceOK := mount.program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
-			point, pointOK := exactNativeScalarRulePoint(mount.Snapshot, mount.Program.Program, summary.OccurrenceID())
+			point, pointOK := exactNativeScalarRulePoint(mount.snapshot, mount.program.Program, summary.OccurrenceID())
 			if !summaryOK || !occurrenceOK || !bodyOK || !pointOK || summary.BodyPathID() != bodyID ||
-				!appendNativeArithmeticRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), occurrence.ID(), bodyID, point) {
+				!appendNativeArithmeticRows(rows, seen, summary, mount.program.ModuleKey, mount.snapshot.ArtifactID(), occurrence.ID(), bodyID, point) {
 				return false
 			}
 		}
 		for summaryIndex := 0; summaryIndex < unaryCount; summaryIndex++ {
-			summary, summaryOK := mount.Program.UnarySummaryAt(summaryIndex)
-			occurrence, occurrenceOK := mount.Program.OccurrenceForID(programschema.OccurrenceUnary, summary.OccurrenceID())
+			summary, summaryOK := mount.program.UnarySummaryAt(summaryIndex)
+			occurrence, occurrenceOK := mount.program.OccurrenceForID(programschema.OccurrenceUnary, summary.OccurrenceID())
 			bodyID, bodyOK := occurrence.BodyID()
 			if !summaryOK || !occurrenceOK || !bodyOK || summary.BodyPathID() != bodyID ||
-				!appendNativeUnaryRows(rows, seen, summary, mount.Program.ModuleKey, mount.Snapshot.ArtifactID(), bodyID) {
+				!appendNativeUnaryRows(rows, seen, summary, mount.program.ModuleKey, mount.snapshot.ArtifactID(), bodyID) {
 				return false
 			}
 		}

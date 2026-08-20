@@ -306,23 +306,23 @@ func Project(
 		if !mount.Valid() {
 			return Geometry{}, false
 		}
-		if _, duplicate := artifactIDs[mount.Program.ModuleKey]; duplicate {
+		if _, duplicate := artifactIDs[mount.program.ModuleKey]; duplicate {
 			return Geometry{}, false
 		}
-		artifactID := mount.Snapshot.ArtifactID()
-		artifactIDs[mount.Program.ModuleKey] = artifactID
+		artifactID := mount.snapshot.ArtifactID()
+		artifactIDs[mount.program.ModuleKey] = artifactID
 		localBodies := make(map[identity.ContentID]int)
-		bodyCount, bodiesPublished := mount.Program.BodyCount()
+		bodyCount, bodiesPublished := mount.program.BodyCount()
 		if !bodiesPublished {
 			return Geometry{}, false
 		}
 		for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
-			body, bodyOK := mount.Program.BodyAt(bodyIndex)
+			body, bodyOK := mount.program.BodyAt(bodyIndex)
 			if !bodyOK || !body.ID().Available() {
 				return Geometry{}, false
 			}
-			key := artifactResultBody{mount: mount.Program.ModuleKey, body: body.ID()}
-			id, idOK := mountedResultID("body", mount.Program.ModuleKey, artifactID, body.ID())
+			key := artifactResultBody{mount: mount.program.ModuleKey, body: body.ID()}
+			id, idOK := mountedResultID("body", mount.program.ModuleKey, artifactID, body.ID())
 			if !idOK {
 				return Geometry{}, false
 			}
@@ -337,12 +337,12 @@ func Project(
 			roots := make([]resultRoot, body.RootCount())
 			seenRoots := make(map[identity.ContentID]struct{}, len(roots))
 			for rootIndex := range roots {
-				root, rootOK := mount.Program.BodyRootFor(bodyIndex, rootIndex)
+				root, rootOK := mount.program.BodyRootFor(bodyIndex, rootIndex)
 				family := keyspace.Family(root.Family())
 				if !rootOK || !root.Available() || family == keyspace.FamilyInvalid {
 					return Geometry{}, false
 				}
-				rootID, rootIDOK := mountedResultID("root", mount.Program.ModuleKey, artifactID, root.ID())
+				rootID, rootIDOK := mountedResultID("root", mount.program.ModuleKey, artifactID, root.ID())
 				if !rootIDOK {
 					return Geometry{}, false
 				}
@@ -358,16 +358,16 @@ func Project(
 			}
 			entryBody := localBodies[body.ID()]
 			for entryIndex := 0; entryIndex < body.EntryCount(); entryIndex++ {
-				entryRow, entryOK := mount.Program.BodyEntryFor(bodyIndex, entryIndex)
+				entryRow, entryOK := mount.program.BodyEntryFor(bodyIndex, entryIndex)
 				entry := entryRow.PointID()
 				if !entryOK || !entry.Available() {
 					continue
 				}
-				pointKey := Point{Mount: mount.Program.ModuleKey, Point: entry}
+				pointKey := Point{Mount: mount.program.ModuleKey, Point: entry}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], entryBody)
 			}
 		}
-		program := mount.Program.Program
+		program := mount.program.Program
 		occurrenceCount, occurrencesPublished := program.OccurrenceCount()
 		if !occurrencesPublished {
 			return Geometry{}, false
@@ -395,7 +395,7 @@ func Project(
 				if !pointOK || !pointRow.Available() || !point.Available() {
 					return Geometry{}, false
 				}
-				pointKey := Point{Mount: mount.Program.ModuleKey, Point: point}
+				pointKey := Point{Mount: mount.program.ModuleKey, Point: point}
 				geometry.PointBodies[pointKey] = appendUniqueInt(geometry.PointBodies[pointKey], mapped)
 			}
 		}
