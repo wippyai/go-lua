@@ -286,7 +286,7 @@ func openProjectionAssembly(t *testing.T, name string) *Assembly {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("projection imports.Finalizer: %v", err)
 	}
-	flowDraft, err := Build(Input{
+	flowDraft, err := Build(authored.Input{
 		Counts: counts,
 		Values: authored.ValuesInput{
 			Rows:  []authored.Value{{Owner: entry, Fixed: authored.Range{End: 1}}, {Owner: entry, Fixed: authored.Range{Start: 1, End: 3}}},
@@ -391,7 +391,7 @@ func TestFlowDraftRejectsDerivedOutcomeInput(t *testing.T) {
 	counts := [keyspace.FamilyCount]uint32{}
 	counts[keyspace.FamilyBody] = 1
 	counts[keyspace.FamilyOutcome] = 1
-	if draft, err := Build(Input{Counts: counts}); err == nil || draft != nil {
+	if draft, err := Build(authored.Input{Counts: counts}); err == nil || draft != nil {
 		t.Fatalf("Build accepted authored Outcome denominator: draft=%#v err=%v", draft, err)
 	}
 }
@@ -428,7 +428,7 @@ func emptyAssemblyOwners(t *testing.T, name string) (source.Finalizer, *static.C
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
-	flowDraft, err := Build(Input{Counts: counts})
+	flowDraft, err := Build(authored.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()

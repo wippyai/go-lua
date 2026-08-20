@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	programflow "github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
@@ -16,20 +15,20 @@ func cloneTerms(values []keyspace.Term) []keyspace.Term {
 
 // Freeze copies the complete Flow rows and resolves only the binder-owned
 // global Cell keys through the Source preimage supplied by assembly core.
-func (r *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.FamilyCount]uint32) (programflow.Input, error) {
+func (r *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.FamilyCount]uint32) (authored.Input, error) {
 	if r == nil || !preimage.Identity().ContentID().Available() {
-		return programflow.Input{}, errors.New("program/lower/collector: unavailable Source Preimage")
+		return authored.Input{}, errors.New("program/lower/collector: unavailable Source Preimage")
 	}
 	if counts[keyspace.FamilyInvalid] != 0 || counts[keyspace.FamilyOutcome] != 0 {
-		return programflow.Input{}, errors.New("program/lower/collector: invalid Flow count denominator")
+		return authored.Input{}, errors.New("program/lower/collector: invalid Flow count denominator")
 	}
 	if err := r.checkCounts(counts); err != nil {
-		return programflow.Input{}, err
+		return authored.Input{}, err
 	}
 	if err := r.resolveBreakTargets(preimage, counts); err != nil {
-		return programflow.Input{}, err
+		return authored.Input{}, err
 	}
-	input := programflow.Input{Counts: counts}
+	input := authored.Input{Counts: counts}
 	input.Values = authored.ValuesInput{Rows: append([]authored.Value(nil), r.values.rows...), Terms: cloneTerms(r.values.terms)}
 	input.Access = authored.AccessInput{Exact: append([]authored.ExactLens(nil), r.access.exact...), Dynamic: append([]authored.DynamicLens(nil), r.access.dynamic...)}
 	input.Storage = authored.StorageInput{
@@ -46,18 +45,18 @@ func (r *Rows) Freeze(preimage programsource.Preimage, counts [keyspace.FamilyCo
 	for index := 0; index < r.storage.globalCensus.Len(); index++ {
 		row, ok := r.storage.globalCensus.At(index)
 		if !ok || index >= len(input.Storage.Cells) || row.Slot() != uint32(index) || input.Storage.Cells[index].Kind != authored.CellGlobal {
-			return programflow.Input{}, fmt.Errorf("program/lower/collector: malformed global Cell prefix at %d", index+1)
+			return authored.Input{}, fmt.Errorf("program/lower/collector: malformed global Cell prefix at %d", index+1)
 		}
 		key, ok := keys.Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: row.Name()})
 		if !ok || key == 0 {
-			return programflow.Input{}, fmt.Errorf("program/lower/collector: Source is missing global atom %q", row.Name())
+			return authored.Input{}, fmt.Errorf("program/lower/collector: Source is missing global atom %q", row.Name())
 		}
 		input.Storage.Cells[index].Key = key
 		input.Storage.Cells[index].Body = 0
 	}
 	for index := r.storage.globalCensus.Len(); index < len(input.Storage.Cells); index++ {
 		if input.Storage.Cells[index].Kind == authored.CellGlobal {
-			return programflow.Input{}, fmt.Errorf("program/lower/collector: global Cell outside reserved census prefix at %d", index+1)
+			return authored.Input{}, fmt.Errorf("program/lower/collector: global Cell outside reserved census prefix at %d", index+1)
 		}
 	}
 	return input, nil

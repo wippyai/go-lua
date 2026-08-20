@@ -6,11 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 )
 
-// Input is the complete authored Flow vocabulary accepted by Build.  It names
-// the seal entry parameter; the row types that populate it are published by
-// the authored owner itself.
-type Input = authored.Input
-
 // Draft is a construction-only Flow capability.  It has no public query,
 // commit, or finalizer operation.  Copies share the private authored
 // lifecycle; only Assemble can claim and consume it.
@@ -20,7 +15,7 @@ type Draft struct{ authored *authored.Draft }
 // construction Draft.  Derived Outcome identities, exact-key joins,
 // activation, evaluation ports, and all analysis projections are absent from
 // this input and are created only by Assemble.
-func Build(input Input) (*Draft, error) {
+func Build(input authored.Input) (*Draft, error) {
 	owner, err := authored.Build(input)
 	if err != nil {
 		return nil, err
