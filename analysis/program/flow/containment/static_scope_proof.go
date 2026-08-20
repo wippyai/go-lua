@@ -119,11 +119,11 @@ func sealStaticScopeProof(
 	resolver *staticScopeResolver,
 	counts [keyspace.FamilyCount]uint32,
 ) (*StaticScopeProof, error) {
-	if resolver == nil || !staticView.Available() || !view.ContentID().Available() {
+	if resolver == nil || !staticView.Available() || !view.Cold().ContentID().Available() {
 		return nil, errors.New("program/flow/containment: static scope proof owner view expired")
 	}
 	sourceID := preimage.Identity().ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/containment: static scope proof identity unavailable")
 	}

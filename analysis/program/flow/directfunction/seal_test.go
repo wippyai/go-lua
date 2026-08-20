@@ -109,11 +109,11 @@ func TestDirectFunctionProvenanceRejectsEqualDenominatorForeignOwners(t *testing
 	foreignFlow := openDirectFixture(t, foreignFlowSpec)
 
 	sourceID := base.source.Identity().ContentID()
-	flowID := base.flow.ContentID()
+	flowID := base.flow.Cold().ContentID()
 	staticID := base.staticView.ContentID()
 	moduleID := base.moduleFinalize.View().ContentID()
 	foreignSourceID := foreignSource.source.Identity().ContentID()
-	foreignFlowID := foreignFlow.flow.ContentID()
+	foreignFlowID := foreignFlow.flow.Cold().ContentID()
 	foreignSourceStaticID := foreignSource.staticView.ContentID()
 	foreignSourceModuleID := foreignSource.moduleFinalize.View().ContentID()
 	foreignFlowStaticID := foreignFlow.staticView.ContentID()

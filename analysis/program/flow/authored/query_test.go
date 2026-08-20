@@ -19,7 +19,7 @@ func TestDenseFlowTwoPhaseIdentityAndQueries(t *testing.T) {
 	if _, err := draft.Finalizer(); err == nil {
 		t.Fatal("draft taken twice")
 	}
-	if !component.ContentID().Available() {
+	if !component.Cold().ContentID().Available() {
 		t.Fatal("Flow identity unavailable")
 	}
 	if got, ok := component.Values().Member(terms.values, 0); !ok || got != terms.nil {

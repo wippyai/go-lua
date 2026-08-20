@@ -77,7 +77,7 @@ func openBindingOwnerFixture(t *testing.T, name string, input authored.Input) bi
 		flow:     flow,
 		body:     bodyResult,
 		sourceID: preimage.Identity().ContentID(),
-		flowID:   flow.ContentID(),
+		flowID:   flow.Cold().ContentID(),
 		close: func() {
 			_ = flowFinish.Abort()
 			_ = sourceFinish.Abort()

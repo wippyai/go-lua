@@ -21,7 +21,7 @@ func Seal(preimage source.Preimage, view authored.View, staticView staticquery.V
 	}
 	identity, order, faults := preimage.Identity(), preimage.Order(), preimage.Faults()
 	sourceID := identity.ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() {
 		return nil, errors.New("program/flow/body: owner identity unavailable")
 	}
@@ -253,7 +253,7 @@ func Seal(preimage source.Preimage, view authored.View, staticView staticquery.V
 
 func liveCounts(identity source.Identity, faults source.Faults, view authored.View, staticView staticquery.View) ([keyspace.FamilyCount]int, error) {
 	var counts [keyspace.FamilyCount]int
-	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 || !view.ContentID().Available() {
+	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 || !view.Cold().ContentID().Available() {
 		return counts, errors.New("program/flow/body: owner view expired")
 	}
 	var total uint64

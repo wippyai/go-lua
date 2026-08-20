@@ -57,7 +57,7 @@ func TestOperatorsRejectHostileRowsAndChangeIdentity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := copyOperatorsInput(input)
 			test.apply(&changed)
-			if first.ContentID() == buildFlowForTest(t, changed).ContentID() {
+			if first.Cold().ContentID() == buildFlowForTest(t, changed).Cold().ContentID() {
 				t.Fatal("authored operator field did not change ContentID")
 			}
 		})

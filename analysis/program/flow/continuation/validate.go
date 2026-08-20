@@ -52,7 +52,7 @@ func validateInputs(
 	input := inputProof{source: sourceView, flow: flow, staticID: staticID, moduleID: moduleID, bodies: bodies, binding: bindingResult,
 		exec: executableResult, cand: candidateResult, causal: causalResult}
 	identity := sourceView.Identity()
-	sourceID, flowID := identity.ContentID(), flow.ContentID()
+	sourceID, flowID := identity.ContentID(), flow.Cold().ContentID()
 	if !sourceID.Available() || identity.Name() == "" || identity.TermCount() == 0 || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return input, errors.New("program/flow/continuation: owner provenance is unavailable")
 	}

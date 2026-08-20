@@ -76,7 +76,7 @@ func Assemble(
 	moduleView := moduleFinalizer.View()
 	authoredLive := flowFinalizer.View()
 	sourceID := preimage.Identity().ContentID()
-	flowID := authoredLive.ContentID()
+	flowID := authoredLive.Cold().ContentID()
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()
 	if staticComponent == nil || staticComponent.ContentID() != staticID ||
@@ -268,7 +268,7 @@ func Assemble(
 	if err != nil {
 		return fail("Flow commit", err)
 	}
-	if !authoredView.ContentID().Available() {
+	if !authoredView.Cold().ContentID().Available() {
 		return fail("Flow commit", errors.New("flow returned no authored View"))
 	}
 	component := &Component{

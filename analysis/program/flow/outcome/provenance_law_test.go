@@ -48,14 +48,14 @@ func TestOutcomeProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 
 	result := current.seal(t)
 	sourceID := current.preimage.Identity().ContentID()
-	flowID := current.flow.ContentID()
+	flowID := current.flow.Cold().ContentID()
 	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("Outcome did not retain its exact Source/Flow identities")
 	}
 	foreignSourceID := foreignSource.preimage.Identity().ContentID()
-	foreignFlowID := foreignFlow.flow.ContentID()
+	foreignFlowID := foreignFlow.flow.Cold().ContentID()
 	if sourceID == foreignSourceID || flowID == foreignFlowID {
 		t.Fatal("foreign fixtures did not preserve equal denominators with distinct identities")
 	}
@@ -84,7 +84,7 @@ func TestOutcomeProvenanceFailsClosedForNilAndZero(t *testing.T) {
 	current := openOutcomeFixture(t, provenanceOutcomeSpec(kind.LoopWhile, false))
 	result := current.seal(t)
 	sourceID := current.preimage.Identity().ContentID()
-	flowID := current.flow.ContentID()
+	flowID := current.flow.Cold().ContentID()
 	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if Matches(result, identity.ContentID{}, flowID, staticID, moduleID) || Matches(result, sourceID, identity.ContentID{}, staticID, moduleID) ||

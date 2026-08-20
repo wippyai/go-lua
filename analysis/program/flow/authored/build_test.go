@@ -15,7 +15,7 @@ func TestDenseFlowAuthoredContentChangesIdentity(t *testing.T) {
 	changed.Values.Terms = append([]keyspace.Term(nil), authored.Values.Terms...)
 	changed.Values.Terms[0] = terms.boolean
 	third := buildFlowForTest(t, changed)
-	if first.ContentID() == third.ContentID() {
+	if first.Cold().ContentID() == third.Cold().ContentID() {
 		t.Fatal("authored structure did not change ContentID")
 	}
 }
@@ -334,25 +334,25 @@ func TestFunctionCallAuthoredLawsQueriesCopiesAndContent(t *testing.T) {
 
 	unchanged, unchangedTerms := functionCallFixture()
 	second := buildFlowForTest(t, unchanged)
-	if first.ContentID() != second.ContentID() || unchangedTerms.function != terms.function {
+	if first.Cold().ContentID() != second.Cold().ContentID() || unchangedTerms.function != terms.function {
 		t.Fatal("equal Function/Call authored content has unstable identity")
 	}
 	changed, _ := functionCallFixture()
 	changed.Functions.Rows[0].Vararg = 0
 	third := buildFlowForTest(t, changed)
-	if first.ContentID() == third.ContentID() {
+	if first.Cold().ContentID() == third.Cold().ContentID() {
 		t.Fatal("Function authored content did not change identity")
 	}
 	changed, _ = functionCallFixture()
 	changed.Functions.Captures[0].Outer = terms.outer2
 	fourth := buildFlowForTest(t, changed)
-	if first.ContentID() == fourth.ContentID() {
+	if first.Cold().ContentID() == fourth.Cold().ContentID() {
 		t.Fatal("Capture authored content did not change identity")
 	}
 	changed, _ = functionCallFixture()
 	changed.Calls[1].Callee = terms.nil
 	fifth := buildFlowForTest(t, changed)
-	if first.ContentID() == fifth.ContentID() {
+	if first.Cold().ContentID() == fifth.Cold().ContentID() {
 		t.Fatal("Call authored content did not change identity")
 	}
 }
@@ -413,14 +413,14 @@ func TestAuthoredControlLawsQueriesCopiesAndContent(t *testing.T) {
 	changed, _ := controlFixture()
 	changed.Control.Gotos[0].Owner = terms.branchFalse
 	second := buildFlowForTest(t, changed)
-	if first.ContentID() == second.ContentID() {
+	if first.Cold().ContentID() == second.Cold().ContentID() {
 		t.Fatal("authored control did not change ContentID")
 	}
 }
 
 func TestAuthoredControlContentSensitivity(t *testing.T) {
 	baseline, _ := controlFixture()
-	want := buildFlowForTest(t, baseline).ContentID()
+	want := buildFlowForTest(t, baseline).Cold().ContentID()
 	tests := []struct {
 		name   string
 		mutate func(*Input, controlTerms)
@@ -439,7 +439,7 @@ func TestAuthoredControlContentSensitivity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input, terms := controlFixture()
 			test.mutate(&input, terms)
-			got := buildFlowForTest(t, input).ContentID()
+			got := buildFlowForTest(t, input).Cold().ContentID()
 			if got == want {
 				t.Fatal("authored control mutation did not change ContentID")
 			}
@@ -969,10 +969,10 @@ func TestFinalizerClaimsCopiedDraftAndCapturedViewExpiresAfterCommit(t *testing.
 	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	if captured.Values().Count() != 0 || captured.ContentID().Available() {
+	if captured.Values().Count() != 0 || captured.Cold().ContentID().Available() {
 		t.Fatal("captured View remained live after Commit")
 	}
-	if committed.Values().Count() == 0 || !committed.ContentID().Available() {
+	if committed.Values().Count() == 0 || !committed.Cold().ContentID().Available() {
 		t.Fatal("committed View did not survive terminal transition")
 	}
 	if _, err := finalizer.Commit(); err == nil {
@@ -1000,7 +1000,7 @@ func TestCapturedViewExpiresAfterAbort(t *testing.T) {
 	if err := finalizer.Abort(); err != nil {
 		t.Fatalf("Abort: %v", err)
 	}
-	if captured.Tables().Count() != 0 || captured.ContentID().Available() {
+	if captured.Tables().Count() != 0 || captured.Cold().ContentID().Available() {
 		t.Fatal("captured View remained live after Abort")
 	}
 	if _, err := finalizer.Commit(); err == nil {

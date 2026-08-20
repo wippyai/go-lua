@@ -22,7 +22,7 @@ func validateStaticCrossOwnerCardinalities(
 	if !staticView.Available() {
 		return errors.New("program/flow/containment: Static cross-owner view expired")
 	}
-	if !view.ContentID().Available() {
+	if !view.Cold().ContentID().Available() {
 		return errors.New("program/flow/containment: Flow cross-owner view expired")
 	}
 	if view.Claims().Count() != int(counts[keyspace.FamilyValueClaim]) {

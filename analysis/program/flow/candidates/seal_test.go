@@ -162,7 +162,7 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleView.ContentID())
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)

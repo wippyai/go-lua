@@ -53,7 +53,7 @@ func TestSealRejectsEqualCardinalityForeignOwnerSplices(t *testing.T) {
 	if first.sourceView.Identity().ContentID() == foreignFlow.sourceView.Identity().ContentID() {
 		t.Fatal("foreign Flow fixtures unexpectedly share Source identity")
 	}
-	if first.flow.ContentID() == foreignFlow.flow.ContentID() {
+	if first.flow.Cold().ContentID() == foreignFlow.flow.Cold().ContentID() {
 		t.Fatal("foreign Flow fixtures unexpectedly share ContentID")
 	}
 	if _, err := Seal(first.sourceView, foreignFlow.flow, first.bodies, first.forest, first.graph,
@@ -85,7 +85,7 @@ func TestRecurrenceMatchesAndQueriesFailClosedWithoutOwnerIDs(t *testing.T) {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
 	sourceID := fixture.sourceView.Identity().ContentID()
-	flowID := fixture.flow.ContentID()
+	flowID := fixture.flow.Cold().ContentID()
 	staticID := fixture.staticView.ContentID()
 	moduleID := fixture.moduleFinalize.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {

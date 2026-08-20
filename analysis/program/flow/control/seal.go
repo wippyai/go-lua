@@ -28,7 +28,7 @@ func Seal(
 ) (*Shape, error) {
 	identity := preimage.Identity()
 	sourceID := identity.ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() ||
 		identity.TermCount() == 0 || bodies == nil || forest == nil {
 		return nil, errors.New("program/flow/control: owner view expired")

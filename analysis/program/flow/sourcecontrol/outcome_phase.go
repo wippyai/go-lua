@@ -83,7 +83,7 @@ func (r *Result) BuildOutcomePhases(
 	if r == nil || !r.ownerAvailable() ||
 		!body.Matches(bodies, r.sourceID, r.flowID) ||
 		!outcome.Matches(outcomes, r.sourceID, r.flowID, r.staticID, r.moduleID) ||
-		sourceView.Identity().ContentID() != r.sourceID || flow.ContentID() != r.flowID ||
+		sourceView.Identity().ContentID() != r.sourceID || flow.Cold().ContentID() != r.flowID ||
 		paths == nil || !paths.Matches(r.sourceID, r.flowID, r.staticID, r.moduleID) || bodies.BodyCount() != len(r.coordinates.bodyOffsets)-1 {
 		return nil, errors.New("program/flow/sourcecontrol: outcome-phase owner is unavailable")
 	}

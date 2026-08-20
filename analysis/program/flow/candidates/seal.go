@@ -38,7 +38,7 @@ func Seal(
 
 	result := &Result{
 		sourceID: identity.ContentID(),
-		flowID:   view.ContentID(),
+		flowID:   view.Cold().ContentID(),
 		staticID: staticID,
 		moduleID: moduleID,
 		// Natural append keeps retained bucket capacity proportional to the
@@ -200,13 +200,13 @@ func validateInputs(
 	if !contentID.Available() || identity.Name() == "" || identity.TermCount() == 0 {
 		return counts, errors.New("program/flow/candidates: Source identity is unavailable")
 	}
-	if !view.ContentID().Available() || !staticID.Available() || !moduleID.Available() {
+	if !view.Cold().ContentID().Available() || !staticID.Available() || !moduleID.Available() {
 		return counts, errors.New("program/flow/candidates: authored view is unavailable")
 	}
 	if proof == nil {
 		return counts, errors.New("program/flow/candidates: executable result is nil")
 	}
-	if !executable.Matches(proof, identity.ContentID(), view.ContentID(), staticID, moduleID) {
+	if !executable.Matches(proof, identity.ContentID(), view.Cold().ContentID(), staticID, moduleID) {
 		return counts, errors.New("program/flow/candidates: executable Source/Flow/Static/Module identity mismatch")
 	}
 

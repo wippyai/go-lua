@@ -93,7 +93,7 @@ func (c *Certificate) TermPathAt(sourceID, flowID, staticID, moduleID identity.C
 // package cannot authenticate fabricated sibling paths by matching lengths.
 func Seal(cellRoles source.CellRoles, view source.View, authoredView authored.View, bodies *body.Result, bindings binding.Result, forest *containment.Result, outcomes *outcome.Result, flowID, staticID, moduleID identity.ContentID) (*Certificate, error) {
 	sourceID := view.Identity().ContentID()
-	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() || authoredView.ContentID() != flowID {
+	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() || authoredView.Cold().ContentID() != flowID {
 		return nil, ErrOwnerMismatch
 	}
 	if !cellRoles.Matches(view) || cellRoles.CellCount() != view.Identity().FamilyCount(keyspace.FamilyCell) || cellRoles.CellCount() != authoredView.Storage().Cells().Count() || !binding.Matches(&bindings, sourceID, flowID) || bindings.CellCount() != cellRoles.CellCount() {

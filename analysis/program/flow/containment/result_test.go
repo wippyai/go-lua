@@ -80,7 +80,7 @@ func TestResultMatchesExactFourOwnerIdentities(t *testing.T) {
 		t.Fatalf("Prove: %v", err)
 	}
 	sourceID := fixture.preimage.Identity().ContentID()
-	flowID := fixture.flowView.ContentID()
+	flowID := fixture.flowView.Cold().ContentID()
 	moduleID := fixture.moduleView.ContentID()
 	staticID := fixture.staticView.ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {

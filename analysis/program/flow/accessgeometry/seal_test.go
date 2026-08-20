@@ -149,7 +149,7 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticID, moduleID)
+		flowView.Cold().ContentID(), staticID, moduleID)
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
 		t.Fatalf("semanticpath.Seal: %v", err)
@@ -374,7 +374,7 @@ func TestAccessGeometrySealHonestFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accessgeometry.Seal: %v", err)
 	}
-	if !Matches(result, fixture.sourceView.Identity().ContentID(), fixture.flowView.ContentID(), fixture.staticID, fixture.moduleID) {
+	if !Matches(result, fixture.sourceView.Identity().ContentID(), fixture.flowView.Cold().ContentID(), fixture.staticID, fixture.moduleID) {
 		t.Fatal("sealed access geometry provenance did not match its four owners")
 	}
 	fields := result.TableFields()

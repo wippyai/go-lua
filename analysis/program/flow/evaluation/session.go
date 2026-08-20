@@ -12,7 +12,7 @@ import (
 // not part of the immutable evaluation-port result and do not encode a
 // second containment relation.
 func (walker *Session) initSeen() error {
-	if walker == nil || !walker.view.ContentID().Available() {
+	if walker == nil || !walker.view.Cold().ContentID().Available() {
 		return errors.New("program/flow/evaluation: authored view is unavailable")
 	}
 	for _, family := range evaluationCompositeFamilies {

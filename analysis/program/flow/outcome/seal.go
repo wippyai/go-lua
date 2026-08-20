@@ -89,7 +89,7 @@ func Seal(
 		return nil, err
 	}
 	result.sourceID = identity.ContentID()
-	result.flowID = view.ContentID()
+	result.flowID = view.Cold().ContentID()
 	result.staticID = staticID
 	result.moduleID = moduleID
 	if err := resolvePropagation(result, keys, bodies, loops, labels, counts); err != nil {
@@ -118,7 +118,7 @@ func validateInputs(
 ) ([keyspace.FamilyCount]int, int, error) {
 	var counts [keyspace.FamilyCount]int
 	sourceID := identity.ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || !staticID.Available() || !moduleID.Available() || identity.Name() == "" || identity.TermCount() == 0 || bodies == nil || shape == nil {
 		return counts, 0, errors.New("program/flow/outcome: owner or structural proof is unavailable")
 	}

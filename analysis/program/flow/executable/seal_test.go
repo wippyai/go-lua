@@ -195,7 +195,7 @@ func openSealFixtureWithSource(
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleView.ContentID())
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleView.ContentID())
 	if err != nil {
 		closeSealFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
@@ -415,7 +415,7 @@ func TestSealRejectsForeignEqualCardinalityProvenance(t *testing.T) {
 	if first.sourceView.Identity().ContentID() != foreignFlow.sourceView.Identity().ContentID() {
 		t.Fatal("same-source Flow provenance fixture changed Source identity")
 	}
-	if first.flow.ContentID() == foreignFlow.flow.ContentID() {
+	if first.flow.Cold().ContentID() == foreignFlow.flow.Cold().ContentID() {
 		t.Fatal("same-source Flow provenance fixture did not change authored Flow identity")
 	}
 	if first.forest.Count() != foreignFlow.forest.Count() || first.control.NodeCount() != foreignFlow.control.NodeCount() {

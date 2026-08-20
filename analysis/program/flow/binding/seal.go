@@ -17,7 +17,7 @@ import (
 func Seal(preimage source.Preimage, view authored.View, bodies *body.Result, entry keyspace.Term) (Result, error) {
 	identity := preimage.Identity()
 	sourceID := identity.ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || identity.Name() == "" || identity.TermCount() == 0 {
 		return Result{}, errors.New("program/flow/binding: Source preimage expired")
 	}

@@ -42,7 +42,7 @@ func Seal(
 	}
 	result := &Result{
 		sourceID: sourceView.Identity().ContentID(),
-		flowID:   flow.ContentID(),
+		flowID:   flow.Cold().ContentID(),
 		staticID: staticID,
 		moduleID: moduleID,
 		cells: cellProjection{

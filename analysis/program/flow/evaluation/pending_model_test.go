@@ -146,7 +146,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SealPending: %v", err)
 	}
-	if !MatchesPending(pending, sourceView.Identity().ContentID(), flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID()) {
+	if !MatchesPending(pending, sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID()) {
 		t.Fatal("sealed Pending provenance did not match its owners")
 	}
 	if count, ok := pending.Count(callA); !ok || count != 0 {

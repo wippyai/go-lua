@@ -51,14 +51,14 @@ func TestShapeProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 
 	shape := current.seal(t)
 	sourceID := current.preimage.Identity().ContentID()
-	flowID := current.flow.ContentID()
+	flowID := current.flow.Cold().ContentID()
 	staticID := current.staticView.ContentID()
 	moduleID := current.moduleFinalize.View().ContentID()
 	if !Matches(shape, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("Shape did not retain its exact Source/Flow identities")
 	}
 	if sourceID == foreignSource.preimage.Identity().ContentID() ||
-		flowID == foreignFlow.flow.ContentID() {
+		flowID == foreignFlow.flow.Cold().ContentID() {
 		t.Fatal("foreign fixtures did not preserve equal denominators with distinct identities")
 	}
 	foreignStatic := staticID
@@ -66,7 +66,7 @@ func TestShapeProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	foreignModule := moduleID
 	foreignModule[0] ^= 0xff
 	if Matches(shape, foreignSource.preimage.Identity().ContentID(), flowID, staticID, moduleID) ||
-		Matches(shape, sourceID, foreignFlow.flow.ContentID(), staticID, moduleID) ||
+		Matches(shape, sourceID, foreignFlow.flow.Cold().ContentID(), staticID, moduleID) ||
 		Matches(shape, sourceID, flowID, foreignStatic, moduleID) ||
 		Matches(shape, sourceID, flowID, staticID, foreignModule) ||
 		Matches(foreignSource.seal(t), sourceID, flowID, staticID, moduleID) {

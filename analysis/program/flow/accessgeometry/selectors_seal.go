@@ -31,7 +31,7 @@ func sealSelectors(
 		return nil, err
 	}
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flow.ContentID()
+	flowID := flow.Cold().ContentID()
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()
 

@@ -36,7 +36,7 @@ func Validate(
 	entry keyspace.Term,
 ) error {
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flowView.ContentID()
+	flowID := flowView.Cold().ContentID()
 	staticID := staticView.ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return errors.New("program/flow/staticcheck: owner view is unavailable")

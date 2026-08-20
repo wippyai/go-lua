@@ -97,7 +97,7 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		t.Fatalf("first body.Seal: %v", err)
 	}
 	sourceID := preimage.Identity().ContentID()
-	flowID := flowView.ContentID()
+	flowID := flowView.Cold().ContentID()
 	if !Matches(first, sourceID, flowID) {
 		t.Fatal("Body result did not retain its exact Source/Flow identities")
 	}
@@ -129,7 +129,7 @@ func TestBodyProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("foreign Flow body.Seal: %v", err)
 	}
-	foreignFlowID := foreignFlowView.ContentID()
+	foreignFlowID := foreignFlowView.Cold().ContentID()
 	if sourceID != foreignFlowPreimage.Identity().ContentID() || flowID == foreignFlowID || base.Counts != foreignFlowInput.Counts {
 		t.Fatal("foreign Flow fixture did not preserve equal denominator with a distinct identity")
 	}

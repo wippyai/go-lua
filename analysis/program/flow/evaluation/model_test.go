@@ -887,7 +887,7 @@ func TestPortsRejectForeignEqualCardinalityForest(t *testing.T) {
 	if first.identity.ContentID() != second.identity.ContentID() {
 		t.Fatal("fixture source identities unexpectedly differ")
 	}
-	if first.view.ContentID() == second.view.ContentID() {
+	if first.view.Cold().ContentID() == second.view.Cold().ContentID() {
 		t.Fatal("fixture Flow identities unexpectedly match")
 	}
 	if _, err := SealPorts(second.identity, second.view, first.forest,
@@ -929,7 +929,7 @@ func TestPortsMatchesRejectsUnavailableAndEqualDenominatorForeignOwners(t *testi
 		t.Fatalf("SealPorts(foreignFlow): %v", err)
 	}
 	sourceID := first.identity.ContentID()
-	flowID := first.view.ContentID()
+	flowID := first.view.Cold().ContentID()
 	staticID := first.staticView.ContentID()
 	moduleID := first.moduleFinalize.View().ContentID()
 	if !Matches(firstPorts, sourceID, flowID, staticID, moduleID) {
@@ -937,7 +937,7 @@ func TestPortsMatchesRejectsUnavailableAndEqualDenominatorForeignOwners(t *testi
 	}
 	if first.identity.TermCount() != foreignFlow.identity.TermCount() ||
 		first.view.Values().Count() != foreignFlow.view.Values().Count() ||
-		flowID == foreignFlow.view.ContentID() {
+		flowID == foreignFlow.view.Cold().ContentID() {
 		t.Fatal("foreign fixture did not preserve denominator while changing Flow identity")
 	}
 	if Matches(nil, sourceID, flowID, staticID, moduleID) || Matches(firstPorts, identity.ContentID{}, flowID, staticID, moduleID) ||

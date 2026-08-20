@@ -26,7 +26,7 @@ func Seal(
 	moduleID identity.ContentID,
 ) (*Result, error) {
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flow.ContentID()
+	flowID := flow.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/binaryprimitive: owner identity is unavailable")
 	}

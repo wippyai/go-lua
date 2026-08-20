@@ -77,7 +77,7 @@ func sealWithPlan(
 	moduleID identity.ContentID,
 ) (*Result, *Binding, error) {
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flow.ContentID()
+	flowID := flow.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, nil, errors.New("program/flow/recurrence: owner identity is unavailable")
 	}
@@ -174,7 +174,7 @@ func validateOwners(
 ) ([keyspace.FamilyCount]uint32, error) {
 	var counts [keyspace.FamilyCount]uint32
 	identity := sourceView.Identity()
-	if !identity.ContentID().Available() || !flow.ContentID().Available() || bodies == nil || forest == nil || graph == nil {
+	if !identity.ContentID().Available() || !flow.Cold().ContentID().Available() || bodies == nil || forest == nil || graph == nil {
 		return counts, errors.New("program/flow/recurrence: one or more sealed owners are unavailable")
 	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {

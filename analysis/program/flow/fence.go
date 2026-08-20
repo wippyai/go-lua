@@ -9,11 +9,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// Authored is the authored-relation query surface. It publishes only the
-// owner's content identity and authored relations.
+// Authored is the authored-relation query surface. It withholds the private
+// Cold projection and publishes only its content identity.
 type Authored struct{ view authored.View }
 
-func (view Authored) ContentID() identity.ContentID   { return view.view.ContentID() }
+func (view Authored) ContentID() identity.ContentID   { return view.view.Cold().ContentID() }
 func (view Authored) Values() authored.Values         { return view.view.Values() }
 func (view Authored) Tables() authored.Tables         { return view.view.Tables() }
 func (view Authored) Fields() authored.Fields         { return view.view.Fields() }

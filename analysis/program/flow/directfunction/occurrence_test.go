@@ -658,7 +658,7 @@ func openDirectFixture(t *testing.T, spec directSpec) *directFixture {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
+		flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)

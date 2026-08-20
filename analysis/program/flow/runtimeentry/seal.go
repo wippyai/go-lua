@@ -19,7 +19,7 @@ import (
 // Values/Write incidence.
 func Seal(sourceView source.View, flow authored.View, control *sourcecontrol.Result, ports *evaluation.Ports,
 	exec *executable.Result, staticID, moduleID identity.ContentID) (*Result, error) {
-	sourceID, flowID := sourceView.Identity().ContentID(), flow.ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), flow.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() ||
 		!sourcecontrol.Matches(control, sourceID, flowID, staticID, moduleID) ||
 		!evaluation.Matches(ports, sourceID, flowID, staticID, moduleID) ||

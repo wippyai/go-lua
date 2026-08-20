@@ -28,7 +28,7 @@ func Seal(
 	entry keyspace.Term,
 ) (*Result, error) {
 	sourceID := preimage.Identity().ContentID()
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/functionboundary: owner identity unavailable")
 	}

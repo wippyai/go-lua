@@ -24,7 +24,7 @@ func emitFlowExecution(view authored.View, counts [keyspace.FamilyCount]uint32, 
 	if result == nil {
 		return errors.New("program/flow/containment: nil execution emission")
 	}
-	if !view.ContentID().Available() {
+	if !view.Cold().ContentID().Available() {
 		return errors.New("program/flow/containment: authored Flow expired")
 	}
 	if err := flowExecutionCounts(view, counts); err != nil {

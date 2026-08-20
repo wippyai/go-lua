@@ -29,7 +29,7 @@ func SealPending(
 	if err != nil {
 		return nil, err
 	}
-	flowID := view.ContentID()
+	flowID := view.Cold().ContentID()
 	if executableResult == nil || !executable.Matches(executableResult, identity.ContentID(), flowID, staticID, moduleID) {
 		return nil, errors.New("program/flow/evaluation: executable provenance is unavailable")
 	}
@@ -200,7 +200,7 @@ func pendingCounts(identity source.Identity, view authored.View) ([keyspace.Fami
 	if err != nil {
 		return counts, err
 	}
-	if !view.ContentID().Available() {
+	if !view.Cold().ContentID().Available() {
 		return counts, errors.New("program/flow/evaluation: authored view is unavailable")
 	}
 	if err := validateAuthoredCounts(view, counts); err != nil {
