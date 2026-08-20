@@ -71,9 +71,6 @@ type View struct {
 	component *Component
 }
 
-// Cold is an identity-only Module snapshot. It retains no Component pointer.
-type Cold struct{ content identity.ContentID }
-
 type authored struct {
 	imports []Import
 	content identity.ContentID

@@ -19,23 +19,9 @@ import (
 
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/static/operators"
 )
-
-func TestStaticColdRetainsOnlyContentIDSnapshot(t *testing.T) {
-	component := staticContentComponent(t, Input{
-		Counts: [keyspace.FamilyCount]uint32{keyspace.FamilyTypePrimitive: 1},
-		Types:  statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
-	})
-	cold := component.Cold()
-	want := cold.ContentID()
-	component.contentID = identity.ContentID{}
-	if got := cold.ContentID(); got != want {
-		t.Fatalf("Cold snapshot changed after Component mutation: %x != %x", got, want)
-	}
-}
 
 func compositeLocalContainmentInput(t *testing.T) Input {
 	t.Helper()
@@ -230,8 +216,8 @@ func TestStaticLocalContainmentCompositeEmitterRows(t *testing.T) {
 	if coldID != wantID {
 		t.Fatalf("repeated Build identity = %x, want %x", coldID, wantID)
 	}
-	if got := component.Cold().ContentID(); got != coldID {
-		t.Fatalf("Cold identity = %x, before proof = %x", got, coldID)
+	if got := component.ContentID(); got != coldID {
+		t.Fatalf("Component identity = %x, before proof = %x", got, coldID)
 	}
 }
 

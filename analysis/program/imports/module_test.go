@@ -47,8 +47,8 @@ func TestBuildAndCommitSeparatesAuthoredAndDerivedModuleState(t *testing.T) {
 	if row, ok := view.ImportAt(0); ok || row != (Import{}) {
 		t.Fatalf("captured View retained row after Commit: %#v/%v", row, ok)
 	}
-	if component.Cold().ContentID() != authoredID {
-		t.Fatal("Cold did not retain authored identity")
+	if component.ContentID() != authoredID {
+		t.Fatal("Component did not retain authored identity")
 	}
 }
 
@@ -147,7 +147,7 @@ func TestAuthoredIdentityExcludesResolutionAndEntry(t *testing.T) {
 			MemberRanges: []EntryRange{{}},
 		},
 	})
-	if first.Cold().ContentID() != second.Cold().ContentID() {
+	if first.ContentID() != second.ContentID() {
 		t.Fatal("derived Module state changed authored ContentID")
 	}
 	changed := authoredInput()
@@ -161,7 +161,7 @@ func TestAuthoredIdentityExcludesResolutionAndEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.Cold().ContentID() == first.Cold().ContentID() {
+	if third.ContentID() == first.ContentID() {
 		t.Fatal("authored Alias change did not change ContentID")
 	}
 }
@@ -185,7 +185,7 @@ func TestAuthoredRequestParticipatesInContentID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if component.Cold().ContentID() == baseline.Cold().ContentID() {
+	if component.ContentID() == baseline.ContentID() {
 		t.Fatal("authored Request change did not change ContentID")
 	}
 }

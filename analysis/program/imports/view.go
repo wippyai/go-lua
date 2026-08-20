@@ -15,12 +15,13 @@ func (c *Component) View() View {
 	return View{component: c}
 }
 
-// Cold is an identity-only snapshot and does not retain the live component.
-func (c *Component) Cold() Cold {
+// ContentID returns the immutable authored Module identity directly from its
+// canonical owner.
+func (c *Component) ContentID() identity.ContentID {
 	if c == nil {
-		return Cold{}
+		return identity.ContentID{}
 	}
-	return Cold{content: c.content}
+	return c.content
 }
 
 // ContentID returns the authored Module identity through the direct view.
@@ -81,9 +82,6 @@ func (v View) Entry() EntryView {
 	}
 	return EntryView{data: &component.entry}
 }
-
-// ContentID returns the identity retained by this snapshot.
-func (cold Cold) ContentID() identity.ContentID { return cold.content }
 
 func (v View) importsForRead() ([]Import, bool) {
 	if component, ok := v.componentForRead(); ok {

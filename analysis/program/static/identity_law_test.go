@@ -29,7 +29,7 @@ func runContentDeltaLedger(t *testing.T, cases []contentDelta) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			component := test.build(t)
-			before := component.Cold().ContentID()
+			before := component.ContentID()
 			test.mutate(component)
 			if after := contentID(component); after == before {
 				t.Fatal("retained authored field did not change ContentID")
@@ -58,9 +58,9 @@ func TestStaticContentIDNonTypeFieldLedger(t *testing.T) {
 func TestStaticContentIDResidualOrderAndSparseClaimCanonicalization(t *testing.T) {
 	t.Run("primitive rows", func(t *testing.T) {
 		input := contentTypesInput(t)
-		before := staticContentComponent(t, input).Cold().ContentID()
+		before := staticContentComponent(t, input).ContentID()
 		input.Types.Primitive[0], input.Types.Primitive[1] = input.Types.Primitive[1], input.Types.Primitive[0]
-		if after := staticContentComponent(t, input).Cold().ContentID(); after == before {
+		if after := staticContentComponent(t, input).ContentID(); after == before {
 			t.Fatal("primitive row order omitted from ContentID")
 		}
 	})
@@ -68,9 +68,9 @@ func TestStaticContentIDResidualOrderAndSparseClaimCanonicalization(t *testing.T
 		input := operatorFixture()
 		input.Counts[keyspace.FamilyRead] = 2
 		input.Operators.TypeOf[1].Operand = keyspace.MakeTerm(keyspace.FamilyRead, 2)
-		before := staticContentComponent(t, input).Cold().ContentID()
+		before := staticContentComponent(t, input).ContentID()
 		input.Operators.TypeOf[0], input.Operators.TypeOf[1] = input.Operators.TypeOf[1], input.Operators.TypeOf[0]
-		if after := staticContentComponent(t, input).Cold().ContentID(); after == before {
+		if after := staticContentComponent(t, input).ContentID(); after == before {
 			t.Fatal("TypeOf row order omitted from ContentID")
 		}
 	})
@@ -80,9 +80,9 @@ func TestStaticContentIDResidualOrderAndSparseClaimCanonicalization(t *testing.T
 		input.Publications.Type = append(input.Publications.Type, staticpubs.Publication{
 			Assign: keyspace.MakeTerm(keyspace.FamilyAssign, 1), Pair: 1, Target: keyspace.MakeTerm(keyspace.FamilyTypeRef, 2),
 		})
-		first := staticContentComponent(t, input).Cold().ContentID()
+		first := staticContentComponent(t, input).ContentID()
 		input.Publications.Type[0], input.Publications.Type[1] = input.Publications.Type[1], input.Publications.Type[0]
-		if second := staticContentComponent(t, input).Cold().ContentID(); second == first {
+		if second := staticContentComponent(t, input).ContentID(); second == first {
 			t.Fatal("TypePublication row order omitted from ContentID")
 		}
 	})
@@ -93,9 +93,9 @@ func TestStaticContentIDResidualOrderAndSparseClaimCanonicalization(t *testing.T
 		input.Operands.Claim = append(input.Operands.Claim, staticoperands.ClaimTarget{
 			Claim: keyspace.MakeTerm(keyspace.FamilyValueClaim, 2), Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 4),
 		})
-		first := staticContentComponent(t, input).Cold().ContentID()
+		first := staticContentComponent(t, input).ContentID()
 		input.Operands.Claim[0], input.Operands.Claim[1] = input.Operands.Claim[1], input.Operands.Claim[0]
-		if second := staticContentComponent(t, input).Cold().ContentID(); second != first {
+		if second := staticContentComponent(t, input).ContentID(); second != first {
 			t.Fatalf("sparse staticoperands.ClaimTarget input order changed canonical ContentID: %x != %x", second, first)
 		}
 	})
@@ -222,15 +222,15 @@ func TestStaticContentIDCoversEveryAuthoredVertical(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			input := test.input(t)
-			first := staticContentComponent(t, input).Cold().ContentID()
+			first := staticContentComponent(t, input).ContentID()
 			if !first.Available() {
 				t.Fatal("content identity unavailable")
 			}
-			if second := staticContentComponent(t, test.input(t)).Cold().ContentID(); second != first {
+			if second := staticContentComponent(t, test.input(t)).ContentID(); second != first {
 				t.Fatalf("equivalent rebuild ContentID = %x, want %x", second, first)
 			}
 			test.mutate(t, &input)
-			if changed := staticContentComponent(t, input).Cold().ContentID(); changed == first {
+			if changed := staticContentComponent(t, input).ContentID(); changed == first {
 				t.Fatal("authored vertical mutation left ContentID unchanged")
 			}
 		})
@@ -240,13 +240,13 @@ func TestStaticContentIDCoversEveryAuthoredVertical(t *testing.T) {
 func TestStaticContentIDExcludesDerivativesAndExternalClaimCardinality(t *testing.T) {
 	input := operandsFixture(t)
 	first := staticContentComponent(t, input)
-	baseline := first.Cold().ContentID()
+	baseline := first.ContentID()
 
 	// A Flow-only ValueClaim with no Static staticoperands.ClaimTarget must not change Static
 	// identity just because it grows the retained dense query lookup.
 	withoutTarget := input
 	withoutTarget.Counts[keyspace.FamilyValueClaim]++
-	if got := staticContentComponent(t, withoutTarget).Cold().ContentID(); got != baseline {
+	if got := staticContentComponent(t, withoutTarget).ContentID(); got != baseline {
 		t.Fatalf("external claim cardinality changed Static ContentID: %x != %x", got, baseline)
 	}
 
@@ -255,7 +255,7 @@ func TestStaticContentIDExcludesDerivativesAndExternalClaimCardinality(t *testin
 	// Declarations vertical retains for O(1) lookup.
 	withoutDeclaredCell := input
 	withoutDeclaredCell.Counts[keyspace.FamilyCell]++
-	if got := staticContentComponent(t, withoutDeclaredCell).Cold().ContentID(); got != baseline {
+	if got := staticContentComponent(t, withoutDeclaredCell).ContentID(); got != baseline {
 		t.Fatalf("external cell cardinality changed Static ContentID: %x != %x", got, baseline)
 	}
 
@@ -277,14 +277,11 @@ func TestStaticContentIDIsImmutableAndAllocationFree(t *testing.T) {
 	// observable. Mutating caller storage cannot change the Component hash.
 	input.References.TypeRef[0].Source[0] = 99
 	input.Publications.Type[0].Pair = 19
-	if got, want := component.Cold().ContentID(), staticContentComponent(t, publicationFixture(t)).Cold().ContentID(); got != want {
+	if got, want := component.ContentID(), staticContentComponent(t, publicationFixture(t)).ContentID(); got != want {
 		t.Fatalf("caller mutation after Build changed ContentID: %x != %x", got, want)
 	}
-	if allocations := testing.AllocsPerRun(1000, func() { _ = component.Cold().ContentID() }); allocations != 0 {
-		t.Fatalf("Cold().ContentID allocations = %f, want 0", allocations)
-	}
-	if got := (Cold{}).ContentID(); got.Available() {
-		t.Fatalf("zero Cold exposed identity: %x", got)
+	if allocations := testing.AllocsPerRun(1000, func() { _ = component.ContentID() }); allocations != 0 {
+		t.Fatalf("ContentID allocations = %f, want 0", allocations)
 	}
 }
 

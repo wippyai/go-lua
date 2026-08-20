@@ -63,7 +63,7 @@ func TestArtifactSectionRoundTripRebuildsAuthoredContentID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decoded Commit: %v", err)
 	}
-	if got, want := rebuilt.Cold().ContentID(), component.Cold().ContentID(); got != want {
+	if got, want := rebuilt.ContentID(), component.ContentID(); got != want {
 		t.Fatalf("rebuilt ContentID = %x, want %x", got, want)
 	}
 }

@@ -12,10 +12,6 @@ import (
 // deliberately outside this authored identity.
 const contentVersion = 4
 
-// Cold is the post-build snapshot of authored Static identity. It deliberately
-// retains only the value observed by consumers, never the Component graph.
-type Cold struct{ contentID identity.ContentID }
-
 // ContentID returns the sealed authored Static identity.
 func (component *Component) ContentID() identity.ContentID {
 	if component == nil {
@@ -23,15 +19,6 @@ func (component *Component) ContentID() identity.ContentID {
 	}
 	return component.contentID
 }
-
-func (component *Component) Cold() Cold {
-	if component == nil {
-		return Cold{}
-	}
-	return Cold{contentID: component.contentID}
-}
-
-func (cold Cold) ContentID() identity.ContentID { return cold.contentID }
 
 // contentID coordinates exactly the eight typed authored verticals. Each
 // vertical owns its own scalar order and never hashes query derivatives.
