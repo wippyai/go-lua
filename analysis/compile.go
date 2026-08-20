@@ -237,45 +237,6 @@ func (state *compiledState) publishComposition() bool {
 	return true
 }
 
-func compileValueCoordinates(source *link.Link) ([]result.ValueCoordinate, bool) {
-	if source == nil || source.Project() == nil || source.Boundary() == nil {
-		return nil, false
-	}
-	values := source.Boundary().Values()
-	if values.Count() == 0 {
-		return nil, false
-	}
-	rows := make([]result.ValueCoordinate, values.Count())
-	seen := make(map[struct {
-		mount identity.ContentID
-		id    identity.ContentID
-	}]struct{}, len(rows))
-	for index := range rows {
-		value, valueOK := values.At(index)
-		id, idOK := values.ID(value)
-		shard, _, originOK := values.Origin(value)
-		mounted, programOK := source.Project().Mounts().Program(shard)
-		module, moduleOK := source.Project().ModuleKey(shard)
-		if !valueOK || !idOK || !originOK || !programOK || mounted == nil || !moduleOK || !id.Available() || !module.Available() {
-			return nil, false
-		}
-		key := struct {
-			mount identity.ContentID
-			id    identity.ContentID
-		}{mount: module, id: id}
-		if _, duplicate := seen[key]; duplicate {
-			return nil, false
-		}
-		seen[key] = struct{}{}
-		coordinate, coordinateOK := result.NewValueCoordinate(id, module)
-		if !coordinateOK {
-			return nil, false
-		}
-		rows[index] = coordinate
-	}
-	return rows, true
-}
-
 type compiledArtifactSet struct {
 	mounts             []programmount.MountedArtifact
 	products           map[identity.ContentID]analysisworkspace.ArtifactProduct

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -91,7 +92,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 			if !ok || !census.Available() {
 				t.Fatalf("seal mounted observation sites: ok=%v available=%v", ok, census.Available())
 			}
-			coordinates, coordinatesOK := compileValueCoordinates(testCase.linked)
+			coordinates, coordinatesOK := result.Coordinates(testCase.linked)
 			if !coordinatesOK {
 				t.Fatal("compile value coordinates")
 			}

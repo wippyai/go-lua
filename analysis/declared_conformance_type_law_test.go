@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/internal/testfixture"
@@ -44,7 +45,7 @@ func TestDeclaredConformanceColumnPublishesWhatEachDeclarationAdmits(t *testing.
 				t.Fatalf("compile fixture = %v diagnostics=%+v", status, diagnostics)
 			}
 			t.Cleanup(func() { plan.Close() })
-			coordinates, coordinatesOK := compileValueCoordinates(linked)
+			coordinates, coordinatesOK := result.Coordinates(linked)
 			if !coordinatesOK {
 				t.Fatal("compile value coordinates")
 			}

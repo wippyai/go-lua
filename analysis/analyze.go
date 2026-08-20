@@ -132,7 +132,7 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	values, valuesOK := compileValueCoordinates(source)
+	values, valuesOK := result.Coordinates(source)
 	if !valuesOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureValueCoordinates
 		diagnostics.FailCurrentPhase()
