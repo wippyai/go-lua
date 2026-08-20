@@ -160,8 +160,8 @@ type NativePublicationToken struct {
 }
 
 // NativePublication is one immutable native row. Its fields are available
-// only through Result-issued cursors, which prevents foreign or stale receipt
-// rows from being mistaken for a row of this result.
+// only through Result-issued cursors, which prevents foreign or stale
+// publication rows from being mistaken for a row of this result.
 type NativePublication struct{ token NativePublicationToken }
 
 func (row NativePublication) Token() NativePublicationToken { return row.token }
@@ -427,11 +427,11 @@ func (row NativePublication) Validity() (NativePublicationValidity, bool) {
 }
 
 // NativePublicationAvailable reports whether a post-convergence typed owner
-// issued a publication receipt for this Result. It is intentionally distinct
-// from an available empty publication: an absent producer must not look like a
+// published native output for this Result. It is intentionally distinct from
+// an available empty publication: an absent producer must not look like a
 // successful analysis with zero native facts.
 func (result *Result) NativePublicationAvailable() bool {
-	return result != nil && result.valid() && result.native != nil && result.native.valid()
+	return result != nil && result.valid() && nativePublicationStateAvailable(result.nativePublished, result.nativeContent, result.nativeRows, result.nativeByID)
 }
 
 // NativePublicationCount, At, ByID, and ByToken are Result's closed native
@@ -441,14 +441,14 @@ func (result *Result) NativePublicationCount() int {
 	if !result.NativePublicationAvailable() {
 		return 0
 	}
-	return len(result.native.rows)
+	return len(result.nativeRows)
 }
 func (result *Result) NativePublicationAt(index int) (NativePublication, bool) {
-	if !result.NativePublicationAvailable() || index < 0 || index >= len(result.native.rows) {
+	if !result.NativePublicationAvailable() || index < 0 || index >= len(result.nativeRows) {
 		return NativePublication{}, false
 	}
 	ordinal := uint32(index + 1)
-	if _, ok := result.native.rowAt(ordinal); !ok {
+	if _, ok := result.nativeRowAt(ordinal); !ok {
 		return NativePublication{}, false
 	}
 	return NativePublication{token: NativePublicationToken{owner: result, ordinal: ordinal}}, true
@@ -457,21 +457,21 @@ func (result *Result) NativePublicationByID(id identity.ContentID) (NativePublic
 	if !result.NativePublicationAvailable() || !id.Available() {
 		return NativePublication{}, false
 	}
-	ordinal, ok := result.native.byID[id]
+	ordinal, ok := result.nativeByID[id]
 	if !ok || ordinal == 0 {
 		return NativePublication{}, false
 	}
-	row, rowOK := result.native.rowAt(ordinal)
+	row, rowOK := result.nativeRowAt(ordinal)
 	if !rowOK || row.id != id {
 		return NativePublication{}, false
 	}
 	return NativePublication{token: NativePublicationToken{owner: result, ordinal: ordinal}}, true
 }
 func (result *Result) NativePublicationByToken(token NativePublicationToken) (NativePublication, bool) {
-	if !result.NativePublicationAvailable() || token.owner != result || token.ordinal == 0 || int(token.ordinal) > len(result.native.rows) {
+	if !result.NativePublicationAvailable() || token.owner != result || token.ordinal == 0 || int(token.ordinal) > len(result.nativeRows) {
 		return NativePublication{}, false
 	}
-	if _, ok := result.native.rowAt(token.ordinal); !ok {
+	if _, ok := result.nativeRowAt(token.ordinal); !ok {
 		return NativePublication{}, false
 	}
 	return NativePublication{token: token}, true
@@ -482,11 +482,11 @@ func (row NativePublication) resolve() (nativePublicationRow, bool) {
 	if owner == nil || !owner.NativePublicationAvailable() {
 		return nativePublicationRow{}, false
 	}
-	return owner.native.rowAt(ordinal)
+	return owner.nativeRowAt(ordinal)
 }
 
 // nativePublicationFamily is the closed semantic denominator for the first
-// receipt-native publication slice. New families extend this owner; callers
+// native publication slice. New families extend this owner; callers
 // cannot authorize a row by supplying a string.
 type nativePublicationFamily uint8
 
@@ -561,30 +561,23 @@ func (value NativePublicationProvenance) valid() bool {
 	return value.mount.Available() && value.artifact.Available() && value.local.Available() && value.body.Available() && value.point.Available() && value.span.Available()
 }
 
-type nativePublicationReceipt struct {
-	content identity.ContentID
-	rows    []nativePublicationRow
-	byID    map[identity.ContentID]uint32
-	sealed  bool
+func nativePublicationStateAvailable(published bool, content identity.ContentID, rows []nativePublicationRow, byID map[identity.ContentID]uint32) bool {
+	return published && content.Available() && rows != nil && byID != nil
 }
 
-func (receipt *nativePublicationReceipt) valid() bool {
-	return receipt != nil && receipt.sealed && receipt.content.Available() && receipt.rows != nil && receipt.byID != nil
-}
-
-func (receipt *nativePublicationReceipt) rowAt(ordinal uint32) (nativePublicationRow, bool) {
-	if !receipt.valid() || ordinal == 0 || int(ordinal) > len(receipt.rows) {
+func (result *Result) nativeRowAt(ordinal uint32) (nativePublicationRow, bool) {
+	if result == nil || !nativePublicationStateAvailable(result.nativePublished, result.nativeContent, result.nativeRows, result.nativeByID) || ordinal == 0 || int(ordinal) > len(result.nativeRows) {
 		return nativePublicationRow{}, false
 	}
-	row := receipt.rows[ordinal-1]
-	stored, indexed := receipt.byID[row.id]
+	row := result.nativeRows[ordinal-1]
+	stored, indexed := result.nativeByID[row.id]
 	if !indexed || stored != ordinal || !row.valid() {
 		return nativePublicationRow{}, false
 	}
 	return row, true
 }
 
-func newNativePublicationReceipt(rows []nativePublicationRow) (*nativePublicationReceipt, bool) {
+func sealNativePublication(rows []nativePublicationRow) (identity.ContentID, []nativePublicationRow, map[identity.ContentID]uint32, bool) {
 	copyRows := make([]nativePublicationRow, len(rows))
 	copy(copyRows, rows)
 	sort.Slice(copyRows, func(i, j int) bool { return bytes.Compare(copyRows[i].id[:], copyRows[j].id[:]) < 0 })
@@ -592,19 +585,19 @@ func newNativePublicationReceipt(rows []nativePublicationRow) (*nativePublicatio
 	parts := make([][]byte, len(copyRows))
 	for index, row := range copyRows {
 		if !row.valid() {
-			return nil, false
+			return identity.ContentID{}, nil, nil, false
 		}
 		if _, duplicate := byID[row.id]; duplicate {
-			return nil, false
+			return identity.ContentID{}, nil, nil, false
 		}
 		byID[row.id] = uint32(index + 1)
 		parts[index] = row.id[:]
 	}
 	content, ok := identity.DeriveContentID("analysis/native-publication/receipt/v1", parts...)
 	if !ok {
-		return nil, false
+		return identity.ContentID{}, nil, nil, false
 	}
-	return &nativePublicationReceipt{content: content, rows: copyRows, byID: byID, sealed: true}, true
+	return content, copyRows, byID, true
 }
 
 func nativePublicationRowID(row nativePublicationRow) (identity.ContentID, bool) {

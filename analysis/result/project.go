@@ -50,11 +50,11 @@ func Detach(
 	if !publicationsOK {
 		return nil, false
 	}
-	native, nativeOK := buildNativeBranchPublication(geometry, mounts, diagnosticObservations, valueSchema, published, observationPlan)
+	nativeRows, nativeOK := buildNativeBranchPublication(geometry, mounts, diagnosticObservations, valueSchema, published, observationPlan)
 	if !nativeOK {
 		return nil, false
 	}
-	result, ok := buildDetachedArtifactResult(geometry, queries, published, queryPlan, native)
+	result, ok := buildDetachedArtifactResult(geometry, queries, published, queryPlan, nativeRows)
 	if !ok || result == nil {
 		return nil, false
 	}
@@ -78,9 +78,9 @@ func buildDetachedArtifactResult(
 	queries []composite.QueryPublication,
 	published *snapshot.Snapshot,
 	plan snapshot.QueryPlan[identity.ContentID, engine.Answer],
-	native *nativePublicationReceipt,
+	nativeRows []nativePublicationRow,
 ) (*Result, bool) {
-	if !geometry.Valid() || published == nil || !published.Published() || !plan.Available() || native == nil || !native.valid() {
+	if !geometry.Valid() || published == nil || !published.Published() || !plan.Available() || nativeRows == nil {
 		return nil, false
 	}
 	bodies := make([]resultBody, len(geometry.bodies))
@@ -197,11 +197,25 @@ func buildDetachedArtifactResult(
 		}
 		families[ordinal-1] = family
 	}
-	content, ok := analysisResultIDWithPublication(geometry.source, bodies, points, families, native)
+	nativeContent, nativeRows, nativeByID, nativePublished := sealNativePublication(nativeRows)
+	if !nativePublished {
+		return nil, false
+	}
+	content, ok := analysisResultIDWithPublication(geometry.source, bodies, points, families, nativePublished, nativeContent, nativeRows, nativeByID)
 	if !ok {
 		return nil, false
 	}
-	result := &Result{source: geometry.source, content: content, bodies: bodies, points: points, families: families, native: native}
+	result := &Result{
+		source:          geometry.source,
+		content:         content,
+		bodies:          bodies,
+		points:          points,
+		families:        families,
+		nativeContent:   nativeContent,
+		nativeRows:      nativeRows,
+		nativeByID:      nativeByID,
+		nativePublished: nativePublished,
+	}
 	if !result.validPayload() {
 		return nil, false
 	}

@@ -26,7 +26,7 @@ func buildNativeBranchPublication(
 	schema *valuedomain.Schema,
 	published *snapshot.Snapshot,
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
-) (*nativePublicationReceipt, bool) {
+) ([]nativePublicationRow, bool) {
 	if !geometry.Valid() || schema == nil || published == nil || !published.Published() || !observationPlan.Available() {
 		return nil, false
 	}
@@ -100,7 +100,7 @@ func buildNativeBranchPublication(
 	if len(observed) != len(expected) {
 		return nil, false
 	}
-	return newNativePublicationReceipt(rows)
+	return rows, true
 }
 
 func appendNativeArithmeticRows(

@@ -111,7 +111,7 @@ func artifactResultLawCloneTables(tables artifactResultLawTables) artifactResult
 
 func artifactResultLawIDFor(t testing.TB, tables artifactResultLawTables) identity.ContentID {
 	t.Helper()
-	id, ok := analysisResultID(tables.source, tables.bodies, tables.points, tables.families, nil)
+	id, ok := analysisResultID(tables.source, tables.bodies, tables.points, tables.families)
 	if !ok {
 		t.Fatal("normalized result tables were not hashable")
 	}

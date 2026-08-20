@@ -30,10 +30,13 @@ type Result struct {
 	bodies   []resultBody
 	points   []resultPoint
 	families []resultFamily
-	// native is the one sealed post-convergence publication receipt. An
-	// available empty receipt is distinct from a missing producer.
-	native *nativePublicationReceipt
-	sealed bool
+	// Native publication is detached output owned by this Result. The explicit
+	// bit keeps a published empty output distinct from an absent producer.
+	nativeContent   identity.ContentID
+	nativeRows      []nativePublicationRow
+	nativeByID      map[identity.ContentID]uint32
+	nativePublished bool
+	sealed          bool
 }
 
 type resultBody struct {
@@ -108,7 +111,7 @@ func (body Body) ID() (identity.ContentID, bool) {
 }
 
 func (body Body) RootCount() int {
-	// Root rows are the exact mount-qualified ProgramArtifact receipt plane; no
+	// Root rows are the exact mount-qualified ProgramArtifact root plane; no
 	// Solve-time Program, Source, or Flow reconstruction participates here.
 	row, ok := body.row()
 	if !ok {
@@ -220,7 +223,7 @@ func (result *Result) validPayload() bool {
 			seenKeys[query.key] = struct{}{}
 		}
 	}
-	if result.native == nil || !result.native.valid() {
+	if !nativePublicationStateAvailable(result.nativePublished, result.nativeContent, result.nativeRows, result.nativeByID) {
 		return false
 	}
 	return true
@@ -235,9 +238,8 @@ func analysisResultID(
 	bodies []resultBody,
 	points []resultPoint,
 	families []resultFamily,
-	native *nativePublicationReceipt,
 ) (identity.ContentID, bool) {
-	return analysisResultIDWithPublication(source, bodies, points, families, native)
+	return analysisResultIDWithPublication(source, bodies, points, families, false, identity.ContentID{}, nil, nil)
 }
 
 func writeResultFrame(hash interface{ Write([]byte) (int, error) }, value []byte) bool {
@@ -253,9 +255,13 @@ func analysisResultIDWithPublication(
 	bodies []resultBody,
 	points []resultPoint,
 	families []resultFamily,
-	native *nativePublicationReceipt,
+	nativePublished bool,
+	nativeContent identity.ContentID,
+	nativeRows []nativePublicationRow,
+	nativeByID map[identity.ContentID]uint32,
 ) (identity.ContentID, bool) {
-	if !source.Available() || len(bodies) == 0 || len(families) == 0 || native != nil && !native.valid() {
+	if !source.Available() || len(bodies) == 0 || len(families) == 0 ||
+		nativePublished && !nativePublicationStateAvailable(nativePublished, nativeContent, nativeRows, nativeByID) {
 		return identity.ContentID{}, false
 	}
 	hash := sha256.New()
@@ -342,21 +348,20 @@ func analysisResultIDWithPublication(
 		}
 	}
 
-	// Native publication is a separate sealed lane, but its receipt identity is
+	// Native publication is a separate sealed lane, and its content identity is
 	// part of the enclosing Result identity.
-	nativeAvailable := native != nil
-	if !write([]byte{boolByte(nativeAvailable)}) {
+	if !write([]byte{boolByte(nativePublished)}) {
 		return identity.ContentID{}, false
 	}
 	nativeCount := 0
-	if nativeAvailable {
-		nativeCount = len(native.rows)
+	if nativePublished {
+		nativeCount = len(nativeRows)
 	}
 	binary.BigEndian.PutUint64(count[:], uint64(nativeCount))
 	if !write(count[:]) {
 		return identity.ContentID{}, false
 	}
-	if nativeAvailable && !write(native.content[:]) {
+	if nativePublished && !write(nativeContent[:]) {
 		return identity.ContentID{}, false
 	}
 	var id identity.ContentID
