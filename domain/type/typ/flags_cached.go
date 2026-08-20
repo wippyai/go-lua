@@ -8,8 +8,8 @@ package typ
 func cachedContainsFlags(t Type) (containsAny, containsNever, containsTypeParam, containsInstantiated bool) {
 	switch n := t.(type) {
 	case *Recursive:
-		flags := n.containsFlags()
-		return flags.containsAny, flags.containsNever, flags.containsTypeParam, flags.containsInstantiated
+		columns := columnsOf(n)
+		return columns.containsAny, columns.containsNever, columns.containsFreeFormal, columns.containsInstantiated
 	case *Instantiated:
 		// A Generic's declaration-owned formals are bound by an
 		// Instantiated node.  They are not free formals of the application;
@@ -151,8 +151,8 @@ func knownContainsInstantiated(t Type) bool {
 
 // ContainsAny reports whether t is, or transitively contains, the gradual any
 // type. A cached positive is definitive. A cached negative is definitive only
-// for non-recursive products; recursive placeholders can receive a later body,
-// so recursive graphs fall back to a live scan.
+// for a product that reaches no recursive placeholder; a placeholder can
+// receive a later body, so those graphs read the derived column instead.
 func ContainsAny(t Type) bool {
 	if knownContainsAny(t) {
 		return true
@@ -160,7 +160,7 @@ func ContainsAny(t Type) bool {
 	if !knownContainsRecursive(t) {
 		return false
 	}
-	return containsAnyDynamic(t, nil, 0)
+	return columnsOf(t).containsAny
 }
 
 // ContainsNever reports whether t is, or transitively contains, never.
@@ -171,11 +171,12 @@ func ContainsNever(t Type) bool {
 	if !knownContainsRecursive(t) {
 		return false
 	}
-	return containsNeverDynamic(t, nil)
+	return columnsOf(t).containsNever
 }
 
 // ContainsTypeParam reports whether t is, or transitively contains, a type
-// parameter node.
+// parameter that no enclosing generic application binds. See typeColumns for
+// the binder rule.
 func ContainsTypeParam(t Type) bool {
 	if knownContainsTypeParam(t) {
 		return true
@@ -183,13 +184,12 @@ func ContainsTypeParam(t Type) bool {
 	if !knownContainsRecursive(t) {
 		return false
 	}
-	return containsTypeParamDynamic(t, nil, 0)
+	return columnsOf(t).containsFreeFormal
 }
 
 // ContainsInstantiated reports whether t is, or transitively contains, a
 // generic instantiation. A cached positive is definitive. A cached negative is
-// definitive only for non-recursive products; recursive placeholders can receive
-// a later body, so recursive graphs fall back to a live scan.
+// definitive only for a product that reaches no recursive placeholder.
 func ContainsInstantiated(t Type) bool {
 	if knownContainsInstantiated(t) {
 		return true
@@ -197,13 +197,19 @@ func ContainsInstantiated(t Type) bool {
 	if !knownContainsRecursive(t) {
 		return false
 	}
-	return containsInstantiatedDynamic(t, nil, 0)
+	return columnsOf(t).containsInstantiated
 }
 
 // ContainsGeneric reports whether t is, or transitively contains, a generic
 // declaration or instantiation node.
 func ContainsGeneric(t Type) bool {
-	return knownContainsGeneric(t)
+	if knownContainsGeneric(t) {
+		return true
+	}
+	if !knownContainsRecursive(t) {
+		return false
+	}
+	return columnsOf(t).containsGeneric
 }
 
 // knownContainsGeneric reports whether t transitively contains a *Generic node,
@@ -222,7 +228,7 @@ func knownContainsGeneric(t Type) bool {
 func cachedContainsGeneric(t Type) bool {
 	switch n := t.(type) {
 	case *Recursive:
-		return n.containsFlags().containsGeneric
+		return columnsOf(n).containsGeneric
 	case *Generic:
 		return true
 	case *Instantiated:

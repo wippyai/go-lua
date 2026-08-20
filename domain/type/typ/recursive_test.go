@@ -832,45 +832,59 @@ func TestRecursiveIdentityGraphUsesInlineStorageForSmallGraphs(t *testing.T) {
 	}
 }
 
-func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
+// TestRecursiveContentAndClosureShareOneColumnPublication states that content
+// containment and graph closure are one derived fact, not two. Closure is
+// decided by the same walk that discovers content markers, so the first query
+// of either kind publishes both and the second reads a memo rather than
+// walking the graph again.
+func TestRecursiveContentAndClosureShareOneColumnPublication(t *testing.T) {
 	rec := NewRecursivePlaceholder("Node")
 	rec.SetBody(newRecord().Field("value", String).Build())
 
-	if rec.containsMemo.Load() != nil || rec.closedMemo.Load() != nil {
-		t.Fatal("fresh recursive body should have no derived content or graph-closure memo")
+	if rec.columnsMemo.Load() != nil {
+		t.Fatal("fresh recursive body should have no derived column")
 	}
 	if knownContainsAny(rec) {
 		t.Fatal("record without any should not contain any")
 	}
-	if rec.containsMemo.Load() == nil {
-		t.Fatal("content flag query should publish content memo")
+	published := rec.columnsMemo.Load()
+	if published == nil {
+		t.Fatal("content query should publish the derived column")
 	}
-	if rec.closedMemo.Load() != nil {
-		t.Fatal("content flag query must not force graph-closure proof")
+	if !published.closed {
+		t.Fatal("the content walk proved a closed graph and must record it")
 	}
 	if knownContainsOpenRecursive(rec) {
 		t.Fatal("closed recursive body should not be open-recursive")
 	}
-	if rec.closedMemo.Load() == nil {
-		t.Fatal("open-recursive query should publish graph-closure memo")
+	if rec.columnsMemo.Load() != published {
+		t.Fatal("the closure query re-derived a column the content query already published")
 	}
 
 	direct := NewRecursivePlaceholder("Direct")
 	direct.SetBody(newRecord().Field("value", String).Build())
+	if knownContainsOpenRecursive(direct) {
+		t.Fatal("closed recursive record reported open")
+	}
+	closureFirst := direct.columnsMemo.Load()
+	if closureFirst == nil {
+		t.Fatal("closure query should publish the derived column")
+	}
 	if knownContainsAny(direct) {
 		t.Fatal("direct recursive record without any should not contain any")
 	}
-	if direct.closedMemo.Load() != nil {
-		t.Fatal("direct content predicate must not force graph-closure proof")
+	if direct.columnsMemo.Load() != closureFirst {
+		t.Fatal("the content query re-derived a column the closure query already published")
 	}
 }
 
-func TestNilRecursiveFlagRefreshIsNoop(t *testing.T) {
+func TestNilRecursiveColumnIsEmptyAndOpen(t *testing.T) {
 	var rec *Recursive
-	if got := rec.containsFlags(); got.containsAny || got.containsNever || got.containsTypeParam || got.containsInstantiated || got.containsGeneric {
-		t.Fatalf("nil recursive content flags = %#v", got)
+	got := columnsOf(rec)
+	if got.containsAny || got.containsNever || got.containsFreeFormal || got.containsInstantiated || got.containsGeneric {
+		t.Fatalf("nil recursive content column = %#v", got)
 	}
-	if rec.containsClosedFlag() {
+	if got.closed {
 		t.Fatal("nil recursive node reported closed")
 	}
 }
@@ -1054,7 +1068,7 @@ func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
 		body = NewArray(body)
 	}
 
-	if !recursiveContainsGraphClosed(body, nil) {
+	if !IsGraphClosed(body) {
 		t.Fatal("deep acyclic products should be recognized as closed without a depth cap")
 	}
 }
@@ -1062,12 +1076,12 @@ func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
 func TestRecursiveContainsGraphClosedAcceptsNilSeenForRecursiveNodes(t *testing.T) {
 	closed := NewRecursivePlaceholder("Closed")
 	closed.SetBody(newRecord().OptField("next", closed).Build())
-	if !recursiveContainsGraphClosed(closed, nil) {
+	if !IsGraphClosed(closed) {
 		t.Fatal("closed recursive node should be graph-closed when caller provides nil seen map")
 	}
 
 	dangling := NewRecursivePlaceholder("Dangling")
-	if recursiveContainsGraphClosed(dangling, nil) {
+	if IsGraphClosed(dangling) {
 		t.Fatal("dangling recursive node should not be graph-closed")
 	}
 }
@@ -1089,13 +1103,13 @@ func TestKnownContainsOpenRecursiveCachesCompositeClosureOnceSealed(t *testing.T
 	child := NewRecursivePlaceholder("Child")
 	wrapper := NewArray(child)
 
-	if wrapper.loadOpenRecursiveMemo() != nil {
+	if wrapper.loadColumns() != nil {
 		t.Fatal("construction must not prove recursive graph closure")
 	}
 	if !knownContainsOpenRecursive(wrapper) {
 		t.Fatal("unresolved child should make wrapper open-recursive")
 	}
-	if wrapper.loadOpenRecursiveMemo() != nil {
+	if wrapper.loadColumns() != nil {
 		t.Fatal("an open result must not be cached: the child may still be sealed")
 	}
 
@@ -1103,8 +1117,8 @@ func TestKnownContainsOpenRecursiveCachesCompositeClosureOnceSealed(t *testing.T
 	if knownContainsOpenRecursive(wrapper) {
 		t.Fatal("closed child should not make wrapper open-recursive")
 	}
-	memo := wrapper.loadOpenRecursiveMemo()
-	if memo == nil || memo.contains {
+	memo := wrapper.loadColumns()
+	if memo == nil || !memo.closed {
 		t.Fatal("open-recursive query must memoize the closure proof once the child is sealed")
 	}
 }
@@ -1150,7 +1164,7 @@ func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 		return body
 	})
 
-	if !recursiveGraphClosureForRecursive(rec) {
+	if !IsGraphClosed(rec) {
 		t.Fatal("deep recursive graph closure should be proven without a depth cap")
 	}
 	first := rec.Hash()
@@ -1173,7 +1187,7 @@ func TestRecursiveHashClosureAndContainmentTraverseTwelveThousandNodeGraph(t *te
 	if knownContainsOpenRecursive(node) {
 		t.Fatal("closed deep recursive graph reported open")
 	}
-	if !recursiveGraphClosureForRecursive(node) {
+	if !IsGraphClosed(node) {
 		t.Fatal("deep recursive graph closure should be proven without a depth cap")
 	}
 	if !ContainsAny(node) {

@@ -46,7 +46,7 @@ func TestRecursiveSetBodyPanicsOnSecondCallAfterMemosPublish(t *testing.T) {
 	if !ContainsAny(node) || knownContainsOpenRecursive(node) {
 		t.Fatal("initial recursive body did not derive expected properties")
 	}
-	if node.containsMemo.Load() == nil || node.closedMemo.Load() == nil || node.hashMemo.Load() == nil {
+	if node.columnsMemo.Load() == nil || node.hashMemo.Load() == nil {
 		t.Fatal("initial queries did not publish all derived memos")
 	}
 
@@ -75,15 +75,15 @@ func TestRecursiveProductCloneDoesNotCopyPublishedMemoSlot(t *testing.T) {
 	if knownContainsOpenRecursive(fn) {
 		t.Fatal("original closed function signature reported open")
 	}
-	originalMemo := fn.loadOpenRecursiveMemo()
-	if originalMemo == nil || originalMemo.contains {
+	originalMemo := fn.loadColumns()
+	if originalMemo == nil || !originalMemo.closed {
 		t.Fatalf("original memo = %#v, want closed-graph proof", originalMemo)
 	}
 	initialClone := CloneFunction(fn)
 	if initialClone == nil {
 		t.Fatal("CloneFunction returned nil")
 	}
-	if cloneMemo := initialClone.loadOpenRecursiveMemo(); cloneMemo != nil {
+	if cloneMemo := initialClone.loadColumns(); cloneMemo != nil {
 		t.Fatalf("clone inherited original published memo slot: %#v", cloneMemo)
 	}
 	if got, want := initialClone.String(), fn.String(); got != want {
@@ -92,14 +92,14 @@ func TestRecursiveProductCloneDoesNotCopyPublishedMemoSlot(t *testing.T) {
 	if knownContainsOpenRecursive(initialClone) {
 		t.Fatal("clone recomputed an open graph for the same recursive signature")
 	}
-	cloneMemo := initialClone.loadOpenRecursiveMemo()
-	if cloneMemo == nil || cloneMemo.contains {
+	cloneMemo := initialClone.loadColumns()
+	if cloneMemo == nil || !cloneMemo.closed {
 		t.Fatalf("clone memo = %#v, want independently published closed-graph proof", cloneMemo)
 	}
 	if cloneMemo == originalMemo {
 		t.Fatal("clone and original share the same published memo record")
 	}
-	if got := fn.loadOpenRecursiveMemo(); got != originalMemo {
+	if got := fn.loadColumns(); got != originalMemo {
 		t.Fatal("computing the clone memo replaced or shared the original memo slot")
 	}
 

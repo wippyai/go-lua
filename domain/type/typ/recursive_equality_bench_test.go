@@ -3,6 +3,8 @@ package typ
 import (
 	"strconv"
 	"testing"
+
+	"github.com/wippyai/go-lua/domain/type/kind"
 )
 
 // benchmarkRecursiveFamily is deliberately shaped like exported recursive
@@ -83,7 +85,57 @@ func BenchmarkRecursiveFamilyOpenRecursiveCache(b *testing.B) {
 	}
 }
 
-// benchmarkLiveOpenRecursiveScan is the pre-cache traversal retained as a
+// recursiveTraversalMemoKey identifies a node by kind and address for the
+// benchmark control's own visited set.
+type recursiveTraversalMemoKey struct {
+	kind kind.Kind
+	ptr  uintptr
+}
+
+func recursiveTraversalMemo(t Type) (recursiveTraversalMemoKey, bool) {
+	if t == nil {
+		return recursiveTraversalMemoKey{}, false
+	}
+	ptr := typePointer(t)
+	if ptr == 0 {
+		ptr = uintptr(t.Kind())
+	}
+	return recursiveTraversalMemoKey{kind: t.Kind(), ptr: ptr}, true
+}
+
+// benchmarkGraphClosed is the uncached closure walk the production column
+// replaces, retained here as the benchmark's control.
+func benchmarkGraphClosed(root Type, seen map[*Recursive]bool) bool {
+	visited := make(map[Type]bool)
+	work := []Type{root}
+	for len(work) != 0 {
+		last := len(work) - 1
+		current := unwrapAnnotatedOrNil(work[last])
+		work = work[:last]
+		if current == nil || visited[current] {
+			continue
+		}
+		visited[current] = true
+		if recursive, ok := current.(*Recursive); ok {
+			if recursive.Body == nil {
+				return false
+			}
+			if seen[recursive] {
+				continue
+			}
+			seen[recursive] = true
+			work = append(work, recursive.Body)
+			continue
+		}
+		WalkChildren(current, func(child Type) bool {
+			work = append(work, child)
+			return false
+		})
+	}
+	return true
+}
+
+// benchmarkOpenRecursiveScan is the pre-cache traversal retained as a
 // benchmark control. The production predicate must remain materially cheaper
 // than this full graph walk after its first lookup.
 type benchmarkOpenRecursiveScan struct {
@@ -98,7 +150,7 @@ func (s *benchmarkOpenRecursiveScan) contains(t Type) bool {
 		return false
 	}
 	if rec, ok := t.(*Recursive); ok {
-		return !recursiveContainsGraphClosed(rec, nil)
+		return !benchmarkGraphClosed(rec, make(map[*Recursive]bool))
 	}
 	if !knownContainsRecursive(t) || !s.enter(t) {
 		return false

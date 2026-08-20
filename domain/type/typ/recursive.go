@@ -30,9 +30,9 @@ type Recursive struct {
 	// computation is harmless; readers always observe either no memo or one
 	// complete memo. Body is write-once, so a published memo is valid for the
 	// lifetime of the node and never needs invalidation.
-	containsMemo atomic.Pointer[recursiveContainsMemo]
-	closedMemo   atomic.Pointer[recursiveClosedMemo]
+	columnsMemo  atomic.Pointer[typeColumns]
 	hashMemo     atomic.Pointer[recursiveHashMemo]
+	runtimeKinds atomic.Uint32
 }
 
 // RecursiveBuilder is used during construction to provide a self-reference.

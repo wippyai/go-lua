@@ -85,7 +85,7 @@ func (g *Generic) SetBody(body Type) {
 		panic("typ: Generic.SetBody: body already sealed")
 	}
 	g.Body = body
-	g.typeProperties.invalidateOpenRecursiveCache()
+	g.typeProperties.invalidateColumns()
 	g.typeProperties.include(body)
 }
 

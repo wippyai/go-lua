@@ -26,7 +26,7 @@ func TestRecursiveContainsMemoTracksNestedGenerations(t *testing.T) {
 			if tc.predicate(parent) {
 				t.Fatal("unresolved child unexpectedly contains marker")
 			}
-			if parent.containsMemo.Load() != nil {
+			if parent.columnsMemo.Load() != nil {
 				t.Fatal("incomplete recursive graph must not publish a definitive negative memo")
 			}
 
@@ -34,7 +34,7 @@ func TestRecursiveContainsMemoTracksNestedGenerations(t *testing.T) {
 			if !tc.predicate(parent) {
 				t.Fatal("parent memo missed marker introduced by late-filled child")
 			}
-			if parent.containsMemo.Load() == nil {
+			if parent.columnsMemo.Load() == nil {
 				t.Fatal("parent memo did not publish once the nested child body was sealed")
 			}
 		})
@@ -64,7 +64,7 @@ func TestRecursiveContainsMemoTracksMutualGraphGenerations(t *testing.T) {
 			if tc.predicate(left) {
 				t.Fatal("open mutual graph unexpectedly contains marker")
 			}
-			if left.containsMemo.Load() != nil {
+			if left.columnsMemo.Load() != nil {
 				t.Fatal("open mutual graph must not publish a definitive negative memo")
 			}
 
@@ -72,7 +72,7 @@ func TestRecursiveContainsMemoTracksMutualGraphGenerations(t *testing.T) {
 			if !tc.predicate(left) {
 				t.Fatal("mutual graph missed introduced marker")
 			}
-			if left.containsMemo.Load() == nil {
+			if left.columnsMemo.Load() == nil {
 				t.Fatal("mutual graph memo did not publish once the peer body was sealed")
 			}
 		})
@@ -102,7 +102,7 @@ func TestRecursiveContainsMemoPreservesDeepDefinitivePositives(t *testing.T) {
 			if !tc.predicate(node) {
 				t.Fatal("marker nested 257 nodes deep was lost")
 			}
-			if node.containsMemo.Load() == nil {
+			if node.columnsMemo.Load() == nil {
 				t.Fatal("complete deep recursive graph did not publish containment memo")
 			}
 		})

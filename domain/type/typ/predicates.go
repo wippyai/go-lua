@@ -1,6 +1,10 @@
 package typ
 
-import "github.com/wippyai/go-lua/domain/type/kind"
+import (
+	"sync/atomic"
+
+	"github.com/wippyai/go-lua/domain/type/kind"
+)
 
 // IsUnknown reports whether t is explicitly the unknown type.
 func IsUnknown(t Type) bool {
@@ -99,6 +103,9 @@ func evaluatePredicate(t Type, which predicateKind) bool {
 	if value, known := predicateLeaf(t, which); known {
 		return value
 	}
+	if value, known := loadPredicate(t, which); known {
+		return value
+	}
 
 	work := predicateWork{
 		kind:  which,
@@ -107,7 +114,52 @@ func evaluatePredicate(t Type, which predicateKind) bool {
 	root := work.intern(t)
 	work.expandAll()
 	work.propagate()
+	work.publish()
 	return root.value
+}
+
+// The predicate equations never descend through a recursive or generic
+// declaration: both are terminal for every predicateKind. Nothing else a node
+// reaches can change after construction, so a value the fixpoint settles on is
+// permanent and is published without a closure gate. One query resolves a
+// whole reachable graph, so the whole graph is published, not just the root.
+func (w *predicateWork) publish() {
+	for subject, node := range w.nodes {
+		storePredicate(subject, w.kind, node.value)
+	}
+}
+
+// predicatePublished is the low bit of the published half of the column word.
+const predicatePublished uint32 = 1 << 8
+
+func loadPredicate(t Type, which predicateKind) (bool, bool) {
+	properties := columnProperties(t)
+	if properties == nil {
+		return false, false
+	}
+	raw := atomic.LoadUint32(&properties.predicates)
+	if raw&(predicatePublished<<uint(which)) == 0 {
+		return false, false
+	}
+	return raw&(1<<uint(which)) != 0, true
+}
+
+func storePredicate(t Type, which predicateKind, value bool) {
+	properties := columnProperties(t)
+	if properties == nil {
+		return
+	}
+	published := predicatePublished << uint(which)
+	if value {
+		published |= 1 << uint(which)
+	}
+	for {
+		current := atomic.LoadUint32(&properties.predicates)
+		next := current | published
+		if next == current || atomic.CompareAndSwapUint32(&properties.predicates, current, next) {
+			return
+		}
+	}
 }
 
 // predicateLeaf handles all terminal cases and the malformed wrapper forms

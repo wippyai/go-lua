@@ -14,30 +14,36 @@ type typeProperties struct {
 	containsRecursive     bool
 	containsOpenRecursive bool
 
-	// The construction-time bit above is conservative. The resolved value is
-	// memoized separately because a recursive placeholder can receive its body
-	// after a product containing it has been built.
-	// Points to an immutable openRecursiveMemo. unsafe.Pointer is used instead
-	// of embedding atomic.Pointer because typeProperties is copied by value
-	// while product nodes are constructed; published memo records themselves
+	// The construction-time bits above are conservative for a node that
+	// reaches a recursive placeholder: the placeholder can receive its body
+	// after a product containing it has been built. The resolved answer for
+	// such a node is the derived column, published here once the graph closes.
+	// Points to an immutable typeColumns record. unsafe.Pointer is used
+	// instead of embedding atomic.Pointer because typeProperties is copied by
+	// value while product nodes are constructed; published records themselves
 	// are never mutated.
-	openRecursiveMemo unsafe.Pointer
+	columnsMemo unsafe.Pointer
+
+	// runtimeKinds carries the published may-runtime-kind column. Zero means
+	// unpublished; a published value sets runtimeKindsPublished so the empty
+	// projection of never is a distinguishable answer.
+	runtimeKinds uint32
+
+	// predicates carries the published monotone Boolean predicate column: one
+	// value bit and one published bit per predicateKind.
+	predicates uint32
 }
 
-type openRecursiveMemo struct {
-	contains bool
-}
-
-func (p *typeProperties) loadOpenRecursiveMemo() *openRecursiveMemo {
+func (p *typeProperties) loadColumns() *typeColumns {
 	if p == nil {
 		return nil
 	}
-	return (*openRecursiveMemo)(atomic.LoadPointer(&p.openRecursiveMemo))
+	return (*typeColumns)(atomic.LoadPointer(&p.columnsMemo))
 }
 
-func (p *typeProperties) storeOpenRecursiveMemo(memo *openRecursiveMemo) {
+func (p *typeProperties) storeColumns(columns *typeColumns) {
 	if p != nil {
-		atomic.StorePointer(&p.openRecursiveMemo, unsafe.Pointer(memo))
+		atomic.StorePointer(&p.columnsMemo, unsafe.Pointer(columns))
 	}
 }
 
@@ -59,11 +65,12 @@ func (p *typeProperties) copyStatic() typeProperties {
 	}
 }
 
-func (p *typeProperties) invalidateOpenRecursiveCache() {
+func (p *typeProperties) invalidateColumns() {
 	if p == nil {
 		return
 	}
-	p.storeOpenRecursiveMemo(nil)
+	p.storeColumns(nil)
+	atomic.StoreUint32(&p.runtimeKinds, 0)
 }
 
 func typePropertiesOf(types ...Type) typeProperties {

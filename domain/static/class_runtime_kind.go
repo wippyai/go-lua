@@ -5,8 +5,6 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/domain/runtimekind"
-	"github.com/wippyai/go-lua/domain/type/kind"
-	"github.com/wippyai/go-lua/domain/type/subst"
 	"github.com/wippyai/go-lua/domain/type/typ"
 )
 
@@ -28,7 +26,7 @@ func (s *ClassSet) sealRuntimeKinds() error {
 			if err != nil || decoded == nil {
 				return errors.New("static: concrete Class runtime-kind decode failed")
 			}
-			masks[index] = staticTypeMayRuntimeKinds(decoded, make(map[typ.Type]bool))
+			masks[index] = typ.MayRuntimeKinds(decoded)
 		case ClassOpaque:
 			// An opaque static residual has no proven runtime representation.
 			// All is the only sound closed Value-vocabulary projection.
@@ -65,7 +63,7 @@ func (s *ClassSet) sealRuntimeAtomKinds() error {
 			masks[index] = runtimekind.All
 			continue
 		}
-		masks[index] = staticTypeMayRuntimeKinds(shape, make(map[typ.Type]bool))
+		masks[index] = typ.MayRuntimeKinds(shape)
 	}
 	s.runtimeAtomKinds = masks
 	return nil
@@ -75,107 +73,11 @@ func (s *ClassSet) sealRuntimeAtomKinds() error {
 // closed Lua runtime vocabulary: the families a value of that type may carry
 // at run time. It is the same projection the Class table is sealed from, so a
 // consumer that holds a type graph rather than a sealed Class reads the one
-// answer this domain gives rather than restating the fold over type shapes.
+// answer this domain gives.
 //
-// The projection loses precision - an unmodelled or cyclic form answers the
-// whole vocabulary - but never excludes a family the type admits.
+// The fold itself belongs to the type domain, which owns the graph and derives
+// the projection as a column over it. Static keeps the name its consumers
+// already call and adds no second traversal.
 func MayRuntimeKinds(value typ.Type) runtimekind.Set {
-	return staticTypeMayRuntimeKinds(value, make(map[typ.Type]bool))
-}
-
-// staticTypeMayRuntimeKinds computes a sound may projection during sealing.
-// It deliberately answers All for an unmodelled or cyclic structural form:
-// this projection may lose precision but must never exclude a possible Lua
-// runtime representation.  Its seen set is seal-only; recurrent queries are
-// the table lookup above.
-func staticTypeMayRuntimeKinds(value typ.Type, active map[typ.Type]bool) runtimekind.Set {
-	value = typ.UnwrapStructuralWrappers(typ.NormalizeNil(value))
-	if value == nil {
-		return runtimekind.All
-	}
-	if active[value] {
-		return runtimekind.All
-	}
-
-	switch typed := value.(type) {
-	case *typ.Optional:
-		active[value] = true
-		result := runtimekind.Bit(runtimekind.Nil) | staticTypeMayRuntimeKinds(typed.Inner, active)
-		delete(active, value)
-		return result
-	case *typ.Union:
-		active[value] = true
-		var result runtimekind.Set
-		for _, member := range typed.Members {
-			result |= staticTypeMayRuntimeKinds(member, active)
-		}
-		delete(active, value)
-		return result
-	case *typ.Intersection:
-		active[value] = true
-		result := runtimekind.All
-		for _, member := range typed.Members {
-			// A value inhabiting an intersection inhabits every member, so
-			// intersecting their may sets remains a sound over-approximation.
-			result &= staticTypeMayRuntimeKinds(member, active)
-		}
-		delete(active, value)
-		return result
-	case *typ.Instantiated:
-		expanded := subst.ExpandInstantiated(typed)
-		if expanded == nil || expanded == value {
-			return runtimekind.All
-		}
-		active[value] = true
-		result := staticTypeMayRuntimeKinds(expanded, active)
-		delete(active, value)
-		return result
-	case *typ.Recursive:
-		if typed.Body == nil {
-			return runtimekind.All
-		}
-		active[value] = true
-		result := staticTypeMayRuntimeKinds(typed.Body, active)
-		delete(active, value)
-		return result
-	case *typ.Literal:
-		return runtimeKindForBase(typed.Base())
-	}
-
-	switch value.Kind() {
-	case kind.Never:
-		return 0
-	case kind.Nil:
-		return runtimekind.Bit(runtimekind.Nil)
-	case kind.Boolean:
-		return runtimekind.Bit(runtimekind.Boolean)
-	case kind.Number, kind.Integer:
-		return runtimekind.Bit(runtimekind.Number)
-	case kind.String:
-		return runtimekind.Bit(runtimekind.String)
-	case kind.Function:
-		return runtimekind.Bit(runtimekind.Function)
-	case kind.Array, kind.Map, kind.ReadonlyMap, kind.Record:
-		return runtimekind.Bit(runtimekind.Table)
-	case kind.Any, kind.Unknown:
-		return runtimekind.All
-	default:
-		// Tuple, interface, meta, type parameter, unresolved reference, and
-		// every future type constructor remain conservatively unclassified
-		// until Static gives them a proved Lua runtime representation.
-		return runtimekind.All
-	}
-}
-
-func runtimeKindForBase(base kind.Kind) runtimekind.Set {
-	switch base {
-	case kind.Boolean:
-		return runtimekind.Bit(runtimekind.Boolean)
-	case kind.Number, kind.Integer:
-		return runtimekind.Bit(runtimekind.Number)
-	case kind.String:
-		return runtimekind.Bit(runtimekind.String)
-	default:
-		return runtimekind.All
-	}
+	return typ.MayRuntimeKinds(value)
 }

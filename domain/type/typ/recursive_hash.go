@@ -102,7 +102,7 @@ func (r *Recursive) Hash() uint64 {
 	scratch := getRecursiveHashScratch()
 	h := hashWithVisitedMemo(r, scratch)
 	putRecursiveHashScratch(scratch)
-	if recursiveGraphClosureForRecursive(r) {
+	if columnsOf(r).closed {
 		r.hashMemo.Store(&recursiveHashMemo{hash: h})
 	}
 	return h
