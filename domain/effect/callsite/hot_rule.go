@@ -11,90 +11,75 @@ import (
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 )
 
-// hotOperand is the runtime-only Callsite operand. It retains no Project
-// Application or Program proof; those are consumed while issuing receipt.
-type hotOperand struct {
-	receipt *callsiteReceipt
-	key     calldomain.Key
-	root    effectfactor.Root
-	id      identity.ContentID
+const selectedOperandDomain = "wippy.analysis.effect.callsite.v2\x00"
+
+// callsiteOwnersValid is the common owner fence for the three Call-to-Effect
+// rules. A mounted row is useful here only after both Factors belong to the
+// exact sealed binding and Link.
+func callsiteOwnersValid(binding *engine.SchemaBinding, calls *callowner.HotOwner, effects *effectowner.HotOwner) bool {
+	return binding != nil && binding.Sealed() && calls != nil && calls.MatchesBinding(binding) && calls.Algebra() != nil && calls.Algebra().Valid() &&
+		effects != nil && effects.MatchesBinding(binding) && effects.Algebra() != nil && effects.Algebra().Valid() &&
+		calls.Algebra().LinkOwner().Matches(effects.Algebra().LinkOwner())
 }
 
-func newHotOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra, root effectfactor.Root, key calldomain.Key) (hotOperand, bool) {
-	if effects == nil || !effects.Valid() || calls == nil || !calls.Valid() || !effects.LinkOwner().Matches(calls.LinkOwner()) || !calls.OwnsKey(key) || !effects.Admit(root, effects.Bottom()) {
-		return hotOperand{}, false
+// mountedCallRows joins Effect's canonical mounted operand to Call's exact
+// mounted row, application key, and Effect root. No joined row is retained:
+// every caller receives only the existing owner-issued values.
+func mountedCallRows(binding *engine.SchemaBinding, calls *callowner.HotOwner, effects *effectowner.HotOwner, mounted effectfactor.MountedCall) (calldomain.MountedCall, calldomain.Key, effectfactor.Root, bool) {
+	if !callsiteOwnersValid(binding, calls, effects) {
+		return calldomain.MountedCall{}, calldomain.Key{}, effectfactor.Root{}, false
+	}
+	callAlgebra, effectAlgebra := calls.Algebra(), effects.Algebra()
+	application, module, occurrence, effectIdentityOK := effectAlgebra.MountedCallIdentity(mounted)
+	ordinal, ordinalOK := effectAlgebra.MountedCallOrdinalForOccurrence(module, occurrence)
+	canonicalEffect, canonicalEffectOK := effectAlgebra.MountedCallAt(ordinal)
+	callMounted, callMountedOK := callAlgebra.MountedCallForOccurrence(module, occurrence)
+	canonicalCall, canonicalCallOK := callAlgebra.MountedCallForApplication(application)
+	callApplication, callOccurrence, callModule, _, _, callIdentityOK := callAlgebra.MountedCallIdentity(callMounted)
+	key, keyOK := callAlgebra.KeyForApplicationID(application)
+	keyApplication, keyApplicationOK := key.ApplicationID()
+	root, rootOK := effectAlgebra.RootForMountedCall(mounted)
+	rootID, rootIDOK := effectAlgebra.RootID(root)
+	if !effectIdentityOK || !ordinalOK || ordinal < 0 || !canonicalEffectOK || canonicalEffect != mounted ||
+		!callMountedOK || !canonicalCallOK || canonicalCall != callMounted || !callIdentityOK ||
+		callApplication != application || callModule != module || callOccurrence != occurrence || !callAlgebra.OwnsMountedModule(module) ||
+		!keyOK || !keyApplicationOK || keyApplication != application || !callAlgebra.OwnsKey(key) ||
+		!rootOK || !rootIDOK || !rootID.Available() || !effectAlgebra.Admit(root, effectAlgebra.Bottom()) {
+		return calldomain.MountedCall{}, calldomain.Key{}, effectfactor.Root{}, false
+	}
+	return callMounted, key, root, true
+}
+
+func mountedOperandID(domain string, calls *calldomain.Algebra, effects *effectfactor.Algebra, key calldomain.Key, root effectfactor.Root) (identity.ContentID, bool) {
+	if domain == "" || calls == nil || effects == nil || !calls.Valid() || !effects.Valid() || !calls.LinkOwner().Matches(effects.LinkOwner()) || !calls.OwnsKey(key) || !effects.Admit(root, effects.Bottom()) {
+		return identity.ContentID{}, false
 	}
 	callID, callOK := key.ContentID()
 	rootID, rootOK := effects.RootID(root)
 	if !callOK || !rootOK || !callID.Available() || !rootID.Available() {
-		return hotOperand{}, false
+		return identity.ContentID{}, false
 	}
-	const prefix = "wippy.analysis.effect.callsite.v2\x00"
-	var payload [len(prefix) + 2*sha256.Size]byte
-	copy(payload[:], prefix)
-	copy(payload[len(prefix):], callID[:])
-	copy(payload[len(prefix)+sha256.Size:], rootID[:])
-	id := identity.ContentID(sha256.Sum256(payload[:]))
-	return hotOperand{key: key, root: root, id: id}, id.Available()
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(domain))
+	_, _ = hash.Write(callID[:])
+	_, _ = hash.Write(rootID[:])
+	var id identity.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id, id.Available()
 }
 
-// callsiteTargetReceipt is the seal-time meaning of one Call seed role for a
-// particular mounted call. Selected rows retain exact beta receipts; opaque
-// rows retain only their already-issued unknown atom. Invalid Target rows are
-// retained explicitly so they fail only when selected, matching the semantic
-// Rule rather than rejecting an unrelated application receipt.
-type callsiteTargetReceipt struct {
-	bindings     []effectfactor.AtomBinding
-	publications []effectfactor.PublicationAtomBinding
-	unknown      effectfactor.Atom
-	unknownKnown bool
-	applicable   bool
-	valid        bool
-}
-
-// callsiteReceipt is the immutable hot operand proof for Selected or Opaque.
-// The target map is built once from Call's stable seed roles. Hot transfer
-// never opens Boundary, Target, Pack, Project, Program, or Flow.
-type callsiteReceipt struct {
-	owner             *HotRule
-	binding           *engine.SchemaBinding
-	key               calldomain.Key
-	root              effectfactor.Root
-	targets           map[calldomain.TargetRoleID]callsiteTargetReceipt
-	opaqueAlternative effectfactor.Atom
-	id                [32]byte
-	opaque            bool
-	sealed            bool
-}
-
-func (receipt *callsiteReceipt) valid() bool {
-	return receipt != nil && receipt.sealed && receipt.owner != nil && receipt.binding != nil && receipt.owner.binding == receipt.binding && receipt.binding.Sealed() &&
-		receipt.owner.calls != nil && receipt.owner.calls.Algebra() != nil && receipt.owner.effects != nil && receipt.owner.effects.Algebra() != nil &&
-		receipt.owner.calls.Algebra().LinkOwner().Matches(receipt.owner.effects.Algebra().LinkOwner()) && receipt.key.Valid() &&
-		receipt.owner.effects.Algebra().Admit(receipt.root, receipt.owner.effects.Algebra().Bottom()) && receipt.targets != nil && receipt.id != [32]byte{}
-}
-
-func (rule *HotRule) operandContent(value hotOperand) (hotOperand, [32]byte, bool) {
-	receipt := value.receipt
-	if rule == nil || !receipt.valid() || receipt.owner != rule || [32]byte(value.id) != receipt.id || value.key != receipt.key || value.root != receipt.root {
-		return hotOperand{}, [32]byte{}, false
-	}
-	return value, receipt.id, true
-}
-
-// HotRule is the receipt-native Selected or Opaque Call-to-Effect Rule. The
-// exact read capability and pending implementation remain owned by the
-// package; callers may only issue and attach opaque operands.
+// HotRule is the Selected or Opaque Call-to-Effect Rule binder. Its operand
+// is Effect's canonical mounted row. Reduction joins that row to Call's
+// TargetRole rows and Effect's formal/publication rows without a second
+// mounted-call directory or target map.
 type HotRule struct {
-	implementation *effectowner.RuleImplementation[hotOperand]
+	implementation *effectowner.RuleImplementation[effectfactor.MountedCall]
 	binding        *engine.SchemaBinding
-	fragment       *schemaFragment[hotOperand]
+	fragment       *schemaFragment
 	calls          *callowner.HotOwner
 	effects        *effectowner.HotOwner
 	read           engine.Read[engine.OrderedCells[calldomain.Value]]
 	opaque         bool
-	receiptsSealed bool
-	receipts       []hotOperand
 }
 
 func BindSelectedHot(binding *engine.SchemaBinding, fragment *SelectedSchemaFragment, calls *callowner.HotOwner, effects *effectowner.HotOwner) (*HotRule, bool) {
@@ -111,19 +96,20 @@ func BindOpaqueHot(binding *engine.SchemaBinding, fragment *OpaqueSchemaFragment
 	return bindHot(binding, fragment.core, calls, effects, true)
 }
 
-func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand], calls *callowner.HotOwner, effects *effectowner.HotOwner, opaque bool) (*HotRule, bool) {
+func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment, calls *callowner.HotOwner, effects *effectowner.HotOwner, opaque bool) (*HotRule, bool) {
 	if binding == nil || fragment == nil || fragment.slot == nil || calls == nil || !calls.MatchesBinding(binding) || calls.Algebra() == nil || effects == nil || !effects.MatchesBinding(binding) || effects.Algebra() == nil ||
 		!calls.Algebra().LinkOwner().Matches(effects.Algebra().LinkOwner()) || !fragment.semantic.Available() || !fragment.evidence.Available() {
 		return nil, false
 	}
 	hot := &HotRule{binding: binding, fragment: fragment, calls: calls, effects: effects, opaque: opaque}
 	var runtimeRead engine.Read[engine.OrderedCells[calldomain.Value]]
-	implementation, read, ok := effectowner.BindExactReadRule(effects, fragment.slot, fragment.callRead, calls.FactorRef(), fragment.write, engine.HotRuleSpec[effectfactor.Value, hotOperand]{
+	implementation, read, ok := effectowner.BindExactReadRule(effects, fragment.slot, fragment.callRead, calls.FactorRef(), fragment.write, engine.HotRuleSpec[effectfactor.Value, effectfactor.MountedCall]{
 		OperandContent: hot.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hot.check),
-		Transfer: func(access engine.Access[effectfactor.Value, hotOperand]) bool {
-			value, operandOK := engine.Operand(access)
-			if !operandOK || !hot.accepts(value) {
+		Transfer: func(access engine.Access[effectfactor.Value, effectfactor.MountedCall]) bool {
+			mounted, operandOK := engine.Operand(access)
+			_, key, root, siteOK := mountedCallRows(hot.binding, hot.calls, hot.effects, mounted)
+			if !operandOK || !siteOK {
 				return false
 			}
 			return engine.Product(access, func(row engine.Row) bool {
@@ -138,7 +124,7 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand]
 				if !present {
 					return engine.NoCandidate(access, row)
 				}
-				result, resultOK := hot.reduce(value.receipt, fact)
+				result, resultOK := hot.reduce(mounted, key, root, fact)
 				if !resultOK {
 					return false
 				}
@@ -148,12 +134,14 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand]
 				return engine.StageValue(access, row, result)
 			})
 		},
-	}, func(operand hotOperand) (uint64, bool) {
-		index, ok := calls.Algebra().KeyIndex(operand.key)
-		return uint64(index), ok && index >= 0
-	}, func(operand hotOperand) (uint64, bool) {
-		index, ok := effects.Algebra().RootIndex(operand.root)
-		return uint64(index), ok && index >= 0
+	}, func(mounted effectfactor.MountedCall) (uint64, bool) {
+		_, key, _, ok := mountedCallRows(binding, calls, effects, mounted)
+		index, indexOK := calls.Algebra().KeyIndex(key)
+		return uint64(index), ok && indexOK && index >= 0
+	}, func(mounted effectfactor.MountedCall) (uint64, bool) {
+		_, _, root, ok := mountedCallRows(binding, calls, effects, mounted)
+		index, indexOK := effects.Algebra().RootIndex(root)
+		return uint64(index), ok && indexOK && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
@@ -166,80 +154,52 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment[hotOperand]
 	return hot, true
 }
 
-func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (hotOperand, bool) {
-	return rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
+func (rule *HotRule) valid() bool {
+	return rule != nil && rule.fragment != nil && rule.fragment.slot != nil && rule.implementation != nil &&
+		callsiteOwnersValid(rule.binding, rule.calls, rule.effects)
 }
 
-// Receipt consumes Project's exact mounted-call proof and issues all Target
-// and beta proofs once after the shared SchemaBinding has sealed.
-func (rule *HotRule) Receipt(mounted effectfactor.MountedCall) (hotOperand, bool) {
-	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.calls == nil || rule.effects == nil {
-		return hotOperand{}, false
+func (rule *HotRule) mountedForOccurrence(mount, occurrence identity.ContentID) (effectfactor.MountedCall, bool) {
+	if !rule.valid() || !mount.Available() || !occurrence.Available() {
+		return effectfactor.MountedCall{}, false
 	}
-	calls, effects := rule.calls.Algebra(), rule.effects.Algebra()
-	applicationID, _, _, mountedOK := effects.MountedCallIdentity(mounted)
-	key, keyOK := calls.KeyForApplicationID(applicationID)
-	root, rootOK := effects.RootForMountedCall(mounted)
-	base, baseOK := newHotOperand(effects, calls, root, key)
-	if !mountedOK || !keyOK || !rootOK || !baseOK {
-		return hotOperand{}, false
+	ordinal, ordinalOK := rule.effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
+	mounted, mountedOK := rule.effects.Algebra().MountedCallAt(ordinal)
+	_, _, _, rowsOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	application, module, callOccurrence, identityOK := rule.effects.Algebra().MountedCallIdentity(mounted)
+	return mounted, ordinalOK && ordinal >= 0 && mountedOK && rowsOK && identityOK && application.Available() && module == mount && callOccurrence == occurrence
+}
+
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (effectfactor.MountedCall, bool) {
+	return rule.mountedForOccurrence(coords.Mount, coords.Occurrence)
+}
+
+func (rule *HotRule) operandContent(mounted effectfactor.MountedCall) (effectfactor.MountedCall, [32]byte, bool) {
+	if rule == nil {
+		return effectfactor.MountedCall{}, [32]byte{}, false
 	}
-	receipt := &callsiteReceipt{
-		owner: rule, binding: rule.binding, key: base.key, root: base.root,
-		targets: make(map[calldomain.TargetRoleID]callsiteTargetReceipt), id: [32]byte(base.id), opaque: rule.opaque,
-	}
-	seeds := calls.Seeds()
-	for index := 0; index < seeds.Count(); index++ {
-		target, targetOK := seeds.At(index)
-		role, roleOK := target.RoleID()
-		if !targetOK || !roleOK || role.Kind() != calldomain.TargetRoleSeed {
-			return hotOperand{}, false
-		}
-		operation, operationOK := target.Operation()
-		row := callsiteTargetReceipt{applicable: operationOK}
-		if operationOK && rule.opaque {
-			part, partOK := effects.SelectedMountedCallOpaque(base.root, mounted, operation)
-			row.valid = partOK
-			if partOK {
-				row.unknown, row.unknownKnown = effects.AtomAt(part, 0)
-				if _, extra := effects.AtomAt(part, 1); extra {
-					return hotOperand{}, false
-				}
-			}
-		} else if operationOK {
-			row.bindings, row.valid = effects.SelectedCallEffectBindings(base.root, mounted, operation)
-			if row.valid {
-				row.publications, row.valid = effects.SelectedCallPublicationAtomBindings(base.root, mounted, operation)
-			}
-		}
-		if _, duplicate := receipt.targets[role]; duplicate {
-			return hotOperand{}, false
-		}
-		receipt.targets[role] = row
+	_, key, root, rowsOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	if !rowsOK {
+		return effectfactor.MountedCall{}, [32]byte{}, false
 	}
 	if rule.opaque {
-		receipt.opaqueAlternative, rootOK = effects.MountedCallOpaqueUnknown(base.root, calls, mounted, calls.Top())
-		if !rootOK {
-			return hotOperand{}, false
+		if _, ok := rule.effects.Algebra().MountedCallOpaqueUnknown(root, rule.calls.Algebra(), mounted, rule.calls.Algebra().Top()); !ok {
+			return effectfactor.MountedCall{}, [32]byte{}, false
 		}
 	}
-	receipt.sealed = true
-	if !receipt.valid() {
-		return hotOperand{}, false
+	id, idOK := mountedOperandID(selectedOperandDomain, rule.calls.Algebra(), rule.effects.Algebra(), key, root)
+	if !idOK {
+		return effectfactor.MountedCall{}, [32]byte{}, false
 	}
-	base.receipt = receipt
-	return base, true
+	return mounted, [32]byte(id), true
 }
 
-func (rule *HotRule) accepts(value hotOperand) bool {
-	receipt := value.receipt
-	return rule != nil && rule.binding != nil && rule.calls != nil && rule.effects != nil && receipt.valid() && receipt.binding == rule.binding &&
-		receipt.owner == rule && receipt.opaque == rule.opaque &&
-		value.key == receipt.key && value.root == receipt.root && [32]byte(value.id) == receipt.id
-}
-
-func (rule *HotRule) reduce(receipt *callsiteReceipt, value calldomain.Value) (effectfactor.Value, bool) {
-	if rule == nil || !receipt.valid() || receipt.owner != rule || receipt.opaque != rule.opaque || !rule.calls.Algebra().Admits(receipt.key, value) {
+func (rule *HotRule) reduce(mounted effectfactor.MountedCall, key calldomain.Key, root effectfactor.Root, value calldomain.Value) (effectfactor.Value, bool) {
+	if !rule.valid() || !rule.calls.Algebra().Admits(key, value) {
+		return effectfactor.Value{}, false
+	}
+	_, canonicalKey, canonicalRoot, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	if !siteOK || canonicalKey != key || canonicalRoot != root {
 		return effectfactor.Value{}, false
 	}
 	if value.IsTop() {
@@ -249,29 +209,40 @@ func (rule *HotRule) reduce(receipt *callsiteReceipt, value calldomain.Value) (e
 	for index := 0; index < value.KnownTargetCount(); index++ {
 		target, targetOK := value.KnownTargetAt(index)
 		role, roleOK := target.RoleID()
-		if !targetOK || !roleOK {
+		canonicalRole, canonicalRoleOK := rule.calls.Algebra().TargetForRole(role)
+		canonicalTarget, canonicalTargetOK := canonicalRole.Target()
+		if !targetOK || !roleOK || !canonicalRoleOK || !canonicalTargetOK || !canonicalTarget.Same(target) {
 			return effectfactor.Value{}, false
 		}
 		if role.Kind() == calldomain.TargetRoleBody {
 			continue
 		}
-		row, found := receipt.targets[role]
-		if !found {
+		if role.Kind() != calldomain.TargetRoleSeed {
 			return effectfactor.Value{}, false
 		}
-		if !row.applicable {
+		operation, applicable := canonicalTarget.Operation()
+		if !applicable {
 			continue
 		}
-		if !row.valid {
-			return effectfactor.Value{}, false
-		}
 		if rule.opaque {
-			if row.unknownKnown {
-				atoms = append(atoms, row.unknown)
+			part, partOK := rule.effects.Algebra().SelectedMountedCallOpaque(root, mounted, operation)
+			if !partOK {
+				return effectfactor.Value{}, false
+			}
+			unknown, known := rule.effects.Algebra().AtomAt(part, 0)
+			if _, extra := rule.effects.Algebra().AtomAt(part, 1); extra {
+				return effectfactor.Value{}, false
+			}
+			if known {
+				atoms = append(atoms, unknown)
 			}
 			continue
 		}
-		for _, binding := range row.bindings {
+		bindings, bindingsOK := rule.effects.Algebra().SelectedCallEffectBindings(root, mounted, operation)
+		if !bindingsOK {
+			return effectfactor.Value{}, false
+		}
+		for _, binding := range bindings {
 			atom, atomOK := binding.Atom()
 			if !atomOK {
 				return effectfactor.Value{}, false
@@ -280,19 +251,25 @@ func (rule *HotRule) reduce(receipt *callsiteReceipt, value calldomain.Value) (e
 		}
 	}
 	if rule.opaque && value.HasOpaqueAlternative() {
-		atoms = append(atoms, receipt.opaqueAlternative)
+		alternative, alternativeOK := rule.effects.Algebra().MountedCallOpaqueUnknown(root, rule.calls.Algebra(), mounted, value)
+		if !alternativeOK {
+			return effectfactor.Value{}, false
+		}
+		atoms = append(atoms, alternative)
 	}
 	return rule.effects.Algebra().FromAtoms(atoms)
 }
 
-func (rule *HotRule) check(derivation engine.RuleDerivation[effectfactor.Value, hotOperand]) (engine.RuleEvidence, bool) {
+func (rule *HotRule) check(derivation engine.RuleDerivation[effectfactor.Value, effectfactor.MountedCall]) (engine.RuleEvidence, bool) {
 	if rule == nil || rule.fragment == nil || derivation.Rule() != rule.fragment.semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
 		return engine.RuleEvidence{}, false
 	}
-	value, operandOK := derivation.Operand()
+	mounted, operandOK := derivation.Operand()
+	_, key, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	_, digest, contentOK := rule.operandContent(mounted)
 	input, inputOK := derivation.InputAt(0)
-	if !operandOK || !rule.accepts(value) || !derivation.OperandContentMatches(value.receipt.id) || !inputOK || input.Guard().Empty() ||
-		!callowner.ReadMatches(rule.calls, derivation, rule.read, value.receipt.key) {
+	if !operandOK || !siteOK || !contentOK || !derivation.OperandContentMatches(digest) || !inputOK || input.Guard().Empty() ||
+		!callowner.ReadMatches(rule.calls, derivation, rule.read, key) {
 		return engine.RuleEvidence{}, false
 	}
 	for index := 0; index < derivation.DispositionCount(); index++ {
@@ -317,7 +294,7 @@ func (rule *HotRule) check(derivation engine.RuleDerivation[effectfactor.Value, 
 			}
 			continue
 		}
-		expected, expectedOK := rule.reduce(value.receipt, fact)
+		expected, expectedOK := rule.reduce(mounted, key, root, fact)
 		if !expectedOK {
 			return engine.RuleEvidence{}, false
 		}
@@ -330,14 +307,14 @@ func (rule *HotRule) check(derivation engine.RuleDerivation[effectfactor.Value, 
 		actual, actualOK := disposition.Value()
 		target, targetOK := disposition.TargetAt(0)
 		if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || !actualOK || !targetOK ||
-			!rule.effects.Algebra().Equal(actual, expected) || !rule.effects.TargetMatches(target, value.receipt.root) {
+			!rule.effects.Algebra().Equal(actual, expected) || !rule.effects.TargetMatches(target, root) {
 			return engine.RuleEvidence{}, false
 		}
 	}
 	return derivation.Accept()
 }
 
-func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[hotOperand], bool) {
+func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[effectfactor.MountedCall], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
@@ -348,7 +325,7 @@ func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[hotOperan
 // SealProgramRule is this typed rule's schema registration. It is the only
 // place the private owner issuer is converted to the engine primitive.
 func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
+	if rule == nil || !rule.valid() {
 		return engine.ProgramRule{}, false
 	}
 	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)

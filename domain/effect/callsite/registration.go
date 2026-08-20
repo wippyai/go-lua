@@ -59,7 +59,8 @@ func BindSelected[A ruleAuthorities](binding *engine.SchemaBinding, context rule
 }
 
 func FinalizeSelected[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	return context.Rule.SealOccurrenceReceipts()
+	return context.Rule != nil && !context.Rule.opaque && context.Rule.valid() &&
+		context.Rule.calls == context.Authorities.CallAuthority() && context.Rule.effects == context.Authorities.EffectAuthority()
 }
 
 // OpaqueEntry is this package's effect-opaque rule declaration.
@@ -94,7 +95,8 @@ func BindOpaque[A ruleAuthorities](binding *engine.SchemaBinding, context rule.B
 }
 
 func FinalizeOpaque[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	return context.Rule.SealOccurrenceReceipts()
+	return context.Rule != nil && context.Rule.opaque && context.Rule.valid() &&
+		context.Rule.calls == context.Authorities.CallAuthority() && context.Rule.effects == context.Authorities.EffectAuthority()
 }
 
 // BodyEntry is this package's effect-body rule declaration.
@@ -129,7 +131,8 @@ func BindBody[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Bin
 }
 
 func FinalizeBody[A ruleAuthorities](context rule.Finalization[A, *BodyHotRule]) bool {
-	return context.Rule.SealOccurrenceReceipts()
+	return context.Rule != nil && context.Rule.valid() &&
+		context.Rule.calls == context.Authorities.CallAuthority() && context.Rule.effects == context.Authorities.EffectAuthority()
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

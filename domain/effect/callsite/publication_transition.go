@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/snapshot"
+	calldomain "github.com/wippyai/go-lua/domain/call"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	"github.com/wippyai/go-lua/domain/pack"
 )
@@ -69,8 +70,8 @@ type PublicationTransitionProof struct {
 	state     *engine.State
 }
 
-// MountedPublicationCandidates joins a selected HotRule's sealed occurrence
-// receipt, its graph-owned CallEffect stage, and each explicitly authored
+// MountedPublicationCandidates joins a selected HotRule's canonical mounted
+// Call row, its graph-owned CallEffect stage, and each explicitly authored
 // PublicationAtomBinding. One exact Effect observation is declared for the
 // whole occurrence, so multiple candidates never multiply solver demand.
 // Opaque and generic effect routes issue no candidate.
@@ -81,13 +82,13 @@ func (rule *HotRule) MountedPublicationCandidates(committed *engine.CommittedPro
 	if rule == nil || rule.opaque || committed == nil || effectQuery == nil || !mount.Available() || !occurrence.Available() {
 		return PublicationTransitionCandidates{}, false
 	}
-	operand, operandOK := rule.receiptForOccurrence(mount, occurrence)
+	mounted, mountedOK := rule.mountedForOccurrence(mount, occurrence)
 	stage, stageOK := rule.MountedSelectedCallEffectStage(committed, mount, occurrence)
 	capability, capabilityOK := rule.implementation.MountedCapability()
-	if !operandOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
+	if !mountedOK || !stageOK || !stage.Available() || stage.Kind() != rows.ArtifactRuleStageIssued5 || stage.MountID() != mount || stage.OccurrenceID() != occurrence || !capabilityOK || !stage.HasMember() {
 		return PublicationTransitionCandidates{}, false
 	}
-	rows, rowsOK := rule.publicationTransitionRows(operand, mount, occurrence)
+	rows, rowsOK := rule.publicationTransitionRows(mounted, mount, occurrence)
 	if !rowsOK {
 		return PublicationTransitionCandidates{}, false
 	}
@@ -103,18 +104,37 @@ func (rule *HotRule) MountedPublicationCandidates(committed *engine.CommittedPro
 	return PublicationTransitionCandidates{set: set}, set.valid()
 }
 
-func (rule *HotRule) publicationTransitionRows(operand hotOperand, mount, occurrence identity.ContentID) ([]publicationTransitionRow, bool) {
-	if rule == nil || rule.opaque || !rule.accepts(operand) || operand.receipt == nil || operand.receipt.owner != rule || rule.effects == nil || rule.effects.Algebra() == nil {
+func (rule *HotRule) publicationTransitionRows(mounted effectfactor.MountedCall, mount, occurrence identity.ContentID) ([]publicationTransitionRow, bool) {
+	if rule == nil || rule.opaque || !rule.valid() {
 		return nil, false
 	}
 	effects := rule.effects.Algebra()
+	calls := rule.calls.Algebra()
+	_, _, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	_, mountedMount, mountedOccurrence, identityOK := effects.MountedCallIdentity(mounted)
+	if !siteOK || !identityOK || mountedMount != mount || mountedOccurrence != occurrence {
+		return nil, false
+	}
 	rows := make([]publicationTransitionRow, 0)
 	seen := make(map[identity.ContentID]struct{})
-	for _, target := range operand.receipt.targets {
-		if !target.applicable || !target.valid {
+	seeds := calls.Seeds()
+	for index := 0; index < seeds.Count(); index++ {
+		target, targetOK := seeds.At(index)
+		role, roleOK := target.RoleID()
+		canonicalRole, canonicalRoleOK := calls.TargetForRole(role)
+		canonicalTarget, canonicalTargetOK := canonicalRole.Target()
+		if !targetOK || !roleOK || role.Kind() != calldomain.TargetRoleSeed || !canonicalRoleOK || !canonicalTargetOK || !canonicalTarget.Same(target) {
+			return nil, false
+		}
+		operation, applicable := canonicalTarget.Operation()
+		if !applicable {
 			continue
 		}
-		for _, publication := range target.publications {
+		publications, publicationsOK := effects.SelectedCallPublicationAtomBindings(root, mounted, operation)
+		if !publicationsOK {
+			continue
+		}
+		for _, publication := range publications {
 			mounted, mountedOK := publication.MountedCall()
 			_, publicationMount, publicationOccurrence, identityOK := effects.MountedCallIdentity(mounted)
 			publicationOccurrenceID, occurrenceOK := publication.OccurrenceID()
@@ -162,7 +182,10 @@ func publicationTransitionID(domain string, ids ...identity.ContentID) (identity
 }
 
 func (set *publicationTransitionSet) valid() bool {
-	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || set.rule.binding == nil || !set.rule.binding.Sealed() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Kind() != rows.ArtifactRuleStageIssued5 || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
+	if set == nil || !set.sealed || set.rule == nil || set.rule.opaque || !set.rule.valid() || !set.mount.Available() || !set.occurrence.Available() || !set.stage.Available() || set.stage.Kind() != rows.ArtifactRuleStageIssued5 || set.stage.MountID() != set.mount || set.stage.OccurrenceID() != set.occurrence {
+		return false
+	}
+	if _, mountedOK := set.rule.mountedForOccurrence(set.mount, set.occurrence); !mountedOK {
 		return false
 	}
 	if len(set.rows) == 0 {
@@ -206,7 +229,8 @@ func publicationTransitionMatches(set *publicationTransitionSet, publication eff
 	}
 	mounted, mountedOK := publication.MountedCall()
 	_, mount, occurrence, identityOK := set.rule.effects.Algebra().MountedCallIdentity(mounted)
-	return mountedOK && identityOK && mount == set.mount && occurrence == set.occurrence
+	_, _, _, rowsOK := mountedCallRows(set.rule.binding, set.rule.calls, set.rule.effects, mounted)
+	return mountedOK && identityOK && rowsOK && mount == set.mount && occurrence == set.occurrence
 }
 
 func (candidates PublicationTransitionCandidates) Available() bool {

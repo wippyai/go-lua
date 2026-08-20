@@ -1,7 +1,6 @@
 package callsite
 
 import (
-	"crypto/sha256"
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -12,76 +11,21 @@ import (
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 )
 
-// hotBodyOperand is the runtime-only body-summary operand. Mounted Project
-// and Program proofs are fully consumed while issuing its receipt.
-type hotBodyOperand struct {
-	receipt *bodyCallReceipt
-	key     calldomain.Key
-	root    effectfactor.Root
-	id      identity.ContentID
-}
+const bodyOperandDomain = "wippy.analysis.effect.body-call.v1\x00"
 
-func newHotBodyOperand(effects *effectfactor.Algebra, calls *calldomain.Algebra, root effectfactor.Root, key calldomain.Key) (hotBodyOperand, bool) {
-	if effects == nil || !effects.Valid() || calls == nil || !calls.Valid() || !effects.LinkOwner().Matches(calls.LinkOwner()) || !calls.OwnsKey(key) || !effects.Admit(root, effects.Bottom()) {
-		return hotBodyOperand{}, false
-	}
-	callID, callOK := key.ContentID()
-	rootID, rootOK := effects.RootID(root)
-	if !callOK || !rootOK || !callID.Available() || !rootID.Available() {
-		return hotBodyOperand{}, false
-	}
-	const prefix = "wippy.analysis.effect.body-call.v1\x00"
-	var payload [len(prefix) + 2*sha256.Size]byte
-	copy(payload[:], prefix)
-	copy(payload[len(prefix):], callID[:])
-	copy(payload[len(prefix)+sha256.Size:], rootID[:])
-	id := identity.ContentID(sha256.Sum256(payload[:]))
-	return hotBodyOperand{key: key, root: root, id: id}, id.Available()
-}
-
-// bodyCallReceipt is one immutable mounted caller operand. Body routes are
-// deliberately absent: BodyHotRule seals the sole cross-Factor route table
-// once, rather than copying every possible callee into every application.
-type bodyCallReceipt struct {
-	owner   *BodyHotRule
-	binding *engine.SchemaBinding
-	key     calldomain.Key
-	root    effectfactor.Root
-	id      [32]byte
-	sealed  bool
-}
-
-func (receipt *bodyCallReceipt) valid() bool {
-	return receipt != nil && receipt.sealed && receipt.owner != nil && receipt.binding != nil && receipt.owner.binding == receipt.binding && receipt.binding.Sealed() &&
-		receipt.owner.calls != nil && receipt.owner.calls.Algebra() != nil && receipt.owner.effects != nil && receipt.owner.effects.Algebra() != nil &&
-		receipt.owner.calls.Algebra().LinkOwner().Matches(receipt.owner.effects.Algebra().LinkOwner()) && receipt.key.Valid() &&
-		receipt.owner.effects.Algebra().Admit(receipt.root, receipt.owner.effects.Algebra().Bottom()) && receipt.id != [32]byte{}
-}
-
-func (rule *BodyHotRule) operandContent(value hotBodyOperand) (hotBodyOperand, [32]byte, bool) {
-	receipt := value.receipt
-	if rule == nil || !receipt.valid() || receipt.owner != rule || [32]byte(value.id) != receipt.id || value.key != receipt.key || value.root != receipt.root {
-		return hotBodyOperand{}, [32]byte{}, false
-	}
-	return value, receipt.id, true
-}
-
-// BodyHotRule is the receipt-native interprocedural Effect transport. The
-// route table is the one sealed join of Call body roles to Effect roots. Hot
-// selection and transfer use only that table, exact Factor receipts, and the
-// already-admitted Call value; they never reopen Project, Program, or Flow.
+// BodyHotRule is the interprocedural Effect reducer. Its operand is Effect's
+// canonical mounted row; the one domain-owned body-role route table remains
+// the cross-Factor join used by selection and transfer.
 type BodyHotRule struct {
-	implementation      *effectowner.RuleImplementation[hotBodyOperand]
-	binding             *engine.SchemaBinding
-	fragment            *BodySchemaFragment
-	calls               *callowner.HotOwner
-	effects             *effectowner.HotOwner
-	callRead            engine.Read[engine.OrderedCells[calldomain.Value]]
-	summary             engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
-	routes              map[calldomain.TargetRoleID]uint32
-	all                 []bodyRoute
-	receiptsSealed      bool
-	receipts            []hotBodyOperand
+	implementation *effectowner.RuleImplementation[effectfactor.MountedCall]
+	binding        *engine.SchemaBinding
+	fragment       *BodySchemaFragment
+	calls          *callowner.HotOwner
+	effects        *effectowner.HotOwner
+	callRead       engine.Read[engine.OrderedCells[calldomain.Value]]
+	summary        engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
+	routes         map[calldomain.TargetRoleID]uint32
+	all            []bodyRoute
 }
 
 // BindBodyHot seals the sole body-role route table and binds the exact Call
@@ -127,27 +71,29 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 
 	var runtimeCall engine.Read[engine.OrderedCells[calldomain.Value]]
 	var runtimeSummary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
-	implementation, bound := effectowner.BindSelectedRuleDirect(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, hotBodyOperand]{
+	implementation, bound := effectowner.BindSelectedRuleDirect(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, effectfactor.MountedCall]{
 		OperandContent: hot.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.core.evidence, hot.check),
-		Transfer: func(access engine.Access[effectfactor.Value, hotBodyOperand]) bool {
+		Transfer: func(access engine.Access[effectfactor.Value, effectfactor.MountedCall]) bool {
 			return hot.transfer(access, runtimeCall, runtimeSummary)
 		},
-	}, func(operand hotBodyOperand) (uint64, bool) {
-		index, ok := effects.Algebra().RootIndex(operand.root)
-		return uint64(index), ok && index >= 0
+	}, func(mounted effectfactor.MountedCall) (uint64, bool) {
+		_, _, root, ok := mountedCallRows(binding, calls, effects, mounted)
+		index, indexOK := effects.Algebra().RootIndex(root)
+		return uint64(index), ok && indexOK && index >= 0
 	})
 	if !bound {
 		return nil, false
 	}
-	callRead, callOK := effectowner.AddSelectedRuleDirectExactRead(implementation, fragment.core.callRead, calls.FactorRef(), func(operand hotBodyOperand) (uint64, bool) {
-		index, ok := calls.Algebra().KeyIndex(operand.key)
-		return uint64(index), ok && index >= 0
+	callRead, callOK := effectowner.AddSelectedRuleDirectExactRead(implementation, fragment.core.callRead, calls.FactorRef(), func(mounted effectfactor.MountedCall) (uint64, bool) {
+		_, key, _, ok := mountedCallRows(binding, calls, effects, mounted)
+		index, indexOK := calls.Algebra().KeyIndex(key)
+		return uint64(index), ok && indexOK && index >= 0
 	})
 	if !callOK {
 		return nil, false
 	}
-	summary, summaryOK := effectowner.AddSelectedRuleDirectOperandRead[hotBodyOperand, effectfactor.Value, uint64](implementation, fragment.effectRead, effects.FactorRef(), hot.locate)
+	summary, summaryOK := effectowner.AddSelectedRuleDirectOperandRead[effectfactor.MountedCall, effectfactor.Value, uint64](implementation, fragment.effectRead, effects.FactorRef(), hot.locate)
 	if !summaryOK {
 		return nil, false
 	}
@@ -160,43 +106,47 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 	return hot, true
 }
 
-func (rule *BodyHotRule) resolveOperand(coords engine.OperandCoords) (hotBodyOperand, bool) {
-	return rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
+func (rule *BodyHotRule) valid() bool {
+	return rule != nil && rule.fragment != nil && rule.fragment.core != nil && rule.fragment.core.slot != nil && rule.implementation != nil &&
+		callsiteOwnersValid(rule.binding, rule.calls, rule.effects)
 }
 
-// Receipt consumes one exact mounted caller proof after the shared binding
-// has sealed. The returned operand contains no Project or Program capability.
-func (rule *BodyHotRule) Receipt(mounted effectfactor.MountedCall) (hotBodyOperand, bool) {
-	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.calls == nil || rule.effects == nil {
-		return hotBodyOperand{}, false
+func (rule *BodyHotRule) mountedForOccurrence(mount, occurrence identity.ContentID) (effectfactor.MountedCall, bool) {
+	if !rule.valid() || !mount.Available() || !occurrence.Available() {
+		return effectfactor.MountedCall{}, false
 	}
-	applicationID, _, _, mountedOK := rule.effects.Algebra().MountedCallIdentity(mounted)
-	key, keyOK := rule.calls.Algebra().KeyForApplicationID(applicationID)
-	root, rootOK := rule.effects.Algebra().RootForMountedCall(mounted)
-	base, baseOK := newHotBodyOperand(rule.effects.Algebra(), rule.calls.Algebra(), root, key)
-	if !mountedOK || !keyOK || !rootOK || !baseOK {
-		return hotBodyOperand{}, false
-	}
-	receipt := &bodyCallReceipt{
-		owner: rule, binding: rule.binding, key: base.key, root: base.root,
-		id: [32]byte(base.id), sealed: true,
-	}
-	if !receipt.valid() {
-		return hotBodyOperand{}, false
-	}
-	base.receipt = receipt
-	return base, true
+	ordinal, ordinalOK := rule.effects.Algebra().MountedCallOrdinalForOccurrence(mount, occurrence)
+	mounted, mountedOK := rule.effects.Algebra().MountedCallAt(ordinal)
+	_, _, _, rowsOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	application, module, callOccurrence, identityOK := rule.effects.Algebra().MountedCallIdentity(mounted)
+	return mounted, ordinalOK && ordinal >= 0 && mountedOK && rowsOK && identityOK && application.Available() && module == mount && callOccurrence == occurrence
 }
 
-func (rule *BodyHotRule) accepts(value hotBodyOperand) bool {
-	receipt := value.receipt
-	return rule != nil && rule.binding != nil && rule.calls != nil && rule.effects != nil && receipt.valid() && receipt.binding == rule.binding &&
-		receipt.owner == rule && value.key == receipt.key && value.root == receipt.root &&
-		[32]byte(value.id) == receipt.id
+func (rule *BodyHotRule) resolveOperand(coords engine.OperandCoords) (effectfactor.MountedCall, bool) {
+	return rule.mountedForOccurrence(coords.Mount, coords.Occurrence)
 }
 
-func (rule *BodyHotRule) locate(context engine.SelectorContext, value hotBodyOperand) bool {
-	if rule == nil || !rule.accepts(value) {
+func (rule *BodyHotRule) operandContent(mounted effectfactor.MountedCall) (effectfactor.MountedCall, [32]byte, bool) {
+	if rule == nil {
+		return effectfactor.MountedCall{}, [32]byte{}, false
+	}
+	_, key, root, rowsOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	if !rowsOK {
+		return effectfactor.MountedCall{}, [32]byte{}, false
+	}
+	id, idOK := mountedOperandID(bodyOperandDomain, rule.calls.Algebra(), rule.effects.Algebra(), key, root)
+	if !idOK {
+		return effectfactor.MountedCall{}, [32]byte{}, false
+	}
+	return mounted, [32]byte(id), true
+}
+
+func (rule *BodyHotRule) locate(context engine.SelectorContext, mounted effectfactor.MountedCall) bool {
+	if !rule.valid() {
+		return false
+	}
+	_, key, _, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	if !siteOK {
 		return false
 	}
 	cells, readable := engine.SelectorRead(context, rule.callRead)
@@ -210,7 +160,7 @@ func (rule *BodyHotRule) locate(context engine.SelectorContext, value hotBodyOpe
 	if !present {
 		return true
 	}
-	_, ok := rule.routesFor(value.receipt.key, fact, func(_ int, route bodyRoute) bool {
+	_, ok := rule.routesFor(key, fact, func(_ int, route bodyRoute) bool {
 		return effectowner.SelectRouteTyped(rule.effects, context, route.root, route.tag)
 	})
 	return ok
@@ -271,9 +221,13 @@ func (rule *BodyHotRule) routesFor(key calldomain.Key, value calldomain.Value, v
 	return len(slots), true
 }
 
-func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, hotBodyOperand], callRead engine.Read[engine.OrderedCells[calldomain.Value]], summary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]) bool {
-	value, operandOK := engine.Operand(access)
-	if !operandOK || !rule.accepts(value) {
+func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, effectfactor.MountedCall], callRead engine.Read[engine.OrderedCells[calldomain.Value]], summary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]) bool {
+	if !rule.valid() {
+		return false
+	}
+	mounted, operandOK := engine.Operand(access)
+	_, key, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	if !operandOK || !siteOK {
 		return false
 	}
 	return engine.Product(access, func(row engine.Row) bool {
@@ -295,7 +249,7 @@ func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, hotBo
 		}
 		atoms := make([]effectfactor.Atom, 0)
 		top := false
-		routeCount, routesOK := rule.routesFor(value.receipt.key, fact, func(ordinal int, route bodyRoute) bool {
+		routeCount, routesOK := rule.routesFor(key, fact, func(ordinal int, route bodyRoute) bool {
 			if ordinal >= selectionCount {
 				return false
 			}
@@ -314,7 +268,7 @@ func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, hotBo
 				top = true
 				return true
 			}
-			transported, transportOK := rule.effects.Algebra().Transport(part, value.receipt.root)
+			transported, transportOK := rule.effects.Algebra().Transport(part, root)
 			if !transportOK {
 				return false
 			}
@@ -344,14 +298,14 @@ func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, hotBo
 	})
 }
 
-func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectfactor.Value, hotBodyOperand], disposition engine.RuleDisposition[effectfactor.Value], value hotBodyOperand, fact calldomain.Value) (effectfactor.Value, bool) {
+func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectfactor.Value, effectfactor.MountedCall], disposition engine.RuleDisposition[effectfactor.Value], key calldomain.Key, root effectfactor.Root, fact calldomain.Value) (effectfactor.Value, bool) {
 	count, countOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.summary)
 	if !countOK {
 		return effectfactor.Value{}, false
 	}
 	atoms := make([]effectfactor.Atom, 0)
 	top := false
-	routeCount, routesOK := rule.routesFor(value.receipt.key, fact, func(ordinal int, route bodyRoute) bool {
+	routeCount, routesOK := rule.routesFor(key, fact, func(ordinal int, route bodyRoute) bool {
 		if ordinal >= count {
 			return false
 		}
@@ -370,7 +324,7 @@ func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectf
 			top = true
 			return true
 		}
-		transported, transportOK := rule.effects.Algebra().Transport(part, value.receipt.root)
+		transported, transportOK := rule.effects.Algebra().Transport(part, root)
 		if !transportOK {
 			return false
 		}
@@ -392,7 +346,7 @@ func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectf
 	return rule.effects.Algebra().FromAtoms(atoms)
 }
 
-func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Value, hotBodyOperand]) (engine.RuleEvidence, bool) {
+func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Value, effectfactor.MountedCall]) (engine.RuleEvidence, bool) {
 	// A derivation read is one resolved observation, not one declared read
 	// slot. This rule resolves the exact Call read plus the Effect summary of
 	// every route its Product selected, so its read surface is bounded by the
@@ -402,10 +356,12 @@ func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Val
 	if rule == nil || rule.fragment == nil || rule.fragment.core == nil || derivation.Rule() != rule.fragment.core.semantic || derivation.InputCount() != 1 || readCount < 1 || readCount > 1+len(rule.all) || derivation.DispositionCount() == 0 {
 		return engine.RuleEvidence{}, false
 	}
-	value, operandOK := derivation.Operand()
+	mounted, operandOK := derivation.Operand()
+	_, key, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
+	_, digest, contentOK := rule.operandContent(mounted)
 	input, inputOK := derivation.InputAt(0)
-	if !operandOK || !rule.accepts(value) || !derivation.OperandContentMatches(value.receipt.id) || !inputOK || input.Guard().Empty() ||
-		!callowner.ReadMatches(rule.calls, derivation, rule.callRead, value.receipt.key) {
+	if !operandOK || !siteOK || !contentOK || !derivation.OperandContentMatches(digest) || !inputOK || input.Guard().Empty() ||
+		!callowner.ReadMatches(rule.calls, derivation, rule.callRead, key) {
 		return engine.RuleEvidence{}, false
 	}
 	for index := 0; index < derivation.DispositionCount(); index++ {
@@ -431,7 +387,7 @@ func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Val
 			}
 			continue
 		}
-		expected, expectedOK := rule.reduceEvidence(derivation, disposition, value, fact)
+		expected, expectedOK := rule.reduceEvidence(derivation, disposition, key, root, fact)
 		if !expectedOK {
 			return engine.RuleEvidence{}, false
 		}
@@ -444,14 +400,14 @@ func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Val
 		actual, actualOK := disposition.Value()
 		target, targetOK := disposition.TargetAt(0)
 		if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || !actualOK || !targetOK ||
-			!rule.effects.Algebra().Equal(actual, expected) || !rule.effects.TargetMatches(target, value.receipt.root) {
+			!rule.effects.Algebra().Equal(actual, expected) || !rule.effects.TargetMatches(target, root) {
 			return engine.RuleEvidence{}, false
 		}
 	}
 	return derivation.Accept()
 }
 
-func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[hotBodyOperand], bool) {
+func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[effectfactor.MountedCall], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
 	}
@@ -461,7 +417,7 @@ func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[hotBo
 
 // SealProgramRule is this typed rule's schema registration.
 func SealBodyProgramRule(rule *BodyHotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
+	if rule == nil || !rule.valid() {
 		return engine.ProgramRule{}, false
 	}
 	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
