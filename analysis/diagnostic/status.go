@@ -328,7 +328,7 @@ type AnalyzeDiagnostics struct {
 	AssembleLowering        engine.SolveFailure
 	AssembleCommit          engine.SolveFailure
 	AssembleScheduleOrdinal uint32
-	ObservationAttach      engine.SolveFailure
+	ObservationAttach       engine.SolveFailure
 	// Construction carries one program-constructor refusal as family,
 	// disposition, and opaque site. The constructor's internal stage names
 	// stay inside the engine.
@@ -351,6 +351,47 @@ func (diagnostics *AnalyzeDiagnostics) EnterConstruction(failure engine.SolveFai
 	}
 	if _, named := engine.ProgramSealStageOf(failure); named {
 		diagnostics.Construction = failure
+	}
+}
+
+// EnterProgramAssemble projects the engine's canonical program-construction
+// refusal into the analysis envelope. Root callers provide the already-bound
+// diagnostic rule because the engine intentionally keeps rule vocabularies
+// opaque. A zero refusal is a root preflight failure and leaves the caller's
+// stage untouched.
+func (diagnostics *AnalyzeDiagnostics) EnterProgramAssemble(refusal engine.ProgramAssembleRefusal, rule AnalyzeDiagnosticRule) {
+	if diagnostics == nil {
+		return
+	}
+	if refusal.Lowered() {
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageLowering
+		diagnostics.AssembleLowering = refusal.LoweringFailure()
+		return
+	}
+	switch refusal.Stage() {
+	case engine.ProgramAdmissionLink:
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageBootstrapRules
+	case engine.ProgramAdmissionMounted:
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageArtifactRules
+	case engine.ProgramAdmissionQuery:
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageQueryRows
+	case engine.ProgramAdmissionSeal:
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageSourceSeal
+		diagnostics.AssembleSeal = refusal.Seal()
+		if ordinal, artifactRows := refusal.ArtifactRowOrdinal(); artifactRows {
+			diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageArtifactRows
+			diagnostics.AssembleOrdinal = ordinal
+		} else {
+			diagnostics.Rule = rule
+		}
+	default:
+		commit := refusal.Commit()
+		if !commit.Available() && refusal.ScheduleRow() == 0 {
+			return
+		}
+		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageCommit
+		diagnostics.AssembleCommit = commit
+		diagnostics.AssembleScheduleOrdinal = refusal.ScheduleRow()
 	}
 }
 

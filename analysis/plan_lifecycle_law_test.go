@@ -331,22 +331,22 @@ return shared_template_probe(43)`
 	if !leftBoundariesPublished || leftBoundaryCount == 0 {
 		t.Fatalf("shared Program function interfaces = %d/%v", leftBoundaryCount, leftBoundariesPublished)
 	}
-	if left.state.committed.program != nil || right.state.committed.program != nil || len(left.state.querySites) != 0 || len(right.state.querySites) != 0 {
+	if left.state.committed != nil || right.state.committed != nil || len(left.state.querySites) != 0 || len(right.state.querySites) != 0 {
 		t.Fatal("Compile instantiated runtime topology before Solve ownership")
 	}
-	leftDiagnostic, leftInstantiated := left.state.instantiateRuntimeTopology()
-	rightDiagnostic, rightInstantiated := right.state.instantiateRuntimeTopology()
+	leftDiagnostic, leftStage, leftRule, leftInstantiated := left.state.instantiateRuntimeTopology()
+	rightDiagnostic, rightStage, rightRule, rightInstantiated := right.state.instantiateRuntimeTopology()
 	if !leftInstantiated || !rightInstantiated {
-		t.Fatalf("runtime topology instantiation = %v/%+v %v/%+v", leftInstantiated, leftDiagnostic, rightInstantiated, rightDiagnostic)
+		t.Fatalf("runtime topology instantiation = %v/%+v/%v/%v %v/%+v/%v/%v", leftInstantiated, leftDiagnostic, leftStage, leftRule, rightInstantiated, rightDiagnostic, rightStage, rightRule)
 	}
-	leftGraph, rightGraph := left.state.committed.program, right.state.committed.program
-	if _, replayed := left.state.instantiateRuntimeTopology(); !replayed || left.state.committed.program != leftGraph {
+	leftGraph, rightGraph := left.state.committed, right.state.committed
+	if _, _, _, replayed := left.state.instantiateRuntimeTopology(); !replayed || left.state.committed != leftGraph {
 		t.Fatal("repeated Solve boundary rematerialized the left runtime topology")
 	}
-	if _, replayed := right.state.instantiateRuntimeTopology(); !replayed || right.state.committed.program != rightGraph {
+	if _, _, _, replayed := right.state.instantiateRuntimeTopology(); !replayed || right.state.committed != rightGraph {
 		t.Fatal("repeated Solve boundary rematerialized the right runtime topology")
 	}
-	if left.state.committed.program == nil || right.state.committed.program == nil {
+	if left.state.committed == nil || right.state.committed == nil {
 		t.Fatal("Solve boundary did not retain the runtime topology")
 	}
 	// The function declaration interface is owned by program/artifact. Both

@@ -51,8 +51,8 @@ func compileMountedPopulationCase(t *testing.T, name string) mountedPopulationCa
 		t.Fatalf("compile fixture %q = %v diagnostics=%+v", name, status, diagnostics)
 	}
 	// The compiled query plan is instantiated with the runtime topology, so
-	// the replacement receipt has to reach the same seam a solve does.
-	if _, ok := plan.state.instantiateRuntimeTopology(); !ok {
+	// this law reaches the same committed-program seam as a solve.
+	if _, _, _, ok := plan.state.instantiateRuntimeTopology(); !ok {
 		plan.Close()
 		t.Fatalf("instantiate runtime topology for fixture %q", name)
 	}
