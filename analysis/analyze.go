@@ -39,16 +39,21 @@ const (
 
 // Plan is an opaque immutable analyzer plan. It retains sealed compile-time
 // snapshots, Link mount substitutions, the owner-handoff ProgramArtifact bag,
-// and one lazily-built ordinary runtime solver. Repeated ordinary solves read
-// that solver's completed immutable State.
+// the canonical detached geometry admitted during compilation, and one
+// lazily-built ordinary runtime solver. Repeated ordinary solves read that
+// solver's completed immutable State.
 type Plan struct {
 	state     *compiledState
 	workspace *Workspace
 }
 
 type compiledState struct {
-	artifacts         *compiledArtifactSet
-	coordinates       []compiledValueCoordinate
+	artifacts *compiledArtifactSet
+	// mounts and geometry are the detached result projection admitted during
+	// Workspace compilation. Solve only reads these immutable owner values; it
+	// must not reopen the Link or replay the mounted observation census.
+	mounts            []result.Mount
+	geometry          result.Geometry
 	binding           *composite.ProgramBinding
 	committed         committedProgramGraph
 	querySites        []composite.QuerySite
@@ -130,11 +135,20 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	state := &compiledState{artifacts: artifacts, coordinates: values, sourceID: source.ContentID()}
-	if _, resultOK := state.resultGeometry(); !resultOK {
+	observations, observationsOK := artifacts.observationCensus(values)
+	mounts, mountsOK := resultMounts(artifacts.mounts)
+	geometry, resultOK := result.Geometry{}, false
+	if mountsOK && observationsOK {
+		geometry, resultOK = result.Project(source.ContentID(), mounts, values, observations)
+	}
+	if !resultOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureResultGeometry
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
+	}
+	state := &compiledState{
+		artifacts: artifacts, mounts: mounts, geometry: geometry,
+		sourceID: source.ContentID(),
 	}
 	state.lifecycleCond = sync.NewCond(&state.lifecycleMu)
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseTopology)
@@ -299,17 +313,16 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	geometry, geometryOK := state.resultGeometry()
-	if !geometryOK {
+	geometry := state.geometry
+	if !geometry.Valid() {
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	mounts, mountsOK := resultMounts(state.artifacts.mounts)
-	if !mountsOK {
+	if len(state.mounts) == 0 {
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	projection, detached := result.Detach(geometry, mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
+	projection, detached := result.Detach(geometry, state.mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
 		Published: &state.composition,
 		Sites:     state.selectSites,
 		Handlers:  state.selectHandlers,
@@ -366,8 +379,8 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.committed.program == nil || len(state.querySites) == 0 || state.artifacts == nil {
 		return nil, nil, engine.SolveFailure{}, false
 	}
-	geometry, geometryOK := state.resultGeometry()
-	if !geometryOK {
+	geometry := state.geometry
+	if !geometry.Valid() {
 		return nil, nil, engine.SolveFailure{}, false
 	}
 	binding := state.binding
@@ -482,7 +495,8 @@ func (state *compiledState) release() {
 		state.queryPublications = nil
 		state.ordinary = nil
 		state.ordinaryOK = false
-		state.coordinates = nil
+		state.mounts = nil
+		state.geometry = result.Geometry{}
 		state.binding = nil
 		state.composition = snapshot.Snapshot{}
 		state.selectSites = nil
@@ -508,37 +522,6 @@ func resultMounts(mounts []mountedProgramArtifact) ([]result.Mount, bool) {
 	return out, true
 }
 
-func resultCoordinates(coordinates []compiledValueCoordinate) ([]result.ValueCoordinate, bool) {
-	out := make([]result.ValueCoordinate, len(coordinates))
-	for index, coordinate := range coordinates {
-		row, ok := result.NewValueCoordinate(coordinate.id, coordinate.mount)
-		if !ok {
-			return nil, false
-		}
-		out[index] = row
-	}
-	return out, true
-}
-
-func (state *compiledState) resultGeometry() (result.Geometry, bool) {
-	if state == nil || state.artifacts == nil {
-		return result.Geometry{}, false
-	}
-	observations, observationsOK := state.artifacts.observationCensus(state.coordinates)
-	if !observationsOK {
-		return result.Geometry{}, false
-	}
-	coordinates, coordinatesOK := resultCoordinates(state.coordinates)
-	if !coordinatesOK {
-		return result.Geometry{}, false
-	}
-	mounts, mountsOK := resultMounts(state.artifacts.mounts)
-	if !mountsOK {
-		return result.Geometry{}, false
-	}
-	return result.Project(state.sourceID, mounts, coordinates, observations)
-}
-
 func (state *compiledState) admit() bool {
 	if state == nil || state.artifacts == nil || !state.sourceID.Available() {
 		return false
@@ -551,8 +534,7 @@ func (state *compiledState) admit() bool {
 			return false
 		}
 	}
-	geometry, geometryOK := state.resultGeometry()
-	return geometryOK && geometry.Valid()
+	return state.geometry.Valid()
 }
 
 func Analyze(ctx context.Context, source *link.Link) (*result.Result, AnalyzeStatus) {

@@ -42,3 +42,9 @@ func NewValueCoordinate(id, mount identity.ContentID) (ValueCoordinate, bool) {
 	}
 	return ValueCoordinate{id: id, mount: mount}, true
 }
+
+// ID returns the canonical Value identity carried by this coordinate.
+func (coordinate ValueCoordinate) ID() identity.ContentID { return coordinate.id }
+
+// MountID returns the Link mount substitution carried by this coordinate.
+func (coordinate ValueCoordinate) MountID() identity.ContentID { return coordinate.mount }

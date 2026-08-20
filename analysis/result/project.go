@@ -243,8 +243,9 @@ func mountedResultID(role string, mount, artifact, local identity.ContentID) (id
 }
 
 // Geometry is the mount-qualified body/value/observation projection
-// built from sealed ingress mounts and Link value substitution. It is
-// computed when Result is detached; compiledState does not retain it.
+// built from sealed ingress mounts and Link value substitution. Workspace
+// compilation admits one immutable Geometry value; Result detachment consumes
+// that owner value without reopening Link, mounts, or diagnostic sites.
 type Geometry struct {
 	source                  identity.ContentID
 	bodies                  []GeometryBody

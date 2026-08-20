@@ -25,6 +25,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
+	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
@@ -345,16 +346,7 @@ func projectAuthenticatesMounts(source *link.Link, published []mountedProgramArt
 	return true
 }
 
-// compiledValueCoordinate is the immutable Link substitution for one Value
-// factor coordinate. Its order is the sole Boundary Values denominator used
-// by the Value schema and its summary query; result detachment therefore does
-// not reopen Link, Program, or Flow.
-type compiledValueCoordinate struct {
-	id    identity.ContentID
-	mount identity.ContentID
-}
-
-func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool) {
+func compileValueCoordinates(source *link.Link) ([]result.ValueCoordinate, bool) {
 	if source == nil || source.Project() == nil || source.Boundary() == nil {
 		return nil, false
 	}
@@ -362,7 +354,7 @@ func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool
 	if values.Count() == 0 {
 		return nil, false
 	}
-	rows := make([]compiledValueCoordinate, values.Count())
+	rows := make([]result.ValueCoordinate, values.Count())
 	seen := make(map[struct {
 		mount identity.ContentID
 		id    identity.ContentID
@@ -384,7 +376,11 @@ func compileValueCoordinates(source *link.Link) ([]compiledValueCoordinate, bool
 			return nil, false
 		}
 		seen[key] = struct{}{}
-		rows[index] = compiledValueCoordinate{id: id, mount: module}
+		coordinate, coordinateOK := result.NewValueCoordinate(id, module)
+		if !coordinateOK {
+			return nil, false
+		}
+		rows[index] = coordinate
 	}
 	return rows, true
 }
@@ -413,7 +409,7 @@ type compiledArtifactSet struct {
 	declared anadiag.DeclaredTypes
 }
 
-func (artifacts *compiledArtifactSet) observationCensus(coordinates []compiledValueCoordinate) ([]anadiag.Observation, bool) {
+func (artifacts *compiledArtifactSet) observationCensus(coordinates []result.ValueCoordinate) ([]anadiag.Observation, bool) {
 	if artifacts == nil {
 		return nil, false
 	}
@@ -423,7 +419,7 @@ func (artifacts *compiledArtifactSet) observationCensus(coordinates []compiledVa
 	}
 	values := make([]anadiag.ValueCoordinate, len(coordinates))
 	for index, coordinate := range coordinates {
-		values[index] = anadiag.ValueCoordinate{Mount: coordinate.mount, ID: coordinate.id}
+		values[index] = anadiag.ValueCoordinate{Mount: coordinate.MountID(), ID: coordinate.ID()}
 	}
 	return anadiag.ProjectSites(artifacts.sites, mounts, values, artifacts.declared)
 }

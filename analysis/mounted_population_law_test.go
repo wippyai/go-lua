@@ -144,8 +144,8 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 				if !measured {
 					t.Fatalf("census site %s measures no coordinate", observation.Local)
 				}
-				if site.ValueID != coordinates[coordinate].id {
-					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[coordinate].id)
+				if site.ValueID != coordinates[coordinate].ID() {
+					t.Fatalf("census site %s value %s, observed coordinate %s", observation.Local, site.ValueID, coordinates[coordinate].ID())
 				}
 				if site.ProducerCount() != len(producers) {
 					t.Fatalf("census site %s carries %d producers, observed %d", observation.Local, site.ProducerCount(), len(producers))
@@ -195,14 +195,14 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 
 // TestObservationPublicationsDeriveFromSealedGeometry is the detach address
 // floor: Snapshot observation keys are the publication identity of the sealed
-// census, not a second table retained on compiledState.
+// census consumed from compiledState's precomputed Geometry owner.
 func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 	for _, name := range mountedPopulationFixtures {
 		t.Run(name, func(t *testing.T) {
 			testCase := compileMountedPopulationCase(t, name)
 			defer testCase.plan.Close()
-			geometry, geometryOK := testCase.state.resultGeometry()
-			if !geometryOK {
+			geometry := testCase.state.geometry
+			if !geometry.Valid() {
 				t.Fatal("result geometry")
 			}
 			// Both produced-value populations publish through the same
