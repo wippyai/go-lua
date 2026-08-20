@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -172,7 +173,9 @@ type emptyFixtureMounts struct {
 func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 	t.Helper()
 	receipt, receiptOK := composite.Global()
-	if !receiptOK || linked == nil || linked.Project() == nil {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("empty artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -185,7 +188,7 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("empty artifact mount")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}

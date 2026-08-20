@@ -8,7 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -74,7 +74,9 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -88,11 +90,11 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 	if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("selector mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile selector artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	if err != nil || types == nil {
 		t.Fatalf("seal selector types: %v", err)
 	}

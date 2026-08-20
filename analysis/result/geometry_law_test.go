@@ -5,6 +5,7 @@ import (
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/identity"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
@@ -88,7 +89,12 @@ func resultGeometryMount(t *testing.T) (Mount, identity.ContentID) {
 	if !compilationOK {
 		t.Fatal("program schema")
 	}
-	compiled, failure := composite.CompileArtifactDetailed(program, compilation)
+	grammar, grammarOK := composite.ArtifactGrammar(compilation)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !grammarOK || !issuanceOK {
+		t.Fatal("artifact compiler inputs")
+	}
+	compiled, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || compiled == nil || !compiled.Available() {
 		t.Fatalf("compile geometry artifact: %s", failure.Error())
 	}

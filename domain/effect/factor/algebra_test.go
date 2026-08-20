@@ -9,12 +9,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -61,7 +63,9 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 		t.Fatal(err)
 	}
 	receipt, ok := composite.Global()
-	if !ok {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !ok || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 
@@ -78,7 +82,7 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatalf("effect fixture mount %d", index)
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile effect artifact %d: %s", index, failure.Error())
 		}
@@ -90,7 +94,11 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 		effectMounts[index] = effectfactor.MountedArtifact{ModuleKey: module, Snapshot: snapshottest.MustLower(t, artifact)}
 		staticMounts[index] = staticdomain.MountedProgram{Program: snapshottest.MustMount(t, artifact, module).Program, ModuleID: module, NamespaceID: module}
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
+	programs := make([]programschema.Program, len(artifacts))
+	for index, artifact := range artifacts {
+		programs[index] = artifact.Program()
+	}
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), programs)
 	if err != nil || types == nil {
 		t.Fatalf("seal type authority: %v", err)
 	}

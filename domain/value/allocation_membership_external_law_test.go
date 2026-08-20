@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -61,7 +62,9 @@ func allocationMembershipFixtureFor(t testing.TB, label string) allocationMember
 		t.Fatal(err)
 	}
 	grammar, grammarOK := composite.Global()
-	if !grammarOK {
+	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !grammarOK || !artifactGrammarOK || !issuanceOK {
 		t.Fatal("allocation membership program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -72,7 +75,7 @@ func allocationMembershipFixtureFor(t testing.TB, label string) allocationMember
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("allocation membership mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
+	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile allocation membership artifact: %s", failure.Error())
 	}

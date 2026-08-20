@@ -8,7 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -80,7 +80,9 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 		t.Fatal(err)
 	}
 	grammar, grammarOK := composite.Global()
-	if !grammarOK {
+	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !grammarOK || !artifactGrammarOK || !issuanceOK {
 		t.Fatal("direct allocation program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -91,11 +93,11 @@ func directAllocationSubjectFixtureFor(t testing.TB, label string) directAllocat
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("direct allocation mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
+	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile direct allocation artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	if err != nil || types == nil {
 		t.Fatalf("seal direct allocation types: %v", err)
 	}

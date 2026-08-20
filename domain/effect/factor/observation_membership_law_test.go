@@ -7,12 +7,13 @@ import (
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
@@ -50,7 +51,9 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 		t.Fatal(err)
 	}
 	receipt, ok := composite.Global()
-	if !ok {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !ok || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -61,11 +64,11 @@ func newEffectMembershipFixture(t testing.TB) effectMembershipFixture {
 	if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("effect observation mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	if err != nil || types == nil {
 		t.Fatalf("seal types: %v", err)
 	}

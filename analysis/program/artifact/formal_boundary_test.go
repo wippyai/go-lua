@@ -35,7 +35,7 @@ func compileFunctionBoundaryArtifact(t testing.TB) *programartifact.Artifact {
 	if !compilationOK {
 		t.Fatal("Program schema unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	artifact, failure := compileArtifactForTest(t, published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile function boundary artifact: %s", failure.Error())
 	}
@@ -167,7 +167,7 @@ return add
 	if !compilationOK {
 		t.Fatal("Program schema unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	artifact, failure := compileArtifactForTest(t, published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile declared formal artifact: %s", failure.Error())
 	}

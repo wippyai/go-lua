@@ -4,8 +4,7 @@ import "testing"
 
 func TestSealFreezeRejectsUnsealedArtifactIdentity(t *testing.T) {
 	artifact := &Artifact{}
-	failure := artifact.validUnsealedFailure()
-	if !failure.Available() || failure.Stage() != CompileStageSeal {
+	if artifact.validUnsealed() {
 		t.Fatal("unsealed artifact did not fail at seal")
 	}
 }

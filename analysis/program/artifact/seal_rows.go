@@ -7,15 +7,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
-func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFailure {
+func (artifact *Artifact) validateSealRows(state *sealValidationState) bool {
 	if artifact == nil || state == nil {
-		return compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
+		return false
 	}
 	outcomeCount, outcomesPublished := coldCount(artifact, programschema.OutcomeFamily())
 	returnValueCount, returnsPublished := coldCount(artifact, programschema.OutcomeReturnValueFamily())
 	outcomePointCount, pointsPublished := coldCount(artifact, programschema.OutcomePointFamily())
 	if !outcomesPublished || !returnsPublished || !pointsPublished {
-		return compileFailure(CompileStageSeal, CompileRowOutcome, -1, -1, CompileReasonOutcomeUnavailable)
+		return false
 	}
 	returnCursor, pointCursor := uint32(0), uint32(0)
 	for index := 0; index < outcomeCount; index++ {
@@ -23,42 +23,42 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		returnOffset, returnWidth, returnSpanOK := row.ReturnValueSpan()
 		pointOffset, pointWidth, pointSpanOK := row.PointSpan()
 		if !held || !returnSpanOK || !pointSpanOK {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeUnavailable)
+			return false
 		}
 		if _, exists := state.bodyRows[row.BodyID()]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeBody)
+			return false
 		}
 		if _, duplicate := state.outcomeRows[row.ID()]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeDuplicate)
+			return false
 		}
 		if pointOffset != pointCursor || uint64(pointOffset)+uint64(pointWidth) > uint64(outcomePointCount) {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeRange)
+			return false
 		}
 		outcomePoints := make(map[identity.ContentID]struct{}, pointWidth)
 		for pointIndex := uint32(0); pointIndex < pointWidth; pointIndex++ {
 			child, childHeld := coldRow(artifact, programschema.OutcomePointFamily(), int(pointOffset+pointIndex))
 			point := child.PointID()
 			if !childHeld || child.OutcomeID() != row.ID() {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
+				return false
 			}
 			if _, known := state.pointRows[point]; !known {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
+				return false
 			}
 			if _, duplicate := outcomePoints[point]; duplicate {
-				return compileFailure(CompileStageSeal, CompileRowOutcome, index, int(pointIndex), CompileReasonOutcomeUnavailable)
+				return false
 			}
 			outcomePoints[point] = struct{}{}
 		}
 		if returnOffset != returnCursor || uint64(returnOffset)+uint64(returnWidth) > uint64(returnValueCount) {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeRange)
+			return false
 		}
 		for valueIndex := uint32(0); valueIndex < returnWidth; valueIndex++ {
 			value, valueHeld := coldRow(artifact, programschema.OutcomeReturnValueFamily(), int(returnOffset+valueIndex))
 			if !valueHeld || value.OutcomeID() != row.ID() {
-				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex), CompileReasonReturnValueUnavailable)
+				return false
 			}
 			if _, exists := state.valueRows[value.ValuesID()]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowReturnValue, index, int(valueIndex), CompileReasonReturnValueReference)
+				return false
 			}
 		}
 		state.outcomeRows[row.ID()] = index
@@ -66,7 +66,7 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		pointCursor += pointWidth
 	}
 	if int(returnCursor) != returnValueCount || int(pointCursor) != outcomePointCount {
-		return compileFailure(CompileStageSeal, CompileRowReturnValue, -1, -1, CompileReasonOutcomeRange)
+		return false
 	}
 	for index := 0; index < outcomeCount; index++ {
 		row, _ := coldRow(artifact, programschema.OutcomeFamily(), index)
@@ -76,43 +76,43 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		}
 		nextIndex, exists := state.outcomeRows[propagation]
 		if !exists || nextIndex == index {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomeReference)
+			return false
 		}
 		next, nextHeld := coldRow(artifact, programschema.OutcomeFamily(), nextIndex)
 		target, hasTarget := row.TargetID()
 		nextTarget, nextHasTarget := next.TargetID()
 		if !nextHeld || next.Kind() != row.Kind() || nextHasTarget != hasTarget || nextTarget != target {
-			return compileFailure(CompileStageSeal, CompileRowOutcome, index, -1, CompileReasonOutcomePropagation)
+			return false
 		}
 	}
 	edgeCount, edgesPublished := coldCount(artifact, programschema.EnvironmentEdgeFamily())
 	if !edgesPublished {
-		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
+		return false
 	}
 	for index := 0; index < edgeCount; index++ {
 		row, held := artifact.environmentEdgeRowAt(index)
 		if !held {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			return false
 		}
 		if _, exists := state.pointRows[row.from]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 0, CompileReasonEnvironmentEndpointUnknown)
+			return false
 		}
 		if _, exists := state.pointRows[row.to]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 1, CompileReasonEnvironmentEndpointUnknown)
+			return false
 		}
 		for resetIndex, reset := range row.resets {
 			if !reset.Available() {
-				return compileFailure(CompileStageSeal, CompileRowEnvironment, index, resetIndex, CompileReasonRouteResetMember)
+				return false
 			}
 			if resetIndex != 0 && !contentIDBefore(row.resets[resetIndex-1], reset) {
-				return compileFailure(CompileStageSeal, CompileRowEnvironment, index, resetIndex, CompileReasonRouteResetOrder)
+				return false
 			}
 		}
 	}
 	localTransferCount, localTransfersPublished := coldCount(artifact, programschema.LocalTransferFamily())
 	localTransferWriteCount, localTransferWritesPublished := coldCount(artifact, programschema.LocalTransferWriteFamily())
 	if !localTransfersPublished || !localTransferWritesPublished {
-		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
+		return false
 	}
 	seenLocalTransfers := make(map[identity.ContentID]struct{}, localTransferCount)
 	consumedTransferWrites := uint32(0)
@@ -120,16 +120,16 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 		row, held := coldRow(artifact, programschema.LocalTransferFamily(), index)
 		offset, writeCount, spanOK := row.WriteSpan()
 		if !held || !spanOK || offset != consumedTransferWrites || uint64(offset)+uint64(writeCount) > uint64(localTransferWriteCount) {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			return false
 		}
 		if _, exists := state.pointRows[row.From()]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 0, CompileReasonEnvironmentEndpointUnknown)
+			return false
 		}
 		if _, exists := state.pointRows[row.To()]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, 1, CompileReasonEnvironmentEndpointUnknown)
+			return false
 		}
 		if _, duplicate := seenLocalTransfers[row.ID()]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowEnvironment, index, -1, CompileReasonEnvironmentDuplicate)
+			return false
 		}
 		seenLocalTransfers[row.ID()] = struct{}{}
 		var prior schema.Key
@@ -137,101 +137,101 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			write, writeHeld := coldRow(artifact, programschema.LocalTransferWriteFamily(), int(offset+child))
 			key, keyOK := write.Key()
 			if !writeHeld || !keyOK || child != 0 && prior >= key {
-				return compileFailure(CompileStageSeal, CompileRowEnvironment, index, int(child), CompileReasonEnvironmentUnavailable)
+				return false
 			}
 			prior = key
 		}
 		consumedTransferWrites += writeCount
 	}
 	if uint64(consumedTransferWrites) != uint64(localTransferWriteCount) {
-		return compileFailure(CompileStageSeal, CompileRowEnvironment, -1, -1, CompileReasonEnvironmentUnavailable)
+		return false
 	}
 	regionCount, regionsPublished := coldCount(artifact, programschema.RegionFamily())
 	if !regionsPublished {
-		return compileFailure(CompileStageSeal, CompileRowRegion, -1, -1, CompileReasonRegionUnavailable)
+		return false
 	}
 	regionRows := make(map[identity.ContentID]struct{}, regionCount)
 	for index := 0; index < regionCount; index++ {
 		row, held := artifact.regionRowAt(index)
 		if !held {
-			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
+			return false
 		}
 		if _, exists := regionRows[row.id]; exists {
-			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionDuplicate)
+			return false
 		}
 		regionRows[row.id] = struct{}{}
 		if _, exists := state.pointRows[row.members[0]]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowRegion, index, 0, CompileReasonRegionHeaderMismatch)
+			return false
 		}
 		for memberIndex, member := range row.members {
 			if _, exists := state.pointRows[member]; !exists || memberIndex != 0 && member == row.members[memberIndex-1] {
-				return compileFailure(CompileStageSeal, CompileRowRegion, index, memberIndex, CompileReasonRegionReference)
+				return false
 			}
 		}
 	}
 	for index := 0; index < regionCount; index++ {
 		row, held := artifact.regionRowAt(index)
 		if !held {
-			return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
+			return false
 		}
 		if row.parent.Available() {
 			if _, exists := regionRows[row.parent]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowRegion, index, -1, CompileReasonRegionReference)
+				return false
 			}
 		}
 	}
 	eventCount, eventsPublished := coldCount(artifact, programschema.WTOEventFamily())
 	if !eventsPublished {
-		return compileFailure(CompileStageSeal, CompileRowWTOEvent, -1, -1, CompileReasonEventUnavailable)
+		return false
 	}
 	for index := 0; index < eventCount; index++ {
 		event, held := artifact.wtoEventRowAt(index)
 		if !held {
-			return compileFailure(CompileStageSeal, CompileRowWTOEvent, index, -1, CompileReasonEventUnavailable)
+			return false
 		}
 		if event.kind == WTOEventPoint {
 			if _, exists := state.pointRows[event.point]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowWTOEvent, index, -1, CompileReasonEventReference)
+				return false
 			}
 		} else if _, exists := regionRows[event.region]; !exists {
-			return compileFailure(CompileStageSeal, CompileRowWTOEvent, index, -1, CompileReasonEventReference)
+			return false
 		}
 	}
 	state.occurrenceRows = make(map[programschema.OccurrenceKind]map[identity.ContentID]struct{})
 	program := artifact.Program()
 	occurrenceCount, occurrencesPublished := program.OccurrenceCount()
 	if !occurrencesPublished {
-		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		return false
 	}
 	for index := 0; index < occurrenceCount; index++ {
 		row, rowOK := program.OccurrenceAt(index)
 		if !rowOK || !row.Available() {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		body, hasBody := row.BodyID()
 		if hasBody {
 			if _, exists := state.bodyRows[body]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+				return false
 			}
 		}
 		pointOffset, pointCount, pointSpanOK := row.PointSpan()
 		inputOffset, inputCount, inputSpanOK := row.InputSpan()
 		if !pointSpanOK || !inputSpanOK {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		for pointIndex := uint32(0); pointIndex < pointCount; pointIndex++ {
 			point, pointOK := program.OccurrencePointAt(int(pointOffset + pointIndex))
 			if !pointOK || !point.Available() {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(pointIndex), CompileReasonOccurrenceUnavailable)
+				return false
 			}
 			if _, exists := state.pointRows[point.PointID()]; !exists {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(pointIndex), CompileReasonOccurrenceUnavailable)
+				return false
 			}
 		}
 		for inputIndex := uint32(0); inputIndex < inputCount; inputIndex++ {
 			input, inputOK := program.OccurrenceInputAt(int(inputOffset + inputIndex))
 			if !inputOK || !input.Available() {
-				return compileFailure(CompileStageSeal, CompileRowOccurrence, index, int(inputIndex), CompileReasonOccurrenceUnavailable)
+				return false
 			}
 		}
 		kind := row.Kind()
@@ -241,28 +241,28 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			state.occurrenceRows[kind] = rows
 		}
 		if _, duplicate := rows[row.ID()]; duplicate {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		rows[row.ID()] = struct{}{}
 	}
 	exactCount, exactPublished := programschema.ExactScalarSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !exactPublished {
-		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		return false
 	}
 	var priorExact identity.ContentID
 	for index := 0; index < exactCount; index++ {
 		row, rowOK := programschema.ExactScalarSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorExact, row.ID()) {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		priorExact = row.ID()
 		_, exists := state.occurrenceRows[programschema.OccurrenceBinaryArithmetic][row.OccurrenceID()]
 		if !exists {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
 		if !found {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		binaryIndex := -1
 		for candidate := 0; candidate < occurrenceCount; candidate++ {
@@ -288,50 +288,50 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			endpointsOK = false
 		}
 		if !endpointsOK || row.SubjectID() != wantSubject {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 	}
 	arithmeticCount, arithmeticPublished := programschema.ArithmeticSummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !arithmeticPublished {
-		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		return false
 	}
 	var priorArithmetic identity.ContentID
 	for index := 0; index < arithmeticCount; index++ {
 		row, rowOK := programschema.ArithmeticSummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorArithmetic, row.ID()) {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		priorArithmetic = row.ID()
 		binary, found := program.OccurrenceForID(programschema.OccurrenceBinaryArithmetic, row.OccurrenceID())
 		if !found {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		body, bodyOK := binary.BodyID()
 		if !bodyOK || body != row.BodyPathID() || flowkind.BinaryOp(binary.Code()) != flowkind.BinaryOp(row.Operator()) {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 	}
 	unaryCount, unaryPublished := programschema.UnarySummaryFamily().Count(&artifact.frozen, artifact.coldCatalog)
 	if !unaryPublished {
-		return compileFailure(CompileStageSeal, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+		return false
 	}
 	var priorUnary identity.ContentID
 	for index := 0; index < unaryCount; index++ {
 		row, rowOK := programschema.UnarySummaryFamily().At(&artifact.frozen, artifact.coldCatalog, index)
 		if !rowOK || index > 0 && !contentIDBefore(priorUnary, row.ID()) {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 0, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		priorUnary = row.ID()
 		unary, found := program.OccurrenceForID(programschema.OccurrenceUnary, row.OccurrenceID())
 		if !found {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 1, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		body, bodyOK := unary.BodyID()
 		if !bodyOK || body != row.BodyPathID() {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 2, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		if flowkind.UnaryOp(unary.Code()) != flowkind.UnaryOp(row.Operator()) {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 3, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 		pointFound := false
 		pointOffset, pointCount, pointSpanOK := unary.PointSpan()
@@ -340,9 +340,9 @@ func (artifact *Artifact) validateSealRows(state *sealValidationState) CompileFa
 			pointFound = pointFound || pointOK && point.PointID() == row.OutputPointID()
 		}
 		if !pointFound {
-			return compileFailure(CompileStageSeal, CompileRowOccurrence, index, 5, CompileReasonOccurrenceUnavailable)
+			return false
 		}
 	}
 
-	return CompileFailure{}
+	return true
 }

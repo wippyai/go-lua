@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 )
 
 func TestCompileFailureIsClosedAndFailClosed(t *testing.T) {
@@ -12,14 +13,14 @@ func TestCompileFailureIsClosedAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, failure := programartifact.CompileDetailed(published, programartifact.GrammarIdentity{}, programartifact.IssuanceDirectory{})
-	if !failure.Available() || failure.Stage() != programartifact.CompileStageAuthority || failure.RowKind() != programartifact.CompileRowAuthority || failure.Reason() != programartifact.CompileReasonGrammarUnavailable {
+	_, failure := artifactcompiler.CompileDetailed(published, programartifact.GrammarIdentity{}, artifactcompiler.IssuanceDirectory{})
+	if !failure.Available() || failure.Stage() != artifactcompiler.CompileStageAuthority || failure.RowKind() != artifactcompiler.CompileRowAuthority || failure.Reason() != artifactcompiler.CompileReasonGrammarUnavailable {
 		t.Fatalf("invalid grammar did not produce a closed authority failure: %s", failure.Error())
 	}
-	if failure.Error() == (programartifact.CompileFailure{}).Error() {
+	if failure.Error() == (artifactcompiler.CompileFailure{}).Error() {
 		t.Fatal("a real compile failure was indistinguishable from success")
 	}
-	if success := (programartifact.CompileFailure{}); success.Available() || success.Error() != "program artifact compile succeeded" {
+	if success := (artifactcompiler.CompileFailure{}); success.Available() || success.Error() != "program artifact compile succeeded" {
 		t.Fatal("zero compile failure was not the closed success state")
 	}
 }

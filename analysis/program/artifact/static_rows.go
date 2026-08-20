@@ -67,29 +67,6 @@ func (row StaticTypeValueRow) Name() string {
 	return row.name
 }
 
-func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
-	if compiler == nil || !compiler.input.Available() {
-		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
-	}
-	compiler.staticTypeValues = make([]StaticTypeValueRow, 0)
-	typeValues := compiler.input.Flow().Authored().TypeValues()
-	for index := 0; index < typeValues.Count(); index++ {
-		source, referenceID, rootID, name, sourceOK := compiler.typeValueCompileRow(index)
-		if !sourceOK {
-			continue // authored denominator includes dead TypeValue candidates
-		}
-		if !source.id.Available() || !source.body.Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		row := StaticTypeValueRow{id: source.id, body: source.body, reference: referenceID, root: rootID, name: name}
-		if !row.Available() {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		compiler.staticTypeValues = append(compiler.staticTypeValues, row)
-	}
-	return CompileFailure{}
-}
-
 // StaticTypeValueCount and StaticTypeValueAt expose executable TypeValue
 // source rows without exporting the authored source coordinate.
 func (artifact *Artifact) StaticTypeValueCount() int {

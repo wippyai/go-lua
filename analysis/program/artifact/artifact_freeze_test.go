@@ -16,7 +16,7 @@ func TestArtifactFreezePublishesOneAvailableIdentity(t *testing.T) {
 	if !ok {
 		t.Fatal("artifact grammar unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	artifact, failure := compileArtifactForTest(t, published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() || !artifact.ID().Available() {
 		t.Fatalf("freeze result = artifact:%v failure:%s", artifact != nil, failure.Error())
 	}

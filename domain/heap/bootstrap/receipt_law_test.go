@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -187,7 +188,9 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("bootstrap artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -200,7 +203,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("bootstrap artifact mount")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("bootstrap artifact compile: %v", failure)
 		}

@@ -3,7 +3,7 @@ package composite
 import (
 	"testing"
 
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -75,7 +75,7 @@ func TestIssuanceRequirementOrdinalsPinTheArtifactVocabulary(t *testing.T) {
 	pinned := []struct {
 		key      schema.Key
 		spelling string
-		ordinal  programartifact.IssuanceRequirement
+		ordinal  artifactcompiler.IssuanceRequirement
 	}{
 		{"requirement/unrestricted", "unrestricted", 1},
 		{"requirement/call-plain-unary", "call-plain-unary", 2},

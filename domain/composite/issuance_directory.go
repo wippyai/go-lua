@@ -1,7 +1,7 @@
 package composite
 
 import (
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
@@ -15,27 +15,27 @@ import (
 // Each row carries the operand shape its rule declared, so the compiler places
 // the rows an owner can seal an operand for and no others: the placement set
 // and the owner-issued operand set are one denominator declared once.
-func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
+func ArtifactIssuanceDirectory() (artifactcompiler.IssuanceDirectory, bool) {
 	sealRegistry()
 	if registry.sealed == nil {
-		return programartifact.IssuanceDirectory{}, false
+		return artifactcompiler.IssuanceDirectory{}, false
 	}
-	var placements []programartifact.IssuancePlacement
+	var placements []artifactcompiler.IssuancePlacement
 	for _, entry := range registry.templates {
 		if entry == nil || entry.Lane() == rule.LaneLink {
 			continue
 		}
 		if !entry.Key().Available() {
-			return programartifact.IssuanceDirectory{}, false
+			return artifactcompiler.IssuanceDirectory{}, false
 		}
 		for index := 0; index < entry.IssuanceCount(); index++ {
 			issued, ok := entry.IssuanceAt(index)
 			if !ok {
-				return programartifact.IssuanceDirectory{}, false
+				return artifactcompiler.IssuanceDirectory{}, false
 			}
 			placement, ok := issuancePlacement(issued, entry.Key(), entry.Writes(), entry.Lane() == rule.LaneMounted)
 			if !ok {
-				return programartifact.IssuanceDirectory{}, false
+				return artifactcompiler.IssuanceDirectory{}, false
 			}
 			placements = append(placements, placement)
 		}
@@ -43,17 +43,17 @@ func ArtifactIssuanceDirectory() (programartifact.IssuanceDirectory, bool) {
 	forms, formsOK := structureFramings(structure.CategoryIssuanceForm)
 	stages, stagesOK := structureFramings(structure.CategoryIssuanceStage)
 	if !formsOK || !stagesOK {
-		return programartifact.IssuanceDirectory{}, false
+		return artifactcompiler.IssuanceDirectory{}, false
 	}
-	formFraming := make(map[programartifact.IssuanceForm]string, len(forms))
+	formFraming := make(map[artifactcompiler.IssuanceForm]string, len(forms))
 	for ordinal, framing := range forms {
-		formFraming[programartifact.IssuanceForm(ordinal)] = framing
+		formFraming[artifactcompiler.IssuanceForm(ordinal)] = framing
 	}
 	stageFraming := make(map[programschema.RuleStage]string, len(stages))
 	for ordinal, framing := range stages {
 		stageFraming[programschema.RuleStage(ordinal)] = framing
 	}
-	return programartifact.NewIssuanceDirectory(placements, formFraming, stageFraming)
+	return artifactcompiler.NewIssuanceDirectory(placements, formFraming, stageFraming)
 }
 
 // structureFramings projects the declared digest framing of every member of one
@@ -78,21 +78,21 @@ func structureFramings(category structure.Category) (map[uint16]string, bool) {
 	return framings, true
 }
 
-func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport bool) (programartifact.IssuancePlacement, bool) {
+func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport bool) (artifactcompiler.IssuancePlacement, bool) {
 	occurrence, occurrenceOK := structureOrdinal(issued.Occurrence, structure.CategoryOccurrenceKind)
 	form, formOK := structureOrdinal(issued.Form, structure.CategoryIssuanceForm)
 	input, inputOK := structureOrdinal(issued.Input, structure.CategoryIssuanceInput)
 	stage, stageOK := structureOrdinal(issued.Stage, structure.CategoryIssuanceStage)
 	requirement, requirementOK := structureOrdinal(issued.Requirement, structure.CategoryIssuanceRequirement)
 	if !occurrenceOK || !formOK || !inputOK || !stageOK || !requirementOK {
-		return programartifact.IssuancePlacement{}, false
+		return artifactcompiler.IssuancePlacement{}, false
 	}
-	placement := programartifact.IssuancePlacement{
+	placement := artifactcompiler.IssuancePlacement{
 		Occurrence:  programschema.OccurrenceKind(occurrence),
-		Form:        programartifact.IssuanceForm(form),
+		Form:        artifactcompiler.IssuanceForm(form),
 		Input:       programschema.RuleInputKind(input),
 		Stage:       programschema.RuleStage(stage),
-		Requirement: programartifact.IssuanceRequirement(requirement),
+		Requirement: artifactcompiler.IssuanceRequirement(requirement),
 		Code:        issued.Code,
 		HasCode:     issued.HasCode,
 		Key:         key,

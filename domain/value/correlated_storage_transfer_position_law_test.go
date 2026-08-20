@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -40,10 +41,12 @@ func TestStorageTransferSealsEveryMultipleAssignmentTargetPosition(t *testing.T)
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(programValue, receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(programValue, grammar, issuance)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}

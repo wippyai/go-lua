@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	proglink "github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -86,7 +87,9 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -99,7 +102,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("artifact mount source")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("artifact compile: %v", failure)
 		}

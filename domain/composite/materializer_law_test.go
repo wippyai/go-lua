@@ -7,7 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	proglink "github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -60,11 +60,13 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		t.Fatal(err)
 	}
 	receipt, receiptOK := Global()
-	if !receiptOK {
+	grammar, grammarOK := ArtifactGrammar(receipt)
+	issuance, issuanceOK := ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("the program schema receipt is unavailable")
 	}
 	mounts := linked.Project().Mounts()
-	artifacts := make([]*programartifact.Artifact, mounts.Count())
+	artifacts := make([]programschema.Program, mounts.Count())
 	rows := make([]programmount.MountedArtifact, mounts.Count())
 	statics := make([]staticdomain.MountedProgram, mounts.Count())
 	for index := 0; index < mounts.Count(); index++ {
@@ -75,11 +77,11 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		if !shardOK || !mountedOK || mounted == nil || !moduleOK || !programIDOK {
 			t.Fatalf("mount %d has no artifact source", index)
 		}
-		artifact, failure := CompileArtifactDetailed(mounted, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(mounted, grammar, issuance)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile artifact %d: %v", index, failure)
 		}
-		artifacts[index] = artifact
+		artifacts[index] = artifact.Program()
 		vocabulary, vocabularyOK := StructureVocabulary()
 		snapshot, lowered := ingress.Lower(artifact, vocabulary)
 		if !vocabularyOK || !lowered {
@@ -102,7 +104,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 		rows[index] = programmount.MountedArtifact{Program: program, Snapshot: snapshot}
 		statics[index] = staticdomain.MountedProgram{Program: program.Program, ModuleID: module, NamespaceID: module}
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), artifacts)
 	if err != nil || types == nil {
 		t.Fatalf("seal the type authority: %v", err)
 	}

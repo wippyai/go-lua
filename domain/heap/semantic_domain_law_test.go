@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -552,10 +553,12 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec declaration.Sp
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programOK := linked.Project().Mounts().ProgramID(shard)
 	receipt, receiptOK := composite.Global()
-	compiled, failure := composite.CompileArtifactDetailed(program, receipt)
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	compiled, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, compiled), module, programID)
 	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
-	if !shardOK || !moduleOK || !programOK || !receiptOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
+	if !shardOK || !moduleOK || !programOK || !receiptOK || !grammarOK || !issuanceOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
 		t.Fatalf("receipt Heap fixture shard=%t module=%t program=%t receipt=%t artifact=%v mount=%t seal=%v", shardOK, moduleOK, programOK, receiptOK, failure, mountOK, sealFailure)
 	}
 	return semanticHeapFixtureRecord{linked: linked, schema: schema, mount: mount, module: module, program: programID}

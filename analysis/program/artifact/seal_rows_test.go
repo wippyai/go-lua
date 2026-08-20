@@ -4,7 +4,7 @@ import "testing"
 
 func TestSealRowsRejectsNilValidationState(t *testing.T) {
 	artifact := &Artifact{}
-	if failure := artifact.validateSealRows(nil); !failure.Available() || failure.Stage() != CompileStageSeal {
+	if artifact.validateSealRows(nil) {
 		t.Fatal("seal row phase admitted missing state")
 	}
 }

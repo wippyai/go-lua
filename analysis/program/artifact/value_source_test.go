@@ -17,7 +17,7 @@ func TestValueSourceCompilationRetainsLiteralOccurrences(t *testing.T) {
 	if !ok {
 		t.Fatal("artifact grammar unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(lowered, compilation)
+	artifact, failure := compileArtifactForTest(t, lowered, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("value source compilation failed: %s", failure.Error())
 	}

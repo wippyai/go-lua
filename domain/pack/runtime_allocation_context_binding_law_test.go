@@ -11,7 +11,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
@@ -44,7 +44,9 @@ func runtimeContextBindingSchema(t testing.TB, contract *contract.Contract, oper
 		t.Fatal(err)
 	}
 	grammar, grammarOK := composite.Global()
-	if !grammarOK {
+	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !grammarOK || !artifactGrammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounted := linked.Project().Mounts()
@@ -55,11 +57,11 @@ func runtimeContextBindingSchema(t testing.TB, contract *contract.Contract, oper
 	if mounted.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("binding mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
+	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile binding artifact: %s", failure.Error())
 	}
-	types, err := typeauthority.SealArtifactRows(linked.ContentID(), []*programartifact.Artifact{artifact})
+	types, err := typeauthority.SealProgramRows(linked.ContentID(), []programschema.Program{artifact.Program()})
 	if err != nil || types == nil {
 		t.Fatalf("seal binding types: %v", err)
 	}

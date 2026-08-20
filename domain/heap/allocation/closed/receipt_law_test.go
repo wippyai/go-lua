@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -123,7 +124,9 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 	t.Helper()
 	receipt, receiptOK := composite.Global()
-	if !receiptOK || linked == nil || linked.Project() == nil {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("closed artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -136,7 +139,7 @@ func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("closed artifact mount")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("closed artifact compile: %v", failure)
 		}

@@ -23,7 +23,7 @@ return check
 	if !ok {
 		t.Fatal("artifact grammar unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(lowered, compilation)
+	artifact, failure := compileArtifactForTest(t, lowered, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("catalog compilation failed: %s", failure.Error())
 	}

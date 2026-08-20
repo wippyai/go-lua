@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -27,7 +28,7 @@ func compileStaticReferenceLeafArtifact(t *testing.T, name, text string) *progra
 	if !compilationOK {
 		t.Fatal("program schema unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	artifact, failure := compileArtifactForTest(t, published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("CompileDetailed(%s): %s", name, failure.Error())
 	}
@@ -182,9 +183,9 @@ return value
 	if !compilationOK {
 		t.Fatal("program schema unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(canonical, compilation)
-	if artifact != nil || !failure.Available() || failure.Stage() != programartifact.CompileStageSeal ||
-		failure.RowKind() != programartifact.CompileRowOccurrence || failure.Reason() != programartifact.CompileReasonOccurrenceUnavailable {
+	artifact, failure := compileArtifactForTest(t, canonical, compilation)
+	if artifact != nil || !failure.Available() || failure.Stage() != artifactcompiler.CompileStageSeal ||
+		failure.RowKind() != artifactcompiler.CompileRowAuthority || failure.Reason() != artifactcompiler.CompileReasonArtifactIdentity {
 		t.Fatalf("CompileDetailed admitted targetless canonical reference: artifact=%v failure=%s", artifact != nil, failure.Error())
 	}
 }

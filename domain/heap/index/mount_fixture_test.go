@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -27,7 +29,9 @@ type indexFixtureMounts struct {
 func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 	t.Helper()
 	receipt, receiptOK := composite.Global()
-	if !receiptOK || linked == nil || linked.Project() == nil {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("index fixture artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -45,7 +49,7 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("index fixture mount")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index fixture artifact: %v", failure)
 		}
@@ -72,7 +76,9 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("index schemas program receipt")
 	}
 	artifacts := make([]*programartifact.Artifact, 0, linked.Project().Mounts().Count())
@@ -82,14 +88,18 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 		if !shardOK || !programOK || program == nil {
 			t.Fatal("index schemas artifact program")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index schemas artifact: %v", failure)
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	contract, _ := linked.Boundary().Target()
-	types, typeErr := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
+	programs := make([]programschema.Program, len(artifacts))
+	for index, artifact := range artifacts {
+		programs[index] = artifact.Program()
+	}
+	types, typeErr := typeauthority.SealProgramRows(linked.ContentID(), programs)
 	staticMounts := make([]staticdomain.MountedProgram, 0, len(artifacts))
 	for index, artifact := range artifacts {
 		shard, shardOK := linked.Project().Mounts().At(index)

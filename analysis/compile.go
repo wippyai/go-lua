@@ -24,6 +24,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -552,9 +553,10 @@ type artifactCacheEntry struct {
 var globalArtifactCache = artifactCacheState{entries: make(map[identity.ContentID]*artifactCacheEntry)}
 
 func cachedProgramArtifact(input *program.Program, compilation composite.Compilation) (*programartifact.Artifact, *ingress.Snapshot, *rows.ArtifactScalarTemplate, *scalarlower.RoleDirectory, bool) {
-	compileKey, keyOK := composite.NewArtifactCompileKey(input, compilation)
+	grammar, grammarOK := composite.ArtifactGrammar(compilation)
+	compileKey, keyOK := programartifact.NewCompileKey(input, grammar)
 	programID := input.ContentID()
-	if !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !compilation.Available() {
+	if !grammarOK || !keyOK || !compileKey.Available() || !input.Available() || !programID.Available() || !compilation.Available() {
 		return nil, nil, nil, nil, false
 	}
 	schemaID := compileKey.SchemaDigest()
@@ -569,7 +571,9 @@ func cachedProgramArtifact(input *program.Program, compilation composite.Compila
 		globalArtifactCache.entries[key] = entry
 		globalArtifactCache.Unlock()
 
-		artifact, compiled := composite.CompileArtifact(input, compilation)
+		issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+		artifact, failure := artifactcompiler.CompileDetailed(input, grammar, issuance)
+		compiled := issuanceOK && artifact != nil && !failure.Available()
 		var snapshot *ingress.Snapshot
 		var template *rows.ArtifactScalarTemplate
 		var roles *scalarlower.RoleDirectory

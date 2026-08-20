@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -34,7 +35,9 @@ invoke(callee)
 		t.Fatal(err)
 	}
 	receipt, ok := composite.Global()
-	if !ok {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !ok || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -50,7 +53,7 @@ invoke(callee)
 	if !ok {
 		t.Fatal("module key")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(mounted, receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(mounted, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -85,7 +88,7 @@ invoke(callee)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreignArtifact, foreignFailure := composite.CompileArtifactDetailed(foreignProgram, receipt)
+	foreignArtifact, foreignFailure := artifactcompiler.CompileDetailed(foreignProgram, grammar, issuance)
 	if foreignFailure.Available() || foreignArtifact == nil || !foreignArtifact.Available() {
 		t.Fatalf("compile foreign artifact: %s", foreignFailure.Error())
 	}

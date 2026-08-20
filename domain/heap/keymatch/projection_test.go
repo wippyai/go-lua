@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -385,7 +386,9 @@ func keymatchValueMounts(t testing.TB, linked *link.Link) []valuedomain.Artifact
 func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
 	receipt, receiptOK := composite.Global()
-	if !receiptOK || linked == nil || linked.Project() == nil {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("keymatch artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -399,7 +402,7 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artif
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("keymatch artifact mount")
 		}
-		artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("keymatch artifact: %v", failure)
 		}

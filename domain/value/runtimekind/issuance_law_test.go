@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -48,7 +49,9 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 		t.Fatalf("seal source: %v", err)
 	}
 	grammar, grammarOK := composite.Global()
-	if !grammarOK {
+	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !grammarOK || !artifactGrammarOK || !issuanceOK {
 		t.Fatal("program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -59,7 +62,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(program, grammar)
+	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}

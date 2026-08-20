@@ -20,7 +20,7 @@ return identity(1)
 	if !ok {
 		t.Fatal("artifact grammar unavailable")
 	}
-	artifact, failure := composite.CompileArtifactDetailed(published, compilation)
+	artifact, failure := compileArtifactForTest(t, published, compilation)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("call occurrence compilation failed: %s", failure.Error())
 	}

@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -23,7 +23,7 @@ type callStageTransportDeclarations struct {
 	axisOf   map[schema.Key]schema.Key
 	mounted  map[schema.Key]struct{}
 	byStage  map[programschema.RuleStage]map[schema.Key]struct{}
-	transfer programartifact.IssuanceDirectory
+	transfer artifactcompiler.IssuanceDirectory
 }
 
 func readCallStageTransportDeclarations(t *testing.T) callStageTransportDeclarations {
@@ -123,10 +123,11 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 		t.Fatal(err)
 	}
 	compilation, compilationOK := Global()
-	if !compilationOK {
+	grammar, grammarOK := ArtifactGrammar(compilation)
+	if !compilationOK || !grammarOK {
 		t.Fatal("the program schema receipt is unavailable")
 	}
-	artifact, failure := CompileArtifactDetailed(published, compilation)
+	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, read.transfer)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile the call fixture: %s", failure.Error())
 	}

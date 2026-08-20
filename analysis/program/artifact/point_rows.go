@@ -1,11 +1,8 @@
 package artifact
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
-	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -54,47 +51,6 @@ type EnvironmentEdge struct {
 	hasReset  bool
 	mu        identity.ContentID
 	hasMu     bool
-}
-
-// localTransferDraft is compiler-only assembly state for one Program local
-// transport. The sealed Artifact does not retain this row: Freeze converts it
-// to programschema.LocalTransfer and the canonical Program publication owns
-// the resulting family.
-type localTransferDraft struct {
-	id     identity.ContentID
-	from   identity.ContentID
-	to     identity.ContentID
-	full   bool
-	writes []schema.Key
-}
-
-func (edge localTransferDraft) Available() bool {
-	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || edge.from == edge.to || edge.full == (len(edge.writes) != 0) {
-		return false
-	}
-	for index, write := range edge.writes {
-		if !write.Available() || index != 0 && edge.writes[index-1] >= write {
-			return false
-		}
-	}
-	return true
-}
-
-// orderedWrites is the closed emission order of one factor transport: unique
-// available keys, strictly ascending. The transfer identity hashes this
-// sequence, so two emissions of the same set produce one ID.
-func orderedWrites(writes []schema.Key) ([]schema.Key, bool) {
-	if len(writes) == 0 {
-		return nil, true
-	}
-	ordered := append([]schema.Key(nil), writes...)
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
-	for index, write := range ordered {
-		if !write.Available() || index != 0 && ordered[index-1] >= write {
-			return nil, false
-		}
-	}
-	return ordered, true
 }
 
 func (edge EnvironmentEdge) ID() identity.ContentID      { return edge.id }

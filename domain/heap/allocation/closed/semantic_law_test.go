@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -177,13 +178,15 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	artifact, failure := composite.CompileArtifactDetailed(program, receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
-	if !receiptOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
+	if !receiptOK || !grammarOK || !issuanceOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("closed semantic artifact admission")
 	}
 	// Value's canonical mount is issued from the same artifact receipt; keep

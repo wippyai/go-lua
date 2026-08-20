@@ -9,11 +9,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	dispatchdomain "github.com/wippyai/go-lua/domain/call/dispatch"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -56,7 +58,9 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		t.Fatal(err)
 	}
 	receipt, receiptOK := composite.Global()
-	if !receiptOK {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -74,7 +78,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		if !shardOK || !programOK || published == nil || !moduleOK || !programIDOK {
 			t.Fatalf("site fixture mount %d", index)
 		}
-		artifact, failure := composite.CompileArtifactDetailed(published, receipt)
+		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance)
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("compile site fixture artifact %d: %s", index, failure.Error())
 		}
@@ -95,7 +99,11 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		t.Fatal("structure vocabulary")
 	}
 	values, valueFailure := valuedomain.SealWithFailure(linked, heaps, valueMounts, structural)
-	types, typesErr := typeauthority.SealArtifactRows(linked.ContentID(), artifacts)
+	programs := make([]programschema.Program, len(artifacts))
+	for index, artifact := range artifacts {
+		programs[index] = artifact.Program()
+	}
+	types, typesErr := typeauthority.SealProgramRows(linked.ContentID(), programs)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone || typesErr != nil || types == nil {
 		t.Fatalf("site fixture schemas heap=%s value=%s types=%v", heapFailure, valueFailure, typesErr)
 	}

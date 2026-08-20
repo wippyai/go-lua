@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
@@ -156,11 +157,13 @@ func compileArtifactForAuthorityTest(t testing.TB, source string) *programartifa
 		t.Fatal(err)
 	}
 	receipt, ok := composite.Global()
-	if !ok || !receipt.Available() {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	if !ok || !receipt.Available() || !grammarOK || !issuanceOK {
 		t.Fatal("global program schema unavailable")
 	}
-	artifact, ok := composite.CompileArtifact(program, receipt)
-	if !ok || artifact == nil || !artifact.Available() {
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatal("ProgramArtifact compilation failed")
 	}
 	return artifact

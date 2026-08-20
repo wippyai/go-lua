@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis/program"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -64,8 +65,9 @@ return retained_cache_probe`, contract)
 	if !shardOK || !mountedOK || mounted == nil {
 		t.Fatal("probe mount unavailable")
 	}
-	compileKey, keyOK := composite.NewArtifactCompileKey(mounted, receipt)
-	if !keyOK || !compileKey.Available() {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	compileKey, keyOK := programartifact.NewCompileKey(mounted, grammar)
+	if !grammarOK || !keyOK || !compileKey.Available() {
 		t.Fatal("compile key unavailable")
 	}
 	first, firstStatus, firstDiagnostics := CompileWithDiagnostics(linked)
@@ -181,9 +183,10 @@ func TestArtifactCacheChangedFullKeyDoesNotAlias(t *testing.T) {
 	receipt, receiptOK := composite.Global()
 	leftInput := planLifecycleInput(t, left)
 	rightInput := planLifecycleInput(t, right)
-	leftKey, leftKeyOK := composite.NewArtifactCompileKey(leftInput, receipt)
-	rightKey, rightKeyOK := composite.NewArtifactCompileKey(rightInput, receipt)
-	if !receiptOK || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
+	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	leftKey, leftKeyOK := programartifact.NewCompileKey(leftInput, grammar)
+	rightKey, rightKeyOK := programartifact.NewCompileKey(rightInput, grammar)
+	if !receiptOK || !grammarOK || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
 		t.Fatal("changed Program did not issue a distinct full compiler key")
 	}
 	leftArtifact := leftPlan.state.artifacts.byProgram[leftInput.ContentID()]
