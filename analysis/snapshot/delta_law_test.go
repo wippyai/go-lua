@@ -314,8 +314,9 @@ func TestRemovedRowBecomesAbsence(t *testing.T) {
 
 // TestDeltaRejectsUnpublishableDerivation fixes what a derived publication
 // refuses. It must advance the store it derives from, because two snapshots
-// of one store at one generation would make one locator address two different
-// contents, and it derives nothing at all from an unpublished snapshot.
+// of one store at one generation would publish two different contents under
+// one store revision, and it derives nothing at all from an unpublished
+// snapshot.
 func TestDeltaRejectsUnpublishableDerivation(t *testing.T) {
 	base := wideSnapshot(t, 8, identity.Generation(3))
 	for name, generation := range map[string]identity.Generation{
@@ -337,23 +338,6 @@ func TestDeltaRejectsUnpublishableDerivation(t *testing.T) {
 		delta := NewDelta(Snapshot{}, identity.Generation(1))
 		if _, err := delta.Seal(); !errors.Is(err, ErrUnavailableIdentity) {
 			t.Fatalf("seal error = %v, want %v", err, ErrUnavailableIdentity)
-		}
-	})
-	t.Run("locator does not survive the derivation", func(t *testing.T) {
-		locator, resolved := Resolve(&base, wideID)
-		if !resolved {
-			t.Fatal("published identity does not resolve")
-		}
-		delta := NewDelta(base, identity.Generation(4))
-		sealed, err := delta.Seal()
-		if err != nil {
-			t.Fatalf("seal delta: %v", err)
-		}
-		value, status := ReadAt[int, int](&sealed, locator, 1)
-		assertInvalid(t, value, status)
-		again, resolved := Resolve(&sealed, wideID)
-		if !resolved || again == locator {
-			t.Fatal("a derived publication reissued the base's locator")
 		}
 	})
 }

@@ -80,28 +80,6 @@ func newFixture(t testing.TB) Snapshot {
 	return sealed
 }
 
-// republish seals the same schema and columns under another store or
-// generation, which is what a locator issued by the fixture must not survive.
-func republish(t testing.TB, store identity.StoreID, generation identity.Generation) Snapshot {
-	t.Helper()
-	builder := NewBuilder(fixtureSchema, store, generation)
-	put(t, &builder, totalAxis, Content[string, int]{
-		Rows:        map[string]int{"present": 11},
-		Denominator: fixtureDenominator,
-		Members:     []string{"present", "absent"},
-	})
-	put(t, &builder, partialAxis, Content[string, int]{Rows: map[string]int{"present": 22}})
-	put(t, &builder, recordAxis, Content[int, record]{Rows: map[int]record{5: {Weight: 1, Reach: 2, Marked: true}}})
-	if err := builder.Publish(fixtureTotalID, totalAxis.Slot); err != nil {
-		t.Fatalf("publish total axis: %v", err)
-	}
-	sealed, err := builder.Seal()
-	if err != nil {
-		t.Fatalf("seal republication: %v", err)
-	}
-	return sealed
-}
-
 // put fills one column and fails the test when construction rejects.
 func put[K comparable, V any](t testing.TB, b *Builder, ax Axis[K, V], content Content[K, V]) {
 	t.Helper()

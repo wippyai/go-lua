@@ -78,8 +78,8 @@
 // derived publication states its change set: SetRow publishes a row,
 // RemoveRow withdraws one, and PutColumn reseals a whole slot. A derived
 // publication must advance the generation of the store it derives from,
-// because two snapshots of one store at one generation would make one
-// locator address two different contents.
+// because two snapshots of one store at one generation would publish two
+// different contents under one store revision.
 //
 // # Queries
 //
@@ -93,15 +93,6 @@
 // and a materializer publishes and withdraws answers through the ordinary row
 // edits.
 //
-// # Locators
-//
-// Resolve turns a ContentID into at most one Locator through the snapshot's
-// immutable directory. A Locator is a snapshot-relative address, not an
-// identity: it is valid only against the snapshot, store, and generation that
-// issued it, and it carries an unexported coordinate so no consumer can mint
-// one, persist one, or read one back out as a durable key. Cross-store
-// semantic identity is ContentID and nothing else.
-//
 // # Borrowed values
 //
 // Values read out of a snapshot are borrowed and transitively immutable. The
@@ -113,9 +104,9 @@
 //
 // # Cost
 //
-// Point reads, queries and Resolve allocate nothing, enforced by allocation
-// laws. A publication costs its change set, enforced by a measured delta law.
-// A Snapshot is a value: copying one shares the published structure and
-// copies no rows, so snapshots and Locators survive assignment, slice
-// placement, and map placement unchanged.
+// Point reads and queries allocate nothing, enforced by allocation laws. A
+// publication costs its change set, enforced by a measured delta law. A
+// Snapshot is a value: copying one shares the published structure and copies
+// no rows, so snapshots survive assignment, slice placement, and map
+// placement unchanged.
 package snapshot

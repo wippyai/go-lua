@@ -1,38 +1,23 @@
 package snapshot
 
-import (
-	"testing"
-
-	"github.com/wippyai/go-lua/analysis/identity"
-)
+import "testing"
 
 // Sinks keep the measured reads observable so a compiler cannot delete the
 // work being measured. They are concrete types, so storing into them never
 // allocates and never contaminates the measurement.
 var (
-	sinkInt      int
-	sinkRecord   record
-	sinkStatus   ReadStatus
-	sinkLocator  Locator
-	sinkResolved bool
+	sinkInt    int
+	sinkRecord record
+	sinkStatus ReadStatus
 )
 
 // TestReadsAllocateNothing is the cost law of a point read. Every read
-// outcome and every directory resolution runs in zero allocations: the axis
-// carries no storage, the column pointer is recovered out of the erased slot
-// without boxing the key or the value, and a Locator is a value. A read that
-// allocated would price the authoritative path above a local shortcut, which
-// is the one thing the incentive law forbids.
+// outcome runs in zero allocations: the axis carries no storage, and the
+// column pointer is recovered out of the erased slot without boxing the key
+// or the value. A read that allocated would price the authoritative path above
+// a local shortcut, which is the one thing the incentive law forbids.
 func TestReadsAllocateNothing(t *testing.T) {
 	sealed := newFixture(t)
-	locator, resolved := Resolve(&sealed, fixtureTotalID)
-	if !resolved {
-		t.Fatal("published identity does not resolve")
-	}
-	recordLocator, resolved := Resolve(&sealed, fixtureRecordID)
-	if !resolved {
-		t.Fatal("record identity does not resolve")
-	}
 
 	cases := []struct {
 		name string
@@ -76,26 +61,6 @@ func TestReadsAllocateNothing(t *testing.T) {
 			want: ReadMiss,
 			read: func() { sinkRecord, sinkStatus = Read(&sealed, recordAxis, 6) },
 		},
-		{
-			name: "locator read hit",
-			want: ReadHit,
-			read: func() { sinkInt, sinkStatus = ReadAt[string, int](&sealed, locator, "present") },
-		},
-		{
-			name: "locator read proven absence",
-			want: ReadProvenAbsent,
-			read: func() { sinkInt, sinkStatus = ReadAt[string, int](&sealed, locator, "absent") },
-		},
-		{
-			name: "locator read miss",
-			want: ReadMiss,
-			read: func() { sinkInt, sinkStatus = ReadAt[string, int](&sealed, locator, "unknown") },
-		},
-		{
-			name: "locator read wide value",
-			want: ReadHit,
-			read: func() { sinkRecord, sinkStatus = ReadAt[int, record](&sealed, recordLocator, 5) },
-		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -108,35 +73,6 @@ func TestReadsAllocateNothing(t *testing.T) {
 		})
 	}
 
-	resolutions := []struct {
-		name string
-		want bool
-		run  func()
-	}{
-		{
-			name: "resolve published",
-			want: true,
-			run:  func() { sinkLocator, sinkResolved = Resolve(&sealed, fixtureTotalID) },
-		},
-		{
-			name: "resolve unpublished",
-			run:  func() { sinkLocator, sinkResolved = Resolve(&sealed, fixtureUnknownID) },
-		},
-		{
-			name: "resolve unavailable",
-			run:  func() { sinkLocator, sinkResolved = Resolve(&sealed, identity.ContentID{}) },
-		},
-	}
-	for _, testCase := range resolutions {
-		t.Run(testCase.name, func(t *testing.T) {
-			if allocations := testing.AllocsPerRun(1000, testCase.run); allocations != 0 {
-				t.Fatalf("allocations = %v, want 0", allocations)
-			}
-			if sinkResolved != testCase.want {
-				t.Fatalf("resolved = %t, want %t", sinkResolved, testCase.want)
-			}
-		})
-	}
 }
 
 // BenchmarkRead reports the point-read cost the law above fixes at zero
@@ -167,12 +103,6 @@ func BenchmarkRead(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
 			sinkInt, sinkStatus = Read(&sealed, rejected, "present")
-		}
-	})
-	b.Run("resolve", func(b *testing.B) {
-		b.ReportAllocs()
-		for range b.N {
-			sinkLocator, sinkResolved = Resolve(&sealed, fixtureTotalID)
 		}
 	})
 }

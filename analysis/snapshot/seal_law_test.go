@@ -10,8 +10,8 @@ import (
 
 // TestSealRejectsIncompletePublication fixes what publication refuses. A
 // snapshot without a schema, a store, or a generation has nothing to anchor a
-// read or a locator to, and a hole in the dense slot range is a column that
-// was declared and never written.
+// read to, and a hole in the dense slot range is a column that was declared
+// and never written.
 func TestSealRejectsIncompletePublication(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -156,6 +156,9 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	if err := builder.Publish(fixtureUnknownID, 3); err != nil {
 		t.Fatalf("late publish: %v", err)
 	}
+	if err := builder.RegisterQuery(fixtureUnknownID); err != nil {
+		t.Fatalf("late directory query: %v", err)
+	}
 	if err := builder.RegisterQuery(identity.ContentID{0xBB}); err != nil {
 		t.Fatalf("late query: %v", err)
 	}
@@ -166,8 +169,11 @@ func TestSealedSnapshotIgnoresLaterConstruction(t *testing.T) {
 	late := Axis[string, int]{SchemaID: fixtureSchema, Slot: 3}
 	lateValue, lateStatus := Read(&sealed, late, "late")
 	assertInvalid(t, lateValue, lateStatus)
-	if _, resolved := Resolve(&sealed, fixtureUnknownID); resolved {
-		t.Fatal("a late directory entry reached the sealed snapshot")
+	if sealed.Queries().Published(fixtureUnknownID) {
+		t.Fatal("a late query registration reached the sealed snapshot")
+	}
+	if _, opened := OpenQuery[string, int](&sealed, fixtureUnknownID); opened {
+		t.Fatal("a late directory query reached the sealed snapshot")
 	}
 	if sealed.Queries().Published(identity.ContentID{0xBB}) {
 		t.Fatal("a late query registration reached the sealed snapshot")

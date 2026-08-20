@@ -2,20 +2,6 @@ package snapshot
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// address is the snapshot-relative coordinate a Locator carries. Its fields
-// are unexported and no exported function accepts one, so a Locator can be
-// held, copied, and compared but never minted, edited, or written down as a
-// durable key. That is the whole enforcement of the rule that a Locator is an
-// address rather than an identity.
-type address struct {
-	slot uint32
-}
-
-// Locator is a directory resolution: one column slot in one store at one
-// generation. It is valid only against the snapshot that issued it, and it
-// stops being valid the moment that store advances.
-type Locator = identity.Locator[address]
-
 // publication is the immutable state both published lifecycles share: the
 // sealing schema, the store and generation that fence its addresses, the
 // dense column vector, the directory, and the denominators that make an
@@ -28,7 +14,7 @@ type publication struct {
 	// columns holds one erased *column[K, V] per dense slot. The slice is
 	// never handed out and never appended to after Seal.
 	columns []any
-	// directory is the immutable ContentID to slot mapping Resolve consults.
+	// directory is the immutable ContentID to slot mapping OpenQuery consults.
 	// It holds at most one entry per published identity and, like every
 	// other published structure here, is shared with the publications
 	// derived from this one rather than copied.
@@ -43,8 +29,7 @@ func (p publication) Schema() identity.ContentID { return p.schema }
 // Store returns the identity of the store that published this value.
 func (p publication) Store() identity.StoreID { return p.store }
 
-// Generation returns the store revision this value publishes. It is the
-// fence every Locator issued from it is anchored to.
+// Generation returns the store revision this value publishes.
 func (p publication) Generation() identity.Generation { return p.generation }
 
 // Published reports whether p is a sealed publication rather than a zero
@@ -54,7 +39,7 @@ func (p publication) Published() bool {
 }
 
 // Columns reports how many dense column slots this value publishes. It
-// bounds the slot of every valid axis and every Locator.
+// bounds the slot of every valid axis.
 func (p publication) Columns() int { return len(p.columns) }
 
 // Denominators returns the sealed denominator publication.
@@ -130,36 +115,6 @@ func ReadOverlay[K comparable, V any](b *Builder, ax Axis[K, V], key K) (V, Read
 	return stored.read(key)
 }
 
-// ReadAt answers key on the column locator addresses. It validates the
-// locator against this snapshot's store and generation before it validates
-// bounds and column kind, so an address issued against a superseded
-// generation fails closed rather than reading whatever now occupies the slot.
-//
-// The returned value is borrowed and transitively immutable. ReadAt allocates
-// nothing.
-func ReadAt[K comparable, V any](s *Snapshot, locator Locator, key K) (V, ReadStatus) {
-	var zero V
-	if s == nil || !locator.Valid(s.store, s.generation) {
-		return zero, ReadInvalid
-	}
-	stored, recovered := columnAt[K, V](&s.publication, s.schema, locator.Slot.slot)
-	if !recovered {
-		return zero, ReadInvalid
-	}
-	return stored.read(key)
-}
-
-// Resolve returns the single Locator this snapshot's immutable directory
-// publishes for id, anchored to this snapshot's store and generation. A
-// ContentID the directory does not publish resolves to nothing; the directory
-// never holds two locators for one identity. Resolve allocates nothing.
-func Resolve(s *Snapshot, id identity.ContentID) (Locator, bool) {
-	if s == nil {
-		return Locator{}, false
-	}
-	return s.publication.resolve(id)
-}
-
 // ReadFrozen answers key on the cold column ax names. It performs exactly the
 // checks Read performs and returns the same outcomes; the separate entry
 // point exists because a Frozen is a different published value, not because
@@ -180,48 +135,8 @@ func ReadFrozen[K comparable, V any](f *Frozen, ax Axis[K, V], key K) (V, ReadSt
 	return stored.read(key)
 }
 
-// ResolveFrozen returns the single Locator the cold directory publishes for
-// id, anchored to the frozen store and its final generation. Because that
-// generation never advances, a Locator issued here stays valid for as long as
-// the Frozen value exists. ResolveFrozen allocates nothing.
-func ResolveFrozen(f *Frozen, id identity.ContentID) (Locator, bool) {
-	if f == nil {
-		return Locator{}, false
-	}
-	return f.publication.resolve(id)
-}
-
-// ReadFrozenAt answers key on the cold column locator addresses.
-//
-// The returned value is borrowed and transitively immutable. ReadFrozenAt
-// allocates nothing.
-func ReadFrozenAt[K comparable, V any](f *Frozen, locator Locator, key K) (V, ReadStatus) {
-	var zero V
-	if f == nil || !locator.Valid(f.store, f.generation) {
-		return zero, ReadInvalid
-	}
-	stored, recovered := columnAt[K, V](&f.publication, f.schema, locator.Slot.slot)
-	if !recovered {
-		return zero, ReadInvalid
-	}
-	return stored.read(key)
-}
-
-// resolve is the directory lookup both published lifecycles perform.
-func (p *publication) resolve(id identity.ContentID) (Locator, bool) {
-	if p == nil || !p.Published() {
-		return Locator{}, false
-	}
-	slot, published := trieLookup(p.directory, hashKey(identityPlan, id), id)
-	if !published || uint64(slot) >= uint64(len(p.columns)) {
-		return Locator{}, false
-	}
-	return identity.NewLocator(p.store, p.generation, address{slot: slot}), true
-}
-
 // columnAt performs the shared validation and typed recovery: schema match,
-// slot bound, then the checked recovery that is the column-kind check. It
-// exists so Read and ReadAt cannot drift apart on what a valid read means.
+// slot bound, then the checked recovery that is the column-kind check.
 func columnAt[K comparable, V any](s *publication, schema identity.ContentID, slot uint32) (*column[K, V], bool) {
 	if s == nil || !s.Published() || !schema.Available() || schema != s.schema {
 		return nil, false

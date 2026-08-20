@@ -91,13 +91,6 @@ func TestQueryAnswersItsPublishedFamily(t *testing.T) {
 	if !sealed.Queries().Published(queryFamily) {
 		t.Fatal("a declared family is not registered as answerable")
 	}
-	locator, resolved := Resolve(&sealed, queryFamily)
-	if !resolved {
-		t.Fatal("a declared family is not addressed by the directory")
-	}
-	if value, status := ReadAt[string, int](&sealed, locator, "present"); value != 11 || status != ReadHit {
-		t.Fatalf("result column locator read = (%d, %v), want (11, hit)", value, status)
-	}
 }
 
 // TestQueryFailsClosed fixes every rejection. A plan a snapshot did not issue

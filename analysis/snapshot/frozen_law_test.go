@@ -186,40 +186,6 @@ func TestFrozenReadsMatchAnEquivalentHotPublication(t *testing.T) {
 	}
 }
 
-// A Locator issued against a frozen store stays valid for the life of the
-// value, because the generation it is anchored to never advances.
-func TestFrozenLocatorStaysValid(t *testing.T) {
-	published, derived := identity.DeriveContentID("snapshot/frozen-law/published", nil)
-	if !derived {
-		t.Fatal("published identity")
-	}
-	builder := NewFrozen(frozenLawSchema(t), identity.StoreID(45))
-	if err := PutFrozenColumn(&builder, frozenLawAxis(t), frozenLawContent(t)); err != nil {
-		t.Fatalf("put cold column: %v", err)
-	}
-	if err := builder.Publish(published, 0); err != nil {
-		t.Fatalf("publish: %v", err)
-	}
-	frozen, err := builder.Seal()
-	if err != nil {
-		t.Fatalf("seal: %v", err)
-	}
-
-	locator, resolved := ResolveFrozen(&frozen, published)
-	if !resolved {
-		t.Fatal("frozen directory resolved nothing")
-	}
-	value, status := ReadFrozenAt[uint64, uint64](&frozen, locator, uint64(1))
-	if status != ReadHit || value != 7 {
-		t.Fatalf("locator read reported %v value %d", status, value)
-	}
-
-	shared := frozen
-	if _, status := ReadFrozenAt[uint64, uint64](&shared, locator, uint64(1)); status != ReadHit {
-		t.Fatal("locator stopped addressing a shared copy of the same frozen value")
-	}
-}
-
 // A frozen publication is held to the same construction rules a hot one is:
 // missing identities and holes in the dense slot range reject.
 func TestFrozenSealRejectsIncompletePublication(t *testing.T) {
@@ -316,12 +282,6 @@ func TestUnpublishedValuesFailClosed(t *testing.T) {
 	if _, status := Read(absentSnapshot, axis, uint64(1)); status != ReadInvalid {
 		t.Errorf("nil snapshot read reported %v", status)
 	}
-	if _, status := ReadAt[uint64, uint64](absentSnapshot, Locator{}, uint64(1)); status != ReadInvalid {
-		t.Errorf("nil snapshot locator read reported %v", status)
-	}
-	if _, resolved := Resolve(absentSnapshot, published); resolved {
-		t.Error("nil snapshot resolved a locator")
-	}
 	if _, opened := OpenQuery[uint64, uint64](absentSnapshot, published); opened {
 		t.Error("nil snapshot opened a query")
 	}
@@ -329,12 +289,6 @@ func TestUnpublishedValuesFailClosed(t *testing.T) {
 	var absentFrozen *Frozen
 	if _, status := ReadFrozen(absentFrozen, axis, uint64(1)); status != ReadInvalid {
 		t.Errorf("nil frozen read reported %v", status)
-	}
-	if _, status := ReadFrozenAt[uint64, uint64](absentFrozen, Locator{}, uint64(1)); status != ReadInvalid {
-		t.Errorf("nil frozen locator read reported %v", status)
-	}
-	if _, resolved := ResolveFrozen(absentFrozen, published); resolved {
-		t.Error("nil frozen resolved a locator")
 	}
 
 	zeroSnapshot, zeroFrozen := Snapshot{}, Frozen{}

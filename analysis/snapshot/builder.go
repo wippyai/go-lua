@@ -25,8 +25,8 @@ var (
 	// column. Slots are dense and append-only.
 	ErrSlotEmpty = errors.New("snapshot: column slot has no column")
 	// ErrDuplicatePublication reports a second directory or denominator
-	// entry under one ContentID. A published identity resolves to at most one
-	// locator, and one denominator identity has one membership authority.
+	// entry under one ContentID. A published identity addresses at most one
+	// slot, and one denominator identity has one membership authority.
 	ErrDuplicatePublication = errors.New("snapshot: identity already published")
 	// ErrUnknownSlot reports a publication or an edit naming a slot no column
 	// fills.
@@ -42,8 +42,8 @@ var (
 	// hash structurally, which is what a column keyed by an interface has.
 	ErrUnhashableKey = errors.New("snapshot: column key type cannot be hashed")
 	// ErrStaleGeneration reports a derived publication that does not advance
-	// the store. Two snapshots of one store at one generation would make one
-	// locator address two different contents.
+	// the store. Two snapshots of one store at one generation would publish
+	// two different contents under one store revision.
 	ErrStaleGeneration = errors.New("snapshot: derived publication does not advance the generation")
 )
 
@@ -301,12 +301,12 @@ func DeclareQuery[K comparable, O any](b *Builder, family identity.ContentID, sl
 	return QueryPlan[K, O]{SchemaID: b.schema, Slot: slot}, nil
 }
 
-// Publish records that id resolves to slot in the sealed directory. An
-// identity resolves to at most one locator, so publishing a second locator
-// for one identity is rejected rather than silently replacing the first.
-// Publishing the locator an identity already resolves to states the same
-// fact, which is what a derived publication that reseals an addressed column
-// does, and is accepted.
+// Publish records that id addresses slot in the sealed directory. An
+// identity addresses at most one slot, so publishing a second slot for one
+// identity is rejected rather than silently replacing the first. Publishing
+// the slot an identity already addresses states the same fact, which is what
+// a derived publication that reseals an addressed column does, and is
+// accepted.
 func (b *builderCore) Publish(id identity.ContentID, slot uint32) error {
 	if !id.Available() {
 		return fmt.Errorf("%w: directory entry", ErrUnavailableIdentity)

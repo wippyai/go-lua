@@ -31,8 +31,8 @@ type (
 // TestAxisCarriesNoStorage is the structural half of the axis contract. An
 // axis is an address: it holds a schema identity and a slot and nothing that
 // can reference published storage, so carrying one costs a copy and holding
-// one keeps no snapshot alive. The same is required of a query plan and of a
-// locator, which are addresses in exactly the same sense.
+// one keeps no snapshot alive. The same is required of a query plan, which is
+// an address in exactly the same sense.
 func TestAxisCarriesNoStorage(t *testing.T) {
 	type anchor struct {
 		SchemaID identity.ContentID
@@ -41,8 +41,6 @@ func TestAxisCarriesNoStorage(t *testing.T) {
 	for _, addressType := range []reflect.Type{
 		reflect.TypeOf(Axis[string, record]{}),
 		reflect.TypeOf(QueryPlan[string, record]{}),
-		reflect.TypeOf(Locator{}),
-		reflect.TypeOf(address{}),
 	} {
 		assertHoldsNoReference(t, addressType, addressType.String())
 	}

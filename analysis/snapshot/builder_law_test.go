@@ -19,12 +19,12 @@ import (
 // and each one is unreachable because another law here holds:
 //
 //   - DeclareQuery's rejection of the directory entry it writes itself. Publish
-//     rejects an unavailable identity, an unfilled slot, and a second locator.
+//     rejects an unavailable identity, an unfilled slot, and a second slot.
 //     DeclareQuery rejects the unavailable identity before it starts, fills the
 //     slot itself immediately before, and rejects a family already addressed
 //     elsewhere against the same directory, which PutColumn does not write. The
 //     remaining case is the identity restated at its own slot, which Publish
-//     accepts and TestPublishRestatesOneLocator fixes.
+//     accepts and TestPublishRestatesOneDirectoryEntry fixes.
 //
 //   - DeclareQuery's rejection of the registration it writes itself.
 //     RegisterQuery rejects only an unavailable identity, which DeclareQuery
@@ -217,9 +217,6 @@ func TestDeclareQueryPublishesAllThreeFacts(t *testing.T) {
 	if !sealed.Queries().Published(armFamily) {
 		t.Fatal("a declared family is not registered")
 	}
-	if _, resolved := Resolve(&sealed, armFamily); !resolved {
-		t.Fatal("a declared family is not addressed")
-	}
 	opened, ok := OpenQuery[int, string](&sealed, armFamily)
 	if !ok || opened != plan {
 		t.Fatalf("opened plan = (%+v, %t), want %+v", opened, ok, plan)
@@ -232,39 +229,28 @@ func TestDeclareQueryPublishesAllThreeFacts(t *testing.T) {
 	}
 }
 
-// TestPublishRestatesOneLocator fixes what publishing an identity twice means.
-// An identity resolves to at most one locator, so restating the locator it
-// already resolves to is the same fact and is accepted -- which is what a
+// TestPublishRestatesOneDirectoryEntry fixes what publishing an identity twice
+// means. An identity addresses at most one slot, so restating the slot it
+// already addresses is the same fact and is accepted -- which is what a
 // derived publication that reseals an addressed column does -- while naming a
-// second locator is a second authority and is rejected.
-func TestPublishRestatesOneLocator(t *testing.T) {
+// second slot is a second authority and is rejected.
+func TestPublishRestatesOneDirectoryEntry(t *testing.T) {
 	base := armSnapshot(t, identity.Generation(1))
 	delta := NewDelta(base, identity.Generation(2))
 	if err := delta.Publish(armColumnID, provenAxis.Slot); err != nil {
-		t.Fatalf("restating a locator: %v", err)
+		t.Fatalf("restating a directory entry: %v", err)
 	}
 	if err := PutColumn(&delta, provenAxis, Content[int, int]{Rows: map[int]int{5: 50}}); err != nil {
 		t.Fatalf("reseal addressed column: %v", err)
 	}
 	if err := delta.Publish(armColumnID, provenAxis.Slot); err != nil {
-		t.Fatalf("restating the locator of a resealed column: %v", err)
+		t.Fatalf("restating the directory entry of a resealed column: %v", err)
 	}
 	if err := delta.Publish(armColumnID, mirrorProvenAxis.Slot); !errors.Is(err, ErrDuplicatePublication) {
-		t.Fatalf("second locator error = %v, want %v", err, ErrDuplicatePublication)
+		t.Fatalf("second directory slot error = %v, want %v", err, ErrDuplicatePublication)
 	}
-	sealed, err := delta.Seal()
-	if err != nil {
+	if _, err := delta.Seal(); err != nil {
 		t.Fatalf("seal: %v", err)
-	}
-	locator, resolved := Resolve(&sealed, armColumnID)
-	if !resolved {
-		t.Fatal("a restated identity resolves to nothing")
-	}
-	if value, status := ReadAt[int, int](&sealed, locator, 5); value != 50 || status != ReadHit {
-		t.Fatalf("restated locator reads (%d, %v), want (50, hit)", value, status)
-	}
-	if _, status := ReadAt[int, int](&sealed, locator, 1); status != ReadMiss {
-		t.Fatalf("resealed column answers the replaced row as %v, want miss", status)
 	}
 }
 
