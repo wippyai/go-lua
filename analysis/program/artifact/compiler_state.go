@@ -25,7 +25,6 @@ type compiler struct {
 	callOperands                             []programschema.CallOperand
 	callArguments                            []programschema.CallArgument
 	callTypeArguments                        []programschema.CallTypeArgument
-	callsByID                                map[identity.ContentID]programschema.Call
 	bodies                                   []programschema.Body
 	bodyEntries                              []programschema.BodyEntry
 	bodyRoots                                []programschema.BodyRoot

@@ -348,22 +348,23 @@ func (compiler *compiler) requirementAdmits(requirement IssuanceRequirement, row
 }
 
 // callForID resolves one authored call row by the parent-issued identity an
-// occurrence row carries. The inverse is built once for the whole occurrence
-// walk, so deciding a requirement stays constant-time per row.
+// occurrence row carries. The canonical Call column is the sole authority;
+// this construction-only lookup scans it directly and retains no inverse.
 func (compiler *compiler) callForID(id identity.ContentID) (programschema.Call, bool) {
-	if !id.Available() {
+	if compiler == nil || !id.Available() {
 		return programschema.Call{}, false
 	}
-	if compiler.callsByID == nil {
-		compiler.callsByID = make(map[identity.ContentID]programschema.Call, len(compiler.calls))
-		for _, row := range compiler.calls {
-			if row.Available() {
-				compiler.callsByID[row.ID()] = row
-			}
+	var found programschema.Call
+	for _, row := range compiler.calls {
+		if !row.Available() || row.ID() != id {
+			continue
 		}
+		if found.Available() {
+			return programschema.Call{}, false
+		}
+		found = row
 	}
-	row, found := compiler.callsByID[id]
-	return row, found
+	return found, found.Available()
 }
 
 func (compiler *compiler) applyIssuance(row programschema.Occurrence, ordinal uint32, geometry occurrenceSpanGeometry, finish []identity.ContentID, placement IssuancePlacement) bool {
