@@ -1,11 +1,43 @@
-package artifact
+package compiler
 
 import (
+	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow"
+	"github.com/wippyai/go-lua/analysis/program/flow/functionboundary"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/internal/framing"
 )
+
+// CompileBodiesAndOutcomes emits the body/outcome families directly as canonical
+// schema columns. The child owns construction and returns only the publication
+// planes; root Artifact retains no body draft or conversion table.
+func CompileBodiesAndOutcomes(input Input) (programschema.Publication, CompileFailure) {
+	if input.Program == nil || !input.Program.Available() || !input.ProgramID.Available() {
+		return programschema.Publication{}, compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	transaction := compiler{
+		input:          input.Program,
+		programID:      input.ProgramID,
+		values:         input.Values,
+		valuesMembers:  input.ValuesMembers,
+		pointIDsBySite: input.PointIDsBySite,
+	}
+	if failure := transaction.copyBodiesAndOutcomesFailure(); failure.Available() {
+		return programschema.Publication{}, failure
+	}
+	return programschema.Publication{
+		Bodies:              transaction.bodies,
+		BodyEntries:         transaction.bodyEntries,
+		BodyRoots:           transaction.bodyRoots,
+		Outcomes:            transaction.outcomes,
+		OutcomeReturnValues: transaction.outcomeReturnValues,
+		OutcomePoints:       transaction.outcomePoints,
+	}, CompileFailure{}
+}
 
 func outcomeKind(kind flowkind.OutcomeKind) (programschema.OutcomeKind, bool) {
 	switch kind {
@@ -28,11 +60,11 @@ func outcomeKind(kind flowkind.OutcomeKind) (programschema.OutcomeKind, bool) {
 	}
 }
 
-func fitsUint32(value int) bool { return value >= 0 && uint64(value) <= uint64(^uint32(0)) }
+func bodyFitsUint32(value int) bool { return value >= 0 && uint64(value) <= uint64(^uint32(0)) }
 
 func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	bodyCount := compiler.input.BodyCount()
-	if bodyCount <= 0 || !fitsUint32(bodyCount) {
+	if bodyCount <= 0 || !bodyFitsUint32(bodyCount) {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
 	valueIDs := make(map[identity.ContentID]struct{}, len(compiler.values))
@@ -56,7 +88,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	seenBodies := make(map[identity.ContentID]struct{}, bodyCount)
 	seenBodyContexts := make(map[identity.ContentID]struct{}, bodyCount)
 	seenOutcomes := make(map[identity.ContentID]int)
-	programID := compiler.key.ProgramID()
+	programID := compiler.programID
 
 	for bodyIndex := 0; bodyIndex < bodyCount; bodyIndex++ {
 		body, ok := compiler.input.BodyAt(bodyIndex)
@@ -93,7 +125,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		if function, functionOK := body.Function(); functionOK {
 			formal, formalOK := flowView.CallBodyTarget(function)
 			var functionIDOK bool
-			functionID, functionIDOK = artifactFunctionID(programID, flowView, function)
+			functionID, functionIDOK = bodyFunctionID(programID, flowView, function)
 			if formalOK {
 				formalID, formalOK = formal.ID()
 			}
@@ -102,7 +134,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			}
 			callable = true
 		}
-		if !fitsUint32(len(bodyEntries)) || !fitsUint32(len(entryPoints)) {
+		if !bodyFitsUint32(len(bodyEntries)) || !bodyFitsUint32(len(entryPoints)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		entryOffset := uint32(len(bodyEntries))
@@ -115,10 +147,10 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		executableRoots := flowView.Executable()
 		rootCount, rootsOK := executableRoots.RootCount(bodyTerm)
-		if !rootsOK || !fitsUint32(rootCount) {
+		if !rootsOK || !bodyFitsUint32(rootCount) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
-		if !fitsUint32(len(bodyRoots)) {
+		if !bodyFitsUint32(len(bodyRoots)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		rootOffset := uint32(len(bodyRoots))
@@ -140,7 +172,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		seenBodies[bodyID] = struct{}{}
 		seenBodyContexts[context] = struct{}{}
-		if !fitsUint32(len(outcomes)) {
+		if !bodyFitsUint32(len(outcomes)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		start := uint32(len(outcomes))
@@ -159,7 +191,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		}
 		matchedReturn := false
 		outcomeCount := bodyBoundary.OutcomeCount()
-		if outcomeCount <= 0 || !fitsUint32(outcomeCount) {
+		if outcomeCount <= 0 || !bodyFitsUint32(outcomeCount) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyRange)
 		}
 		for outcomeIndex := 0; outcomeIndex < outcomeCount; outcomeIndex++ {
@@ -240,7 +272,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 				points = compiler.pointIDs(site)
 			}
 
-			if !fitsUint32(len(outcomePoints)) || !fitsUint32(len(points)) {
+			if !bodyFitsUint32(len(outcomePoints)) || !bodyFitsUint32(len(points)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
 			}
 			pointOffset := uint32(len(outcomePoints))
@@ -252,7 +284,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 				outcomePoints = append(outcomePoints, child)
 			}
 
-			if !fitsUint32(len(returnValues)) {
+			if !bodyFitsUint32(len(returnValues)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
 			}
 			returnStart := uint32(len(returnValues))
@@ -279,7 +311,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 					returnValues = append(returnValues, child)
 				}
 			}
-			if !fitsUint32(len(returnValues)) {
+			if !bodyFitsUint32(len(returnValues)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, bodyIndex, outcomeIndex, CompileReasonOutcomeRange)
 			}
 			row, rowOK := programschema.NewOutcome(
@@ -294,7 +326,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 			seenOutcomes[outcomeID] = len(outcomes)
 			outcomes = append(outcomes, row)
 		}
-		if hasReturn != matchedReturn || !fitsUint32(len(outcomes)) {
+		if hasReturn != matchedReturn || !bodyFitsUint32(len(outcomes)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowOutcome, bodyIndex, -1, CompileReasonOutcomeReturn)
 		}
 		bodyRow, bodyRowOK := programschema.NewBody(
@@ -329,4 +361,32 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 	compiler.bodies, compiler.bodyEntries, compiler.bodyRoots = bodies, bodyEntries, bodyRoots
 	compiler.outcomes, compiler.outcomeReturnValues, compiler.outcomePoints = outcomes, returnValues, outcomePoints
 	return CompileFailure{}
+}
+
+// bodyFunctionID preserves the root-fenced callable scalar identity while
+// keeping its issuer with the body publication child. The framing domain,
+// version, and fields are byte-identical to the former root issuer.
+func bodyFunctionID(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary) (identity.ContentID, bool) {
+	if !programID.Available() || !boundary.Available() {
+		return identity.ContentID{}, false
+	}
+	boundaries := view.FunctionBoundaries()
+	bodyTerm, bodyTermOK := boundary.Body()
+	body, bodyOK := boundaries.ForBody(bodyTerm)
+	context := boundary.ContextID()
+	if !boundaries.OwnsFunction(boundary) || !bodyTermOK || !bodyOK || !boundaries.OwnsBody(body) || !body.Available() || !context.Available() {
+		return identity.ContentID{}, false
+	}
+	hash := sha256.New()
+	var writer framing.Writer
+	if writer.Reset(hash, "program/transformer/function", 1) != nil ||
+		writer.Record(1) != nil ||
+		writer.Bytes(programID[:]) != nil ||
+		writer.Bytes(context[:]) != nil ||
+		writer.Finish() != nil {
+		return identity.ContentID{}, false
+	}
+	var id identity.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id, id.Available()
 }

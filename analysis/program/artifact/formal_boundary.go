@@ -34,14 +34,15 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
 		function, callable := body.Function()
-		functionID, functionOK := artifactFunctionID(programID, flowView, function)
 		if !callable {
 			continue
 		}
 		copiedBody := compiler.bodies[bodyIndex]
+		functionID, functionOK := copiedBody.FunctionContextID()
 		callFormal, callFormalOK := flowView.CallBodyTarget(function)
 		callFormalID, callFormalIDOK := callFormal.ID()
-		if !functionOK || !copiedBody.Callable() || copiedBody.OutcomeCount() == 0 || !callFormalOK || !callFormalIDOK {
+		copiedFormalID, copiedFormalIDOK := copiedBody.CallFormalID()
+		if !functionOK || !copiedBody.Callable() || copiedBody.OutcomeCount() == 0 || !callFormalOK || !callFormalIDOK || !copiedFormalIDOK || copiedFormalID != callFormalID {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, -1, CompileReasonBodyUnavailable)
 		}
 
@@ -74,7 +75,7 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 
 		captureOffset := uint32(len(compiler.functionCaptures))
 		for position := 0; position < function.CaptureCount(); position++ {
-			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := artifactFunctionCaptureAt(programID, flowView, function, position)
+			captureID, innerID, outerID, innerBodyID, outerBodyID, captureOK := artifactFunctionCaptureAt(flowView, function, position)
 			if !captureOK || uint64(position) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, bodyIndex, position, CompileReasonBodyUnavailable)
 			}
@@ -98,35 +99,11 @@ func (compiler *compiler) copyFunctionBoundariesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-// artifactFunctionID is the construction-seam join for the callable scalar
-// identity. Flow owns the boundary, Body, and context; Artifact supplies the
-// already-published Program root fence explicitly. No Program wrapper or
-// boundary handle crosses the sealed Artifact.
-func artifactFunctionID(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary) (identity.ContentID, bool) {
-	if !programID.Available() || !boundary.Available() {
-		return identity.ContentID{}, false
-	}
-	boundaries := view.FunctionBoundaries()
-	bodyTerm, bodyTermOK := boundary.Body()
-	body, bodyOK := boundaries.ForBody(bodyTerm)
-	context := boundary.ContextID()
-	if !boundaries.OwnsFunction(boundary) || !bodyTermOK || !bodyOK || !boundaries.OwnsBody(body) || !body.Available() || !context.Available() {
-		return identity.ContentID{}, false
-	}
-	id := artifactCallableRoleID("program/transformer/function", programID, func(writer *framing.Writer) bool {
-		return writer.Bytes(context[:]) == nil
-	})
-	return id, id.Available()
-}
-
 // artifactFunctionFormalAt joins one Flow formal with its lexical Cell,
 // storage Cell, and optional Static declaration. An absent declaration is a
 // valid unannotated formal and therefore does not invalidate the row.
 func artifactFunctionFormalAt(programID identity.ContentID, view flow.View, staticView staticquery.View, boundary functionboundary.Boundary, index int) (formalID, cellID, storageID, declaredTypeID identity.ContentID, ok bool) {
 	if !programID.Available() || index < 0 {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	if _, functionOK := artifactFunctionID(programID, view, boundary); !functionOK {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	term, termOK := boundary.FormalAt(index)
@@ -165,11 +142,8 @@ func artifactStorageCellID(programID identity.ContentID, view flow.View, term ke
 // artifactFunctionCaptureAt joins one ordered Flow capture pair. Both Body
 // paths are already sealed by Flow; the scalar equations remain byte-for-byte
 // identical to the former Program projection.
-func artifactFunctionCaptureAt(programID identity.ContentID, view flow.View, boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
-	if !programID.Available() || index < 0 {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
-	}
-	if _, functionOK := artifactFunctionID(programID, view, boundary); !functionOK {
+func artifactFunctionCaptureAt(view flow.View, boundary functionboundary.Boundary, index int) (id, innerID, outerID, innerBodyID, outerBodyID identity.ContentID, ok bool) {
+	if index < 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
 	pair, pairOK := boundary.CaptureAt(index)
@@ -226,20 +200,6 @@ func artifactCallableSemanticID(domain string, write func(*framing.Writer) bool)
 	hash := sha256.New()
 	var writer framing.Writer
 	if writer.Reset(hash, domain, 1) != nil || writer.Record(1) != nil || write == nil || !write(&writer) || writer.Finish() != nil {
-		return identity.ContentID{}
-	}
-	var id identity.ContentID
-	copy(id[:], hash.Sum(nil))
-	return id
-}
-
-func artifactCallableRoleID(domain string, owner identity.ContentID, write func(*framing.Writer) bool) identity.ContentID {
-	if !owner.Available() || write == nil {
-		return identity.ContentID{}
-	}
-	hash := sha256.New()
-	var writer framing.Writer
-	if writer.Reset(hash, domain, 1) != nil || writer.Record(1) != nil || writer.Bytes(owner[:]) != nil || !write(&writer) || writer.Finish() != nil {
 		return identity.ContentID{}
 	}
 	var id identity.ContentID

@@ -81,6 +81,8 @@ type compiler struct {
 	environmentRouteDuplicates               map[identity.ContentID]struct{}
 }
 
+func fitsUint32(value int) bool { return value >= 0 && uint64(value) <= uint64(^uint32(0)) }
+
 // valueRowForTerm resolves the canonical Values column by the authored Flow
 // ordinal. The compiler retains no nested Values draft or member slice.
 func (compiler *compiler) valueRowForTerm(term keyspace.Term) (programschema.Values, bool) {

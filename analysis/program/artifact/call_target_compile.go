@@ -23,7 +23,6 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 	seenAllocations := make(map[identity.ContentID]struct{})
 	seenBodies := make(map[identity.ContentID]struct{})
 	flowView := compiler.input.Flow()
-	programID := compiler.key.ProgramID()
 	boundaries := flowView.FunctionBoundaries()
 	for index, allocation := range compiler.allocationRows {
 		if allocation.role != AllocationClosure {
@@ -37,16 +36,12 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 		formal, formalOK := flowView.CallBodyTarget(boundary)
 		allocationID, bodyID := allocation.template, body.PathID()
 		context := body.ContextID()
-		functionID, functionIDOK := artifactFunctionID(programID, flowView, boundary)
-		formalID, formalIDOK := formal.ID()
 		copied, copiedOK := bodyByContext[context]
+		functionID, functionIDOK := copied.FunctionContextID()
+		formalID, formalIDOK := copied.CallFormalID()
+		flowFormalID, flowFormalIDOK := formal.ID()
 		owner, authoredBody, _, authoredOK := flowView.Authored().Functions().Get(allocation.term)
-		if !boundaryOK || !boundaries.OwnsFunction(boundary) || !functionTermOK || functionTerm != allocation.term || !bodyTermOK || owner == 0 || authoredBody != bodyTerm || !authoredOK || !bodyOK || !functionOK || !functionIDOK || !formalOK || !formalIDOK || !allocationID.Available() || !bodyID.Available() || !context.Available() || !functionID.Available() || !formalID.Available() || !copiedOK || !copied.Callable() || copied.ID() != bodyID || copied.ContextID() != context {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
-		}
-		copiedFunction, copiedFunctionOK := copied.FunctionContextID()
-		copiedFormal, copiedFormalOK := copied.CallFormalID()
-		if !copiedFunctionOK || !copiedFormalOK || copiedFunction != functionID || copiedFormal != formalID {
+		if !boundaryOK || !boundaries.OwnsFunction(boundary) || !functionTermOK || functionTerm != allocation.term || !bodyTermOK || owner == 0 || authoredBody != bodyTerm || !authoredOK || !bodyOK || !functionOK || !functionIDOK || !formalOK || !formalIDOK || !flowFormalIDOK || !allocationID.Available() || !bodyID.Available() || !context.Available() || !functionID.Available() || !formalID.Available() || !copiedOK || !copied.Callable() || copied.ID() != bodyID || copied.ContextID() != context || formalID != flowFormalID {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		if _, duplicate := seenAllocations[allocationID]; duplicate {

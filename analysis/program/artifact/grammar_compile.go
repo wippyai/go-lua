@@ -213,9 +213,22 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	}
 	transaction.values = valuesPublication.Values
 	transaction.valuesMembers = valuesPublication.ValuesMembers
-	if failure := transaction.copyBodiesAndOutcomesFailure(); failure.Available() {
-		return nil, failure
+	bodyPublication, bodyFailure := artifactcompiler.CompileBodiesAndOutcomes(artifactcompiler.Input{
+		Program:        transaction.input,
+		ProgramID:      transaction.key.ProgramID(),
+		Values:         transaction.values,
+		ValuesMembers:  transaction.valuesMembers,
+		PointIDsBySite: transaction.pointIDsBySite,
+	})
+	if bodyFailure.Available() {
+		return nil, artifactCompilerFailure(bodyFailure)
 	}
+	transaction.bodies = bodyPublication.Bodies
+	transaction.bodyEntries = bodyPublication.BodyEntries
+	transaction.bodyRoots = bodyPublication.BodyRoots
+	transaction.outcomes = bodyPublication.Outcomes
+	transaction.outcomeReturnValues = bodyPublication.OutcomeReturnValues
+	transaction.outcomePoints = bodyPublication.OutcomePoints
 	if failure := transaction.copyFunctionBoundariesFailure(); failure.Available() {
 		return nil, failure
 	}
@@ -312,6 +325,8 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 	switch failure.Stage() {
 	case artifactcompiler.CompileStageValues:
 		stage = CompileStageValues
+	case artifactcompiler.CompileStageBodyOutcomes:
+		stage = CompileStageBodyOutcomes
 	case artifactcompiler.CompileStageRoutes:
 		stage = CompileStageRoutes
 	case artifactcompiler.CompileStageOccurrences:
@@ -321,6 +336,12 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 	switch failure.RowKind() {
 	case artifactcompiler.CompileRowValues:
 		kind = CompileRowValues
+	case artifactcompiler.CompileRowBody:
+		kind = CompileRowBody
+	case artifactcompiler.CompileRowOutcome:
+		kind = CompileRowOutcome
+	case artifactcompiler.CompileRowReturnValue:
+		kind = CompileRowReturnValue
 	case artifactcompiler.CompileRowRoute:
 		kind = CompileRowRoute
 	case artifactcompiler.CompileRowOccurrence:
@@ -340,6 +361,44 @@ func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFai
 		reason = CompileReasonValuesTail
 	case artifactcompiler.CompileReasonValuesDuplicate:
 		reason = CompileReasonValuesDuplicate
+	case artifactcompiler.CompileReasonBodyUnavailable:
+		reason = CompileReasonBodyUnavailable
+	case artifactcompiler.CompileReasonBodyForeign:
+		reason = CompileReasonBodyForeign
+	case artifactcompiler.CompileReasonBodyIdentity:
+		reason = CompileReasonBodyIdentity
+	case artifactcompiler.CompileReasonBodyDuplicate:
+		reason = CompileReasonBodyDuplicate
+	case artifactcompiler.CompileReasonBodyRange:
+		reason = CompileReasonBodyRange
+	case artifactcompiler.CompileReasonOutcomeUnavailable:
+		reason = CompileReasonOutcomeUnavailable
+	case artifactcompiler.CompileReasonOutcomeAttachment:
+		reason = CompileReasonOutcomeAttachment
+	case artifactcompiler.CompileReasonOutcomeShape:
+		reason = CompileReasonOutcomeShape
+	case artifactcompiler.CompileReasonOutcomeForeign:
+		reason = CompileReasonOutcomeForeign
+	case artifactcompiler.CompileReasonOutcomeIdentity:
+		reason = CompileReasonOutcomeIdentity
+	case artifactcompiler.CompileReasonOutcomeDuplicate:
+		reason = CompileReasonOutcomeDuplicate
+	case artifactcompiler.CompileReasonOutcomeKind:
+		reason = CompileReasonOutcomeKind
+	case artifactcompiler.CompileReasonOutcomeTarget:
+		reason = CompileReasonOutcomeTarget
+	case artifactcompiler.CompileReasonOutcomePropagation:
+		reason = CompileReasonOutcomePropagation
+	case artifactcompiler.CompileReasonOutcomeReference:
+		reason = CompileReasonOutcomeReference
+	case artifactcompiler.CompileReasonOutcomeRange:
+		reason = CompileReasonOutcomeRange
+	case artifactcompiler.CompileReasonOutcomeReturn:
+		reason = CompileReasonOutcomeReturn
+	case artifactcompiler.CompileReasonReturnValueUnavailable:
+		reason = CompileReasonReturnValueUnavailable
+	case artifactcompiler.CompileReasonReturnValueReference:
+		reason = CompileReasonReturnValueReference
 	case artifactcompiler.CompileReasonRouteUnavailable:
 		reason = CompileReasonRouteUnavailable
 	case artifactcompiler.CompileReasonRouteGuard:

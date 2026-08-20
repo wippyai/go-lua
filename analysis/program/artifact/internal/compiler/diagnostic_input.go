@@ -24,33 +24,56 @@ type CompileFailure struct {
 type CompileStage string
 
 const (
-	CompileStageValues      CompileStage = "values"
-	CompileStageRoutes      CompileStage = "routes"
-	CompileStageOccurrences CompileStage = "occurrences"
+	CompileStageValues       CompileStage = "values"
+	CompileStageBodyOutcomes CompileStage = "body-outcomes"
+	CompileStageRoutes       CompileStage = "routes"
+	CompileStageOccurrences  CompileStage = "occurrences"
 )
 
 type CompileRowKind string
 
 const (
-	CompileRowValues     CompileRowKind = "values"
-	CompileRowRoute      CompileRowKind = "route"
-	CompileRowOccurrence CompileRowKind = "occurrence"
+	CompileRowValues      CompileRowKind = "values"
+	CompileRowBody        CompileRowKind = "body"
+	CompileRowOutcome     CompileRowKind = "outcome"
+	CompileRowReturnValue CompileRowKind = "return-value"
+	CompileRowRoute       CompileRowKind = "route"
+	CompileRowOccurrence  CompileRowKind = "occurrence"
 )
 
 type CompileReason string
 
 const (
-	CompileReasonValuesUnavailable     CompileReason = "values-unavailable"
-	CompileReasonValuesBody            CompileReason = "values-body"
-	CompileReasonValuesIdentity        CompileReason = "values-identity"
-	CompileReasonValuesMember          CompileReason = "values-member"
-	CompileReasonValuesTail            CompileReason = "values-tail"
-	CompileReasonValuesDuplicate       CompileReason = "values-duplicate"
-	CompileReasonRouteUnavailable      CompileReason = "route-unavailable"
-	CompileReasonRouteGuard            CompileReason = "route-guard"
-	CompileReasonOccurrenceUnavailable CompileReason = "occurrence-unavailable"
-	CompileReasonOccurrenceStorageRead CompileReason = "occurrence-storage-read"
-	CompileReasonOccurrenceCall        CompileReason = "occurrence-call"
+	CompileReasonValuesUnavailable      CompileReason = "values-unavailable"
+	CompileReasonValuesBody             CompileReason = "values-body"
+	CompileReasonValuesIdentity         CompileReason = "values-identity"
+	CompileReasonValuesMember           CompileReason = "values-member"
+	CompileReasonValuesTail             CompileReason = "values-tail"
+	CompileReasonValuesDuplicate        CompileReason = "values-duplicate"
+	CompileReasonBodyUnavailable        CompileReason = "body-unavailable"
+	CompileReasonBodyForeign            CompileReason = "body-foreign"
+	CompileReasonBodyIdentity           CompileReason = "body-identity"
+	CompileReasonBodyDuplicate          CompileReason = "body-duplicate"
+	CompileReasonBodyRange              CompileReason = "body-range"
+	CompileReasonOutcomeUnavailable     CompileReason = "outcome-unavailable"
+	CompileReasonOutcomeAttachment      CompileReason = "outcome-attachment"
+	CompileReasonOutcomeShape           CompileReason = "outcome-shape"
+	CompileReasonOutcomeForeign         CompileReason = "outcome-foreign"
+	CompileReasonOutcomeIdentity        CompileReason = "outcome-identity"
+	CompileReasonOutcomeDuplicate       CompileReason = "outcome-duplicate"
+	CompileReasonOutcomeKind            CompileReason = "outcome-kind"
+	CompileReasonOutcomeTarget          CompileReason = "outcome-target"
+	CompileReasonOutcomePropagation     CompileReason = "outcome-propagation"
+	CompileReasonOutcomeReference       CompileReason = "outcome-reference"
+	CompileReasonOutcomeRange           CompileReason = "outcome-range"
+	CompileReasonOutcomeReturn          CompileReason = "outcome-return"
+	CompileReasonReturnValueUnavailable CompileReason = "return-value-unavailable"
+	CompileReasonReturnValueReference   CompileReason = "return-value-reference"
+	CompileReasonRouteUnavailable       CompileReason = "route-unavailable"
+	CompileReasonRouteGuard             CompileReason = "route-guard"
+	CompileReasonOccurrenceUnavailable  CompileReason = "occurrence-unavailable"
+	CompileReasonOccurrenceStorageRead  CompileReason = "occurrence-storage-read"
+	CompileReasonOccurrenceCall         CompileReason = "occurrence-call"
 )
 
 func compileFailure(stage CompileStage, kind CompileRowKind, row, subrow int, reason CompileReason) CompileFailure {
@@ -103,17 +126,22 @@ type Input struct {
 }
 
 type compiler struct {
-	input          *program.Program
-	programID      identity.ContentID
-	values         []programschema.Values
-	valuesMembers  []programschema.ValuesMember
-	calls          []programschema.Call
-	callArguments  []programschema.CallArgument
-	bodies         []programschema.Body
-	boundaries     []programschema.FunctionBoundary
-	formals        []programschema.FunctionFormal
-	pointIDsBySite map[identity.ContentID][]identity.ContentID
-	storageReads   []StorageRead
+	input               *program.Program
+	programID           identity.ContentID
+	values              []programschema.Values
+	valuesMembers       []programschema.ValuesMember
+	bodies              []programschema.Body
+	bodyEntries         []programschema.BodyEntry
+	bodyRoots           []programschema.BodyRoot
+	outcomes            []programschema.Outcome
+	outcomeReturnValues []programschema.OutcomeReturnValue
+	outcomePoints       []programschema.OutcomePoint
+	calls               []programschema.Call
+	callArguments       []programschema.CallArgument
+	boundaries          []programschema.FunctionBoundary
+	formals             []programschema.FunctionFormal
+	pointIDsBySite      map[identity.ContentID][]identity.ContentID
+	storageReads        []StorageRead
 
 	diagnosticObservations    []programschema.DiagnosticObservation
 	diagnosticEvidence        []programschema.DiagnosticEvidence
