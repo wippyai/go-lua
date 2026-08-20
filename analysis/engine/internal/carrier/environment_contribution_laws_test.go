@@ -8,11 +8,11 @@ import (
 
 func TestEnvironmentBaselinePreservesUnrelatedFactorSlots(t *testing.T) {
 	_, whole, composition, operations, _ := contributionFixture(t, 2)
-	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false, true)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, true)
 	if !ok {
 		t.Fatal("environment plan")
 	}
-	environmentPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
+	environmentPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
 	if !ok {
 		t.Fatal("environment publication plan")
 	}
@@ -40,7 +40,7 @@ func TestEnvironmentBaselinePreservesUnrelatedFactorSlots(t *testing.T) {
 
 func TestEnvironmentBaselineRequiresSeparateEnvironmentContribution(t *testing.T) {
 	_, whole, composition, _, _ := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(0, nil, nil, false, true)
+	plan, ok := composition.SealContribution(0, nil, nil, true)
 	if !ok {
 		t.Fatal("environment plan")
 	}

@@ -98,7 +98,7 @@ func newAscentCoverageFixture(t testing.TB, widen func(left, right uint64) uint6
 		Widen:    widen,
 		LessOrEq: func(left, right uint64) bool { return left <= right },
 	}, whole)
-	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
+	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
 	if !ok {
 		t.Fatal("ascent-coverage contribution plan")
 	}

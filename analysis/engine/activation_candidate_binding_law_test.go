@@ -4,23 +4,21 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
-	"github.com/wippyai/go-lua/analysis/identity"
 )
 
 // activationTransportLawOwner is a Schema whose only structural Rule is one
 // activation Rule, declared beside enough Factors to order transport vectors of
 // several arities.
 type activationTransportLawOwner struct {
-	schema    *Schema
-	factors   []*FactorSlot[uint64]
-	rule      *SchemaActivationRuleSlot
-	admission identity.SemanticKey
+	schema  *Schema
+	factors []*FactorSlot[uint64]
+	rule    *SchemaActivationRuleSlot
 }
 
 func newActivationTransportLawOwner(t testing.TB, count int, salt uint64) activationTransportLawOwner {
 	t.Helper()
 	builder := NewSchema()
-	owner := activationTransportLawOwner{factors: make([]*FactorSlot[uint64], count), admission: coldKey(salt + 1)}
+	owner := activationTransportLawOwner{factors: make([]*FactorSlot[uint64], count)}
 	for index := range owner.factors {
 		factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(salt+10+uint64(index)))
 		if !factorOK || factor == nil {
@@ -31,7 +29,6 @@ func newActivationTransportLawOwner(t testing.TB, count int, salt uint64) activa
 	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(salt+2))
 	rule, ruleOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{
 		Semantic:   coldKey(salt + 3),
-		Admission:  SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: owner.admission},
 		Activation: family,
 	})
 	schema, schemaOK := builder.Seal()
@@ -71,8 +68,9 @@ func openActivationTransportLawBinding(t testing.TB, owner activationTransportLa
 		}
 	}
 	if !BindActivationRule(binding, owner.rule, HotActivationSpec{
-		Admission: AdmitActivationByTrustedTheorem(owner.admission),
-		Run:       func(activation Activation) bool { return true },
+		Fold: func(frame ActivationFrame) ActivationResult {
+			return Activated(frame)
+		},
 	}) {
 		t.Fatal("activation transport law activation binding")
 	}

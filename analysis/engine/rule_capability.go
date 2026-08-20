@@ -268,33 +268,3 @@ func registerRuleSlot(binding *SchemaBinding, schema *Schema, ordinal uint64, ca
 func completeCapabilityDirectory(state *schemaBindingState) bool {
 	return state != nil && len(state.roleSlots) != 0
 }
-
-// Layer-B sealed-authority accessors. Each reads only the sealed schema proof
-// held by the typed implementation; none of them touch source admission.
-func (implementation *RuleImplementation[K, V, O]) selectedRead(index uint64) bool {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return false
-	}
-	return implementation.binding.proof.selectedReadAt(index)
-}
-
-func (implementation *RuleImplementation[K, V, O]) routeWrite() (uint64, bool) {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return 0, false
-	}
-	return implementation.binding.proof.routeWriteAt(0)
-}
-
-func (implementation *ActivationRuleImplementation) selectedRead(index uint64) bool {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return false
-	}
-	return implementation.binding.proof.selectedReadAt(index)
-}
-
-func (implementation *RuleImplementation[K, V, O]) summaryRead(index uint64) bool {
-	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
-		return false
-	}
-	return implementation.binding.proof.summaryReadAt(index)
-}

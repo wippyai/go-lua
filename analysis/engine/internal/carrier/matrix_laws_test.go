@@ -17,15 +17,15 @@ func TestCarrierMatrixCarryOnlyProductArity(t *testing.T) {
 			t.Run("factors="+strconv.Itoa(factors)+"/inputs="+strconv.Itoa(inputs), func(t *testing.T) {
 				_, whole, composition, operations, initial := contributionFixture(t, factors)
 				anchor := shape.Slot(factors / 2)
-				zeroRead, ok := composition.SealContribution(inputs, nil, nil, true)
+				zeroRead, ok := composition.SealContribution(inputs, nil, nil)
 				if !ok {
 					t.Fatal("seal zero-read contribution")
 				}
-				carryOnly, ok := composition.SealContribution(inputs, []shape.Slot{anchor}, []ContributionSource{{Slot: anchor, Input: inputs - 1}}, false)
+				carryOnly, ok := composition.SealContribution(inputs, []shape.Slot{anchor}, []ContributionSource{{Slot: anchor, Input: inputs - 1}})
 				if !ok {
 					t.Fatal("seal carry-only contribution")
 				}
-				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil, false)
+				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil)
 				if !ok {
 					t.Fatal("seal anchor input publication")
 				}
@@ -87,11 +87,11 @@ func BenchmarkCarrierMatrixCarryOnly(b *testing.B) {
 			b.Run("factors="+strconv.Itoa(factors)+"/inputs="+strconv.Itoa(inputs), func(b *testing.B) {
 				_, whole, composition, operations, initial := contributionFixture(b, factors)
 				anchor := shape.Slot(factors / 2)
-				plan, ok := composition.SealContribution(inputs, []shape.Slot{anchor}, []ContributionSource{{Slot: anchor, Input: inputs - 1}}, false)
+				plan, ok := composition.SealContribution(inputs, []shape.Slot{anchor}, []ContributionSource{{Slot: anchor, Input: inputs - 1}})
 				if !ok {
 					b.Fatal("seal contribution")
 				}
-				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil, false)
+				anchorWrite, ok := composition.SealContribution(0, []shape.Slot{anchor}, nil)
 				if !ok {
 					b.Fatal("seal anchor input publication")
 				}

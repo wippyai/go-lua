@@ -14,52 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/demand"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
-
-// programExecutor is the closed harvest seam from a binder draft to the sealed
-// row's execution closure. It is declared here, not on runtimeMember: the draft
-// contract does not grow for the substrate that replaces it, and this seam dies
-// with this file once rows are minted at the bind sites themselves.
-type programExecutor interface {
-	programExec() memberExec
-}
-
-// programExec mints the row closure over the concrete bound rule. The closure
-// captures the rule, never the draft, so a sealed row keeps no attachment
-// alive. A draft that cannot execute mints nothing.
-func (bound *boundRuleMember[V, O]) programExec() memberExec {
-	if bound == nil || bound.rule == nil {
-		return nil
-	}
-	rule := bound.rule
-	return func(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
-		patch, reads, wrote, ok, boundary := rule.execute(work, base, inputs, within)
-		return memberResult{patch: patch, wrote: wrote, reads: reads, boundary: boundary, valid: ok}
-	}
-}
-
-func (bound *boundActivationMember) programExec() memberExec {
-	if bound == nil || bound.rule == nil {
-		return nil
-	}
-	rule := bound.rule
-	return func(work *carrier.Work, base carrier.RuleContributionBase, inputs []carrier.State, within support.Mask) memberResult {
-		selected, reads, ok, phase := rule.execute(work, base, inputs, within)
-		return memberResult{activations: selected, reads: reads, boundary: phase, valid: ok}
-	}
-}
-
-// programMemberExec harvests one already-constructed draft. The generic Rule
-// draft cannot be named in a type switch, so the closed set is reached through
-// the private single-method seam every concrete draft implements.
-func programMemberExec(draft runtimeMember) memberExec {
-	executor, harvestable := draft.(programExecutor)
-	if !harvestable || executor == nil {
-		return nil
-	}
-	return executor.programExec()
-}
 
 // memberFold is one Group's binder result: the ten cold per-member answers
 // aggregated once, in graph member order. It is the sole authority for the
@@ -72,7 +27,6 @@ type memberFold struct {
 	dynamicReads []demand.DynamicRead
 	carries      []demand.Carry
 	footprint    []recurrenceFootprint
-	supportPrune bool
 }
 
 // foldMemberDrafts aggregates one Group's attached drafts. Targets are
@@ -127,7 +81,6 @@ func foldMemberDrafts(inputCount int, drafts []runtimeMember) (memberFold, bool)
 			return memberFold{}, false
 		}
 		slot, hasSlot := draft.outputSlot()
-		fold.supportPrune = fold.supportPrune || !hasSlot
 		fold.initialReads = append(fold.initialReads, draft.initialReads()...)
 		fold.dynamicReads = append(fold.dynamicReads, draft.dynamicReads()...)
 		if !hasSlot {
@@ -264,12 +217,7 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		start := int32(len(rows))
 		for _, position := range positions {
 			draft := attached[position]
-			exec := programMemberExec(draft)
-			if exec == nil {
-				return nil, nil, false
-			}
-			slot, hasSlot := draft.outputSlot()
-			rows = append(rows, memberRow{exec: exec, outputSlot: slot, memberIndex: int32(position), hasSlot: hasSlot})
+			rows = append(rows, memberRow{member: draft})
 		}
 		spans[index] = memberSpan{start: start, end: int32(len(rows))}
 	}
@@ -284,8 +232,8 @@ func bindRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 }
 
 // assembleProgramRuntime is the one entry from attached drafts to an
-// executable runtime. It seals the program first and assembles from it, so the
-// drafts are unreachable the moment this call returns.
+// executable runtime. It seals the program first and retains each canonical
+// runtime member only through the row's direct execute method value.
 func assembleProgramRuntime(schema *Schema, graph *equation.Graph, runtime *carrier.Composition, factors map[composition.Key]runtimeFactor, drafts []runtimeMember, queries []queryRow, observations []observationRow) (*solverRuntime, bool) {
 	program, folds, bound := bindRuntimeProgram(schema, graph, runtime, factors, drafts, queries, observations)
 	if !bound {

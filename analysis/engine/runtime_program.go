@@ -13,32 +13,21 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/carrier/shape"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
-// memberExec is the one hot per-member entry point. It is minted at bind time
-// over the concrete bound rule, so a sealed row retains the executable rule and
-// nothing of the binder draft that described it.
-type memberExec func(*carrier.Work, carrier.RuleContributionBase, []carrier.State, support.Mask) memberResult
-
-// memberRow is one hot member of the sealed program. It carries exactly what
-// the group fold reads per member: the execution closure, the output slot it
-// patches, and the member's dense position in its own graph Group.
-//
-// memberIndex is that position, not a pointer to an identity: one RuleMember
-// value is 392 bytes, so a row that carried its identity would retain more of
-// the draft than it replaced. Failure reporting recovers the identity from the
-// Group node it already holds.
-type memberRow struct {
-	exec        memberExec
-	outputSlot  shape.Slot
-	memberIndex int32
-	hasSlot     bool
-}
+// memberRow retains exactly one canonical runtime member. Scheduling metadata,
+// execution, output ownership, reads, carries, routes, and failure identity are
+// all projected from that same immutable object rather than copied into a
+// parallel row representation.
+type memberRow struct{ member runtimeMember }
 
 func (row memberRow) valid() bool {
-	return row.exec != nil && row.memberIndex >= 0 && (!row.hasSlot || row.outputSlot >= 0)
+	if row.member == nil || !row.member.member().Key().Available() {
+		return false
+	}
+	slot, hasSlot := row.member.outputSlot()
+	return !hasSlot || slot >= 0
 }
 
 // factorRecord is one sealed Factor coordinate: its canonical key, the carrier
@@ -55,6 +44,26 @@ type factorRecord struct {
 // binding owner is captured by the closure.
 type queryExec func(*carrier.Work, carrier.State, runtimeFactor, carrier.Unit) (frozenValue, solveBoundary, bool)
 
+// heterogeneousQueryExec is the one combined execution seam for an ordered
+// heterogeneous query projection vector. The runtime program supplies the
+// sealed Factor owners; the graph still contributes exactly one query row and
+// one point regardless of vector width.
+type heterogeneousQueryExec func(*carrier.Work, carrier.State, *runtimeProgram) (frozenValue, solveBoundary, bool)
+
+type queryProjectionRow struct {
+	factorOrdinal uint64
+	unit          carrier.Unit
+}
+
+// heterogeneousQueryRow retains the ordered Factor/Unit pairs of one query.
+// It deliberately has no graph or topology multiplication: point and query
+// identity remain on queryRow, while these pairs are the sole additional
+// runtime coordinates needed by the typed fold.
+type heterogeneousQueryRow struct {
+	projections []queryProjectionRow
+	exec        heterogeneousQueryExec
+}
+
 // queryRow is the whole live query plan. Schema ordinals select its declared
 // family and factor, point is a store-local dense graph handle, and Unit is the
 // Factor-issued read contract for the graph surface.
@@ -64,11 +73,26 @@ type queryRow struct {
 	point         int32
 	unit          carrier.Unit
 	exec          queryExec
+	heterogeneous *heterogeneousQueryRow
 }
 
 func (row queryRow) valid() bool {
 	_, unitOK := row.unit.Slot()
-	return row.point >= 0 && unitOK && row.exec != nil
+	if row.point < 0 || row.heterogeneous != nil && row.exec != nil {
+		return false
+	}
+	if row.heterogeneous != nil {
+		if row.heterogeneous.exec == nil || len(row.heterogeneous.projections) == 0 {
+			return false
+		}
+		for _, projection := range row.heterogeneous.projections {
+			if _, unitOK := projection.unit.Slot(); !unitOK {
+				return false
+			}
+		}
+		return true
+	}
+	return unitOK && row.exec != nil
 }
 
 // observationRow is a solve-local projection request over the same sealed
@@ -81,11 +105,26 @@ type observationRow struct {
 	point         int32
 	unit          carrier.Unit
 	exec          queryExec
+	heterogeneous *heterogeneousQueryRow
 }
 
 func (row observationRow) valid() bool {
 	_, unitOK := row.unit.Slot()
-	return row.id.Available() && row.point >= 0 && unitOK && row.exec != nil
+	if !row.id.Available() || row.point < 0 || row.heterogeneous != nil && row.exec != nil {
+		return false
+	}
+	if row.heterogeneous != nil {
+		if row.heterogeneous.exec == nil || len(row.heterogeneous.projections) == 0 {
+			return false
+		}
+		for _, projection := range row.heterogeneous.projections {
+			if _, unitOK := projection.unit.Slot(); !unitOK {
+				return false
+			}
+		}
+		return true
+	}
+	return unitOK && row.exec != nil
 }
 
 func (record factorRecord) valid() bool {
@@ -123,20 +162,40 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		return nil, false
 	}
 	next := int32(0)
-	for _, span := range spans {
+	for groupIndex, span := range spans {
 		if span.start != next || span.end < span.start || int(span.end) > len(rows) {
 			return nil, false
 		}
-		// A Group's rows are a permutation of its graph members: each row carries
-		// a distinct position, so recovering an identity from the Group is
-		// injective and no member is represented twice.
-		taken := make([]bool, span.count())
-		for position := span.start; position < span.end; position++ {
-			row := rows[position]
-			if !row.valid() || int(row.memberIndex) >= len(taken) || taken[row.memberIndex] {
+		group, groupOK := graph.HyperedgeAt(groupIndex)
+		if !groupOK || span.count() != group.MemberCount() {
+			return nil, false
+		}
+		// A Group's rows are exactly its graph members. The transient expected set
+		// proves that permutation once; no identity/index mirror survives Seal.
+		expected := make(map[composition.Key]struct{}, group.MemberCount())
+		for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
+			member, memberOK := group.MemberAt(memberIndex)
+			if !memberOK || !member.Key().Available() {
 				return nil, false
 			}
-			taken[row.memberIndex] = true
+			expected[member.Key()] = struct{}{}
+		}
+		if len(expected) != group.MemberCount() {
+			return nil, false
+		}
+		for position := span.start; position < span.end; position++ {
+			row := rows[position]
+			if !row.valid() {
+				return nil, false
+			}
+			key := row.member.member().Key()
+			if _, present := expected[key]; !present {
+				return nil, false
+			}
+			delete(expected, key)
+		}
+		if len(expected) != 0 {
+			return nil, false
 		}
 		next = span.end
 	}
@@ -156,24 +215,54 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 	for index, row := range queries {
 		query, queryOK := graph.QueryAt(index)
 		point, pointOK := graph.PointIndex(query.Point())
-		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || row.queryOrdinal >= schema.queryCount() || row.factorOrdinal >= uint64(len(factors)) || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
+		if !queryOK || !row.valid() || !pointOK || int(row.point) != point || row.queryOrdinal >= schema.queryCount() || schema.querySemanticAt(row.queryOrdinal) != query.Family() {
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
+		if !shapeOK {
+			return nil, false
+		}
+		if row.heterogeneous != nil {
+			if shape.ProjectionCount == 0 || shape.ProjectionCount != uint64(len(row.heterogeneous.projections)) || len(query.Surfaces()) != len(row.heterogeneous.projections) || row.heterogeneous.exec == nil {
+				return nil, false
+			}
+			surfaces := query.Surfaces()
+			for projectionIndex, pair := range row.heterogeneous.projections {
+				projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, uint64(projectionIndex))
+				if !projectionOK || !validRuntimeQueryProjection(schema, factors, runtime, row.queryOrdinal, uint64(projectionIndex), pair) || !validProgramQuerySurface(surfaces[projectionIndex], projection) {
+					return nil, false
+				}
+			}
+			continue
+		}
 		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
 		unitSlot, unitOK := row.unit.Slot()
-		if !shapeOK || !projectionOK || shape.ProjectionCount != 1 || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
+		if !projectionOK || shape.ProjectionCount != 1 || row.factorOrdinal >= uint64(len(factors)) || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
 			return nil, false
 		}
 	}
 	for _, row := range observations {
-		if !row.valid() || int(row.point) >= graph.PointCount() || row.queryOrdinal >= schema.queryCount() || row.factorOrdinal >= uint64(len(factors)) {
+		if !row.valid() || int(row.point) >= graph.PointCount() || row.queryOrdinal >= schema.queryCount() {
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
+		if !shapeOK {
+			return nil, false
+		}
+		if row.heterogeneous != nil {
+			if shape.ProjectionCount == 0 || shape.ProjectionCount != uint64(len(row.heterogeneous.projections)) || row.heterogeneous.exec == nil {
+				return nil, false
+			}
+			for projectionIndex, pair := range row.heterogeneous.projections {
+				if !validRuntimeQueryProjection(schema, factors, runtime, row.queryOrdinal, uint64(projectionIndex), pair) {
+					return nil, false
+				}
+			}
+			continue
+		}
 		projection, projectionOK := schema.queryProjectionShapeAt(row.queryOrdinal, 0)
 		unitSlot, unitOK := row.unit.Slot()
-		if !shapeOK || !projectionOK || shape.ProjectionCount != 1 || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
+		if !projectionOK || shape.ProjectionCount != 1 || row.factorOrdinal >= uint64(len(factors)) || projection.Factor != factors[row.factorOrdinal].key || !unitOK || unitSlot != factors[row.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, row.unit) || projection.Kind == composition.QueryFactorExact && row.unit.Kind() != carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && row.unit.Kind() != carrier.SummaryUnit {
 			return nil, false
 		}
 	}
@@ -187,6 +276,18 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 		programSealed:    true,
 	}
 	return program, true
+}
+
+func validRuntimeQueryProjection(schema *Schema, factors []factorRecord, runtime *carrier.Composition, queryOrdinal, projectionOrdinal uint64, pair queryProjectionRow) bool {
+	if schema == nil || runtime == nil || pair.factorOrdinal >= uint64(len(factors)) {
+		return false
+	}
+	projection, projectionOK := schema.queryProjectionShapeAt(queryOrdinal, projectionOrdinal)
+	unitSlot, unitOK := pair.unit.Slot()
+	if !projectionOK || projection.Factor != factors[pair.factorOrdinal].key || !unitOK || unitSlot != factors[pair.factorOrdinal].slot || !runtime.OwnsUnit(unitSlot, pair.unit) {
+		return false
+	}
+	return projection.Kind == composition.QueryFactorExact && pair.unit.Kind() == carrier.ExactUnit || projection.Kind == composition.QueryFactorSummary && pair.unit.Kind() == carrier.SummaryUnit
 }
 
 // valid reports the one decision sealRuntimeProgram already took. No later
@@ -220,14 +321,20 @@ func (program *runtimeProgram) memberRows(span memberSpan) []memberRow {
 	return program.memberTable[span.start:span.end]
 }
 
-// memberRowIdentity recovers the cold member identity a row was bound from,
-// out of the graph Group that owns it. Only diagnostics and failure reporting
-// need it; the hot fold does not, and no table retains it.
+// memberRowIdentity returns the same canonical member used for execution after
+// re-proving that the reporting Group contains it.
 func memberRowIdentity(group equation.GroupNode, row memberRow) (equation.RuleMember, bool) {
-	if row.memberIndex < 0 || int(row.memberIndex) >= group.MemberCount() {
+	if !row.valid() {
 		return equation.RuleMember{}, false
 	}
-	return group.MemberAt(int(row.memberIndex))
+	member := row.member.member()
+	for index := 0; index < group.MemberCount(); index++ {
+		candidate, ok := group.MemberAt(index)
+		if ok && candidate.Key() == member.Key() {
+			return member, true
+		}
+	}
+	return equation.RuleMember{}, false
 }
 
 func (program *runtimeProgram) groupCount() int {
@@ -310,6 +417,9 @@ func (program *runtimeProgram) materializeQuery(index int, work *carrier.Work, s
 	if !ok {
 		return nil, refused(SolveFailureFamilyObservation, "query-row"), false
 	}
+	if row.heterogeneous != nil {
+		return row.heterogeneous.exec(work, state, program)
+	}
 	factor, ok := program.factorOwnerAt(int32(row.factorOrdinal))
 	if !ok {
 		return nil, refused(SolveFailureFamilyObservation, "factor-row"), false
@@ -335,6 +445,9 @@ func (program *runtimeProgram) materializeObservation(index int, work *carrier.W
 	row, ok := program.observationAt(index)
 	if !ok {
 		return nil, refused(SolveFailureFamilyObservation, "observation-row"), false
+	}
+	if row.heterogeneous != nil {
+		return row.heterogeneous.exec(work, state, program)
 	}
 	factor, ok := program.factorOwnerAt(int32(row.factorOrdinal))
 	if !ok {

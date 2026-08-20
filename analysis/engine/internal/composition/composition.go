@@ -12,10 +12,10 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// codecVersion changes whenever a cold semantic term changes meaning. The
-// trusted-theorem provenance rename is semantic: previous `Theorem` rows must
-// never be mistaken for checked artifacts by a persisted CompositionID.
-const codecVersion = 16
+// codecVersion changes whenever a cold semantic term changes meaning. Rule
+// admission is no longer a cold schema term, so previous CompositionIDs must
+// not be reused for the reduced declaration grammar.
+const codecVersion = 17
 
 // ID is a fixed semantic digest.  It is not a Program artifact identity.
 type ID [sha256.Size]byte
@@ -75,29 +75,6 @@ type Read struct {
 	Semantic     Key
 	Normalizer   Key
 	Dependencies []uint64
-}
-
-// AdmissionKind is the exhaustive transfer-soundness provenance of a Rule.
-// Neither value is a runtime mode: it is sealed provenance of the one
-// evaluator admission path selected by the owning domain.
-type AdmissionKind uint8
-
-const (
-	AdmissionInvalid AdmissionKind = iota
-	// AdmissionTrustedTheorem is one explicitly named/versioned reviewed TCB
-	// obligation. It is not an artifact-verification or exhaustive-proof
-	// classification; no such basis exists until its verifier exists.
-	AdmissionTrustedTheorem
-	AdmissionDerivation
-)
-
-// Admission identifies the versioned trusted theorem or local checker that
-// licenses a Rule evaluator. Its implementation closure stays outside cold
-// identity; its basis and semantic identity are part of the Rule and
-// Composition digest.
-type Admission struct {
-	Kind     AdmissionKind
-	Identity Key
 }
 
 // Carry is the schema-level whole-output relation.
@@ -179,7 +156,6 @@ type FactorFormShape struct {
 
 type RuleShape struct {
 	OperandFamily    Key
-	Admission        Admission
 	OutputKind       OutputKind
 	Output           Key
 	Inputs           uint64
@@ -250,7 +226,6 @@ type Factor struct {
 type Rule struct {
 	Key           Key
 	OperandFamily Key
-	Admission     Admission
 	OutputKind    OutputKind
 	Output        Key
 	Inputs        uint64
@@ -433,7 +408,7 @@ func (c *Composition) RuleShapeAt(index uint64) (RuleShape, bool) {
 	if len(row.Activations) == 1 {
 		activationFamily = row.Activations[0].Family
 	}
-	return RuleShape{OperandFamily: row.OperandFamily, Admission: row.Admission, OutputKind: row.OutputKind, Output: row.Output, Inputs: row.Inputs, ReadCount: uint64(len(row.Reads)), CarryCount: uint64(len(row.Carries)), WriteCount: uint64(len(row.Writes)), SupportCount: uint64(len(row.Supports)), PruneCount: uint64(len(row.Prunes)), ActivationCount: uint64(len(row.Activations)), ActivationFamily: activationFamily}, true
+	return RuleShape{OperandFamily: row.OperandFamily, OutputKind: row.OutputKind, Output: row.Output, Inputs: row.Inputs, ReadCount: uint64(len(row.Reads)), CarryCount: uint64(len(row.Carries)), WriteCount: uint64(len(row.Writes)), SupportCount: uint64(len(row.Supports)), PruneCount: uint64(len(row.Prunes)), ActivationCount: uint64(len(row.Activations)), ActivationFamily: activationFamily}, true
 }
 
 func (c *Composition) RuleReadShapeAt(rule, read uint64) (RuleReadShape, bool) {
@@ -498,7 +473,7 @@ func (c *Composition) QueryProjectionShapeAt(query, projection uint64) (QueryPro
 }
 
 // RuleAt returns one detached sealed rule without cloning the entire catalog.
-// Dense ordinal admission remains owned by RuleIndex; callers cannot retain or
+// Dense ordinal rule indexing remains owned by RuleIndex; callers cannot retain or
 // mutate Composition storage through this projection.
 func (c *Composition) RuleAt(index uint64) (Rule, bool) {
 	if c == nil || index >= uint64(len(c.rules)) {
@@ -575,7 +550,7 @@ func Seal(candidate Candidate) (*Composition, bool) {
 	// This exactly mirrors the public Composition.claim authority for cold
 	// declaration identities. A persisted Candidate must not admit a form or
 	// other declared schema identity that no public Composition could declare.
-	// Operand families, admission evidence, and Factor references are excluded:
+	// Operand families and Factor references are excluded:
 	// they are references under the public grammar and may lawfully repeat.
 	if !validGlobalClaims(factors, completion, activations, rules, queries) {
 		return nil, false
@@ -769,7 +744,7 @@ func validCompletion(completion Completion) bool {
 }
 
 func validRule(rule *Rule, factors map[Key]uint64, forms map[Key]map[Key]FactorFormKind, completion Completion, activations map[Key]ActivationFamily) bool {
-	if rule == nil || !rule.Key.Available() || !rule.OperandFamily.Available() || !validAdmission(rule.Admission) {
+	if rule == nil || !rule.Key.Available() || !rule.OperandFamily.Available() {
 		return false
 	}
 	canonicalSupports(rule.Supports)
@@ -837,10 +812,6 @@ func validActivationRanges(ranges []ActivationRange, families map[Key]Activation
 		}
 	}
 	return true
-}
-
-func validAdmission(admission Admission) bool {
-	return admission.Identity.Available() && (admission.Kind == AdmissionTrustedTheorem || admission.Kind == AdmissionDerivation)
 }
 
 func validStructuralSupportPrunes(supports []Support, prunes []Prune, completion Completion) bool {
@@ -1033,7 +1004,7 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 		return ID{}, false
 	}
 	for _, rule := range rules {
-		if !key(rule.Key) || !key(rule.OperandFamily) || writer.Uint(uint64(rule.Admission.Kind)) != nil || !key(rule.Admission.Identity) || writer.Uint(uint64(rule.OutputKind)) != nil || !key(rule.Output) || writer.Uint(rule.Inputs) != nil {
+		if !key(rule.Key) || !key(rule.OperandFamily) || writer.Uint(uint64(rule.OutputKind)) != nil || !key(rule.Output) || writer.Uint(rule.Inputs) != nil {
 			return ID{}, false
 		}
 		if writer.Count(uint64(len(rule.Reads))) != nil {

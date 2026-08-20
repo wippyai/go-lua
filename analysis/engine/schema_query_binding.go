@@ -90,25 +90,28 @@ func validBindingQueryInstance(schema *Schema, ordinal uint64, query equation.Qu
 		return false
 	}
 	shape, ok := schema.queryShapeAt(ordinal)
-	if !ok || shape.ProjectionCount != 1 || len(query.Surfaces) != 1 {
+	if !ok || shape.ProjectionCount == 0 || uint64(len(query.Surfaces)) != shape.ProjectionCount {
 		return false
 	}
-	projection, ok := schema.queryProjectionShapeAt(ordinal, 0)
-	if !ok {
-		return false
+	for index, surface := range query.Surfaces {
+		projection, projectionOK := schema.queryProjectionShapeAt(ordinal, uint64(index))
+		if !projectionOK || !surface.Available() || surface.Factor != projection.Factor || surface.Mode != equation.TargetModeNone {
+			return false
+		}
+		switch projection.Kind {
+		case composition.QueryFactorExact:
+			if surface.Form != equation.SurfaceReadExact || surface.Semantic.Available() || surface.Normalizer.Available() {
+				return false
+			}
+		case composition.QueryFactorSummary:
+			if surface.Form != equation.SurfaceReadSummary || !surface.Semantic.Available() || surface.Semantic != projection.Normalizer || surface.Normalizer != projection.Normalizer {
+				return false
+			}
+		default:
+			return false
+		}
 	}
-	surface := query.Surfaces[0]
-	if !surface.Available() || surface.Factor != projection.Factor || surface.Mode != equation.TargetModeNone {
-		return false
-	}
-	switch projection.Kind {
-	case composition.QueryFactorExact:
-		return surface.Form == equation.SurfaceReadExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
-	case composition.QueryFactorSummary:
-		return surface.Form == equation.SurfaceReadSummary && surface.Semantic.Available() && surface.Semantic == projection.Normalizer && surface.Normalizer == projection.Normalizer
-	default:
-		return false
-	}
+	return true
 }
 
 func duplicateBindingQuery(rows []equation.QueryInstance, query equation.QueryInstance) bool {

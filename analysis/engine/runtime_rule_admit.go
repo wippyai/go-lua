@@ -16,31 +16,29 @@ import (
 )
 
 // anchoredSelectedReadSurface issues the ReadSelect surface from the exact
-// admitted occurrence and operand. ReadSelect has no exact target unit: its
-// local is a sealed identity of this occurrence/operand/read proof, not a
-// caller-selected Ref. The declaration passes its already-emitted reads so
-// duplicate anchored coordinates can be rejected without a mutable builder.
-func anchoredSelectedReadSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, proof *ruleRuntimeProof, read uint64, dependencies []RuleReadSurface, reads []RuleReadSurface) (RuleReadSurface, bool) {
-	if state == nil || state.schema == nil || authority == nil || !semantic.Available() || proof == nil || !proof.selectedReadAt(read) || proof.bindingAuthority != authority || proof.schema != state.schema {
+// admitted occurrence and the compiled read row. ReadSelect has no exact
+// target unit: its local is a sealed identity of this occurrence/operand/read
+// shape, not a caller-selected Ref. The declaration passes its already-emitted
+// reads so duplicate anchored coordinates can be rejected without a mutable
+// builder.
+func anchoredSelectedReadSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, row *schemaRuleReadRow, rows []*schemaRuleReadRow, dependencies []RuleReadSurface, reads []RuleReadSurface) (RuleReadSurface, bool) {
+	if state == nil || authority == nil || state.authority != authority || state.phase != schemaBindingSealed || row == nil || !row.sealed() || row.ownerState() != state || !semantic.Available() {
 		return RuleReadSurface{}, false
 	}
-	shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, read)
-	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(proof.schema.ruleSemanticAt(proof.ordinal))
-	if !shapeOK || !ruleSemanticOK || ruleSemantic != semantic || len(dependencies) != int(shape.DependencyCount) {
+	if len(dependencies) != len(row.dependencies) || row.readOrdinal >= uint64(len(rows)) {
 		return RuleReadSurface{}, false
 	}
-	factor := shape.Factor
+	factor := row.factor
 	if !factor.Available() {
 		return RuleReadSurface{}, false
 	}
 	for index, dependency := range dependencies {
-		readIndex, ok := proof.schema.ruleReadDependencyAt(proof.ordinal, read, uint64(index))
-		shape, shapeOK := proof.schema.ruleReadShapeAt(proof.ordinal, readIndex)
-		if !ok || !shapeOK || dependency.authority != authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != shape.Factor || !dependency.value.LocalAvailable() || !validSelectedDependencySurface(shape, dependency.value) {
+		readIndex := row.dependencies[index]
+		if readIndex >= uint64(len(rows)) || readIndex >= row.readOrdinal || rows[readIndex] == nil || dependency.authority != authority || dependency.value.Mode != equation.TargetModeNone || dependency.value.Factor != rows[readIndex].factor || !dependency.value.LocalAvailable() || !validSelectedDependencyRow(rows[readIndex], dependency.value) {
 			return RuleReadSurface{}, false
 		}
 	}
-	content, contentOK := anchoredSelectedContent(anchor.occurrence, anchor.operand, proof, read)
+	content, contentOK := anchoredSelectedContent(anchor.occurrence, anchor.operand, row.ownerOrdinal, row.readOrdinal)
 	if !contentOK {
 		return RuleReadSurface{}, false
 	}
@@ -56,51 +54,50 @@ func anchoredSelectedReadSurface(state *schemaBindingState, authority *schemaBin
 // anchoredRouteWriteSurface is the route sibling of anchoredSelectedReadSurface:
 // the output has no single exact Ref because runtime chooses zero-or-many
 // selected targets. Its local is tied to the admitted occurrence/operand and
-// the sealed route proof.
-func anchoredRouteWriteSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, proof *ruleRuntimeProof, write uint64) (RuleWriteSurface, bool) {
-	read, routeOK := proof.routeWriteAt(write)
-	if state == nil || state.schema == nil || authority == nil || !semantic.Available() || !routeOK || proof.bindingAuthority != authority || proof.schema != state.schema {
-		return RuleWriteSurface{}, false
+// the sealed route shape.
+func anchoredRouteWriteSurface(state *schemaBindingState, authority *schemaBindingAuthority, semantic identity.SemanticKey, anchor ruleSurfaceAnchor, ordinal, write, routeRead uint64, factor composition.Key, row *schemaRuleReadRow) (ruleWriteSurface, bool) {
+	if state == nil || authority == nil || state.authority != authority || state.phase != schemaBindingSealed || ordinal >= uint64(len(state.rules)) || !semantic.Available() {
+		return ruleWriteSurface{}, false
 	}
-	ruleSemantic, ruleSemanticOK := semanticKeyFromComposition(proof.schema.ruleSemanticAt(proof.ordinal))
-	if !ruleSemanticOK || ruleSemantic != semantic {
-		return RuleWriteSurface{}, false
+	if routeRead == 0 || !factor.Available() {
+		return ruleWriteSurface{}, false
 	}
-	shape, shapeOK := proof.schema.ruleWriteShapeAt(proof.ordinal, write)
-	if !shapeOK || !shape.Factor.Available() {
-		return RuleWriteSurface{}, false
+	read := routeRead - 1
+	if row == nil || !row.sealed() || row.ownerState() != state || row.ownerOrdinal != ordinal || row.readOrdinal != read {
+		return ruleWriteSurface{}, false
 	}
-	content, contentOK := anchoredRouteContent(anchor.occurrence, anchor.operand, proof, write, read)
+	content, contentOK := anchoredRouteContent(anchor.occurrence, anchor.operand, ordinal, write, read)
 	if !contentOK {
-		return RuleWriteSurface{}, false
+		return ruleWriteSurface{}, false
 	}
-	surface := equation.Surface{Factor: shape.Factor, Form: equation.SurfaceWriteRoute, Content: content}
-	return RuleWriteSurface{value: surface, authority: authority, proof: proof, write: write, anchored: true}, true
+	surface := equation.Surface{Factor: factor, Form: equation.SurfaceWriteRoute, Content: content}
+	return ruleWriteSurface{value: surface, authority: authority, anchored: true}, true
 }
 
-// summaryReadSurface is the callback-free type-erasure seam for generic
-// ClosedRefs. It returns a row value; it cannot append to or retain a caller's
-// construction state.
-type summaryReadSurface interface {
-	summaryReadSurface(*ruleRuntimeProof, uint64) (RuleReadSurface, bool)
+// summaryKeySource is the engine-private seam for source operands that own
+// their canonical dense Value-key issuance. The domain exposes only the
+// read-only method; no receipt, callback, or engine reference vector crosses
+// the package boundary.
+type summaryKeySource interface {
+	SummaryKeys() ([]uint64, bool)
 }
 
-func (refs *ClosedRefs[K]) summaryReadSurface(proof *ruleRuntimeProof, read uint64) (RuleReadSurface, bool) {
-	return SummaryReadSurface(proof, read, refs)
-}
-
-func readSummarySurface(proof *ruleRuntimeProof, read uint64, refs any) (RuleReadSurface, bool) {
-	provider, ok := refs.(summaryReadSurface)
-	if !ok || provider == nil {
+func readSummarySurface(state *schemaBindingState, authority *schemaBindingAuthority, row *schemaRuleReadRow, operand any) (RuleReadSurface, bool) {
+	provider, ok := operand.(summaryKeySource)
+	if !ok {
 		return RuleReadSurface{}, false
 	}
-	return provider.summaryReadSurface(proof, read)
+	keys, keysOK := provider.SummaryKeys()
+	if !keysOK {
+		return RuleReadSurface{}, false
+	}
+	return summaryReadSurface(state, authority, row, keys)
 }
 
 // resolveDeclaredRuleInstance folds one issuance's declared surfaces into the
 // sealed equation row. The cold schema decides the shape: a declaration that
 // places a different read count, an unowned Factor, or a route write without
-// its sealed route proof has no row.
+// its sealed route shape has no row.
 func resolveDeclaredRuleInstance(schema *Schema, authority *schemaBindingAuthority, semantic, family composition.Key, anchor ruleSurfaceAnchor, surfaces declaredRuleSurfaces) (equation.RuleInstance, bool) {
 	if schema == nil || schema.cold == nil || authority == nil || !semantic.Available() || !family.Available() {
 		return equation.RuleInstance{}, false
@@ -133,17 +130,14 @@ func resolveDeclaredRuleInstance(schema *Schema, authority *schemaBindingAuthori
 		resolved := equation.ResolvedWrite{Index: uint64(index), Surface: surface.value}
 		switch write.Kind {
 		case composition.WriteExact:
-			if surface.proof != nil || surface.value.Form != equation.SurfaceWriteExact || surface.value.Mode != equation.TargetModeStrong {
+			if surface.value.Form != equation.SurfaceWriteExact || surface.value.Mode != equation.TargetModeStrong {
 				return equation.RuleInstance{}, false
 			}
 		case composition.WriteRoute:
-			proof := surface.proof
-			read, routeOK := proof.routeWriteAt(surface.write)
-			if !routeOK || proof.bindingAuthority != authority || proof.schema != schema || surface.write != uint64(index) ||
-				surface.value.Form != equation.SurfaceWriteRoute || surface.value.Mode != equation.TargetModeNone {
+			if write.Route == 0 || surface.value.Form != equation.SurfaceWriteRoute || surface.value.Mode != equation.TargetModeNone {
 				return equation.RuleInstance{}, false
 			}
-			resolved.Route = read + 1
+			resolved.Route = write.Route
 		default:
 			return equation.RuleInstance{}, false
 		}
@@ -154,9 +148,6 @@ func resolveDeclaredRuleInstance(schema *Schema, authority *schemaBindingAuthori
 		Occurrence: anchor.occurrence, Operand: anchor.operand,
 		Reads: reads, Carries: carries, Writes: writes,
 	}
-	if !validateBindingRuleRows(schema, row) {
-		return equation.RuleInstance{}, false
-	}
 	return row, true
 }
 
@@ -165,7 +156,7 @@ func resolveDeclaredRuleInstance(schema *Schema, authority *schemaBindingAuthori
 func declaredSummaryMappings(surfaces declaredRuleSurfaces) []RuleReadSurface {
 	var mapped []RuleReadSurface
 	for _, read := range surfaces.reads {
-		if read.summary == nil || (read.summary.state == nil) == (read.summary.proof == nil) {
+		if read.summary == nil {
 			continue
 		}
 		mapped = append(mapped, read)

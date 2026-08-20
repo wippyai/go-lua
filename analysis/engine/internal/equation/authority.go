@@ -8,7 +8,7 @@ import (
 )
 
 // Topology is the one sealed structural authority for a Solver. It owns the
-// ordinary graph and the immutable binding-origin activation selections.
+// ordinary graph and the immutable trigger/locator activation rows.
 type Topology struct {
 	source *composition.Composition
 	// deferredQueries is issued only by the binding-only observation seal. It
@@ -29,15 +29,13 @@ type Topology struct {
 	// These are the owner-issued activation rows. They remain immutable after
 	// sealing; selection scans them directly instead of rebuilding an index or
 	// reissuing a wrapper around each row.
-	materializations []TemplateMaterialization
-	directCandidates []DirectActivationCandidate
-	instanceKeys     []composition.Key
+	activation   *activationRowDirectory
+	instanceKeys []composition.Key
 	// triggers is the declared activation binding of every sealed trigger,
 	// keyed by the trigger's canonical rule-instance key. It is the authority
-	// for a trigger's family and application; candidate rows are separate, and
-	// a trigger with none is still bound.
+	// for a trigger's family and application; a trigger with no activation row
+	// is still bound.
 	triggers map[composition.Key]activationTriggerBinding
-	reverses []derivedActivationReverse
 }
 
 // activationTriggerBinding is the sealed declaration of one activation
@@ -45,16 +43,6 @@ type Topology struct {
 type activationTriggerBinding struct {
 	family      composition.Key
 	application composition.Key
-}
-
-// Deprecated compatibility storage for the in-flight selector migration.
-// It is not used by graph lowering; binding-origin rows are authoritative.
-// derivedActivationReverse is produced exclusively by a sealed binding's
-// actual export ports. It is not a second user-authored declaration.
-type derivedActivationReverse struct {
-	binding composition.Key
-	target  composition.Key
-	trigger composition.Key
 }
 
 // SealTopology freezes a single base graph and its binding descriptors. It
@@ -90,17 +78,29 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 	if deferredQueries && len(source.Queries()) == 0 {
 		return nil, sealRefused(SealFailureFamilyTopology, "deferred-queries"), false
 	}
-	assembly, assembled := SealTopologyAssembly(spec.Batch, spec.Materializations)
-	if !assembled || !assembly.Available() {
-		return nil, sealRefused(SealFailureFamilyTopology, "assembly"), false
+	// A nil slice is normalized to an empty disposable row plane.  The
+	// topology always seals through the one activation-row directory.
+	if spec.ActivationRows == nil {
+		spec.ActivationRows = []ActivationRowSpec{}
 	}
-	materializations := append([]TemplateMaterialization(nil), spec.Materializations...)
-	directCandidates := append([]DirectActivationCandidate(nil), spec.DirectCandidates...)
+	return sealTopologyWithActivationDirectory(source, spec, deferredQueries)
+}
+
+// sealTopologyWithActivationDirectory is the seq4161 path.  All formal
+// target lowering, direct transport rows, trigger tuple validation, and
+// target-Batch reindexing finish before the ordinary graph compiler runs.
+// Topology retains only the one activationRowDirectory.
+func sealTopologyWithActivationDirectory(source *composition.Composition, spec TopologySpec, deferredQueries bool) (*Topology, SealFailure, bool) {
+	directory, directoryOK := sealActivationRowDirectory(source, spec.Batch, spec.ActivationRows)
+	if !directoryOK || directory == nil || !directory.available() {
+		return nil, sealRefused(SealFailureFamilyTopology, "activation-directory"), false
+	}
 	sealed := copyTopologySpec(spec)
-	if !reissueTopologySpec(&sealed, assembly) {
+	sealed.ActivationRows = nil
+	if !reissueTopologySpecDirectory(&sealed, directory) {
 		return nil, sealRefused(SealFailureFamilyTopology, "reissue"), false
 	}
-	if !appendAssemblyTargets(&sealed, assembly.Targets()) {
+	if !appendAssemblyTargets(&sealed, directory.targetSpecs()) {
 		return nil, sealRefused(SealFailureFamilyTopology, "targets"), false
 	}
 	if deferredQueries && len(sealed.Queries) != 0 {
@@ -119,20 +119,20 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 		return nil, sealRefused(SealFailureFamilyTopology, "instances"), false
 	}
 	topology := &Topology{
-		source:          source,
-		deferredQueries: deferredQueries,
-		triggers:        make(map[composition.Key]activationTriggerBinding),
+		source: source, deferredQueries: deferredQueries,
+		activation: directory,
+		triggers:   make(map[composition.Key]activationTriggerBinding),
 	}
 	if !topology.sealTriggers(sealed.ActivationTriggers, instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-triggers"), false
 	}
-	if !topology.sealActivationRows(sealed.Batch, len(sealed.Points), materializations, directCandidates, instances) {
+	if !topology.sealActivationDirectory(directory, len(sealed.Points), instances) {
 		return nil, sealRefused(SealFailureFamilyTopology, "activation-rows"), false
 	}
 	if !sealed.Batch.closesOperandRealms(sealed.Rules) {
 		return nil, sealRefused(SealFailureFamilyTopology, "operand-realms"), false
 	}
-	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, topology.reverses, deferredQueries)
+	graph, rows, compileFailure, compiled := compileTopologyWithFailure(source, sealed, nil, deferredQueries)
 	if !compiled || graph == nil {
 		return nil, compileFailure, false
 	}
@@ -151,6 +151,80 @@ func sealTopologyWithFailure(source *composition.Composition, spec TopologySpec,
 	}
 	graph.relation = topology.initialRelation
 	return topology, SealFailure{}, true
+}
+
+func reissueTopologySpecDirectory(spec *TopologySpec, directory *activationRowDirectory) bool {
+	if spec == nil || directory == nil || !directory.available() || spec.Batch == nil {
+		return false
+	}
+	base := spec.Batch
+	if directory.batch == base {
+		spec.ActivationRows = nil
+		return true
+	}
+	reissueInput := func(input Input) (Input, bool) {
+		if !input.Available() {
+			return Input{}, false
+		}
+		if input.Source().batch == directory.batch && input.Target().batch == directory.batch {
+			return input, true
+		}
+		source, sourceOK := directory.site(base, input.Source())
+		target, targetOK := directory.site(base, input.Target())
+		if !sourceOK || !targetOK {
+			return Input{}, false
+		}
+		result := BoundaryInput(source, target, input.Provenance(), input.Pre(), input.Reindex(), input.Post())
+		return result, result.Available()
+	}
+	for index := range spec.Rules {
+		occurrence, occurrenceOK := directory.occurrence(base, spec.Rules[index].Occurrence)
+		operand, operandOK := directory.operand(base, spec.Rules[index].Operand)
+		if !occurrenceOK || !operandOK || !operand.Occurrence().Same(occurrence) {
+			return false
+		}
+		spec.Rules[index].Occurrence, spec.Rules[index].Operand = occurrence, operand
+	}
+	for index := range spec.Points {
+		site, ok := directory.site(base, spec.Points[index].Site)
+		if !ok {
+			return false
+		}
+		spec.Points[index].Site = site
+	}
+	for index := range spec.Groups {
+		for input := range spec.Groups[index].Inputs {
+			bound, ok := reissueInput(spec.Groups[index].Inputs[input])
+			if !ok {
+				return false
+			}
+			spec.Groups[index].Inputs[input] = bound
+		}
+		if spec.Groups[index].EnvironmentInput.Available() {
+			bound, ok := reissueInput(spec.Groups[index].EnvironmentInput)
+			if !ok {
+				return false
+			}
+			spec.Groups[index].EnvironmentInput = bound
+		}
+	}
+	for index := range spec.EnvironmentEdges {
+		bound, ok := reissueInput(spec.EnvironmentEdges[index].Input)
+		if !ok {
+			return false
+		}
+		spec.EnvironmentEdges[index].Input = bound
+	}
+	for index := range spec.FactorEdges {
+		bound, ok := reissueInput(spec.FactorEdges[index].Input)
+		if !ok {
+			return false
+		}
+		spec.FactorEdges[index].Input = bound
+	}
+	spec.Batch = directory.batch
+	spec.ActivationRows = nil
+	return true
 }
 
 // appendAssemblyTargets joins the already-directory-owned target rows to the
@@ -224,80 +298,6 @@ func appendAssemblyTargets(spec *TopologySpec, targets []TopologySpec) bool {
 	return true
 }
 
-// reissueTopologySpec replaces builder-local capabilities with the exact
-// directory issued by TopologyAssembly. Existing base-only topologies retain
-// their Batch identity; a materialized assembly can never leak a foreign
-// Batch into ordinary compilation.
-func reissueTopologySpec(spec *TopologySpec, assembly TopologyAssembly) bool {
-	if spec == nil || !assembly.Available() || spec.Batch == nil {
-		return false
-	}
-	if assembly.Batch() == spec.Batch {
-		spec.Materializations = nil
-		return true
-	}
-	reissueInput := func(input Input) (Input, bool) {
-		if !input.Available() {
-			return Input{}, false
-		}
-		source, sourceOK := assembly.Site(input.Source())
-		target, targetOK := assembly.Site(input.Target())
-		if !sourceOK || !targetOK {
-			return Input{}, false
-		}
-		result := BoundaryInput(source, target, input.Provenance(), input.Pre(), input.Reindex(), input.Post())
-		return result, result.Available()
-	}
-	for index := range spec.Rules {
-		occurrence, occurrenceOK := assembly.Occurrence(spec.Rules[index].Occurrence)
-		operand, operandOK := assembly.Operand(spec.Rules[index].Operand)
-		if !occurrenceOK || !operandOK || !operand.Occurrence().Same(occurrence) {
-			return false
-		}
-		spec.Rules[index].Occurrence, spec.Rules[index].Operand = occurrence, operand
-	}
-	for index := range spec.Points {
-		site, ok := assembly.Site(spec.Points[index].Site)
-		if !ok {
-			return false
-		}
-		spec.Points[index].Site = site
-	}
-	for index := range spec.Groups {
-		for input := range spec.Groups[index].Inputs {
-			bound, ok := reissueInput(spec.Groups[index].Inputs[input])
-			if !ok {
-				return false
-			}
-			spec.Groups[index].Inputs[input] = bound
-		}
-		if spec.Groups[index].EnvironmentInput.Available() {
-			bound, ok := reissueInput(spec.Groups[index].EnvironmentInput)
-			if !ok {
-				return false
-			}
-			spec.Groups[index].EnvironmentInput = bound
-		}
-	}
-	for index := range spec.EnvironmentEdges {
-		bound, ok := reissueInput(spec.EnvironmentEdges[index].Input)
-		if !ok {
-			return false
-		}
-		spec.EnvironmentEdges[index].Input = bound
-	}
-	for index := range spec.FactorEdges {
-		bound, ok := reissueInput(spec.FactorEdges[index].Input)
-		if !ok {
-			return false
-		}
-		spec.FactorEdges[index].Input = bound
-	}
-	spec.Batch = assembly.Batch()
-	spec.Materializations = nil
-	return true
-}
-
 // sealTriggers seals the declared activation binding of every trigger. Each
 // binding names a rule instance that carries exactly one activation of the
 // declared family, and no instance is bound twice.
@@ -326,14 +326,6 @@ func (topology *Topology) sealTriggers(bindings []ActivationTriggerBinding, inst
 	return true
 }
 
-// bindingAgreesWithTrigger holds when a candidate binding names a trigger the
-// declaration bound, under that trigger's declared family and application. A
-// binding cannot introduce a trigger, a family, or an application of its own.
-func (topology *Topology) bindingAgreesWithTrigger(trigger composition.Key, origin MaterializationOrigin) bool {
-	binding, bound := topology.triggers[trigger]
-	return bound && binding.family == origin.Family && binding.application == origin.Application
-}
-
 // TriggerBound reports whether one rule-instance key is a sealed activation
 // trigger of the declared family.
 func (topology *Topology) TriggerBound(trigger, family composition.Key) bool {
@@ -344,8 +336,8 @@ func (topology *Topology) TriggerBound(trigger, family composition.Key) bool {
 	return bound && binding.family == family
 }
 
-func (topology *Topology) sealActivationRows(base *Batch, pointCount int, values []TemplateMaterialization, direct []DirectActivationCandidate, instances []canonicalInstance) bool {
-	if topology == nil || topology.source == nil || base == nil || pointCount == 0 {
+func (topology *Topology) sealActivationDirectory(directory *activationRowDirectory, pointCount int, instances []canonicalInstance) bool {
+	if topology == nil || topology.source == nil || directory == nil || !directory.available() || pointCount == 0 {
 		return false
 	}
 	instanceKeys := make([]composition.Key, len(instances))
@@ -355,72 +347,40 @@ func (topology *Topology) sealActivationRows(base *Batch, pointCount int, values
 		}
 		instanceKeys[index] = instance.key
 	}
-	seen := make(map[composition.Key]struct{}, len(values)+len(direct))
-	for _, value := range values {
-		origin, ok := value.Origin()
-		// Structural/template assembly laws may materialize a target without
-		// an activation trigger. Such rows still belong in the sealed graph,
-		// but cannot mint a runtime selection binding. Production activation
-		// callers attach origin before admission.
-		if !ok {
-			continue
-		}
-		if origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(instances) {
+	seen := make(map[composition.Key]struct{}, len(directory.rows))
+	for _, row := range directory.rows {
+		if row.locator.triggerOrdinal < 0 || row.locator.triggerOrdinal >= len(instances) || !row.key.Available() {
 			return false
 		}
-		if _, known := topology.source.ActivationFamily(origin.Family); !known {
+		if _, known := topology.source.ActivationFamily(row.locator.family); !known {
 			return false
 		}
-		instance := instances[origin.TriggerOrdinal]
+		instance := instances[row.locator.triggerOrdinal]
 		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
-		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
+		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != row.locator.family {
 			return false
 		}
-		if !topology.bindingAgreesWithTrigger(instance.key, origin) {
+		trigger := instance.key
+		binding, bound := topology.triggers[trigger]
+		if !bound || binding.family != row.locator.family || binding.application != row.locator.application {
 			return false
 		}
-		key := value.Key()
-		if !key.Available() {
+		if row.target != nil && (row.target != directory.batch || !row.target.Sealed()) {
 			return false
 		}
-		if _, duplicate := seen[key]; duplicate {
-			return false
-		}
-		seen[key] = struct{}{}
-	}
-	for _, value := range direct {
-		origin, ok := value.Origin()
-		if !ok || !value.OwnedBy(topology.source, base) || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(instances) {
-			return false
-		}
-		if _, known := topology.source.ActivationFamily(origin.Family); !known {
-			return false
-		}
-		instance := instances[origin.TriggerOrdinal]
-		schema, schemaOK := ruleSchema(topology.source, instance.row.Schema)
-		if !schemaOK || len(schema.Activations) != 1 || schema.Activations[0].Family != origin.Family {
-			return false
-		}
-		if !topology.bindingAgreesWithTrigger(instance.key, origin) {
-			return false
-		}
-		for index := 0; index < value.TransportCount(); index++ {
-			transport, transportOK := value.TransportAt(index)
-			if !transportOK || int(uint64(transport.Source)) > pointCount || int(uint64(transport.Target)) > pointCount {
+		for _, transport := range row.transport {
+			if !transport.id.Available() || transport.source == 0 || transport.target == 0 || int(uint64(transport.source)) > pointCount || int(uint64(transport.target)) > pointCount || !transport.factor.Available() {
+				return false
+			}
+			if _, known := topology.source.FactorIndex(transport.factor); !known {
 				return false
 			}
 		}
-		key := value.Key()
-		if !key.Available() {
+		if _, duplicate := seen[row.key]; duplicate {
 			return false
 		}
-		if _, duplicate := seen[key]; duplicate {
-			return false
-		}
-		seen[key] = struct{}{}
+		seen[row.key] = struct{}{}
 	}
-	topology.materializations = append([]TemplateMaterialization(nil), values...)
-	topology.directCandidates = append([]DirectActivationCandidate(nil), direct...)
 	topology.instanceKeys = instanceKeys
 	return true
 }
@@ -432,8 +392,11 @@ func (topology *Topology) ownsMember(member Member) bool {
 	if topology == nil || member.owner != topology || !member.binding.Available() || !member.locator.Available() {
 		return false
 	}
-	origin, found := topology.activationOrigin(member.binding)
-	return found && origin.Application == member.locator.Application && origin.Target == member.locator.Target && origin.Endpoint == member.locator.Endpoint
+	if topology.activation != nil {
+		row, found := topology.activation.row(member.binding)
+		return found && row.locator.application == member.locator.Application && row.locator.target == member.locator.Target && row.locator.endpoint == member.locator.Endpoint
+	}
+	return false
 }
 
 // ActivationApplication returns the exact application constituent sealed on
@@ -456,59 +419,18 @@ func (topology *Topology) SelectActivationMember(trigger composition.Key, locato
 	if topology == nil || !trigger.Available() || !locator.Available() {
 		return Member{}, false
 	}
-	for _, value := range topology.materializations {
-		if origin, ok := value.Origin(); ok {
-			if valueTrigger, triggerOK := topology.activationTrigger(origin); triggerOK && valueTrigger == trigger && origin.Application == locator.Application && origin.Target == locator.Target && origin.Endpoint == locator.Endpoint {
-				return Member{owner: topology, binding: value.Key(), locator: locator}, true
+	if topology.activation != nil {
+		for _, row := range topology.activation.rows {
+			if row.locator.triggerOrdinal < 0 || row.locator.triggerOrdinal >= len(topology.instanceKeys) || topology.instanceKeys[row.locator.triggerOrdinal] != trigger {
+				continue
+			}
+			if row.locator.application == locator.Application && row.locator.target == locator.Target && row.locator.endpoint == locator.Endpoint {
+				return Member{owner: topology, binding: row.key, locator: locator}, true
 			}
 		}
-	}
-	for _, value := range topology.directCandidates {
-		if origin, ok := value.Origin(); ok {
-			if valueTrigger, triggerOK := topology.activationTrigger(origin); triggerOK && valueTrigger == trigger && origin.Application == locator.Application && origin.Target == locator.Target && origin.Endpoint == locator.Endpoint {
-				return Member{owner: topology, binding: value.Key(), locator: locator}, true
-			}
-		}
+		return Member{}, false
 	}
 	return Member{}, false
-}
-
-func (topology *Topology) activationTrigger(origin MaterializationOrigin) (composition.Key, bool) {
-	if topology == nil || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(topology.instanceKeys) {
-		return composition.Key{}, false
-	}
-	trigger := topology.instanceKeys[origin.TriggerOrdinal]
-	_, bound := topology.triggers[trigger]
-	return trigger, bound
-}
-
-func (topology *Topology) activationOrigin(key composition.Key) (MaterializationOrigin, bool) {
-	if topology == nil || !key.Available() {
-		return MaterializationOrigin{}, false
-	}
-	for _, value := range topology.materializations {
-		if value.Key() == key {
-			return value.Origin()
-		}
-	}
-	for _, value := range topology.directCandidates {
-		if value.Key() == key {
-			return value.Origin()
-		}
-	}
-	return MaterializationOrigin{}, false
-}
-
-func (topology *Topology) directCandidate(key composition.Key) (DirectActivationCandidate, bool) {
-	if topology == nil || !key.Available() {
-		return DirectActivationCandidate{}, false
-	}
-	for _, value := range topology.directCandidates {
-		if value.Key() == key {
-			return value, true
-		}
-	}
-	return DirectActivationCandidate{}, false
 }
 
 func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool) {
@@ -516,7 +438,13 @@ func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool
 		return composition.Key{}, false
 	}
 	return identityKey("analysis/engine/equation/topology", func(writer *canonical.DigestWriter) bool {
-		return writeKey(writer, base) && writer.Uint(boolUint(topology.deferredQueries)) == nil
+		if !writeKey(writer, base) || writer.Uint(boolUint(topology.deferredQueries)) != nil {
+			return false
+		}
+		if topology.activation != nil {
+			return writeKey(writer, topology.activation.key)
+		}
+		return true
 	})
 }
 
@@ -599,16 +527,19 @@ func (topology *Topology) acceptedEvidenceKey(member Member, premise Expr) (comp
 	if topology == nil || !member.ownedBy(topology) || !premise.Available() {
 		return composition.Key{}, false
 	}
-	origin, bound := topology.activationOrigin(member.Binding())
-	if !bound {
+	if topology.activation == nil {
 		return composition.Key{}, false
 	}
-	trigger, triggerOK := topology.activationTrigger(origin)
-	if !triggerOK {
+	row, found := topology.activation.row(member.Binding())
+	if !found || row.locator.triggerOrdinal < 0 || row.locator.triggerOrdinal >= len(topology.instanceKeys) {
+		return composition.Key{}, false
+	}
+	trigger := topology.instanceKeys[row.locator.triggerOrdinal]
+	if _, bound := topology.triggers[trigger]; !bound {
 		return composition.Key{}, false
 	}
 	return identityKey("analysis/engine/equation/activation-evidence", func(writer *canonical.DigestWriter) bool {
-		return writeMemberTuple(writer, member) && writeKey(writer, origin.Family) && writeKey(writer, trigger) && writeKey(writer, origin.Application) && writeExpr(writer, premise)
+		return writeMemberTuple(writer, member) && writeKey(writer, row.locator.family) && writeKey(writer, trigger) && writeKey(writer, row.locator.application) && writeExpr(writer, premise)
 	})
 }
 
@@ -920,8 +851,7 @@ func graphSemanticKeyWithFailure(graph *Graph) (composition.Key, SealFailure, bo
 func copyTopologySpec(spec TopologySpec) TopologySpec {
 	result := TopologySpec{
 		Batch:            spec.Batch,
-		Materializations: append([]TemplateMaterialization(nil), spec.Materializations...),
-		DirectCandidates: append([]DirectActivationCandidate(nil), spec.DirectCandidates...),
+		ActivationRows:   cloneActivationRowSpecs(spec.ActivationRows),
 		Rules:            make([]RuleInstance, len(spec.Rules)),
 		Points:           append([]PointSpec(nil), spec.Points...),
 		PointRanks:       append([]int(nil), spec.PointRanks...),
@@ -951,14 +881,6 @@ func copyTopologySpec(spec TopologySpec) TopologySpec {
 	}
 	for index, mapping := range spec.WeakTargets {
 		result.WeakTargets[index] = WeakTargetMapping{Surface: mapping.Surface, Candidates: append([]Surface(nil), mapping.Candidates...)}
-	}
-	return result
-}
-
-func cloneQueryInstances(rows []QueryInstance) []QueryInstance {
-	result := make([]QueryInstance, len(rows))
-	for index, row := range rows {
-		result[index] = QueryInstance{Family: row.Family, Point: row.Point, Surfaces: append([]Surface(nil), row.Surfaces...)}
 	}
 	return result
 }

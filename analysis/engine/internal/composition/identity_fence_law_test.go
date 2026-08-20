@@ -15,13 +15,13 @@ import (
 // codecVersionFence is the version compositionID frames its preimage under.
 // Raising it is a deliberate declaration that every persisted CompositionID is
 // now unreadable, so it may only change together with coldCompositionFenceHex.
-const codecVersionFence = 16
+const codecVersionFence = 17
 
 // coldCompositionFenceHex is the sealed CompositionID of fenceCandidate. It is
 // stable by design: the preimage is the sorted declaration set, the codec
 // version, and the domain tag, none of which a construction-path edit is
 // allowed to reach.
-const coldCompositionFenceHex = "a71f6a083b1ee744579e1a12b6e65ae7f7d24bc6a5a758a6ca3585eda6c82866"
+const coldCompositionFenceHex = "3e6b0eb2fdaeb9d1509ae5eac9ed64e5af0cb14f89ad23f05d9840d68f84bf98"
 
 func TestColdCodecVersionIsFenced(t *testing.T) {
 	if codecVersion != codecVersionFence {
@@ -46,7 +46,7 @@ func fenceCandidate() Candidate {
 		ActivationFamilies: []ActivationFamily{{Semantic: family}},
 		Rules: []Rule{
 			{
-				Key: fenceKey(31), OperandFamily: fenceKey(32), Admission: fenceAdmission(),
+				Key: fenceKey(31), OperandFamily: fenceKey(32),
 				OutputKind: FactorOutput, Output: factor, Inputs: 2,
 				Reads: []Read{
 					{Kind: ReadExact, Input: 0, Factor: structural},
@@ -56,14 +56,14 @@ func fenceCandidate() Candidate {
 				Writes:  []Write{{Kind: WriteExact, Factor: factor}},
 			},
 			{
-				Key: fenceKey(41), OperandFamily: fenceKey(42), Admission: fenceAdmission(),
+				Key: fenceKey(41), OperandFamily: fenceKey(42),
 				OutputKind: StructuralOutput, Inputs: 1,
 				Reads:    []Read{{Kind: ReadExact, Input: 0, Factor: factor}},
 				Supports: []Support{{Semantic: completion}},
 				Prunes:   []Prune{{Semantic: prune}},
 			},
 			{
-				Key: fenceKey(51), OperandFamily: fenceKey(52), Admission: fenceAdmission(),
+				Key: fenceKey(51), OperandFamily: fenceKey(52),
 				OutputKind: StructuralOutput, Inputs: 0,
 				Activations: []ActivationRange{{Family: family}},
 			},
@@ -82,10 +82,6 @@ func fenceKey(value byte) Key {
 	var id ID
 	id[0] = value
 	return Key{ID: id, Version: 1}
-}
-
-func fenceAdmission() Admission {
-	return Admission{Kind: AdmissionTrustedTheorem, Identity: fenceKey(250)}
 }
 
 // TestColdCompositionDigestIsFenced pins the whole preimage in one literal: the

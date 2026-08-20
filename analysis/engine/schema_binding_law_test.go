@@ -27,7 +27,7 @@ func schemaSlotFixture(t testing.TB, routed bool, reverse bool) (*SchemaBuilder,
 	if !inputOK || !outputOK {
 		t.Fatal("factor forms")
 	}
-	rule, ok := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(940_003), OperandFamily: coldKey(940_004), Inputs: 1, Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(940_005)}, Output: output.Ref()})
+	rule, ok := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(940_003), OperandFamily: coldKey(940_004), Inputs: 1, Output: output.Ref()})
 	if !ok {
 		t.Fatal("rule")
 	}
@@ -88,7 +88,7 @@ func TestSchemaSlotsRejectForeignEqualCandidateAndPoison(t *testing.T) {
 		t.Fatal("foreign factor")
 	}
 	owner := NewSchema()
-	_, declared := DeclareRuleSlot[uint64, struct{}](owner, SchemaRuleSpec[uint64]{Semantic: coldKey(942_002), OperandFamily: coldKey(942_003), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(942_004)}, Output: foreignFactor.Ref()})
+	_, declared := DeclareRuleSlot[uint64, struct{}](owner, SchemaRuleSpec[uint64]{Semantic: coldKey(942_002), OperandFamily: coldKey(942_003), Output: foreignFactor.Ref()})
 	sealed, _ := owner.Seal()
 	if declared || sealed != nil {
 		t.Fatal("foreign factor accepted")
@@ -134,7 +134,7 @@ func TestSchemaSlotsExtensionPresenceAcceptsCanonicalOrdinalZero(t *testing.T) {
 	}
 	rule, ok := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(942_302), OperandFamily: coldKey(942_303),
-		Inputs: 1, Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(942_304)}, Output: factor.Ref(),
+		Inputs: 1, Output: factor.Ref(),
 	})
 	if !ok {
 		t.Fatal("rule")
@@ -189,8 +189,8 @@ func TestSchemaSlotsExactKindsAndParentFence(t *testing.T) {
 	if read.Kind() == write.Kind() {
 		t.Fatal("exact read/write kinds aliased")
 	}
-	ruleA, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(944_002), OperandFamily: coldKey(944_003), Inputs: 1, Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_004)}, Output: factor.Ref()})
-	ruleB, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(944_005), OperandFamily: coldKey(944_006), Inputs: 1, Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_007)}, Output: factor.Ref()})
+	ruleA, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(944_002), OperandFamily: coldKey(944_003), Inputs: 1, Output: factor.Ref()})
+	ruleB, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{Semantic: coldKey(944_005), OperandFamily: coldKey(944_006), Inputs: 1, Output: factor.Ref()})
 	inA, _ := ruleA.Input(0)
 	inB, _ := ruleB.Input(0)
 	readA, _ := SchemaRead[uint64](ruleA, read, inA)
@@ -209,7 +209,7 @@ func TestSchemaSlotsRouteAndSelectorPredecessorsAreExactAndCanonical(t *testing.
 	write, _ := factor.ExactWrite()
 	rule, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(944_101), OperandFamily: coldKey(944_102), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_103)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	if _, ok := factor.Ordinal(); ok {
 		t.Fatal("factor exposed provisional ordinal")
@@ -260,7 +260,7 @@ func TestSchemaSlotsRejectRouteAfterStaticWrite(t *testing.T) {
 	write, _ := factor.ExactWrite()
 	rule, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(944_202), OperandFamily: coldKey(944_203), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_204)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	input, _ := rule.Input(0)
 	base, _ := SchemaRead(rule, read, input)
@@ -281,7 +281,7 @@ func TestSchemaSlotsRouteRequiresSelectedOutputFactor(t *testing.T) {
 	otherRead, _ := other.ExactRead()
 	rule, _ := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(944_302), OperandFamily: coldKey(944_303), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(944_304)}, Output: output.Ref(),
+		Output: output.Ref(),
 	})
 	input, _ := rule.Input(0)
 	base, _ := SchemaRead(rule, otherRead, input)
@@ -321,7 +321,7 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	if !ok {
 		t.Fatal("prune")
 	}
-	rule, ok := DeclareSchemaSupportRule(builder, SchemaStructuralRuleSpec{Semantic: coldKey(945_003), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(945_004)}, Completion: completion, Prune: prune})
+	rule, ok := DeclareSchemaSupportRule(builder, SchemaStructuralRuleSpec{Semantic: coldKey(945_003), Completion: completion, Prune: prune})
 	if !ok || rule == nil {
 		t.Fatal("support rule")
 	}
@@ -342,7 +342,7 @@ func TestSchemaSlotsStructuralCapabilitiesBind(t *testing.T) {
 	if !ok {
 		t.Fatal("family")
 	}
-	if _, ok := DeclareSchemaActivationRule(familyBuilder, SchemaStructuralRuleSpec{Semantic: coldKey(945_008), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(945_009)}, Activation: family}); !ok {
+	if _, ok := DeclareSchemaActivationRule(familyBuilder, SchemaStructuralRuleSpec{Semantic: coldKey(945_008), Activation: family}); !ok {
 		t.Fatal("activation rule")
 	}
 	if rows := familyBuilder.candidate.Rules; len(rows) != 1 || rows[0].OperandFamily != compositionKeyOf(unitOperandFamily) {
@@ -373,7 +373,7 @@ func TestSchemaSlotsPortIdentityIsItsIndex(t *testing.T) {
 	}
 	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(946_002), OperandFamily: coldKey(946_003), Inputs: 2,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_004)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	if !ruleOK {
 		t.Fatal("rule")
@@ -392,7 +392,7 @@ func TestSchemaSlotsPortIdentityIsItsIndex(t *testing.T) {
 	}
 	structural, structuralOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{
 		Semantic: coldKey(946_006), Inputs: 2,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_007)}, Activation: family,
+		Activation: family,
 	})
 	if !structuralOK {
 		t.Fatal("activation rule")
@@ -431,7 +431,7 @@ func TestSchemaSlotsRefuseCrossRoleTokens(t *testing.T) {
 	}
 	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(946_103), OperandFamily: coldKey(946_104), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_105)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	if !ruleOK {
 		t.Fatal("rule")
@@ -454,7 +454,7 @@ func TestSchemaSlotsRefuseCrossRoleTokens(t *testing.T) {
 	familyAsFactor := FactorRef[uint64]{slotHandle[keyDraft[factorRole]]{cell: family.cell}}
 	if _, ok := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(946_106), OperandFamily: coldKey(946_107), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_108)}, Output: familyAsFactor,
+		Output: familyAsFactor,
 	}); ok {
 		t.Fatal("an activation family was accepted as a Factor output")
 	}
@@ -478,7 +478,7 @@ func TestSchemaSlotsRefusedDeclarationsEmitNoRow(t *testing.T) {
 	}
 	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(946_204), OperandFamily: coldKey(946_205), Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_206)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	if !ruleOK {
 		t.Fatal("rule")
@@ -605,8 +605,7 @@ func TestSchemaBindingRetainsRicherSchemaUntilFullInventory(t *testing.T) {
 	richWrite, richWriteOK := richFactor.ExactWrite()
 	rule, ruleOK := NewRuleSlot[uint64, uint64](rich, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(946_031), OperandFamily: coldKey(946_032),
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(946_033)},
-		Output:    richFactor.Ref(),
+		Output: richFactor.Ref(),
 	})
 	_, ruleWriteOK := SchemaWrite(rule, richWrite)
 	if !richWriteOK || !ruleOK || rule == nil || !ruleWriteOK {

@@ -30,11 +30,11 @@ import (
 // builder.candidate declaration set in schema_slots.go is its sole preimage, so
 // this literal fences every candidate declaration the builder emits: a changed
 // field, a dropped part, or a reordered ordered sub-slice moves it.
-const schemaDeclarationFenceHex = "3c5c0b7267f63d0e7a285b5b82bc0f0316d05ecb14649fef2b2b93da7dae0a59"
+const schemaDeclarationFenceHex = "66c85c2756b200e3cc923b5b8646ff55543f9b1a0fd9038a5415f99c2d15a3fb"
 
 // fenceSchema declares a fixed schema through the public SchemaBuilder surface:
-// a Factor with both intrinsic forms, a Factor-output Rule carrying a trusted
-// admission and an exact write, and a query family with one exact projection.
+// a Factor with both intrinsic forms, a Factor-output Rule with an exact
+// write, and a query family with one exact projection.
 // Each of those is a distinct builder.candidate append, so the sealed cold
 // identity below is the digest of that declaration sequence.
 func fenceSchema(t testing.TB) *Schema {
@@ -45,7 +45,7 @@ func fenceSchema(t testing.TB) *Schema {
 	readForm, readFormOK := factor.ExactRead()
 	rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(970_011), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(970_012)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	_, writeOK := SchemaWrite(rule, writeForm)
 	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(970_021), Freezer: coldKey(970_022)})

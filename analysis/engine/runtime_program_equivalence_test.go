@@ -2,9 +2,36 @@ package engine
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"unsafe"
+
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 )
+
+// TestBoundRuleMemberIsTheExecutionAuthority prevents reintroducing a nested
+// rule carrier beside the graph-owned runtime member. Access, read binding,
+// output ownership, and execution fencing must all terminate at this object.
+func TestBoundRuleMemberIsTheExecutionAuthority(t *testing.T) {
+	memberType := reflect.TypeOf(boundRuleMember[uint64, struct{}]{})
+	if _, mirrored := memberType.FieldByName("rule"); mirrored {
+		t.Fatal("bound rule member retained a nested rule authority mirror")
+	}
+	for _, field := range []string{"value", "cell", "ordinal", "fold", "reads", "output", "nextEpoch"} {
+		if _, present := memberType.FieldByName(field); !present {
+			t.Fatalf("canonical bound rule member does not own %s", field)
+		}
+	}
+	ownerField, present := reflect.TypeOf(Frame[uint64, struct{}]{}).FieldByName("owner")
+	if !present || ownerField.Type != reflect.TypeOf((*boundRuleMember[uint64, struct{}])(nil)) {
+		t.Fatal("Frame is not fenced by the canonical bound rule member")
+	}
+	var owner anyRule = (*boundRuleMember[uint64, struct{}])(nil)
+	var reads readBinding = (*boundRuleMember[uint64, struct{}])(nil)
+	if owner == nil || reads == nil {
+		t.Fatal("typed nil interface witnesses unexpectedly vanished")
+	}
+}
 
 // TestMemberRowIsTheModelledWidth proves the runtime row table is sized by
 // sealed member spans rather than by a retained construction object.
@@ -34,12 +61,17 @@ func TestSolvedRuntimeProgramCoversEveryGraphMember(t *testing.T) {
 		if !groupOK || !spanOK || span.count() != group.MemberCount() {
 			t.Fatalf("group %d graph/runtime member width mismatch", groupIndex)
 		}
-		for offset, row := range program.memberRows(span) {
+		groupKeys := make(map[composition.Key]struct{}, group.MemberCount())
+		for _, row := range program.memberRows(span) {
 			member, memberOK := memberRowIdentity(group, row)
-			if !row.valid() || !memberOK || !graph.OwnsMember(member) || offset != int(row.memberIndex) {
-				t.Fatalf("group %d row %d lost its graph member", groupIndex, offset)
+			if !row.valid() || !memberOK || !graph.OwnsMember(member) || row.member.member().Key() != member.Key() {
+				t.Fatalf("group %d row lost its canonical graph member", groupIndex)
 			}
+			groupKeys[member.Key()] = struct{}{}
 			seen++
+		}
+		if len(groupKeys) != group.MemberCount() {
+			t.Fatalf("group %d runtime member set = %d, want %d", groupIndex, len(groupKeys), group.MemberCount())
 		}
 	}
 	if seen != len(fixture.graph.members) {
@@ -69,8 +101,12 @@ func TestProgramRowExecutionMatchesDraftExecution(t *testing.T) {
 // is all-or-nothing and a valid committed program exposes the resulting sealed
 // table without a recoverable draft phase.
 func TestSealRuntimeProgramTakesOneValidityDecision(t *testing.T) {
-	if program, ok := sealRuntimeProgram(nil, nil, nil, []memberRow{{memberIndex: 0}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil); ok || program != nil {
+	if program, ok := sealRuntimeProgram(nil, nil, nil, []memberRow{{}}, []memberSpan{{start: 0, end: 1}}, nil, nil, nil, nil); ok || program != nil {
 		t.Fatal("invalid runtime row published a program")
+	}
+	var nilRule *boundRuleMember[uint64, struct{}]
+	if (memberRow{member: nilRule}).valid() {
+		t.Fatal("typed-nil runtime member became valid")
 	}
 	fixture := newReceiptQueryMatrixFixture(t, 2, nil, nil)
 	if fixture.solver.runtime.program == nil || !fixture.solver.runtime.program.valid() {
@@ -78,10 +114,9 @@ func TestSealRuntimeProgramTakesOneValidityDecision(t *testing.T) {
 	}
 }
 
-// TestProgramRowsCarryNoDraft proves each hot row can be recovered only by
-// its graph Group and dense position; the row itself retains no construction
-// identity or mutable workspace.
-func TestProgramRowsCarryNoDraft(t *testing.T) {
+// TestProgramRowsCarryOneCanonicalMember proves each hot row retains the same
+// immutable member used for execution, output ownership, and failure identity.
+func TestProgramRowsCarryOneCanonicalMember(t *testing.T) {
 	fixture := newReceiptQueryMatrixFixture(t, 4, nil, nil)
 	program, graph := fixture.solver.runtime.program, fixture.graph.graph
 	for groupIndex := 0; groupIndex < program.groupCount(); groupIndex++ {
@@ -91,8 +126,9 @@ func TestProgramRowsCarryNoDraft(t *testing.T) {
 			t.Fatal("sealed group span unavailable")
 		}
 		for _, row := range program.memberRows(span) {
-			if _, ok := memberRowIdentity(group, row); !ok || !row.valid() {
-				t.Fatal("runtime member row retained no recoverable graph position")
+			member, ok := memberRowIdentity(group, row)
+			if !ok || !row.valid() || row.member.member().Key() != member.Key() {
+				t.Fatal("runtime member row did not retain one canonical member")
 			}
 		}
 	}

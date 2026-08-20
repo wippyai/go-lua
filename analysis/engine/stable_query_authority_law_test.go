@@ -148,7 +148,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	readForm, readOK := factor.ExactRead()
 	rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(952_000), OperandFamily: unitOperandFamily, Inputs: 0,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(952_100)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	writeSlot, writeSlotOK := SchemaWrite(rule, writeForm)
 	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(953_000), Freezer: coldKey(953_100)})
@@ -163,13 +163,12 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	binding := NewSchemaBinding(schema)
 	ruleSpec := HotRuleSpec[uint64, ruleUnit]{
 		OperandContent: ruleUnitContent,
-		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(952_100)),
-		Transfer: func(access Access[uint64, ruleUnit]) bool {
+		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			*transferRuns++
 			if failTransfer {
-				return false
+				return RuleResult[uint64]{}
 			}
-			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
+			return Staged(frame, uint64(1))
 		},
 	}
 	querySpec := hotExactQuerySpec()
