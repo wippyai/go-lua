@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // artifactResultProjection is an immutable, detached result. Result
@@ -32,7 +33,7 @@ type Projection struct {
 func Detach(
 	geometry Geometry,
 	mounts []Mount,
-	valueSchema *detachValueSchema,
+	valueSchema *valuedomain.Schema,
 	policy *anadiag.DiagnosticPolicy,
 	queries []composite.QueryPublication,
 	published *snapshot.Snapshot,

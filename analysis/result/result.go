@@ -6,19 +6,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
 // resultFormat is part of the Result identity preimage.  The normalized
 // family/point tables are a different wire shape from the old flat row
 // projection, so they must never share an identity with an older Result.
 const resultFormat uint64 = 11
-
-// detachValueSchema is kept as an alias at the package boundary so the
-// projection implementation can remain free of domain-specific imports while
-// the existing Detach entry point continues to pass the schema to native and
-// diagnostic producers.
-type detachValueSchema = valuedomain.Schema
 
 // Result is a detached projection of canonical body/root geometry and generic
 // query publications.  Query family contracts and point geometry are stored
