@@ -1905,9 +1905,6 @@ func (schema Schema) LinkOwner() link.OwnerCapability {
 	return schema.owner.linkOwner
 }
 
-// Owner is the concise alias used by cross-domain binders.
-func (schema Schema) Owner() link.OwnerCapability { return schema.LinkOwner() }
-
 // Rebind reconstructs the complete cold authority from an equivalent Link.
 // State Values intentionally do not rebind or serialize.
 func (schema Schema) Rebind(source *link.Link) (Schema, bool) {
@@ -2095,28 +2092,6 @@ func (schema Schema) BootFrozen(key Key) (Frozen, bool) {
 		return FrozenFrozen, true
 	}
 	return FrozenMutable, true
-}
-
-func (schema Schema) SlotCount() int {
-	if !schema.valid() {
-		return 0
-	}
-	return len(schema.owner.slots)
-}
-
-func (schema Schema) SlotAt(index int) (Slot, bool) {
-	if !schema.valid() || index < 0 || index >= len(schema.owner.slots) {
-		return Slot{}, false
-	}
-	return Slot{owner: schema.owner, id: uint32(index + 1)}, true
-}
-
-// UnknownSlot returns the one sealed Heap-owned fallback partition.
-func (schema Schema) UnknownSlot() (Slot, bool) {
-	if !schema.valid() || schema.owner.unknownSlot == 0 {
-		return Slot{}, false
-	}
-	return Slot{owner: schema.owner, id: schema.owner.unknownSlot}, true
 }
 
 // FieldCount and FieldAt enumerate the dense field range sealed for one
