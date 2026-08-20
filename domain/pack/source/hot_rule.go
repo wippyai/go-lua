@@ -14,7 +14,6 @@ type HotRule struct {
 	implementation *packowner.RuleImplementation[packdomain.Source]
 	owner          *packowner.HotOwner
 	schema         *packdomain.Schema
-	receiptsSealed bool
 }
 
 // BindHot binds one exact callback-free source fragment to one exact Pack
@@ -59,8 +58,13 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 }
 
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (packdomain.Source, bool) {
-	result, ok := rule.receiptForOccurrence(coords.Mount, coords.Occurrence)
-	if !ok {
+	if rule == nil || rule.owner == nil || rule.schema == nil ||
+		!rule.owner.OwnsSchema(rule.schema) ||
+		!coords.Mount.Available() || !coords.Occurrence.Available() {
+		return packdomain.Source{}, false
+	}
+	result, ok := rule.schema.SourceResultForMountedOccurrence(coords.Mount, coords.Occurrence)
+	if !ok || !rule.schema.OwnsSourceResult(result) {
 		return packdomain.Source{}, false
 	}
 	return result.Source()

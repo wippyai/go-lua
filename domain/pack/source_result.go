@@ -147,27 +147,6 @@ func (schema *Schema) sealSourceResults() bool {
 	return true
 }
 
-// SourceOccurrenceCount returns the exact compact source-result denominator
-// sealed while Pack still owned the Program occurrence proof.
-func (schema *Schema) SourceOccurrenceCount() int {
-	if schema == nil || schema.state == nil {
-		return 0
-	}
-	return len(schema.state.sourceOccurrences)
-}
-
-// SourceOccurrenceAt projects one mounted Program occurrence ID to Pack's
-// opaque already-sealed result. No Program, Flow, Link mount, or raw term is
-// exposed or reconstructed.
-func (schema *Schema) SourceOccurrenceAt(index int) (identity.ContentID, identity.ContentID, SourceResult, bool) {
-	if schema == nil || schema.state == nil || index < 0 || index >= len(schema.state.sourceOccurrences) {
-		return identity.ContentID{}, identity.ContentID{}, SourceResult{}, false
-	}
-	row := schema.state.sourceOccurrences[index]
-	result := SourceResult{schema: schema.state, index: row.result}
-	return row.module, row.occurrence, result, row.module.Available() && row.occurrence.Available() && result.valid()
-}
-
 // SourceResultForMountedOccurrence is the sole direct inverse from a mounted
 // Program occurrence to Pack's already sealed source receipt. Mounted owners
 // redeem through it instead of retaining a module-scoped directory.
