@@ -2,7 +2,6 @@ package dispatch
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -11,116 +10,10 @@ import (
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
-type dispatchAtomReceipt struct {
-	target   calldomain.Target
-	known    bool
-	callable bool
-}
-
-// dispatchReceipt is the sealed hot operand for one mounted Call application.
-// Its atom table is built once from exact Link/Boundary/Heap/Pack authorities
-// while issuing the receipt. Runtime callbacks consume only this table, the
-// sealed Value schema, and owner-fenced Call targets.
-type dispatchReceipt struct {
-	binding    *engine.SchemaBinding
-	values     *valuedomain.Schema
-	algebra    *calldomain.Algebra
-	key        calldomain.Key
-	coordinate valuedomain.Coordinate
-	id         [32]byte
-	atoms      map[valuedomain.Atom]dispatchAtomReceipt
-	sealed     bool
-}
-
-func (receipt dispatchReceipt) valid() bool {
-	if receipt.algebra == nil {
-		return false
-	}
-	applicationID, idOK := receipt.key.ApplicationID()
-	_, mountedOK := receipt.algebra.MountedCallForApplication(applicationID)
-	return receipt.sealed && receipt.binding != nil && receipt.binding.Sealed() && receipt.values != nil && receipt.algebra.Valid() && receipt.key.Valid() && receipt.key.IsApplication() && receipt.coordinate.Valid() && receipt.id != [32]byte{} && receipt.atoms != nil && idOK && applicationID.Available() && mountedOK
-}
-
-func dispatchReceiptContent(receipt dispatchReceipt) (dispatchReceipt, [32]byte, bool) {
-	return receipt, receipt.id, receipt.valid()
-}
-
-func (rule *HotRule) receipt(applicationID identity.ContentID) (dispatchReceipt, bool) {
-	if rule == nil || rule.values == nil || rule.calls == nil || !rule.heaps.Valid() || rule.packs == nil {
-		return dispatchReceipt{}, false
-	}
-	bound, ok := newSite(rule.calls.Algebra(), rule.values.Schema(), rule.heaps, rule.packs, applicationID)
-	if !ok {
-		return dispatchReceipt{}, false
-	}
-	values := rule.values.Schema()
-	if values == nil {
-		return dispatchReceipt{}, false
-	}
-	coordinate, coordinateOK := bound.valueCoordinate()
-	if !coordinateOK {
-		return dispatchReceipt{}, false
-	}
-	atoms := make(map[valuedomain.Atom]dispatchAtomReceipt)
-	if !values.AdmitsCoordinate(coordinate, values.Bottom()) {
-		return dispatchReceipt{}, false
-	}
-	issuanceOK := true
-	if !values.VisitSupport(values.Top(), func(atom valuedomain.Atom) {
-		capability, known, callable := dispatchAtom(bound, atom)
-		if !values.OwnsAtom(atom) || (known && !rule.calls.Algebra().OwnsTarget(capability)) {
-			issuanceOK = false
-			return
-		}
-		atoms[atom] = dispatchAtomReceipt{target: capability, known: known, callable: callable}
-	}) {
-		return dispatchReceipt{}, false
-	}
-	id, idOK := bound.contentID()
-	key, keyOK := bound.callKey()
-	applicationID, applicationIDOK := key.ContentID()
-	if !idOK || !keyOK || !coordinateOK || !applicationIDOK || !applicationID.Available() {
-		return dispatchReceipt{}, false
-	}
-	if !issuanceOK {
-		return dispatchReceipt{}, false
-	}
-	receipt := dispatchReceipt{binding: rule.binding, values: values, algebra: rule.calls.Algebra(), key: key, coordinate: coordinate, id: [32]byte(id), atoms: atoms, sealed: true}
-	return receipt, receipt.valid()
-}
-
-func reduceReceipt(receipt dispatchReceipt, callee valuedomain.Value) (calldomain.Value, bool) {
-	if !receipt.valid() {
-		return calldomain.Value{}, false
-	}
-	if callee.IsTop() {
-		return receipt.algebra.Top(), true
-	}
-	if callee.IsBottom() {
-		return receipt.algebra.DispatchValue(receipt.key, nil, false)
-	}
-	targets := make([]calldomain.Target, 0, 2)
-	unknown := false
-	if !receipt.values.VisitAtoms(callee, func(atom valuedomain.Atom) bool {
-		mapped, ok := receipt.atoms[atom]
-		if !ok {
-			return false
-		}
-		if mapped.known {
-			targets = append(targets, mapped.target)
-		}
-		if mapped.callable {
-			unknown = true
-		}
-		return true
-	}) {
-		return calldomain.Value{}, false
-	}
-	return receipt.algebra.DispatchValue(receipt.key, targets, unknown)
-}
-
-// HotRule is Call dispatch's receipt-native exact-read Rule binder. Its
-// callbacks never retain or inspect Link, Flow, Target, or Pack topology.
+// HotRule is Call dispatch's exact-read Rule binder. Its operand is Call's
+// canonical mounted row; callbacks join that row to Value's coordinate and
+// atom relations, Pack's call-root row, Heap's allocation rows, and Call's
+// target rows without retaining a second mounted-call directory.
 type HotRule struct {
 	binding        *engine.SchemaBinding
 	fragment       *SchemaFragment
@@ -129,25 +22,28 @@ type HotRule struct {
 	heaps          heapdomain.Schema
 	packs          *packdomain.Schema
 	read           engine.Read[engine.OrderedCells[valuedomain.Value]]
-	implementation *callowner.HeterogeneousRuleImplementation[valuedomain.Value, dispatchReceipt]
-	receipts       []dispatchReceipt
-	receiptsSealed bool
+	implementation *callowner.HeterogeneousRuleImplementation[valuedomain.Value, calldomain.MountedCall]
 }
 
 // BindHot binds the closed Value-read/Call-write dispatch lane through typed
-// FactorRefs. Heap and Pack are used only while issuing application receipts;
-// no topology scan occurs from the sealed engine callbacks.
+// FactorRefs. Heap and Pack remain exact row owners used at the reducer
+// boundary; no Program or Flow topology is reopened by the callbacks.
 func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *valueowner.HotOwner, calls *callowner.HotOwner, heaps heapdomain.Schema, packs *packdomain.Schema) (*HotRule, bool) {
 	if binding == nil || fragment == nil || values == nil || !values.MatchesBinding(binding) || calls == nil || !calls.MatchesBinding(binding) || values.Schema() == nil || calls.Algebra() == nil || !calls.Algebra().Valid() || !heaps.Valid() || packs == nil || !fragment.semantic.Available() || !fragment.evidence.Available() {
 		return nil, false
 	}
+	linkOwner := calls.Algebra().LinkOwner()
+	if !linkOwner.Available() || !values.Schema().LinkOwner().Matches(linkOwner) || !heaps.LinkOwner().Matches(linkOwner) || !packs.LinkOwner().Matches(linkOwner) || !values.Schema().OwnsHeapSchema(heaps) {
+		return nil, false
+	}
 	hot := &HotRule{binding: binding, fragment: fragment, values: values, calls: calls, heaps: heaps, packs: packs}
-	implementation, runtimeRead, ok := callowner.BindHeterogeneousExactReadRule(calls, fragment.slot, fragment.read, fragment.value, fragment.write, engine.HotRuleSpec[calldomain.Value, dispatchReceipt]{
-		OperandContent: dispatchReceiptContent,
+	implementation, runtimeRead, ok := callowner.BindHeterogeneousExactReadRule(calls, fragment.slot, fragment.read, fragment.value, fragment.write, engine.HotRuleSpec[calldomain.Value, calldomain.MountedCall]{
+		OperandContent: hot.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotDispatchChecker(hot)),
-		Transfer: func(access engine.Access[calldomain.Value, dispatchReceipt]) bool {
-			receipt, receiptOK := engine.Operand(access)
-			if !receiptOK {
+		Transfer: func(access engine.Access[calldomain.Value, calldomain.MountedCall]) bool {
+			mounted, mountedOK := engine.Operand(access)
+			bound, siteOK := hot.siteForMounted(mounted)
+			if !mountedOK || !siteOK {
 				return false
 			}
 			return engine.Product(access, func(row engine.Row) bool {
@@ -162,16 +58,20 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 				if !present {
 					return engine.NoCandidate(access, row)
 				}
-				result, resultOK := reduceReceipt(receipt, fact)
+				result, resultOK := reduce(bound, fact)
 				return resultOK && engine.StageValue(access, row, result)
 			})
 		},
-	}, func(receipt dispatchReceipt) (uint64, bool) {
-		index, ok := values.Schema().CoordinateIndex(receipt.coordinate)
-		return uint64(index), ok
-	}, func(receipt dispatchReceipt) (uint64, bool) {
-		index, ok := calls.Algebra().KeyIndex(receipt.key)
-		return uint64(index), ok && index >= 0
+	}, func(mounted calldomain.MountedCall) (uint64, bool) {
+		bound, boundOK := hot.siteForMounted(mounted)
+		coordinate, coordinateOK := bound.valueCoordinate()
+		index, indexOK := values.Schema().CoordinateIndex(coordinate)
+		return uint64(index), boundOK && coordinateOK && indexOK
+	}, func(mounted calldomain.MountedCall) (uint64, bool) {
+		bound, boundOK := hot.siteForMounted(mounted)
+		key, keyOK := bound.callKey()
+		index, indexOK := calls.Algebra().KeyIndex(key)
+		return uint64(index), boundOK && keyOK && indexOK && index >= 0
 	})
 	if !ok {
 		return nil, false
@@ -186,7 +86,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 
 // SealProgramRule is this typed rule's schema registration.
 func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
+	if rule == nil || !rule.valid() {
 		return engine.ProgramRule{}, false
 	}
 	implementation, ok := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
@@ -196,69 +96,66 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 	return engine.SealProgramRule(implementation)
 }
 
-// resolveOperand addresses the sealed receipt plane directly. Call's mounted
-// order is the ordinal space the catalog was filled in, so one module-scoped
-// occurrence inverse names the row; no mount-scoped issuer stands between.
-func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (dispatchReceipt, bool) {
-	if rule == nil || !rule.receiptsSealed || rule.calls == nil || rule.calls.Algebra() == nil {
-		return dispatchReceipt{}, false
+// resolveOperand reads Call's owner-fenced occurrence inverse directly. The
+// site validation joins only sealed owner rows and rejects a foreign mount,
+// occurrence, Heap, Pack, Value schema, or Call algebra before publication.
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (calldomain.MountedCall, bool) {
+	if !rule.valid() {
+		return calldomain.MountedCall{}, false
 	}
-	ordinal, ok := rule.calls.Algebra().MountedCallOrdinalForOccurrence(coords.Mount, coords.Occurrence)
-	if !ok || ordinal < 0 || ordinal >= len(rule.receipts) {
-		return dispatchReceipt{}, false
+	mounted, ok := rule.calls.Algebra().MountedCallForOccurrence(coords.Mount, coords.Occurrence)
+	if !ok {
+		return calldomain.MountedCall{}, false
 	}
-	return rule.receipts[ordinal], true
+	_, siteOK := rule.siteForMounted(mounted)
+	return mounted, siteOK
 }
 
-// sealReceiptCatalog issues every ordinary-call application witness once for
-// this sealed Link/Binding pair. The receipt plane is dense in Call's
-// canonical mounted order; occurrence/application inverses remain solely in
-// Call. This is the one cold seal pass; hot lookup never reopens Program or
-// Flow.
-func (rule *HotRule) sealReceiptCatalog() bool {
-	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.calls == nil || rule.calls.Algebra() == nil {
-		return false
-	}
-	if rule.receiptsSealed {
-		return rule.receipts != nil
-	}
-	if rule.values.Schema() == nil {
-		return false
+// siteForMounted joins the canonical owner rows needed by dispatch. The site
+// is ephemeral: it is neither retained by HotRule nor published as a second
+// mounted-call directory.
+func (rule *HotRule) siteForMounted(mounted calldomain.MountedCall) (site, bool) {
+	if !rule.valid() {
+		return site{}, false
 	}
 	algebra := rule.calls.Algebra()
-	receipts := make([]dispatchReceipt, algebra.MountedCallCount())
-	for index := range receipts {
-		mounted, mountedOK := algebra.MountedCallAtHandle(index)
-		applicationID, occurrenceID, module, _, _, identityOK := algebra.MountedCallIdentity(mounted)
-		ordinal, ordinalOK := algebra.MountedCallOrdinalForOccurrence(module, occurrenceID)
-		if !mountedOK || !identityOK || !applicationID.Available() || !module.Available() || !occurrenceID.Available() || !ordinalOK || ordinal != index || !algebra.OwnsMountedModule(module) {
-			return false
-		}
-		receipt, ok := rule.receipt(applicationID)
-		if !ok || !receipt.valid() {
-			return false
-		}
-		receipts[index] = receipt
+	applicationID, occurrenceID, moduleID, _, _, identityOK := algebra.MountedCallIdentity(mounted)
+	canonical, occurrenceOK := algebra.MountedCallForOccurrence(moduleID, occurrenceID)
+	if !identityOK || !occurrenceOK || canonical != mounted || !applicationID.Available() || !moduleID.Available() || !occurrenceID.Available() || !algebra.OwnsMountedModule(moduleID) {
+		return site{}, false
 	}
-	rule.receipts = receipts
-	rule.receiptsSealed = true
-	return true
+	bound, ok := newSite(algebra, rule.values.Schema(), rule.heaps, rule.packs, applicationID)
+	return bound, ok && bound.mounted == mounted && bound.matchesSchemas(rule.heaps, rule.packs)
 }
 
-// SealOccurrenceReceipts closes Call dispatch's Link-local artifact inverse
-// after its shared binding seals.  It is deliberately explicit so Program
-// binding owns the cold lifecycle rather than the first engine lookup.
-func (rule *HotRule) SealOccurrenceReceipts() bool {
-	return rule != nil && rule.sealReceiptCatalog()
+func (rule *HotRule) operandContent(mounted calldomain.MountedCall) (calldomain.MountedCall, [32]byte, bool) {
+	bound, ok := rule.siteForMounted(mounted)
+	id, idOK := bound.contentID()
+	if !ok || !idOK || !id.Available() {
+		return calldomain.MountedCall{}, [32]byte{}, false
+	}
+	return mounted, [32]byte(id), true
 }
 
-func hotDispatchChecker(rule *HotRule) engine.RuleDerivationChecker[calldomain.Value, dispatchReceipt] {
-	return func(derivation engine.RuleDerivation[calldomain.Value, dispatchReceipt]) (engine.RuleEvidence, bool) {
+func (rule *HotRule) valid() bool {
+	if rule == nil || rule.binding == nil || !rule.binding.Sealed() || rule.values == nil || !rule.values.MatchesBinding(rule.binding) || rule.calls == nil || !rule.calls.MatchesBinding(rule.binding) || rule.values.Schema() == nil || rule.calls.Algebra() == nil || !rule.calls.Algebra().Valid() || !rule.heaps.Valid() || rule.packs == nil {
+		return false
+	}
+	linkOwner := rule.calls.Algebra().LinkOwner()
+	return linkOwner.Available() && rule.values.Schema().LinkOwner().Matches(linkOwner) && rule.heaps.LinkOwner().Matches(linkOwner) && rule.packs.LinkOwner().Matches(linkOwner) && rule.values.Schema().OwnsHeapSchema(rule.heaps)
+}
+
+func hotDispatchChecker(rule *HotRule) engine.RuleDerivationChecker[calldomain.Value, calldomain.MountedCall] {
+	return func(derivation engine.RuleDerivation[calldomain.Value, calldomain.MountedCall]) (engine.RuleEvidence, bool) {
 		if rule == nil || rule.fragment == nil || derivation.Rule() != rule.fragment.semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false
 		}
-		receipt, receiptOK := derivation.Operand()
-		if !receiptOK || !derivation.OperandContentMatches(receipt.id) {
+		mounted, operandOK := derivation.Operand()
+		bound, siteOK := rule.siteForMounted(mounted)
+		_, digest, contentOK := rule.operandContent(mounted)
+		coordinate, coordinateOK := bound.valueCoordinate()
+		key, keyOK := bound.callKey()
+		if !operandOK || !siteOK || !contentOK || !coordinateOK || !keyOK || !derivation.OperandContentMatches(digest) || !valueowner.ReadMatches(rule.values, derivation, rule.read, coordinate) {
 			return engine.RuleEvidence{}, false
 		}
 		input, inputOK := derivation.InputAt(0)
@@ -284,12 +181,14 @@ func hotDispatchChecker(rule *HotRule) engine.RuleDerivationChecker[calldomain.V
 				}
 				continue
 			}
-			expected, expectedOK := reduceReceipt(receipt, fact)
+			expected, expectedOK := reduce(bound, fact)
 			if !expectedOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
 				return engine.RuleEvidence{}, false
 			}
+			target, targetOK := disposition.TargetAt(0)
+			ref, refOK := rule.calls.Ref(key)
 			actual, actualOK := disposition.Value()
-			if !actualOK || !rule.calls.Algebra().Equal(actual, expected) {
+			if !targetOK || !refOK || !engine.TargetMatchesRef(target, ref) || !actualOK || !rule.calls.Algebra().Equal(actual, expected) {
 				return engine.RuleEvidence{}, false
 			}
 		}

@@ -64,7 +64,11 @@ func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Bin
 }
 
 func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	return context.Rule.SealOccurrenceReceipts()
+	return context.Rule != nil && context.Rule.valid() &&
+		context.Rule.values == context.Authorities.ValueAuthority() &&
+		context.Rule.calls == context.Authorities.CallAuthority() &&
+		context.Rule.heaps == context.Authorities.HeapSchema() &&
+		context.Rule.packs == context.Authorities.PackSchema()
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

@@ -11,7 +11,7 @@ import (
 
 // SchemaFragment is Call dispatch's callback-free one-input Rule surface.
 type SchemaFragment struct {
-	slot     *engine.RuleSlot[calldomain.Value, dispatchReceipt]
+	slot     *engine.RuleSlot[calldomain.Value, calldomain.MountedCall]
 	input    engine.SchemaInput
 	read     engine.SchemaReadSlot[valuedomain.Value]
 	write    engine.SchemaWriteSlot[calldomain.Value]
@@ -26,7 +26,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[calldomain.Value, dispatchReceipt](builder, engine.SchemaRuleSpec[calldomain.Value]{
+	slot, ok := engine.NewRuleSlot[calldomain.Value, calldomain.MountedCall](builder, engine.SchemaRuleSpec[calldomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
 		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
 		Output:    calls.Ref(),
@@ -49,6 +49,6 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	return &SchemaFragment{slot: slot, input: input, read: read, write: write, value: values.Ref(), call: calls.Ref(), semantic: semantic, evidence: evidence}, true
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[calldomain.Value, dispatchReceipt] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[calldomain.Value, calldomain.MountedCall] {
 	return fragment.slot
 }
