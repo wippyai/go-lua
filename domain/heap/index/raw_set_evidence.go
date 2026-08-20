@@ -8,8 +8,8 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func (rule *RawSetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Access] {
-	return func(derivation engine.RuleDerivation[heapdomain.Value, Access]) (engine.RuleEvidence, bool) {
+func (rule *RawSetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Index] {
+	return func(derivation engine.RuleDerivation[heapdomain.Value, Index]) (engine.RuleEvidence, bool) {
 		// ReadCount is the number of completed product observations, not the
 		// number of declared reads: staged selector routes can contribute
 		// additional dynamic observations. The exact receiver proof below is
@@ -111,7 +111,7 @@ func receiverValue(cells engine.OrderedCells[valuedomain.Value]) valuedomain.Val
 }
 
 func derivationNoRouteShape(
-	rule *RawSetRule, derivation engine.RuleDerivation[heapdomain.Value, Access], disposition engine.RuleDisposition[heapdomain.Value], operand Access, receiverPresent bool,
+	rule *RawSetRule, derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], operand Index, receiverPresent bool,
 ) bool {
 	keyCount, keyOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.key)
 	packCount, packOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.packRead)
@@ -130,9 +130,9 @@ func derivationNoRouteShape(
 
 func derivationDynamicKeyMatches(
 	rule *RawSetRule,
-	derivation engine.RuleDerivation[heapdomain.Value, Access],
+	derivation engine.RuleDerivation[heapdomain.Value, Index],
 	disposition engine.RuleDisposition[heapdomain.Value],
-	operand Access,
+	operand Index,
 ) bool {
 	coordinate, coordinateOK := operand.DynamicKey()
 	if !coordinateOK {
@@ -149,9 +149,9 @@ func derivationDynamicKeyMatches(
 
 func derivationRawSetView(
 	rule *RawSetRule,
-	derivation engine.RuleDerivation[heapdomain.Value, Access],
+	derivation engine.RuleDerivation[heapdomain.Value, Index],
 	disposition engine.RuleDisposition[heapdomain.Value],
-	operand Access,
+	operand Index,
 	scratch *rawSetScratch,
 ) (rawSetView, bool) {
 	if rule == nil || scratch == nil {
@@ -218,7 +218,7 @@ func derivationRawSetView(
 	return view, true
 }
 
-func routeTargetMatches(rule *RawSetRule, operand Access, receiver valuedomain.Value, tag heapdomain.RawRouteTag, target engine.RuleTarget) bool {
+func routeTargetMatches(rule *RawSetRule, operand Index, receiver valuedomain.Value, tag heapdomain.RawRouteTag, target engine.RuleTarget) bool {
 	if rule == nil || tag == 0 || !rule.owns(operand) {
 		return false
 	}

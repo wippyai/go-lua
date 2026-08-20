@@ -9,7 +9,7 @@ import (
 // row. They are downstream of the selected Heap routes, so invalid dynamic
 // keys and absent receivers produce an authenticated empty route rather than
 // an invented Pack/Value read.
-func (rule *RawSetRule) locatePack(context engine.SelectorContext, access Access) bool {
+func (rule *RawSetRule) locatePack(context engine.SelectorContext, access Index) bool {
 	descriptor, ok := rule.payloadForWrite(access)
 	if !ok {
 		return false
@@ -32,7 +32,7 @@ func (rule *RawSetRule) locatePack(context engine.SelectorContext, access Access
 	return rootOK && rule.packRoute(context, root, descriptor.tag)
 }
 
-func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Access) bool {
+func (rule *RawSetRule) locateSource(context engine.SelectorContext, access Index) bool {
 	descriptor, ok := rule.payloadForWrite(access)
 	if !ok {
 		return false

@@ -15,22 +15,22 @@ import (
 // shared transfer/evidence plane; this type only retains owner-typed reads
 // and the sealed Heap rule implementation.
 type RawSetHotRule struct {
-	implementation *heapowner.RuleImplementation[Access]
+	implementation *heapowner.RuleImplementation[Index]
 	core           *RawSetRule
 	values         *valueowner.HotOwner
 	heap           *heapowner.HotOwner
 }
 
-func (rule *RawSetRule) operandContent(access Access) (Access, [32]byte, bool) {
+func (rule *RawSetRule) operandContent(access Index) (Index, [32]byte, bool) {
 	if rule == nil || !rule.owns(access) {
-		return Access{}, [32]byte{}, false
+		return Index{}, [32]byte{}, false
 	}
 	return access, [32]byte(access.id), true
 }
 
 // Implementation returns the exact Heap-owned issuer after the enclosing
 // SchemaBinding seals.
-func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Access], bool) {
+func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Index], bool) {
 	if rule == nil || rule.heap == nil || rule.implementation == nil {
 		return nil, false
 	}
@@ -62,32 +62,32 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	core.scratch.New = func() any { return &rawSetScratch{} }
 	core.scratch.Put(&rawSetScratch{})
 
-	implementation, bound := heapowner.BindSelectedRouteRuleDirect(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Access]{
+	implementation, bound := heapowner.BindSelectedRouteRuleDirect(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Index]{
 		OperandContent: core.operandContent,
 		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)),
 		Transfer:       core.transfer,
-	}, engine.HotCarrySpec[heapdomain.Value, Access]{}, nil)
+	}, engine.HotCarrySpec[heapdomain.Value, Index]{}, nil)
 	if !bound {
 		return nil, false
 	}
 	var ok bool
-	if core.receiver, ok = heapowner.AddSelectedRouteRuleDirectExactRead(implementation, fragment.receiver, fragment.valueRef, func(access Access) (uint64, bool) {
+	if core.receiver, ok = heapowner.AddSelectedRouteRuleDirectExactRead(implementation, fragment.receiver, fragment.valueRef, func(access Index) (uint64, bool) {
 		receiver, receiverOK := access.Receiver()
 		index, indexOK := values.Schema().CoordinateIndex(receiver)
 		return uint64(index), receiverOK && indexOK
 	}); !ok {
 		return nil, false
 	}
-	if core.key, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, valuedomain.Value, uint64](implementation, fragment.key, fragment.valueRef, core.locateKey); !ok {
+	if core.key, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, valuedomain.Value, uint64](implementation, fragment.key, fragment.valueRef, core.locateKey); !ok {
 		return nil, false
 	}
-	if core.heapRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
+	if core.heapRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, heapdomain.Value, heapdomain.RawRouteTag](implementation, fragment.heapRead, fragment.heapRef, core.locateHeap); !ok {
 		return nil, false
 	}
-	if core.packRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, fragment.packRef, core.locatePack); !ok {
+	if core.packRead, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, pack.Value, heapdomain.RawPayloadTag](implementation, fragment.packRead, fragment.packRef, core.locatePack); !ok {
 		return nil, false
 	}
-	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Access, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
+	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
 		return nil, false
 	}
 	rule := &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}
@@ -97,22 +97,22 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	return rule, true
 }
 
-func (rule *RawSetHotRule) resolveOperand(coords engine.OperandCoords) (Access, bool) {
+func (rule *RawSetHotRule) resolveOperand(coords engine.OperandCoords) (Index, bool) {
 	if rule == nil || rule.core == nil || rule.core.topology == nil {
-		return Access{}, false
+		return Index{}, false
 	}
 	topology := rule.core.topology
 	mount, mountOK := topology.heap.OccurrenceMountForModule(coords.Mount)
 	if !mountOK {
-		return Access{}, false
+		return Index{}, false
 	}
 	indexAccess, accessOK := mount.IndexAccessForOccurrence(coords.Occurrence, false)
 	if !accessOK {
-		return Access{}, false
+		return Index{}, false
 	}
 	access, accessOK := topology.Access(indexAccess)
 	if !accessOK {
-		return Access{}, false
+		return Index{}, false
 	}
 	return access, access.Write()
 }
@@ -135,19 +135,19 @@ func hotRawSetRuntime(values *valueowner.HotOwner, heap *heapowner.HotOwner, pac
 		return values.TargetMatches(target, coordinate)
 	}
 	runtime.heapTarget = func(target engine.RuleTarget, key heapdomain.Key) bool { return heap.TargetMatches(target, key) }
-	runtime.valueReadRef = func(derivation engine.RuleDerivation[heapdomain.Value, Access], read engine.Read[engine.OrderedCells[valuedomain.Value]], coordinate valuedomain.Coordinate) bool {
+	runtime.valueReadRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], read engine.Read[engine.OrderedCells[valuedomain.Value]], coordinate valuedomain.Coordinate) bool {
 		return valueowner.ReadMatches(values, derivation, read, coordinate)
 	}
-	runtime.valueSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Access], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
+	runtime.valueSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
 		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
 	}
-	runtime.sourceSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Access], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
+	runtime.sourceSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
 		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
 	}
-	runtime.heapSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Access], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], ordinal int, key heapdomain.Key) bool {
+	runtime.heapSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], ordinal int, key heapdomain.Key) bool {
 		return heapowner.SelectionMatches(heap, derivation, disposition, read, ordinal, key)
 	}
-	runtime.packSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Access], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], ordinal int, root pack.Root) bool {
+	runtime.packSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], ordinal int, root pack.Root) bool {
 		return packowner.SelectionMatches(packs, derivation, disposition, read, ordinal, root)
 	}
 	return runtime

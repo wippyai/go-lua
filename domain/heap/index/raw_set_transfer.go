@@ -22,7 +22,7 @@ type rawSetView struct {
 	source      func(rawSourceTag) rawSelected[valuedomain.Value]
 }
 
-func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Access]) bool {
+func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Index]) bool {
 	operand, ok := engine.Operand(access)
 	if !ok || !rule.owns(operand) {
 		return false
@@ -89,7 +89,7 @@ func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Access])
 }
 
 func transferRawSetView(
-	access engine.Access[heapdomain.Value, Access], row engine.Row, operand Access,
+	access engine.Access[heapdomain.Value, Index], row engine.Row, operand Index,
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
@@ -143,7 +143,7 @@ func transferRawSetView(
 	return view, true
 }
 
-func rawSetSelectionShape(access Access, descriptor rawPayload, view rawSetView) bool {
+func rawSetSelectionShape(access Index, descriptor rawPayload, view rawSetView) bool {
 	if view.keyCount < 0 || view.heapCount < 0 || view.packCount < 0 || view.sourceCount < 0 {
 		return false
 	}
@@ -186,7 +186,7 @@ func rawSetSelectionShape(access Access, descriptor rawPayload, view rawSetView)
 // descriptor, and existing Pack/Value observations, then joins only the
 // branches returned by RawStore/RawDelete. Frozen/error outcomes widen to
 // Heap.Top and are never converted into ordinary writes.
-func (rule *RawSetRule) mutateRoute(access Access, route heapdomain.RawRouteTag, fact heapdomain.Value, view rawSetView) (heapdomain.Value, bool) {
+func (rule *RawSetRule) mutateRoute(access Index, route heapdomain.RawRouteTag, fact heapdomain.Value, view rawSetView) (heapdomain.Value, bool) {
 	if !rule.owns(access) || !fact.Valid() {
 		return heapdomain.Value{}, false
 	}
@@ -271,7 +271,7 @@ func (rule *RawSetRule) mutateRoute(access Access, route heapdomain.RawRouteTag,
 
 func (rule *RawSetRule) applyPayload(
 	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag,
-	view rawSetView, access Access, slot heapdomain.Slot, payload heapdomain.Payload,
+	view rawSetView, access Index, slot heapdomain.Slot, payload heapdomain.Payload,
 	keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
 	if result == nil || frozen == nil || changed == nil || preserved == nil {
@@ -333,7 +333,7 @@ func (rule *RawSetRule) applyPayload(
 
 func (rule *RawSetRule) applyScalar(
 	raw heapdomain.RawAccess, descriptor rawPayload, payloadTag heapdomain.RawPayloadTag, scalar pack.Scalar, view rawSetView,
-	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
 	if scalar.Kind() == pack.ScalarEndpoint {
@@ -348,7 +348,7 @@ func (rule *RawSetRule) applyScalar(
 
 func (rule *RawSetRule) applySourceTag(
 	schema heapdomain.Schema, raw heapdomain.RawAccess, tag rawSourceTag, view rawSetView,
-	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
 	selected := view.source(tag)
@@ -364,7 +364,7 @@ func (rule *RawSetRule) applySourceTag(
 
 func (rule *RawSetRule) applySourceValue(
 	schema heapdomain.Schema, raw heapdomain.RawAccess, source valuedomain.Value,
-	access Access, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
+	access Index, slot heapdomain.Slot, payload heapdomain.Payload, keyChild heapdomain.Containment,
 	result *heapdomain.Value, frozen, changed, preserved *bool,
 ) bool {
 	values := rule.valueSchema()
@@ -405,7 +405,7 @@ func (rule *RawSetRule) applySourceValue(
 // cell rather than one world apiece, and the payload-class quotient keeps that
 // cell finite by collapsing alternatives that denote the same child edge.
 func (rule *RawSetRule) applyTop(
-	schema heapdomain.Schema, raw heapdomain.RawAccess, access Access, slot heapdomain.Slot,
+	schema heapdomain.Schema, raw heapdomain.RawAccess, access Index, slot heapdomain.Slot,
 	payload heapdomain.Payload, keyChild heapdomain.Containment, result *heapdomain.Value, frozen, changed *bool,
 ) bool {
 	values := rule.valueSchema()

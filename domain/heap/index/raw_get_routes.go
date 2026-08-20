@@ -5,7 +5,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
-func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Access) bool {
+func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Index) bool {
 	seen := rule.takeScratch()
 	defer rule.putScratch(seen)
 	return rule.visitSelectedPayloads(context, access, func(tag heapdomain.RawPayloadTag, payload rawPayload) bool {
@@ -24,7 +24,7 @@ func (rule *RawGetRule) locatePack(context engine.SelectorContext, access Access
 	})
 }
 
-func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Access) bool {
+func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Index) bool {
 	seen := rule.takeScratch()
 	defer rule.putScratch(seen)
 	return rule.visitSelectedPayloads(context, access, func(payloadTag heapdomain.RawPayloadTag, payload rawPayload) bool {
@@ -49,7 +49,7 @@ func (rule *RawGetRule) locateSource(context engine.SelectorContext, access Acce
 	})
 }
 
-func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, access Access, visit func(heapdomain.RawPayloadTag, rawPayload) bool) bool {
+func (rule *RawGetRule) visitSelectedPayloads(context engine.SelectorContext, access Index, visit func(heapdomain.RawPayloadTag, rawPayload) bool) bool {
 	if rule == nil || !rule.owns(access) || visit == nil {
 		return false
 	}
@@ -143,7 +143,7 @@ func mark(words []uint64, value uint64) {
 	}
 }
 
-func (rule *RawGetRule) visitContextKeySelectors(context engine.SelectorContext, access Access, visit func(heapdomain.KeySelector) bool) bool {
+func (rule *RawGetRule) visitContextKeySelectors(context engine.SelectorContext, access Index, visit func(heapdomain.KeySelector) bool) bool {
 	if visit == nil {
 		return false
 	}

@@ -44,13 +44,13 @@ type rawGetRuntime struct {
 	visitRawRoute      func(heapdomain.RawRouteTag, heapdomain.Value, heapdomain.KeySelector, func(heapdomain.RawAccess) bool) bool
 	selectorForSlot    func(heapdomain.Slot) (heapdomain.KeySelector, bool)
 	callKeyForTag      func(uint64) (calldomain.Key, bool)
-	valueReadRef       func(engine.RuleDerivation[valuedomain.Value, Access], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
+	valueReadRef       func(engine.RuleDerivation[valuedomain.Value, Index], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
 	valueTarget        func(engine.RuleTarget, valuedomain.Coordinate) bool
-	valueSelectionRef  func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	callSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]], int, uint64) bool
-	heapSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
-	packSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
-	sourceSelectionRef func(engine.RuleDerivation[valuedomain.Value, Access], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	valueSelectionRef  func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	callSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]], int, uint64) bool
+	heapSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
+	packSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
+	sourceSelectionRef func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
 }
 
 func (rule *RawGetRule) valueSchema() *valuedomain.Schema {
@@ -133,7 +133,7 @@ func bitWords(count int) int {
 	return (count + 63) / 64
 }
 
-func (rule *RawGetRule) owns(access Access) bool {
+func (rule *RawGetRule) owns(access Index) bool {
 	if !rule.valid() || !access.valid() || access.topology != rule.runtime.topology || !access.Read() {
 		return false
 	}
@@ -148,7 +148,7 @@ func (rule *RawGetRule) valid() bool {
 	return rule != nil && rule.runtime != nil && rule.runtime.topology != nil && rule.runtime.topology.valid() && rule.runtime.values != nil && rule.runtime.calls != nil && rule.runtime.heap.Valid()
 }
 
-func (rule *RawGetRule) locateKey(context engine.SelectorContext, access Access) bool {
+func (rule *RawGetRule) locateKey(context engine.SelectorContext, access Index) bool {
 	_, receiverPresent, receiverValid := selectorSingle(context, rule.receiver)
 	if !rule.owns(access) || !receiverValid {
 		return false
@@ -163,7 +163,7 @@ func (rule *RawGetRule) locateKey(context engine.SelectorContext, access Access)
 	return rule.runtime.valueRoute != nil && rule.runtime.valueRoute(context, coordinate, uint64(1))
 }
 
-func (rule *RawGetRule) locateCall(context engine.SelectorContext, access Access) bool {
+func (rule *RawGetRule) locateCall(context engine.SelectorContext, access Index) bool {
 	receiver, present, valid := selectorSingle(context, rule.receiver)
 	if !rule.owns(access) || !valid {
 		return false
@@ -186,7 +186,7 @@ func (rule *RawGetRule) locateCall(context engine.SelectorContext, access Access
 	})
 }
 
-func (rule *RawGetRule) locateHeap(context engine.SelectorContext, access Access) bool {
+func (rule *RawGetRule) locateHeap(context engine.SelectorContext, access Index) bool {
 	receiver, present, valid := selectorSingle(context, rule.receiver)
 	if !rule.owns(access) || !valid {
 		return false
@@ -276,7 +276,7 @@ func selectorSelectionValue[V any, Tag interface {
 	return rawSelected[V]{value: value, present: present, found: true, valid: true}
 }
 
-func (rule *RawGetRule) keySelector(access Access) (heapdomain.KeySelector, bool) {
+func (rule *RawGetRule) keySelector(access Index) (heapdomain.KeySelector, bool) {
 	slot, ok := access.Slot()
 	if !ok {
 		return heapdomain.KeySelector{}, false

@@ -22,7 +22,7 @@ func ApplyRawSetTopPayload(topology *Topology, raw heapdomain.RawAccess, slot he
 	}
 	result := topology.heap.Bottom()
 	var frozen, changed bool
-	ok := rule.applyTop(topology.heap, raw, Access{}, slot, payload, keyChild, &result, &frozen, &changed)
+	ok := rule.applyTop(topology.heap, raw, Index{}, slot, payload, keyChild, &result, &frozen, &changed)
 	return result, ok && changed && !frozen
 }
 
@@ -35,7 +35,7 @@ func ApplyRawSetSourcePayload(topology *Topology, raw heapdomain.RawAccess, slot
 	}
 	result := topology.heap.Bottom()
 	var frozen, changed, preserved bool
-	ok := rule.applySourceValue(topology.heap, raw, source, Access{}, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
+	ok := rule.applySourceValue(topology.heap, raw, source, Index{}, slot, payload, keyChild, &result, &frozen, &changed, &preserved)
 	return result, ok && changed && !frozen
 }
 

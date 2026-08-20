@@ -102,7 +102,7 @@ func TestTopologyStaticRoutesPreserveExactTopAndHeapExtremes(t *testing.T) {
 		t.Fatal("foreign Value.Top crossed topology owner fence")
 	}
 	_, _, _, _, _, foreignCandidate, _ := staticTopologyFixture(t)
-	if access, ok := topology.Access(foreignCandidate); ok || access != (indexdomain.Access{}) {
+	if access, ok := topology.Access(foreignCandidate); ok || access != (indexdomain.Index{}) {
 		t.Fatal("foreign index access crossed topology owner fence")
 	}
 }

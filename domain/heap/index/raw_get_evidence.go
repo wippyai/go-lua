@@ -9,8 +9,8 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-func (rule *RawGetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[valuedomain.Value, Access] {
-	return func(derivation engine.RuleDerivation[valuedomain.Value, Access]) (engine.RuleEvidence, bool) {
+func (rule *RawGetRule) check(semantic identity.SemanticKey) engine.RuleDerivationChecker[valuedomain.Value, Index] {
+	return func(derivation engine.RuleDerivation[valuedomain.Value, Index]) (engine.RuleEvidence, bool) {
 		if rule == nil || derivation.Rule() != semantic || derivation.InputCount() != 4 || derivation.DispositionCount() == 0 {
 			return engine.RuleEvidence{}, false
 		}
@@ -79,7 +79,7 @@ func (rule *RawGetRule) check(semantic identity.SemanticKey) engine.RuleDerivati
 	}
 }
 
-func derivationSelectionsEmpty(rule *RawGetRule, derivation engine.RuleDerivation[valuedomain.Value, Access], disposition engine.RuleDisposition[valuedomain.Value]) bool {
+func derivationSelectionsEmpty(rule *RawGetRule, derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value]) bool {
 	keyCount, keyOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.key)
 	callCount, callOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.call)
 	heapCount, heapOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.heapRead)
@@ -90,9 +90,9 @@ func derivationSelectionsEmpty(rule *RawGetRule, derivation engine.RuleDerivatio
 
 func derivationRawGetView(
 	rule *RawGetRule,
-	derivation engine.RuleDerivation[valuedomain.Value, Access],
+	derivation engine.RuleDerivation[valuedomain.Value, Index],
 	disposition engine.RuleDisposition[valuedomain.Value],
-	operand Access,
+	operand Index,
 	scratch *rawGetScratch,
 ) (rawGetView, bool) {
 	if scratch == nil {

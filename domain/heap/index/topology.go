@@ -156,10 +156,6 @@ type Index struct {
 	*indexRow
 }
 
-// Access is retained as the index package's rule operand name. It is an alias
-// of the topology projection, not a second Heap schema authority.
-type Access = Index
-
 // RouteKind distinguishes a tracked Heap root from an untracked possible
 // table and an ordinary non-table alternative. Unknown is semantically
 // different from Other: it retains a possible table operation whose root is
@@ -437,20 +433,20 @@ func (topology *Topology) buildRouteFacts() bool {
 // Access returns the exact existing Heap candidate row. All geometry comes
 // from the sealed Heap row; this path never reopens Flow or reconstructs a
 // Lens.
-func (topology *Topology) Access(indexAccess heapdomain.IndexAccess) (Access, bool) {
+func (topology *Topology) Access(indexAccess heapdomain.IndexAccess) (Index, bool) {
 	if topology == nil || !topology.valid() || topology.indexRows == nil {
-		return Access{}, false
+		return Index{}, false
 	}
 	row, ok := topology.indexRows[indexAccess]
-	return Access{indexRow: row}, ok && topology.ownsRow(row)
+	return Index{indexRow: row}, ok && topology.ownsRow(row)
 }
 
 // OwnsAccess is the topology ownership fence for one retained index operand.
-// A valid Access from a duplicate same-content Topology is still foreign:
+// A valid Index from a duplicate same-content Topology is still foreign:
 // the issuing Topology pointer is part of the semantic owner boundary. The
 // canonical reissue also verifies every derived coordinate and policy field,
 // so a matching portable ID cannot substitute for ownership.
-func (topology *Topology) OwnsAccess(access Access) bool {
+func (topology *Topology) OwnsAccess(access Index) bool {
 	return topology != nil && topology.ownsRow(access.indexRow)
 }
 
@@ -462,20 +458,20 @@ func (topology *Topology) ownsRow(row *indexRow) bool {
 	return geometryOK
 }
 
-func (access Access) valid() bool {
+func (access Index) valid() bool {
 	if access.indexRow == nil || access.topology == nil || !access.id.Available() {
 		return false
 	}
 	return access.topology.ownsRow(access.indexRow)
 }
 
-func (access Access) IndexAccess() (heapdomain.IndexAccess, bool) {
+func (access Index) IndexAccess() (heapdomain.IndexAccess, bool) {
 	if !access.valid() {
 		return heapdomain.IndexAccess{}, false
 	}
 	return access.indexAccess, true
 }
-func (access Access) Receiver() (valuedomain.Coordinate, bool) {
+func (access Index) Receiver() (valuedomain.Coordinate, bool) {
 	if !access.valid() {
 		return valuedomain.Coordinate{}, false
 	}
@@ -485,7 +481,7 @@ func (access Access) Receiver() (valuedomain.Coordinate, bool) {
 // Result returns the fixed result Value coordinate for a typed Read candidate.
 // Write candidates have no result coordinate and fail closed, so a Rule cannot
 // turn an assignment source into an index-read result.
-func (access Access) Result() (valuedomain.Coordinate, bool) {
+func (access Index) Result() (valuedomain.Coordinate, bool) {
 	if !access.valid() || !access.result.Valid() {
 		return valuedomain.Coordinate{}, false
 	}
@@ -495,7 +491,7 @@ func (access Access) Result() (valuedomain.Coordinate, bool) {
 // DynamicKey returns the existing Value coordinate for a dynamic heap key.
 // Exact-key lenses return false: their selector is already carried by Slot,
 // so no synthetic literal Value coordinate is introduced.
-func (access Access) DynamicKey() (valuedomain.Coordinate, bool) {
+func (access Index) DynamicKey() (valuedomain.Coordinate, bool) {
 	if !access.valid() || !access.dynamicKey.Valid() {
 		return valuedomain.Coordinate{}, false
 	}
@@ -505,7 +501,7 @@ func (access Access) DynamicKey() (valuedomain.Coordinate, bool) {
 // Read reports whether the Heap candidate row is a typed Read. Raw-get
 // admission is based solely on this row membership; no operation enum is
 // reclassified at query time.
-func (access Access) Read() bool {
+func (access Index) Read() bool {
 	if !access.valid() {
 		return false
 	}
@@ -516,7 +512,7 @@ func (access Access) Read() bool {
 // Write reports whether this existing Heap candidate row is a typed indexed
 // write.  Write rows deliberately retain no result coordinate; mutation rules
 // must use the sealed RHS Payload rather than treating a write as a read.
-func (access Access) Write() bool {
+func (access Index) Write() bool {
 	if !access.valid() {
 		return false
 	}
@@ -524,13 +520,13 @@ func (access Access) Write() bool {
 	return ok && !geometry.Read
 }
 
-func (access Access) Slot() (heapdomain.Slot, bool) {
+func (access Index) Slot() (heapdomain.Slot, bool) {
 	if !access.valid() {
 		return heapdomain.Slot{}, false
 	}
 	return access.slot, true
 }
-func (access Access) ID() (identity.ContentID, bool) {
+func (access Index) ID() (identity.ContentID, bool) {
 	if !access.valid() {
 		return identity.ContentID{}, false
 	}

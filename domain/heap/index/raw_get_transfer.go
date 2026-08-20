@@ -33,7 +33,7 @@ type rawSelected[V any] struct {
 	valid   bool
 }
 
-func (rule *RawGetRule) transfer(access engine.Access[valuedomain.Value, Access]) bool {
+func (rule *RawGetRule) transfer(access engine.Access[valuedomain.Value, Index]) bool {
 	operand, ok := engine.Operand(access)
 	if !ok || !rule.owns(operand) {
 		return false
@@ -73,7 +73,7 @@ func (rule *RawGetRule) transfer(access engine.Access[valuedomain.Value, Access]
 }
 
 func transferSelectionsEmpty(
-	access engine.Access[valuedomain.Value, Access],
+	access engine.Access[valuedomain.Value, Index],
 	row engine.Row,
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
@@ -90,7 +90,7 @@ func transferSelectionsEmpty(
 }
 
 func transferRawGetView(
-	access engine.Access[valuedomain.Value, Access], row engine.Row, operand Access,
+	access engine.Access[valuedomain.Value, Index], row engine.Row, operand Index,
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
@@ -192,7 +192,7 @@ func buildTransferIndex[Out any, O any, S any, Tag interface {
 	})
 }
 
-func (rule *RawGetRule) reduce(operand Access, receiver valuedomain.Value, view rawGetView) (valuedomain.Value, bool, bool) {
+func (rule *RawGetRule) reduce(operand Index, receiver valuedomain.Value, view rawGetView) (valuedomain.Value, bool, bool) {
 	if rule == nil || !rule.owns(operand) || view.scratch == nil || view.call == nil || view.heap == nil || view.pack == nil || view.source == nil {
 		return valuedomain.Value{}, false, false
 	}
@@ -266,7 +266,7 @@ func (rule *RawGetRule) reduce(operand Access, receiver valuedomain.Value, view 
 	return result, any, true
 }
 
-func (rule *RawGetRule) visitKeySelectors(operand Access, view rawGetView, visit func(heapdomain.KeySelector) bool) bool {
+func (rule *RawGetRule) visitKeySelectors(operand Index, view rawGetView, visit func(heapdomain.KeySelector) bool) bool {
 	if visit == nil {
 		return false
 	}

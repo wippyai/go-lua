@@ -18,7 +18,7 @@ import (
 type RawGetSchemaFragment struct {
 	semantic   identity.SemanticKey
 	evidence   identity.SemanticKey
-	slot       *engine.RuleSlot[valuedomain.Value, Access]
+	slot       *engine.RuleSlot[valuedomain.Value, Index]
 	inputs     [4]engine.SchemaInput
 	receiver   engine.SchemaReadSlot[valuedomain.Value]
 	key        engine.SchemaReadSlot[valuedomain.Value]
@@ -35,7 +35,7 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[valuedomain.Value, Access](builder, engine.SchemaRuleSpec[valuedomain.Value]{
+	slot, ok := engine.NewRuleSlot[valuedomain.Value, Index](builder, engine.SchemaRuleSpec[valuedomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 4,
 		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence}, Output: values.Ref(),
 	})
@@ -97,7 +97,7 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 // write is retained as an opaque child capability; its route is the Heap
 // selected read, not a reconstructed topology relation.
 type RawSetSchemaFragment struct {
-	slot       *engine.RuleSlot[heapdomain.Value, Access]
+	slot       *engine.RuleSlot[heapdomain.Value, Index]
 	semantic   identity.SemanticKey
 	evidence   identity.SemanticKey
 	valueRef   engine.FactorRef[valuedomain.Value]
@@ -113,10 +113,10 @@ type RawSetSchemaFragment struct {
 	write      engine.SchemaWriteSlot[heapdomain.Value]
 }
 
-func (fragment *RawGetSchemaFragment) RuleSlot() *engine.RuleSlot[valuedomain.Value, Access] {
+func (fragment *RawGetSchemaFragment) RuleSlot() *engine.RuleSlot[valuedomain.Value, Index] {
 	return fragment.slot
 }
-func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, Access] {
+func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, Index] {
 	return fragment.slot
 }
 
@@ -126,7 +126,7 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 	if builder == nil || values == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[heapdomain.Value, Access](builder, engine.SchemaRuleSpec[heapdomain.Value]{
+	slot, ok := engine.NewRuleSlot[heapdomain.Value, Index](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 3,
 		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence}, Output: heap.Ref(),
 	})

@@ -10,7 +10,7 @@ import (
 )
 
 // RawSetRule is Heap's one indexed-write judgment.  It admits only the
-// already-sealed Access write geometry and routes its output through Heap's
+// already-sealed Index write geometry and routes its output through Heap's
 // exact RawStore/RawDelete owner operations.  Value and Pack are read owners;
 // this Rule never creates a mutation licence, a source identity, or an
 // ObjectInit mutation path.
@@ -39,11 +39,11 @@ type rawSetRuntime struct {
 	packRoute          func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 	valueTarget        func(engine.RuleTarget, valuedomain.Coordinate) bool
 	heapTarget         func(engine.RuleTarget, heapdomain.Key) bool
-	valueReadRef       func(engine.RuleDerivation[heapdomain.Value, Access], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
-	valueSelectionRef  func(engine.RuleDerivation[heapdomain.Value, Access], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	sourceSelectionRef func(engine.RuleDerivation[heapdomain.Value, Access], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	heapSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Access], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
-	packSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Access], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
+	valueReadRef       func(engine.RuleDerivation[heapdomain.Value, Index], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
+	valueSelectionRef  func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	sourceSelectionRef func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	heapSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
+	packSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
 }
 
 func (rule *RawSetRule) valueSchema() *valuedomain.Schema {
@@ -119,13 +119,13 @@ func (rule *RawSetRule) valid() bool {
 	return rule != nil && rule.runtime != nil && rule.topology != nil && rule.topology.valid() && rule.valueSchema() != nil && rule.heapSchema().Valid() && rule.packSchema() != nil
 }
 
-func (rule *RawSetRule) owns(access Access) bool {
+func (rule *RawSetRule) owns(access Index) bool {
 	return rule.valid() && access.valid() && access.topology == rule.topology && rule.topology.values == rule.valueSchema() && rule.topology.heap == rule.heapSchema() && access.Write()
 }
 
 // payloadForWrite reissues the exact Heap payload tag from IndexAccessGeometry
 // before using the cold descriptor lookup.
-func (rule *RawSetRule) payloadForWrite(access Access) (rawSetPayload, bool) {
+func (rule *RawSetRule) payloadForWrite(access Index) (rawSetPayload, bool) {
 	if !rule.owns(access) || rule.topology.catalog == nil {
 		return rawSetPayload{}, false
 	}
@@ -134,14 +134,14 @@ func (rule *RawSetRule) payloadForWrite(access Access) (rawSetPayload, bool) {
 	return rawSetPayload{tag: tag, descriptor: descriptor}, ok && descriptorOK && descriptor.kind != rawPayloadInvalid
 }
 
-func (rule *RawSetRule) sourcesFor(access Access) []rawSource {
+func (rule *RawSetRule) sourcesFor(access Index) []rawSource {
 	if rule != nil && rule.owns(access) && rule.topology.catalog != nil {
 		return rule.topology.catalog.sources
 	}
 	return nil
 }
 
-func (rule *RawSetRule) locateKey(context engine.SelectorContext, access Access) bool {
+func (rule *RawSetRule) locateKey(context engine.SelectorContext, access Index) bool {
 	_, present, valid := selectorSingle(context, rule.receiver)
 	if !rule.owns(access) || !valid {
 		return false
@@ -156,7 +156,7 @@ func (rule *RawSetRule) locateKey(context engine.SelectorContext, access Access)
 	return rule.valueRoute(context, coordinate, uint64(1))
 }
 
-func (rule *RawSetRule) locateHeap(context engine.SelectorContext, access Access) bool {
+func (rule *RawSetRule) locateHeap(context engine.SelectorContext, access Index) bool {
 	if _, payloadOK := rule.payloadForWrite(access); !payloadOK {
 		return false
 	}
@@ -189,7 +189,7 @@ func (rule *RawSetRule) locateHeap(context engine.SelectorContext, access Access
 	})
 }
 
-func (rule *RawSetRule) visitContextKeySelectors(context engine.SelectorContext, access Access, visit func(heapdomain.KeySelector) bool) bool {
+func (rule *RawSetRule) visitContextKeySelectors(context engine.SelectorContext, access Index, visit func(heapdomain.KeySelector) bool) bool {
 	if visit == nil {
 		return false
 	}
@@ -235,7 +235,7 @@ func keyContainmentFromSelector(schema heapdomain.Schema, selector heapdomain.Ke
 	return none, ok
 }
 
-func staticSetSelector(rule *RawSetRule, access Access) (heapdomain.KeySelector, heapdomain.Containment, bool) {
+func staticSetSelector(rule *RawSetRule, access Index) (heapdomain.KeySelector, heapdomain.Containment, bool) {
 	slot, ok := access.Slot()
 	if !ok {
 		return heapdomain.KeySelector{}, heapdomain.Containment{}, false
