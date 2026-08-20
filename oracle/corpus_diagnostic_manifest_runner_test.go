@@ -588,7 +588,22 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 	if expected := corpusDiagnosticProjectExpectedCount(project, code); expected != fixtureCase.expect {
 		t.Fatalf("native fixture registration %s/%s expects %d rows, catalog has %d", projectName, code, fixtureCase.expect, expected)
 	}
-	plan := corpusHarnessFixtureRun(t, projectName, corpusHarnessDiagnosticMode()).plan
+	run, _, err := corpusHarnessExecuteWithPlanCleanup(t, corpusHarnessFixture(t, projectName), corpusHarnessDiagnosticMode(), false)
+	if run != nil && run.plan != nil {
+		plan := run.plan
+		defer func() {
+			if !plan.Close() {
+				t.Error("close compiled fixture plan")
+			}
+		}()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run == nil || run.plan == nil {
+		t.Fatal("manifest runner has no compiled plan")
+	}
+	plan := run.plan
 	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), anadiag.DiagnosticPolicy{Enabled: family.enabled})
 	if status != analysis.AnalyzeComplete {
 		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)

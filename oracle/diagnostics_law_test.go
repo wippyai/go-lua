@@ -23,6 +23,9 @@ func TestPlanDiagnosticsRejectInvalidOptionsAtSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, status := analysis.Compile(linked)
+	if plan != nil {
+		defer plan.Close()
+	}
 	if status != analysis.CompileComplete || plan == nil {
 		t.Fatal("diagnostic Plan fixture")
 	}

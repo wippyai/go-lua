@@ -141,6 +141,9 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 // retain an analyzer implementation handle.
 func nativePublicationCorpusResult(t *testing.T, name string) *result.Result {
 	t.Helper()
-	run := corpusHarnessFixtureRun(t, name, corpusHarnessDiagnosticMode())
+	run, _, err := corpusHarnessExecuteDetached(t, corpusHarnessFixture(t, name), corpusHarnessDiagnosticMode())
+	if err != nil {
+		t.Fatal(err)
+	}
 	return run.result
 }

@@ -29,19 +29,10 @@ var mountedPopulationFixtures = []string{
 // mountedPopulationCase is one compiled fixture: the sealed Link, the plan it
 // compiled to, and the mount rows the populations are derived from.
 type mountedPopulationCase struct {
-	name   string
 	linked *link.Link
+	plan   *Plan
 	state  *compiledState
 	mounts []mounted.Mount
-}
-
-func mountedPopulationCases(t *testing.T) []mountedPopulationCase {
-	t.Helper()
-	cases := make([]mountedPopulationCase, 0, len(mountedPopulationFixtures))
-	for _, name := range mountedPopulationFixtures {
-		cases = append(cases, compileMountedPopulationCase(t, name))
-	}
-	return cases
 }
 
 // compileMountedPopulationCase compiles one named corpus fixture to the seam
@@ -54,19 +45,22 @@ func compileMountedPopulationCase(t *testing.T, name string) mountedPopulationCa
 	}
 	plan, status, diagnostics := CompileWithDiagnostics(linked)
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
+		if plan != nil {
+			plan.Close()
+		}
 		t.Fatalf("compile fixture %q = %v diagnostics=%+v", name, status, diagnostics)
 	}
-	t.Cleanup(func() { plan.Close() })
 	// The compiled query plan is instantiated with the runtime topology, so
 	// the replacement receipt has to reach the same seam a solve does.
 	if _, ok := plan.state.instantiateRuntimeTopology(); !ok {
+		plan.Close()
 		t.Fatalf("instantiate runtime topology for fixture %q", name)
 	}
 	rows := make([]mounted.Mount, 0, len(plan.state.artifacts.mounts))
 	for _, mount := range plan.state.artifacts.mounts {
 		rows = append(rows, mounted.Mount{ModuleKey: mount.moduleKey, Snapshot: mount.snapshot})
 	}
-	return mountedPopulationCase{name: name, linked: linked, state: plan.state, mounts: rows}
+	return mountedPopulationCase{linked: linked, plan: plan, state: plan.state, mounts: rows}
 }
 
 // reversed returns the same mount rows in the opposite order. Every population
@@ -87,8 +81,10 @@ func (testCase mountedPopulationCase) reversed() []mounted.Mount {
 // does not observe.
 func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.T) {
 	branches := 0
-	for _, testCase := range mountedPopulationCases(t) {
-		t.Run(testCase.name, func(t *testing.T) {
+	for _, name := range mountedPopulationFixtures {
+		t.Run(name, func(t *testing.T) {
+			testCase := compileMountedPopulationCase(t, name)
+			defer testCase.plan.Close()
 			producerAxes, axesOK := composite.ProducedValueAxes()
 			if !axesOK {
 				t.Fatal("declared produced-value axes")
@@ -201,8 +197,10 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 // floor: Snapshot observation keys are the publication identity of the sealed
 // census, not a second table retained on compiledState.
 func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
-	for _, testCase := range mountedPopulationCases(t) {
-		t.Run(testCase.name, func(t *testing.T) {
+	for _, name := range mountedPopulationFixtures {
+		t.Run(name, func(t *testing.T) {
+			testCase := compileMountedPopulationCase(t, name)
+			defer testCase.plan.Close()
 			geometry, geometryOK := testCase.state.resultGeometry()
 			if !geometryOK {
 				t.Fatal("result geometry")

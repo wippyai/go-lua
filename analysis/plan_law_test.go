@@ -55,6 +55,9 @@ func TestCompiledPlanDuplicateMountsReuseArtifactAndFreshenResults(t *testing.T)
 		{Name: "right", Program: shared},
 	})
 	plan, status := Compile(linked)
+	if plan != nil {
+		defer plan.Close()
+	}
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 		t.Fatalf("duplicate-mount compile = %v/%v", status, plan)
 	}
@@ -89,6 +92,9 @@ func TestCompiledMountsCarrySealedSnapshot(t *testing.T) {
 		{Name: "left", Program: shared},
 		{Name: "right", Program: shared},
 	}))
+	if plan != nil {
+		defer plan.Close()
+	}
 	if status != CompileComplete || plan == nil || plan.state == nil || plan.state.artifacts == nil {
 		t.Fatalf("compile = %v/%v", status, plan)
 	}

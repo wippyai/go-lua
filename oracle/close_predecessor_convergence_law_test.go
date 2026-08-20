@@ -38,6 +38,9 @@ func TestNumericLoopWithGuardedBodyConverges(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan, compileStatus := analysis.Compile(linked)
+	if plan != nil {
+		defer plan.Close()
+	}
 	if compileStatus != analysis.CompileComplete || plan == nil {
 		t.Fatalf("compile: status=%d plan=%t", compileStatus, plan != nil)
 	}
