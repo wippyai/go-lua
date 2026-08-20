@@ -191,7 +191,7 @@ func openModuleEntryFunctionFixture(t *testing.T) *moduleEntryFunctionFixture {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.Cold().ContentID(), staticID, moduleID)
+		flowView.ContentID(), staticID, moduleID)
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}

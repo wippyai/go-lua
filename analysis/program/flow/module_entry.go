@@ -42,7 +42,7 @@ func sealModuleEntry(
 ) (imports.CommitInput, error) {
 	var empty imports.CommitInput
 	sourceID := sourceView.Identity().ContentID()
-	flowID := flowView.Cold().ContentID()
+	flowID := flowView.ContentID()
 	moduleID := moduleView.ContentID()
 	if !sourceID.Available() || !flowID.Available() || !moduleID.Available() || !staticID.Available() {
 		return empty, errors.New("program/flow: module entry owner identity is unavailable")

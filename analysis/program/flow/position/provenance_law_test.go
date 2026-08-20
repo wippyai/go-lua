@@ -48,7 +48,7 @@ func TestSealRejectsEqualCountForeignOwnerIdentities(t *testing.T) {
 	foreignFlowSpec.flow.Calls[0].Callee = integers[1]
 	foreignFlowSpec.flow.Calls[1].Callee = integers[0]
 	foreignFlow := openPositionFixture(t, foreignFlowSpec)
-	if current.flow.Cold().ContentID() == foreignFlow.flow.Cold().ContentID() {
+	if current.flow.ContentID() == foreignFlow.flow.ContentID() {
 		t.Fatal("foreign Flow fixture did not change Flow identity")
 	}
 

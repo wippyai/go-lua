@@ -18,13 +18,13 @@ func validateSelectorInputs(sourceView sourceColumns, flow authored.View, bodies
 	if !identity.ContentID().Available() || identity.TermCount() == 0 {
 		return errors.New("program/flow/accessgeometry: Source sourceView is unavailable")
 	}
-	if !flow.Cold().ContentID().Available() {
+	if !flow.ContentID().Available() {
 		return errors.New("program/flow/accessgeometry: authored Flow is unavailable")
 	}
-	if !body.Matches(bodies, identity.ContentID(), flow.Cold().ContentID()) {
+	if !body.Matches(bodies, identity.ContentID(), flow.ContentID()) {
 		return errors.New("program/flow/accessgeometry: Body provenance disagrees with Source or Flow")
 	}
-	if !binding.Matches(&bindings, identity.ContentID(), flow.Cold().ContentID()) {
+	if !binding.Matches(&bindings, identity.ContentID(), flow.ContentID()) {
 		return errors.New("program/flow/accessgeometry: Bindings provenance disagrees with Source or Flow")
 	}
 	if !staticView.ContentID().Available() {

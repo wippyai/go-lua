@@ -244,7 +244,7 @@ func geometryCounts(
 ) ([keyspace.FamilyCount]uint32, error) {
 	var counts [keyspace.FamilyCount]uint32
 	identity := sourceView.Identity()
-	if !identity.ContentID().Available() || !flow.Cold().ContentID().Available() || bodies == nil || forest == nil {
+	if !identity.ContentID().Available() || !flow.ContentID().Available() || bodies == nil || forest == nil {
 		return counts, errors.New("program/flow/sourcecontrol: owner view or proof is unavailable")
 	}
 	var preOutcome uint64

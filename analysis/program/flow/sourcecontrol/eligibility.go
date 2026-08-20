@@ -36,7 +36,7 @@ func (r *Result) TableFieldThrowEligibility(sourceView source.View, flow authore
 	if sourceView.Identity().ContentID() != r.sourceID || !outcome.Matches(outcomes, r.sourceID, r.flowID, r.staticID, r.moduleID) {
 		return TableFieldThrowEligibility{}, errors.New("program/flow/sourcecontrol: TableField eligibility source/outcome owner is unavailable")
 	}
-	if flow.Cold().ContentID() != r.flowID {
+	if flow.ContentID() != r.flowID {
 		return TableFieldThrowEligibility{}, errors.New("program/flow/sourcecontrol: TableField eligibility flow owner is unavailable")
 	}
 	if keyspace.TermFamily(field) != keyspace.FamilyTableField || keyspace.TermFamily(owner) != keyspace.FamilyBody {

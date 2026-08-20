@@ -18,7 +18,7 @@ import (
 // one typed definition role, and local identities fold both lexical Body and
 // definition host paths without using a Cell Term or global ordinal.
 func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, bodyPaths []identity.ContentID, paths *[keyspace.FamilyCount][]identity.ContentID) error {
-	if paths == nil || bodies == nil || forest == nil || !catalog.Matches(sourceView) || !binding.Matches(&bindings, sourceView.Identity().ContentID(), view.Cold().ContentID()) {
+	if paths == nil || bodies == nil || forest == nil || !catalog.Matches(sourceView) || !binding.Matches(&bindings, sourceView.Identity().ContentID(), view.ContentID()) {
 		return errors.New("semanticpath: Cell role join owners are unavailable")
 	}
 	cells := view.Storage().Cells()

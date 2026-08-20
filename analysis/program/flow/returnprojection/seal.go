@@ -27,7 +27,7 @@ func Seal(
 	if !sourceView.Identity().ContentID().Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/returnprojection: owner provenance is unavailable")
 	}
-	sourceID, flowID := sourceView.Identity().ContentID(), authoredView.Cold().ContentID()
+	sourceID, flowID := sourceView.Identity().ContentID(), authoredView.ContentID()
 	if !flowID.Available() || !body.Matches(bodies, sourceID, flowID) || !outcome.Matches(outcomes, sourceID, flowID, staticID, moduleID) || !executable.Matches(executableResult, sourceID, flowID, staticID, moduleID) {
 		return nil, errors.New("program/flow/returnprojection: source projections disagree")
 	}

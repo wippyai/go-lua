@@ -28,10 +28,10 @@ func SealPorts(
 	if err != nil {
 		return nil, err
 	}
-	if !view.Cold().ContentID().Available() || !staticID.Available() || !moduleID.Available() {
+	if !view.ContentID().Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errors.New("program/flow/evaluation: authored view is unavailable")
 	}
-	if forest == nil || !containment.Matches(forest, identity.ContentID(), view.Cold().ContentID(), staticID, moduleID) ||
+	if forest == nil || !containment.Matches(forest, identity.ContentID(), view.ContentID(), staticID, moduleID) ||
 		forest.Count() != int(identity.TermCount()) {
 		return nil, errors.New("program/flow/evaluation: containment proof is unavailable")
 	}
@@ -41,7 +41,7 @@ func SealPorts(
 	if err := validateRows(view, counts, forest); err != nil {
 		return nil, err
 	}
-	ports := newPorts(counts, identity.ContentID(), view.Cold().ContentID(), staticID, moduleID)
+	ports := newPorts(counts, identity.ContentID(), view.ContentID(), staticID, moduleID)
 	if err := sealEntries(ports, view, counts); err != nil {
 		return nil, err
 	}

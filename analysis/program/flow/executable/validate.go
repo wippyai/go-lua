@@ -39,10 +39,10 @@ func validateInputs(
 	if !out.source.Available() || identity.Name() == "" || identity.TermCount() == 0 {
 		return out, errors.New("program/flow/executable: Source identity is unavailable")
 	}
-	if !flow.Cold().ContentID().Available() {
+	if !flow.ContentID().Available() {
 		return out, errors.New("program/flow/executable: authored Flow is unavailable")
 	}
-	flowID := flow.Cold().ContentID()
+	flowID := flow.ContentID()
 	out.flow = flowID
 	if !body.Matches(bodies, out.source, flowID) {
 		return out, errors.New("program/flow/executable: Body provenance disagrees with Source or Flow")

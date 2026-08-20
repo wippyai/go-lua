@@ -17,7 +17,7 @@ func TestCandidateProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		t.Fatalf("first candidates.Seal: %v", err)
 	}
 	sourceID := first.sourceView.Identity().ContentID()
-	flowID := first.flowView.Cold().ContentID()
+	flowID := first.flowView.ContentID()
 	staticID := first.staticView.ContentID()
 	moduleID := first.moduleFinalize.View().ContentID()
 	if !Matches(firstResult, sourceID, flowID, staticID, moduleID) {
@@ -56,7 +56,7 @@ func TestCandidateProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	foreignFlowSpec := candidateIntegrationSpec()
 	foreignFlowSpec.flow.Operators.Binaries[0].Op = kind.BinarySub
 	foreignFlow := openCandidateFixture(t, foreignFlowSpec)
-	foreignFlowID := foreignFlow.flowView.Cold().ContentID()
+	foreignFlowID := foreignFlow.flowView.ContentID()
 	if sourceID != foreignFlow.sourceView.Identity().ContentID() || flowID == foreignFlowID {
 		t.Fatal("foreign Flow fixture did not preserve equal denominator with a distinct identity")
 	}

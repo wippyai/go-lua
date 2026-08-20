@@ -670,7 +670,7 @@ func TestSealSmoke(t *testing.T) {
 	}
 
 	sourceID := sourceFinalizer.Preimage().Identity().ContentID()
-	flowID := flowFinalizer.View().Cold().ContentID()
+	flowID := flowFinalizer.View().ContentID()
 	staticID := staticView.ContentID()
 	moduleID := moduleFinalizer.View().ContentID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {

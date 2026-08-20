@@ -12,7 +12,7 @@ import (
 func TestContinuationSealDirectCallAndExactSubjectPlane(t *testing.T) {
 	fixture := openContinuationFixture(t, directContinuationSpec("continuation-direct-call.lua"))
 	sourceID := fixture.sourceView.Identity().ContentID()
-	flowID := fixture.flow.Cold().ContentID()
+	flowID := fixture.flow.ContentID()
 	if !Matches(fixture.result, sourceID, flowID, fixture.staticID, fixture.moduleID) {
 		t.Fatal("sealed continuation provenance did not match exact quartet")
 	}
@@ -103,18 +103,18 @@ func TestContinuationSealUnavailableAndForeignInputsFailClosed(t *testing.T) {
 		{Owner: continuationTerm(keyspace.FamilyBody, 1), Callee: continuationTerm(keyspace.FamilyNil, 2), Actuals: continuationTerm(keyspace.FamilyValues, 2)},
 	}
 	right := openContinuationFixture(t, rightSpec)
-	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), left.staticID, left.moduleID) {
+	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.ContentID(), left.staticID, left.moduleID) {
 		t.Fatal("foreign Source identity matched continuation Result")
 	}
-	if Matches(left.result, left.sourceView.Identity().ContentID(), right.flow.Cold().ContentID(), left.staticID, left.moduleID) {
+	if Matches(left.result, left.sourceView.Identity().ContentID(), right.flow.ContentID(), left.staticID, left.moduleID) {
 		t.Fatal("foreign authored Flow identity matched continuation Result")
 	}
-	if Matches(left.result, left.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), right.staticID, left.moduleID) {
+	if Matches(left.result, left.sourceView.Identity().ContentID(), left.flow.ContentID(), right.staticID, left.moduleID) {
 		t.Fatal("foreign Static identity matched continuation Result")
 	}
 	foreignModule := left.moduleID
 	foreignModule[0]++
-	if Matches(left.result, left.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), left.staticID, foreignModule) {
+	if Matches(left.result, left.sourceView.Identity().ContentID(), left.flow.ContentID(), left.staticID, foreignModule) {
 		t.Fatal("foreign Module identity matched continuation Result")
 	}
 	if _, err := Seal(right.sourceView, left.flow, left.bodies, left.binding, left.executable, left.candidates, left.causal, left.staticID, left.moduleID); err == nil {

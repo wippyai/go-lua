@@ -319,7 +319,7 @@ func validateStaticFallbackInputs(
 	}
 	identity := preimage.Identity()
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 ||
-		!staticView.Available() || !view.Cold().ContentID().Available() {
+		!staticView.Available() || !view.ContentID().Available() {
 		return errors.New("program/flow/containment: static fallback owner view expired")
 	}
 	return nil

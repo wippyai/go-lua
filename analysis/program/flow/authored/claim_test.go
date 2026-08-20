@@ -150,18 +150,18 @@ func TestClaimsAndTypeValuesCopyContentAndQueryBounds(t *testing.T) {
 	}
 
 	first := buildFlowForTest(t, claimInput())
-	if first.Cold().ContentID() != buildFlowForTest(t, claimInput()).Cold().ContentID() {
+	if first.ContentID() != buildFlowForTest(t, claimInput()).ContentID() {
 		t.Fatal("equal Claim and TypeValue authored content has unstable identity")
 	}
 	changed := claimInput()
 	changed.Claims[0].Kind = kind.ValueClaimTypeColonColon
-	if first.Cold().ContentID() == buildFlowForTest(t, changed).Cold().ContentID() {
+	if first.ContentID() == buildFlowForTest(t, changed).ContentID() {
 		t.Fatal("ValueClaim authored content did not change identity")
 	}
 	changed = claimInput()
 	changed.TypeValues[0].Owner = keyspace.MakeTerm(keyspace.FamilyBody, 2)
 	changed.Counts[keyspace.FamilyBody] = 2
-	if first.Cold().ContentID() == buildFlowForTest(t, changed).Cold().ContentID() {
+	if first.ContentID() == buildFlowForTest(t, changed).ContentID() {
 		t.Fatal("TypeValue authored content did not change identity")
 	}
 

@@ -173,12 +173,12 @@ func openOwnerFixture(t *testing.T, spec ownerSpec) *ownerFixture {
 		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, err := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.Cold().ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
+		flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
 	if err != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(),
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.ContentID(),
 		staticView.ContentID(), moduleFinalize.View().ContentID())
 	vertexLease, err := graph.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || err != nil || vertexLease == nil {

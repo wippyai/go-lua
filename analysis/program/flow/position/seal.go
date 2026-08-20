@@ -115,7 +115,7 @@ func validateInputs(
 	var counts [keyspace.FamilyCount]uint32
 	identity := preimage.Identity()
 	sourceID := identity.ContentID()
-	flowID := flow.Cold().ContentID()
+	flowID := flow.ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return counts, 0, errors.New("program/flow/position: Source preimage is unavailable")
 	}

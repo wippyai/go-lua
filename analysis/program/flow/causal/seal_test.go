@@ -1234,7 +1234,7 @@ func TestSemanticMatrixForeignProvenanceFailsClosed(t *testing.T) {
 	second := provenanceCallSpec("causal-provenance-b.lua", true)
 	left := openCausalFixture(t, first)
 	right := openCausalFixture(t, second)
-	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.Cold().ContentID(), left.staticView.ContentID(), left.moduleFinalize.View().ContentID()) {
+	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.ContentID(), left.staticView.ContentID(), left.moduleFinalize.View().ContentID()) {
 		t.Fatal("equal-shape foreign Source identity matched causal Result")
 	}
 	// Route planning is path-only: Source cell roles are consumed before Causal
@@ -2078,12 +2078,12 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatal("source.CellRoles: unavailable")
 	}
-	certificate, certificateErr := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
+	certificate, certificateErr := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.ContentID(), staticID, moduleID)
 	if certificateErr != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
-	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || vertexErr != nil || vertexLease == nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
@@ -2156,7 +2156,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 			}
 		}
 	}
-	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	outcomePhases, outcomeErr := graph.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
 	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
@@ -2176,7 +2176,7 @@ func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
 		spec.runtimeEntryProbe(&runtimeEntryFixture{sourceView: sourceView, flow: flowView, outcomes: outcomes,
 			control: graph, ports: ports, executable: execResult, entries: entries, staticID: staticID, moduleID: moduleID})
 	}
-	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	if !pathsOK {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatal("semanticpath.Causal: view unavailable")

@@ -64,7 +64,7 @@ const (
 // SealPending uses the same machine with a private pending mode for their
 // condition/header phases.
 func New(view authored.View) (*Session, error) {
-	if !view.Cold().ContentID().Available() {
+	if !view.ContentID().Available() {
 		return nil, errors.New("program/flow/evaluation: authored view is unavailable")
 	}
 	walker := &Session{view: view, done: true}

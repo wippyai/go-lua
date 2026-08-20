@@ -30,7 +30,7 @@ func validateOwners(
 	var counts [keyspace.FamilyCount]uint32
 	identity := sourceView.Identity()
 	sourceID := identity.ContentID()
-	flowID := flow.Cold().ContentID()
+	flowID := flow.ContentID()
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 ||
 		!flowID.Available() || !staticID.Available() || !moduleID.Available() || bodies == nil || forest == nil || control == nil || executableResult == nil {
 		return counts, errors.New("program/flow/directfunction: one or more owners are unavailable")

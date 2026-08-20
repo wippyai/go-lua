@@ -337,19 +337,19 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatal("source.CellRoles: unavailable")
 	}
-	certificate, certificateErr := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.Cold().ContentID(), staticID, moduleID)
+	certificate, certificateErr := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.ContentID(), staticID, moduleID)
 	if certificateErr != nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
-	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	vertexLease, vertexErr := controlResult.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || vertexErr != nil || vertexLease == nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	defer controlResult.ReleaseVertexCatalog(vertexLease)
-	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	outcomePhases, outcomeErr := controlResult.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
 	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
@@ -365,7 +365,7 @@ func openContinuationFixture(t *testing.T, spec continuationSpec) *continuationF
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatalf("runtimeentry.Seal: %v", err)
 	}
-	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.Cold().ContentID(), staticID, moduleID)
+	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	if !pathsOK {
 		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
 		t.Fatal("semanticpath.Causal: view unavailable")
