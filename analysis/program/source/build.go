@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/source/admission"
 )
 
 // Build seals only authored Source rows. The explicit typed index batch is
@@ -297,7 +298,7 @@ func (a *authority) validTerm(term keyspace.Term) bool {
 // the canonical AdmitsDirectBodyFamily admission primitive that Lua lowering
 // also consumes.
 func (a *authority) validDirectBodyTerm(term keyspace.Term) bool {
-	return a != nil && AdmitsDirectBodyFamily(keyspace.TermFamily(term)) && a.validTerm(term)
+	return a != nil && admission.AdmitsDirectBodyFamily(keyspace.TermFamily(term)) && a.validTerm(term)
 }
 
 func (a *authority) validFamilyTerm(term keyspace.Term, family keyspace.Family) bool {

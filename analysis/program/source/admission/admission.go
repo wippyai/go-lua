@@ -1,10 +1,13 @@
-package source
+// Package admission owns the closed set of Term families that may occur
+// directly in authored Body source order.
+package admission
 
 import "github.com/wippyai/go-lua/analysis/program/keyspace"
 
 // AdmitsDirectBodyFamily reports whether a Term family may occur directly in
-// authored Body source order. Source owns this closed admission boundary so
-// builders and consumers cannot drift into independent family switches.
+// authored Body source order. The admission policy is independent of any
+// Source authority or lifecycle and is shared by Source validation and Lua
+// lowering.
 func AdmitsDirectBodyFamily(family keyspace.Family) bool {
 	switch family {
 	case keyspace.FamilyBody, keyspace.FamilyBind, keyspace.FamilyAssign,

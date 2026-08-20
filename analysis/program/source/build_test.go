@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/source/admission"
 )
 
 func commitSource(draft *Draft, index IndexInput) (*Component, error) {
@@ -264,7 +265,7 @@ func TestSourceDirectBodyFamilyMatrix(t *testing.T) {
 	}
 	for family := keyspace.FamilyInvalid; family <= keyspace.FamilyCount; family++ {
 		_, want := admitted[family]
-		if got := AdmitsDirectBodyFamily(family); got != want {
+		if got := admission.AdmitsDirectBodyFamily(family); got != want {
 			t.Fatalf("AdmitsDirectBodyFamily(%d) = %v, want %v", family, got, want)
 		}
 	}
@@ -272,7 +273,7 @@ func TestSourceDirectBodyFamilyMatrix(t *testing.T) {
 
 func TestSourceRejectsNonDirectBodyFamilies(t *testing.T) {
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if AdmitsDirectBodyFamily(family) || family == keyspace.FamilyOutcome {
+		if admission.AdmitsDirectBodyFamily(family) || family == keyspace.FamilyOutcome {
 			continue
 		}
 		t.Run("family-"+strconv.Itoa(int(family)), func(t *testing.T) {

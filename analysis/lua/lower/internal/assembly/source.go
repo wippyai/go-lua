@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/program/source/admission"
 )
 
 // mint is the sole authored Term allocator.  Source's Outcome family is
@@ -135,7 +136,7 @@ func validFamilyTerm(c *Collector, term keyspace.Term, family keyspace.Family) b
 }
 
 func validDirectBodyTerm(c *Collector, body, term keyspace.Term) bool {
-	if c == nil || !validBody(c, body) || !validTermInCounts(c, term) || !source.AdmitsDirectBodyFamily(keyspace.TermFamily(term)) {
+	if c == nil || !validBody(c, body) || !validTermInCounts(c, term) || !admission.AdmitsDirectBodyFamily(keyspace.TermFamily(term)) {
 		return false
 	}
 	if keyspace.TermFamily(term) == keyspace.FamilyBody {
