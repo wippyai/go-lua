@@ -57,7 +57,7 @@ func (a *artifactResolver) children(row programschema.StaticTypeNode) ([]identit
 	if !ok {
 		return nil, false
 	}
-	return canonicalProgramStaticNodeChildren(program, index, row)
+	return program.StaticTypeNodeChildren(index, row, false)
 }
 
 // componentScope is one descent into a cyclic component. local holds the
