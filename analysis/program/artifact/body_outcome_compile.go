@@ -40,7 +40,7 @@ func (compiler *compiler) copyBodiesAndOutcomesFailure() CompileFailure {
 		if !row.Available() {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowReturnValue, -1, -1, CompileReasonReturnValueReference)
 		}
-		valueIDs[row.id] = struct{}{}
+		valueIDs[row.ID()] = struct{}{}
 	}
 	bodies := make([]programschema.Body, bodyCount)
 	bodyEntries := make([]programschema.BodyEntry, 0, bodyCount)

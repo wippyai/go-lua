@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -36,7 +37,7 @@ type allocationFieldCompileRow struct {
 	finalOpen    bool
 	normalized   keyspace.Key
 	normalizedOK bool
-	valuesRow    ValuesRow
+	valuesRow    programschema.Values
 	fieldSpan    program.Span
 	selectorSpan program.Span
 	id           identity.ContentID

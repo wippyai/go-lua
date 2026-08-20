@@ -103,36 +103,6 @@ func coldHeapPlanes(rows []HeapAllocationRow) ([]programschema.HeapAllocation, [
 	return allocations, fields, true
 }
 
-// coldValuesPlanes flattens the compiler's nested Values rows the same way:
-// members become one dense plane and each row names the span it owns.
-func coldValuesPlanes(rows []ValuesRow) ([]programschema.Values, []programschema.ValuesMember, bool) {
-	values := make([]programschema.Values, 0, len(rows))
-	members := make([]programschema.ValuesMember, 0, len(rows))
-	for _, row := range rows {
-		if !row.Available() || !fitsUint32(len(members)) || !fitsUint32(len(row.members)) {
-			return nil, nil, false
-		}
-		offset := uint32(len(members))
-		for _, member := range row.members {
-			converted, ok := programschema.NewValuesMember(member.id)
-			if !ok {
-				return nil, nil, false
-			}
-			members = append(members, converted)
-		}
-		tail, tailOK := programschema.NewValuesTail(row.tail.id, row.tail.span, programschema.ValuesTailKind(row.tail.kind), row.tail.present)
-		if !tailOK {
-			return nil, nil, false
-		}
-		converted, ok := programschema.NewValues(row.id, row.body, row.span, offset, uint32(len(row.members)), tail)
-		if !ok {
-			return nil, nil, false
-		}
-		values = append(values, converted)
-	}
-	return values, members, true
-}
-
 // coldPointPlanes flattens the sealed point sequence into the two dense
 // planes the publication holds. Each point names its decisions by the
 // half-open span it occupies in the decision plane, so the canonical decision
@@ -312,14 +282,14 @@ func freezeColdPublication(compiler *compiler, pointRows []Point) (snapshot.Froz
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
 	allocations, allocationFields, heapOK := coldHeapPlanes(compiler.heapAllocations)
-	values, valuesMembers, valuesOK := coldValuesPlanes(compiler.values)
+	values, valuesMembers := compiler.values, compiler.valuesMembers
 	indexes, indexesOK := coldHeapIndexes(compiler.heapIndexes)
 	points, pointDecisions, pointsOK := coldPointPlanes(pointRows)
 	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
 	transfers, transferWrites, transfersOK := coldLocalTransfers(compiler.localTransfers)
 	typeValues, staticExpressions, staticOK := coldStaticPlanes(compiler.staticTypeValues, compiler.staticExpressions)
 	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
-	if !heapOK || !valuesOK || !indexesOK || !pointsOK || !edgesOK || !transfersOK || !staticOK || !regionsOK {
+	if !heapOK || !indexesOK || !pointsOK || !edgesOK || !transfersOK || !staticOK || !regionsOK {
 		return snapshot.Frozen{}, identity.ContentID{}, false
 	}
 	for index, row := range compiler.occurrences {

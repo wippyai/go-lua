@@ -207,9 +207,12 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		return nil, failure
 	}
-	if failure := transaction.copyValuesFailure(); failure.Available() {
-		return nil, failure
+	valuesPublication, valuesFailure := artifactcompiler.CompileValues(transaction.input)
+	if valuesFailure.Available() {
+		return nil, artifactCompilerFailure(valuesFailure)
 	}
+	transaction.values = valuesPublication.Values
+	transaction.valuesMembers = valuesPublication.ValuesMembers
 	if failure := transaction.copyBodiesAndOutcomesFailure(); failure.Available() {
 		return nil, failure
 	}
@@ -250,6 +253,8 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 	diagnosticPublication, diagnosticFailure := artifactcompiler.CompileDiagnostics(artifactcompiler.Input{
 		Program:        transaction.input,
 		ProgramID:      transaction.key.ProgramID(),
+		Values:         transaction.values,
+		ValuesMembers:  transaction.valuesMembers,
 		Calls:          transaction.calls,
 		CallArguments:  transaction.callArguments,
 		Bodies:         transaction.bodies,
@@ -259,7 +264,7 @@ func CompileDetailed(input *program.Program, grammar GrammarIdentity, issuance I
 		StorageReads:   storageReads,
 	})
 	if diagnosticFailure.Available() {
-		return nil, artifactDiagnosticFailure(diagnosticFailure)
+		return nil, artifactCompilerFailure(diagnosticFailure)
 	}
 	transaction.diagnosticObservations = diagnosticPublication.DiagnosticObservations
 	transaction.diagnosticEvidence = diagnosticPublication.DiagnosticEvidence
@@ -299,12 +304,14 @@ func Compile(input *program.Program, grammar GrammarIdentity, issuance IssuanceD
 	return artifact, artifact != nil && !failure.Available()
 }
 
-func artifactDiagnosticFailure(failure artifactcompiler.CompileFailure) CompileFailure {
+func artifactCompilerFailure(failure artifactcompiler.CompileFailure) CompileFailure {
 	if !failure.Available() {
 		return CompileFailure{}
 	}
 	stage := CompileStageInvalid
 	switch failure.Stage() {
+	case artifactcompiler.CompileStageValues:
+		stage = CompileStageValues
 	case artifactcompiler.CompileStageRoutes:
 		stage = CompileStageRoutes
 	case artifactcompiler.CompileStageOccurrences:
@@ -312,6 +319,8 @@ func artifactDiagnosticFailure(failure artifactcompiler.CompileFailure) CompileF
 	}
 	kind := CompileRowInvalid
 	switch failure.RowKind() {
+	case artifactcompiler.CompileRowValues:
+		kind = CompileRowValues
 	case artifactcompiler.CompileRowRoute:
 		kind = CompileRowRoute
 	case artifactcompiler.CompileRowOccurrence:
@@ -319,6 +328,18 @@ func artifactDiagnosticFailure(failure artifactcompiler.CompileFailure) CompileF
 	}
 	reason := CompileReasonInvalid
 	switch failure.Reason() {
+	case artifactcompiler.CompileReasonValuesUnavailable:
+		reason = CompileReasonValuesUnavailable
+	case artifactcompiler.CompileReasonValuesBody:
+		reason = CompileReasonValuesBody
+	case artifactcompiler.CompileReasonValuesIdentity:
+		reason = CompileReasonValuesIdentity
+	case artifactcompiler.CompileReasonValuesMember:
+		reason = CompileReasonValuesMember
+	case artifactcompiler.CompileReasonValuesTail:
+		reason = CompileReasonValuesTail
+	case artifactcompiler.CompileReasonValuesDuplicate:
+		reason = CompileReasonValuesDuplicate
 	case artifactcompiler.CompileReasonRouteUnavailable:
 		reason = CompileReasonRouteUnavailable
 	case artifactcompiler.CompileReasonRouteGuard:

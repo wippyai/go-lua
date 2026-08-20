@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/internal/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -31,9 +32,12 @@ return identity(true)
 	if failure := transaction.copyCalls(); failure.Available() {
 		t.Fatalf("copy calls: %+v", failure)
 	}
-	if failure := transaction.copyValuesFailure(); failure.Available() {
-		t.Fatalf("copy values: %+v", failure)
+	valuesPublication, valueFailure := artifactcompiler.CompileValues(compiled)
+	if valueFailure.Available() {
+		t.Fatalf("copy values: %+v", valueFailure)
 	}
+	transaction.values = valuesPublication.Values
+	transaction.valuesMembers = valuesPublication.ValuesMembers
 	if failure := transaction.copyCallRowsFailure(); failure.Available() {
 		t.Fatalf("copy call rows: %+v", failure)
 	}

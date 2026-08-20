@@ -143,7 +143,7 @@ func (compiler *compiler) storageBindAt(index int) (storageBindCompileRow, bool)
 			continue
 		}
 		valueRow, valueRowOK := compiler.valueRowForTerm(values)
-		member, memberOK := valueRow.MemberAt(position)
+		member, memberOK := compiler.valueMemberAt(valueRow, position)
 		if !valueRowOK || !memberOK {
 			return storageBindCompileRow{}, false
 		}
@@ -207,7 +207,7 @@ func (compiler *compiler) storageAssignmentAt(index int) (storageAssignmentCompi
 			continue
 		}
 		valueRow, valueRowOK := compiler.valueRowForTerm(values)
-		member, memberOK := valueRow.MemberAt(position)
+		member, memberOK := compiler.valueMemberAt(valueRow, position)
 		if !valueRowOK || !memberOK {
 			return storageAssignmentCompileRow{}, false
 		}

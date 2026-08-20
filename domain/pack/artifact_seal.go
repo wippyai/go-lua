@@ -11,7 +11,6 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
@@ -519,9 +518,9 @@ func sealMountedArtifactTail(schema *Schema, module identity.ContentID, tail ing
 	}
 	kind := TailProducerInvalid
 	switch tail.Kind() {
-	case uint8(programartifact.ValuesTailCall):
+	case uint8(programschema.ValuesTailCall):
 		kind = TailProducerCall
-	case uint8(programartifact.ValuesTailVararg):
+	case uint8(programschema.ValuesTailVararg):
 		kind = TailProducerVararg
 	default:
 		return Port{}, false

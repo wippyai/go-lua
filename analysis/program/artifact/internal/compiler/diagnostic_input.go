@@ -24,6 +24,7 @@ type CompileFailure struct {
 type CompileStage string
 
 const (
+	CompileStageValues      CompileStage = "values"
 	CompileStageRoutes      CompileStage = "routes"
 	CompileStageOccurrences CompileStage = "occurrences"
 )
@@ -31,6 +32,7 @@ const (
 type CompileRowKind string
 
 const (
+	CompileRowValues     CompileRowKind = "values"
 	CompileRowRoute      CompileRowKind = "route"
 	CompileRowOccurrence CompileRowKind = "occurrence"
 )
@@ -38,6 +40,12 @@ const (
 type CompileReason string
 
 const (
+	CompileReasonValuesUnavailable     CompileReason = "values-unavailable"
+	CompileReasonValuesBody            CompileReason = "values-body"
+	CompileReasonValuesIdentity        CompileReason = "values-identity"
+	CompileReasonValuesMember          CompileReason = "values-member"
+	CompileReasonValuesTail            CompileReason = "values-tail"
+	CompileReasonValuesDuplicate       CompileReason = "values-duplicate"
 	CompileReasonRouteUnavailable      CompileReason = "route-unavailable"
 	CompileReasonRouteGuard            CompileReason = "route-guard"
 	CompileReasonOccurrenceUnavailable CompileReason = "occurrence-unavailable"
@@ -67,8 +75,8 @@ func (failure CompileFailure) Subrow() (int, bool) {
 	return failure.subrow, failure.Available() && failure.subrow >= 0
 }
 
-// StorageRead is the minimal receipt needed by the diagnostic phase for an
-// implicit global read.  The child does not import artifact's storage draft.
+// StorageRead is the minimal immutable input needed by the diagnostic phase
+// for an implicit global read. The child does not import artifact's storage draft.
 type StorageRead struct {
 	ID   identity.ContentID
 	Cell identity.ContentID
@@ -80,6 +88,9 @@ type StorageRead struct {
 type Input struct {
 	Program   *program.Program
 	ProgramID identity.ContentID
+
+	Values        []programschema.Values
+	ValuesMembers []programschema.ValuesMember
 
 	Calls         []programschema.Call
 	CallArguments []programschema.CallArgument
@@ -94,6 +105,8 @@ type Input struct {
 type compiler struct {
 	input          *program.Program
 	programID      identity.ContentID
+	values         []programschema.Values
+	valuesMembers  []programschema.ValuesMember
 	calls          []programschema.Call
 	callArguments  []programschema.CallArgument
 	bodies         []programschema.Body
@@ -117,6 +130,7 @@ func CompileDiagnostics(input Input) (programschema.Publication, CompileFailure)
 	}
 	transaction := compiler{
 		input: input.Program, programID: input.ProgramID,
+		values: input.Values, valuesMembers: input.ValuesMembers,
 		calls: input.Calls, callArguments: input.CallArguments,
 		bodies: input.Bodies, boundaries: input.Boundaries, formals: input.Formals,
 		pointIDsBySite: input.PointIDsBySite, storageReads: input.StorageReads,
@@ -228,48 +242,28 @@ func (compiler *compiler) functionFormalAt(boundary programschema.FunctionBounda
 	return formal, formal.Available() && positionOK && position == index
 }
 
-type valuesRow struct{ members []identity.ContentID }
-
-type valueMember struct{ id identity.ContentID }
-
-func (member valueMember) Available() bool { return member.id.Available() }
-func (member valueMember) ID() identity.ContentID {
-	if !member.Available() {
-		return identity.ContentID{}
-	}
-	return member.id
-}
-
-func (row valuesRow) MemberAt(index int) (valueMember, bool) {
-	if index < 0 || index >= len(row.members) {
-		return valueMember{}, false
-	}
-	return valueMember{id: row.members[index]}, true
-}
-
-func (compiler *compiler) valueRowForTerm(term keyspace.Term) (valuesRow, bool) {
+func (compiler *compiler) valueRowForTerm(term keyspace.Term) (programschema.Values, bool) {
 	if compiler == nil || keyspace.TermFamily(term) != keyspace.FamilyValues || keyspace.TermOrdinal(term) == 0 {
-		return valuesRow{}, false
+		return programschema.Values{}, false
 	}
-	values := compiler.input.Flow().Authored().Values()
 	index := int(keyspace.TermOrdinal(term)) - 1
-	authored, termOK := values.At(index)
-	width, widthOK := values.Len(term)
-	if !termOK || authored != term || !widthOK || width < 0 {
-		return valuesRow{}, false
+	if index < 0 || index >= len(compiler.values) {
+		return programschema.Values{}, false
 	}
-	members := make([]identity.ContentID, width)
-	for position := range members {
-		if _, ok := values.Member(term, position); !ok {
-			return valuesRow{}, false
-		}
-		member, ok := compiler.input.Flow().ValuesMemberID(term, position)
-		if !ok || !member.Available() {
-			return valuesRow{}, false
-		}
-		members[position] = member
+	row := compiler.values[index]
+	return row, row.Available()
+}
+
+func (compiler *compiler) valueMemberAt(row programschema.Values, index int) (programschema.ValuesMember, bool) {
+	if compiler == nil || !row.Available() || index < 0 {
+		return programschema.ValuesMember{}, false
 	}
-	return valuesRow{members: members}, true
+	offset, count, spanOK := row.MemberSpan()
+	if !spanOK || index >= int(count) || uint64(offset)+uint64(index) >= uint64(len(compiler.valuesMembers)) {
+		return programschema.ValuesMember{}, false
+	}
+	member := compiler.valuesMembers[int(offset)+index]
+	return member, member.Available()
 }
 
 func declaredStaticTypeID(programID identity.ContentID, view staticquery.View, cell keyspace.Term) (identity.ContentID, bool) {

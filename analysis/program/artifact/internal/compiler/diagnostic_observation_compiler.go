@@ -551,7 +551,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() CompileFailu
 			}
 			declared, declaredOK := declaredStaticTypeID(compiler.programID, compiler.input.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
-			member, memberRowOK := valueRow.MemberAt(position)
+			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
 				continue
 			}
@@ -644,7 +644,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Compile
 			}
 			declared, declaredOK := declaredStaticTypeID(compiler.programID, compiler.input.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
-			member, memberRowOK := valueRow.MemberAt(position)
+			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
 				continue
 			}

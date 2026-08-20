@@ -357,7 +357,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
-			member, ok := values.MemberAt(memberIndex)
+			member, ok := compiler.valueMemberAt(values, memberIndex)
 			memberTerm, memberTermOK := authoredValues.Member(term, memberIndex)
 			memberID, memberIDOK := compiler.valueSubjectID(memberTerm)
 			if !ok || !memberTermOK || !memberIDOK ||

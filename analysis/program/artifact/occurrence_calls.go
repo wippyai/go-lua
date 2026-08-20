@@ -22,7 +22,7 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 			if values.Available() {
 				inputs = append(inputs, values.ID())
 				for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
-					member, memberOK := values.MemberAt(memberIndex)
+					member, memberOK := compiler.valueMemberAt(values, memberIndex)
 					if !memberOK {
 						return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
 					}
