@@ -328,7 +328,7 @@ func (view View) projectionFence() bool {
 	fence := view.component.provenance
 	return fence.Source.Available() && fence.Flow.Available() &&
 		fence.Static.Available() && fence.Module.Available() &&
-		view.component.authored.Cold().ContentID() == fence.Flow
+		view.component.authored.ContentID() == fence.Flow
 }
 
 func (view View) Continuation() *continuation.Result {
