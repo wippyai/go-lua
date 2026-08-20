@@ -13,7 +13,6 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
 // Form is the complete source constructor disposition. Closed means that all
@@ -121,12 +120,12 @@ func (root Root) FencedTo(schema heap.Schema) bool {
 // Closed is the complete schema-fenced structural view of one scalar table
 // constructor. It is the only field source accepted by the closed Rule.
 type Closed struct {
-	root    Root
-	heap    heap.Schema
-	values  *valuedomain.Schema
-	coords  []valuedomain.Coordinate
-	fields  []Field
-	summary valueowner.SummaryReceipt
+	root   Root
+	heap   heap.Schema
+	values *valuedomain.Schema
+	coords []valuedomain.Coordinate
+	keys   []uint64
+	fields []Field
 }
 
 // NewClosed admits only a scalar closed source table. No caller can use this
@@ -141,7 +140,11 @@ func NewClosed(schema heap.Schema, valueSchema *valuedomain.Schema, allocation h
 	if !fieldsOK || len(coords) == 0 {
 		return Closed{}, false
 	}
-	return Closed{root: root, heap: schema, values: valueSchema, coords: coords, fields: fields}, true
+	keys, keysOK := denseSummaryKeys(valueSchema, coords)
+	if !keysOK {
+		return Closed{}, false
+	}
+	return Closed{root: root, heap: schema, values: valueSchema, coords: coords, keys: keys, fields: fields}, true
 }
 
 func (closed Closed) ID() (identity.ContentID, bool) { return closed.root.ID() }
@@ -160,7 +163,7 @@ func (closed Closed) Count() int {
 // Heap and Value schemas before any Rule uses it.
 func (closed Closed) Revalidate() bool {
 	canonical, ok := NewClosed(closed.heap, closed.values, closed.root.key)
-	return ok && closed.root.same(canonical.root) && closed.heap == canonical.heap && closed.values == canonical.values && equalCoordinates(closed.coords, canonical.coords) && equalFields(closed.fields, canonical.fields)
+	return ok && closed.root.same(canonical.root) && closed.heap == canonical.heap && closed.values == canonical.values && equalCoordinates(closed.coords, canonical.coords) && equalDenseKeys(closed.keys, canonical.keys) && equalFields(closed.fields, canonical.fields)
 }
 
 // RevalidateFor additionally fences this descriptor to the exact Heap and
@@ -197,19 +200,15 @@ func (closed Closed) CoordinateAt(index int) (valuedomain.Coordinate, bool) {
 	return closed.coords[index], true
 }
 
-// WithSummaryReceipt retains the Value-owned immutable summary witness issued
-// during hot operand admission. The source descriptor stores no coordinates
-// from the witness and does not expose its private Ref vector.
-func (closed Closed) WithSummaryReceipt(receipt valueowner.SummaryReceipt) (Closed, bool) {
-	if !closed.valid() || !receipt.MatchesCoordinates(closed.values, closed.coords) {
-		return Closed{}, false
+// SummaryKeys returns the canonical dense Value-factor coordinates used by
+// this closed source. The returned slice is a fresh copy: the source owns the
+// issuance and callers can only consume the read-only snapshot.
+func (closed Closed) SummaryKeys() ([]uint64, bool) {
+	if !closed.valid() || len(closed.keys) == 0 {
+		return nil, false
 	}
-	closed.summary = receipt
-	return closed, true
+	return append([]uint64(nil), closed.keys...), true
 }
-
-// SummaryReceipt returns the opaque Value witness retained by this operand.
-func (closed Closed) SummaryReceipt() valueowner.SummaryReceipt { return closed.summary }
 
 // Field is one source-ordered scalar constructor input. It carries only cold
 // topology projections; applying values to Heap remains the closed Rule's
@@ -242,7 +241,7 @@ func (closed Closed) At(index int) (Field, bool) {
 
 func (closed Closed) valid() bool {
 	_, rootIDOK := closed.root.ID()
-	return closed.heap.Valid() && closed.heap.ContentID().Available() && closed.values != nil && closed.values.LinkOwner().Matches(closed.heap.LinkOwner()) && closed.values.OwnsHeapSchema(closed.heap) && rootIDOK && closed.root.Key().Kind() == heap.RootAllocation && closed.root.Form() == FormClosed && len(closed.coords) != 0 && len(closed.fields) != 0
+	return closed.heap.Valid() && closed.heap.ContentID().Available() && closed.values != nil && closed.values.LinkOwner().Matches(closed.heap.LinkOwner()) && closed.values.OwnsHeapSchema(closed.heap) && rootIDOK && closed.root.Key().Kind() == heap.RootAllocation && closed.root.Form() == FormClosed && len(closed.coords) != 0 && len(closed.coords) == len(closed.keys) && len(closed.fields) != 0
 }
 
 func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root) ([]Field, []valuedomain.Coordinate, bool) {
@@ -414,6 +413,36 @@ func equalCoordinates(left, right []valuedomain.Coordinate) bool {
 		}
 	}
 	return true
+}
+
+func equalDenseKeys(left, right []uint64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func denseSummaryKeys(schema *valuedomain.Schema, coordinates []valuedomain.Coordinate) ([]uint64, bool) {
+	if schema == nil || len(coordinates) == 0 {
+		return nil, false
+	}
+	keys := make([]uint64, len(coordinates))
+	for index, coordinate := range coordinates {
+		dense, ok := schema.CoordinateIndex(coordinate)
+		if !ok {
+			return nil, false
+		}
+		if index != 0 && keys[index-1] >= uint64(dense) {
+			return nil, false
+		}
+		keys[index] = uint64(dense)
+	}
+	return keys, true
 }
 
 func coordinateOrdinal(coords []valuedomain.Coordinate, coordinate valuedomain.Coordinate) (uint32, bool) {

@@ -38,16 +38,17 @@ func SelectedEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-selected",
-		Roles:    []schema.Key{"semantic/operand/effect/callsite-selected", "semantic/evidence/effect/callsite-selected"},
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-selected"},
 	}
 }
 
 func DeclareSelected[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SelectedSchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("effect/callsite-selected")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/effect/callsite-selected")
+	operand, operandOK := context.Roles.Key("semantic/operand/effect/callsite-selected")
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareSelectedSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
+	return DeclareSelectedSchema(builder, semantic, operand, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 }
 
 func RegisterSelected(binding *engine.SchemaBinding, context rule.Registration[*SelectedSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -74,16 +75,17 @@ func OpaqueEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-opaque",
-		Roles:    []schema.Key{"semantic/operand/effect/callsite-opaque", "semantic/evidence/effect/callsite-opaque"},
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-opaque"},
 	}
 }
 
 func DeclareOpaque[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*OpaqueSchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("effect/callsite-opaque")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/effect/callsite-opaque")
+	operand, operandOK := context.Roles.Key("semantic/operand/effect/callsite-opaque")
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareOpaqueSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
+	return DeclareOpaqueSchema(builder, semantic, operand, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 }
 
 func RegisterOpaque(binding *engine.SchemaBinding, context rule.Registration[*OpaqueSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -110,16 +112,17 @@ func BodyEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/effect/callsite-body",
-		Roles:    []schema.Key{"semantic/operand/effect/callsite-body", "semantic/evidence/effect/callsite-body"},
+		Roles:    []schema.Key{"semantic/operand/effect/callsite-body"},
 	}
 }
 
 func DeclareBody[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*BodySchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("effect/callsite-body")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/effect/callsite-body")
+	operand, operandOK := context.Roles.Key("semantic/operand/effect/callsite-body")
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareBodySchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
+	return DeclareBodySchema(builder, semantic, operand, context.Principals.CallPrincipal(), context.Principals.EffectPrincipal())
 }
 
 func RegisterBody(binding *engine.SchemaBinding, context rule.Registration[*BodySchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -136,11 +139,11 @@ func FinalizeBody[A ruleAuthorities](context rule.Finalization[A, *BodyHotRule])
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the three roles each of its three rules is identified by. A
-// role is declared where it is used, so the row and the reference that names it
-// are one package's statement.
+// role vocabulary: the rule and operand roles identifying each of its three
+// rules. A role is declared where it is used, so the row and the reference that
+// names it are one package's statement.
 func StructureSpecs() []structure.Spec {
-	specs := vocabulary.RuleRoleSpecs("effect/callsite-selected")
-	specs = append(specs, vocabulary.RuleRoleSpecs("effect/callsite-opaque")...)
-	return append(specs, vocabulary.RuleRoleSpecs("effect/callsite-body")...)
+	specs := vocabulary.RoleSpecs("rule/effect/callsite-selected", "operand/effect/callsite-selected")
+	specs = append(specs, vocabulary.RoleSpecs("rule/effect/callsite-opaque", "operand/effect/callsite-opaque")...)
+	return append(specs, vocabulary.RoleSpecs("rule/effect/callsite-body", "operand/effect/callsite-body")...)
 }

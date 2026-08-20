@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -78,6 +79,7 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 		// the engine admits to fill the column a consumer reads it out of.
 		Frame:    axis.Frame{Outputs: []axis.Output{{Key: "heap/facts", Writer: "heap"}}},
 		Semantic: "semantic/factor/heap",
+		Roles:    []schema.Key{"semantic/factor/heap/summary-complete"},
 		Mount: axis.NewMount(func(context axis.Mounting[A]) (heap.Schema, heap.SealFailure, bool) {
 			return mountHeapSchema[A](context.Inputs)
 		}),
@@ -86,10 +88,11 @@ func AxisEntry[A axisInputs]() axis.Spec[A] {
 
 func DeclareAxis(builder *engine.SchemaBuilder, context axis.Declaration) (*SchemaFragment, bool) {
 	semantic, ok := context.Roles.Key("semantic/factor/heap")
-	if !ok {
+	summary, summaryOK := context.Roles.Key("semantic/factor/heap/summary-complete")
+	if !ok || !summaryOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantic)
+	return DeclareSchema(builder, semantic, summary)
 }
 
 func BindAxis[A axisInputs](binding *engine.SchemaBinding, context axis.Binding[A, *SchemaFragment]) (*HotOwner, bool) {
@@ -117,8 +120,9 @@ func adoptFactor(spec engine.HotFactorSpec[coordinate, heap.Value]) (axis.Algebr
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the heap factor's own identity. A role is declared where it is
-// used, so the row and the reference that names it are one package's statement.
+// role vocabulary: the heap factor's own identity and complete-vector summary
+// form. A role is declared where it is used, so the row and the reference that
+// names it are one package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.RoleSpecs("factor/heap")
+	return vocabulary.RoleSpecs("factor/heap", "factor/heap/summary-complete")
 }

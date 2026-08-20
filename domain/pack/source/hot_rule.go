@@ -2,7 +2,6 @@ package source
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 )
@@ -20,28 +19,22 @@ type HotRule struct {
 // schema owner. There is no legacy Rule or Composition fallback here.
 func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdomain.Schema) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.OwnsSchema(schema) ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	implementation, ok := packowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[packdomain.Value, packdomain.Source]{
 		OperandContent: sourceContent,
-		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotSourceChecker(owner, schema, fragment.semantic)),
-		Transfer: func(access engine.Access[packdomain.Value, packdomain.Source]) bool {
-			source, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[packdomain.Value, packdomain.Source]) engine.RuleResult[packdomain.Value] {
+			source, operandOK := engine.Operand(frame)
 			if !operandOK {
-				return false
+				return engine.RuleResult[packdomain.Value]{}
 			}
 			root, rootOK := source.Root()
 			fact, valueOK := schema.SourceValue(source)
 			if !rootOK || !valueOK || !schema.Admit(root, fact) {
-				return false
+				return engine.RuleResult[packdomain.Value]{}
 			}
-			rows := 0
-			completed := engine.Product(access, func(row engine.Row) bool {
-				rows++
-				return rows == 1 && engine.StageValue(access, row, fact)
-			})
-			return completed && rows == 1
+			return engine.Staged(frame, fact)
 		},
 	}, func(source packdomain.Source) (uint64, bool) {
 		root, rootOK := source.Root()
@@ -91,30 +84,4 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 		return engine.ProgramRule{}, false
 	}
 	return engine.SealProgramRule(implementation)
-}
-
-func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[packdomain.Value, packdomain.Source] {
-	return func(derivation engine.RuleDerivation[packdomain.Value, packdomain.Source]) (engine.RuleEvidence, bool) {
-		if owner == nil || schema == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		source, ok := derivation.Operand()
-		id, idOK := source.ContentID()
-		if !ok || !idOK || !derivation.OperandContentMatches([32]byte(id)) {
-			return engine.RuleEvidence{}, false
-		}
-		root, rootOK := source.Root()
-		expected, valueOK := schema.SourceValue(source)
-		ref, refOK := owner.Ref(root)
-		disposition, dispositionOK := derivation.DispositionAt(0)
-		if !rootOK || !valueOK || !refOK || !dispositionOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || disposition.Guard().Empty() {
-			return engine.RuleEvidence{}, false
-		}
-		target, targetOK := disposition.TargetAt(0)
-		actual, actualOK := disposition.Value()
-		if !targetOK || !actualOK || !engine.TargetMatchesRef(target, ref) || !schema.Lattice().Equal(actual, expected) {
-			return engine.RuleEvidence{}, false
-		}
-		return derivation.Accept()
-	}
 }

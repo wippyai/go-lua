@@ -34,17 +34,17 @@ func TestHotIngressBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 	}
 
 	builder := engine.NewSchema()
-	heapFragment, heapOK := heapowner.DeclareSchema(builder, ingressKey(1))
+	heapFragment, heapOK := heapowner.DeclareSchema(builder, ingressKey(1), ingressKey(201))
 	valueFragment, valueOK := valueowner.DeclareSchema(builder, ingressKey(2), ingressKey(3), ingressKey(101))
-	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(4), ingressKey(5), ingressKey(6), heapFragment)
+	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(4), ingressKey(5), heapFragment)
 	cold, coldOK := builder.Seal()
 	if !heapOK || !valueOK || !fragmentOK || !coldOK || cold == nil {
 		t.Fatal("ingress receipt schema")
 	}
 	binding := engine.NewSchemaBinding(cold)
 	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
-	valueHot, valueHotOK := valueowner.BindHot(binding, valueFragment, valueSchema)
-	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, valueHot, mounts.heap)
+	_, valueHotOK := valueowner.BindHot(binding, valueFragment, valueSchema)
+	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
 	rule, ruleOK := ingress.BindHot(fragment, heapHot)
 	if !heapHotOK || !valueHotOK || !catalogOK || !ruleOK || rule == nil || !rule.AttachCatalog(catalog) || !binding.Seal() {
 		t.Fatal("exact ingress mounted bind")
@@ -103,8 +103,8 @@ func TestIngressReceiptNativeSeedIsExactlyWorldZero(t *testing.T) {
 func ingressHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, *ingress.SchemaFragment) {
 	t.Helper()
 	builder := engine.NewSchema()
-	owner, ownerOK := heapowner.DeclareSchema(builder, ingressKey(31))
-	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(32), ingressKey(33), ingressKey(34), owner)
+	owner, ownerOK := heapowner.DeclareSchema(builder, ingressKey(31), ingressKey(131))
+	fragment, fragmentOK := ingress.DeclareSchema(builder, ingressKey(32), ingressKey(33), owner)
 	schema, sealOK := builder.Seal()
 	if !ownerOK || !fragmentOK || !sealOK || schema == nil {
 		t.Fatal("declare ingress cold schema")

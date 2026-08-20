@@ -144,7 +144,7 @@ func bootstrapColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragme
 	t.Helper()
 	builder := engine.NewSchema()
 	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, bootstrapKey(32_001), bootstrapKey(32_002), bootstrapKey(32_101))
-	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(32_003), bootstrapKey(32_004), bootstrapKey(32_005), ownerFragment)
+	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(32_003), bootstrapKey(32_004), ownerFragment)
 	if !ownerOK || !fragmentOK {
 		t.Fatal("bootstrap cold schema")
 	}

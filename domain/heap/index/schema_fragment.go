@@ -16,8 +16,6 @@ import (
 // RawGetSchemaFragment is the callback-free RawGet Rule shape. Selector
 // callbacks and payload/topology catalogs remain Binding-owned.
 type RawGetSchemaFragment struct {
-	semantic   identity.SemanticKey
-	evidence   identity.SemanticKey
 	slot       *engine.RuleSlot[valuedomain.Value, Index]
 	inputs     [4]engine.SchemaInput
 	receiver   engine.SchemaReadSlot[valuedomain.Value]
@@ -31,13 +29,13 @@ type RawGetSchemaFragment struct {
 }
 
 // DeclareRawGetSchema records RawGet's exact four-input selector DAG.
-func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawGetSchemaFragment, bool) {
+	if builder == nil || values == nil || calls == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[valuedomain.Value, Index](builder, engine.SchemaRuleSpec[valuedomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 4,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence}, Output: values.Ref(),
+		Output: values.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -90,7 +88,7 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 	if !ok {
 		return nil, false
 	}
-	return &RawGetSchemaFragment{semantic: semantic, evidence: evidence, slot: slot, inputs: [4]engine.SchemaInput{in0, in1, in2, in3}, receiver: receiver, key: key, call: call, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
+	return &RawGetSchemaFragment{slot: slot, inputs: [4]engine.SchemaInput{in0, in1, in2, in3}, receiver: receiver, key: key, call: call, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
 }
 
 // RawSetSchemaFragment is the callback-free RawSet Rule shape. The routed
@@ -98,8 +96,6 @@ func DeclareRawGetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 // selected read, not a reconstructed topology relation.
 type RawSetSchemaFragment struct {
 	slot       *engine.RuleSlot[heapdomain.Value, Index]
-	semantic   identity.SemanticKey
-	evidence   identity.SemanticKey
 	valueRef   engine.FactorRef[valuedomain.Value]
 	heapRef    engine.FactorRef[heapdomain.Value]
 	packRef    engine.FactorRef[packdomain.Value]
@@ -122,13 +118,13 @@ func (fragment *RawSetSchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Val
 
 // DeclareRawSetSchema records RawSet's exact three-input selector DAG and
 // routed Heap write.
-func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
-	if builder == nil || values == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, heap *heapowner.SchemaFragment, packs *packowner.SchemaFragment) (*RawSetSchemaFragment, bool) {
+	if builder == nil || values == nil || heap == nil || packs == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, Index](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 3,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence}, Output: heap.Ref(),
+		Output: heap.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -173,5 +169,5 @@ func DeclareRawSetSchema(builder *engine.SchemaBuilder, semantic, operandFamily,
 	if !ok {
 		return nil, false
 	}
-	return &RawSetSchemaFragment{slot: slot, semantic: semantic, evidence: evidence, valueRef: values.Ref(), heapRef: heap.Ref(), packRef: packs.Ref(), inputs: [3]engine.SchemaInput{in0, in1, in2}, receiver: receiver, key: key, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
+	return &RawSetSchemaFragment{slot: slot, valueRef: values.Ref(), heapRef: heap.Ref(), packRef: packs.Ref(), inputs: [3]engine.SchemaInput{in0, in1, in2}, receiver: receiver, key: key, heapRead: heapRead, packRead: packRead, sourceRead: sourceRead, carry: carry, write: write}, true
 }

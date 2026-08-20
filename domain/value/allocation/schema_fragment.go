@@ -16,7 +16,6 @@ type SchemaFragment struct {
 	write     engine.SchemaWriteSlot[value.Value]
 	semantic  identity.SemanticKey
 	transform identity.SemanticKey
-	evidence  identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, operand] {
@@ -24,14 +23,13 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, operand
 }
 
 // DeclareSchema records Value allocation's one-input transformed-carry Rule.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, operand](builder, engine.SchemaRuleSpec[value.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    owner.Ref(),
+		Output: owner.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -48,5 +46,5 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, trans
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, carry: carry, write: write, semantic: semantic, transform: transform, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, carry: carry, write: write, semantic: semantic, transform: transform}, true
 }

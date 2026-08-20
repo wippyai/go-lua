@@ -9,9 +9,9 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// rawSetView is the authenticated finite observation used by both transfer
-// and evidence. Pack/Value facts remain owner-issued selections; the view
-// carries no new coordinates or mutation authority.
+// rawSetView is the authenticated finite observation consumed by Fold.
+// Pack/Value facts remain owner-issued selections; the view carries no new
+// coordinates or mutation authority.
 type rawSetView struct {
 	key         rawSelected[valuedomain.Value]
 	keyCount    int
@@ -22,74 +22,72 @@ type rawSetView struct {
 	source      func(rawSourceTag) rawSelected[valuedomain.Value]
 }
 
-func (rule *RawSetRule) transfer(access engine.Access[heapdomain.Value, Index]) bool {
-	operand, ok := engine.Operand(access)
+func (rule *RawSetRule) fold(frame engine.Frame[heapdomain.Value, Index]) engine.RuleResult[heapdomain.Value] {
+	operand, ok := engine.Operand(frame)
 	if !ok || !rule.owns(operand) {
-		return false
+		return engine.RuleResult[heapdomain.Value]{}
 	}
-	return engine.Product(access, func(row engine.Row) bool {
-		receiverCells, receiverOK := engine.ReadValue(access, row, rule.receiver)
-		keys, keyOK := engine.ReadValue(access, row, rule.key)
-		heaps, heapOK := engine.ReadValue(access, row, rule.heapRead)
-		packs, packOK := engine.ReadValue(access, row, rule.packRead)
-		sources, sourceOK := engine.ReadValue(access, row, rule.source)
-		if !receiverOK || !keyOK || !heapOK || !packOK || !sourceOK || receiverCells.Count() != 1 {
-			return false
-		}
-		_, receiverPresent, receiverAvailable := receiverCells.At(0)
-		if !receiverAvailable {
-			return false
-		}
-		descriptor, descriptorOK := rule.payloadForWrite(operand)
-		if !descriptorOK {
-			return false
-		}
-		scratch := rule.takeSetScratch()
-		defer rule.putSetScratch(scratch)
-		view, viewOK := transferRawSetView(access, row, operand, keys, heaps, packs, sources, scratch)
-		if !viewOK || !rawSetSelectionShape(operand, descriptor.descriptor, view) {
-			return false
-		}
-		// An empty Heap route is the explicit no-candidate disposition. This
-		// covers absent receivers, selected-but-absent dynamic keys, and
-		// definitely invalid dynamic nil/NaN keys; Pack/Value selectors must
-		// be empty downstream of that route.
-		if view.heapCount == 0 {
-			if _, dynamic := operand.DynamicKey(); dynamic {
-				if receiverPresent && view.keyCount != 1 || !receiverPresent && view.keyCount != 0 {
-					return false
-				}
-				// A live receiver's no-route branch is still authenticated by
-				// one exact dynamic-key selection. Its cell may be absent only
-				// because every downstream selection is empty; routed Heap
-				// mutation remains stricter below.
-				if receiverPresent && (!view.key.valid || !view.key.found) {
-					return false
-				}
+	receiverCells, receiverOK := engine.ReadValue(frame, rule.receiver)
+	keys, keyOK := engine.ReadValue(frame, rule.key)
+	heaps, heapOK := engine.ReadValue(frame, rule.heapRead)
+	packs, packOK := engine.ReadValue(frame, rule.packRead)
+	sources, sourceOK := engine.ReadValue(frame, rule.source)
+	if !receiverOK || !keyOK || !heapOK || !packOK || !sourceOK || receiverCells.Count() != 1 {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	_, receiverPresent, receiverAvailable := receiverCells.At(0)
+	if !receiverAvailable {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	descriptor, descriptorOK := rule.payloadForWrite(operand)
+	if !descriptorOK {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	scratch := rule.takeSetScratch()
+	defer rule.putSetScratch(scratch)
+	view, viewOK := transferRawSetView(frame, operand, keys, heaps, packs, sources, scratch)
+	if !viewOK || !rawSetSelectionShape(operand, descriptor.descriptor, view) {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	// An empty Heap route is the explicit no-candidate disposition. This
+	// covers absent receivers, selected-but-absent dynamic keys, and
+	// definitely invalid dynamic nil/NaN keys; Pack/Value selectors must
+	// be empty downstream of that route.
+	if view.heapCount == 0 {
+		if _, dynamic := operand.DynamicKey(); dynamic {
+			if receiverPresent && view.keyCount != 1 || !receiverPresent && view.keyCount != 0 {
+				return engine.RuleResult[heapdomain.Value]{}
 			}
-			return engine.NoSelection(access, row, heaps)
+			// A live receiver's no-route branch is still authenticated by
+			// one exact dynamic-key selection. Its cell may be absent only
+			// because every downstream selection is empty; routed Heap
+			// mutation remains stricter below.
+			if receiverPresent && (!view.key.valid || !view.key.found) {
+				return engine.RuleResult[heapdomain.Value]{}
+			}
 		}
-		if !receiverPresent {
-			return false
+		return engine.NoSelection(frame, heaps)
+	}
+	if !receiverPresent {
+		return engine.RuleResult[heapdomain.Value]{}
+	}
+	return engine.Routed(frame, heaps, func(tag heapdomain.RawRouteTag, cells engine.OrderedCells[heapdomain.Value]) (heapdomain.Value, bool) {
+		if cells.Count() != 1 {
+			return heapdomain.Value{}, false
 		}
-		return engine.StageSelection(access, row, heaps, func(tag heapdomain.RawRouteTag, cells engine.OrderedCells[heapdomain.Value]) (heapdomain.Value, bool) {
-			if cells.Count() != 1 {
-				return heapdomain.Value{}, false
-			}
-			fact, present, available := cells.At(0)
-			if !available {
-				return heapdomain.Value{}, false
-			}
-			if !present {
-				return rule.heapSchema().Bottom(), true
-			}
-			return rule.mutateRoute(operand, tag, fact, view)
-		})
+		fact, present, available := cells.At(0)
+		if !available {
+			return heapdomain.Value{}, false
+		}
+		if !present {
+			return rule.heapSchema().Bottom(), true
+		}
+		return rule.mutateRoute(operand, tag, fact, view)
 	})
 }
 
 func transferRawSetView(
-	access engine.Access[heapdomain.Value, Index], row engine.Row, operand Index,
+	frame engine.Frame[heapdomain.Value, Index], operand Index,
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
@@ -101,24 +99,24 @@ func transferRawSetView(
 	}
 	view := rawSetView{}
 	var ok bool
-	view.keyCount, ok = engine.SelectionCount(access, row, keys)
+	view.keyCount, ok = engine.SelectionCount(frame, keys)
 	if !ok {
 		return rawSetView{}, false
 	}
-	view.heapCount, ok = engine.SelectionCount(access, row, heaps)
+	view.heapCount, ok = engine.SelectionCount(frame, heaps)
 	if !ok {
 		return rawSetView{}, false
 	}
-	view.packCount, ok = engine.SelectionCount(access, row, packs)
+	view.packCount, ok = engine.SelectionCount(frame, packs)
 	if !ok {
 		return rawSetView{}, false
 	}
-	view.sourceCount, ok = engine.SelectionCount(access, row, sources)
+	view.sourceCount, ok = engine.SelectionCount(frame, sources)
 	if !ok {
 		return rawSetView{}, false
 	}
-	if !buildTransferIndex(access, row, packs, view.packCount, &scratch.pack) ||
-		!buildTransferIndex(access, row, sources, view.sourceCount, &scratch.source) {
+	if !buildTransferIndex(frame, packs, view.packCount, &scratch.pack) ||
+		!buildTransferIndex(frame, sources, view.sourceCount, &scratch.source) {
 		return rawSetView{}, false
 	}
 	if _, dynamic := operand.DynamicKey(); dynamic {
@@ -126,7 +124,7 @@ func transferRawSetView(
 			return rawSetView{}, false
 		}
 		if view.keyCount == 1 {
-			view.key = transferSelectionValue(access, row, keys, nil, uint64(1))
+			view.key = transferSelectionValue(frame, keys, nil, uint64(1))
 			if !view.key.valid || !view.key.found {
 				return rawSetView{}, false
 			}
@@ -135,10 +133,10 @@ func transferRawSetView(
 		return rawSetView{}, false
 	}
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
-		return transferSelectionValue(access, row, packs, &scratch.pack, tag)
+		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
 	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
-		return transferSelectionValue(access, row, sources, &scratch.source, tag)
+		return transferSelectionValue(frame, sources, &scratch.source, tag)
 	}
 	return view, true
 }
@@ -181,8 +179,8 @@ func rawSetSelectionShape(access Index, descriptor rawPayload, view rawSetView) 
 	return view.packCount == wantPack && view.sourceCount == int(descriptor.sourceCount)
 }
 
-// mutateRoute is the common Heap-owned reducer used by transfer and
-// evidence. It consumes one selected predecessor route, one exact sealed RHS
+// mutateRoute is the common Heap-owned reducer used by Fold. It consumes one
+// selected predecessor route, one exact sealed RHS
 // descriptor, and existing Pack/Value observations, then joins only the
 // branches returned by RawStore/RawDelete. Frozen/error outcomes widen to
 // Heap.Top and are never converted into ordinary writes.

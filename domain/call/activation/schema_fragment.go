@@ -10,17 +10,16 @@ import (
 // SchemaFragment is Call activation's callback-free structural Rule surface.
 // It retains only the activation family, structural Rule, and exact Call read.
 type SchemaFragment struct {
-	semantic  identity.SemanticKey
-	admission identity.SemanticKey
-	family    engine.SchemaActivationFamily
-	slot      *engine.SchemaActivationRuleSlot
-	input     engine.SchemaInput
-	read      engine.SchemaReadSlot[calldomain.Value]
+	semantic identity.SemanticKey
+	family   engine.SchemaActivationFamily
+	slot     *engine.SchemaActivationRuleSlot
+	input    engine.SchemaInput
+	read     engine.SchemaReadSlot[calldomain.Value]
 }
 
 // DeclareSchema records the one-input trusted structural activation Rule.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admission identity.SemanticKey, owner *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, familySemantic, admission) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic identity.SemanticKey, owner *callowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, familySemantic) {
 		return nil, false
 	}
 	family, ok := engine.DeclareSchemaActivationFamily(builder, familySemantic)
@@ -29,7 +28,6 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admi
 	}
 	slot, ok := engine.DeclareSchemaActivationRule(builder, engine.SchemaStructuralRuleSpec{
 		Semantic: semantic, Inputs: 1,
-		Admission:  engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: admission},
 		Activation: family,
 	})
 	if !ok {
@@ -43,7 +41,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, familySemantic, admi
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{semantic: semantic, admission: admission, family: family, slot: slot, input: input, read: read}, true
+	return &SchemaFragment{semantic: semantic, family: family, slot: slot, input: input, read: read}, true
 }
 
 func (fragment *SchemaFragment) ActivationSlot() *engine.SchemaActivationRuleSlot {

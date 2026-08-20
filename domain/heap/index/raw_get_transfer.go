@@ -9,9 +9,8 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// rawGetView is the read-only input to the one raw-get reduction. Transfer
-// and evidence provide different authenticated observation capabilities, but
-// both execute this same domain reduction.
+// rawGetView is the read-only input to the one raw-get reduction. The Fold
+// consumes only authenticated owner-issued observations.
 type rawGetView struct {
 	scratch     *rawGetScratch
 	key         rawSelected[valuedomain.Value]
@@ -33,64 +32,64 @@ type rawSelected[V any] struct {
 	valid   bool
 }
 
-func (rule *RawGetRule) transfer(access engine.Access[valuedomain.Value, Index]) bool {
-	operand, ok := engine.Operand(access)
+func (rule *RawGetRule) fold(frame engine.Frame[valuedomain.Value, Index]) engine.RuleResult[valuedomain.Value] {
+	operand, ok := engine.Operand(frame)
 	if !ok || !rule.owns(operand) {
-		return false
+		return engine.RuleResult[valuedomain.Value]{}
 	}
-	return engine.Product(access, func(row engine.Row) bool {
-		receiverCells, receiverOK := engine.ReadValue(access, row, rule.receiver)
-		keys, keyOK := engine.ReadValue(access, row, rule.key)
-		calls, callOK := engine.ReadValue(access, row, rule.call)
-		heaps, heapOK := engine.ReadValue(access, row, rule.heapRead)
-		packs, packOK := engine.ReadValue(access, row, rule.packRead)
-		sources, sourceOK := engine.ReadValue(access, row, rule.sourceRead)
-		if !receiverOK || !keyOK || !callOK || !heapOK || !packOK || !sourceOK || receiverCells.Count() != 1 {
-			return false
+	receiverCells, receiverOK := engine.ReadValue(frame, rule.receiver)
+	keys, keyOK := engine.ReadValue(frame, rule.key)
+	calls, callOK := engine.ReadValue(frame, rule.call)
+	heaps, heapOK := engine.ReadValue(frame, rule.heapRead)
+	packs, packOK := engine.ReadValue(frame, rule.packRead)
+	sources, sourceOK := engine.ReadValue(frame, rule.sourceRead)
+	if !receiverOK || !keyOK || !callOK || !heapOK || !packOK || !sourceOK || receiverCells.Count() != 1 {
+		return engine.RuleResult[valuedomain.Value]{}
+	}
+	receiver, receiverPresent, receiverAvailable := receiverCells.At(0)
+	if !receiverAvailable {
+		return engine.RuleResult[valuedomain.Value]{}
+	}
+	if !receiverPresent {
+		if !transferSelectionsEmpty(frame, keys, calls, heaps, packs, sources) {
+			return engine.RuleResult[valuedomain.Value]{}
 		}
-		receiver, receiverPresent, receiverAvailable := receiverCells.At(0)
-		if !receiverAvailable {
-			return false
-		}
-		if !receiverPresent {
-			return transferSelectionsEmpty(access, row, keys, calls, heaps, packs, sources) && engine.NoCandidate(access, row)
-		}
-		scratch := rule.takeScratch()
-		defer rule.putScratch(scratch)
-		view, ok := transferRawGetView(access, row, operand, keys, calls, heaps, packs, sources, scratch)
-		if !ok {
-			return false
-		}
-		result, contributed, valid := rule.reduce(operand, receiver, view)
-		if !valid {
-			return false
-		}
-		if !contributed {
-			return engine.NoCandidate(access, row)
-		}
-		return engine.StageValue(access, row, result)
-	})
+		return engine.NoCandidate(frame)
+	}
+	scratch := rule.takeScratch()
+	defer rule.putScratch(scratch)
+	view, ok := transferRawGetView(frame, operand, keys, calls, heaps, packs, sources, scratch)
+	if !ok {
+		return engine.RuleResult[valuedomain.Value]{}
+	}
+	result, contributed, valid := rule.reduce(operand, receiver, view)
+	if !valid {
+		return engine.RuleResult[valuedomain.Value]{}
+	}
+	if !contributed {
+		return engine.NoCandidate(frame)
+	}
+	return engine.Staged(frame, result)
 }
 
 func transferSelectionsEmpty(
-	access engine.Access[valuedomain.Value, Index],
-	row engine.Row,
+	frame engine.Frame[valuedomain.Value, Index],
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
 	sources engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]],
 ) bool {
-	keyCount, keyOK := engine.SelectionCount(access, row, keys)
-	callCount, callOK := engine.SelectionCount(access, row, calls)
-	heapCount, heapOK := engine.SelectionCount(access, row, heaps)
-	packCount, packOK := engine.SelectionCount(access, row, packs)
-	sourceCount, sourceOK := engine.SelectionCount(access, row, sources)
+	keyCount, keyOK := engine.SelectionCount(frame, keys)
+	callCount, callOK := engine.SelectionCount(frame, calls)
+	heapCount, heapOK := engine.SelectionCount(frame, heaps)
+	packCount, packOK := engine.SelectionCount(frame, packs)
+	sourceCount, sourceOK := engine.SelectionCount(frame, sources)
 	return keyOK && callOK && heapOK && packOK && sourceOK && keyCount == 0 && callCount == 0 && heapCount == 0 && packCount == 0 && sourceCount == 0
 }
 
 func transferRawGetView(
-	access engine.Access[valuedomain.Value, Index], row engine.Row, operand Index,
+	frame engine.Frame[valuedomain.Value, Index], operand Index,
 	keys engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]],
 	calls engine.Selection[uint64, engine.OrderedCells[calldomain.Value]],
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
@@ -103,49 +102,49 @@ func transferRawGetView(
 	}
 	view := rawGetView{scratch: scratch}
 	var ok bool
-	view.keyCount, ok = engine.SelectionCount(access, row, keys)
+	view.keyCount, ok = engine.SelectionCount(frame, keys)
 	if !ok {
 		return rawGetView{}, false
 	}
-	view.callCount, ok = engine.SelectionCount(access, row, calls)
+	view.callCount, ok = engine.SelectionCount(frame, calls)
 	if !ok {
 		return rawGetView{}, false
 	}
-	view.heapCount, ok = engine.SelectionCount(access, row, heaps)
+	view.heapCount, ok = engine.SelectionCount(frame, heaps)
 	if !ok {
 		return rawGetView{}, false
 	}
-	view.packCount, ok = engine.SelectionCount(access, row, packs)
+	view.packCount, ok = engine.SelectionCount(frame, packs)
 	if !ok {
 		return rawGetView{}, false
 	}
-	view.sourceCount, ok = engine.SelectionCount(access, row, sources)
+	view.sourceCount, ok = engine.SelectionCount(frame, sources)
 	if !ok {
 		return rawGetView{}, false
 	}
-	if !buildTransferIndex(access, row, calls, view.callCount, &scratch.call) ||
-		!buildTransferIndex(access, row, heaps, view.heapCount, &scratch.heap) ||
-		!buildTransferIndex(access, row, packs, view.packCount, &scratch.pack) ||
-		!buildTransferIndex(access, row, sources, view.sourceCount, &scratch.value) {
+	if !buildTransferIndex(frame, calls, view.callCount, &scratch.call) ||
+		!buildTransferIndex(frame, heaps, view.heapCount, &scratch.heap) ||
+		!buildTransferIndex(frame, packs, view.packCount, &scratch.pack) ||
+		!buildTransferIndex(frame, sources, view.sourceCount, &scratch.value) {
 		return rawGetView{}, false
 	}
 	if _, dynamic := operand.DynamicKey(); dynamic {
-		view.key = transferSelectionValue(access, row, keys, nil, uint64(1))
+		view.key = transferSelectionValue(frame, keys, nil, uint64(1))
 		if !view.key.valid || !view.key.found {
 			return rawGetView{}, false
 		}
 	}
 	view.call = func(tag uint64) rawSelected[calldomain.Value] {
-		return transferSelectionValue(access, row, calls, &scratch.call, tag)
+		return transferSelectionValue(frame, calls, &scratch.call, tag)
 	}
 	view.heap = func(tag heapdomain.RawRouteTag, _ heapdomain.Key) rawSelected[heapdomain.Value] {
-		return transferSelectionValue(access, row, heaps, &scratch.heap, tag)
+		return transferSelectionValue(frame, heaps, &scratch.heap, tag)
 	}
 	view.pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
-		return transferSelectionValue(access, row, packs, &scratch.pack, tag)
+		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
 	view.source = func(tag rawSourceTag) rawSelected[valuedomain.Value] {
-		return transferSelectionValue(access, row, sources, &scratch.value, tag)
+		return transferSelectionValue(frame, sources, &scratch.value, tag)
 	}
 	return view, true
 }
@@ -153,11 +152,11 @@ func transferRawGetView(
 func transferSelectionValue[Out any, O any, S any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }](
-	access engine.Access[Out, O], row engine.Row, selection engine.Selection[Tag, engine.OrderedCells[S]], index *rawSelectionIndex, want Tag,
+	frame engine.Frame[Out, O], selection engine.Selection[Tag, engine.OrderedCells[S]], index *rawSelectionIndex, want Tag,
 ) rawSelected[S] {
 	ordinal := 0
 	if index == nil {
-		count, ok := engine.SelectionCount(access, row, selection)
+		count, ok := engine.SelectionCount(frame, selection)
 		if !ok || count != 1 {
 			return rawSelected[S]{}
 		}
@@ -168,7 +167,7 @@ func transferSelectionValue[Out any, O any, S any, Tag interface {
 		}
 		ordinal = found
 	}
-	tag, cells, selected := engine.SelectionAt(access, row, selection, ordinal)
+	tag, cells, selected := engine.SelectionAt(frame, selection, ordinal)
 	if !selected || tag != want || cells.Count() != 1 {
 		return rawSelected[S]{}
 	}
@@ -181,9 +180,9 @@ func transferSelectionValue[Out any, O any, S any, Tag interface {
 
 func buildTransferIndex[Out any, O any, S any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](access engine.Access[Out, O], row engine.Row, selection engine.Selection[Tag, engine.OrderedCells[S]], count int, index *rawSelectionIndex) bool {
+}](frame engine.Frame[Out, O], selection engine.Selection[Tag, engine.OrderedCells[S]], count int, index *rawSelectionIndex) bool {
 	return index.build(count, func(ordinal int) (uint64, bool) {
-		tag, cells, selected := engine.SelectionAt(access, row, selection, ordinal)
+		tag, cells, selected := engine.SelectionAt(frame, selection, ordinal)
 		if !selected || cells.Count() != 1 {
 			return 0, false
 		}

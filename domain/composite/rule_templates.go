@@ -72,7 +72,7 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	}
 
 	add(WireRule(valuesource.RuleEntry[P, A](), valuesource.DeclareRule[P], valuesource.RegisterRule, nil, valuesource.BindRule[A], nil, nil, valuesource.SealProgramRule, nil))
-	add(WireRule(packsource.RuleEntry[P, A](), packsource.DeclareRule[P], packsource.RegisterRule, nil, packsource.BindRule[A], packsource.FinalizeRule[A], nil, packsource.SealProgramRule, nil))
+	add(WireRule(packsource.RuleEntry[P, A](), packsource.DeclareRule[P], packsource.RegisterRule, nil, packsource.BindRule[A], nil, nil, packsource.SealProgramRule, nil))
 	add(WireRule(heapingress.RuleEntry[P, A](), heapingress.DeclareRule[P], heapingress.RegisterRule, nil, heapingress.BindRule[A], heapingress.FinalizeRule[A], nil, heapingress.SealProgramRule, nil))
 	add(WireRule(valueallocation.RuleEntry[P, A](), valueallocation.DeclareRule[P], valueallocation.RegisterRule, nil, valueallocation.BindRule[A], nil, nil, valueallocation.SealProgramRule, nil))
 	add(WireRule(heapempty.RuleEntry[P, A](), heapempty.DeclareRule[P], heapempty.RegisterRule, nil, heapempty.BindRule[A], nil, nil, heapempty.SealProgramRule, nil))
@@ -83,7 +83,7 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	add(WireRule(callsite.SelectedEntry[P, A](), callsite.DeclareSelected[P], callsite.RegisterSelected, nil, callsite.BindSelected[A], callsite.FinalizeSelected[A], nil, callsite.SealProgramRule, nil))
 	add(WireRule(callsite.OpaqueEntry[P, A](), callsite.DeclareOpaque[P], callsite.RegisterOpaque, nil, callsite.BindOpaque[A], callsite.FinalizeOpaque[A], nil, callsite.SealProgramRule, nil))
 	add(WireRule(callsite.BodyEntry[P, A](), callsite.DeclareBody[P], callsite.RegisterBody, nil, callsite.BindBody[A], callsite.FinalizeBody[A], nil, callsite.SealBodyProgramRule, nil))
-	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], callactivation.FinalizeRule[A], nil, nil, activationRule))
+	add(WireRule(callactivation.RuleEntry[P, A](), callactivation.DeclareRule[P], callactivation.RegisterRule, nil, callactivation.BindRule[A], nil, nil, nil, activationRule))
 	add(WireRule(valueruntimekind.RuleEntry[P, A](), valueruntimekind.DeclareRule[P], valueruntimekind.RegisterRule, nil, valueruntimekind.BindRule[A], nil, nil, valueruntimekind.SealProgramRule, nil))
 	add(WireRule(valuebootstrap.RuleEntry[P, A](), valuebootstrap.DeclareRule[P], valuebootstrap.RegisterRule, nil, valuebootstrap.BindRule[A], valuebootstrap.FinalizeRule[A], valuebootstrap.LinkCatalog, valuebootstrap.SealProgramRule, nil))
 	add(WireRule(heapbootstrap.RuleEntry[P, A](), heapbootstrap.DeclareRule[P], heapbootstrap.RegisterRule, heapbootstrap.PairRule, heapbootstrap.BindRule[A], heapbootstrap.FinalizeRule[A], heapbootstrap.LinkCatalog, heapbootstrap.SealProgramRule, nil))

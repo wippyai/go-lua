@@ -2,7 +2,6 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -22,7 +21,7 @@ type HotRule struct {
 // path never reopens Link or Flow topology.
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[value.Value]]
@@ -30,30 +29,27 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		OperandContent: func(transfer value.StorageTransfer) (value.StorageTransfer, [32]byte, bool) {
 			return hotStorageTransferContent(owner.Schema(), transfer)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotTransferChecker(owner, fragment.semantic, &runtimeRead)),
-		Transfer: func(access engine.Access[value.Value, value.StorageTransfer]) bool {
-			transfer, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[value.Value, value.StorageTransfer]) engine.RuleResult[value.Value] {
+			transfer, operandOK := engine.Operand(frame)
 			if !operandOK {
-				return false
+				return engine.RuleResult[value.Value]{}
 			}
 			_, _, endpointsOK := hotStorageTransferEndpoints(owner.Schema(), transfer)
 			if !endpointsOK {
-				return false
+				return engine.RuleResult[value.Value]{}
 			}
-			return engine.Product(access, func(row engine.Row) bool {
-				cells, readOK := engine.ReadValue(access, row, runtimeRead)
-				if !readOK || cells.Count() != 1 {
-					return false
-				}
-				fact, present, available := cells.At(0)
-				if !available {
-					return false
-				}
-				if !present {
-					return engine.NoCandidate(access, row)
-				}
-				return engine.StageValue(access, row, fact)
-			})
+			cells, readOK := engine.ReadValue(frame, runtimeRead)
+			if !readOK || cells.Count() != 1 {
+				return engine.RuleResult[value.Value]{}
+			}
+			fact, present, available := cells.At(0)
+			if !available {
+				return engine.RuleResult[value.Value]{}
+			}
+			if !present {
+				return engine.NoCandidate(frame)
+			}
+			return engine.Staged(frame, fact)
 		},
 	}, engine.HotCarrySpec[value.Value, value.StorageTransfer]{}, func(transfer value.StorageTransfer) (uint64, bool) {
 		from, _, ok := hotStorageTransferEndpoints(owner.Schema(), transfer)
@@ -127,49 +123,4 @@ func hotStorageTransferEndpoints(schema *value.Schema, transfer value.StorageTra
 		return value.Coordinate{}, value.Coordinate{}, false
 	}
 	return from, to, true
-}
-
-func hotTransferChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, read *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.StorageTransfer] {
-	return func(derivation engine.RuleDerivation[value.Value, value.StorageTransfer]) (engine.RuleEvidence, bool) {
-		if owner == nil || owner.Schema() == nil || read == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
-			return engine.RuleEvidence{}, false
-		}
-		transfer, operandOK := derivation.Operand()
-		canonical, digest, contentOK := hotStorageTransferContent(owner.Schema(), transfer)
-		from, to, endpointsOK := hotStorageTransferEndpoints(owner.Schema(), canonical)
-		input, inputOK := derivation.InputAt(0)
-		if !operandOK || !contentOK || !endpointsOK || !derivation.OperandContentMatches(digest) || !inputOK || input.Guard().Empty() ||
-			!valueowner.ReadMatches(owner, derivation, *read, from) {
-			return engine.RuleEvidence{}, false
-		}
-		for index := 0; index < derivation.DispositionCount(); index++ {
-			disposition, dispositionOK := derivation.DispositionAt(index)
-			if !dispositionOK || disposition.Guard().Empty() {
-				return engine.RuleEvidence{}, false
-			}
-			cells, cellsOK := engine.DerivationDispositionReadValue(derivation, disposition, *read)
-			if !cellsOK || cells.Count() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			fact, present, available := cells.At(0)
-			if !available {
-				return engine.RuleEvidence{}, false
-			}
-			if !present {
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-				continue
-			}
-			if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			target, targetOK := disposition.TargetAt(0)
-			actual, valueOK := disposition.Value()
-			if !targetOK || !valueOK || !owner.TargetMatches(target, to) || !owner.Schema().Equal(actual, fact) {
-				return engine.RuleEvidence{}, false
-			}
-		}
-		return derivation.Accept()
-	}
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
-	"github.com/wippyai/go-lua/analysis/program/target/contract"
+	contractvalue "github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -75,6 +75,9 @@ func TestTargetBehaviorProjection(t *testing.T) {
 	if !left.OwnsTarget(known) || left.OwnsTarget(foreignTarget) {
 		t.Fatal("Target owner fence was not preserved")
 	}
+	if !left.OwnsTargetContract(contract) || left.OwnsTargetContract(nil) || left.OwnsTargetContract(new(contractvalue.Contract)) {
+		t.Fatal("Target Contract owner fence was not preserved")
+	}
 	if known.BehaviorResultCount() != 1 || known.BehaviorPredicateCount() != 1 {
 		t.Fatalf("behavior rows = %d/%d, want 1/1", known.BehaviorResultCount(), known.BehaviorPredicateCount())
 	}
@@ -103,7 +106,7 @@ func TestTargetBehaviorProjection(t *testing.T) {
 	}
 }
 
-func behaviorTestAlgebra(contract *contract.Contract, owner link.OwnerCapability, operation, plain vocabulary.Operation) *Algebra {
+func behaviorTestAlgebra(contract *contractvalue.Contract, owner link.OwnerCapability, operation, plain vocabulary.Operation) *Algebra {
 	firstKey := targetKey{kind: targetSeed, seedID: identity.ContentID{1}}
 	secondKey := targetKey{kind: targetSeed, seedID: identity.ContentID{2}}
 	return &Algebra{

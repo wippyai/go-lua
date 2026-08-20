@@ -8,23 +8,21 @@ import (
 )
 
 // SchemaFragment is Value/source's callback-free Rule surface. It retains no
-// source checker, operand content function, transfer, or mounted identity.
+// operand content function, transfer, or mounted identity.
 type SchemaFragment struct {
 	slot     *engine.RuleSlot[value.Value, value.SourceSeed]
 	write    engine.SchemaWriteSlot[value.Value]
 	semantic identity.SemanticKey
-	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the zero-input Value source Rule shape.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, value.SourceSeed](builder, engine.SchemaRuleSpec[value.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 0,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    owner.Ref(),
+		Output: owner.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -33,7 +31,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, write: write, semantic: semantic, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, write: write, semantic: semantic}, true
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.SourceSeed] {

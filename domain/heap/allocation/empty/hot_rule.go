@@ -20,13 +20,13 @@ type HotRule struct {
 	schema         heapdomain.Schema
 }
 
-// BindHot attaches Empty's private transform, transfer, and evidence checker
-// to its exact cold fragment through Heap's already-bound output Factor.
+// BindHot attaches Empty's private transform and exact row fold to its cold
+// fragment through Heap's already-bound output Factor.
 func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *allocationcatalog.Catalog) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.Schema().Valid() ||
 		catalog == nil || !catalog.FencedToHeap(owner.Schema()) ||
-		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!identity.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
+		!fragment.semantic.Available() || !fragment.transform.Available() ||
+		!identity.DistinctKeys(fragment.semantic, fragment.transform) {
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[heapdomain.Value]]
@@ -36,27 +36,27 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 		OperandContent: func(operand source.Root) (source.Root, [32]byte, bool) {
 			return emptyContent(owner.Schema(), operand)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotEmptyChecker(owner, fragment.semantic, fragment.transform, &runtimeRead)),
-		Transfer: func(access engine.Access[heapdomain.Value, source.Root]) bool {
-			operand, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[heapdomain.Value, source.Root]) engine.RuleResult[heapdomain.Value] {
+			operand, operandOK := engine.Operand(frame)
 			if !operandOK {
-				return false
+				return engine.RuleResult[heapdomain.Value]{}
 			}
-			return engine.Product(access, func(row engine.Row) bool {
-				cells, cellsOK := engine.ReadValue(access, row, runtimeRead)
-				if !cellsOK || cells.Count() != 1 {
-					return false
-				}
-				predecessor, present, available := cells.At(0)
-				if !available {
-					return false
-				}
-				if !present {
-					return engine.NoCandidate(access, row)
-				}
-				_, next, resultOK := emptyResult(owner.Schema(), operand, predecessor)
-				return resultOK && engine.StageValue(access, row, next)
-			})
+			cells, cellsOK := engine.ReadValue(frame, runtimeRead)
+			if !cellsOK || cells.Count() != 1 {
+				return engine.RuleResult[heapdomain.Value]{}
+			}
+			predecessor, present, available := cells.At(0)
+			if !available {
+				return engine.RuleResult[heapdomain.Value]{}
+			}
+			if !present {
+				return engine.NoCandidate(frame)
+			}
+			_, next, resultOK := emptyResult(owner.Schema(), operand, predecessor)
+			if !resultOK {
+				return engine.RuleResult[heapdomain.Value]{}
+			}
+			return engine.Staged(frame, next)
 		},
 	}, engine.HotCarrySpec[heapdomain.Value, source.Root]{
 		Apply: func(operand source.Root, predecessor heapdomain.Value) (heapdomain.Value, bool) {
@@ -135,48 +135,4 @@ func emptyResult(schema heapdomain.Schema, operand source.Root, predecessor heap
 	}
 	next, nextOK := schema.Create(predecessor, operand.Key(), fresh)
 	return operand.Key(), next, nextOK
-}
-
-func hotEmptyChecker(owner *heapowner.HotOwner, semantic, transform identity.SemanticKey, read *engine.Read[engine.OrderedCells[heapdomain.Value]]) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
-	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Root]) (engine.RuleEvidence, bool) {
-		if owner == nil || read == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		operand, operandOK := derivation.Operand()
-		id, idOK := operand.ID()
-		ref, refOK := owner.Ref(operand.Key())
-		input, inputOK := derivation.InputAt(0)
-		if !operandOK || !idOK || operand.Form() != source.FormEmpty || !operand.FencedTo(owner.Schema()) || !refOK || !inputOK || input.Guard().Empty() || !derivation.OperandContentMatches([32]byte(id)) || !engine.DerivationReadMatchesRef(derivation, *read, ref) {
-			return engine.RuleEvidence{}, false
-		}
-		for index := 0; index < derivation.DispositionCount(); index++ {
-			disposition, dispositionOK := derivation.DispositionAt(index)
-			if !dispositionOK || disposition.Guard().Empty() {
-				return engine.RuleEvidence{}, false
-			}
-			cells, cellsOK := engine.DerivationDispositionReadValue(derivation, disposition, *read)
-			if !cellsOK || cells.Count() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			predecessor, present, available := cells.At(0)
-			if !available {
-				return engine.RuleEvidence{}, false
-			}
-			if !present {
-				_, transformed := disposition.CarryTransform()
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || transformed || disposition.TransformOnly() || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-				continue
-			}
-			_, next, nextOK := emptyResult(owner.Schema(), operand, predecessor)
-			target, targetOK := disposition.TargetAt(0)
-			actual, actualOK := disposition.Value()
-			carry, transformed := disposition.CarryTransform()
-			if !nextOK || !targetOK || !actualOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TransformOnly() || !transformed || carry != transform || disposition.TargetCount() != 1 || !engine.TargetMatchesRef(target, ref) || !owner.Schema().Domain().Equal(actual, next) {
-				return engine.RuleEvidence{}, false
-			}
-		}
-		return derivation.Accept()
-	}
 }

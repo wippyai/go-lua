@@ -22,14 +22,13 @@ type HotRule struct {
 // artifact/target-batch join; this binder neither accepts fabricable route
 // rows nor reopens Program or Flow state.
 func BindHot(fragment *SchemaFragment, owner *callowner.HotOwner, catalog *TargetBatchCatalog) (*HotRule, bool) {
-	if fragment == nil || fragment.slot == nil || !fragment.semantic.Available() || !fragment.admission.Available() ||
+	if fragment == nil || fragment.slot == nil || !fragment.semantic.Available() ||
 		owner == nil || owner.Algebra() == nil || !owner.Algebra().Valid() || !validHotCatalog(catalog, owner) {
 		return nil, false
 	}
 	rule := &HotRule{owner: owner, catalog: catalog}
 	implementation, read, bound := callowner.BindExactActivationRule(owner, fragment.slot, fragment.read, engine.HotActivationSpec{
-		Admission: engine.AdmitActivationByTrustedTheorem(fragment.admission),
-		Run:       rule.run,
+		Fold: rule.fold,
 	})
 	if !bound || implementation == nil {
 		return nil, false
@@ -66,22 +65,33 @@ func BindMountedTransport[V, C, H, P, E any](rule *HotRule, value engine.FactorR
 	return true
 }
 
-func (rule *HotRule) run(activation engine.Activation) bool {
+func (rule *HotRule) fold(frame engine.ActivationFrame) engine.ActivationResult {
 	if rule == nil || rule.owner == nil || rule.owner.Algebra() == nil {
-		return false
+		return engine.ActivationResult{}
 	}
-	application, applicationOK := engine.ActivationApplication(activation)
-	cells, readOK := engine.ActivationReadValue(activation, rule.read)
+	application, applicationOK := engine.ActivationApplication(frame)
+	cells, readOK := engine.ActivationReadValue(frame, rule.read)
 	if !applicationOK || !readOK || cells.Count() != 1 {
-		return false
+		return engine.ActivationResult{}
 	}
 	value, present, available := cells.At(0)
 	if !available || !present {
-		return available
+		if available {
+			return engine.Activated(frame)
+		}
+		return engine.ActivationResult{}
 	}
-	return rule.visit(value, func(item route) bool {
-		return engine.Activate(activation, application, item.target, item.endpoint)
-	})
+	locators := make([]engine.ActivationLocator, 0)
+	if !rule.visit(value, func(item route) bool {
+		locator, ok := engine.NewActivationLocator(application, item.target, item.endpoint)
+		if ok {
+			locators = append(locators, locator)
+		}
+		return ok
+	}) {
+		return engine.ActivationResult{}
+	}
+	return engine.Activated(frame, locators...)
 }
 
 func (rule *HotRule) visit(value calldomain.Value, apply func(route) bool) bool {

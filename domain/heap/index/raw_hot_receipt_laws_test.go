@@ -698,15 +698,15 @@ return b.source`)})
 	builder := engine.NewSchema()
 	valueFragment, valueFragmentOK := valueowner.DeclareSchema(builder, rawHotKey(1), rawHotKey(2), rawHotKey(101))
 	callFragment, callFragmentOK := callowner.DeclareSchema(builder, rawHotKey(3))
-	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, rawHotKey(4))
+	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, rawHotKey(4), rawHotKey(16))
 	packFragment, packFragmentOK := packowner.DeclareSchema(builder, rawHotKey(5))
-	getFragment, getFragmentOK := indexdomain.DeclareRawGetSchema(builder, rawHotKey(6), rawHotKey(7), rawHotKey(8), valueFragment, callFragment, heapFragment, packFragment)
-	setFragment, setFragmentOK := indexdomain.DeclareRawSetSchema(builder, rawHotKey(9), rawHotKey(10), rawHotKey(11), valueFragment, heapFragment, packFragment)
+	getFragment, getFragmentOK := indexdomain.DeclareRawGetSchema(builder, rawHotKey(6), rawHotKey(7), valueFragment, callFragment, heapFragment, packFragment)
+	setFragment, setFragmentOK := indexdomain.DeclareRawSetSchema(builder, rawHotKey(9), rawHotKey(10), valueFragment, heapFragment, packFragment)
 	valueSeedRules := make([]*engine.RuleSlot[valuedomain.Value, identity.ContentID], len(plan.valueCoordinates))
 	valueSeedWrites := make([]engine.SchemaWriteSlot[valuedomain.Value], len(plan.valueCoordinates))
 	valueSeedOK := true
 	for index := range valueSeedRules {
-		seedRule, seedRuleOK := engine.DeclareRuleSlot[valuedomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[valuedomain.Value]{Semantic: rawHotKey(byte(20 + index*3)), OperandFamily: rawHotKey(byte(21 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(22 + index*3))}, Output: valueFragment.Ref()})
+		seedRule, seedRuleOK := engine.DeclareRuleSlot[valuedomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[valuedomain.Value]{Semantic: rawHotKey(byte(20 + index*3)), OperandFamily: rawHotKey(byte(21 + index*3)), Inputs: 0, Output: valueFragment.Ref()})
 		seedWrite, seedWriteOK := engine.SchemaWrite(seedRule, valueFragment.ExactWrite())
 		valueSeedRules[index], valueSeedWrites[index], valueSeedOK = seedRule, seedWrite, valueSeedOK && seedRuleOK && seedWriteOK
 	}
@@ -714,7 +714,7 @@ return b.source`)})
 	heapSeedWrites := make([]engine.SchemaWriteSlot[heapdomain.Value], len(plan.heapKeys))
 	heapSeedOK := true
 	for index := range heapSeedRules {
-		seedRule, seedRuleOK := engine.DeclareRuleSlot[heapdomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[heapdomain.Value]{Semantic: rawHotKey(byte(40 + index*3)), OperandFamily: rawHotKey(byte(41 + index*3)), Inputs: 0, Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisTrustedTheorem, Identity: rawHotKey(byte(42 + index*3))}, Output: heapFragment.Ref()})
+		seedRule, seedRuleOK := engine.DeclareRuleSlot[heapdomain.Value, identity.ContentID](builder, engine.SchemaRuleSpec[heapdomain.Value]{Semantic: rawHotKey(byte(40 + index*3)), OperandFamily: rawHotKey(byte(41 + index*3)), Inputs: 0, Output: heapFragment.Ref()})
 		seedWrite, seedWriteOK := engine.SchemaWrite(seedRule, heapFragment.ExactWrite())
 		heapSeedRules[index], heapSeedWrites[index], heapSeedOK = seedRule, seedWrite, heapSeedOK && seedRuleOK && seedWriteOK
 	}
@@ -747,9 +747,8 @@ return b.source`)})
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
-			Admission: engine.AdmitRuleByTrustedTheorem[valuedomain.Value, identity.ContentID](rawHotKey(byte(22 + index*3))),
-			Transfer: func(access engine.Access[valuedomain.Value, identity.ContentID]) bool {
-				return engine.Product(access, func(row engine.Row) bool { return engine.StageValue(access, row, fact) })
+			Fold: func(frame engine.Frame[valuedomain.Value, identity.ContentID]) engine.RuleResult[valuedomain.Value] {
+				return engine.Staged(frame, fact)
 			},
 		}, func(operand identity.ContentID) (uint64, bool) { return local, operand == occurrence })
 		valueSeedBindOK = valueSeedBindOK && implementationOK && implementation.InstallOperandResolver(func(coords engine.OperandCoords) (identity.ContentID, bool) {
@@ -771,9 +770,8 @@ return b.source`)})
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
-			Admission: engine.AdmitRuleByTrustedTheorem[heapdomain.Value, identity.ContentID](rawHotKey(byte(42 + index*3))),
-			Transfer: func(access engine.Access[heapdomain.Value, identity.ContentID]) bool {
-				return engine.Product(access, func(row engine.Row) bool { return engine.StageValue(access, row, fact) })
+			Fold: func(frame engine.Frame[heapdomain.Value, identity.ContentID]) engine.RuleResult[heapdomain.Value] {
+				return engine.Staged(frame, fact)
 			},
 		}, func(operand identity.ContentID) (uint64, bool) { return local, operand == occurrence })
 		heapSeedBindOK = heapSeedBindOK && implementationOK && implementation.InstallOperandResolver(func(coords engine.OperandCoords) (identity.ContentID, bool) {

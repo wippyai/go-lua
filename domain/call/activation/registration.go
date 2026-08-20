@@ -45,18 +45,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneActivation,
 		Semantic: "semantic/activation/call-body",
-		Roles:    []schema.Key{"semantic/activation-family/call-body", "semantic/activation-admission/call-body"},
+		Roles:    []schema.Key{"semantic/activation-family/call-body"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
 	activation, activationOK := context.Roles.Key("semantic/activation/call-body")
 	family, familyOK := context.Roles.Key("semantic/activation-family/call-body")
-	admission, admissionOK := context.Roles.Key("semantic/activation-admission/call-body")
-	if !activationOK || !familyOK || !admissionOK {
+	if !activationOK || !familyOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, activation, family, admission, context.Principals.CallPrincipal())
+	return DeclareSchema(builder, activation, family, context.Principals.CallPrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -80,14 +79,12 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the call-body activation, the family its variants are
-// grouped under, and the admission its bodies enter by. A role is declared
-// where it is used, so the row and the reference that names it are one
-// package's statement.
+// role vocabulary: the call-body activation and the family its variants are
+// grouped under. A role is declared where it is used, so the row and the
+// reference that names it are one package's statement.
 func StructureSpecs() []structure.Spec {
 	return vocabulary.RoleSpecs(
 		"activation/call-body",
 		"activation-family/call-body",
-		"activation-admission/call-body",
 	)
 }

@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 )
@@ -20,7 +19,7 @@ type HotRule struct {
 // Target, Link, or the BootEntry denominator.
 func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.Schema().Valid() ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	schema := owner.Schema()
@@ -28,19 +27,13 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 		OperandContent: func(root Root) (Root, [32]byte, bool) {
 			return contentForSchema(schema, root)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotBootstrapChecker(owner, fragment.semantic)),
-		Transfer: func(access engine.Access[heapdomain.Value, Root]) bool {
-			root, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[heapdomain.Value, Root]) engine.RuleResult[heapdomain.Value] {
+			root, operandOK := engine.Operand(frame)
 			_, value, resultOK := resultForSchema(schema, root)
 			if !operandOK || !resultOK {
-				return false
+				return engine.RuleResult[heapdomain.Value]{}
 			}
-			rows := 0
-			complete := engine.Product(access, func(row engine.Row) bool {
-				rows++
-				return rows == 1 && engine.StageValue(access, row, value)
-			})
-			return complete && rows == 1
+			return engine.Staged(frame, value)
 		},
 	}, func(root Root) (uint64, bool) {
 		key, _, ok := resultForSchema(schema, root)
@@ -95,26 +88,4 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 		return engine.ProgramRule{}, false
 	}
 	return engine.SealProgramRule(implementation)
-}
-
-func hotBootstrapChecker(owner *heapowner.HotOwner, semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, Root] {
-	return func(derivation engine.RuleDerivation[heapdomain.Value, Root]) (engine.RuleEvidence, bool) {
-		if owner == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		root, operandOK := derivation.Operand()
-		id, idOK := root.ID()
-		key, expected, resultOK := resultForSchema(owner.Schema(), root)
-		disposition, dispositionOK := derivation.DispositionAt(0)
-		if !operandOK || !idOK || !resultOK || !derivation.OperandContentMatches([32]byte(id)) || !dispositionOK ||
-			disposition.Kind() != engine.RuleDispositionStaged || disposition.Guard().Empty() || disposition.TargetCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		target, targetOK := disposition.TargetAt(0)
-		actual, valueOK := disposition.Value()
-		if !targetOK || !valueOK || !owner.TargetMatches(target, key) || !owner.Schema().Domain().Equal(actual, expected) {
-			return engine.RuleEvidence{}, false
-		}
-		return derivation.Accept()
-	}
 }

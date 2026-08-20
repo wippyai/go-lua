@@ -2,7 +2,6 @@ package ingress
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
@@ -22,28 +21,22 @@ type HotRule struct {
 // cold Rule fragment. Heap owner alone attaches the output Factor binding.
 func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || !owner.Schema().Valid() ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	implementation, ok := heapowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[heapdomain.Value, source.Root]{
 		// Root.New issued the complete cold classification receipt. Member,
-		// transfer, and evidence paths authenticate that receipt in O(1).
+		// fold path authenticates that receipt in O(1).
 		OperandContent: func(operand source.Root) (source.Root, [32]byte, bool) {
 			return ingressContent(owner.Schema(), operand)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotIngressChecker(owner, fragment.semantic)),
-		Transfer: func(access engine.Access[heapdomain.Value, source.Root]) bool {
-			operand, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[heapdomain.Value, source.Root]) engine.RuleResult[heapdomain.Value] {
+			operand, operandOK := engine.Operand(frame)
 			_, value, resultOK := ingressResult(owner.Schema(), operand)
 			if !operandOK || !resultOK {
-				return false
+				return engine.RuleResult[heapdomain.Value]{}
 			}
-			rows := 0
-			complete := engine.Product(access, func(row engine.Row) bool {
-				rows++
-				return rows == 1 && engine.StageValue(access, row, value)
-			})
-			return complete && rows == 1
+			return engine.Staged(frame, value)
 		},
 	}, func(operand source.Root) (uint64, bool) {
 		index, ok := owner.Schema().KeyIndex(operand.Key())
@@ -113,25 +106,4 @@ func ingressResult(schema heapdomain.Schema, operand source.Root) (heapdomain.Ke
 	}
 	value, ok := schema.EmptyObject(operand.Key())
 	return operand.Key(), value, ok
-}
-
-func hotIngressChecker(owner *heapowner.HotOwner, semantic identity.SemanticKey) engine.RuleDerivationChecker[heapdomain.Value, source.Root] {
-	return func(derivation engine.RuleDerivation[heapdomain.Value, source.Root]) (engine.RuleEvidence, bool) {
-		if owner == nil || !owner.Schema().Valid() || derivation.Rule() != semantic || derivation.InputCount() != 0 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		operand, operandOK := derivation.Operand()
-		id, idOK := operand.ID()
-		key, expected, resultOK := ingressResult(owner.Schema(), operand)
-		ref, refOK := owner.Ref(key)
-		disposition, dispositionOK := derivation.DispositionAt(0)
-		actual, actualOK := disposition.Value()
-		target, targetOK := disposition.TargetAt(0)
-		if !operandOK || !idOK || !operand.FencedTo(owner.Schema()) || !resultOK || !refOK || !derivation.OperandContentMatches([32]byte(id)) ||
-			!dispositionOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.Guard().Empty() || disposition.TargetCount() != 1 ||
-			!actualOK || !targetOK || !engine.TargetMatchesRef(target, ref) || !owner.Schema().Domain().Equal(actual, expected) {
-			return engine.RuleEvidence{}, false
-		}
-		return derivation.Accept()
-	}
 }

@@ -46,16 +46,17 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-get-raw",
-		Roles:    []schema.Key{"semantic/operand/heap/index-get-raw", "semantic/evidence/heap/index-get-raw"},
+		Roles:    []schema.Key{vocabulary.RoleKey("operand/heap/index-get-raw")},
 	}
 }
 
 func DeclareRawGet[P rawGetPrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*RawGetSchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("heap/index-get-raw")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key(vocabulary.RoleKey("rule/heap/index-get-raw"))
+	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/heap/index-get-raw"))
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareRawGetSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
+	return DeclareRawGetSchema(builder, semantic, operandFamily, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
 }
 
 func RegisterRawGet(binding *engine.SchemaBinding, context rule.Registration[*RawGetSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -95,16 +96,17 @@ func RawSetEntry[P rawSetPrincipals, A rawSetAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-set-raw",
-		Roles:    []schema.Key{"semantic/operand/heap/index-set-raw", "semantic/evidence/heap/index-set-raw"},
+		Roles:    []schema.Key{vocabulary.RoleKey("operand/heap/index-set-raw")},
 	}
 }
 
 func DeclareRawSet[P rawSetPrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*RawSetSchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("heap/index-set-raw")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key(vocabulary.RoleKey("rule/heap/index-set-raw"))
+	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/heap/index-set-raw"))
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareRawSetSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
+	return DeclareRawSetSchema(builder, semantic, operandFamily, context.Principals.ValuePrincipal(), context.Principals.HeapPrincipal(), context.Principals.PackPrincipal())
 }
 
 func RegisterRawSet(binding *engine.SchemaBinding, context rule.Registration[*RawSetSchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -116,12 +118,13 @@ func BindRawSet[A rawSetAuthorities](binding *engine.SchemaBinding, context rule
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the three roles each of its two rules is identified by. A
+// role vocabulary: the rule and operand roles each of its two rules is
+// identified by. A
 // role is declared where it is used, so the row and the reference that names it
 // are one package's statement.
 func StructureSpecs() []structure.Spec {
 	return append(
-		vocabulary.RuleRoleSpecs("heap/index-get-raw"),
-		vocabulary.RuleRoleSpecs("heap/index-set-raw")...,
+		vocabulary.RoleSpecs("rule/heap/index-get-raw", "operand/heap/index-get-raw"),
+		vocabulary.RoleSpecs("rule/heap/index-set-raw", "operand/heap/index-set-raw")...,
 	)
 }

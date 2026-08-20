@@ -31,19 +31,12 @@ type RawSetRule struct {
 // installs them from HotOwners and exact SchemaBinding cells. The reducer
 // never receives a copied Factor, coordinate map, or erased callback.
 type rawSetRuntime struct {
-	values             *valuedomain.Schema
-	heap               heapdomain.Schema
-	valueRoute         func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
-	sourceRoute        func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
-	heapRoute          func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
-	packRoute          func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
-	valueTarget        func(engine.RuleTarget, valuedomain.Coordinate) bool
-	heapTarget         func(engine.RuleTarget, heapdomain.Key) bool
-	valueReadRef       func(engine.RuleDerivation[heapdomain.Value, Index], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
-	valueSelectionRef  func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	sourceSelectionRef func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	heapSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
-	packSelectionRef   func(engine.RuleDerivation[heapdomain.Value, Index], engine.RuleDisposition[heapdomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
+	values      *valuedomain.Schema
+	heap        heapdomain.Schema
+	valueRoute  func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
+	sourceRoute func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
+	heapRoute   func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
+	packRoute   func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
 }
 
 func (rule *RawSetRule) valueSchema() *valuedomain.Schema {
@@ -94,12 +87,6 @@ func (rule *RawSetRule) packRoute(context engine.SelectorContext, root pack.Root
 		return false
 	}
 	return rule.runtime.packRoute(context, root, tag)
-}
-func (rule *RawSetRule) valueTarget(target engine.RuleTarget, coordinate valuedomain.Coordinate) bool {
-	return rule != nil && rule.runtime != nil && rule.runtime.valueTarget != nil && rule.runtime.valueTarget(target, coordinate)
-}
-func (rule *RawSetRule) heapTarget(target engine.RuleTarget, key heapdomain.Key) bool {
-	return rule != nil && rule.runtime != nil && rule.runtime.heapTarget != nil && rule.runtime.heapTarget(target, key)
 }
 
 type rawSetPayload struct {

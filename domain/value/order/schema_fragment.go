@@ -18,7 +18,6 @@ type SchemaFragment struct {
 	carry       engine.SchemaCarrySlot[value.Value]
 	write       engine.SchemaWriteSlot[value.Value]
 	semantic    identity.SemanticKey
-	evidence    identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.BinaryOrder] {
@@ -28,14 +27,13 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[value.Value, value.B
 	return fragment.slot
 }
 
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, owner *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[value.Value, value.BinaryOrder](builder, engine.SchemaRuleSpec[value.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    owner.Ref(),
+		Output: owner.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -51,5 +49,5 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	if !leftOK || !rightOK || !carryOK || !writeOK {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, left: left, right: right, carry: carry, write: write, semantic: semantic, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, left: left, right: right, carry: carry, write: write, semantic: semantic}, true
 }

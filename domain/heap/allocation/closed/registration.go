@@ -42,16 +42,18 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-closed",
-		Roles:    []schema.Key{"semantic/operand/heap/allocation-closed", "semantic/evidence/heap/allocation-closed", "semantic/transform/heap/allocation-closed"},
+		Roles:    []schema.Key{"semantic/operand/heap/allocation-closed", "semantic/transform/heap/allocation-closed"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Transformed("heap/allocation-closed")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/heap/allocation-closed")
+	operand, operandOK := context.Roles.Key("semantic/operand/heap/allocation-closed")
+	transform, transformOK := context.Roles.Key("semantic/transform/heap/allocation-closed")
+	if !semanticOK || !operandOK || !transformOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.HeapPrincipal(), context.Principals.ValuePrincipal())
+	return DeclareSchema(builder, semantic, operand, transform, context.Principals.HeapPrincipal(), context.Principals.ValuePrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -63,10 +65,11 @@ func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Bin
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the four roles its rule is identified by, the transform
-// form included because its output is normalized before admission. A role is
+// role vocabulary: the rule, operand, and transform roles its rule is identified by,
+// the
+// form included because its output is normalized before publication. A role is
 // declared where it is used, so the row and the reference that names it are one
 // package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.TransformedRuleRoleSpecs("heap/allocation-closed")
+	return vocabulary.RoleSpecs("rule/heap/allocation-closed", "operand/heap/allocation-closed", "transform/heap/allocation-closed")
 }

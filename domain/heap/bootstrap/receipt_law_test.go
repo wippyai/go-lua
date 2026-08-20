@@ -37,8 +37,8 @@ func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T)
 	}
 
 	builder := engine.NewSchema()
-	ownerFragment, ownerOK := heapowner.DeclareSchema(builder, bootstrapKey(1))
-	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(2), bootstrapKey(3), bootstrapKey(4), ownerFragment)
+	ownerFragment, ownerOK := heapowner.DeclareSchema(builder, bootstrapKey(1), bootstrapKey(101))
+	fragment, fragmentOK := bootstrap.DeclareSchema(builder, bootstrapKey(2), bootstrapKey(3), ownerFragment)
 	cold, coldOK := builder.Seal()
 	if !ownerOK || !fragmentOK || !coldOK || cold == nil {
 		t.Fatal("bootstrap receipt cold schema")

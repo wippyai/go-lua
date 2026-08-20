@@ -415,6 +415,14 @@ func (algebra *Algebra) LinkOwner() link.OwnerCapability {
 // Owner is the concise alias used by cross-domain binders.
 func (algebra *Algebra) Owner() link.OwnerCapability { return algebra.LinkOwner() }
 
+// OwnsTargetContract authenticates the exact Target contract authority used
+// while this Algebra was sealed. Equivalent contracts intentionally do not
+// pass: their handles may have equal content but belong to a different
+// immutable authority, so a consumer must not pair one with this Algebra.
+func (algebra *Algebra) OwnsTargetContract(target *contract.Contract) bool {
+	return algebra != nil && algebra.Valid() && target != nil && target == algebra.contract
+}
+
 func (algebra *Algebra) KeyCount() int {
 	if !algebra.Valid() {
 		return 0

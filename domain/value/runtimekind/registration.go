@@ -61,17 +61,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Semantic: "semantic/rule/value/runtime-kind-call",
 		Roles: []schema.Key{
 			"semantic/operand/value/runtime-kind-call",
-			"semantic/evidence/value/runtime-kind-call",
 		},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("value/runtime-kind-call")
-	if !ok {
+	ruleSemantic, ruleOK := context.Roles.Key(vocabulary.RoleKey("rule/value/runtime-kind-call"))
+	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/value/runtime-kind-call"))
+	if !ruleOK || !operandOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal())
+	return DeclareSchema(builder, ruleSemantic, operandFamily, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -82,9 +82,9 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 	return BindHot(context.Fragment, context.Authorities.ValueAuthority(), context.Authorities.CallAuthority())
 }
 
-// StructureSpecs contributes the three semantic identities owned by this
+// StructureSpecs contributes the rule and operand semantic identities owned by this
 // rule.  The runtime-kind result relation itself is declared by the runtimekind
 // domain; this rule consumes that opaque identity through Call's projection.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.RuleRoleSpecs("value/runtime-kind-call")
+	return vocabulary.RoleSpecs("rule/value/runtime-kind-call", "operand/value/runtime-kind-call")
 }

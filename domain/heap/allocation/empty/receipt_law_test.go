@@ -39,9 +39,9 @@ func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 	// The actual Empty fragment and owner must share one SchemaBinding. Build a
 	// complete binding with both declarations for the authoritative bind.
 	builder := engine.NewSchema()
-	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, emptyKey(51))
+	heapFragment, heapFragmentOK := heapowner.DeclareSchema(builder, emptyKey(51), emptyKey(201))
 	valueFragment2, valueFragmentOK := valueowner.DeclareSchema(builder, emptyKey(52), emptyKey(53), emptyKey(151))
-	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(54), emptyKey(55), emptyKey(56), emptyKey(57), heapFragment)
+	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(54), emptyKey(55), emptyKey(56), heapFragment)
 	if !heapFragmentOK || !valueFragmentOK || !fragmentOK {
 		t.Fatal("empty receipt fragments")
 	}
@@ -51,8 +51,8 @@ func TestHotEmptyBindingIssuesOnlyItsExactMountedReceipt(t *testing.T) {
 	}
 	binding := engine.NewSchemaBinding(cold)
 	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
-	valueHot2, valueHotOK := valueowner.BindHot(binding, valueFragment2, valueSchema)
-	catalog2, catalog2OK := allocationcatalog.Seal(heapSchema, valueSchema, valueHot2, mounts.heap)
+	_, valueHotOK := valueowner.BindHot(binding, valueFragment2, valueSchema)
+	catalog2, catalog2OK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
 	rule, ruleOK := empty.BindHot(fragment, heapHot, catalog2)
 	if !heapHotOK || !valueHotOK || !catalog2OK || !ruleOK || rule == nil || !binding.Seal() {
 		t.Fatal("exact Empty mounted bind")
@@ -119,8 +119,8 @@ func TestEmptyReceiptNativeSelfCreateProducesCanonicalHeader(t *testing.T) {
 func emptyHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, *empty.SchemaFragment) {
 	t.Helper()
 	builder := engine.NewSchema()
-	owner, ownerOK := heapowner.DeclareSchema(builder, emptyKey(31))
-	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(32), emptyKey(33), emptyKey(34), emptyKey(35), owner)
+	owner, ownerOK := heapowner.DeclareSchema(builder, emptyKey(31), emptyKey(131))
+	fragment, fragmentOK := empty.DeclareSchema(builder, emptyKey(32), emptyKey(33), emptyKey(34), owner)
 	schema, sealOK := builder.Seal()
 	if !ownerOK || !fragmentOK || !sealOK || schema == nil {
 		t.Fatal("declare Empty cold schema")

@@ -21,7 +21,6 @@ type SchemaFragment struct {
 	write        engine.SchemaWriteSlot[heapdomain.Value]
 	semantic     identity.SemanticKey
 	transform    identity.SemanticKey
-	evidence     identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, source.Closed] {
@@ -30,14 +29,13 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, so
 
 // DeclareSchema records Heap closed allocation's exact incidence: one input,
 // exact Heap read, Value summary read, transformed Heap carry, and write.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence identity.SemanticKey, heap *heapowner.SchemaFragment, values *valueowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || heap == nil || values == nil || !identity.DistinctKeys(semantic, operandFamily, transform, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform identity.SemanticKey, heap *heapowner.SchemaFragment, values *valueowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || heap == nil || values == nil || !identity.DistinctKeys(semantic, operandFamily, transform) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, source.Closed](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    heap.Ref(),
+		Output: heap.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -62,5 +60,5 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, trans
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, heapRead: heapRead, valueRead: valueRead, valueSummary: values.SummaryRead(), carry: carry, write: write, semantic: semantic, transform: transform, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, heapRead: heapRead, valueRead: valueRead, valueSummary: values.SummaryRead(), carry: carry, write: write, semantic: semantic, transform: transform}, true
 }

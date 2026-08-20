@@ -75,41 +75,12 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	runtime.packRoute = func(context engine.SelectorContext, root pack.Root, tag heapdomain.RawPayloadTag) bool {
 		return packowner.SelectRouteTyped(packs, context, root, tag)
 	}
-	runtime.valueTarget = func(target engine.RuleTarget, coordinate valuedomain.Coordinate) bool {
-		return values.TargetMatches(target, coordinate)
-	}
-	runtime.valueReadRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], read engine.Read[engine.OrderedCells[valuedomain.Value]], coordinate valuedomain.Coordinate) bool {
-		return valueowner.ReadMatches(values, derivation, read, coordinate)
-	}
-	runtime.valueSelectionRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value], read engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
-		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
-	}
-	runtime.callSelectionRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value], read engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]], ordinal int, tag uint64) bool {
-		key, ok := topology.CallKeyForTag(tag)
-		if !ok {
-			return false
-		}
-		ref, ok := calls.Ref(key)
-		return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-	}
-	runtime.heapSelectionRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value], read engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], ordinal int, key heapdomain.Key) bool {
-		ref, ok := heap.Ref(key)
-		return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-	}
-	runtime.packSelectionRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value], read engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], ordinal int, root pack.Root) bool {
-		ref, ok := packs.Ref(root)
-		return ok && engine.DerivationDispositionSelectionMatchesRef(derivation, disposition, read, ordinal, ref)
-	}
-	runtime.sourceSelectionRef = func(derivation engine.RuleDerivation[valuedomain.Value, Index], disposition engine.RuleDisposition[valuedomain.Value], read engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
-		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
-	}
-	runtime.callKeyForTag = topology.CallKeyForTag
 	core := &RawGetRule{runtime: runtime}
 	core.scratch.New = func() any {
 		return &rawGetScratch{payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)), source: make([]uint64, bitWords(len(topology.catalog.sources)))}
 	}
 	core.scratch.Put(core.scratch.New())
-	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Index]{OperandContent: core.operandContent, Admission: engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)), Transfer: core.transfer}, engine.HotCarrySpec[valuedomain.Value, Index]{}, func(access Index) (uint64, bool) {
+	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Index]{OperandContent: core.operandContent, Fold: core.fold}, engine.HotCarrySpec[valuedomain.Value, Index]{}, func(access Index) (uint64, bool) {
 		result, resultOK := access.Result()
 		index, indexOK := values.Schema().CoordinateIndex(result)
 		return uint64(index), resultOK && indexOK

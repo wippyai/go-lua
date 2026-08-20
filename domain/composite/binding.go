@@ -139,7 +139,7 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	// The mount set the allocation catalog joins is the heap schema's own: it
 	// sealed those mounts, so the list is read back from it rather than carried
 	// beside it as a second copy.
-	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, value, inputs.HeapSchema.ArtifactMounts())
+	allocations, allocationFailure := allocationcatalog.BeginWithFailure(inputs.HeapSchema, inputs.ValueSchema, inputs.HeapSchema.ArtifactMounts())
 	if allocationFailure != allocationcatalog.SealFailureNone {
 		return catalogBinding{}, BindFailure{Stage: BindStageAllocationCatalog, Allocation: allocationFailure}
 	}
@@ -180,9 +180,6 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	}
 	if rules == nil {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
-	}
-	if allocationFailure = allocations.SealSummaryReceiptsWithFailure(); allocationFailure != allocationcatalog.SealFailureNone {
-		return catalogBinding{}, BindFailure{Stage: BindStageAllocations, Allocation: allocationFailure}
 	}
 	// The sealed query fragments are the canonical query rows. Their typed
 	// implementations remain owned by the same sealed binding; no second

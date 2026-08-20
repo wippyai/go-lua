@@ -40,16 +40,18 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/allocation",
-		Roles:    []schema.Key{"semantic/operand/value/allocation", "semantic/evidence/value/allocation", "semantic/transform/value/allocation"},
+		Roles:    []schema.Key{"semantic/operand/value/allocation", "semantic/transform/value/allocation"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Transformed("value/allocation")
-	if !ok {
+	ruleSemantic, ruleOK := context.Roles.Key(vocabulary.RoleKey("rule/value/allocation"))
+	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/value/allocation"))
+	transform, transformOK := context.Roles.Key(vocabulary.RoleKey("transform/value/allocation"))
+	if !ruleOK || !operandOK || !transformOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.ValuePrincipal())
+	return DeclareSchema(builder, ruleSemantic, operandFamily, transform, context.Principals.ValuePrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -61,10 +63,11 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the four roles its rule is identified by, the transform
-// form included because its output is normalized before admission. A role is
+// role vocabulary: the rule, operand, and transform roles its rule is identified by,
+// the
+// form included because its output is normalized before carry publication. A role
 // declared where it is used, so the row and the reference that names it are one
 // package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.TransformedRuleRoleSpecs("value/allocation")
+	return vocabulary.RoleSpecs("rule/value/allocation", "operand/value/allocation", "transform/value/allocation")
 }

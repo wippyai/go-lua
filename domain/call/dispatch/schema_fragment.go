@@ -18,18 +18,16 @@ type SchemaFragment struct {
 	value    engine.FactorRef[valuedomain.Value]
 	call     engine.FactorRef[calldomain.Value]
 	semantic identity.SemanticKey
-	evidence identity.SemanticKey
 }
 
 // DeclareSchema records the exact Value-read/Call-write dispatch incidence.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[calldomain.Value, calldomain.MountedCall](builder, engine.SchemaRuleSpec[calldomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    calls.Ref(),
+		Output: calls.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -46,7 +44,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, read: read, write: write, value: values.Ref(), call: calls.Ref(), semantic: semantic, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, read: read, write: write, value: values.Ref(), call: calls.Ref(), semantic: semantic}, true
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[calldomain.Value, calldomain.MountedCall] {

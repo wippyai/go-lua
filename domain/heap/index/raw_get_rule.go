@@ -30,27 +30,19 @@ type RawGetRule struct {
 // tables are frozen before binding and all live reads route through typed
 // owner callbacks.
 type rawGetRuntime struct {
-	topology           *Topology
-	values             *valuedomain.Schema
-	calls              *calldomain.Algebra
-	heap               heapdomain.Schema
-	visitCallDemand    func(valuedomain.Value, func(calldomain.Key, uint64) bool) bool
-	callRoute          func(engine.SelectorContext, calldomain.Key, uint64) bool
-	valueRoute         func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
-	sourceRoute        func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
-	heapRoute          func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
-	packRoute          func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
-	visitReceiver      func(valuedomain.Value, CallState, func(Route) bool) bool
-	visitRawRoute      func(heapdomain.RawRouteTag, heapdomain.Value, heapdomain.KeySelector, func(heapdomain.RawAccess) bool) bool
-	selectorForSlot    func(heapdomain.Slot) (heapdomain.KeySelector, bool)
-	callKeyForTag      func(uint64) (calldomain.Key, bool)
-	valueReadRef       func(engine.RuleDerivation[valuedomain.Value, Index], engine.Read[engine.OrderedCells[valuedomain.Value]], valuedomain.Coordinate) bool
-	valueTarget        func(engine.RuleTarget, valuedomain.Coordinate) bool
-	valueSelectionRef  func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
-	callSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[uint64, engine.OrderedCells[calldomain.Value]]], int, uint64) bool
-	heapSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], int, heapdomain.Key) bool
-	packSelectionRef   func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], int, pack.Root) bool
-	sourceSelectionRef func(engine.RuleDerivation[valuedomain.Value, Index], engine.RuleDisposition[valuedomain.Value], engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], int, valuedomain.Coordinate) bool
+	topology        *Topology
+	values          *valuedomain.Schema
+	calls           *calldomain.Algebra
+	heap            heapdomain.Schema
+	visitCallDemand func(valuedomain.Value, func(calldomain.Key, uint64) bool) bool
+	callRoute       func(engine.SelectorContext, calldomain.Key, uint64) bool
+	valueRoute      func(engine.SelectorContext, valuedomain.Coordinate, uint64) bool
+	sourceRoute     func(engine.SelectorContext, valuedomain.Coordinate, rawSourceTag) bool
+	heapRoute       func(engine.SelectorContext, heapdomain.Key, heapdomain.RawRouteTag) bool
+	packRoute       func(engine.SelectorContext, pack.Root, heapdomain.RawPayloadTag) bool
+	visitReceiver   func(valuedomain.Value, CallState, func(Route) bool) bool
+	visitRawRoute   func(heapdomain.RawRouteTag, heapdomain.Value, heapdomain.KeySelector, func(heapdomain.RawAccess) bool) bool
+	selectorForSlot func(heapdomain.Slot) (heapdomain.KeySelector, bool)
 }
 
 func (rule *RawGetRule) valueSchema() *valuedomain.Schema {

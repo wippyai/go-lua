@@ -21,7 +21,6 @@ type SchemaFragment struct {
 	carry          engine.SchemaCarrySlot[valuedomain.Value]
 	write          engine.SchemaWriteSlot[valuedomain.Value]
 	semantic       identity.SemanticKey
-	evidence       identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[valuedomain.Value, valuedomain.RuntimeKindCall] {
@@ -34,14 +33,13 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[valuedomain.Value, v
 // DeclareSchema records one exact Call read, one exact Value read, ordinary
 // Value carry, and an exact Value write.  No domain-specific engine surface
 // is introduced for this relation.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evidence identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || values == nil || calls == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[valuedomain.Value, valuedomain.RuntimeKindCall](builder, engine.SchemaRuleSpec[valuedomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    values.Ref(),
+		Output: values.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -70,5 +68,5 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, evide
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, callRead: callRead, valueRead: valueRead, comparisonRead: comparisonRead, carry: carry, write: write, semantic: semantic, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, callRead: callRead, valueRead: valueRead, comparisonRead: comparisonRead, carry: carry, write: write, semantic: semantic}, true
 }

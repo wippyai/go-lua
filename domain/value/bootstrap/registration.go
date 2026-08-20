@@ -36,16 +36,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Owner:    "value",
 		Lane:     rule.LaneLink,
 		Semantic: "semantic/rule/value/host-global-bootstrap",
-		Roles:    []schema.Key{"semantic/operand/value/host-global-bootstrap", "semantic/evidence/value/host-global-bootstrap"},
+		Roles:    []schema.Key{"semantic/operand/value/host-global-bootstrap"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("value/host-global-bootstrap")
-	if !ok {
+	ruleSemantic, ruleOK := context.Roles.Key(vocabulary.RoleKey("rule/value/host-global-bootstrap"))
+	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/value/host-global-bootstrap"))
+	if !ruleOK || !operandOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal())
+	return DeclareSchema(builder, ruleSemantic, operandFamily, context.Principals.ValuePrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -70,9 +71,9 @@ func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the three roles its rule is identified by. A role is
+// role vocabulary: the two roles its rule is identified by. A role is
 // declared where it is used, so the row and the reference that names it are one
 // package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.RuleRoleSpecs("value/host-global-bootstrap")
+	return vocabulary.RoleSpecs("rule/value/host-global-bootstrap", "operand/value/host-global-bootstrap")
 }

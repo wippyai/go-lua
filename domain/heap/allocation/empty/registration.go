@@ -39,16 +39,18 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-empty",
-		Roles:    []schema.Key{"semantic/operand/heap/allocation-empty", "semantic/evidence/heap/allocation-empty", "semantic/transform/heap/allocation-empty"},
+		Roles:    []schema.Key{"semantic/operand/heap/allocation-empty", "semantic/transform/heap/allocation-empty"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Transformed("heap/allocation-empty")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/heap/allocation-empty")
+	operand, operandOK := context.Roles.Key("semantic/operand/heap/allocation-empty")
+	transform, transformOK := context.Roles.Key("semantic/transform/heap/allocation-empty")
+	if !semanticOK || !operandOK || !transformOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Transform, semantics.Evidence, context.Principals.HeapPrincipal())
+	return DeclareSchema(builder, semantic, operand, transform, context.Principals.HeapPrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -60,10 +62,11 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the four roles its rule is identified by, the transform
-// form included because its output is normalized before admission. A role is
+// role vocabulary: the rule, operand, and transform roles its rule is identified by,
+// the
+// form included because its output is normalized before publication. A role is
 // declared where it is used, so the row and the reference that names it are one
 // package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.TransformedRuleRoleSpecs("heap/allocation-empty")
+	return vocabulary.RoleSpecs("rule/heap/allocation-empty", "operand/heap/allocation-empty", "transform/heap/allocation-empty")
 }

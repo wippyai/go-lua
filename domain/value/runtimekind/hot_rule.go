@@ -30,7 +30,7 @@ type HotRule struct {
 
 func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || values == nil || calls == nil || values.Schema() == nil || calls.Algebra() == nil ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	relation := schema.NewEntryID(schema.SurfaceKindStructure, runtimekindenum.RuntimeKindResultRelationKey)
@@ -47,48 +47,45 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		OperandContent: func(row valuedomain.RuntimeKindCall) (valuedomain.RuntimeKindCall, [32]byte, bool) {
 			return hotContent(values.Schema(), row)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotChecker(hot, fragment.semantic, &callRead, &valueRead, &comparisonRead)),
-		Transfer: func(access engine.Access[valuedomain.Value, valuedomain.RuntimeKindCall]) bool {
-			operand, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[valuedomain.Value, valuedomain.RuntimeKindCall]) engine.RuleResult[valuedomain.Value] {
+			operand, operandOK := engine.Operand(frame)
 			_, _, endpointsOK := hotEndpoints(values.Schema(), operand)
 			if !operandOK || !endpointsOK {
-				return false
+				return engine.RuleResult[valuedomain.Value]{}
 			}
 			if _, writeOK := hotWriteTarget(values.Schema(), operand); !writeOK {
-				return false
+				return engine.RuleResult[valuedomain.Value]{}
 			}
-			return engine.Product(access, func(row engine.Row) bool {
-				callCells, callOK := engine.ReadValue(access, row, callRead)
-				valueCells, valueOK := engine.ReadValue(access, row, valueRead)
-				comparisonCells, comparisonOK := engine.ReadValue(access, row, comparisonRead)
-				if !callOK || !valueOK || !comparisonOK || callCells.Count() != 1 || valueCells.Count() != 1 || comparisonCells.Count() != 1 {
-					return false
-				}
-				callFact, callPresent, callAvailable := callCells.At(0)
-				valueFact, valuePresent, valueAvailable := valueCells.At(0)
-				comparisonFact, comparisonPresent, comparisonAvailable := comparisonCells.At(0)
-				if !callAvailable || !valueAvailable || !comparisonAvailable {
-					return false
-				}
-				if !callPresent || !valuePresent || !comparisonPresent {
-					return engine.NoCandidate(access, row)
-				}
-				projected, decision, ok := classify(values.Schema(), callFact, valueFact, relation)
-				if _, op, truth, refinement := operand.Refinement(); refinement {
-					projected, decision, ok = classifyRefinement(values.Schema(), callFact, valueFact, comparisonFact, predicateRelation, op, truth)
-				}
-				if !ok {
-					return false
-				}
-				switch decision {
-				case decisionNoCandidate:
-					return engine.NoCandidate(access, row)
-				case decisionStage:
-					return engine.StageValue(access, row, projected)
-				default:
-					return false
-				}
-			})
+			callCells, callOK := engine.ReadValue(frame, callRead)
+			valueCells, valueOK := engine.ReadValue(frame, valueRead)
+			comparisonCells, comparisonOK := engine.ReadValue(frame, comparisonRead)
+			if !callOK || !valueOK || !comparisonOK || callCells.Count() != 1 || valueCells.Count() != 1 || comparisonCells.Count() != 1 {
+				return engine.RuleResult[valuedomain.Value]{}
+			}
+			callFact, callPresent, callAvailable := callCells.At(0)
+			valueFact, valuePresent, valueAvailable := valueCells.At(0)
+			comparisonFact, comparisonPresent, comparisonAvailable := comparisonCells.At(0)
+			if !callAvailable || !valueAvailable || !comparisonAvailable {
+				return engine.RuleResult[valuedomain.Value]{}
+			}
+			if !callPresent || !valuePresent || !comparisonPresent {
+				return engine.NoCandidate(frame)
+			}
+			projected, decision, ok := classify(values.Schema(), callFact, valueFact, relation)
+			if _, op, truth, refinement := operand.Refinement(); refinement {
+				projected, decision, ok = classifyRefinement(values.Schema(), callFact, valueFact, comparisonFact, predicateRelation, op, truth)
+			}
+			if !ok {
+				return engine.RuleResult[valuedomain.Value]{}
+			}
+			switch decision {
+			case decisionNoCandidate:
+				return engine.NoCandidate(frame)
+			case decisionStage:
+				return engine.Staged(frame, projected)
+			default:
+				return engine.RuleResult[valuedomain.Value]{}
+			}
 		},
 	}
 	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), bindSpec, engine.HotCarrySpec[valuedomain.Value, valuedomain.RuntimeKindCall]{}, func(row valuedomain.RuntimeKindCall) (uint64, bool) {
@@ -344,77 +341,4 @@ func targetProducesRuntimeKindPredicate(target call.Target, expectedRelation sch
 	outcome, result, subject, relation, ok := target.BehaviorPredicateAt(0)
 	return ok && outcome == 0 && result == 0 &&
 		subject.Kind == vocabulary.InputSourceValueFormal && subject.Ordinal == 0 && relation == expectedRelation
-}
-
-func hotChecker(rule *HotRule, semantic identity.SemanticKey, callRead *engine.Read[engine.OrderedCells[call.Value]], valueRead, comparisonRead *engine.Read[engine.OrderedCells[valuedomain.Value]]) engine.RuleDerivationChecker[valuedomain.Value, valuedomain.RuntimeKindCall] {
-	return func(derivation engine.RuleDerivation[valuedomain.Value, valuedomain.RuntimeKindCall]) (engine.RuleEvidence, bool) {
-		if rule == nil || rule.values == nil || rule.calls == nil || rule.values.Schema() == nil || callRead == nil || valueRead == nil || comparisonRead == nil ||
-			derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 3 || derivation.DispositionCount() == 0 {
-			return engine.RuleEvidence{}, false
-		}
-		operand, operandOK := derivation.Operand()
-		canonical, digest, contentOK := hotContent(rule.values.Schema(), operand)
-		_, input, endpointsOK := hotEndpoints(rule.values.Schema(), canonical)
-		written, writtenOK := hotWriteTarget(rule.values.Schema(), canonical)
-		comparison := input
-		if refinementComparison, _, _, refinement := canonical.Refinement(); refinement {
-			comparison = refinementComparison
-		}
-		module, occurrence, identityOK := callOccurrence(rule.values.Schema(), canonical)
-		callKey, callKeyOK := projectCallKey(rule.calls.Algebra(), module, occurrence, identityOK)
-		inputGuard, inputOK := derivation.InputAt(0)
-		if !operandOK || !contentOK || !endpointsOK || !writtenOK || !identityOK || !callKeyOK || !derivation.OperandContentMatches(digest) || !inputOK || inputGuard.Guard().Empty() ||
-			!callowner.ReadMatches(rule.calls, derivation, *callRead, callKey) || !valueowner.ReadMatches(rule.values, derivation, *valueRead, input) || !valueowner.ReadMatches(rule.values, derivation, *comparisonRead, comparison) {
-			return engine.RuleEvidence{}, false
-		}
-		for index := 0; index < derivation.DispositionCount(); index++ {
-			disposition, dispositionOK := derivation.DispositionAt(index)
-			if !dispositionOK || disposition.Guard().Empty() {
-				return engine.RuleEvidence{}, false
-			}
-			callCells, callOK := engine.DerivationDispositionReadValue(derivation, disposition, *callRead)
-			valueCells, valueOK := engine.DerivationDispositionReadValue(derivation, disposition, *valueRead)
-			comparisonCells, comparisonOK := engine.DerivationDispositionReadValue(derivation, disposition, *comparisonRead)
-			if !callOK || !valueOK || !comparisonOK || callCells.Count() != 1 || valueCells.Count() != 1 || comparisonCells.Count() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			callFact, callPresent, callAvailable := callCells.At(0)
-			valueFact, valuePresent, valueAvailable := valueCells.At(0)
-			comparisonFact, comparisonPresent, comparisonAvailable := comparisonCells.At(0)
-			if !callAvailable || !valueAvailable || !comparisonAvailable {
-				return engine.RuleEvidence{}, false
-			}
-			if !callPresent || !valuePresent || !comparisonPresent {
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-				continue
-			}
-			expected, expectedDecision, expectedOK := classify(rule.values.Schema(), callFact, valueFact, rule.relation)
-			if _, op, truth, refinement := canonical.Refinement(); refinement {
-				expected, expectedDecision, expectedOK = classifyRefinement(rule.values.Schema(), callFact, valueFact, comparisonFact, rule.predicateRelation, op, truth)
-			}
-			if !expectedOK {
-				return engine.RuleEvidence{}, false
-			}
-			switch expectedDecision {
-			case decisionNoCandidate:
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-			case decisionStage:
-				if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
-					return engine.RuleEvidence{}, false
-				}
-				target, targetOK := disposition.TargetAt(0)
-				actual, actualOK := disposition.Value()
-				if !targetOK || !actualOK || !rule.values.TargetMatches(target, written) || !rule.values.Schema().Equal(actual, expected) {
-					return engine.RuleEvidence{}, false
-				}
-			default:
-				return engine.RuleEvidence{}, false
-			}
-		}
-		return derivation.Accept()
-	}
 }

@@ -2,7 +2,6 @@ package source
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -21,27 +20,21 @@ type HotRule struct {
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
 		owner.Schema().SourceSeedMountCount() == 0 ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	implementation, ok := valueowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[value.Value, value.SourceSeed]{
 		OperandContent: sourceSeedContent,
-		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotSourceChecker(owner, fragment.semantic)),
-		Transfer: func(access engine.Access[value.Value, value.SourceSeed]) bool {
-			seed, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[value.Value, value.SourceSeed]) engine.RuleResult[value.Value] {
+			seed, operandOK := engine.Operand(frame)
 			if !operandOK {
-				return false
+				return engine.RuleResult[value.Value]{}
 			}
 			_, fact, resultOK := sourceResultForSchema(owner.Schema(), seed)
 			if !resultOK {
-				return false
+				return engine.RuleResult[value.Value]{}
 			}
-			rows := 0
-			completed := engine.Product(access, func(row engine.Row) bool {
-				rows++
-				return rows == 1 && engine.StageValue(access, row, fact)
-			})
-			return completed && rows == 1
+			return engine.Staged(frame, fact)
 		},
 	}, func(seed value.SourceSeed) (uint64, bool) {
 		coordinate, _, ok := sourceResultForSchema(owner.Schema(), seed)
@@ -95,36 +88,4 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 		return engine.ProgramRule{}, false
 	}
 	return engine.SealProgramRule(implementation)
-}
-
-func hotSourceChecker(owner *valueowner.HotOwner, ruleSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, value.SourceSeed] {
-	return func(derivation engine.RuleDerivation[value.Value, value.SourceSeed]) (engine.RuleEvidence, bool) {
-		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 0 ||
-			derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		seed, ok := derivation.Operand()
-		if !ok {
-			return engine.RuleEvidence{}, false
-		}
-		id, idOK := seed.ID()
-		if !idOK || !derivation.OperandContentMatches([32]byte(id)) {
-			return engine.RuleEvidence{}, false
-		}
-		disposition, ok := derivation.DispositionAt(0)
-		if !ok || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || disposition.Guard().Empty() {
-			return engine.RuleEvidence{}, false
-		}
-		target, targetOK := disposition.TargetAt(0)
-		coordinate, expected, resultOK := sourceResultForSchema(owner.Schema(), seed)
-		ref, refOK := owner.Ref(coordinate)
-		if !targetOK || !resultOK || !refOK || !engine.TargetMatchesRef(target, ref) {
-			return engine.RuleEvidence{}, false
-		}
-		actual, valueOK := disposition.Value()
-		if !valueOK || !owner.Schema().Equal(actual, expected) {
-			return engine.RuleEvidence{}, false
-		}
-		return derivation.Accept()
-	}
 }

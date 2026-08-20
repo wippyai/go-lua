@@ -32,13 +32,13 @@ func TestHotAllocationRuleBindsCarryReceiptAndRejectsForeignBinding(t *testing.T
 		cold, ownerFragment, fragment, query := allocationColdSchema(t)
 		binding := engine.NewSchemaBinding(cold)
 		owner, ownerOK := valueowner.BindHot(binding, ownerFragment, fixture.schema)
-		catalog, catalogFailure := allocationcatalog.BeginWithFailure(fixture.heaps, fixture.schema, owner, fixture.mounts)
+		catalog, catalogFailure := allocationcatalog.BeginWithFailure(fixture.heaps, fixture.schema, fixture.mounts)
 		rule, ruleOK := allocation.BindHot(fragment, owner, fixture.heaps, catalog)
 		queryOK := valueowner.BindExactQuery(owner, query, engine.HotExactQuerySpec[valuedomain.Value, bool]{
 			Project: func(engine.OrderedCells[valuedomain.Value]) bool { return true },
 			Result:  allocationBoolResult(allocationKey(31_008)),
 		})
-		if !ownerOK || catalogFailure != allocationcatalog.SealFailureNone || !ruleOK || !queryOK || !binding.Seal() || catalog.SealSummaryReceiptsWithFailure() != allocationcatalog.SealFailureNone {
+		if !ownerOK || catalogFailure != allocationcatalog.SealFailureNone || !ruleOK || !queryOK || !binding.Seal() {
 			return nil, nil, binding, catalog
 		}
 		return owner, rule, binding, catalog
@@ -144,7 +144,7 @@ func allocationColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragm
 	t.Helper()
 	builder := engine.NewSchema()
 	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, allocationKey(31_001), allocationKey(31_002), allocationKey(31_101))
-	fragment, fragmentOK := allocation.DeclareSchema(builder, allocationKey(31_003), allocationKey(31_004), allocationKey(31_005), allocationKey(31_006), ownerFragment)
+	fragment, fragmentOK := allocation.DeclareSchema(builder, allocationKey(31_003), allocationKey(31_004), allocationKey(31_005), ownerFragment)
 	query, queryOK := engine.NewQuerySlot[bool](builder, engine.SchemaQuerySpec{Semantic: allocationKey(31_007), Freezer: allocationKey(31_008)})
 	if !ownerOK || !fragmentOK || !queryOK || !engine.SchemaQueryRead(query, ownerFragment.ExactRead()) {
 		t.Fatal("allocation cold schema")

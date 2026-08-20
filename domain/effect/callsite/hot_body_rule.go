@@ -32,7 +32,7 @@ type BodyHotRule struct {
 // predecessor, dependent selected Effect summaries, and exact Effect output.
 func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, calls *callowner.HotOwner, effects *effectowner.HotOwner) (*BodyHotRule, bool) {
 	if binding == nil || fragment == nil || fragment.core == nil || fragment.core.slot == nil || calls == nil || !calls.MatchesBinding(binding) || calls.Algebra() == nil || effects == nil || !effects.MatchesBinding(binding) || effects.Algebra() == nil ||
-		!calls.Algebra().LinkOwner().Matches(effects.Algebra().LinkOwner()) || !fragment.core.semantic.Available() || !fragment.core.evidence.Available() {
+		!calls.Algebra().LinkOwner().Matches(effects.Algebra().LinkOwner()) || !fragment.core.semantic.Available() {
 		return nil, false
 	}
 	hot := &BodyHotRule{
@@ -73,9 +73,8 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 	var runtimeSummary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
 	implementation, bound := effectowner.BindSelectedRuleDirect(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, effectfactor.MountedCall]{
 		OperandContent: hot.operandContent,
-		Admission:      engine.AdmitRuleByDerivation(fragment.core.evidence, hot.check),
-		Transfer: func(access engine.Access[effectfactor.Value, effectfactor.MountedCall]) bool {
-			return hot.transfer(access, runtimeCall, runtimeSummary)
+		Fold: func(frame engine.Frame[effectfactor.Value, effectfactor.MountedCall]) engine.RuleResult[effectfactor.Value] {
+			return hot.fold(frame, runtimeCall, runtimeSummary)
 		},
 	}, func(mounted effectfactor.MountedCall) (uint64, bool) {
 		_, _, root, ok := mountedCallRows(binding, calls, effects, mounted)
@@ -221,103 +220,49 @@ func (rule *BodyHotRule) routesFor(key calldomain.Key, value calldomain.Value, v
 	return len(slots), true
 }
 
-func (rule *BodyHotRule) transfer(access engine.Access[effectfactor.Value, effectfactor.MountedCall], callRead engine.Read[engine.OrderedCells[calldomain.Value]], summary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]) bool {
+func (rule *BodyHotRule) fold(frame engine.Frame[effectfactor.Value, effectfactor.MountedCall], callRead engine.Read[engine.OrderedCells[calldomain.Value]], summary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]) engine.RuleResult[effectfactor.Value] {
 	if !rule.valid() {
-		return false
+		return engine.RuleResult[effectfactor.Value]{}
 	}
-	mounted, operandOK := engine.Operand(access)
+	mounted, operandOK := engine.Operand(frame)
 	_, key, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
 	if !operandOK || !siteOK {
-		return false
+		return engine.RuleResult[effectfactor.Value]{}
 	}
-	return engine.Product(access, func(row engine.Row) bool {
-		callCells, callOK := engine.ReadValue(access, row, callRead)
-		selection, selectionOK := engine.ReadValue(access, row, summary)
-		if !callOK || !selectionOK || callCells.Count() != 1 {
-			return false
-		}
-		fact, present, available := callCells.At(0)
-		if !available {
-			return false
-		}
-		selectionCount, countOK := engine.SelectionCount(access, row, selection)
-		if !countOK {
-			return false
-		}
-		if !present {
-			return selectionCount == 0 && engine.NoCandidate(access, row)
-		}
-		atoms := make([]effectfactor.Atom, 0)
-		top := false
-		routeCount, routesOK := rule.routesFor(key, fact, func(ordinal int, route bodyRoute) bool {
-			if ordinal >= selectionCount {
-				return false
-			}
-			tag, cells, selected := engine.SelectionAt(access, row, selection, ordinal)
-			if !selected || tag != route.tag || cells.Count() != 1 {
-				return false
-			}
-			part, partPresent, partAvailable := cells.At(0)
-			if !partAvailable {
-				return false
-			}
-			if !partPresent || top {
-				return true
-			}
-			if rule.effects.Algebra().Equal(part, rule.effects.Algebra().Top()) {
-				top = true
-				return true
-			}
-			transported, transportOK := rule.effects.Algebra().Transport(part, root)
-			if !transportOK {
-				return false
-			}
-			for atomIndex := 0; ; atomIndex++ {
-				atom, exists := rule.effects.Algebra().AtomAt(transported, atomIndex)
-				if !exists {
-					break
-				}
-				atoms = append(atoms, atom)
-			}
-			return true
-		})
-		if !routesOK || routeCount != selectionCount {
-			return false
-		}
-		if top {
-			return engine.StageValue(access, row, rule.effects.Algebra().Top())
-		}
-		result, resultOK := rule.effects.Algebra().FromAtoms(atoms)
-		if !resultOK {
-			return false
-		}
-		if rule.effects.Algebra().Equal(result, rule.effects.Algebra().Bottom()) {
-			return engine.NoCandidate(access, row)
-		}
-		return engine.StageValue(access, row, result)
-	})
-}
-
-func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectfactor.Value, effectfactor.MountedCall], disposition engine.RuleDisposition[effectfactor.Value], key calldomain.Key, root effectfactor.Root, fact calldomain.Value) (effectfactor.Value, bool) {
-	count, countOK := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.summary)
+	callCells, callOK := engine.ReadValue(frame, callRead)
+	selection, selectionOK := engine.ReadValue(frame, summary)
+	if !callOK || !selectionOK || callCells.Count() != 1 {
+		return engine.RuleResult[effectfactor.Value]{}
+	}
+	fact, present, available := callCells.At(0)
+	if !available {
+		return engine.RuleResult[effectfactor.Value]{}
+	}
+	selectionCount, countOK := engine.SelectionCount(frame, selection)
 	if !countOK {
-		return effectfactor.Value{}, false
+		return engine.RuleResult[effectfactor.Value]{}
+	}
+	if !present {
+		if selectionCount != 0 {
+			return engine.RuleResult[effectfactor.Value]{}
+		}
+		return engine.NoCandidate(frame)
 	}
 	atoms := make([]effectfactor.Atom, 0)
 	top := false
 	routeCount, routesOK := rule.routesFor(key, fact, func(ordinal int, route bodyRoute) bool {
-		if ordinal >= count {
+		if ordinal >= selectionCount {
 			return false
 		}
-		tag, cells, selected := engine.DerivationDispositionSelectionAt(derivation, disposition, rule.summary, ordinal)
-		if !selected || tag != route.tag || cells.Count() != 1 || !effectowner.SelectionMatches(rule.effects, derivation, disposition, rule.summary, ordinal, route.root) {
+		tag, cells, selected := engine.SelectionAt(frame, selection, ordinal)
+		if !selected || tag != route.tag || cells.Count() != 1 {
 			return false
 		}
-		part, present, available := cells.At(0)
-		if !available {
+		part, partPresent, partAvailable := cells.At(0)
+		if !partAvailable {
 			return false
 		}
-		if !present || top {
+		if !partPresent || top {
 			return true
 		}
 		if rule.effects.Algebra().Equal(part, rule.effects.Algebra().Top()) {
@@ -337,74 +282,20 @@ func (rule *BodyHotRule) reduceEvidence(derivation engine.RuleDerivation[effectf
 		}
 		return true
 	})
-	if !routesOK || routeCount != count {
-		return effectfactor.Value{}, false
+	if !routesOK || routeCount != selectionCount {
+		return engine.RuleResult[effectfactor.Value]{}
 	}
 	if top {
-		return rule.effects.Algebra().Top(), true
+		return engine.Staged(frame, rule.effects.Algebra().Top())
 	}
-	return rule.effects.Algebra().FromAtoms(atoms)
-}
-
-func (rule *BodyHotRule) check(derivation engine.RuleDerivation[effectfactor.Value, effectfactor.MountedCall]) (engine.RuleEvidence, bool) {
-	// A derivation read is one resolved observation, not one declared read
-	// slot. This rule resolves the exact Call read plus the Effect summary of
-	// every route its Product selected, so its read surface is bounded by the
-	// sealed route table: a call value denoting every body reaches every
-	// route, and one denoting none reaches only the Call read.
-	readCount := derivation.ReadCount()
-	if rule == nil || rule.fragment == nil || rule.fragment.core == nil || derivation.Rule() != rule.fragment.core.semantic || derivation.InputCount() != 1 || readCount < 1 || readCount > 1+len(rule.all) || derivation.DispositionCount() == 0 {
-		return engine.RuleEvidence{}, false
+	result, resultOK := rule.effects.Algebra().FromAtoms(atoms)
+	if !resultOK {
+		return engine.RuleResult[effectfactor.Value]{}
 	}
-	mounted, operandOK := derivation.Operand()
-	_, key, root, siteOK := mountedCallRows(rule.binding, rule.calls, rule.effects, mounted)
-	_, digest, contentOK := rule.operandContent(mounted)
-	input, inputOK := derivation.InputAt(0)
-	if !operandOK || !siteOK || !contentOK || !derivation.OperandContentMatches(digest) || !inputOK || input.Guard().Empty() ||
-		!callowner.ReadMatches(rule.calls, derivation, rule.callRead, key) {
-		return engine.RuleEvidence{}, false
+	if rule.effects.Algebra().Equal(result, rule.effects.Algebra().Bottom()) {
+		return engine.NoCandidate(frame)
 	}
-	for index := 0; index < derivation.DispositionCount(); index++ {
-		disposition, dispositionOK := derivation.DispositionAt(index)
-		if !dispositionOK || disposition.Guard().Empty() {
-			return engine.RuleEvidence{}, false
-		}
-		if _, transformed := disposition.CarryTransform(); transformed || disposition.TransformOnly() {
-			return engine.RuleEvidence{}, false
-		}
-		callCells, callOK := engine.DerivationDispositionReadValue(derivation, disposition, rule.callRead)
-		if !callOK || callCells.Count() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		fact, present, available := callCells.At(0)
-		if !available {
-			return engine.RuleEvidence{}, false
-		}
-		if !present {
-			count, selected := engine.DerivationDispositionSelectionCount(derivation, disposition, rule.summary)
-			if !selected || count != 0 || disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-				return engine.RuleEvidence{}, false
-			}
-			continue
-		}
-		expected, expectedOK := rule.reduceEvidence(derivation, disposition, key, root, fact)
-		if !expectedOK {
-			return engine.RuleEvidence{}, false
-		}
-		if rule.effects.Algebra().Equal(expected, rule.effects.Algebra().Bottom()) {
-			if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-				return engine.RuleEvidence{}, false
-			}
-			continue
-		}
-		actual, actualOK := disposition.Value()
-		target, targetOK := disposition.TargetAt(0)
-		if disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || !actualOK || !targetOK ||
-			!rule.effects.Algebra().Equal(actual, expected) || !rule.effects.TargetMatches(target, root) {
-			return engine.RuleEvidence{}, false
-		}
-	}
-	return derivation.Accept()
+	return engine.Staged(frame, result)
 }
 
 func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[effectfactor.MountedCall], bool) {

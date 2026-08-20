@@ -29,7 +29,7 @@ type HotRule struct {
 // FactorRefs. Heap and Pack remain exact row owners used at the reducer
 // boundary; no Program or Flow topology is reopened by the callbacks.
 func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *valueowner.HotOwner, calls *callowner.HotOwner, heaps heapdomain.Schema, packs *packdomain.Schema) (*HotRule, bool) {
-	if binding == nil || fragment == nil || values == nil || !values.MatchesBinding(binding) || calls == nil || !calls.MatchesBinding(binding) || values.Schema() == nil || calls.Algebra() == nil || !calls.Algebra().Valid() || !heaps.Valid() || packs == nil || !fragment.semantic.Available() || !fragment.evidence.Available() {
+	if binding == nil || fragment == nil || values == nil || !values.MatchesBinding(binding) || calls == nil || !calls.MatchesBinding(binding) || values.Schema() == nil || calls.Algebra() == nil || !calls.Algebra().Valid() || !heaps.Valid() || packs == nil || !fragment.semantic.Available() {
 		return nil, false
 	}
 	linkOwner := calls.Algebra().LinkOwner()
@@ -39,28 +39,28 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	hot := &HotRule{binding: binding, fragment: fragment, values: values, calls: calls, heaps: heaps, packs: packs}
 	implementation, runtimeRead, ok := callowner.BindHeterogeneousExactReadRule(calls, fragment.slot, fragment.read, fragment.value, fragment.write, engine.HotRuleSpec[calldomain.Value, calldomain.MountedCall]{
 		OperandContent: hot.operandContent,
-		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, hotDispatchChecker(hot)),
-		Transfer: func(access engine.Access[calldomain.Value, calldomain.MountedCall]) bool {
-			mounted, mountedOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[calldomain.Value, calldomain.MountedCall]) engine.RuleResult[calldomain.Value] {
+			mounted, mountedOK := engine.Operand(frame)
 			bound, siteOK := hot.siteForMounted(mounted)
 			if !mountedOK || !siteOK {
-				return false
+				return engine.RuleResult[calldomain.Value]{}
 			}
-			return engine.Product(access, func(row engine.Row) bool {
-				cells, readOK := engine.ReadValue(access, row, hot.read)
-				if !readOK || cells.Count() != 1 {
-					return false
-				}
-				fact, present, available := cells.At(0)
-				if !available {
-					return false
-				}
-				if !present {
-					return engine.NoCandidate(access, row)
-				}
-				result, resultOK := reduce(bound, fact)
-				return resultOK && engine.StageValue(access, row, result)
-			})
+			cells, readOK := engine.ReadValue(frame, hot.read)
+			if !readOK || cells.Count() != 1 {
+				return engine.RuleResult[calldomain.Value]{}
+			}
+			fact, present, available := cells.At(0)
+			if !available {
+				return engine.RuleResult[calldomain.Value]{}
+			}
+			if !present {
+				return engine.NoCandidate(frame)
+			}
+			result, resultOK := reduce(bound, fact)
+			if !resultOK {
+				return engine.RuleResult[calldomain.Value]{}
+			}
+			return engine.Staged(frame, result)
 		},
 	}, func(mounted calldomain.MountedCall) (uint64, bool) {
 		bound, boundOK := hot.siteForMounted(mounted)
@@ -143,55 +143,4 @@ func (rule *HotRule) valid() bool {
 	}
 	linkOwner := rule.calls.Algebra().LinkOwner()
 	return linkOwner.Available() && rule.values.Schema().LinkOwner().Matches(linkOwner) && rule.heaps.LinkOwner().Matches(linkOwner) && rule.packs.LinkOwner().Matches(linkOwner) && rule.values.Schema().OwnsHeapSchema(rule.heaps)
-}
-
-func hotDispatchChecker(rule *HotRule) engine.RuleDerivationChecker[calldomain.Value, calldomain.MountedCall] {
-	return func(derivation engine.RuleDerivation[calldomain.Value, calldomain.MountedCall]) (engine.RuleEvidence, bool) {
-		if rule == nil || rule.fragment == nil || derivation.Rule() != rule.fragment.semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 1 || derivation.DispositionCount() == 0 {
-			return engine.RuleEvidence{}, false
-		}
-		mounted, operandOK := derivation.Operand()
-		bound, siteOK := rule.siteForMounted(mounted)
-		_, digest, contentOK := rule.operandContent(mounted)
-		coordinate, coordinateOK := bound.valueCoordinate()
-		key, keyOK := bound.callKey()
-		if !operandOK || !siteOK || !contentOK || !coordinateOK || !keyOK || !derivation.OperandContentMatches(digest) || !valueowner.ReadMatches(rule.values, derivation, rule.read, coordinate) {
-			return engine.RuleEvidence{}, false
-		}
-		input, inputOK := derivation.InputAt(0)
-		if !inputOK || input.Guard().Empty() {
-			return engine.RuleEvidence{}, false
-		}
-		for index := 0; index < derivation.DispositionCount(); index++ {
-			disposition, dispositionOK := derivation.DispositionAt(index)
-			if !dispositionOK || disposition.Guard().Empty() {
-				return engine.RuleEvidence{}, false
-			}
-			cells, cellsOK := engine.DerivationDispositionReadValue(derivation, disposition, rule.read)
-			if !cellsOK || cells.Count() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			fact, present, available := cells.At(0)
-			if !available {
-				return engine.RuleEvidence{}, false
-			}
-			if !present {
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-				continue
-			}
-			expected, expectedOK := reduce(bound, fact)
-			if !expectedOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			target, targetOK := disposition.TargetAt(0)
-			ref, refOK := rule.calls.Ref(key)
-			actual, actualOK := disposition.Value()
-			if !targetOK || !refOK || !engine.TargetMatchesRef(target, ref) || !actualOK || !rule.calls.Algebra().Equal(actual, expected) {
-				return engine.RuleEvidence{}, false
-			}
-		}
-		return derivation.Accept()
-	}
 }

@@ -223,7 +223,7 @@ func (schema *Schema) RootAt(index int) (Root, bool) {
 }
 
 // RootOrder returns the sealed Factor-coordinate order of one Pack root.
-// Summary reads canonicalize their ClosedRefs by this order; a transformation
+// Summary reads canonicalize their dense keys by this order; a transformation
 // which also has authored order can therefore carry only this small Pack
 // permutation, never an engine coordinate or copied source row.
 func (schema *Schema) RootOrder(root Root) (int, bool) {

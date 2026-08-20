@@ -17,7 +17,6 @@ type SchemaFragment struct {
 	write     engine.SchemaWriteSlot[heapdomain.Value]
 	semantic  identity.SemanticKey
 	transform identity.SemanticKey
-	evidence  identity.SemanticKey
 }
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, source.Root] {
@@ -26,14 +25,13 @@ func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, so
 
 // DeclareSchema records Heap empty allocation's one-input transformed-carry
 // Rule with one exact Heap read and write.
-func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform, evidence identity.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
-	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform, evidence) {
+func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, transform identity.SemanticKey, owner *heapowner.SchemaFragment) (*SchemaFragment, bool) {
+	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily, transform) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[heapdomain.Value, source.Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 1,
-		Admission: engine.SchemaAdmission{Basis: engine.RuleAdmissionBasisDerivation, Identity: evidence},
-		Output:    owner.Ref(),
+		Output: owner.Ref(),
 	})
 	if !ok {
 		return nil, false
@@ -54,5 +52,5 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily, trans
 	if !ok {
 		return nil, false
 	}
-	return &SchemaFragment{slot: slot, input: input, read: read, carry: carry, write: write, semantic: semantic, transform: transform, evidence: evidence}, true
+	return &SchemaFragment{slot: slot, input: input, read: read, carry: carry, write: write, semantic: semantic, transform: transform}, true
 }

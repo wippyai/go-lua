@@ -2,7 +2,6 @@ package equality
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -18,7 +17,7 @@ type HotRule struct {
 
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
-		!fragment.semantic.Available() || !fragment.evidence.Available() || fragment.semantic == fragment.evidence {
+		!fragment.semantic.Available() {
 		return nil, false
 	}
 	var leftRead, rightRead engine.Read[engine.OrderedCells[value.Value]]
@@ -28,30 +27,30 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		OperandContent: func(row value.BinaryEquality) (value.BinaryEquality, [32]byte, bool) {
 			return hotContent(owner.Schema(), row)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotChecker(owner, fragment.semantic, &leftRead, &rightRead)),
-		Transfer: func(access engine.Access[value.Value, value.BinaryEquality]) bool {
-			operand, operandOK := engine.Operand(access)
+		Fold: func(frame engine.Frame[value.Value, value.BinaryEquality]) engine.RuleResult[value.Value] {
+			operand, operandOK := engine.Operand(frame)
 			_, _, _, notEqual, endpointsOK := hotEndpoints(owner.Schema(), operand)
 			if !operandOK || !endpointsOK {
-				return false
+				return engine.RuleResult[value.Value]{}
 			}
-			return engine.Product(access, func(row engine.Row) bool {
-				leftCells, leftOK := engine.ReadValue(access, row, leftRead)
-				rightCells, rightOK := engine.ReadValue(access, row, rightRead)
-				if !leftOK || !rightOK || leftCells.Count() != 1 || rightCells.Count() != 1 {
-					return false
-				}
-				left, leftPresent, leftAvailable := leftCells.At(0)
-				right, rightPresent, rightAvailable := rightCells.At(0)
-				if !leftAvailable || !rightAvailable {
-					return false
-				}
-				if !leftPresent || !rightPresent {
-					return engine.NoCandidate(access, row)
-				}
-				result, resultOK := owner.Schema().CompareEquality(left, right, notEqual)
-				return resultOK && engine.StageValue(access, row, result)
-			})
+			leftCells, leftOK := engine.ReadValue(frame, leftRead)
+			rightCells, rightOK := engine.ReadValue(frame, rightRead)
+			if !leftOK || !rightOK || leftCells.Count() != 1 || rightCells.Count() != 1 {
+				return engine.RuleResult[value.Value]{}
+			}
+			left, leftPresent, leftAvailable := leftCells.At(0)
+			right, rightPresent, rightAvailable := rightCells.At(0)
+			if !leftAvailable || !rightAvailable {
+				return engine.RuleResult[value.Value]{}
+			}
+			if !leftPresent || !rightPresent {
+				return engine.NoCandidate(frame)
+			}
+			result, resultOK := owner.Schema().CompareEquality(left, right, notEqual)
+			if !resultOK {
+				return engine.RuleResult[value.Value]{}
+			}
+			return engine.Staged(frame, result)
 		},
 	}, engine.HotCarrySpec[value.Value, value.BinaryEquality]{}, func(row value.BinaryEquality) (uint64, bool) {
 		result, _, _, _, ok := hotEndpoints(owner.Schema(), row)
@@ -137,52 +136,4 @@ func hotEndpoints(schema *value.Schema, row value.BinaryEquality) (result, left,
 		return value.Coordinate{}, value.Coordinate{}, value.Coordinate{}, false, false
 	}
 	return result, left, right, notEqual, true
-}
-
-func hotChecker(owner *valueowner.HotOwner, semantic identity.SemanticKey, leftRead, rightRead *engine.Read[engine.OrderedCells[value.Value]]) engine.RuleDerivationChecker[value.Value, value.BinaryEquality] {
-	return func(derivation engine.RuleDerivation[value.Value, value.BinaryEquality]) (engine.RuleEvidence, bool) {
-		if owner == nil || owner.Schema() == nil || leftRead == nil || rightRead == nil || derivation.Rule() != semantic || derivation.InputCount() != 1 || derivation.ReadCount() != 2 || derivation.DispositionCount() == 0 {
-			return engine.RuleEvidence{}, false
-		}
-		operand, operandOK := derivation.Operand()
-		canonical, digest, contentOK := hotContent(owner.Schema(), operand)
-		result, left, right, notEqual, endpointsOK := hotEndpoints(owner.Schema(), canonical)
-		input, inputOK := derivation.InputAt(0)
-		if !operandOK || !contentOK || !endpointsOK || !derivation.OperandContentMatches(digest) || !inputOK || input.Guard().Empty() ||
-			!valueowner.ReadMatches(owner, derivation, *leftRead, left) || !valueowner.ReadMatches(owner, derivation, *rightRead, right) {
-			return engine.RuleEvidence{}, false
-		}
-		for index := 0; index < derivation.DispositionCount(); index++ {
-			disposition, dispositionOK := derivation.DispositionAt(index)
-			if !dispositionOK || disposition.Guard().Empty() {
-				return engine.RuleEvidence{}, false
-			}
-			leftCells, leftOK := engine.DerivationDispositionReadValue(derivation, disposition, *leftRead)
-			rightCells, rightOK := engine.DerivationDispositionReadValue(derivation, disposition, *rightRead)
-			if !leftOK || !rightOK || leftCells.Count() != 1 || rightCells.Count() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			leftValue, leftPresent, leftAvailable := leftCells.At(0)
-			rightValue, rightPresent, rightAvailable := rightCells.At(0)
-			if !leftAvailable || !rightAvailable {
-				return engine.RuleEvidence{}, false
-			}
-			if !leftPresent || !rightPresent {
-				if disposition.Kind() != engine.RuleDispositionNoCandidate || disposition.TargetCount() != 0 {
-					return engine.RuleEvidence{}, false
-				}
-				continue
-			}
-			expected, expectedOK := owner.Schema().CompareEquality(leftValue, rightValue, notEqual)
-			if !expectedOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 {
-				return engine.RuleEvidence{}, false
-			}
-			target, targetOK := disposition.TargetAt(0)
-			actual, valueOK := disposition.Value()
-			if !targetOK || !valueOK || !owner.TargetMatches(target, result) || !owner.Schema().Equal(actual, expected) {
-				return engine.RuleEvidence{}, false
-			}
-		}
-		return derivation.Accept()
-	}
 }

@@ -140,7 +140,7 @@ func transferColdSchema(t testing.TB) (*engine.Schema, *valueowner.SchemaFragmen
 	t.Helper()
 	builder := engine.NewSchema()
 	ownerFragment, ownerOK := valueowner.DeclareSchema(builder, transferKey(71_001), transferKey(71_002), transferKey(71_101))
-	fragment, fragmentOK := transfer.DeclareSchema(builder, transferKey(71_003), transferKey(71_004), transferKey(71_005), ownerFragment)
+	fragment, fragmentOK := transfer.DeclareSchema(builder, transferKey(71_003), transferKey(71_004), ownerFragment)
 	if !ownerOK || !fragmentOK {
 		t.Fatal("storage transfer cold schema")
 	}

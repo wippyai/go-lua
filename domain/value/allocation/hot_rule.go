@@ -23,8 +23,8 @@ type HotRule struct {
 func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdomain.Schema, catalog *allocationcatalog.Catalog) (*HotRule, bool) {
 	if fragment == nil || fragment.slot == nil || owner == nil || owner.Schema() == nil ||
 		catalog == nil || !catalog.FencedTo(heap, owner.Schema()) ||
-		!fragment.semantic.Available() || !fragment.transform.Available() || !fragment.evidence.Available() ||
-		!identity.DistinctKeys(fragment.semantic, fragment.transform, fragment.evidence) {
+		!fragment.semantic.Available() || !fragment.transform.Available() ||
+		!identity.DistinctKeys(fragment.semantic, fragment.transform) {
 		return nil, false
 	}
 	schema := owner.Schema()
@@ -32,19 +32,16 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return allocationOperandContentForSchema(schema, candidate)
 		},
-		Admission: engine.AdmitRuleByDerivation(fragment.evidence, hotAllocationChecker(owner, fragment.semantic, fragment.transform)),
-		Transfer: func(access engine.Access[value.Value, operand]) bool {
-			allocation, operandOK := engine.Operand(access)
-			if !operandOK {
-				return false
-			}
-			if allocation.result == nil {
-				return false
+		Fold: func(frame engine.Frame[value.Value, operand]) engine.RuleResult[value.Value] {
+			allocation, operandOK := engine.Operand(frame)
+			if !operandOK || allocation.result == nil {
+				return engine.RuleResult[value.Value]{}
 			}
 			fresh, freshOK := allocation.result.Fresh()
-			return freshOK && engine.Product(access, func(row engine.Row) bool {
-				return engine.StageValue(access, row, fresh)
-			})
+			if !freshOK {
+				return engine.RuleResult[value.Value]{}
+			}
+			return engine.Staged(frame, fresh)
 		},
 	}, engine.HotCarrySpec[value.Value, operand]{
 		Apply: func(allocation operand, prior value.Value) (value.Value, bool) {
@@ -98,33 +95,4 @@ func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
 		return engine.ProgramRule{}, false
 	}
 	return engine.SealProgramRule(implementation)
-}
-
-func hotAllocationChecker(owner *valueowner.HotOwner, ruleSemantic, transformSemantic identity.SemanticKey) engine.RuleDerivationChecker[value.Value, operand] {
-	return func(derivation engine.RuleDerivation[value.Value, operand]) (engine.RuleEvidence, bool) {
-		if owner == nil || owner.Schema() == nil || derivation.Rule() != ruleSemantic || derivation.InputCount() != 1 || derivation.ReadCount() != 0 || derivation.DispositionCount() != 1 {
-			return engine.RuleEvidence{}, false
-		}
-		if _, ok := derivation.InputAt(0); !ok {
-			return engine.RuleEvidence{}, false
-		}
-		allocation, operandOK := derivation.Operand()
-		canonical, _, contentOK := allocationOperandContentForSchema(owner.Schema(), allocation)
-		if !operandOK || !contentOK || !derivation.OperandContentMatches(canonical.digest) {
-			return engine.RuleEvidence{}, false
-		}
-		disposition, ok := derivation.DispositionAt(0)
-		semantic, transformed := disposition.CarryTransform()
-		if !ok || disposition.Kind() != engine.RuleDispositionStaged || disposition.TransformOnly() ||
-			!transformed || semantic != transformSemantic || disposition.TargetCount() != 1 || disposition.Guard().Empty() {
-			return engine.RuleEvidence{}, false
-		}
-		actual, valueOK := disposition.Value()
-		target, targetOK := disposition.TargetAt(0)
-		ref, refOK := owner.Ref(canonical.coordinate)
-		if !valueOK || !targetOK || !refOK || !owner.Schema().Equal(actual, canonical.fresh) || !engine.TargetMatchesRef(target, ref) {
-			return engine.RuleEvidence{}, false
-		}
-		return derivation.Accept()
-	}
 }

@@ -90,6 +90,14 @@ func CloneValueSummary(input ValueSummaryObservation) ValueSummaryObservation {
 	return input
 }
 
+// OwnsSummaryObservation is the Value schema's owner fence for a detached
+// summary answer. It rechecks the private schema pointer, vector shape,
+// coordinate ownership, and row/presence law before another domain consumes
+// the answer as solve-time evidence.
+func (schema *Schema) OwnsSummaryObservation(observation ValueSummaryObservation) bool {
+	return schema != nil && summaryObservationOwned(schema, observation)
+}
+
 func EqualValueSummary(schema *Schema, left, right ValueSummaryObservation) bool {
 	if schema == nil || left.owner != schema || right.owner != schema || !summaryObservationOwned(schema, left) || !summaryObservationOwned(schema, right) || left.Valid != right.Valid || left.Rows != right.Rows || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) {
 		return false

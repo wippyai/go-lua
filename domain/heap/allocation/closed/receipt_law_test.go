@@ -38,9 +38,9 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 	}
 
 	builder := engine.NewSchema()
-	heapFragment, heapOK := heapowner.DeclareSchema(builder, closedKey(1))
+	heapFragment, heapOK := heapowner.DeclareSchema(builder, closedKey(1), closedKey(201))
 	valueFragment, valueOK := valueowner.DeclareSchema(builder, closedKey(2), closedKey(3), closedKey(101))
-	fragment, fragmentOK := closed.DeclareSchema(builder, closedKey(4), closedKey(5), closedKey(6), closedKey(7), heapFragment, valueFragment)
+	fragment, fragmentOK := closed.DeclareSchema(builder, closedKey(4), closedKey(5), closedKey(6), heapFragment, valueFragment)
 	cold, coldOK := builder.Seal()
 	if !heapOK || !valueOK || !fragmentOK || !coldOK || cold == nil {
 		t.Fatal("closed receipt schema")
@@ -48,7 +48,7 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 	binding := engine.NewSchemaBinding(cold)
 	heapHot, heapHotOK := heapowner.BindHot(binding, heapFragment, heapSchema)
 	valueHot, valueHotOK := valueowner.BindHot(binding, valueFragment, valueSchema)
-	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, valueHot, mounts.heap)
+	catalog, catalogOK := allocationcatalog.Seal(heapSchema, valueSchema, mounts.heap)
 	rule, ruleOK := closed.BindHot(binding, fragment, heapHot, valueHot, catalog)
 	if !heapHotOK || !valueHotOK || !catalogOK || !ruleOK || rule == nil || !binding.Seal() {
 		t.Fatal("closed mounted receipt binding")

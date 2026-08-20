@@ -2,7 +2,6 @@ package index
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	"github.com/wippyai/go-lua/domain/pack"
@@ -12,7 +11,7 @@ import (
 )
 
 // RawSetHotRule is the direct RawSet issuer. The reducer remains the one
-// shared transfer/evidence plane; this type only retains owner-typed reads
+// shared Fold plane; this type only retains owner-typed reads
 // and the sealed Heap rule implementation.
 type RawSetHotRule struct {
 	implementation *heapowner.RuleImplementation[Index]
@@ -54,7 +53,7 @@ func SealRawSetProgramRule(rule *RawSetHotRule) (engine.ProgramRule, bool) {
 // directly at their declared schema ordinals. No construction transaction,
 // cold Owner, Composition Rule, or copied Factor geometry is retained.
 func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment, topology *Topology, values *valueowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) (*RawSetHotRule, bool) {
-	if binding == nil || fragment == nil || fragment.slot == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || !packs.OwnsSchema(topology.packs) || fragment.semantic == (identity.SemanticKey{}) || fragment.evidence == (identity.SemanticKey{}) || values.Schema() != topology.values || heap.Schema() != topology.heap || !topology.packs.LinkOwner().Matches(values.Schema().LinkOwner()) {
+	if binding == nil || fragment == nil || fragment.slot == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || !packs.OwnsSchema(topology.packs) || values.Schema() != topology.values || heap.Schema() != topology.heap || !topology.packs.LinkOwner().Matches(values.Schema().LinkOwner()) {
 		return nil, false
 	}
 	core := &RawSetRule{topology: topology}
@@ -64,8 +63,7 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 
 	implementation, bound := heapowner.BindSelectedRouteRuleDirect(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Index]{
 		OperandContent: core.operandContent,
-		Admission:      engine.AdmitRuleByDerivation(fragment.evidence, core.check(fragment.semantic)),
-		Transfer:       core.transfer,
+		Fold:           core.fold,
 	}, engine.HotCarrySpec[heapdomain.Value, Index]{}, nil)
 	if !bound {
 		return nil, false
@@ -130,25 +128,6 @@ func hotRawSetRuntime(values *valueowner.HotOwner, heap *heapowner.HotOwner, pac
 	}
 	runtime.packRoute = func(context engine.SelectorContext, root pack.Root, tag heapdomain.RawPayloadTag) bool {
 		return packowner.SelectRouteTyped(packs, context, root, tag)
-	}
-	runtime.valueTarget = func(target engine.RuleTarget, coordinate valuedomain.Coordinate) bool {
-		return values.TargetMatches(target, coordinate)
-	}
-	runtime.heapTarget = func(target engine.RuleTarget, key heapdomain.Key) bool { return heap.TargetMatches(target, key) }
-	runtime.valueReadRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], read engine.Read[engine.OrderedCells[valuedomain.Value]], coordinate valuedomain.Coordinate) bool {
-		return valueowner.ReadMatches(values, derivation, read, coordinate)
-	}
-	runtime.valueSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[uint64, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
-		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
-	}
-	runtime.sourceSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[rawSourceTag, engine.OrderedCells[valuedomain.Value]]], ordinal int, coordinate valuedomain.Coordinate) bool {
-		return valueowner.SelectionMatches(values, derivation, disposition, read, ordinal, coordinate)
-	}
-	runtime.heapSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]]], ordinal int, key heapdomain.Key) bool {
-		return heapowner.SelectionMatches(heap, derivation, disposition, read, ordinal, key)
-	}
-	runtime.packSelectionRef = func(derivation engine.RuleDerivation[heapdomain.Value, Index], disposition engine.RuleDisposition[heapdomain.Value], read engine.Read[engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]]], ordinal int, root pack.Root) bool {
-		return packowner.SelectionMatches(packs, derivation, disposition, read, ordinal, root)
 	}
 	return runtime
 }

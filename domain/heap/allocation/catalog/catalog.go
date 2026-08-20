@@ -7,19 +7,16 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	"github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
-	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
 // Catalog is the immutable allocation-occurrence denominator for one exact
 // Heap/Value Link seal. Duplicate mounts have distinct Mount issuers even
 // when their reusable occurrence IDs are identical.
 type Catalog struct {
-	heap         heapdomain.Schema
-	values       *valuedomain.Schema
-	summaryOwner *valueowner.HotOwner
-	mounts       map[identity.ContentID]*mountRows
-	mountOrder   []identity.ContentID
-	summaryState summaryState
+	heap       heapdomain.Schema
+	values     *valuedomain.Schema
+	mounts     map[identity.ContentID]*mountRows
+	mountOrder []identity.ContentID
 }
 
 type mountRows struct {
@@ -29,14 +26,6 @@ type mountRows struct {
 	closed     []source.Closed
 	closedSet  []bool
 }
-
-type summaryState uint8
-
-const (
-	summaryPending summaryState = iota + 1
-	summarySealed
-	summaryFailed
-)
 
 // SealFailure is the closed cold-binding stage that rejected an allocation
 // catalog. It deliberately exposes no Program proof, Heap key, coordinate,
@@ -53,8 +42,6 @@ const (
 	SealFailureRoot
 	SealFailureClosed
 	SealFailureCoordinate
-	SealFailureSummary
-	SealFailureSummaryAttachment
 	SealFailureDuplicateAllocation
 	SealFailureAllocationCoverage
 	SealFailureMountCoverage
@@ -78,10 +65,6 @@ func (failure SealFailure) String() string {
 		return "closed"
 	case SealFailureCoordinate:
 		return "coordinate"
-	case SealFailureSummary:
-		return "summary"
-	case SealFailureSummaryAttachment:
-		return "summary-attachment"
 	case SealFailureDuplicateAllocation:
 		return "duplicate-allocation"
 	case SealFailureAllocationCoverage:
@@ -99,13 +82,7 @@ type Mount struct{ rows *mountRows }
 // FencedTo authenticates this immutable catalog against the exact Link-local
 // Heap and Value owners used at seal.
 func (catalog *Catalog) FencedTo(heap heapdomain.Schema, values *valuedomain.Schema) bool {
-	return catalog != nil && catalog.heap == heap && catalog.values == values && catalog.summaryOwner != nil && catalog.summaryOwner.Schema() == values && catalog.summaryState != summaryFailed && heap.Valid() && values != nil && values.Valid() && values.OwnsHeapSchema(heap) && len(catalog.mounts) == values.MountCount()
-}
-
-// FencedToSummaryOwner additionally authenticates the exact Value hot owner
-// that issued every closed-constructor summary receipt at seal.
-func (catalog *Catalog) FencedToSummaryOwner(heap heapdomain.Schema, values *valuedomain.Schema, owner *valueowner.HotOwner) bool {
-	return catalog != nil && owner != nil && catalog.summaryOwner == owner && catalog.FencedTo(heap, values)
+	return catalog != nil && catalog.heap == heap && catalog.values == values && heap.Valid() && values != nil && values.Valid() && values.OwnsHeapSchema(heap) && len(catalog.mounts) == values.MountCount()
 }
 
 func (catalog *Catalog) FencedToHeap(heap heapdomain.Schema) bool {
@@ -114,33 +91,25 @@ func (catalog *Catalog) FencedToHeap(heap heapdomain.Schema) bool {
 
 // Seal joins each exact mounted Program Allocation proof to Heap's already
 // issued key once. No raw term, ordinal, or engine authority is retained.
-func Seal(heap heapdomain.Schema, values *valuedomain.Schema, summaryOwner *valueowner.HotOwner, mounts []heapdomain.ArtifactMount) (*Catalog, bool) {
-	catalog, failure := SealWithFailure(heap, values, summaryOwner, mounts)
+func Seal(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, bool) {
+	catalog, failure := SealWithFailure(heap, values, mounts)
 	return catalog, failure == SealFailureNone
 }
 
-// SealWithFailure is the single-call form for callers whose Value binding is
-// already sealed. Production binding uses BeginWithFailure, binds every Rule,
-// seals the shared SchemaBinding, then calls SealSummaryReceiptsWithFailure.
-func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, summaryOwner *valueowner.HotOwner, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
-	result, failure := BeginWithFailure(heap, values, summaryOwner, mounts)
-	if failure != SealFailureNone {
-		return nil, failure
-	}
-	if failure = result.SealSummaryReceiptsWithFailure(); failure != SealFailureNone {
-		return nil, failure
-	}
-	return result, SealFailureNone
+// SealWithFailure is the single-call form for callers that do not need to
+// interleave catalog construction with SchemaBinding registration.
+func SealWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
+	return BeginWithFailure(heap, values, mounts)
 }
 
 // BeginWithFailure seals the mount owner fence while the shared
 // SchemaBinding remains open. Heap already owns the allocation occurrence
 // inverse; this catalog retains no key/artifact-occurrence reconstruction.
-func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, summaryOwner *valueowner.HotOwner, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
-	if !heap.Valid() || values == nil || !values.Valid() || summaryOwner == nil || summaryOwner.Schema() != values || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(heap.LinkOwner()) || len(mounts) != values.MountCount() {
+func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, mounts []heapdomain.ArtifactMount) (*Catalog, SealFailure) {
+	if !heap.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(heap) || !values.LinkOwner().Matches(heap.LinkOwner()) || len(mounts) != values.MountCount() {
 		return nil, SealFailureInput
 	}
-	result := &Catalog{heap: heap, values: values, summaryOwner: summaryOwner, mounts: make(map[identity.ContentID]*mountRows), summaryState: summaryPending}
+	result := &Catalog{heap: heap, values: values, mounts: make(map[identity.ContentID]*mountRows)}
 	for _, mounted := range mounts {
 		if !mounted.Available() {
 			return nil, SealFailureMount
@@ -171,73 +140,39 @@ func BeginWithFailure(heap heapdomain.Schema, values *valuedomain.Schema, summar
 	if len(result.mounts) != len(mounts) {
 		return nil, SealFailureMountCoverage
 	}
-	return result, SealFailureNone
-}
-
-// SealSummaryReceiptsWithFailure completes the catalog exactly once after
-// SchemaBinding publication. Closed source summaries are preissued into the
-// binding-specific source vector; Heap remains the sole occurrence identity
-// authority and this catalog stores no occurrence-keyed directory.
-func (catalog *Catalog) SealSummaryReceiptsWithFailure() SealFailure {
-	if catalog == nil || catalog.summaryState != summaryPending || !catalog.FencedTo(catalog.heap, catalog.values) {
-		return SealFailureInput
-	}
-	for _, module := range catalog.mountOrder {
-		rows := catalog.mounts[module]
-		if rows == nil || rows.owner != catalog || rows.module != module || !rows.occurrence.Module().Available() {
-			catalog.summaryState = summaryFailed
-			return SealFailureMount
+	for _, module := range result.mountOrder {
+		rows := result.mounts[module]
+		if rows == nil || rows.owner != result || rows.module != module || !rows.occurrence.Module().Available() {
+			return nil, SealFailureMount
 		}
 		for index := 0; index < rows.occurrence.AllocationCount(); index++ {
 			id, key, allocationOK := rows.occurrence.AllocationAt(index)
 			if !allocationOK || !id.Available() {
-				catalog.summaryState = summaryFailed
-				return SealFailureAllocation
+				return nil, SealFailureAllocation
 			}
-			root, rootOK := source.New(catalog.heap, key)
-			if !rootOK || !root.FencedTo(catalog.heap) {
-				catalog.summaryState = summaryFailed
-				return SealFailureRoot
+			root, rootOK := source.New(result.heap, key)
+			if !rootOK || !root.FencedTo(result.heap) {
+				return nil, SealFailureRoot
 			}
 			if root.Form() != source.FormClosed {
 				continue
 			}
-			closed, closedOK := source.NewClosed(catalog.heap, catalog.values, key)
-			if !closedOK || !closed.FencedTo(catalog.heap, catalog.values) {
-				catalog.summaryState = summaryFailed
-				return SealFailureClosed
+			closed, closedOK := source.NewClosed(result.heap, result.values, key)
+			if !closedOK || !closed.FencedTo(result.heap, result.values) {
+				return nil, SealFailureClosed
 			}
-			coordinates := make([]valuedomain.Coordinate, closed.CoordinateCount())
-			for coordinateIndex := range coordinates {
-				coordinate, coordinateOK := closed.CoordinateAt(coordinateIndex)
-				if !coordinateOK {
-					catalog.summaryState = summaryFailed
-					return SealFailureCoordinate
-				}
-				coordinates[coordinateIndex] = coordinate
-			}
-			summary, summaryOK := catalog.summaryOwner.IssueSummaryReceipt(coordinates)
-			if !summaryOK || !summary.IssuedBy(catalog.summaryOwner) || summary.Width() != len(coordinates) {
-				catalog.summaryState = summaryFailed
-				return SealFailureSummary
-			}
-			closed, closedOK = closed.WithSummaryReceipt(summary)
-			if !closedOK || !closed.SummaryReceipt().IssuedBy(catalog.summaryOwner) {
-				catalog.summaryState = summaryFailed
-				return SealFailureSummaryAttachment
+			if _, keysOK := closed.SummaryKeys(); !keysOK {
+				return nil, SealFailureCoordinate
 			}
 			rows.closed[index] = closed
 			rows.closedSet[index] = true
 		}
 	}
-	// This state transition seals the catalog's owner fence; it does not build
-	// an occurrence-keyed directory.
-	catalog.summaryState = summarySealed
-	return SealFailureNone
+	return result, SealFailureNone
 }
 
 func (catalog *Catalog) ForMount(module identity.ContentID) (Mount, bool) {
-	if catalog == nil || catalog.summaryState != summarySealed || !module.Available() {
+	if catalog == nil || !module.Available() {
 		return Mount{}, false
 	}
 	rows := catalog.mounts[module]
@@ -284,7 +219,7 @@ func (mount Mount) ClosedForOccurrence(id identity.ContentID) (source.Closed, bo
 		return source.Closed{}, false
 	}
 	closed := mount.rows.closed[ordinal]
-	return closed, closed.FencedTo(mount.rows.owner.heap, mount.rows.owner.values) && closed.SummaryReceipt().IssuedBy(mount.rows.owner.summaryOwner)
+	return closed, closed.FencedTo(mount.rows.owner.heap, mount.rows.owner.values)
 }
 
 // OwnedBy is the exact catalog fence used by package-owned hot rules.

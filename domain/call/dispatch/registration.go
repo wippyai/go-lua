@@ -43,16 +43,17 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/call/dispatch",
-		Roles:    []schema.Key{"semantic/operand/call/dispatch", "semantic/evidence/call/dispatch"},
+		Roles:    []schema.Key{"semantic/operand/call/dispatch"},
 	}
 }
 
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
-	semantics, ok := context.Roles.Rule("call/dispatch")
-	if !ok {
+	semantic, semanticOK := context.Roles.Key("semantic/rule/call/dispatch")
+	operand, operandOK := context.Roles.Key("semantic/operand/call/dispatch")
+	if !semanticOK || !operandOK {
 		return nil, false
 	}
-	return DeclareSchema(builder, semantics.Rule, semantics.Operand, semantics.Evidence, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal())
+	return DeclareSchema(builder, semantic, operand, context.Principals.ValuePrincipal(), context.Principals.CallPrincipal())
 }
 
 func RegisterRule(binding *engine.SchemaBinding, context rule.Registration[*SchemaFragment]) (engine.RuleSlotCapability, bool) {
@@ -72,9 +73,9 @@ func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) boo
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic
-// role vocabulary: the three roles its rule is identified by. A role is
+// role vocabulary: the rule and operand roles its rule is identified by. A role is
 // declared where it is used, so the row and the reference that names it are one
 // package's statement.
 func StructureSpecs() []structure.Spec {
-	return vocabulary.RuleRoleSpecs("call/dispatch")
+	return vocabulary.RoleSpecs("rule/call/dispatch", "operand/call/dispatch")
 }
