@@ -413,6 +413,11 @@ type rootRow struct {
 	fresh         freshSource
 	bootID        identity.ContentID
 	bootImmutable bool
+	// bootContentID and bootValue are the sealed Heap-owned bootstrap row.
+	// Bootstrap rules consume this row through Key; they never carry a second
+	// Root image or rebuild the immutable object at solve time.
+	bootContentID identity.ContentID
+	bootValue     Value
 	fieldStart    uint32
 	fieldCount    uint32
 }
@@ -1535,6 +1540,9 @@ func (owner *heapBuilder) finishWithFailure() SealFailure {
 	}
 	owner.bottom = Value{owner: owner.schema}
 	owner.top = Value{owner: owner.schema, top: true}
+	if !owner.sealBootRows() {
+		return SealFailureBootProjection
+	}
 	return SealFailureNone
 }
 
