@@ -91,7 +91,7 @@ func TestAssembleSuccessfulQuartetPublishesStaticReceipt(t *testing.T) {
 		t.Fatalf("copied Assembly.Take = %p/%p/%p/%p, %v; want all nil and error", secondSource, secondFlow, secondStatic, secondModule, secondErr)
 	}
 	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || moduleView.ContentID().Available() {
-		t.Fatal("successful Assemble left a consumed construction owner View readable or lost Static receipt")
+		t.Fatal("successful Assemble left a consumed construction owner View readable or lost Static view")
 	}
 	if repeated, repeatedErr := Assemble(source.Finalizer{}, staticComponent, staticView, imports.Finalizer{}, draft, entry); repeatedErr == nil || repeated != nil {
 		t.Fatalf("copied Draft reopened Flow: assembly=%#v err=%v", repeated, repeatedErr)
@@ -322,7 +322,7 @@ func TestAssemblePreflightFailureAbortsEveryConstructionOwner(t *testing.T) {
 		t.Fatalf("Assemble(invalid entry) = %#v, %v; want terminal failure", assembly, err)
 	}
 	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || moduleView.ContentID().Available() {
-		t.Fatal("failed Assemble left a construction owner View readable or lost Static receipt")
+		t.Fatal("failed Assemble left a construction owner View readable or lost Static view")
 	}
 	if _, claimErr := draft.claim(); claimErr == nil {
 		t.Fatal("failed Assemble left the authored Flow Draft reclaimable")
