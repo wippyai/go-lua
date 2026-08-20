@@ -1,6 +1,8 @@
 package program
 
 import (
+	"crypto/sha256"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -130,11 +132,21 @@ func evaluationSpanID(program *Program, authored keyspace.Term, entry, finish id
 	if program == nil || authored == 0 || !entry.Available() || !finish.Available() {
 		return identity.ContentID{}
 	}
-	return programRoleID("program/transformer/span", program.ContentID(), func(writer *framing.Writer) bool {
-		return writer.Uint(uint64(keyspace.TermFamily(authored))) == nil &&
-			writer.Uint(uint64(keyspace.TermOrdinal(authored))) == nil &&
-			writer.Bytes(entry[:]) == nil && writer.Bytes(finish[:]) == nil
-	})
+	owner := program.ContentID()
+	if !owner.Available() {
+		return identity.ContentID{}
+	}
+	hash := sha256.New()
+	var writer framing.Writer
+	if writer.Reset(hash, "program/transformer/span", 1) != nil || writer.Record(1) != nil ||
+		writer.Bytes(owner[:]) != nil || writer.Uint(uint64(keyspace.TermFamily(authored))) != nil ||
+		writer.Uint(uint64(keyspace.TermOrdinal(authored))) != nil || writer.Bytes(entry[:]) != nil ||
+		writer.Bytes(finish[:]) != nil || writer.Finish() != nil {
+		return identity.ContentID{}
+	}
+	var id identity.ContentID
+	copy(id[:], hash.Sum(nil))
+	return id
 }
 
 func (program *Program) OwnsSpan(span Span) bool {
