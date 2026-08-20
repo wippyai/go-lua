@@ -387,7 +387,7 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 			return nil, false
 		}
 	}
-	if len(state.roots) == 0 || !sealed.sealSourceResults() {
+	if len(state.roots) == 0 || !sealed.sealSourceValues() {
 		return nil, false
 	}
 	return sealed, true

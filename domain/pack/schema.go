@@ -162,11 +162,14 @@ type schema struct {
 	binds     []bindRow
 	bodies    []bodyRow
 	outcomes  []outcomeRow
-	results   []sourceResultRow
+	// sourceValues is the sealed Pack value column for each source-producing
+	// root. Source and Root remain the canonical descriptors in roots; this
+	// column stores the Value directly and never wraps it in a transport object.
+	sourceValues []Value
 	// sourceOccurrences is the compact mounted Program occurrence inverse
-	// sealed beside results; no raw Program proof survives publication.
-	// sourceOccurrenceIndex is its direct address, so mounted owners redeem a
-	// source result without rebuilding a directory of their own.
+	// sealed beside sourceValues; no raw Program proof survives publication.
+	// sourceOccurrenceIndex is its direct address, so mounted owners resolve
+	// the existing Source row without rebuilding a directory of their own.
 	sourceOccurrences     []sourceOccurrenceRow
 	sourceOccurrenceIndex map[sourceOccurrenceRef]uint32
 

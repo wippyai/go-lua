@@ -7,7 +7,7 @@ import (
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 )
 
-// HotRule is Pack/source's receipt-native Rule issuer. It retains only the
+// HotRule is Pack/source's typed Rule issuer. It retains only the
 // Pack owner's opaque typed issuer; the Rule slot, output Factor, and private
 // coordinate remain owned by the exact SchemaBinding.
 type HotRule struct {
@@ -31,8 +31,9 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 			if !operandOK {
 				return false
 			}
-			_, fact, resultOK := sealedResult(schema, source)
-			if !resultOK {
+			root, rootOK := source.Root()
+			fact, valueOK := schema.SourceValue(source)
+			if !rootOK || !valueOK || !schema.Admit(root, fact) {
 				return false
 			}
 			rows := 0
@@ -43,9 +44,10 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 			return completed && rows == 1
 		},
 	}, func(source packdomain.Source) (uint64, bool) {
-		root, _, ok := sealedResult(schema, source)
+		root, rootOK := source.Root()
+		_, valueOK := schema.SourceValue(source)
 		index, indexOK := schema.RootOrder(root)
-		return uint64(index), ok && indexOK && index >= 0
+		return uint64(index), rootOK && valueOK && indexOK && index >= 0
 	})
 	if !ok || implementation == nil {
 		return nil, false
@@ -63,15 +65,15 @@ func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (packdomain.Sou
 		!coords.Mount.Available() || !coords.Occurrence.Available() {
 		return packdomain.Source{}, false
 	}
-	result, ok := rule.schema.SourceResultForMountedOccurrence(coords.Mount, coords.Occurrence)
-	if !ok || !rule.schema.OwnsSourceResult(result) {
+	source, ok := rule.schema.SourceForMountedOccurrence(coords.Mount, coords.Occurrence)
+	if !ok {
 		return packdomain.Source{}, false
 	}
-	return result.Source()
+	return source, true
 }
 
-// Implementation returns the typed pending issuer. It resolves to an exact
-// engine receipt only after the shared SchemaBinding has sealed.
+// Implementation returns the typed pending issuer. It resolves to the exact
+// engine rule only after the shared SchemaBinding has sealed.
 func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.Source], bool) {
 	if rule == nil || rule.implementation == nil {
 		return nil, false
@@ -101,10 +103,11 @@ func hotSourceChecker(owner *packowner.HotOwner, schema *packdomain.Schema, rule
 		if !ok || !idOK || !derivation.OperandContentMatches([32]byte(id)) {
 			return engine.RuleEvidence{}, false
 		}
-		root, expected, resultOK := sealedResult(schema, source)
+		root, rootOK := source.Root()
+		expected, valueOK := schema.SourceValue(source)
 		ref, refOK := owner.Ref(root)
 		disposition, dispositionOK := derivation.DispositionAt(0)
-		if !resultOK || !refOK || !dispositionOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || disposition.Guard().Empty() {
+		if !rootOK || !valueOK || !refOK || !dispositionOK || disposition.Kind() != engine.RuleDispositionStaged || disposition.TargetCount() != 1 || disposition.Guard().Empty() {
 			return engine.RuleEvidence{}, false
 		}
 		target, targetOK := disposition.TargetAt(0)
