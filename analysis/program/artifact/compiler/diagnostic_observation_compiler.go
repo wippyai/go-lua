@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
@@ -85,7 +84,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 	// Branches.Get returns (owner, condition, true arm, false arm, ok).
 	owner, branchCondition, branchTrue, branchFalse, branchRelationOK := compiler.input.Flow().Authored().Control().Branches().Get(decisionTerm)
 	_ = owner
-	if !branchRelationOK || !diagnosticBranchScopeRewriteSafe(compiler.input, branchTrue, branchFalse) {
+	if !branchRelationOK || !compiler.diagnosticBranchScopeRewriteSafe(branchTrue, branchFalse) {
 		return CompileFailure{}
 	}
 	span, spanOK := compiler.input.Span(branchCondition)
@@ -124,12 +123,47 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 // diagnosticBranchScopeRewriteSafe is the artifact builder's copy of the
 // source-rewrite eligibility law. It consumes only canonical Flow/Static
 // rows; no Source or authored term is retained after row construction.
-func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFalse keyspace.Term) bool {
-	if !input.Available() || keyspace.TermFamily(whenTrue) != keyspace.FamilyBody || keyspace.TermOrdinal(whenTrue) == 0 ||
+//
+// The predicate splits in two: a program-global well-formedness scan over
+// Flow's cells and labels and Static's aliases and interfaces (independent
+// of the route's own arms), and a per-route arm-ownership test against the
+// term set that scan collects. The scan runs once per compile and memoizes
+// on compiler; each route only pays two set lookups.
+func (compiler *compiler) diagnosticBranchScopeRewriteSafe(whenTrue, whenFalse keyspace.Term) bool {
+	if keyspace.TermFamily(whenTrue) != keyspace.FamilyBody || keyspace.TermOrdinal(whenTrue) == 0 ||
 		keyspace.TermFamily(whenFalse) != keyspace.FamilyBody || keyspace.TermOrdinal(whenFalse) == 0 || whenTrue == whenFalse {
 		return false
 	}
-	arm := func(owner keyspace.Term) bool { return owner == whenTrue || owner == whenFalse }
+	if !compiler.branchScopeRewriteComputed {
+		compiler.branchScopeRewriteWellFormed = compiler.computeBranchScopeRewriteGlobal()
+		compiler.branchScopeRewriteComputed = true
+	}
+	if !compiler.branchScopeRewriteWellFormed {
+		return false
+	}
+	if _, matched := compiler.branchScopeRewriteOwners[whenTrue]; matched {
+		return false
+	}
+	if _, matched := compiler.branchScopeRewriteOwners[whenFalse]; matched {
+		return false
+	}
+	return true
+}
+
+// computeBranchScopeRewriteGlobal runs the program-global half of
+// diagnosticBranchScopeRewriteSafe once: it validates every Cell/Label row
+// in Flow and every Alias/Interface row in Static, and collects the set of
+// owner terms (CellLocal bodies, label owners, alias owners, interface
+// owners) a route's arms are tested against. It populates
+// compiler.branchScopeRewriteOwners as a side effect even on failure, since
+// the caller only reads the set when well-formedness holds.
+func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
+	input := compiler.input
+	if !input.Available() {
+		return false
+	}
+	owners := make(map[keyspace.Term]struct{})
+	compiler.branchScopeRewriteOwners = owners
 	authoredView := input.Flow().Authored()
 	cells := authoredView.Storage().Cells()
 	for index := 0; index < cells.Count(); index++ {
@@ -143,9 +177,7 @@ func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFals
 			if key != 0 || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 {
 				return false
 			}
-			if arm(body) {
-				return false
-			}
+			owners[body] = struct{}{}
 		case authored.CellGlobal:
 			if body != 0 || key == 0 {
 				return false
@@ -158,30 +190,29 @@ func diagnosticBranchScopeRewriteSafe(input *program.Program, whenTrue, whenFals
 	for index := 0; index < labels.Count(); index++ {
 		term, termOK := labels.At(index)
 		owner, rowOK := labels.Get(term)
-		if !termOK || !rowOK || arm(owner) {
+		if !termOK || !rowOK {
 			return false
 		}
+		owners[owner] = struct{}{}
 	}
-	programOwner := input
-	if programOwner == nil {
-		return false
-	}
-	static := programOwner.Static().Declarations()
+	static := input.Static().Declarations()
 	aliases := static.Aliases()
 	for index := 0; index < aliases.Count(); index++ {
 		term, termOK := aliases.At(index)
 		owner, _, _, _, rowOK := aliases.Get(term)
-		if !termOK || !rowOK || arm(owner) {
+		if !termOK || !rowOK {
 			return false
 		}
+		owners[owner] = struct{}{}
 	}
 	interfaces := static.Interfaces()
 	for index := 0; index < interfaces.Count(); index++ {
 		term, termOK := interfaces.At(index)
 		owner, _, _, rowOK := interfaces.Get(term)
-		if !termOK || !rowOK || arm(owner) {
+		if !termOK || !rowOK {
 			return false
 		}
+		owners[owner] = struct{}{}
 	}
 	return true
 }
@@ -358,15 +389,31 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() CompileFailur
 			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(call.id, argument.member, declared, memberTerm) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
+			}
 		}
 	}
 	return CompileFailure{}
 }
 
+// selectedDirectCalleeBodies computes the sealed DirectFunctions closure once
+// per compile and memoizes it: the three conformance walks that read it all
+// run against the same compiler state, so the closure cannot change between
+// calls.
 func (compiler *compiler) selectedDirectCalleeBodies() (map[identity.ContentID]struct{}, bool) {
 	if compiler == nil {
 		return nil, false
 	}
+	if compiler.selectedDirectCalleeBodiesComputed {
+		return compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK
+	}
+	compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK = compiler.computeSelectedDirectCalleeBodies()
+	compiler.selectedDirectCalleeBodiesComputed = true
+	return compiler.selectedDirectCalleeBodiesValue, compiler.selectedDirectCalleeBodiesOK
+}
+
+func (compiler *compiler) computeSelectedDirectCalleeBodies() (map[identity.ContentID]struct{}, bool) {
 	selected := make(map[identity.ContentID]struct{})
 	callable := make(map[identity.ContentID]struct{})
 	for _, body := range compiler.bodies {
@@ -405,6 +452,50 @@ func (compiler *compiler) selectedDirectCalleeBodies() (map[identity.ContentID]s
 	return selected, true
 }
 
+// diagnosticEvidenceLinearScanLimit is the width below which a direct
+// pairwise scan over evidence beats a map: observed evidence widths across
+// the fixture corpus are 0 or 1, and a benchmarked comparison shows the
+// linear scan winning through width 8; this bound keeps the same scan sound
+// at any width by falling back to the reused compiler-level scratch map
+// above it, so the row's own admission cost never regresses on a
+// pathological evidence count.
+const diagnosticEvidenceLinearScanLimit = 16
+
+// validUniqueEvidence reports whether evidence holds only available, distinct
+// points. Below diagnosticEvidenceLinearScanLimit it scans in place with no
+// allocation; above it, it dedups through compiler.diagnosticEvidenceScratch,
+// a map reused and cleared per row instead of allocated per row.
+func (compiler *compiler) validUniqueEvidence(evidence []identity.ContentID) bool {
+	if len(evidence) <= diagnosticEvidenceLinearScanLimit {
+		for index, point := range evidence {
+			if !point.Available() {
+				return false
+			}
+			for prior := 0; prior < index; prior++ {
+				if evidence[prior] == point {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	if compiler.diagnosticEvidenceScratch == nil {
+		compiler.diagnosticEvidenceScratch = make(map[identity.ContentID]struct{}, len(evidence))
+	} else {
+		clear(compiler.diagnosticEvidenceScratch)
+	}
+	for _, point := range evidence {
+		if !point.Available() {
+			return false
+		}
+		if _, duplicate := compiler.diagnosticEvidenceScratch[point]; duplicate {
+			return false
+		}
+		compiler.diagnosticEvidenceScratch[point] = struct{}{}
+	}
+	return true
+}
+
 func (compiler *compiler) admitDiagnosticObservation(
 	row programschema.DiagnosticObservation,
 	evidence []identity.ContentID,
@@ -434,15 +525,8 @@ func (compiler *compiler) admitDiagnosticObservation(
 		}
 		return true
 	}
-	seenEvidence := make(map[identity.ContentID]struct{}, len(evidence))
-	for _, point := range evidence {
-		if !point.Available() {
-			return false
-		}
-		if _, duplicate := seenEvidence[point]; duplicate {
-			return false
-		}
-		seenEvidence[point] = struct{}{}
+	if !compiler.validUniqueEvidence(evidence) {
+		return false
 	}
 	for _, component := range path {
 		if component == "" {
@@ -558,6 +642,9 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() CompileFailu
 			if !compiler.admitConformanceObservation(diagnosticTypeConformanceSiteAssignment, assignmentID, member.ID(), declared, memberTerm, uint32(position)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(assignmentID, member.ID(), declared, memberTerm) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
 		}
 	}
 	return CompileFailure{}
@@ -649,6 +736,9 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Compile
 				continue
 			}
 			if !compiler.admitConformanceObservation(diagnosticTypeConformanceSiteAssignment, bindID, member.ID(), declared, memberTerm, uint32(position)) {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
+			}
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(bindID, member.ID(), declared, memberTerm) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, position, CompileReasonOccurrenceUnavailable)
 			}
 		}

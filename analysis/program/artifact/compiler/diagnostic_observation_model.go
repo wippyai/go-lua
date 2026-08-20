@@ -1,8 +1,6 @@
 package compiler
 
 import (
-	"crypto/sha256"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -33,6 +31,8 @@ type diagnosticUnresolvedValueReferenceRow struct {
 const (
 	diagnosticTypeConformanceSiteCallArgument uint8 = 1
 	diagnosticTypeConformanceSiteAssignment   uint8 = 2
+	diagnosticTypeConformanceSiteMember       uint8 = 3
+	diagnosticTypeConformanceSiteMemberAbsent uint8 = 4
 )
 
 type diagnosticTypeConformanceRow struct {
@@ -90,7 +90,8 @@ func (payload diagnosticUnresolvedValueReferenceRow) empty() bool {
 
 func (payload diagnosticTypeConformanceRow) available() bool {
 	switch payload.site {
-	case diagnosticTypeConformanceSiteCallArgument, diagnosticTypeConformanceSiteAssignment:
+	case diagnosticTypeConformanceSiteCallArgument, diagnosticTypeConformanceSiteAssignment,
+		diagnosticTypeConformanceSiteMember, diagnosticTypeConformanceSiteMemberAbsent:
 	default:
 		return false
 	}
@@ -124,7 +125,8 @@ func diagnosticObservationID(owner identity.ContentID, kind structure.Diagnostic
 	if !owner.Available() || !kind.Available() || !validDiagnosticSpan(location) {
 		return identity.ContentID{}
 	}
-	hash := sha256.New()
+	hash := acquireHash()
+	defer releaseHash(hash)
 	var writer framing.Writer
 	if writer.Reset(hash, "program/transformer/diagnostic-observation", 1) != nil || writer.Record(1) != nil ||
 		writer.Bytes(owner[:]) != nil || writer.Uint(uint64(kind)) != nil || writer.String(location.File) != nil ||

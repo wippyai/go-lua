@@ -42,6 +42,11 @@ type allocationFieldCompileRow struct {
 	selectorSpan program.Span
 	id           identity.ContentID
 	shares       bool
+	// memberTerm is authored.Values().Member(values, 0): the single fixed
+	// member a width-1, non-open field carries. It is 0 when the field is
+	// open or has width other than 1, mirroring authored.Values().Member's
+	// own zero-term failure convention.
+	memberTerm keyspace.Term
 }
 
 // copyAllocationRowsFailure compiles the complete authored allocation
@@ -109,10 +114,14 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 			normalized, normalizedOK := flowView.AccessGeometry().TableFields().Get(fieldTerm)
 			fieldProof, fieldProofOK := flowView.AllocationFieldID(term, fieldTerm)
 			fieldID := allocationFieldID(compiler.input.ContentID(), fieldProof)
+			var memberTerm keyspace.Term
+			if !finalOpen && width == 1 {
+				memberTerm, _ = authored.Values().Member(values, 0)
+			}
 			fieldRow := allocationFieldCompileRow{
 				term: fieldTerm, kind: kind, selector: selector, values: values,
 				width: width, finalOpen: finalOpen, normalized: normalized, normalizedOK: normalizedOK,
-				valuesRow: valueRow, fieldSpan: fieldSpan, id: fieldID,
+				valuesRow: valueRow, fieldSpan: fieldSpan, id: fieldID, memberTerm: memberTerm,
 			}
 			if kind == flowkind.FieldKey {
 				fieldRow.selectorSpan, _ = compiler.input.Span(selector)
@@ -178,6 +187,30 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 	compiler.allocationRows = rows
 	compiler.heapAllocations = heapRows
 	return CompileFailure{}
+}
+
+// allocationRowForTerm looks up one allocation's compile row by its own
+// authored term. The term -> row index is built once, on first use, so a
+// program whose diagnostic population never descends a structural member
+// (no declared record/array/map initializer) pays nothing for it. A term
+// that is not a compiled allocation -- not FamilyTable, or FamilyTable but
+// not Executable -- is simply absent from the index.
+func (compiler *compiler) allocationRowForTerm(term keyspace.Term) (allocationCompileRow, bool) {
+	if compiler == nil || term == 0 {
+		return allocationCompileRow{}, false
+	}
+	if compiler.allocationRowsByTerm == nil {
+		byTerm := make(map[keyspace.Term]int, len(compiler.allocationRows))
+		for index, row := range compiler.allocationRows {
+			byTerm[row.term] = index
+		}
+		compiler.allocationRowsByTerm = byTerm
+	}
+	index, found := compiler.allocationRowsByTerm[term]
+	if !found || index < 0 || index >= len(compiler.allocationRows) {
+		return allocationCompileRow{}, false
+	}
+	return compiler.allocationRows[index], true
 }
 
 func allocationTemplateID(occurrence identity.ContentID, role allocationRole, form allocationForm, fields []allocationFieldCompileRow) identity.ContentID {

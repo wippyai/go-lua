@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"crypto/sha256"
+	"hash"
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -9,6 +11,32 @@ import (
 )
 
 var digestSinks sync.Pool
+
+// hashSinks pools raw SHA-256 hash.Hash state for callers that frame their
+// own preimage bytes directly (internal/framing.Writer) instead of going
+// through the canonical.DigestWriter tag scheme digestSink wraps. Pooling
+// the hasher does not touch the framing: the caller's byte sequence into the
+// hash is unchanged, only the hash.Hash allocation is reused.
+var hashSinks sync.Pool
+
+// acquireHash returns a reset SHA-256 hasher from the pool, allocating one
+// only when the pool is empty.
+func acquireHash() hash.Hash {
+	if h, ok := hashSinks.Get().(hash.Hash); ok && h != nil {
+		h.Reset()
+		return h
+	}
+	return sha256.New()
+}
+
+// releaseHash returns a hasher to the pool for reuse. The caller must not
+// use h again after this call.
+func releaseHash(h hash.Hash) {
+	if h == nil {
+		return
+	}
+	hashSinks.Put(h)
+}
 
 type field struct {
 	bytes []byte

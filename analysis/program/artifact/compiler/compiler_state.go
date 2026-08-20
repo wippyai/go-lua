@@ -40,6 +40,7 @@ type compiler struct {
 	heapAllocations                          []heapAllocationDraft
 	heapIndexes                              []heapIndexDraft
 	allocationRows                           []allocationCompileRow
+	allocationRowsByTerm                     map[keyspace.Term]int
 	occurrences                              []programschema.Occurrence
 	occurrencePoints                         []programschema.OccurrencePoint
 	occurrenceInputs                         []programschema.OccurrenceInput
@@ -52,6 +53,13 @@ type compiler struct {
 	diagnosticObservations                   []programschema.DiagnosticObservation
 	diagnosticEvidence                       []programschema.DiagnosticEvidence
 	diagnosticPaths                          []programschema.DiagnosticPath
+	branchScopeRewriteComputed               bool
+	branchScopeRewriteWellFormed             bool
+	branchScopeRewriteOwners                 map[keyspace.Term]struct{}
+	diagnosticEvidenceScratch                map[identity.ContentID]struct{}
+	selectedDirectCalleeBodiesComputed       bool
+	selectedDirectCalleeBodiesOK             bool
+	selectedDirectCalleeBodiesValue          map[identity.ContentID]struct{}
 	staticTypeValues                         []staticTypeValueDraft
 	staticTypeNodes                          []programschema.StaticTypeNode
 	staticTypeNodeUnionMembers               []programschema.StaticTypeNodeUnionMember
@@ -69,6 +77,7 @@ type compiler struct {
 	staticExpressions                        []programschema.StaticExpression
 	staticInputs                             []programschema.StaticInput
 	diagnosticObservationByID                map[identity.ContentID]int
+	staticTypeTermsByID                      map[identity.ContentID]keyspace.Term
 	pointGeometry                            map[identity.ContentID]pointDraft
 	occurrenceSpans                          map[occurrenceLookup]occurrenceSpanGeometry
 	predecessorStages                        map[identity.ContentID]identity.ContentID
