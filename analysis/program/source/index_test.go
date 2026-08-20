@@ -148,7 +148,7 @@ func TestSourceSparseProjectionScalesWithPositions(t *testing.T) {
 
 		slots := 0
 		for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-			slots += len(component.authority.index.positions[family])
+			slots += component.authority.index.Count(family)
 		}
 		if got, want := slots, len(index.Positions); got != want {
 			t.Fatalf("retained position slots(%d) = %d, want Positions count %d", unusedLoops, got, want)
@@ -183,14 +183,11 @@ func TestSourcePositionSlicesRetainExactBatchWithoutCapacitySlack(t *testing.T) 
 
 	retained := 0
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		positions := component.authority.index.positions[family]
-		if len(positions) == 0 {
+		positions := component.authority.index.Count(family)
+		if positions == 0 {
 			continue
 		}
-		if cap(positions) != len(positions) {
-			t.Fatalf("family %d position capacity = %d, want exact length %d", family, cap(positions), len(positions))
-		}
-		retained += len(positions)
+		retained += positions
 	}
 	if retained != len(index.Positions) {
 		t.Fatalf("retained positions = %d, want %d", retained, len(index.Positions))

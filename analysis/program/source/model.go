@@ -8,6 +8,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	sealedindex "github.com/wippyai/go-lua/analysis/program/source/index"
 )
 
 // Span is one source coordinate. The source name is owned once by Input.
@@ -203,53 +204,6 @@ type spellingStore struct {
 	cells []string
 	// calls is sparse and remains in ascending FamilyCall ordinal order.
 	calls []CallSpelling
-}
-
-type positionSlot struct {
-	root           keyspace.Term
-	body           keyspace.Term
-	offset         uint32
-	cursor         uint32
-	frontierBody   keyspace.Term
-	frontierCursor uint32
-}
-
-// positionEntry is one retained source-position row. The ordinal is kept
-// separately from the row so each family index contains only positioned Terms
-// instead of one slot for every possible identity ordinal.
-type positionEntry struct {
-	ordinal uint32
-	slot    positionSlot
-}
-
-// positionIndex is ordered by ordinal after sealing. It is intentionally a
-// private, per-family slice: immutable queries binary-search it without
-// allocating, and retained storage is proportional to positioned Terms.
-type positionIndex []positionEntry
-
-func (index positionIndex) lookup(ordinal uint32) (positionSlot, bool) {
-	// Keep the retained position query allocation-free without importing a
-	// general-purpose sorting helper. The rows are canonical by ordinal after
-	// sealing, so this is the ordinary lower-bound search over that proof.
-	low, high := 0, len(index)
-	for low < high {
-		middle := low + (high-low)/2
-		if index[middle].ordinal < ordinal {
-			low = middle + 1
-			continue
-		}
-		high = middle
-	}
-	if low == len(index) || index[low].ordinal != ordinal {
-		return positionSlot{}, false
-	}
-	return index[low].slot, true
-}
-
-type indexStore struct {
-	// positions is sparse by positioned Term ordinal. Body parent/root rows are
-	// owned by Flow's sealed Body result and are not retained in Source.
-	positions [keyspace.FamilyCount]positionIndex
 }
 
 // directLocation is Seal-only validation scratch. It proves that a root is a
@@ -500,7 +454,7 @@ type authority struct {
 	order     orderStore
 	spellings spellingStore
 	keys      keyFaultStore
-	index     indexStore
+	index     *sealedindex.Table
 	cellRoles *cellRoleAuthority
 	content   identity.ContentID
 }

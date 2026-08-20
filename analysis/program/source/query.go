@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
+	sealedindex "github.com/wippyai/go-lua/analysis/program/source/index"
 )
 
 // CoordinateFromParts validates one compact coordinate. The all-zero value is
@@ -256,7 +257,7 @@ func (v Spellings) CallName(call keyspace.Term) (string, bool) {
 
 func (v Index) Root(term keyspace.Term) (keyspace.Term, bool) {
 	row, ok := v.position(term)
-	return row.root, ok
+	return row.Root(), ok
 }
 
 // Position is the exact containing direct source coordinate. It never implies
@@ -266,7 +267,7 @@ func (v Index) Position(term keyspace.Term) (keyspace.Term, int, int, bool) {
 	if !ok {
 		return 0, 0, 0, false
 	}
-	return row.body, int(row.offset), int(row.cursor), true
+	return row.Body(), int(row.Offset()), int(row.Cursor()), true
 }
 
 // Frontier returns the precomputed final frontier including Repeat adjustment.
@@ -275,18 +276,18 @@ func (v Index) Frontier(term keyspace.Term) (keyspace.Term, int, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	return row.frontierBody, int(row.frontierCursor), true
+	return row.FrontierBody(), int(row.FrontierCursor()), true
 }
 
-func (v Index) position(term keyspace.Term) (positionSlot, bool) {
-	if v.authority == nil {
-		return positionSlot{}, false
+func (v Index) position(term keyspace.Term) (sealedindex.Slot, bool) {
+	if v.authority == nil || v.authority.index == nil {
+		return sealedindex.Slot{}, false
 	}
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 	if family == keyspace.FamilyInvalid || ordinal == 0 {
-		return positionSlot{}, false
+		return sealedindex.Slot{}, false
 	}
-	return v.authority.index.positions[family].lookup(ordinal)
+	return v.authority.index.Lookup(keyspace.MakeTerm(family, ordinal))
 }
 func (v Literals) Nils() Nils {
 	return Nils(v)

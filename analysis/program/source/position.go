@@ -4,9 +4,10 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	sealedindex "github.com/wippyai/go-lua/analysis/program/source/index"
 )
 
-func installPositions(a *authority, index *indexStore, locations directLocations, input IndexInput) error {
+func installPositions(a *authority, index **sealedindex.Table, locations directLocations, input IndexInput) error {
 	// Positions is the exact batch for Flow's reachable containment closure.
 	// Identity/span cardinality is a separate denominator; direct Body source
 	// occurrences are mandatory, while Terms outside that closure have no
@@ -15,10 +16,8 @@ func installPositions(a *authority, index *indexStore, locations directLocations
 	// Allocate the retained batch exactly once. The input is already canonical
 	// by (Family, Ordinal), so each family can be carved from this backing array
 	// without per-family geometric growth or a sorting/counting pass.
-	entries := make([]positionEntry, len(input.Positions))
+	entries := make([]sealedindex.Row, len(input.Positions))
 	var directCounts [keyspace.FamilyCount]int
-	familyStart := 0
-	var installedFamily keyspace.Family
 	var previousFamily keyspace.Family
 	var previousOrdinal uint32
 	for position, row := range input.Positions {
@@ -31,14 +30,6 @@ func installPositions(a *authority, index *indexStore, locations directLocations
 		if previousFamily != keyspace.FamilyInvalid &&
 			(family < previousFamily || family == previousFamily && termOrdinal <= previousOrdinal) {
 			return errors.New("program/source: noncanonical source position order")
-		}
-		if installedFamily != keyspace.FamilyInvalid && family != installedFamily {
-			index.positions[installedFamily] = positionIndex(entries[familyStart:position:position])
-			installedFamily = family
-			familyStart = position
-		} else if installedFamily == keyspace.FamilyInvalid {
-			installedFamily = family
-			familyStart = position
 		}
 		previousFamily, previousOrdinal = family, termOrdinal
 		location, ok := locations.lookup(row.Root)
@@ -59,34 +50,34 @@ func installPositions(a *authority, index *indexStore, locations directLocations
 		if err := validateFrontier(row, location); err != nil {
 			return err
 		}
-		entries[position] = positionEntry{
-			ordinal: keyspace.TermOrdinal(row.Term),
-			slot: positionSlot{
-				root: row.Root, body: row.Body, offset: row.Offset, cursor: row.Cursor,
-				frontierBody: row.FrontierBody, frontierCursor: row.FrontierCursor,
-			},
-		}
+		entries[position] = sealedindex.NewRow(
+			row.Term, row.Root, row.Body, row.Offset, row.Cursor,
+			row.FrontierBody, row.FrontierCursor,
+		)
 	}
-	if installedFamily != keyspace.FamilyInvalid {
-		index.positions[installedFamily] = positionIndex(entries[familyStart:len(entries):len(entries)])
+	table, err := sealedindex.Seal(entries)
+	if err != nil {
+		return err
 	}
+	*index = table
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		if directCounts[family] != len(locations[family].rows) {
 			return errors.New("program/source: direct source Term lacks position")
 		}
 	}
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		for _, entry := range index.positions[family] {
-			slot := entry.slot
-			rootFamily, rootOrdinal := keyspace.TermFamily(slot.root), keyspace.TermOrdinal(slot.root)
-			if rootFamily == keyspace.FamilyInvalid {
-				return errors.New("program/source: root lacks direct source position")
-			}
-			root, ok := index.positions[rootFamily].lookup(rootOrdinal)
-			if !ok || root.root != slot.root || root.body != slot.body || root.offset != slot.offset || root.cursor != slot.cursor ||
-				root.frontierBody != slot.frontierBody || root.frontierCursor != slot.frontierCursor {
-				return errors.New("program/source: root position is not its direct source coordinate")
-			}
+	for _, row := range input.Positions {
+		slot, ok := table.Lookup(row.Term)
+		if !ok {
+			return errors.New("program/source: retained source position is unavailable")
+		}
+		rootFamily := keyspace.TermFamily(slot.Root())
+		if rootFamily == keyspace.FamilyInvalid {
+			return errors.New("program/source: root lacks direct source position")
+		}
+		root, ok := table.Lookup(slot.Root())
+		if !ok || root.Root() != slot.Root() || root.Body() != slot.Body() || root.Offset() != slot.Offset() || root.Cursor() != slot.Cursor() ||
+			root.FrontierBody() != slot.FrontierBody() || root.FrontierCursor() != slot.FrontierCursor() {
+			return errors.New("program/source: root position is not its direct source coordinate")
 		}
 	}
 	return nil
