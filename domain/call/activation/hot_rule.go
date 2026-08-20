@@ -6,8 +6,8 @@ import (
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
 )
 
-// HotRule is Call activation's receipt-native callback. It retains only the
-// sealed mounted target-batch identity catalog; Program geometry is consumed
+// HotRule is Call activation's mounted callback. It retains only the
+// owner-sealed target-batch identity catalog; Program geometry is consumed
 // before this owner is bound.
 type HotRule struct {
 	owner          *callowner.HotOwner
@@ -15,7 +15,6 @@ type HotRule struct {
 	transport      *engine.MountedActivationCandidateIssuer
 	read           engine.Read[engine.OrderedCells[calldomain.Value]]
 	catalog        *TargetBatchCatalog
-	receiptsSealed bool
 }
 
 // BindHot attaches the one exact Call read and selector callback to its

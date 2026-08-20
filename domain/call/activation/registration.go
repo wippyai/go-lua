@@ -79,10 +79,6 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 	return hot, true
 }
 
-func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	return context.Rule.SealOccurrenceReceipts()
-}
-
 // StructureSpecs is this package's contribution to the analyzer's semantic
 // role vocabulary: the call-body activation, the family its variants are
 // grouped under, and the admission its bodies enter by. A role is declared
