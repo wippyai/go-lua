@@ -39,6 +39,19 @@ const (
 	// VerdictViolates is the answer when the value may carry a family the
 	// declaration does not admit.
 	VerdictViolates
+	// VerdictMayBeNil is the answer when the declaration excludes nil, the
+	// value may carry nil, and every family the value may carry besides nil is
+	// a family the declaration admits. It names the nil-presence finding apart
+	// from a general containment violation.
+	VerdictMayBeNil
+	// VerdictMemberAbsent is the answer for a declared-required key that is
+	// not established. This package names the verdict; the key-set comparison
+	// that decides it is the issuance layer's, not a judgment this package
+	// computes.
+	VerdictMemberAbsent
+	// VerdictUnproven is the answer for a requirement no derivation in this
+	// package establishes. It is reserved for a judgment owned elsewhere.
+	VerdictUnproven
 	verdictLimit
 )
 
@@ -71,4 +84,33 @@ func MayKindConformance(declaredMay, observed runtimekind.Set) Verdict {
 		return VerdictViolates
 	}
 	return VerdictConforms
+}
+
+// MayBeNilConformance is the nil-presence verdict over runtime families. It
+// answers the narrower question of whether an observation that would
+// otherwise violate a declaration violates it for no reason beyond nil: the
+// declaration excludes nil, the value may carry nil, and every other family
+// the value may carry is one the declaration admits.
+//
+// This is not a restatement of MayKindConformance's containment: an
+// observation that carries a family the declaration does not admit besides
+// nil is answered as an abstention here, because the finding it names is a
+// general violation, not a nil-presence one. The two functions are called
+// together by a caller that wants to tell the two findings apart; neither
+// calls the other.
+func MayBeNilConformance(declaredMay, observed runtimekind.Set) Verdict {
+	if !declaredMay.Valid() || !observed.Valid() {
+		return VerdictInvalid
+	}
+	if observed == 0 || observed == runtimekind.All {
+		return VerdictAbstain
+	}
+	if declaredMay.Contains(runtimekind.Nil) || !observed.Contains(runtimekind.Nil) {
+		return VerdictAbstain
+	}
+	nonNil := observed &^ runtimekind.Bit(runtimekind.Nil)
+	if nonNil&^declaredMay != 0 {
+		return VerdictAbstain
+	}
+	return VerdictMayBeNil
 }

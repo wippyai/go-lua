@@ -93,17 +93,136 @@ func TestMayKindConformanceRefusesAMalformedSet(t *testing.T) {
 	}
 }
 
-// TestVerdictCatalogIsClosed states the verdict vocabulary itself: three
+// TestVerdictCatalogIsClosed states the verdict vocabulary itself: six
 // answers and the absent one, and nothing beyond them.
 func TestVerdictCatalogIsClosed(t *testing.T) {
-	for _, verdict := range []Verdict{VerdictAbstain, VerdictConforms, VerdictViolates} {
+	for _, verdict := range []Verdict{
+		VerdictAbstain, VerdictConforms, VerdictViolates,
+		VerdictMayBeNil, VerdictMemberAbsent, VerdictUnproven,
+	} {
 		if !verdict.Available() {
 			t.Fatalf("verdict %d is not available", verdict)
 		}
 	}
-	for _, verdict := range []Verdict{VerdictInvalid, Verdict(4), Verdict(255)} {
+	for _, verdict := range []Verdict{VerdictInvalid, verdictLimit, Verdict(255)} {
 		if verdict.Available() {
 			t.Fatalf("verdict %d answered as a member of the catalog", verdict)
+		}
+	}
+}
+
+// TestMayBeNilConformanceIsTheNilPresenceVerdict states the whole of the
+// narrower judgment: it fires exactly when nil is the value's only excess
+// over an admitted, nil-excluding declaration, and abstains for every other
+// combination, including the ones where a general containment violation
+// exists alongside nil.
+func TestMayBeNilConformanceIsTheNilPresenceVerdict(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		declaredMay runtimekind.Set
+		observed    runtimekind.Set
+		want        Verdict
+	}{
+		{"nothing observed", set(runtimekind.String), 0, VerdictAbstain},
+		{"observation proved nothing", set(runtimekind.String), runtimekind.All, VerdictAbstain},
+
+		// The declaration already admits nil, so an observed nil is not a
+		// finding this judgment names.
+		{"nil admitted by an optional declaration", set(runtimekind.Nil, runtimekind.String), set(runtimekind.Nil, runtimekind.String), VerdictAbstain},
+		{"nil admitted, value narrowed to nil", set(runtimekind.Nil, runtimekind.String), set(runtimekind.Nil), VerdictAbstain},
+
+		// The value carries no nil, so there is no nil-presence question.
+		{"non-optional declaration, no nil observed", set(runtimekind.String), set(runtimekind.String), VerdictAbstain},
+		{"disjoint family with no nil", set(runtimekind.String), set(runtimekind.Number), VerdictAbstain},
+
+		// Nil is excluded by the declaration, observed, and the remainder
+		// after removing nil conforms: the finding is exactly nil presence.
+		{"single family plus nil", set(runtimekind.String), set(runtimekind.Nil, runtimekind.String), VerdictMayBeNil},
+		{"pair declaration plus nil", set(runtimekind.String, runtimekind.Number), set(runtimekind.Nil, runtimekind.String), VerdictMayBeNil},
+		{"narrowed to exactly nil against a non-optional declaration", set(runtimekind.String), set(runtimekind.Nil), VerdictMayBeNil},
+		{"non-nil partition declaration narrowed to nil", runtimekind.NonNil, set(runtimekind.Nil), VerdictMayBeNil},
+
+		// Nil is excluded and observed, but another excess family remains
+		// after removing nil: the finding is a general violation, not this
+		// judgment's to name.
+		{"nil plus a disjoint family", set(runtimekind.String), set(runtimekind.Nil, runtimekind.Number), VerdictAbstain},
+		{"nil plus an unadmitted reference", runtimekind.Scalar, set(runtimekind.Nil, runtimekind.Table), VerdictAbstain},
+
+		// A declaration admitting nothing still admits nothing: nil alone
+		// against it is a nil-presence finding like any other.
+		{"nothing declared, nil observed", 0, set(runtimekind.Nil), VerdictMayBeNil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			verdict := MayBeNilConformance(testCase.declaredMay, testCase.observed)
+			if verdict != testCase.want {
+				t.Fatalf("MayBeNilConformance(%d, %d) = %d, want %d", testCase.declaredMay, testCase.observed, verdict, testCase.want)
+			}
+			if !verdict.Available() {
+				t.Fatalf("verdict %d is outside the closed catalog", verdict)
+			}
+		})
+	}
+}
+
+// TestMayBeNilConformanceRefusesAMalformedSet mirrors the malformed-set law
+// MayKindConformance states: a set with a bit outside the closed vocabulary is
+// a caller defect, never an answer about a program.
+func TestMayBeNilConformanceRefusesAMalformedSet(t *testing.T) {
+	foreign := runtimekind.Set(1) << uint(runtimekind.Count)
+	for _, testCase := range []struct {
+		name                  string
+		declaredMay, observed runtimekind.Set
+	}{
+		{"malformed declaration", runtimekind.All | foreign, set(runtimekind.Nil)},
+		{"malformed observation", set(runtimekind.String), set(runtimekind.Nil) | foreign},
+		{"both malformed", foreign, foreign},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if verdict := MayBeNilConformance(testCase.declaredMay, testCase.observed); verdict != VerdictInvalid {
+				t.Fatalf("MayBeNilConformance answered %d for a malformed set", verdict)
+			}
+		})
+	}
+}
+
+// TestMayBeNilConformanceAgreesWithMayKindConformance is the cross-function
+// law: the two judgments are asked over the same inputs, so a MayBeNil answer
+// must never occur where the containment verdict is not a violation, and the
+// narrower judgment must never answer outside its own two-member range.
+// The loop covers every valid set pair, which the eight-family vocabulary
+// keeps exhaustive.
+func TestMayBeNilConformanceAgreesWithMayKindConformance(t *testing.T) {
+	for declaredMay := runtimekind.Set(0); declaredMay <= runtimekind.All; declaredMay++ {
+		for observed := runtimekind.Set(0); observed <= runtimekind.All; observed++ {
+			kind := MayKindConformance(declaredMay, observed)
+			nilVerdict := MayBeNilConformance(declaredMay, observed)
+			if nilVerdict != VerdictMayBeNil && nilVerdict != VerdictAbstain {
+				t.Fatalf("MayBeNilConformance(%d, %d) = %d outside {MayBeNil, Abstain}", declaredMay, observed, nilVerdict)
+			}
+			if nilVerdict == VerdictMayBeNil && kind != VerdictViolates {
+				t.Fatalf("MayBeNilConformance(%d, %d) = MayBeNil while MayKindConformance = %d, not Violates", declaredMay, observed, kind)
+			}
+		}
+	}
+}
+
+// TestMayKindConformanceIsPinnedAcrossTheSealedUniverse restates the
+// containment law directly for every valid set pair the eight-family
+// vocabulary admits, so a change to MayKindConformance's behavior anywhere in
+// that universe fails here rather than surfacing downstream.
+func TestMayKindConformanceIsPinnedAcrossTheSealedUniverse(t *testing.T) {
+	for declaredMay := runtimekind.Set(0); declaredMay <= runtimekind.All; declaredMay++ {
+		for observed := runtimekind.Set(0); observed <= runtimekind.All; observed++ {
+			want := VerdictConforms
+			switch {
+			case observed == 0 || observed == runtimekind.All:
+				want = VerdictAbstain
+			case observed&^declaredMay != 0:
+				want = VerdictViolates
+			}
+			if got := MayKindConformance(declaredMay, observed); got != want {
+				t.Fatalf("MayKindConformance(%d, %d) = %d, want %d", declaredMay, observed, got, want)
+			}
 		}
 	}
 }
@@ -120,5 +239,20 @@ func TestMayKindConformanceAllocatesNothing(t *testing.T) {
 	})
 	if allocations != 0 {
 		t.Fatalf("MayKindConformance allocated %.0f times per run", allocations)
+	}
+}
+
+// TestMayBeNilConformanceAllocatesNothing states the same cost law for the
+// nil-presence judgment: pure set algebra over two scalars, callable from any
+// point without a budget.
+func TestMayBeNilConformanceAllocatesNothing(t *testing.T) {
+	declared, observed := set(runtimekind.String), set(runtimekind.Nil, runtimekind.String)
+	allocations := testing.AllocsPerRun(100, func() {
+		if MayBeNilConformance(declared, observed) != VerdictMayBeNil {
+			t.Fatal("verdict changed under repetition")
+		}
+	})
+	if allocations != 0 {
+		t.Fatalf("MayBeNilConformance allocated %.0f times per run", allocations)
 	}
 }
