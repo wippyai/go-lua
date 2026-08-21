@@ -20,11 +20,6 @@ func CompileGeometry(input Input) (Geometry, error) {
 	if err != nil {
 		return Geometry{}, err
 	}
-	canonical := make([]OperationInput, len(input.Operations))
-	for index, source := range order {
-		canonical[index] = input.Operations[source]
-	}
-	input.Operations = canonical
 
 	var (
 		segmentPool  rows.PoolBuilder[string]
@@ -36,14 +31,16 @@ func CompileGeometry(input Input) (Geometry, error) {
 	)
 	operations := make([]operationRow, len(input.Operations)+1)
 	sources := make([]sourceRow, len(input.Operations))
-	sourceSeen := make([]bool, len(input.Operations))
-	producedInputs := make([][]ProducedInput, len(input.Operations))
+	bindingValues := make([]bindingRow, 0)
+	outcomeValues := make([]outcomeRow, 0)
+	callbackSeen := make([]bool, 0)
+	producedValues := make([]producedRow, 0)
 
-	for index, item := range input.Operations {
-		if item.Source < 0 || item.Source >= len(input.Operations) || sourceSeen[item.Source] {
+	for index, source := range order {
+		item := input.Operations[source]
+		if item.Source < 0 || item.Source >= len(input.Operations) {
 			return Geometry{}, fmt.Errorf("target/operation: invalid source coordinate %d", item.Source)
 		}
-		sourceSeen[item.Source] = true
 		sources[item.Source] = sourceRow{operation: vocabulary.Operation(index + 1)}
 		if item.InputFormalCount < 0 {
 			return Geometry{}, fmt.Errorf("target/operation: negative input formal count for operation %d", index)
@@ -76,16 +73,16 @@ func CompileGeometry(input Input) (Geometry, error) {
 			return Geometry{}, err
 		}
 
-		bindingValues := make([]bindingRow, 0, len(item.Bindings))
+		bindingValues = bindingValues[:0]
 		for bindingIndex, binding := range item.Bindings {
 			if !vocabulary.ValidBinding(binding) {
 				return Geometry{}, fmt.Errorf("target/operation: invalid binding %d in operation %d", bindingIndex, index)
 			}
-			owner, ok := appendSegments(&segmentPool, binding.Owner)
+			owner, ok := segmentPool.Append(binding.Owner)
 			if !ok {
 				return Geometry{}, errors.New("target/operation: operation owner segments overflow")
 			}
-			member, ok := appendSegments(&segmentPool, binding.Member)
+			member, ok := segmentPool.Append(binding.Member)
 			if !ok {
 				return Geometry{}, errors.New("target/operation: operation member segments overflow")
 			}
@@ -96,9 +93,9 @@ func CompileGeometry(input Input) (Geometry, error) {
 			return Geometry{}, errors.New("target/operation: operation binding range overflow")
 		}
 
-		outcomeValues := make([]outcomeRow, 0, len(item.OutcomeValueSlots))
+		outcomeValues = outcomeValues[:0]
 		for _, outcome := range item.OutcomeValueSlots {
-			selector, ok := appendBytes(&anchorPool, outcome.Anchor)
+			selector, ok := anchorPool.Append(outcome.Anchor)
 			if !ok {
 				return Geometry{}, errors.New("target/operation: outcome anchor overflow")
 			}
@@ -109,8 +106,19 @@ func CompileGeometry(input Input) (Geometry, error) {
 			return Geometry{}, errors.New("target/operation: operation outcome range overflow")
 		}
 
-		callbackValues := make([]callbackRow, 0, len(item.Callbacks))
-		callbackSeen := make([]bool, len(item.Callbacks))
+		callbackStart, err := vocabulary.CheckedStoredLength("operation callback table", len(callbackRows))
+		if err != nil {
+			return Geometry{}, err
+		}
+		if _, err := vocabulary.CheckedStoredTotal("operation callback table", len(callbackRows), len(item.Callbacks)); err != nil {
+			return Geometry{}, err
+		}
+		if cap(callbackSeen) < len(item.Callbacks) {
+			callbackSeen = make([]bool, len(item.Callbacks))
+		} else {
+			callbackSeen = callbackSeen[:len(item.Callbacks)]
+			clear(callbackSeen)
+		}
 		for callbackIndex, callback := range item.Callbacks {
 			if callback.Source < 0 || callback.Source >= len(item.Callbacks) {
 				return Geometry{}, fmt.Errorf("target/operation: callback %d source outside operation", callbackIndex)
@@ -122,20 +130,12 @@ func CompileGeometry(input Input) (Geometry, error) {
 			if !validCallbackLifecycle(callback.Lifecycle) {
 				return Geometry{}, fmt.Errorf("target/operation: callback %d has invalid lifecycle", callbackIndex)
 			}
-			callbackValues = append(callbackValues, callbackRow{
-				id: vocabulary.CallbackID(len(callbackRows) + len(callbackValues) + 1), owner: vocabulary.Operation(index + 1),
+			callbackRows = append(callbackRows, callbackRow{
+				id: vocabulary.CallbackID(len(callbackRows) + 1), owner: vocabulary.Operation(index + 1),
 				source: callback.Source, function: callback.Function, ordinal: uint32(callbackIndex), lifecycle: callback.Lifecycle,
 			})
 		}
-		callbackStart, err := vocabulary.CheckedStoredLength("operation callback table", len(callbackRows))
-		if err != nil {
-			return Geometry{}, err
-		}
-		if _, err := vocabulary.CheckedStoredTotal("operation callback table", len(callbackRows), len(callbackValues)); err != nil {
-			return Geometry{}, err
-		}
-		callbackRows = append(callbackRows, callbackValues...)
-		callbackRange := callbackRange{start: callbackStart, end: callbackStart + uint32(len(callbackValues))}
+		callbackRange := callbackRange{start: callbackStart, end: callbackStart + uint32(len(item.Callbacks))}
 		if callbackRange.end < callbackRange.start {
 			return Geometry{}, errors.New("target/operation: operation callback range overflow")
 		}
@@ -143,19 +143,14 @@ func CompileGeometry(input Input) (Geometry, error) {
 			bindings: bindingRange, outcomes: outcomeRange, callbacks: callbackRange,
 			input: uint32(item.InputFormalCount), typeForms: uint32(item.TypeFormalCount), rowForms: uint32(item.RowFormalCount), valuesVar: item.ValuesVars,
 		}
-		producedInputs[index] = append([]ProducedInput(nil), item.Produced...)
-	}
-	for index := range sourceSeen {
-		if !sourceSeen[index] {
-			return Geometry{}, errors.New("target/operation: source coordinates are not a complete mapping")
-		}
 	}
 
 	// Produced rows are appended only after every source-to-handle mapping is
 	// known. The operation handle still comes from this owner; authoring source
 	// coordinates never escape into the sealed rows.
-	for parentIndex, inputs := range producedInputs {
-		producedValues := make([]producedRow, 0, len(inputs))
+	for parentIndex, source := range order {
+		inputs := input.Operations[source].Produced
+		producedValues = producedValues[:0]
 		for producedIndex, produced := range inputs {
 			if produced.TargetSource < 0 || produced.TargetSource >= len(input.Operations) {
 				return Geometry{}, fmt.Errorf("target/operation: produced %d target outside scope", producedIndex)
@@ -166,7 +161,7 @@ func CompileGeometry(input Input) (Geometry, error) {
 			if uint64(produced.Outcome) >= uint64(parentRow.outcomes.Len()) {
 				return Geometry{}, fmt.Errorf("target/operation: produced %d outcome outside scope", producedIndex)
 			}
-			outcomeInput := input.Operations[parentIndex].OutcomeValueSlots[produced.Outcome]
+			outcomeInput := input.Operations[source].OutcomeValueSlots[produced.Outcome]
 			if produced.Result >= outcomeInput.ValueSlots {
 				return Geometry{}, fmt.Errorf("target/operation: produced %d result outside scope", producedIndex)
 			}
@@ -203,14 +198,15 @@ func CompileGeometry(input Input) (Geometry, error) {
 	geometry := Geometry{
 		operations: rows.NewRows(operations), bindings: bindingRows.Seal(), segments: segmentPool.Seal(),
 		outcomes: outcomeRows.Seal(), anchors: anchorPool.Seal(), callbacks: rows.NewRows(callbackRows),
-		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations), boundN: boundCount(input.Operations),
+		produced: producedRows.Seal(), sources: rows.NewRows(sources), sourceN: len(input.Operations), boundN: boundCount(input.Operations, order),
 	}
 	return geometry, nil
 }
 
-func boundCount(operations []OperationInput) int {
+func boundCount(operations []OperationInput, order []int) int {
 	count := 0
-	for _, operation := range operations {
+	for _, source := range order {
+		operation := operations[source]
 		if len(operation.Bindings) == 0 {
 			break
 		}
@@ -226,7 +222,6 @@ func boundCount(operations []OperationInput) int {
 func canonicalOrder(input []OperationInput) ([]int, error) {
 	type edge struct {
 		target  int
-		anchor  []byte
 		result  uint32
 		outcome uint32
 	}
@@ -234,30 +229,31 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 	edges := make([][]edge, n)
 	incoming := make([]int, n)
 	sourceIndex := make([]int, n)
-	sourceSeen := make([]bool, n)
 	for index, item := range input {
-		if item.Source < 0 || item.Source >= n || sourceSeen[item.Source] {
+		if item.Source < 0 || item.Source >= n || sourceIndex[item.Source] != 0 {
 			return nil, fmt.Errorf("target/operation: invalid source coordinate %d", item.Source)
 		}
-		sourceSeen[item.Source] = true
-		sourceIndex[item.Source] = index
+		sourceIndex[item.Source] = index + 1
 	}
-	for source, seen := range sourceSeen {
-		if !seen {
+	for source, index := range sourceIndex {
+		if index == 0 {
 			return nil, fmt.Errorf("target/operation: source coordinates are not a complete mapping (missing %d)", source)
 		}
 	}
-	owners := make([]struct {
-		binding vocabulary.BindingSpec
-	}, 0)
 	for source, item := range input {
-		for _, binding := range item.Bindings {
-			for _, owner := range owners {
-				if compareBinding(owner.binding, binding) == 0 {
-					return nil, errors.New("target/operation: binding belongs to multiple operations")
+		for bindingIndex, binding := range item.Bindings {
+			for previousSource := 0; previousSource <= source; previousSource++ {
+				previousBindings := input[previousSource].Bindings
+				limit := len(previousBindings)
+				if previousSource == source {
+					limit = bindingIndex
+				}
+				for previousBindingIndex := 0; previousBindingIndex < limit; previousBindingIndex++ {
+					if compareBinding(previousBindings[previousBindingIndex], binding) == 0 {
+						return nil, errors.New("target/operation: binding belongs to multiple operations")
+					}
 				}
 			}
-			owners = append(owners, struct{ binding vocabulary.BindingSpec }{binding: binding})
 		}
 		for producedIndex, produced := range item.Produced {
 			if produced.TargetSource < 0 || produced.TargetSource >= n {
@@ -270,12 +266,12 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 			if produced.Result >= outcome.ValueSlots {
 				return nil, fmt.Errorf("target/operation: produced %d result outside scope", producedIndex)
 			}
-			targetIndex := sourceIndex[produced.TargetSource]
+			targetIndex := sourceIndex[produced.TargetSource] - 1
 			if len(input[targetIndex].Bindings) == 0 {
 				incoming[targetIndex]++
 			}
 			edges[source] = append(edges[source], edge{
-				target: targetIndex, anchor: append([]byte(nil), outcome.Anchor...),
+				target: targetIndex,
 				result: produced.Result, outcome: produced.Outcome,
 			})
 		}
@@ -297,8 +293,11 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 		return compareBinding(input[roots[left]].Bindings[0], input[roots[right]].Bindings[0]) < 0
 	})
 	for source := range edges {
+		anchors := input[source].OutcomeValueSlots
 		sort.Slice(edges[source], func(left, right int) bool {
-			if compared := bytes.Compare(edges[source][left].anchor, edges[source][right].anchor); compared != 0 {
+			leftAnchor := anchors[edges[source][left].outcome].Anchor
+			rightAnchor := anchors[edges[source][right].outcome].Anchor
+			if compared := bytes.Compare(leftAnchor, rightAnchor); compared != 0 {
 				return compared < 0
 			}
 			if edges[source][left].result != edges[source][right].result {
@@ -308,7 +307,7 @@ func canonicalOrder(input []OperationInput) ([]int, error) {
 		})
 		for index := 1; index < len(edges[source]); index++ {
 			left, right := edges[source][index-1], edges[source][index]
-			if bytes.Equal(left.anchor, right.anchor) && left.result == right.result {
+			if bytes.Equal(anchors[left.outcome].Anchor, anchors[right.outcome].Anchor) && left.result == right.result {
 				return nil, errors.New("target/operation: duplicate produced anchor step")
 			}
 		}
@@ -384,16 +383,6 @@ func compareSegments(left, right []string) int {
 		return 1
 	}
 	return 0
-}
-
-func appendSegments(pool *rows.PoolBuilder[string], values []string) (rows.Span, bool) {
-	copyValues := append([]string(nil), values...)
-	return pool.Append(copyValues)
-}
-
-func appendBytes(pool *rows.PoolBuilder[byte], values []byte) (rows.Span, bool) {
-	copyValues := append([]byte(nil), values...)
-	return pool.Append(copyValues)
 }
 
 func validCallbackLifecycle(value vocabulary.CallbackLifecycle) bool {
