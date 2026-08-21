@@ -207,7 +207,7 @@ func failWTORow(reason wtoFailureReason, row, event, path, site, route int) erro
 	return &wtoFailure{phase: wtoFailurePhaseRows, reason: reason, row: row, event: event, path: path, site: site, route: route, ref: -1}
 }
 
-func failWTORowRef(reason wtoFailureReason, ref successorRef, route, path, site int) error {
+func failWTORowRef(reason wtoFailureReason, ref *successorRef, route, path, site int) error {
 	endpoint := ref.fromPoint
 	if reason == wtoFailureReasonRowRouteToPath || reason == wtoFailureReasonRowRouteToSite || reason == wtoFailureReasonRowRouteToAttach {
 		endpoint = ref.toPoint
@@ -473,7 +473,7 @@ func (region WTORegion) RouteAt(index int) (Successor, bool) {
 	if !ok || index < 0 || index >= len(row.routes) {
 		return Successor{}, false
 	}
-	return region.result.successorForRef(row.routes[index])
+	return region.result.successorForRef(&row.routes[index])
 }
 func (region WTORegion) SiteCount() int {
 	row, ok := region.row()
@@ -674,8 +674,9 @@ func (r *Result) installBoundRoutePaths() error {
 	for index := range canonicalIndexBySlot {
 		canonicalIndexBySlot[index] = -1
 	}
-	for index, ref := range r.index.refs {
-		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) || canonicalIndexBySlot[ref.routeIndexOrdinal] != -1 || !routeRefsEqual(ref, r.routeIndex[ref.routeIndexOrdinal].ref) {
+	for index := range r.index.refs {
+		ref := &r.index.refs[index]
+		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) || canonicalIndexBySlot[ref.routeIndexOrdinal] != -1 || !routeRefsEqual(ref, &r.routeIndex[ref.routeIndexOrdinal].ref) {
 			return fmt.Errorf("bound-route phase=canonical row=%d arm=%d reason=route-index-mismatch", index, ref.arm)
 		}
 		canonicalIndexBySlot[ref.routeIndexOrdinal] = index
@@ -695,14 +696,14 @@ func (r *Result) installBoundRoutePaths() error {
 			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=from-to-unavailable", index, ref.arm)
 		}
 		slot := ref.routeIndexOrdinal
-		if !routeRefsEqual(*ref, r.routeIndex[slot].ref) {
+		if !routeRefsEqual(ref, &r.routeIndex[slot].ref) {
 			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=route-index-oob", index, ref.arm)
 		}
 		r.routeIndex[slot].ref = *ref
 	}
 	for index := range r.boundaries.rows {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
-			if !boundaryArmPresent(r.boundaries.rows[index], arm) {
+			if !boundaryArmPresent(&r.boundaries.rows[index], arm) {
 				continue
 			}
 			ref := &r.boundaries.rows[index].refs[arm]
@@ -719,9 +720,9 @@ func (r *Result) installBoundRoutePaths() error {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=route-index-oob", index, arm)
 				}
 				slot := ref.routeIndexOrdinal
-				canonical := r.routeIndex[slot].ref
+				canonical := &r.routeIndex[slot].ref
 				canonicalIndex := canonicalIndexBySlot[slot]
-				if canonicalIndex < 0 || !routeRefsEqual(r.index.refs[canonicalIndex], canonical) || !routeRefsEqual(*ref, canonical) {
+				if canonicalIndex < 0 || !routeRefsEqual(&r.index.refs[canonicalIndex], canonical) || !routeRefsEqual(ref, canonical) {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=canonical-route-mismatch", index, arm)
 				}
 				if !ref.planOrdinalSet || !canonical.planOrdinalSet || ref.planOrdinal != canonical.planOrdinal {
@@ -803,7 +804,8 @@ func (r *Result) prepareWTORows() error {
 		sitesByPath[node] = append(sitesByPath[node], site.index)
 		return true
 	}
-	for index, ref := range r.index.refs {
+	for index := range r.index.refs {
+		ref := &r.index.refs[index]
 		from := mustSite(r, ref, true)
 		if !from.Available() {
 			return failWTORowRef(wtoFailureReasonRowRouteFromSite, ref, index, -1, -1)
@@ -844,7 +846,8 @@ func (r *Result) prepareWTORows() error {
 	r.pendingNodeSites = sitesByPath
 	r.pendingVertexPaths = paths
 	r.pendingWTORoutes = make([]pendingWTORoute, len(r.index.refs))
-	for index, ref := range r.index.refs {
+	for index := range r.index.refs {
+		ref := &r.index.refs[index]
 		from, fromOK := pathNode[ref.fromPoint]
 		to, toOK := pathNode[ref.toPoint]
 		if !fromOK {
@@ -878,7 +881,7 @@ func (r *Result) prepareWTORows() error {
 	return nil
 }
 
-func mustSite(r *Result, ref successorRef, from bool) Site {
+func mustSite(r *Result, ref *successorRef, from bool) Site {
 	term, ok := r.successorForRef(ref)
 	if !ok {
 		return Site{}

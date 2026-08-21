@@ -34,7 +34,7 @@ func (v Edges) At(index int) (Edge, bool) {
 	if !v.result.available() || index < 0 || index >= len(v.result.edges.rows) {
 		return Edge{}, false
 	}
-	row := v.result.edges.rows[index]
+	row := &v.result.edges.rows[index]
 	if !v.result.validEdgeRow(row) {
 		return Edge{}, false
 	}
@@ -61,7 +61,7 @@ func (v Edges) ResetCount(index int) (int, bool) {
 	if !v.result.available() || index < 0 || index >= len(v.result.edges.rows) {
 		return 0, false
 	}
-	edge := v.result.edges.rows[index]
+	edge := &v.result.edges.rows[index]
 	if !v.result.validEdgeRow(edge) {
 		return 0, false
 	}
@@ -83,7 +83,7 @@ func (v Edges) ResetAt(index, offset int) (keyspace.Term, bool) {
 	if !v.result.available() || index < 0 || index >= len(v.result.edges.rows) || offset < 0 {
 		return 0, false
 	}
-	edge := v.result.edges.rows[index]
+	edge := &v.result.edges.rows[index]
 	if !v.result.validEdgeRow(edge) {
 		return 0, false
 	}
@@ -110,7 +110,7 @@ func (v Edges) ResetContains(index int, decision keyspace.Term) bool {
 	if !v.result.available() || index < 0 || index >= len(v.result.edges.rows) || !isDecision(decision) {
 		return false
 	}
-	edge := v.result.edges.rows[index]
+	edge := &v.result.edges.rows[index]
 	if !v.result.validEdgeRow(edge) {
 		return false
 	}
@@ -174,7 +174,7 @@ func (v Edges) BodyAt(body keyspace.Term, index int) (Edge, bool) {
 	if uint64(edgeIndex) >= uint64(len(v.result.edges.rows)) {
 		return Edge{}, false
 	}
-	row := v.result.edges.rows[edgeIndex]
+	row := &v.result.edges.rows[edgeIndex]
 	if !v.result.validEdgeRow(row) {
 		return Edge{}, false
 	}
@@ -215,7 +215,7 @@ func (v Edges) ActivationAt(body keyspace.Term, index int) (Edge, bool) {
 	if uint64(edgeIndex) >= uint64(len(v.result.edges.rows)) {
 		return Edge{}, false
 	}
-	row := v.result.edges.rows[edgeIndex]
+	row := &v.result.edges.rows[edgeIndex]
 	if !v.result.validEdgeRow(row) {
 		return Edge{}, false
 	}
@@ -239,7 +239,7 @@ func (v Boundaries) At(index int) (CallBoundary, bool) {
 	if !v.result.available() || index < 0 || index >= len(v.result.boundaries.rows) {
 		return CallBoundary{}, false
 	}
-	row := v.result.boundaries.rows[index]
+	row := &v.result.boundaries.rows[index]
 	if !v.result.validBoundaryRow(row) {
 		return CallBoundary{}, false
 	}
@@ -258,7 +258,7 @@ func (v Boundaries) For(call keyspace.Term) (CallBoundary, bool) {
 	if slot == 0 || uint64(slot-1) >= uint64(len(v.result.boundaries.rows)) {
 		return CallBoundary{}, false
 	}
-	row := v.result.boundaries.rows[slot-1]
+	row := &v.result.boundaries.rows[slot-1]
 	if !v.result.validBoundaryRow(row) {
 		return CallBoundary{}, false
 	}
@@ -281,7 +281,7 @@ func (v Boundaries) Arm(call keyspace.Term, arm BoundaryArmKind) (Successor, boo
 	if slot == 0 || uint64(slot-1) >= uint64(len(v.result.boundaries.rows)) {
 		return Successor{}, false
 	}
-	row := v.result.boundaries.rows[slot-1]
+	row := &v.result.boundaries.rows[slot-1]
 	if !v.result.validBoundaryRow(row) || row.Call != call {
 		return Successor{}, false
 	}
@@ -289,7 +289,7 @@ func (v Boundaries) Arm(call keyspace.Term, arm BoundaryArmKind) (Successor, boo
 	if !ok {
 		return Successor{}, false
 	}
-	ref := row.refs[arm]
+	ref := &row.refs[arm]
 	if !ref.routeDigest.Available() || ref.index != slot-1 || ref.local || ref.arm != arm {
 		return Successor{}, false
 	}
@@ -322,7 +322,22 @@ func (v Successors) TotalAt(index int) (Successor, bool) {
 	if v.result == nil || !v.result.available() || index < 0 || index >= len(v.result.index.refs) {
 		return Successor{}, false
 	}
-	return v.result.successorForRef(v.result.index.refs[index])
+	return v.result.successorForRef(&v.result.index.refs[index])
+}
+
+// SemanticIDAt projects the semantic identity already issued onto one sealed
+// successor ref. Consumers that need only that identity do not materialize and
+// revalidate the complete Edge or CallBoundary row merely to discard it.
+func (v Successors) SemanticIDAt(index int) (identity.ContentID, bool) {
+	if v.result == nil || !v.result.available() || index < 0 || index >= len(v.result.index.refs) {
+		return identity.ContentID{}, false
+	}
+	ref := &v.result.index.refs[index]
+	if !v.result.issuedRef(ref) {
+		return identity.ContentID{}, false
+	}
+	semantic := ref.semanticPath
+	return semantic, semantic.Available()
 }
 
 func (v Successors) Count(from keyspace.Term) int {
@@ -342,7 +357,7 @@ func (v Successors) At(from keyspace.Term, index int) (Successor, bool) {
 	if at >= uint64(len(v.result.index.refs)) {
 		return Successor{}, false
 	}
-	return v.result.successorForRef(v.result.index.refs[at])
+	return v.result.successorForRef(&v.result.index.refs[at])
 }
 
 // AssignmentPredecessor returns the owner-issued Successor for the reverse
@@ -357,7 +372,7 @@ func (v Successors) AssignmentPredecessor(write keyspace.Term) (Successor, bool)
 	if ordinal == 0 || uint64(ordinal) >= uint64(len(v.result.index.writeCommitRefs)) {
 		return Successor{}, false
 	}
-	ref := v.result.index.writeCommitRefs[ordinal]
+	ref := &v.result.index.writeCommitRefs[ordinal]
 	if !ref.local || ref.arm != BoundaryLocal || uint64(ref.index) >= uint64(len(v.result.edges.rows)) {
 		return Successor{}, false
 	}
@@ -371,18 +386,21 @@ func (v Successors) AssignmentPredecessor(write keyspace.Term) (Successor, bool)
 // successorForRef projects one already-indexed route. The ref is an existing
 // entry in the sealed combined successor plane; no route row, endpoint copy,
 // or source-local ordinal is manufactured for this projection.
-func (r *Result) successorForRef(ref successorRef) (Successor, bool) {
+func (r *Result) successorForRef(ref *successorRef) (Successor, bool) {
 	if r == nil || !r.available() {
 		return Successor{}, false
 	}
 	if !isKnownArm(ref.arm) || ref.local != isLocalArm(ref.arm) {
 		return Successor{}, false
 	}
+	if r.routesReady && !r.issuedRef(ref) {
+		return Successor{}, false
+	}
 	if ref.local {
 		if uint64(ref.index) >= uint64(len(r.edges.rows)) {
 			return Successor{}, false
 		}
-		row := r.edges.rows[ref.index]
+		row := &r.edges.rows[ref.index]
 		if !r.validEdgeRow(row) {
 			return Successor{}, false
 		}
@@ -393,12 +411,12 @@ func (r *Result) successorForRef(ref successorRef) (Successor, bool) {
 		}
 		return Successor{From: edge.From, To: edge.To, Decision: edge.Decision, Truth: edge.Truth,
 			Mu: edge.Mu, Arm: BoundaryLocal, routeDigest: ref.routeDigest, route: id,
-			component: row.component, ref: ref, refValid: true, result: r, edgeIndex: ref.index, edgeIndexValid: idOK}, true
+			component: row.component, ref: *ref, refValid: true, result: r, edgeIndex: ref.index, edgeIndexValid: idOK}, true
 	}
 	if uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 		return Successor{}, false
 	}
-	row := r.boundaries.rows[ref.index]
+	row := &r.boundaries.rows[ref.index]
 	if !r.validBoundaryRow(row) {
 		return Successor{}, false
 	}
@@ -414,7 +432,7 @@ func (r *Result) successorForRef(ref successorRef) (Successor, bool) {
 	}
 	return Successor{From: boundary.Call, To: to, Decision: decision, Truth: truth, Mu: proof.mu,
 		Arm: ref.arm, routeDigest: ref.routeDigest, route: id, result: r,
-		component: row.components[ref.arm], ref: ref, refValid: true, edgeIndex: ref.index, edgeIndexValid: idOK}, true
+		component: row.components[ref.arm], ref: *ref, refValid: true, edgeIndex: ref.index, edgeIndexValid: idOK}, true
 }
 
 // Component reports the recurrence-issued cyclic-component head carried by
@@ -450,14 +468,14 @@ func (s Successor) Identity() (RouteIdentity, bool) {
 // owner, without rebuilding the digest.
 func (s Successor) IssuedBy(owner *Result) bool {
 	return owner != nil && s.result == owner && s.refValid && s.result.routesReady &&
-		s.route.Issued() && s.route.Digest == s.routeDigest
+		s.result.issuedRef(&s.ref) && s.route.Issued() && s.route.Digest == s.routeDigest
 }
 
 func (s Successor) SemanticID() (identity.ContentID, bool) {
 	if s.result == nil || !s.refValid {
 		return identity.ContentID{}, false
 	}
-	return s.result.semanticRouteID(s.ref)
+	return s.result.semanticRouteID(&s.ref)
 }
 
 // FromPoint/ToPoint resolve the exact parent-issued VertexCatalog points
@@ -561,13 +579,12 @@ func (v Successors) Resolve(identity RouteIdentity) (Successor, bool) {
 	if found == -1 {
 		return Successor{}, false
 	}
-	ref := v.result.routeIndex[found].ref
+	ref := &v.result.routeIndex[found].ref
 	candidate, ok := v.result.routeIdentityFastForRef(ref)
 	if !ok || !compareRouteID(candidate, identity) {
 		return Successor{}, false
 	}
-	entry := v.result.routeIndex[found]
-	return v.result.successorForRef(entry.ref)
+	return v.result.successorForRef(&v.result.routeIndex[found].ref)
 }
 
 func (r *Result) validResultTerm(term keyspace.Term) bool {
@@ -578,7 +595,14 @@ func (r *Result) validResultTerm(term keyspace.Term) bool {
 	return family > keyspace.FamilyInvalid && family < keyspace.FamilyCount && ordinal != 0 && ordinal <= r.index.familyCounts[family]
 }
 
-func (r *Result) validEdgeRow(row edgeRow) bool {
+// validEdgeRow derives one local Edge row's structural well-formedness. It is
+// a construction predicate: sealRows applies it to every retained row in its
+// final form and fails the seal closed, after which the row plane is immutable
+// and a reader projects the proven row instead of re-deriving it.
+func (r *Result) validEdgeRow(row *edgeRow) bool {
+	if r.rowsSealed {
+		return true
+	}
 	if !r.validResultTerm(row.From) || !r.validResultTerm(row.To) || keyspace.TermFamily(row.From) == keyspace.FamilyCall {
 		return false
 	}
@@ -625,7 +649,13 @@ func (r *Result) validEdgeRow(row edgeRow) bool {
 	return true
 }
 
-func (r *Result) validBoundaryRow(row boundaryRow) bool {
+// validBoundaryRow derives one CallBoundary row's shape and the proof of every
+// present arm. Like validEdgeRow it is a construction predicate proven once by
+// sealRows; the sealed plane needs no per-read rederivation.
+func (r *Result) validBoundaryRow(row *boundaryRow) bool {
+	if r.rowsSealed {
+		return true
+	}
 	b := row.CallBoundary
 	if !r.validResultTerm(b.Call) || keyspace.TermFamily(b.Call) != keyspace.FamilyCall ||
 		keyspace.TermFamily(b.Throw) != keyspace.FamilyOutcome || !r.validResultTerm(b.Throw) ||
@@ -662,11 +692,17 @@ func (r *Result) validBoundaryRow(row boundaryRow) bool {
 	return true
 }
 
-func (r *Result) validBoundaryProof(row boundaryRow, arm BoundaryArmKind) bool {
+// validBoundaryProof derives one arm's recurrence witness. Arm presence stays
+// the residue after sealing: the caller supplies the arm, so which arms this
+// proven row actually carries is the only thing a sealed read still decides.
+func (r *Result) validBoundaryProof(row *boundaryRow, arm BoundaryArmKind) bool {
+	if r.rowsSealed {
+		return isBoundaryArm(arm) && boundaryArmPresent(row, arm)
+	}
 	if !isBoundaryArm(arm) || !boundaryArmPresent(row, arm) || (row.components[arm] != 0 && !r.componentIssued(row.components[arm])) {
 		return false
 	}
-	proof := row.proofs[arm]
+	proof := &row.proofs[arm]
 	if proof.mu == 0 {
 		return proof.resetStart == 0 && proof.resetPast == 0 && proof.resetCount == 0 && !proof.resetDigest.Available()
 	}
@@ -710,7 +746,7 @@ func (r *Result) boundaryResetCount(index uint32, arm BoundaryArmKind) (int, boo
 	if r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) {
 		return 0, false
 	}
-	row := r.boundaries.rows[index]
+	row := &r.boundaries.rows[index]
 	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
 		return 0, false
 	}
@@ -722,7 +758,7 @@ func (r *Result) boundaryResetAt(index uint32, arm BoundaryArmKind, offset int) 
 	if offset < 0 || r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) {
 		return 0, false
 	}
-	row := r.boundaries.rows[index]
+	row := &r.boundaries.rows[index]
 	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
 		return 0, false
 	}
@@ -742,7 +778,7 @@ func (r *Result) boundaryResetContains(index uint32, arm BoundaryArmKind, decisi
 	if r == nil || uint64(index) >= uint64(len(r.boundaries.rows)) || !isDecision(decision) {
 		return false
 	}
-	row := r.boundaries.rows[index]
+	row := &r.boundaries.rows[index]
 	if !r.validBoundaryProof(row, arm) || row.proofs[arm].mu == 0 {
 		return false
 	}

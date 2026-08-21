@@ -1942,7 +1942,7 @@ type causalArcCapture struct {
 	ordinal int
 }
 
-func openCausalFixture(t *testing.T, spec causalSpec) *causalFixture {
+func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 	t.Helper()
 	if spec.counts[keyspace.FamilyBody] == 0 || len(spec.rows) != int(spec.counts[keyspace.FamilyBody]) {
 		t.Fatal("causal fixture requires one Source row per Body")

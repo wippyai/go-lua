@@ -113,8 +113,9 @@ func (r *Result) buildLocal() bool {
 	}
 	// First group existing successor refs by the exact issued head. The
 	// transient lookup is discarded below; it is not a retained SCC map.
-	for _, ref := range r.index.refs {
-		component, _, _, ok := r.localRefComponent(ref)
+	for refIndex := range r.index.refs {
+		ref := r.index.refs[refIndex]
+		component, _, _, ok := r.localRefComponent(&ref)
 		if !ok {
 			return false
 		}
@@ -140,8 +141,8 @@ func (r *Result) buildLocal() bool {
 		}
 		row := &store.regions[regionIndex]
 		stamp := uint32(regionIndex) + 1
-		for _, ref := range row.successors {
-			_, from, to, ok := r.localRefComponent(ref)
+		for successorIndex := range row.successors {
+			_, from, to, ok := r.localRefComponent(&row.successors[successorIndex])
 			if !ok {
 				return false
 			}
@@ -170,7 +171,7 @@ func (r *Result) buildLocal() bool {
 // localRefComponent projects only prevalidated final-row fields. It is used
 // during sealing after the issued directory has been validated, avoiding query
 // predicates or binary searches in the O(R) Local construction pass.
-func (r *Result) localRefComponent(ref successorRef) (keyspace.Term, keyspace.Term, keyspace.Term, bool) {
+func (r *Result) localRefComponent(ref *successorRef) (keyspace.Term, keyspace.Term, keyspace.Term, bool) {
 	if r == nil || !isKnownArm(ref.arm) || ref.local != isLocalArm(ref.arm) {
 		return 0, 0, 0, false
 	}
@@ -178,7 +179,7 @@ func (r *Result) localRefComponent(ref successorRef) (keyspace.Term, keyspace.Te
 		if uint64(ref.index) >= uint64(len(r.edges.rows)) {
 			return 0, 0, 0, false
 		}
-		row := r.edges.rows[ref.index]
+		row := &r.edges.rows[ref.index]
 		if row.From == 0 || row.To == 0 || (row.component != 0 && !canonicalComponent(row.component, true)) {
 			return 0, 0, 0, false
 		}
@@ -187,7 +188,7 @@ func (r *Result) localRefComponent(ref successorRef) (keyspace.Term, keyspace.Te
 	if uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 		return 0, 0, 0, false
 	}
-	row := r.boundaries.rows[ref.index]
+	row := &r.boundaries.rows[ref.index]
 	if !boundaryArmPresent(row, ref.arm) {
 		return 0, 0, 0, false
 	}
@@ -339,7 +340,7 @@ func (region Region) SuccessorAt(index int) (Successor, bool) {
 	if !ok || index < 0 || index >= len(row.successors) {
 		return Successor{}, false
 	}
-	successor, ok := region.result.successorForRef(row.successors[index])
+	successor, ok := region.result.successorForRef(&row.successors[index])
 	if !ok || !region.ContainsSuccessor(successor) {
 		return Successor{}, false
 	}

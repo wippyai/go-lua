@@ -14,8 +14,8 @@ func TestSitesEquivalentReplayAndPermutationPreserveContext(t *testing.T) {
 	left := openCausalFixture(t, wideCallSpec(8))
 	right := openCausalFixture(t, wideCallSpec(8))
 	wantTerms := make(map[keyspace.Term]struct{})
-	for _, ref := range left.result.index.refs {
-		route, ok := left.result.successorForRef(ref)
+	for refIndex := range left.result.index.refs {
+		route, ok := left.result.successorForRef(&left.result.index.refs[refIndex])
 		if !ok {
 			t.Fatal("existing route disappeared while checking endpoint denominator")
 		}

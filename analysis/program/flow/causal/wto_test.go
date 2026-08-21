@@ -68,7 +68,8 @@ func rebuildSyntheticSuccessors(r *Result, edges []edgeRow, boundaries []boundar
 			componentSet[row.component] = struct{}{}
 		}
 	}
-	for _, row := range boundaries {
+	for boundaryIndex := range boundaries {
+		row := &boundaries[boundaryIndex]
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
 			if boundaryArmPresent(row, arm) && row.components[arm] != 0 {
 				componentSet[row.components[arm]] = struct{}{}
@@ -509,7 +510,7 @@ func TestBoundaryArmRetainsExactMuResetWitness(t *testing.T) {
 	if err := rebuildSyntheticSuccessors(r, nil, []boundaryRow{boundary}); err != nil {
 		t.Fatal(err)
 	}
-	row := r.boundaries.rows[0]
+	row := &r.boundaries.rows[0]
 	if !r.validBoundaryProof(row, BoundaryResume) || row.components[BoundaryResume] != loop || row.proofs[BoundaryResume].mu != loop {
 		t.Fatalf("pre-seal boundary recurrence proof = %#v", row)
 	}
@@ -779,7 +780,7 @@ func TestMalformedMuLessSelfEdgeIsRejectedByQueries(t *testing.T) {
 	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	r.edges.rows = []edgeRow{{Edge: Edge{From: body, To: body}}}
 
-	if r.validEdgeRow(r.edges.rows[0]) {
+	if r.validEdgeRow(&r.edges.rows[0]) {
 		t.Fatal("Mu-less self Edge passed retained row validation")
 	}
 	if _, ok := r.Edges().At(0); ok {

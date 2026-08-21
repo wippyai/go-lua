@@ -51,7 +51,7 @@ func (s *sealState) finalizeBinding(plan *routeplan.Plan, binding *recurrence.Bi
 		row := &s.rows.boundaryRows[index]
 		planned := s.rows.planOrdinals[index]
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
-			if !boundaryArmPresent(*row, arm) {
+			if !boundaryArmPresent(row, arm) {
 				if planned.present[arm] {
 					return errors.New("program/flow/causal: absent CallBoundary arm was planned")
 				}
@@ -306,7 +306,8 @@ func (s *sealState) installComponentDirectory(components []recurrence.Component)
 			return errors.New("program/flow/causal: local row component was not issued by recurrence")
 		}
 	}
-	for _, row := range s.rows.boundaryRows {
+	for index := range s.rows.boundaryRows {
+		row := &s.rows.boundaryRows[index]
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
 			if boundaryArmPresent(row, arm) && row.components[arm] != 0 && !s.pub.result.componentIssued(row.components[arm]) {
 				return errors.New("program/flow/causal: CallBoundary component was not issued by recurrence")

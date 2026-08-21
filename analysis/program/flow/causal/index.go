@@ -77,19 +77,19 @@ func (s *indexState) finish() error {
 	// parallel owner slices remain seal-local for projection construction.
 	s.result.edges.rows = s.edgeRows
 	s.result.boundaries.rows = s.boundaryRows
-	for _, edge := range s.edgeRows {
-		if !s.result.validEdgeRow(edge) {
+	for index := range s.edgeRows {
+		if !s.result.validEdgeRow(&s.edgeRows[index]) {
 			return errors.New("program/flow/causal: malformed local Edge combination")
 		}
 	}
-	for _, boundary := range s.boundaryRows {
-		if !s.result.validBoundaryRow(boundary) {
+	for index := range s.boundaryRows {
+		if !s.result.validBoundaryRow(&s.boundaryRows[index]) {
 			return errors.New("program/flow/causal: malformed CallBoundary combination")
 		}
 	}
 	s.result.boundaries.callSlots = make([]uint32, s.counts[keyspace.FamilyCall]+1)
-	for index, row := range s.boundaryRows {
-		callOrdinal := keyspace.TermOrdinal(row.Call)
+	for index := range s.boundaryRows {
+		callOrdinal := keyspace.TermOrdinal(s.boundaryRows[index].Call)
 		if callOrdinal == 0 || uint64(callOrdinal) >= uint64(len(s.result.boundaries.callSlots)) ||
 			s.result.boundaries.callSlots[callOrdinal] != 0 {
 			return errors.New("program/flow/causal: duplicate CallBoundary ordinal")
@@ -106,9 +106,36 @@ func (s *indexState) finish() error {
 	if err := s.result.buildRouteIndex(); err != nil {
 		return err
 	}
+	if err := s.result.sealRows(); err != nil {
+		return err
+	}
 	if err := s.buildWriteCommitIndex(); err != nil {
 		return err
 	}
+	return nil
+}
+
+// sealRows is the causal plane's single structural well-formedness gate. The
+// route-index cut is the last phase that writes an Edge or CallBoundary row:
+// it installs each row's reset witness, so only here does a row exist in the
+// exact form every later reader observes. Proving all of them once, closed,
+// makes the two planes immutable evidence; the remaining phases stamp only the
+// per-arm successorRef payloads, which carry no structural row obligation.
+func (r *Result) sealRows() error {
+	if r == nil || !r.available() || !r.routesReady || r.rowsSealed {
+		return errors.New("program/flow/causal: row seal owner is unavailable")
+	}
+	for index := range r.edges.rows {
+		if !r.validEdgeRow(&r.edges.rows[index]) {
+			return fmt.Errorf("program/flow/causal: sealed local Edge row %d is malformed", index)
+		}
+	}
+	for index := range r.boundaries.rows {
+		if !r.validBoundaryRow(&r.boundaries.rows[index]) {
+			return fmt.Errorf("program/flow/causal: sealed CallBoundary row %d is malformed", index)
+		}
+	}
+	r.rowsSealed = true
 	return nil
 }
 
@@ -258,7 +285,8 @@ func (s *indexState) buildSuccessorIndex() error {
 		}
 		active[family] = true
 	}
-	for _, boundary := range s.boundaryRows {
+	for index := range s.boundaryRows {
+		boundary := &s.boundaryRows[index]
 		family, ordinal := keyspace.TermFamily(boundary.Call), keyspace.TermOrdinal(boundary.Call)
 		if family != keyspace.FamilyCall || ordinal == 0 || ordinal > s.counts[family] {
 			return errors.New("program/flow/causal: CallBoundary source is outside successor denominator")
@@ -283,7 +311,8 @@ func (s *indexState) buildSuccessorIndex() error {
 			return err
 		}
 	}
-	for _, boundary := range s.boundaryRows {
+	for index := range s.boundaryRows {
+		boundary := &s.boundaryRows[index]
 		if err := inc(keyspace.FamilyCall, keyspace.TermOrdinal(boundary.Call), uint64(boundaryArmCount(boundary))); err != nil {
 			return err
 		}
@@ -340,7 +369,8 @@ func (s *indexState) buildSuccessorIndex() error {
 	if len(s.boundaryRowsScratch.planOrdinals) != 0 && len(s.boundaryRowsScratch.planOrdinals) != len(s.boundaryRows) {
 		return errors.New("program/flow/causal: CallBoundary Plan ordinal scratch is malformed")
 	}
-	for index, boundary := range s.boundaryRows {
+	for index := range s.boundaryRows {
+		boundary := &s.boundaryRows[index]
 		var planned boundaryPlanOrdinals
 		planBound := len(s.boundaryRowsScratch.planOrdinals) != 0
 		if planBound {
@@ -375,7 +405,8 @@ func (s *indexState) buildSuccessorIndex() error {
 		}
 		rangeValue.start--
 	}
-	for _, boundary := range s.boundaryRows {
+	for index := range s.boundaryRows {
+		boundary := &s.boundaryRows[index]
 		plane := &s.result.index.planes[keyspace.FamilyCall]
 		rangeValue := &plane.ranges[keyspace.TermOrdinal(boundary.Call)]
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
@@ -399,7 +430,7 @@ func (s *indexState) buildSuccessorIndex() error {
 	return nil
 }
 
-func boundaryArmPresent(row boundaryRow, arm BoundaryArmKind) bool {
+func boundaryArmPresent(row *boundaryRow, arm BoundaryArmKind) bool {
 	b := row.CallBoundary
 	switch arm {
 	case BoundaryResume:
@@ -419,7 +450,7 @@ func boundaryArmPresent(row boundaryRow, arm BoundaryArmKind) bool {
 	}
 }
 
-func boundaryArmCount(row boundaryRow) int {
+func boundaryArmCount(row *boundaryRow) int {
 	count := 0
 	for _, arm := range [...]BoundaryArmKind{
 		BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail,

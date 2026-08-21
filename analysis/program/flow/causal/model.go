@@ -198,8 +198,9 @@ type successorRef struct {
 	planOrdinal    uint32
 	planOrdinalSet bool
 	// routeIndexOrdinal is the exact slot stamped when the sorted route
-	// directory is sealed. It lets later semantic-path publication update the
-	// existing lookup row in O(1), without reconstructing a second ref map.
+	// directory is sealed. Semantic-path publication uses it to update the
+	// existing lookup row, and immutable readers retain it as their O(1)
+	// membership proof instead of rebuilding an Edge or Boundary by value.
 	routeIndexOrdinal uint32
 	// wtoRegion is the sole parent-issued local schedule membership for this
 	// final route. It is a semantic ID, never a region row/index capability.
@@ -298,6 +299,13 @@ type Result struct {
 	// needed for logarithmic semantic resolution.
 	routeIndex  []routeLookup
 	routesReady bool
+	// rowsSealed records that sealRows has proven every retained Edge and
+	// CallBoundary row in its final post-route form. The two planes are
+	// immutable from that point: later phases stamp only the per-arm
+	// successorRef payloads, which carry no structural row obligation. A read
+	// after this flag therefore projects a proven row instead of re-deriving
+	// its well-formedness per successor reference.
+	rowsSealed bool
 	// components is the exact ordered recurrence-issued component directory.
 	// It retains only heads, never node/arc/SCC topology, and seeds Flow.Local.
 	components     []keyspace.Term

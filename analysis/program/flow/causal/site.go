@@ -243,8 +243,8 @@ func (r *Result) buildSites(sourceView source.View, control *sourcecontrol.Resul
 	if r.outcomePhasePaths == nil {
 		return errors.New("program/flow/causal: terminal Outcome paths were not captured")
 	}
-	for _, routeRef := range r.index.refs {
-		route, ok := r.successorForRef(routeRef)
+	for refIndex := range r.index.refs {
+		route, ok := r.successorForRef(&r.index.refs[refIndex])
 		if !ok || keyspace.TermFamily(route.From) == keyspace.FamilyInvalid || keyspace.TermFamily(route.To) == keyspace.FamilyInvalid {
 			return errors.New("program/flow/causal: successor endpoint is malformed")
 		}

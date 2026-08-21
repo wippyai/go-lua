@@ -37,7 +37,7 @@ func (r *Result) semanticResetRange(mu keyspace.Term, start, past uint32) (uint6
 	return uint64(base), true
 }
 
-func (r *Result) semanticResetMembers(ref successorRef) ([]identity.ContentID, bool) {
+func (r *Result) semanticResetMembers(ref *successorRef) ([]identity.ContentID, bool) {
 	if r == nil || !isKnownArm(ref.arm) {
 		return nil, false
 	}
@@ -47,14 +47,14 @@ func (r *Result) semanticResetMembers(ref successorRef) ([]identity.ContentID, b
 		if uint64(ref.index) >= uint64(len(r.edges.rows)) {
 			return nil, false
 		}
-		row := r.edges.rows[ref.index]
+		row := &r.edges.rows[ref.index]
 		mu, start, past = row.Mu, row.resetStart, row.resetPast
 	} else {
 		if uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 			return nil, false
 		}
-		row := r.boundaries.rows[ref.index]
-		proof := row.proofs[ref.arm]
+		row := &r.boundaries.rows[ref.index]
+		proof := &row.proofs[ref.arm]
 		mu, start, past = proof.mu, proof.resetStart, proof.resetPast
 	}
 	base, ok := r.semanticResetRange(mu, start, past)
@@ -78,7 +78,7 @@ func (r *Result) semanticResetMembers(ref successorRef) ([]identity.ContentID, b
 	return members, true
 }
 
-func (r *Result) semanticRoutePath(ref successorRef) (identity.ContentID, bool) {
+func (r *Result) semanticRoutePath(ref *successorRef) (identity.ContentID, bool) {
 	if r == nil || !isKnownArm(ref.arm) {
 		return identity.ContentID{}, false
 	}
@@ -88,20 +88,20 @@ func (r *Result) semanticRoutePath(ref successorRef) (identity.ContentID, bool) 
 		if uint64(ref.index) >= uint64(len(r.edges.rows)) {
 			return identity.ContentID{}, false
 		}
-		row := r.edges.rows[ref.index]
+		row := &r.edges.rows[ref.index]
 		from, to, decision, truth, mu = row.From, row.To, row.Decision, row.Truth, row.Mu
 	} else {
 		if uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 			return identity.ContentID{}, false
 		}
-		row := r.boundaries.rows[ref.index]
+		row := &r.boundaries.rows[ref.index]
 		var ok bool
 		from = row.Call
 		to, decision, truth, ok = boundarySuccessor(row.CallBoundary, ref.arm)
 		if !ok {
 			return identity.ContentID{}, false
 		}
-		proof := row.proofs[ref.arm]
+		proof := &row.proofs[ref.arm]
 		mu = proof.mu
 	}
 	// Endpoints are SourceControl VertexCatalog phases, not term/Site paths.
@@ -157,7 +157,7 @@ func (r *Result) semanticRoutePath(ref successorRef) (identity.ContentID, bool) 
 	return identity.ContentID(sha256.Sum256(encoded.Bytes())), true
 }
 
-func (r *Result) routeMu(ref successorRef) keyspace.Term {
+func (r *Result) routeMu(ref *successorRef) keyspace.Term {
 	if r == nil || !isKnownArm(ref.arm) {
 		return 0
 	}
@@ -173,7 +173,7 @@ func (r *Result) routeMu(ref successorRef) keyspace.Term {
 	return r.boundaries.rows[ref.index].proofs[ref.arm].mu
 }
 
-func (r *Result) semanticResetPathMembers(ref successorRef, resetMembers []identity.ContentID) (identity.ContentID, bool) {
+func (r *Result) semanticResetPathMembers(ref *successorRef, resetMembers []identity.ContentID) (identity.ContentID, bool) {
 	routeID, routeOK := r.semanticRoutePath(ref)
 	if !routeOK {
 		return identity.ContentID{}, false
@@ -200,7 +200,8 @@ func (r *Result) installRouteSemanticPaths() bool {
 	if r == nil || !r.available() || r.structuralPaths == nil {
 		return false
 	}
-	for index, ref := range r.index.refs {
+	for index := range r.index.refs {
+		ref := &r.index.refs[index]
 		path, ok := r.semanticRoutePath(ref)
 		if !ok {
 			return false
@@ -275,13 +276,14 @@ func (r *Result) installRouteSemanticPaths() bool {
 	// sorted route directory. Publish semantic paths directly through that
 	// directory: this is linear in the route count and does not scan/rebuild
 	// the existing ref authority.
-	for _, ref := range r.index.refs {
+	for refIndex := range r.index.refs {
+		ref := &r.index.refs[refIndex]
 		index := ref.routeIndexOrdinal
 		if uint64(index) >= uint64(len(r.routeIndex)) {
 			return false
 		}
 		lookup := &r.routeIndex[index].ref
-		if !routeRefsEqual(ref, *lookup) || lookup.routeIndexOrdinal != index {
+		if !routeRefsEqual(ref, lookup) || lookup.routeIndexOrdinal != index {
 			return false
 		}
 		lookup.semanticPath = ref.semanticPath
@@ -295,7 +297,7 @@ func (r *Result) installRouteSemanticPaths() bool {
 				return false
 			}
 			rowRef := &r.boundaries.rows[ref.index].refs[ref.arm]
-			if !routeRefsEqual(ref, *rowRef) {
+			if !routeRefsEqual(ref, rowRef) {
 				return false
 			}
 			rowRef.routeIndexOrdinal = index
@@ -315,7 +317,7 @@ func (r *Result) installRouteSemanticPaths() bool {
 		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 			return false
 		}
-		canonical := r.routeIndex[ref.routeIndexOrdinal].ref
+		canonical := &r.routeIndex[ref.routeIndexOrdinal].ref
 		ref.semanticPath = canonical.semanticPath
 		ref.semanticResetPath = canonical.semanticResetPath
 		ref.resetMembers = canonical.resetMembers
@@ -323,35 +325,33 @@ func (r *Result) installRouteSemanticPaths() bool {
 		ref.guardContext = canonical.guardContext
 		ref.guardDecisionPath = canonical.guardDecisionPath
 	}
-	for index := range r.index.refs {
-		r.index.refs[index].routeIndexOrdinal = 0
-	}
-	for index := range r.routeIndex {
-		r.routeIndex[index].ref.routeIndexOrdinal = 0
-	}
-	for row := range r.boundaries.rows {
-		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
-			r.boundaries.rows[row].refs[arm].routeIndexOrdinal = 0
-		}
-	}
-	for index := range r.index.writeCommitRefs {
-		r.index.writeCommitRefs[index].routeIndexOrdinal = 0
-	}
 	// All semantic derivations have been copied into exact refs/Sites. The
 	// Source term path lease cannot remain as a second published route plane.
 	r.structuralPaths = nil
 	return true
 }
 
-func (r *Result) semanticRouteID(ref successorRef) (identity.ContentID, bool) {
+func (r *Result) semanticRouteID(ref *successorRef) (identity.ContentID, bool) {
 	if r == nil || !ref.semanticPath.Available() {
 		return identity.ContentID{}, false
 	}
 	return ref.semanticPath, true
 }
 
-func routeRefsEqual(left, right successorRef) bool {
+func routeRefsEqual(left, right *successorRef) bool {
 	return left.index == right.index && left.local == right.local && left.arm == right.arm && left.routeDigest == right.routeDigest
+}
+
+// issuedRef authenticates one projection against the sole sorted route
+// directory. The directory ordinal is retained after sealing specifically so
+// hot readers can prove owner membership without rebuilding an Edge or
+// CallBoundary row by value.
+func (r *Result) issuedRef(ref *successorRef) bool {
+	if r == nil || !r.available() || !r.routesReady || uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
+		return false
+	}
+	canonical := &r.routeIndex[ref.routeIndexOrdinal].ref
+	return canonical.routeIndexOrdinal == ref.routeIndexOrdinal && routeRefsEqual(ref, canonical)
 }
 
 // RouteIdentity is the immutable semantic identity of one final causal
@@ -522,7 +522,7 @@ func (proof RouteGuardProof) Available() bool {
 		!isDecision(proof.successor.Decision) || proof.context != guardProofContext(proof.successor.result, proof.successor) {
 		return false
 	}
-	issued, ok := proof.successor.result.successorForRef(proof.successor.ref)
+	issued, ok := proof.successor.result.successorForRef(&proof.successor.ref)
 	return ok && issued.route == proof.successor.route && issued.routeDigest == proof.successor.routeDigest && issued.Decision == proof.successor.Decision &&
 		issued.Truth == proof.successor.Truth
 }
@@ -631,7 +631,7 @@ func (proof RouteRecurrence) Available() bool {
 	} else if !proof.successor.ref.semanticMuPath.Available() || proof.successor.ref.semanticMuPath != proof.muID {
 		return false
 	}
-	issued, ok := proof.successor.result.successorForRef(proof.successor.ref)
+	issued, ok := proof.successor.result.successorForRef(&proof.successor.ref)
 	if !ok || issued.result != proof.successor.result || issued.route != proof.successor.route || issued.routeDigest != proof.successor.routeDigest ||
 		issued.component != proof.successor.component {
 		return false
@@ -711,7 +711,8 @@ func (r *Result) buildRouteIndex() error {
 		return errors.New("program/flow/causal: route owner is unavailable")
 	}
 	descriptors := make([]routeDescriptor, 0, len(r.index.refs))
-	for refIndex, ref := range r.index.refs {
+	for refIndex := range r.index.refs {
+		ref := &r.index.refs[refIndex]
 		id, resetSet, ok := r.routeIdentityForRef(ref)
 		if !ok {
 			return errors.New("program/flow/causal: successor route preimage is malformed")
@@ -721,7 +722,7 @@ func (r *Result) buildRouteIndex() error {
 		if !ref.local && uint64(ref.index) < uint64(len(r.boundaries.rows)) && isBoundaryArm(ref.arm) {
 			r.boundaries.rows[ref.index].refs[ref.arm] = r.index.refs[refIndex]
 		}
-		descriptors = append(descriptors, routeDescriptor{id: id, ref: ref, resetSet: resetSet, sourceIndex: refIndex})
+		descriptors = append(descriptors, routeDescriptor{id: id, ref: *ref, resetSet: resetSet, sourceIndex: refIndex})
 	}
 	identity.SortByContentID(descriptors, routeDescriptorDigest)
 	for index := 1; index < len(descriptors); index++ {
@@ -780,12 +781,12 @@ func routePreimageEqual(left, right routeDescriptor) bool {
 // routeIdentityForRef reconstructs a route from existing Edge/Boundary rows.
 // It deliberately accepts only the private successor ref produced by the
 // combined index; no public ordinal can reach this helper.
-func (r *Result) routeIdentityForRef(ref successorRef) (RouteIdentity, []keyspace.Term, bool) {
+func (r *Result) routeIdentityForRef(ref *successorRef) (RouteIdentity, []keyspace.Term, bool) {
 	if r == nil || !isKnownArm(ref.arm) || ref.local && uint64(ref.index) >= uint64(len(r.edges.rows)) || !ref.local && uint64(ref.index) >= uint64(len(r.boundaries.rows)) {
 		return RouteIdentity{}, nil, false
 	}
 	if ref.local {
-		row := r.edges.rows[ref.index]
+		row := &r.edges.rows[ref.index]
 		if !r.validEdgeRow(row) || !isLocalArm(ref.arm) {
 			return RouteIdentity{}, nil, false
 		}
@@ -816,7 +817,7 @@ func (r *Result) routeIdentityForRef(ref successorRef) (RouteIdentity, []keyspac
 		id.Digest = hashRoute(id)
 		return id, resetSet, true
 	}
-	row := r.boundaries.rows[ref.index]
+	row := &r.boundaries.rows[ref.index]
 	if !r.validBoundaryRow(row) || !isBoundaryArm(ref.arm) || !boundaryArmPresent(row, ref.arm) {
 		return RouteIdentity{}, nil, false
 	}
@@ -824,7 +825,7 @@ func (r *Result) routeIdentityForRef(ref successorRef) (RouteIdentity, []keyspac
 	if !ok {
 		return RouteIdentity{}, nil, false
 	}
-	proof := row.proofs[ref.arm]
+	proof := &row.proofs[ref.arm]
 	resetSet, resetDigest, resetCount, proofOK := r.boundaryResetSet(ref.index, ref.arm, row)
 	if !proofOK {
 		return RouteIdentity{}, nil, false
@@ -847,8 +848,8 @@ func (r *Result) routeIdentityForRef(ref successorRef) (RouteIdentity, []keyspac
 // query path used by At and Resolve: the sorted inverse has already attached
 // the digest to this existing successor ref, while the immutable row carries
 // only the reset commitment needed to authenticate the rest of the preimage.
-func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool) {
-	if r == nil || !r.available() || !r.routesReady || !ref.routeDigest.Available() {
+func (r *Result) routeIdentityFastForRef(ref *successorRef) (RouteIdentity, bool) {
+	if r == nil || !r.issuedRef(ref) || !ref.routeDigest.Available() {
 		return RouteIdentity{}, false
 	}
 	if !isKnownArm(ref.arm) {
@@ -858,10 +859,7 @@ func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool)
 		if uint64(ref.index) >= uint64(len(r.edges.rows)) || !isLocalArm(ref.arm) {
 			return RouteIdentity{}, false
 		}
-		row := r.edges.rows[ref.index]
-		if !r.validEdgeRow(row) {
-			return RouteIdentity{}, false
-		}
+		row := &r.edges.rows[ref.index]
 		resetDigest, resetCount, ok := edgeResetWitness(row)
 		if !ok {
 			return RouteIdentity{}, false
@@ -876,18 +874,15 @@ func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool)
 	if uint64(ref.index) >= uint64(len(r.boundaries.rows)) || !isBoundaryArm(ref.arm) {
 		return RouteIdentity{}, false
 	}
-	row := r.boundaries.rows[ref.index]
-	if !r.validBoundaryRow(row) || !boundaryArmPresent(row, ref.arm) {
+	row := &r.boundaries.rows[ref.index]
+	if !boundaryArmPresent(row, ref.arm) {
 		return RouteIdentity{}, false
 	}
 	to, decision, truth, ok := boundarySuccessor(row.CallBoundary, ref.arm)
 	if !ok {
 		return RouteIdentity{}, false
 	}
-	proof := row.proofs[ref.arm]
-	if !r.validBoundaryProof(row, ref.arm) {
-		return RouteIdentity{}, false
-	}
+	proof := &row.proofs[ref.arm]
 	resetDigest, resetCount, ok := boundaryResetWitness(proof)
 	if !ok {
 		return RouteIdentity{}, false
@@ -900,7 +895,7 @@ func (r *Result) routeIdentityFastForRef(ref successorRef) (RouteIdentity, bool)
 	return id, id.issued()
 }
 
-func edgeResetWitness(row edgeRow) (identity.ContentID, uint32, bool) {
+func edgeResetWitness(row *edgeRow) (identity.ContentID, uint32, bool) {
 	if row.Mu == 0 {
 		if row.resetStart != 0 || row.resetPast != 0 || row.resetCount != 0 || row.resetDigest.Available() {
 			return identity.ContentID{}, 0, false
@@ -913,7 +908,7 @@ func edgeResetWitness(row edgeRow) (identity.ContentID, uint32, bool) {
 	return row.resetDigest, row.resetCount, true
 }
 
-func boundaryResetWitness(proof boundaryRecurrenceProof) (identity.ContentID, uint32, bool) {
+func boundaryResetWitness(proof *boundaryRecurrenceProof) (identity.ContentID, uint32, bool) {
 	if proof.mu == 0 {
 		if proof.resetStart != 0 || proof.resetPast != 0 || proof.resetCount != 0 || proof.resetDigest.Available() {
 			return identity.ContentID{}, 0, false
@@ -928,7 +923,7 @@ func boundaryResetWitness(proof boundaryRecurrenceProof) (identity.ContentID, ui
 
 // canonicalResetSet validates the existing Mu range and returns a sorted
 // seal-local copy. The reset store remains the only retained relation.
-func (r *Result) canonicalResetSet(row edgeRow) ([]keyspace.Term, identity.ContentID, uint32, bool) {
+func (r *Result) canonicalResetSet(row *edgeRow) ([]keyspace.Term, identity.ContentID, uint32, bool) {
 	return r.canonicalResetRange(row.Mu, row.resetStart, row.resetPast)
 }
 
@@ -976,11 +971,11 @@ func (r *Result) canonicalResetRange(mu keyspace.Term, resetStart, resetPast uin
 	return terms, hashResetPaths(paths), count, true
 }
 
-func (r *Result) boundaryResetSet(index uint32, arm BoundaryArmKind, row boundaryRow) ([]keyspace.Term, identity.ContentID, uint32, bool) {
+func (r *Result) boundaryResetSet(index uint32, arm BoundaryArmKind, row *boundaryRow) ([]keyspace.Term, identity.ContentID, uint32, bool) {
 	if !r.validBoundaryProof(row, arm) {
 		return nil, identity.ContentID{}, 0, false
 	}
-	proof := row.proofs[arm]
+	proof := &row.proofs[arm]
 	return r.canonicalResetRange(proof.mu, proof.resetStart, proof.resetPast)
 }
 
