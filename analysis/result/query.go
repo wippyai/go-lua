@@ -134,10 +134,6 @@ func (family Family) ContractID() identity.ContentID {
 	return row.contract.ContentID()
 }
 
-// FamilyID is a descriptive alias for ID retained for callers that use the
-// engine contract vocabulary.
-func (family Family) FamilyID() identity.ContentID { return family.ID() }
-
 func (family Family) QueryCount() int {
 	if _, ok := family.row(); !ok {
 		return 0
