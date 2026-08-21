@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/internal/framing"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/internal/framing"
 )
 
 // scratchEntry is a stand-in row for a sibling surface. The composite surface
@@ -263,15 +263,15 @@ func TestSealedCapabilityDoesNotAliasItsReader(t *testing.T) {
 	}
 }
 
-// TestCompositeIdentityIsThisSurfaceDerivation states that a composite carries
-// this surface's own derivation of its key. An entry identity minted for
-// another surface names another entry, so it may not travel here.
+// TestCompositeIdentityIsThisSurfaceDerivation states that a composite's
+// identity is derived from its authored key. An entry with no key cannot carry
+// an identity into the declaration table.
 func TestCompositeIdentityIsThisSurfaceDerivation(t *testing.T) {
 	entry := mustEntry(t, containmentSpec("containment"))
-	entry.id = schema.NewEntryID(schema.SurfaceKindAxis, entry.key)
+	entry.key = ""
 	failure := sealEntries(t, []*Entry{entry})
-	if failure.Law != LawCompositeIdentity || failure.Disposition != schema.DispositionMalformed {
-		t.Fatalf("foreign entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	if failure.Law != schema.LawEntryIdentity || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("keyless entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
 
