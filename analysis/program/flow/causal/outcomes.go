@@ -66,12 +66,7 @@ func (s *outcomeState) outcomeResumeOrigin(from keyspace.Term) (keyspace.Term, r
 	if err != nil {
 		return 0, routeplan.Origin{}, err
 	}
-	fromRef, toRef, endpoints := row.Endpoints(s.entries, s.graph)
-	if !endpoints {
-		return 0, routeplan.Origin{}, errors.New("program/flow/causal: normalized Outcome resume endpoints are unavailable")
-	}
-	fromTerm, toTerm := row.RouteTerms()
-	origin, to, valid := routeplan.OutcomeResumeSubdivision(fromRef, toRef, fromTerm, toTerm)
+	origin, to, valid := routeplan.OutcomeResumeSubdivision(row, s.entries, s.graph)
 	if !valid || to == 0 {
 		return 0, routeplan.Origin{}, errors.New("program/flow/causal: normalized Outcome resume subdivision is unavailable")
 	}

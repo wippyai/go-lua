@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/wippyai/go-lua/analysis/program/flow/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -34,35 +35,25 @@ func (arm Arm) valid() bool { return arm >= ArmLocal && arm <= ArmCancel }
 // proof and optional recurrence witness; no physical ordinal or raw endpoint
 // term is present in the neutral plan.
 type Origin struct {
-	// pair is shared storage for ordinary CSR pairs and normalized
-	// Outcome resumes. SourceControl subdivisions use Segment as their
-	// canonical endpoint owner and leave this pair empty.
+	// pair stores only ordinary CSR endpoints. SourceControl subdivisions use
+	// Segment as their canonical endpoint owner and leave this pair empty.
+	// Runtime-entry subdivisions retain the already-issued owner row below;
+	// they do not copy its endpoint terms or phases into RoutePlan.
 	pair        endpointPair
+	resume      runtimeentry.OutcomeResumeRow
+	runtime     *runtimeentry.Result
+	control     *sourcecontrol.Result
 	carrier     RecurrenceCarrier
 	subdivision subdivisionKind
 	segment     sourcecontrol.Segment
 }
 
-// endpointPair is the resolved endpoint storage shared by CSR and runtime
-// entries. The term pair is populated only for a normalized Outcome resume;
-// the owner fence over the entry and SourceControl relations belongs to the
-// caller that owns both.
+// endpointPair is the resolved endpoint storage for ordinary CSR routes.
+// Runtime-entry endpoints remain in runtimeentry.OutcomeResumeRow, their
+// canonical owner, and never enter this second representation.
 type endpointPair struct {
-	from     sourcecontrol.PhaseRef
-	to       sourcecontrol.PhaseRef
-	fromTerm keyspace.Term
-	toTerm   keyspace.Term
-}
-
-func (pair endpointPair) resumeAvailable() bool {
-	return pair.fromTerm != 0 && pair.toTerm != 0 &&
-		pair.from.Available() && pair.to.Available() &&
-		pair.from.OutcomePhase() && !pair.to.OutcomePhase() &&
-		sourcecontrol.SamePhaseOwner(pair.from, pair.to)
-}
-
-func (pair endpointPair) MatchesRoute(from, to keyspace.Term) bool {
-	return pair.resumeAvailable() && from == pair.fromTerm && to == pair.toTerm
+	from sourcecontrol.PhaseRef
+	to   sourcecontrol.PhaseRef
 }
 
 type subdivisionKind uint8
@@ -80,8 +71,7 @@ func (origin Origin) endpoints() (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef
 		// PhaseRef pair into Origin.
 		return origin.segment.Endpoints()
 	case subdivisionRuntimeEntry:
-		return origin.pair.from, origin.pair.to,
-			origin.pair.from.Available() && origin.pair.to.Available()
+		return origin.resume.Endpoints(origin.runtime, origin.control)
 	default:
 		return origin.pair.from, origin.pair.to,
 			origin.pair.from.Available() && origin.pair.to.Available()
@@ -171,18 +161,26 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, segment sourcecontrol.Segme
 	return origin, true
 }
 
-// OutcomeResumeSubdivision admits one already-resolved normalized endpoint
-// pair. It is the only RoutePlan ingress for an Outcome→CSR runtime resume;
-// the caller owns the entry and SourceControl relations the values came from
-// and has already proven the row against them.
-func OutcomeResumeSubdivision(from, to sourcecontrol.PhaseRef,
-	fromTerm, toTerm keyspace.Term) (Origin, keyspace.Term, bool) {
-	endpoints := endpointPair{from: from, to: to, fromTerm: fromTerm, toTerm: toTerm}
-	if !endpoints.resumeAvailable() {
+// OutcomeResumeSubdivision admits the already-resolved runtime-entry row.
+// runtimeentry owns the normalized endpoint terms and phases; RoutePlan keeps
+// only that sealed row plus its owner fences instead of reconstructing a
+// second endpoint pair.
+func OutcomeResumeSubdivision(row runtimeentry.OutcomeResumeRow, runtime *runtimeentry.Result,
+	control *sourcecontrol.Result) (Origin, keyspace.Term, bool) {
+	if !row.OwnedBy(runtime, control) {
 		return Origin{}, 0, false
 	}
-	return Origin{pair: endpoints, carrier: noRecurrenceCarrier(),
-		subdivision: subdivisionRuntimeEntry}, toTerm, true
+	_, toTerm := row.RouteTerms()
+	if toTerm == 0 {
+		return Origin{}, 0, false
+	}
+	return Origin{
+		resume:      row,
+		runtime:     runtime,
+		control:     control,
+		carrier:     noRecurrenceCarrier(),
+		subdivision: subdivisionRuntimeEntry,
+	}, toTerm, true
 }
 
 func (origin Origin) valid() bool {
@@ -191,7 +189,8 @@ func (origin Origin) valid() bool {
 		if (from.OutcomePhase() || to.OutcomePhase()) != (origin.subdivision != subdivisionNone) {
 			return false
 		}
-		if origin.subdivision == subdivisionRuntimeEntry && (!from.OutcomePhase() || to.OutcomePhase() || !origin.pair.resumeAvailable()) {
+		if origin.subdivision == subdivisionRuntimeEntry &&
+			(!from.OutcomePhase() || to.OutcomePhase() || !origin.resume.OwnedBy(origin.runtime, origin.control)) {
 			return false
 		}
 		switch origin.carrier.kind {
@@ -345,7 +344,7 @@ func validRoute(route Route, origin Origin, owner sourcecontrol.Owner) bool {
 				return false
 			}
 		case subdivisionRuntimeEntry:
-			if !origin.pair.MatchesRoute(route.From, route.To) {
+			if !origin.resume.MatchesRoute(route.From, route.To) {
 				return false
 			}
 		default:
