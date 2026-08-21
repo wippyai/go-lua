@@ -62,10 +62,10 @@ type Graph struct {
 	// Region-owned sparse rows are appended once during recurrence derivation.
 	// regionData records immutable half-open offsets into these rows.
 	regionInterfaces          []interfaceRef
-	regionFaces               []int
 	regionExternal            []int
 	regionBack                []int
-	regionInternal            []int
+	regionInternal            []internalGroupRef
+	regionInternalInputs      []int
 	regionEnvironmentExternal []int
 	regionEnvironmentBack     []int
 	regionFactorExternal      []int

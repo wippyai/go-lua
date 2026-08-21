@@ -92,22 +92,3 @@ func TestIteratorEffects(t *testing.T) {
 		t.Error("Empty row should not be any iterator")
 	}
 }
-
-func TestActiveIterator(t *testing.T) {
-	indexed := Iterator{Source: effect.ParamRef{Index: 1}, Kind: IterateIndexed}
-	keyed := Iterator{Source: effect.ParamRef{Index: 2}, Kind: IterateKeyed}
-
-	got, ok := ActiveIterator([]effect.Label{returns.Return{}, indexed})
-	if !ok || !got.Equals(indexed) {
-		t.Fatalf("ActiveIterator value label = %v/%v, want %v", got, ok, indexed)
-	}
-
-	got, ok = ActiveIterator([]effect.Label{&keyed})
-	if !ok || !got.Equals(keyed) {
-		t.Fatalf("ActiveIterator pointer label = %v/%v, want %v", got, ok, keyed)
-	}
-
-	if got, ok := ActiveIterator([]effect.Label{returns.Return{}}); ok || got.Source.Index != 0 {
-		t.Fatalf("ActiveIterator missing label = %v/%v, want false", got, ok)
-	}
-}

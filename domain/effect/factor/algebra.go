@@ -353,18 +353,6 @@ func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.Content
 	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
 }
 
-func (a *Algebra) OpenCallbackUnknown(root Root, applicationID identity.ContentID, owner vocabulary.Operation, callback vocabulary.CallbackID) (Atom, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, owner) {
-		return Atom{}, false
-	}
-	callbackOwner, ownerOK := a.contract.Operations.CallbackOwner(callback)
-	tail, _, tailOK := a.contract.Operations.CallbackEffectTail(callback)
-	if !ownerOK || callbackOwner != owner || !tailOK || tail != vocabulary.RowUnknownOpen {
-		return Atom{}, false
-	}
-	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
-}
-
 // CallEffectAtom validates one selected ordinary-call effect. Row variables and
 // row arguments fail closed; explicit closed/open rows retain known atoms.
 func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, owner vocabulary.Operation, effect int) (Atom, bool) {
@@ -373,21 +361,6 @@ func (a *Algebra) CallEffectAtom(root Root, applicationID identity.ContentID, ow
 		return Atom{}, false
 	}
 	formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
-	binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
-	if !formalOK || !bindingOK {
-		return Atom{}, false
-	}
-	return binding.Atom()
-}
-
-// CallbackEffectAtom validates and issues one callback-owned selected-call
-// atom. Callback occurrence provenance does not enter atom identity.
-func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int) (Atom, bool) {
-	mounted, mountedOK := a.mountedCallForApplication(applicationID)
-	if !mountedOK || !a.selectedMountedCall(root, mounted, owner) {
-		return Atom{}, false
-	}
-	formal, formalOK := a.FormalCallbackEffectAtom(mounted, owner, callback, effect)
 	binding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 	if !formalOK || !bindingOK {
 		return Atom{}, false

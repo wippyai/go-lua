@@ -59,16 +59,6 @@ type Iterator struct {
 	Kind   IteratorKind
 }
 
-func ActiveIterator(labels []effect.Label) (Iterator, bool) {
-	for _, label := range labels {
-		switch normalized := effect.NormalizeLabel(label).(type) {
-		case Iterator:
-			return normalized, true
-		}
-	}
-	return Iterator{}, false
-}
-
 func (Iterator) CapabilityID() string { return capability.IterationIterator }
 func (i Iterator) String() string {
 	return fmt.Sprintf("iterator(%s, %s)", i.Source, i.Kind)

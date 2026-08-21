@@ -250,22 +250,6 @@ func (schema *Schema) Port(values Values) (Port, bool) {
 	return port, port.valid()
 }
 
-// EndpointForMountedSemantic returns Pack's scalar subject for an exact
-// mounted Program semantic value. This replaces the former Boundary.Value
-// carrier: construction authenticates the source once, and post-seal callers
-// retain no Link-owned proof object.
-func (schema *Schema) EndpointForMountedSemantic(module, id identity.ContentID) (Endpoint, bool) {
-	if schema == nil || schema.state == nil {
-		return Endpoint{}, false
-	}
-	source, sourceOK := newSemanticSource(module, id)
-	if !sourceOK {
-		return Endpoint{}, false
-	}
-	endpoint, ok := schema.state.endpointIndex[source]
-	return endpoint, ok && endpoint.valid()
-}
-
 // OwnsSemanticSource proves that source was emitted by this exact sealed Pack
 // directory. SemanticSource intentionally carries only detached scalar
 // identities, so a later owner join must not accept a copied source from an
@@ -277,18 +261,6 @@ func (schema *Schema) OwnsSemanticSource(source SemanticSource) bool {
 	}
 	endpoint, ok := schema.state.endpointIndex[source]
 	return ok && endpoint.valid() && endpoint.owner == schema.state.owner
-}
-
-// EndpointTag exposes the owner-issued selector identity for an exact Pack
-// endpoint.  It is meaningful only to this Schema and never decodes Link.
-func (schema *Schema) EndpointTag(endpoint Endpoint) (uint64, bool) {
-	if schema == nil || schema.state == nil || !endpoint.valid() || endpoint.owner != schema.state.owner {
-		return 0, false
-	}
-	if endpoint.index == 0 || uint64(endpoint.index) > uint64(len(schema.state.endpointSources)) {
-		return 0, false
-	}
-	return uint64(endpoint.index), true
 }
 
 // ScalarSource projects an exact Pack endpoint to its detached mounted
@@ -307,21 +279,6 @@ func (schema *Schema) ScalarSource(scalar Scalar) (SemanticSource, bool) {
 	return source, valid && source.Available()
 }
 
-// ScalarSourceRoute is the exact endpoint projection used by staged Value
-// selectors.  The tag is Pack's schema-issued endpoint identity, not a Boundary
-// ordinal or an application/formal coordinate.
-func (schema *Schema) ScalarSourceRoute(scalar Scalar) (SemanticSource, uint64, bool) {
-	if schema == nil || schema.state == nil {
-		return SemanticSource{}, 0, false
-	}
-	value, ok := schema.ScalarSource(scalar)
-	endpoint, endpointOK := scalar.Endpoint()
-	if !ok || !endpointOK || endpoint.owner != schema.state.owner {
-		return SemanticSource{}, 0, false
-	}
-	return value, uint64(endpoint.index), endpoint.index != 0
-}
-
 func (schema *Schema) relation(root Root) (*relation, bool) {
 	if schema == nil || schema.state == nil || !root.valid() || root.schema != schema.state {
 		return nil, false
@@ -330,19 +287,6 @@ func (schema *Schema) relation(root Root) (*relation, bool) {
 	return relation, relation != nil && relation.valid()
 }
 
-// RootForValue recovers the exact occurrence root carried by one non-extreme
-// Pack value in O(1).  Bottom and Top intentionally name no occurrence.
-func (schema *Schema) RootForValue(value Value) (Root, bool) {
-	if schema == nil || schema.state == nil || !value.valid() || value.owner != schema.state.owner || value.relation == nil || value.bottom || value.top {
-		return Root{}, false
-	}
-	index, ok := schema.state.relationIndex[value.relation]
-	if !ok || uint64(index) >= uint64(len(schema.state.roots)) {
-		return Root{}, false
-	}
-	root := Root{schema.state, index}
-	return root, root.valid() && schema.state.relations[index] == value.relation
-}
 func (schema *Schema) Admit(root Root, value Value) bool {
 	relation, ok := schema.relation(root)
 	return ok && value.valid() && value.owner == schema.state.owner && (value.IsBottom() || value.IsTop() || value.relation == relation)
@@ -539,20 +483,6 @@ func (schema *Schema) PackOnly(root Root) bool {
 	return ok && len(relation.targets) == 1 && relation.targets[0].kind == EquationPack
 }
 
-// CellTag is the local opaque selector associated with a Cell endpoint. It is
-// not a Source/Link ordinal and cannot be used to mint another endpoint.
-func (schema *Schema) CellTag(endpoint Endpoint) (uint64, bool) {
-	if schema == nil || schema.state == nil || !endpoint.valid() || endpoint.owner != schema.state.owner {
-		return 0, false
-	}
-	for _, candidate := range schema.state.semanticEndpoints {
-		if candidate == endpoint {
-			return uint64(endpoint.index), true
-		}
-	}
-	return 0, false
-}
-
 // Bind is one executable fixed Cell-binding occurrence. It carries no Value
 // fact and no copied authored row; all source order is reissued from the
 // sealed descriptor.
@@ -720,26 +650,6 @@ func (outcome Outcome) ValuesCount() int {
 	}
 	return len(outcome.schema.outcomes[outcome.index].valueRoots)
 }
-func (outcome Outcome) ValuesRootAt(index int) (Root, bool) {
-	if !outcome.valid() || index < 0 || index >= len(outcome.schema.outcomes[outcome.index].valueRoots) {
-		return Root{}, false
-	}
-	row := outcome.schema.outcomes[outcome.index]
-	rootIndex := row.valueRoots[index]
-	if uint64(rootIndex) >= uint64(len(outcome.schema.roots)) {
-		return Root{}, false
-	}
-	rootRow := outcome.schema.roots[rootIndex]
-	if rootRow.kind != rootValues || uint64(rootRow.sourceIndex) >= uint64(len(outcome.schema.values)) {
-		return Root{}, false
-	}
-	valueRow := outcome.schema.values[rootRow.sourceIndex]
-	if valueRow.root != rootIndex || valueRow.moduleKey != row.moduleKey {
-		return Root{}, false
-	}
-	root := Root{schema: outcome.schema, index: rootIndex}
-	return root, root.valid()
-}
 func (outcome Outcome) Port() (Port, bool) {
 	if !outcome.valid() {
 		return Port{}, false
@@ -787,17 +697,6 @@ func (body Body) Return() (Outcome, bool) {
 	}
 	outcome := Outcome{schema: body.schema, index: body.schema.bodies[body.index].returnOutcome}
 	return outcome, outcome.valid() && outcome.Kind() == flowkind.OutcomeReturn && outcome.schema.outcomes[outcome.index].bodyID == body.schema.bodies[body.index].bodyID && outcome.schema.outcomes[outcome.index].moduleKey == body.schema.bodies[body.index].moduleKey
-}
-
-// BelongsTo proves that this Pack Outcome was issued for this exact Pack Body
-// descriptor. It exposes no raw Program Body or Outcome coordinate.
-func (outcome Outcome) BelongsTo(body Body) bool {
-	if !outcome.valid() || !body.valid() || outcome.schema != body.schema {
-		return false
-	}
-	outcomeRow := outcome.schema.outcomes[outcome.index]
-	bodyRow := body.schema.bodies[body.index]
-	return outcomeRow.bodyID == bodyRow.bodyID && outcomeRow.moduleKey == bodyRow.moduleKey
 }
 
 // Same is an owner-fenced capability comparison. Invalid or foreign

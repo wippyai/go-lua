@@ -49,7 +49,6 @@ type effectRefinementWire struct {
 type effectReturnWire struct {
 	Kind          string               `json:"kind"`
 	Source        *paramRefWire        `json:"source,omitempty"`
-	Cases         *paramRefWire        `json:"cases,omitempty"`
 	Default       *paramRefWire        `json:"default,omitempty"`
 	CallbackParam *paramRefWire        `json:"callbackParam,omitempty"`
 	Format        *paramRefWire        `json:"format,omitempty"`

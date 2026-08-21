@@ -154,10 +154,10 @@ func (graph *Graph) ActivationGraphOverlay(execution *schedule.Schedule, additio
 	}
 	view.regions = nil
 	view.regionInterfaces = nil
-	view.regionFaces = nil
 	view.regionExternal = nil
 	view.regionBack = nil
 	view.regionInternal = nil
+	view.regionInternalInputs = nil
 	view.regionEnvironmentExternal = nil
 	view.regionEnvironmentBack = nil
 	view.regionFactorExternal = nil
