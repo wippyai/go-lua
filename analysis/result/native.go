@@ -20,22 +20,16 @@ type NativePublicationLane uint8
 const (
 	NativePublicationLaneInvalid NativePublicationLane = iota
 	NativePublicationLaneValues
-	NativePublicationLaneOutcomes
-	NativePublicationLaneDiagnostics
 )
 
 func (lane NativePublicationLane) Valid() bool {
-	return lane >= NativePublicationLaneValues && lane <= NativePublicationLaneDiagnostics
+	return lane == NativePublicationLaneValues
 }
 
 func (lane NativePublicationLane) String() string {
 	switch lane {
 	case NativePublicationLaneValues:
 		return "values"
-	case NativePublicationLaneOutcomes:
-		return "outcomes"
-	case NativePublicationLaneDiagnostics:
-		return "diagnostics"
 	default:
 		return ""
 	}
@@ -49,22 +43,16 @@ type NativePublicationKind uint8
 const (
 	NativePublicationKindInvalid NativePublicationKind = iota
 	NativePublicationKindValue
-	NativePublicationKindOutcome
-	NativePublicationKindDiagnostic
 )
 
 func (kind NativePublicationKind) Valid() bool {
-	return kind >= NativePublicationKindValue && kind <= NativePublicationKindDiagnostic
+	return kind == NativePublicationKindValue
 }
 
 func (kind NativePublicationKind) String() string {
 	switch kind {
 	case NativePublicationKindValue:
 		return "value"
-	case NativePublicationKindOutcome:
-		return "outcome"
-	case NativePublicationKindDiagnostic:
-		return "diagnostic"
 	default:
 		return ""
 	}
@@ -77,22 +65,16 @@ type NativePublicationTrust uint8
 const (
 	NativePublicationTrustInvalid NativePublicationTrust = iota
 	NativePublicationTrustProven
-	NativePublicationTrustClaimed
-	NativePublicationTrustUnknown
 )
 
 func (trust NativePublicationTrust) Valid() bool {
-	return trust >= NativePublicationTrustProven && trust <= NativePublicationTrustUnknown
+	return trust == NativePublicationTrustProven
 }
 
 func (trust NativePublicationTrust) String() string {
 	switch trust {
 	case NativePublicationTrustProven:
 		return "proven"
-	case NativePublicationTrustClaimed:
-		return "claimed"
-	case NativePublicationTrustUnknown:
-		return "unknown"
 	default:
 		return ""
 	}
