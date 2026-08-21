@@ -1,10 +1,13 @@
 {
   "description": "Large dynamic compiler fixture must terminate; proven dynamic calls should not report stale false positives",
+  "files": [
+    "df_consts.lua",
+    "main.lua"
+  ],
   "packages": [
     "uuid",
     "json",
-    "expr",
-    "df_consts"
+    "expr"
   ],
   "check": {
     "errors": 0

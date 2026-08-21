@@ -50,6 +50,14 @@ func sealStandardLibraryTarget() (*contract.Contract, error) {
 		Identity:    "testfixture.wippy.uuid",
 		Mount:       manifest.MountModule,
 		Declaration: uuidHostManifest,
+	}, manifest.Provider{
+		Identity:    "testfixture.wippy.expr",
+		Mount:       manifest.MountModule,
+		Declaration: exprHostManifest,
+	}, manifest.Provider{
+		Identity:    "testfixture.wippy.json",
+		Mount:       manifest.MountModule,
+		Declaration: jsonHostManifest,
 	})
 	catalogue, err := manifest.Seal(providers...)
 	if err != nil {
@@ -94,6 +102,30 @@ func uuidHostManifest() *manifestwire.Manifest {
 	declaration.SetExport(typetable.NewRecord().
 		Field("v7", v7Type).
 		Build())
+	return declaration
+}
+
+// exprHostManifest declares the expression evaluator surface the corpus
+// fixtures require. Only eval is declared, because that is the only member
+// the fixture corpus calls; the evaluated value and the error are plain
+// returned values and the call carries no ownership, dispatch, or transfer
+// effect.
+func exprHostManifest() *manifestwire.Manifest {
+	evalType := typ.Func().Param("source", typ.String).Param("env", typ.Any).Returns(typ.Any, typ.Any).Build()
+	declaration := manifestwire.New("expr")
+	declaration.DefineFunctionSignature("eval", signature.Function{Type: evalType})
+	declaration.SetExport(typetable.NewRecord().
+		Field("eval", evalType).
+		Build())
+	return declaration
+}
+
+// jsonHostManifest declares the module identity the corpus fixtures require
+// through require("json") without dereferencing a member. It carries no
+// members because the fixture corpus never calls one.
+func jsonHostManifest() *manifestwire.Manifest {
+	declaration := manifestwire.New("json")
+	declaration.SetExport(typetable.NewRecord().Build())
 	return declaration
 }
 
