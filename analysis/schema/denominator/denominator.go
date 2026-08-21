@@ -75,22 +75,6 @@ type Owner struct {
 
 func (owner Owner) Available() bool { return owner.Surface.Available() && owner.Entry.Available() }
 
-// Spec is the authored declaration of one denominator.
-type Spec struct {
-	// Key is the denominator's authored identity and its diagnostic name, so a
-	// closed world has exactly one spelling in the analyzer. It derives the
-	// entry identity a verdict carries.
-	Key schema.Key
-	// Owner is the surface entry whose facts this universe quantifies over.
-	Owner Owner
-	// Universe is the declared identity of the set description itself. Two
-	// denominators over one description are one closed world under two names,
-	// so this identity is unique across the surface.
-	Universe identity.ContentID
-	// Phase is when the universe closes.
-	Phase Phase
-}
-
 // Entry is one admitted denominator declaration. It is immutable once built.
 type Entry struct {
 	key      schema.Key
@@ -100,25 +84,39 @@ type Entry struct {
 	phase    Phase
 }
 
-// New admits one authored declaration. A rejected spec returns false rather
-// than a partially usable entry.
-func New(spec Spec) (*Entry, bool) {
-	if !spec.Key.Available() || !spec.Owner.Available() || !spec.Universe.Available() || !spec.Phase.Available() {
+// coordinatePrefix is the spelling one axis's coordinate world is named under.
+// A closed world has exactly one spelling in the analyzer, and this one is the
+// axis's own key under the name of what the world holds.
+const coordinatePrefix = "coordinates/"
+
+// Coordinate derives the closed world of one declared axis: the coordinate
+// population that axis carries.
+//
+// Nothing here is authored. The identity is the axis's own key, the owner is
+// the axis row itself, and the phase is publication because an axis's
+// coordinates are derived by the solver, so the set is total only once the
+// fixpoint that derives it has closed. A coordinate world therefore cannot
+// disagree with the axis it describes, and an axis cannot acquire a world that
+// quantifies over something else.
+//
+// The universe is the one thing this surface does not derive: it is the
+// identity of the set description, which the axis surface holds and has
+// already proved unique across its inventory, so two axes cannot present one
+// closed world under two names. A source that names no axis, or no set
+// description, yields no entry rather than a partially usable one.
+func Coordinate(axis schema.Key, universe identity.ContentID) (*Entry, bool) {
+	if !axis.Available() || !universe.Available() {
 		return nil, false
 	}
-	// A denominator resolves its owner against a surface sealed below it, so an
-	// owner at or above this surface names a table that does not exist yet.
-	if spec.Owner.Surface >= schema.SurfaceKindDenominator {
-		return nil, false
-	}
+	key := schema.Key(coordinatePrefix + string(axis))
 	entry := &Entry{
-		key:      spec.Key,
-		id:       schema.NewEntryID(schema.SurfaceKindDenominator, spec.Key),
-		owner:    spec.Owner,
-		universe: spec.Universe,
-		phase:    spec.Phase,
+		key:      key,
+		id:       schema.NewEntryID(schema.SurfaceKindDenominator, key),
+		owner:    Owner{Surface: schema.SurfaceKindAxis, Entry: axis},
+		universe: universe,
+		phase:    PhasePublication,
 	}
-	return entry, entry.EntryAvailable() && entry.declarationComplete()
+	return entry, entry.EntryAvailable()
 }
 
 func (entry *Entry) Key() schema.Key { return entry.key }
@@ -154,10 +152,6 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 		return err
 	}
 	return content.Uint(uint64(entry.phase))
-}
-
-func (entry *Entry) declarationComplete() bool {
-	return entry.owner.Available() && entry.universe.Available() && entry.phase.Available()
 }
 
 // RelationOwner identifies the immutable component that publishes one

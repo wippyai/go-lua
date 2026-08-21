@@ -86,30 +86,28 @@ func sealContribution(t *testing.T, contribution schema.Surface) (*schema.Schema
 	return builder.Seal()
 }
 
-func axisSpec(key schema.Key) Spec {
-	return Spec{
-		Key:      key,
-		Owner:    Owner{Surface: schema.SurfaceKindAxis, Entry: "container"},
-		Universe: universeID("universe/" + string(key)),
-		Phase:    PhasePublication,
-	}
-}
-
-func compositeSpec(key schema.Key) Spec {
-	return Spec{
-		Key:      key,
-		Owner:    Owner{Surface: schema.SurfaceKindComposite, Entry: "containment"},
-		Universe: universeID("universe/" + string(key)),
-		Phase:    PhaseSeal,
-	}
-}
-
-func mustEntry(t *testing.T, spec Spec) *Entry {
+// axisEntry derives one scratch coordinate world. The axis keys it is handed
+// are the ones the surrounding scratch axis surface declares, so the owner a
+// derived world names resolves in the table these laws are read against.
+func axisEntry(t *testing.T, axis schema.Key) *Entry {
 	t.Helper()
-	entry, ok := New(spec)
+	entry, ok := Coordinate(axis, universeID("universe/"+string(axis)))
 	if !ok || entry == nil {
-		t.Fatalf("scratch denominator %q rejected by construction", spec.Key)
+		t.Fatalf("scratch coordinate world for axis %q rejected by derivation", axis)
 	}
+	return entry
+}
+
+// compositeEntry is a scratch closed world owned by a surface other than the
+// axis surface and closing at seal rather than at publication. The surface
+// states its laws over any owner sealed below it, so the inventories these
+// laws are read against carry more than the one owner kind the analyzer's own
+// derivation produces.
+func compositeEntry(t *testing.T, axis schema.Key) *Entry {
+	t.Helper()
+	entry := axisEntry(t, axis)
+	entry.owner = Owner{Surface: schema.SurfaceKindComposite, Entry: "containment"}
+	entry.phase = PhaseSeal
 	return entry
 }
 
@@ -136,8 +134,8 @@ func sealRelations(t *testing.T, entries []*Entry, relations []*RelationEntry) s
 // denominator inventory is admitted, indexed, and sealed with no verdict.
 func TestDenominatorSurfaceSealsCompleteInventory(t *testing.T) {
 	entries := []*Entry{
-		mustEntry(t, axisSpec("container-coordinates")),
-		mustEntry(t, compositeSpec("containment-members")),
+		axisEntry(t, "container"),
+		compositeEntry(t, "member"),
 	}
 	if failure := sealEntries(t, entries); failure.Available() {
 		t.Fatalf("complete denominator inventory rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -146,7 +144,7 @@ func TestDenominatorSurfaceSealsCompleteInventory(t *testing.T) {
 	if entry.Owner().Surface != schema.SurfaceKindAxis || entry.Owner().Entry != "container" {
 		t.Fatal("declared owner lost")
 	}
-	if entry.Universe() != universeID("universe/container-coordinates") || entry.Phase() != PhasePublication {
+	if entry.Universe() != universeID("universe/container") || entry.Phase() != PhasePublication {
 		t.Fatal("declared universe or closure phase lost")
 	}
 }
@@ -184,7 +182,7 @@ func TestForeignRowIsRejected(t *testing.T) {
 // TestDenominatorIdentityIsThisSurfaceDerivation states that a denominator
 // carries this surface's own derivation of its key.
 func TestDenominatorIdentityIsThisSurfaceDerivation(t *testing.T) {
-	entry := mustEntry(t, axisSpec("container-coordinates"))
+	entry := axisEntry(t, "container")
 	entry.id = schema.NewEntryID(schema.SurfaceKindAxis, entry.key)
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawDenominatorIdentity || failure.Disposition != schema.DispositionMalformed {
@@ -195,8 +193,9 @@ func TestDenominatorIdentityIsThisSurfaceDerivation(t *testing.T) {
 // TestDenominatorKeyIsUnique states that two closed worlds cannot share one
 // authored identity.
 func TestDenominatorKeyIsUnique(t *testing.T) {
-	first := mustEntry(t, axisSpec("container-coordinates"))
-	second := mustEntry(t, compositeSpec("container-coordinates"))
+	first := axisEntry(t, "container")
+	second := compositeEntry(t, "container")
+	second.universe = universeID("universe/second-container")
 	failure := sealEntries(t, []*Entry{first, second})
 	if failure.Law != schema.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate denominator key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -209,7 +208,7 @@ func TestDenominatorOwnerIsDeclared(t *testing.T) {
 		"surface": func(entry *Entry) { entry.owner.Surface = schema.SurfaceKindInvalid },
 		"entry":   func(entry *Entry) { entry.owner.Entry = "" },
 	} {
-		entry := mustEntry(t, axisSpec("container-coordinates"))
+		entry := axisEntry(t, "container")
 		damage(entry)
 		failure := sealEntries(t, []*Entry{entry})
 		if failure.Law != LawOwnerDeclared || failure.Disposition != schema.DispositionIncomplete {
@@ -222,7 +221,7 @@ func TestDenominatorOwnerIsDeclared(t *testing.T) {
 // against a surface already sealed under this one, so a reference upward names
 // a table that does not exist yet and is rejected rather than deferred.
 func TestDenominatorOwnerIsSealedBelow(t *testing.T) {
-	entry := mustEntry(t, axisSpec("container-coordinates"))
+	entry := axisEntry(t, "container")
 	entry.owner.Surface = schema.SurfaceKindQuery
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawOwnerPhase || failure.Disposition != schema.DispositionMalformed {
@@ -238,7 +237,7 @@ func TestDenominatorOwnerIsSealedBelow(t *testing.T) {
 // TestDenominatorOwnerResolves states that the owning entry exists in the
 // surface it names.
 func TestDenominatorOwnerResolves(t *testing.T) {
-	entry := mustEntry(t, axisSpec("container-coordinates"))
+	entry := axisEntry(t, "container")
 	entry.owner.Entry = "absent"
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawOwnerResolves || failure.Disposition != schema.DispositionIncomplete {
@@ -246,7 +245,7 @@ func TestDenominatorOwnerResolves(t *testing.T) {
 	}
 	// The owner is resolved in the surface it names, not in any surface: an
 	// axis key is not a composite key.
-	crossed := mustEntry(t, axisSpec("container-coordinates"))
+	crossed := axisEntry(t, "container")
 	crossed.owner.Surface = schema.SurfaceKindComposite
 	if failure = sealEntries(t, []*Entry{crossed}); failure.Law != LawOwnerResolves ||
 		failure.Disposition != schema.DispositionIncomplete {
@@ -256,7 +255,7 @@ func TestDenominatorOwnerResolves(t *testing.T) {
 
 // TestDenominatorUniverseIsDeclared states that the set description is named.
 func TestDenominatorUniverseIsDeclared(t *testing.T) {
-	entry := mustEntry(t, axisSpec("container-coordinates"))
+	entry := axisEntry(t, "container")
 	entry.universe = identity.ContentID{}
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawUniverseDeclared || failure.Disposition != schema.DispositionIncomplete {
@@ -268,8 +267,8 @@ func TestDenominatorUniverseIsDeclared(t *testing.T) {
 // closed world: a totality claim may not depend on which name it was made
 // under.
 func TestDenominatorUniverseIsUnique(t *testing.T) {
-	first := mustEntry(t, axisSpec("container-coordinates"))
-	second := mustEntry(t, compositeSpec("containment-members"))
+	first := axisEntry(t, "container")
+	second := compositeEntry(t, "member")
 	second.universe = first.universe
 	failure := sealEntries(t, []*Entry{first, second})
 	if failure.Law != LawUniverseUnique || failure.Disposition != schema.DispositionDuplicate {
@@ -283,7 +282,7 @@ func TestDenominatorUniverseIsUnique(t *testing.T) {
 // TestDenominatorPhaseIsDeclared states that a closed world says when it
 // closes.
 func TestDenominatorPhaseIsDeclared(t *testing.T) {
-	entry := mustEntry(t, axisSpec("container-coordinates"))
+	entry := axisEntry(t, "container")
 	entry.phase = PhaseInvalid
 	failure := sealEntries(t, []*Entry{entry})
 	if failure.Law != LawPhaseDeclared || failure.Disposition != schema.DispositionIncomplete {
@@ -296,23 +295,48 @@ func TestDenominatorPhaseIsDeclared(t *testing.T) {
 	}
 }
 
-// TestNewRejectsIncompleteSpec states the constructor half: a spec that
-// violates a law yields no entry at all.
-func TestNewRejectsIncompleteSpec(t *testing.T) {
-	cases := map[string]func(*Spec){
-		"key":           func(spec *Spec) { spec.Key = "" },
-		"owner surface": func(spec *Spec) { spec.Owner.Surface = schema.SurfaceKindInvalid },
-		"owner entry":   func(spec *Spec) { spec.Owner.Entry = "" },
-		"owner phase":   func(spec *Spec) { spec.Owner.Surface = schema.SurfaceKindQuery },
-		"self owner":    func(spec *Spec) { spec.Owner.Surface = schema.SurfaceKindDenominator },
-		"universe":      func(spec *Spec) { spec.Universe = identity.ContentID{} },
-		"phase":         func(spec *Spec) { spec.Phase = PhaseInvalid },
+// TestCoordinateIsDerivedFromTheAxisItDescribes states the derivation half of
+// this surface: a coordinate world has no authored content beyond the axis it
+// belongs to and the identity of the set description. The identity a verdict
+// carries, the owning surface entry and the closure phase are this surface's
+// own derivation of that axis, so no row can name a different owner, a
+// non-existent closure point, or an owner at or above this surface.
+func TestCoordinateIsDerivedFromTheAxisItDescribes(t *testing.T) {
+	universe := universeID("universe/container")
+	entry, ok := Coordinate("container", universe)
+	if !ok || entry == nil {
+		t.Fatal("a declared axis and set description yielded no coordinate world")
 	}
-	for name, damage := range cases {
-		spec := axisSpec("container-coordinates")
-		damage(&spec)
-		if entry, ok := New(spec); ok || entry != nil {
-			t.Fatalf("spec with a rejected %s admitted", name)
+	if entry.Key() != "coordinates/container" {
+		t.Fatalf("coordinate world spelled %q, not the axis's own key under its coordinates", entry.Key())
+	}
+	if entry.ID() != schema.NewEntryID(schema.SurfaceKindDenominator, entry.Key()) {
+		t.Fatal("coordinate world does not carry this surface's derivation of its key")
+	}
+	if entry.Owner() != (Owner{Surface: schema.SurfaceKindAxis, Entry: "container"}) {
+		t.Fatal("coordinate world is not owned by the axis it describes")
+	}
+	if entry.Owner().Surface >= schema.SurfaceKindDenominator {
+		t.Fatal("coordinate world names an owner at or above this surface")
+	}
+	if entry.Phase() != PhasePublication {
+		t.Fatalf("coordinate world closes at phase %d, not at publication", entry.Phase())
+	}
+	if entry.Universe() != universe {
+		t.Fatal("declared set description lost")
+	}
+}
+
+// TestCoordinateRejectsUndeclaredSource states that the two inputs the
+// derivation cannot supply itself are required: a world with no axis belongs
+// to nothing, and a world with no set description quantifies over nothing.
+func TestCoordinateRejectsUndeclaredSource(t *testing.T) {
+	for name, derive := range map[string]func() (*Entry, bool){
+		"axis":     func() (*Entry, bool) { return Coordinate("", universeID("universe/container")) },
+		"universe": func() (*Entry, bool) { return Coordinate("container", identity.ContentID{}) },
+	} {
+		if entry, ok := derive(); ok || entry != nil {
+			t.Fatalf("coordinate world with no %s admitted", name)
 		}
 	}
 }
@@ -323,13 +347,13 @@ func TestNewRejectsIncompleteSpec(t *testing.T) {
 // two tables. A phase is when a totality claim becomes answerable, so moving one
 // moves the digest.
 func TestTableDigestCoversDeclaredContent(t *testing.T) {
-	declared, failure := sealTable(t, []*Entry{mustEntry(t, axisSpec("container-coordinates"))})
+	declared, failure := sealTable(t, []*Entry{axisEntry(t, "container")})
 	if failure.Available() {
 		t.Fatalf("toy denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	spec := axisSpec("container-coordinates")
-	spec.Phase = PhaseSeal
-	shifted, failure := sealTable(t, []*Entry{mustEntry(t, spec)})
+	moved := axisEntry(t, "container")
+	moved.phase = PhaseSeal
+	shifted, failure := sealTable(t, []*Entry{moved})
 	if failure.Available() {
 		t.Fatalf("denominator with a shifted phase rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -339,7 +363,7 @@ func TestTableDigestCoversDeclaredContent(t *testing.T) {
 }
 
 func TestUnifiedSurfaceSealsClosedWorldAndRelations(t *testing.T) {
-	closed := mustEntry(t, axisSpec("container-coordinates"))
+	closed := axisEntry(t, "container")
 	primary := mustRelation(t, relationSpec("relation/primary", RelationOwnerProgramSource, RelationFormAuthored))
 	child := mustRelation(t, relationSpec("relation/child", RelationOwnerProgramSource, RelationFormSealDerived, primary.ID()))
 	if failure := sealRelations(t, []*Entry{closed}, []*RelationEntry{primary, child}); failure.Available() {
@@ -356,11 +380,11 @@ func TestRelationIdentityAndContentAreDeclaredByDenominatorSurface(t *testing.T)
 	if left.ID() != schema.NewEntryID(schema.SurfaceKindDenominator, left.Key()) || left.ID() != right.ID() {
 		t.Fatal("relation identity is not the denominator derivation of its key")
 	}
-	first, failure := sealTable(t, []*Entry{mustEntry(t, axisSpec("container-coordinates"))})
+	first, failure := sealTable(t, []*Entry{axisEntry(t, "container")})
 	if failure.Available() {
 		t.Fatalf("baseline denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
-	second, failure := sealContribution(t, NewSurface([]*Entry{mustEntry(t, axisSpec("container-coordinates"))}, []*RelationEntry{left}))
+	second, failure := sealContribution(t, NewSurface([]*Entry{axisEntry(t, "container")}, []*RelationEntry{left}))
 	if failure.Available() {
 		t.Fatalf("relation denominator rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
