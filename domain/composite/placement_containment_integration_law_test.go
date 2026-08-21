@@ -22,11 +22,11 @@ func TestPlacementLinkTailIsAppendOnly(t *testing.T) {
 		containmentKey         schema.Key = "placement-containment"
 		containmentSlot                   = 26
 		suspensionKey          schema.Key = "placement-suspension"
-		suspensionSlot                    = 29
+		suspensionSlot                    = 28
 		suspensionEvidenceKey  schema.Key = "placement-suspension-evidence"
-		suspensionEvidenceSlot            = 30
+		suspensionEvidenceSlot            = 29
 		freshKey               schema.Key = "placement-fresh"
-		freshSlot                         = 31
+		freshSlot                         = 30
 	)
 	key, keyOK := RuleKeyAt(compilation, containmentSlot-1)
 	if !keyOK || key != containmentKey {
