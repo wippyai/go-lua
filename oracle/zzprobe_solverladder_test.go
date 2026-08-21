@@ -54,11 +54,16 @@ type zzProbeSolverSample struct {
 	reuseAdmit, reuseRefuse, reuseTerms, rebuildTerm uint64
 	dropRestart, dropNarrowPhase, dropNarrowFold     uint64
 
-	refuseNotAscent, refuseNoAccumulator, refuseColdEpisode, refuseDroppedAccum uint64
+	refuseNotAscent, refuseNoAccumulator, refuseColdEpisode, refuseDroppedAccum  uint64
 	refusePendingUnknown, refusePendingDescend, refuseNotOwned, refuseChangedRow uint64
 	carryRetained, carryExtended, carryRebuilt, carryOpened                      uint64
 
 	mergeMany, cells, cellPairs, cellWidth, maxOperand uint64
+
+	regionsTotal, regionsWidenFactorFree               uint64
+	backEnvTerms, backFactorTerms, backGroupTerms      uint64
+	regionsPureTransport, regionsLinearCandidate       uint64
+	regionInteriorPointsMax, regionInteriorPointsTotal uint64
 }
 
 func zzProbeSolverSampleOne(t *testing.T, project corpusHarnessProject) zzProbeSolverSample {
@@ -93,6 +98,11 @@ func zzProbeSolverSampleOne(t *testing.T, project corpusHarnessProject) zzProbeS
 	sample.carryRebuilt, sample.carryOpened = counters.CarryRebuilt, counters.CarryOpened
 
 	sample.mergeMany, sample.cells, sample.cellPairs, sample.cellWidth, sample.maxOperand = engineprobe.DbgMerge()
+
+	sample.regionsTotal, sample.regionsWidenFactorFree = counters.RegionsTotal, counters.RegionsWidenFactorFree
+	sample.backEnvTerms, sample.backFactorTerms, sample.backGroupTerms = counters.BackEnvTerms, counters.BackFactorTerms, counters.BackGroupTerms
+	sample.regionsPureTransport, sample.regionsLinearCandidate = counters.RegionsPureTransport, counters.RegionsLinearCandidate
+	sample.regionInteriorPointsMax, sample.regionInteriorPointsTotal = counters.RegionInteriorPointsMax, counters.RegionInteriorPointsTotal
 	return sample
 }
 
@@ -102,7 +112,8 @@ func zzProbeSolverLine(sample zzProbeSolverSample) string {
 			"pubs=%d sem=%d raw=%d rawOnly=%d bumps=%d iface=%d/%d/%d maxQueue=%d maxEpisode=%d | "+
 			"dbgFolds=%d foldTerms=%d foldMax=%d reuse=%d/%d reuseTerms=%d rebuildTerms=%d drops=%d/%d/%d | "+
 			"refuse{notAscent=%d noAccum=%d cold=%d dropped=%d pendUnknown=%d pendDescend=%d notOwned=%d changedRow=%d} carry{%d/%d/%d/%d} | "+
-			"mergeMany=%d cells=%d cellPairs=%d cellWidth=%d maxOperand=%d",
+			"mergeMany=%d cells=%d cellPairs=%d cellWidth=%d maxOperand=%d | "+
+			"regions=%d widenFree=%d pureTransport=%d linearCandidate=%d back{env=%d factor=%d group=%d} interior{max=%d total=%d}",
 		sample.name, sample.solve.Round(time.Microsecond), sample.compile.Round(time.Microsecond), sample.class, sample.err,
 		sample.epochs, sample.passes, sample.refreshes, sample.evaluates, sample.folds, sample.rhs, sample.restarts,
 		sample.publications, sample.semanticPubs, sample.rawPubs, sample.rawOnly, sample.bumps,
@@ -112,7 +123,10 @@ func zzProbeSolverLine(sample zzProbeSolverSample) string {
 		sample.refuseNotAscent, sample.refuseNoAccumulator, sample.refuseColdEpisode, sample.refuseDroppedAccum,
 		sample.refusePendingUnknown, sample.refusePendingDescend, sample.refuseNotOwned, sample.refuseChangedRow,
 		sample.carryRetained, sample.carryExtended, sample.carryRebuilt, sample.carryOpened,
-		sample.mergeMany, sample.cells, sample.cellPairs, sample.cellWidth, sample.maxOperand)
+		sample.mergeMany, sample.cells, sample.cellPairs, sample.cellWidth, sample.maxOperand,
+		sample.regionsTotal, sample.regionsWidenFactorFree, sample.regionsPureTransport, sample.regionsLinearCandidate,
+		sample.backEnvTerms, sample.backFactorTerms, sample.backGroupTerms,
+		sample.regionInteriorPointsMax, sample.regionInteriorPointsTotal)
 }
 
 // TestZZProbeSolverLadderWalk walks the corpus serially and reports the
@@ -167,6 +181,17 @@ func TestZZProbeSolverLadderWalk(t *testing.T) {
 		totals.mergeMany += sample.mergeMany
 		totals.cells += sample.cells
 		totals.cellPairs += sample.cellPairs
+		totals.regionsTotal += sample.regionsTotal
+		totals.regionsWidenFactorFree += sample.regionsWidenFactorFree
+		totals.regionsPureTransport += sample.regionsPureTransport
+		totals.regionsLinearCandidate += sample.regionsLinearCandidate
+		totals.backEnvTerms += sample.backEnvTerms
+		totals.backFactorTerms += sample.backFactorTerms
+		totals.backGroupTerms += sample.backGroupTerms
+		totals.regionInteriorPointsTotal += sample.regionInteriorPointsTotal
+		if sample.regionInteriorPointsMax > totals.regionInteriorPointsMax {
+			totals.regionInteriorPointsMax = sample.regionInteriorPointsMax
+		}
 	}
 
 	sort.SliceStable(samples, func(left, right int) bool { return samples[left].solve > samples[right].solve })
@@ -177,10 +202,14 @@ func TestZZProbeSolverLadderWalk(t *testing.T) {
 		}
 		t.Logf("ZZPROBE row %s", zzProbeSolverLine(sample))
 	}
-	t.Logf("ZZPROBE totals solve=%s compile=%s passes=%d refreshes=%d evaluates=%d folds=%d rhs=%d restarts=%d pubs=%d bumps=%d iface=%d foldTerms=%d reuse=%d/%d reuseTerms=%d rebuildTerms=%d mergeMany=%d cells=%d cellPairs=%d",
+	t.Logf("ZZPROBE totals solve=%s compile=%s passes=%d refreshes=%d evaluates=%d folds=%d rhs=%d restarts=%d pubs=%d bumps=%d iface=%d foldTerms=%d reuse=%d/%d reuseTerms=%d rebuildTerms=%d mergeMany=%d cells=%d cellPairs=%d "+
+		"regions=%d widenFree=%d pureTransport=%d linearCandidate=%d back{env=%d factor=%d group=%d} interior{max=%d total=%d}",
 		totals.solve.Round(time.Millisecond), totals.compile.Round(time.Millisecond), totals.passes, totals.refreshes, totals.evaluates,
 		totals.folds, totals.rhs, totals.restarts, totals.publications, totals.bumps, totals.ifaceRefresh, totals.dbgFoldTerms,
-		totals.reuseAdmit, totals.reuseRefuse, totals.reuseTerms, totals.rebuildTerm, totals.mergeMany, totals.cells, totals.cellPairs)
+		totals.reuseAdmit, totals.reuseRefuse, totals.reuseTerms, totals.rebuildTerm, totals.mergeMany, totals.cells, totals.cellPairs,
+		totals.regionsTotal, totals.regionsWidenFactorFree, totals.regionsPureTransport, totals.regionsLinearCandidate,
+		totals.backEnvTerms, totals.backFactorTerms, totals.backGroupTerms,
+		totals.regionInteriorPointsMax, totals.regionInteriorPointsTotal)
 }
 
 // TestZZProbeSolverLadderFixture runs exactly one named fixture so the global

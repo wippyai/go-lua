@@ -37,6 +37,20 @@ type DbgEngineCounters struct {
 	CarryInstalls        uint64
 	RefuseReasons        [8]uint64
 	RefuseDirection      [8]uint64
+
+	// RegionsTotal through RegionInteriorPointsTotal are the Newton prototype
+	// Step 0 measurement: is the pure-transport back-composition class
+	// (regions with zero back Group producers) non-empty on the corpus, and
+	// how many of those regions also carry an empty widen selection.
+	RegionsTotal              uint64
+	RegionsWidenFactorFree    uint64
+	BackEnvTerms              uint64
+	BackFactorTerms           uint64
+	BackGroupTerms            uint64
+	RegionsPureTransport      uint64
+	RegionsLinearCandidate    uint64
+	RegionInteriorPointsMax   uint64
+	RegionInteriorPointsTotal uint64
 }
 
 var dbgEngine DbgEngineCounters
@@ -92,5 +106,36 @@ func dbgRegionReuseRefusal(epoch *executorEpoch, episode *regionEpoch) {
 		if episode.pending.Direction&direction != 0 {
 			dbgEngine.RefuseDirection[position]++
 		}
+	}
+}
+
+// dbgRegionBackComposition attributes one bound Region's back composition and
+// interior size to the Newton prototype Step 0 counters. widenTargets is the
+// authored Target count handed to SealWidening: carrier.MergeScope keeps its
+// selected slots package-private, so the pre-seal target count is the
+// observable proxy for an empty widen selection.
+func dbgRegionBackComposition(back, environmentBack, factorBack, points []int, widenTargets int) {
+	dbgEngine.RegionsTotal++
+	dbgEngine.BackGroupTerms += uint64(len(back))
+	dbgEngine.BackEnvTerms += uint64(len(environmentBack))
+	dbgEngine.BackFactorTerms += uint64(len(factorBack))
+	widenFactorFree := widenTargets == 0
+	if widenFactorFree {
+		dbgEngine.RegionsWidenFactorFree++
+	}
+	pureTransport := len(back) == 0
+	if pureTransport {
+		dbgEngine.RegionsPureTransport++
+		if widenFactorFree {
+			dbgEngine.RegionsLinearCandidate++
+		}
+	}
+	interior := len(points) - 1
+	if interior < 0 {
+		interior = 0
+	}
+	dbgEngine.RegionInteriorPointsTotal += uint64(interior)
+	if uint64(interior) > dbgEngine.RegionInteriorPointsMax {
+		dbgEngine.RegionInteriorPointsMax = uint64(interior)
 	}
 }

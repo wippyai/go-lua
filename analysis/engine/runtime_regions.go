@@ -346,6 +346,7 @@ func bindRuntimeRegionsWithEdges(graph *equation.Graph, active []bool, runtime *
 			return nil, nil, false
 		}
 		bound.widen, bound.narrow, bound.discharge = widen, narrow, discharge
+		dbgRegionBackComposition(bound.back, bound.environmentBack, bound.factorBack, bound.points, len(targets))
 		regions[regionIndex] = bound
 	}
 	// Parent is immutable graph topology.  The children row is only a compact
