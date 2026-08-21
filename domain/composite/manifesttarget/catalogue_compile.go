@@ -389,10 +389,7 @@ func applyOperationAmendments(operation *vocabulary.OperationSpec, law moduleio.
 		operation.Outcomes = append(operation.Outcomes, vocabulary.OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
 	}
 	if law.ReplaceNormalSet {
-		operation.Outcomes = operation.Outcomes[:0]
-		for _, values := range law.ReplaceNormal {
-			operation.Outcomes = append(operation.Outcomes, vocabulary.OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: convertValues(values)})
-		}
+		operation.Outcomes = replaceNormalOutcomes(operation.Outcomes, law.ReplaceNormal)
 	}
 	if law.InputTailType != nil {
 		operation.Input.TailType = portable(law.InputTailType)
@@ -417,6 +414,41 @@ func applyOperationAmendments(operation *vocabulary.OperationSpec, law moduleio.
 			outcome.ResultAliases = append(outcome.ResultAliases, vocabulary.ResultAliasSpec{Result: value.Result, Source: convertInputSource(value.Source)})
 		}
 	}
+}
+
+// replaceNormalOutcomes replaces exactly the outcomes of kind OutcomeNormal
+// with the arms declared by ReplaceNormal. Every other declared outcome
+// (Throw and any other kind) is untouched. A result tail declared on the
+// outcomes being replaced belongs to the callable's return geometry rather
+// than to the discriminated arm split the law amends, so it carries forward
+// onto a replacement arm that does not declare its own.
+func replaceNormalOutcomes(outcomes []vocabulary.OutcomeSpec, replacement []moduleio.Values) []vocabulary.OutcomeSpec {
+	var tailType schematype.Type
+	var suffix []schematype.Type
+	kept := make([]vocabulary.OutcomeSpec, 0, len(outcomes)+len(replacement))
+	for _, outcome := range outcomes {
+		if outcome.Kind != flowkind.OutcomeNormal {
+			kept = append(kept, outcome)
+			continue
+		}
+		if !tailType.Available() {
+			tailType = outcome.Values.TailType
+		}
+		if suffix == nil {
+			suffix = outcome.Values.Suffix
+		}
+	}
+	for _, values := range replacement {
+		converted := convertValues(values)
+		if !converted.TailType.Available() {
+			converted.TailType = tailType
+		}
+		if converted.Suffix == nil {
+			converted.Suffix = suffix
+		}
+		kept = append(kept, vocabulary.OutcomeSpec{Kind: flowkind.OutcomeNormal, Values: converted})
+	}
+	return kept
 }
 
 func applyProducedRelations(catalogue *authoredCatalogue, producer string, law moduleio.Operation) error {
