@@ -303,25 +303,6 @@ func (r *Result) installRouteSemanticPaths() bool {
 			rowRef.guardDecisionPath = ref.guardDecisionPath
 		}
 	}
-	for index := range r.index.writeCommitRefs {
-		ref := &r.index.writeCommitRefs[index]
-		if !ref.routeDigest.Available() {
-			continue
-		}
-		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
-			return false
-		}
-		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
-		if !canonicalOK {
-			return false
-		}
-		ref.semanticPath = canonical.semanticPath
-		ref.semanticResetPath = canonical.semanticResetPath
-		ref.resetMembers = canonical.resetMembers
-		ref.semanticMuPath = canonical.semanticMuPath
-		ref.guardContext = canonical.guardContext
-		ref.guardDecisionPath = canonical.guardDecisionPath
-	}
 	// All semantic derivations have been copied into exact refs/Sites. The
 	// Source term path lease cannot remain as a second published route plane.
 	r.structuralPaths = nil

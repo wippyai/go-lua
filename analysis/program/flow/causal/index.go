@@ -141,43 +141,47 @@ func (r *Result) sealRows() error {
 
 // buildWriteCommitIndex projects the seal-local assignment commit witnesses
 // onto the existing combined Successor refs. It publishes no new Edge rows or
-// predecessor relation: each entry is only a capability to one already
-// indexed local Edge.
+// predecessor relation: each entry is only the canonical combined-index slot
+// of one already indexed local Edge. Keeping the slot rather than copying the
+// whole successorRef makes the Write inverse a lookup, not a second route
+// plane.
 func (s *indexState) buildWriteCommitIndex() error {
 	writeCount := s.counts[keyspace.FamilyWrite]
 	if uint64(len(s.writeCommitEdges)) != uint64(writeCount)+1 || uint64(len(s.writeCommitSet)) != uint64(writeCount)+1 {
 		return errors.New("program/flow/causal: assignment commit witness denominator is unavailable")
 	}
-	refs := make([]successorRef, writeCount+1)
+	routeIndexes := make([]uint32, writeCount+1)
 	if writeCount == 0 {
-		s.result.index.writeCommitRefs = refs
+		s.result.index.writeCommitRouteIndexes = routeIndexes
 		return nil
 	}
-	edgeRefs := make([]successorRef, len(s.edgeRows))
-	for _, ref := range s.result.index.refs {
+	edgeRouteIndexes := make([]uint32, len(s.edgeRows))
+	edgeRouteSet := make([]bool, len(s.edgeRows))
+	for routeIndex, ref := range s.result.index.refs {
 		if !ref.local {
 			continue
 		}
-		if uint64(ref.index) >= uint64(len(edgeRefs)) || edgeRefs[ref.index].local {
+		if uint64(ref.index) >= uint64(len(edgeRouteIndexes)) || edgeRouteSet[ref.index] {
 			return errors.New("program/flow/causal: assignment commit Edge ref is ambiguous")
 		}
-		edgeRefs[ref.index] = ref
+		edgeRouteIndexes[ref.index] = uint32(routeIndex)
+		edgeRouteSet[ref.index] = true
 	}
 	for ordinal := uint32(1); ordinal <= writeCount; ordinal++ {
 		if !s.writeCommitSet[ordinal] {
 			continue
 		}
 		edgeIndex := s.writeCommitEdges[ordinal]
-		if uint64(edgeIndex) >= uint64(len(s.edgeRows)) || !edgeRefs[edgeIndex].local {
+		if uint64(edgeIndex) >= uint64(len(s.edgeRows)) || !edgeRouteSet[edgeIndex] {
 			return errors.New("program/flow/causal: assignment commit Edge disappeared from Successors")
 		}
 		write := keyspace.MakeTerm(keyspace.FamilyWrite, ordinal)
 		if s.edgeRows[edgeIndex].To != write {
 			return errors.New("program/flow/causal: assignment commit Successor target disagrees with Write")
 		}
-		refs[ordinal] = edgeRefs[edgeIndex]
+		routeIndexes[ordinal] = edgeRouteIndexes[edgeIndex]
 	}
-	s.result.index.writeCommitRefs = refs
+	s.result.index.writeCommitRouteIndexes = routeIndexes
 	return nil
 }
 

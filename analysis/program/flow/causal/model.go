@@ -256,10 +256,12 @@ type successorIndex struct {
 	familyCounts [keyspace.FamilyCount]uint32
 	planes       [keyspace.FamilyCount]successorPlane
 	refs         []successorRef
-	// writeCommitRefs is a dense owner projection from authored Write ordinal
-	// to the existing local Successor ref emitted by the assignment commit
-	// chain. It is not a second relation or edge plane.
-	writeCommitRefs []successorRef
+	// writeCommitRouteIndexes is a dense owner projection from authored Write
+	// ordinal to the existing canonical successor-index slot emitted by the
+	// assignment commit chain. It stores only a slot, never a copied
+	// successorRef: route identity, endpoint paths, and WTO membership remain
+	// owned by refs.
+	writeCommitRouteIndexes []uint32
 }
 
 // pendingWTORoute is seal-local provenance for one existing final successor.

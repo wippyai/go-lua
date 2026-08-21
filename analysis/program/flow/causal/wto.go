@@ -739,21 +739,7 @@ func (r *Result) installBoundRoutePaths() error {
 			}
 		}
 	}
-	for index := range r.index.writeCommitRefs {
-		ref := &r.index.writeCommitRefs[index]
-		if ref.routeDigest.Available() || ref.planOrdinalSet {
-			if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
-				return fmt.Errorf("bound-route phase=write row=%d arm=%d reason=route-index-oob", index, ref.arm)
-			}
-			canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
-			if !canonicalOK {
-				return fmt.Errorf("bound-route phase=write row=%d arm=%d reason=route-index-oob", index, ref.arm)
-			}
-			*ref = *canonical
-		}
-	}
-	// All aliases now contain the exact canonical ref. Drop every seal-only
-	// ordinal before publication so no Plan capability survives in any copy.
+	// Drop every seal-only ordinal before publication.
 	for index := range r.index.refs {
 		r.index.refs[index].planOrdinal, r.index.refs[index].planOrdinalSet = 0, false
 	}
@@ -762,9 +748,6 @@ func (r *Result) installBoundRoutePaths() error {
 			ref := &r.boundaries.rows[row].refs[arm]
 			ref.planOrdinal, ref.planOrdinalSet = 0, false
 		}
-	}
-	for index := range r.index.writeCommitRefs {
-		r.index.writeCommitRefs[index].planOrdinal, r.index.writeCommitRefs[index].planOrdinalSet = 0, false
 	}
 	return nil
 }
@@ -874,9 +857,6 @@ func (r *Result) prepareWTORows() error {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
 			r.boundaries.rows[row].refs[arm].diagnostic = routeDiagnostic{}
 		}
-	}
-	for index := range r.index.writeCommitRefs {
-		r.index.writeCommitRefs[index].diagnostic = routeDiagnostic{}
 	}
 	return nil
 }
@@ -1171,19 +1151,6 @@ func (r *Result) classifyWTORoutes(store *wtoStore, nodeRegion []uint32) error {
 		if !refOK || ref.routeDigest != r.routeIndex[index].digest {
 			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyRoute, index, -1, -1)
 		}
-	}
-	for index, ref := range r.index.writeCommitRefs {
-		if !ref.routeDigest.Available() {
-			if ref != (successorRef{}) {
-				return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyWrite, index, -1, -1)
-			}
-			continue
-		}
-		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
-		if !canonicalOK || canonical.routeDigest != ref.routeDigest || !canonical.local || !isLocalArm(canonical.arm) {
-			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyWrite, index, -1, -1)
-		}
-		r.index.writeCommitRefs[index].wtoRegion = canonical.wtoRegion
 	}
 	for index := range store.regions {
 		routes := store.regions[index].routes

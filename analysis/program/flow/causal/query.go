@@ -369,10 +369,14 @@ func (v Successors) AssignmentPredecessor(write keyspace.Term) (Successor, bool)
 		return Successor{}, false
 	}
 	ordinal := keyspace.TermOrdinal(write)
-	if ordinal == 0 || uint64(ordinal) >= uint64(len(v.result.index.writeCommitRefs)) {
+	if ordinal == 0 || uint64(ordinal) >= uint64(len(v.result.index.writeCommitRouteIndexes)) {
 		return Successor{}, false
 	}
-	ref := &v.result.index.writeCommitRefs[ordinal]
+	routeIndex := v.result.index.writeCommitRouteIndexes[ordinal]
+	if uint64(routeIndex) >= uint64(len(v.result.index.refs)) {
+		return Successor{}, false
+	}
+	ref := &v.result.index.refs[routeIndex]
 	if !ref.local || ref.arm != BoundaryLocal || uint64(ref.index) >= uint64(len(v.result.edges.rows)) {
 		return Successor{}, false
 	}
