@@ -223,7 +223,6 @@ type queryKey struct {
 type productBuilder struct {
 	declarations map[string]Declaration
 	records      map[string][]Field
-	semantic     map[string]bool
 	vocabulary   GrammarVocabulary
 	constants    map[string]bool
 	// enums are the admitted closed constant families, keyed by the named type
@@ -277,7 +276,6 @@ func newProductBuilder(root string) (*productBuilder, error) {
 	builder := &productBuilder{
 		declarations: make(map[string]Declaration, len(schema.Declarations)),
 		records:      records,
-		semantic:     make(map[string]bool, len(schema.Constructors)),
 		vocabulary:   vocabulary,
 		constants:    make(map[string]bool, len(constants)),
 		enums:        make(map[string]DiscriminantEnum),
@@ -311,9 +309,6 @@ func newProductBuilder(root string) (*productBuilder, error) {
 	}
 	for _, declaration := range schema.Declarations {
 		builder.declarations[declaration.Name] = declaration
-	}
-	for _, constructor := range schema.Constructors {
-		builder.semantic[constructor.Name] = constructor.Semantic
 	}
 	for _, constant := range constants {
 		builder.constants[constant.Name] = constant.Zero

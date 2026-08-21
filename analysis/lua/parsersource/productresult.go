@@ -148,7 +148,7 @@ func (b *productBuilder) scopeMutations() []FieldMutation {
 		receiver := b.eval(mutation.scope, mutation.target)
 		for _, name := range b.receiverConstructors(receiver) {
 			declaration, known := b.declarations[name]
-			if !known || !b.semantic[name] {
+			if !known || !declaration.Semantic {
 				continue
 			}
 			field, exists := declaredField(declaration, mutation.field)

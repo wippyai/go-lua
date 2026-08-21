@@ -523,16 +523,17 @@ func (b *productBuilder) site(scope *actionScope, literal *goast.CompositeLit, g
 		return existing
 	}
 	name, astType := literalTypeName(literal)
+	declaration, declared := b.declarations[name]
 	record := &constructionSite{
 		id:       siteID(len(b.sites)),
 		scope:    scope.index,
 		typeName: name,
 		astType:  astType,
-		semantic: astType && b.semantic[name],
+		semantic: astType && declared && declaration.Semantic,
 		literal:  literal,
 		elements: make(map[string]goast.Expr, len(literal.Elts)),
 	}
-	if declaration, known := b.declarations[name]; astType && known {
+	if astType && declared {
 		record.fields = declaration.Fields
 	} else if fields, known := b.records[name]; !astType && known {
 		record.fields = fields
