@@ -14,7 +14,7 @@ func TestCallSpellingIsBoundAtTheCallOccurrence(t *testing.T) {
 		t.Fatal(err)
 	}
 	binding := bind.BindChunk(statements)
-	want := []string{"direct", "field", "", "method"}
+	want := []string{"direct", "object.field", "", "method"}
 	for index, statement := range statements {
 		callStmt, ok := statement.(*ast.FuncCallStmt)
 		if !ok || callStmt.Expr == nil {

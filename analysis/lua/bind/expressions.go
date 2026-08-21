@@ -126,8 +126,9 @@ func (b *binder) visitExpr(expr ast.Expr, mode exprBindMode) {
 
 // recordCallSpelling owns the optional authored debug name for one Call. It
 // deliberately records only names whose syntax is unambiguous at the bind
-// boundary: identifiers, dot-selected string keys, and method selectors.
-// Indexed/dynamic calls have no authored spelling row.
+// boundary: identifiers, dot-selected attribute chains rooted at an
+// identifier, and method selectors. Indexed/dynamic calls have no authored
+// spelling row.
 func (b *binder) recordCallSpelling(call *ast.FuncCallExpr) {
 	if b == nil || b.result == nil || call == nil {
 		return
@@ -140,15 +141,48 @@ func (b *binder) recordCallSpelling(call *ast.FuncCallExpr) {
 				name = callee.Value
 			}
 		case *ast.AttrGetExpr:
-			if callee != nil && callee.KeySyntax == ast.AttrKeyDot {
-				if key, ok := callee.Key.(*ast.StringExpr); ok && key != nil {
-					name = key.Value
-				}
+			if callee != nil {
+				name, _ = dottedAttrChainSpelling(callee)
 			}
 		}
 	}
 	if name != "" {
 		b.result.callSpellings[call] = name
+	}
+}
+
+// dottedAttrChainSpelling renders the full source spelling of an attribute
+// chain, such as a.b.c for a.b.c(). It succeeds only when every link is a
+// dot-selected string key and the chain is rooted at an identifier; any
+// bracket link, non-string key, or non-identifier root reports failure so
+// the caller never records a partial or wrong spelling.
+func dottedAttrChainSpelling(chain *ast.AttrGetExpr) (string, bool) {
+	var keys []string
+	var object ast.Expr = chain
+	for {
+		switch e := object.(type) {
+		case *ast.IdentExpr:
+			if e == nil {
+				return "", false
+			}
+			spelling := e.Value
+			for index := len(keys) - 1; index >= 0; index-- {
+				spelling += "." + keys[index]
+			}
+			return spelling, true
+		case *ast.AttrGetExpr:
+			if e == nil || e.KeySyntax != ast.AttrKeyDot {
+				return "", false
+			}
+			key, ok := e.Key.(*ast.StringExpr)
+			if !ok || key == nil {
+				return "", false
+			}
+			keys = append(keys, key.Value)
+			object = e.Object
+		default:
+			return "", false
+		}
 	}
 }
 
