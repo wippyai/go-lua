@@ -134,18 +134,23 @@ func (builder *valueBuilder) sealMountedCallResultSlots() bool {
 		if slot.SourceKind() == programschema.CallResultSlotSourceValuesTail && slot.ConsumerKind() == programschema.CallResultSlotConsumerCell {
 			// The result is not the destination Cell. Reserve one dense logical
 			// coordinate per mounted finite tail slot so stale Cell state cannot
-			// join the call summary before the explicit storage transfer.
+			// join the call summary before the explicit storage transfer. The
+			// slot carries Program's derived portable identity for that result,
+			// so the reserved coordinate is named by it in the detached identity
+			// range like every other coordinate.
 			if coordinateOK || builder.Schema.coordinateCount == ^uint32(0) {
 				return false
 			}
-			builder.Schema.coordinateCount++
-			builder.Schema.syntheticCoordinateCount++
-			coordinate = Coordinate{schema: builder.Schema, index: builder.Schema.coordinateCount}
 			mountedKey := mountedCoordinateKey{module: key.module, value: valueID}
-			if _, duplicate := builder.Schema.mountedCoordinates[mountedKey]; duplicate {
+			_, mountedDuplicate := builder.Schema.mountedCoordinates[mountedKey]
+			_, identityDuplicate := builder.Schema.coordinates[valueID]
+			if mountedDuplicate || identityDuplicate {
 				return false
 			}
+			builder.Schema.coordinateCount++
+			coordinate = Coordinate{schema: builder.Schema, index: builder.Schema.coordinateCount}
 			builder.Schema.mountedCoordinates[mountedKey] = coordinate.index
+			builder.Schema.coordinates[valueID] = coordinateRow{coordinate: coordinate.index}
 			coordinateOK = true
 		} else if slot.SourceKind() == programschema.CallResultSlotSourceCallValue {
 			// A direct scalar Call result carries Program's existing evaluation

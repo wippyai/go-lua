@@ -389,12 +389,12 @@ type Schema struct {
 	atoms           []atomRow
 	atomByRow       map[atomRow]uint32
 	coordinateCount uint32
-	// syntheticCoordinateCount is the mounted finite CallResult-slot suffix.
-	// These coordinates are declaration-only dynamic values and deliberately
-	// do not enter the Boundary coordinate/source map.
-	syntheticCoordinateCount uint32
-	mountCount               uint32
-	coordinates              map[identity.ContentID]coordinateRow // complete detached Value identity range
+	mountCount      uint32
+	// coordinates is the complete detached Value identity range: Link's
+	// boundary Values followed by the mounted finite CallResult-slot suffix.
+	// Suffix rows are declaration-only dynamic coordinates and carry no source
+	// atom; they are named by Program's derived portable slot identity.
+	coordinates map[identity.ContentID]coordinateRow
 	// mountedCoordinates is the detached semantic lookup consumed by downstream
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
@@ -678,7 +678,7 @@ func (schema *Schema) LinkID() identity.ContentID {
 // Project or Boundary pointer.
 func (schema *Schema) Valid() bool {
 	return schema != nil && schema.linkID.Available() && schema.owner.Available() &&
-		uint64(len(schema.coordinates))+uint64(schema.syntheticCoordinateCount) == uint64(schema.coordinateCount) && schema.heap.Valid()
+		uint64(len(schema.coordinates)) == uint64(schema.coordinateCount) && schema.heap.Valid()
 }
 
 func (schema *Schema) MountCount() int {
