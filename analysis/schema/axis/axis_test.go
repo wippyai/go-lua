@@ -61,14 +61,14 @@ func TestAxisSurfaceRejectsAForeignRow(t *testing.T) {
 	}
 }
 
-// TestAxisIdentityRequiresAValidKey states that an axis's entry identity is
-// derived from its own key. A malformed key therefore cannot travel through
-// this surface as an admitted entry.
+// TestAxisIdentityIsThisSurfaceDerivation states that an axis carries this
+// surface's own derivation of its key. An entry identity minted for another
+// surface names another entry, so it may not travel here.
 func TestAxisIdentityIsThisSurfaceDerivation(t *testing.T) {
 	template := mustTemplate(t, scratchSpec("value", valueRole))
-	template.key = ""
+	template.id = schema.NewEntryID(schema.SurfaceKindRule, template.key)
 	failure := sealTemplates(t, []*Template[scratchInputs]{template})
-	if failure.Law != schema.LawEntryIdentity || failure.Disposition != schema.DispositionMalformed {
+	if failure.Law != LawAxisIdentity || failure.Disposition != schema.DispositionMalformed {
 		t.Fatalf("foreign entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }

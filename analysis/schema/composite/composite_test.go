@@ -263,15 +263,15 @@ func TestSealedCapabilityDoesNotAliasItsReader(t *testing.T) {
 	}
 }
 
-// TestCompositeIdentityIsThisSurfaceDerivation states that a composite's
-// identity is derived from its authored key. An entry with no key cannot carry
-// an identity into the declaration table.
+// TestCompositeIdentityIsThisSurfaceDerivation states that a composite carries
+// this surface's own derivation of its key. An entry identity minted for
+// another surface names another entry, so it may not travel here.
 func TestCompositeIdentityIsThisSurfaceDerivation(t *testing.T) {
 	entry := mustEntry(t, containmentSpec("containment"))
-	entry.key = ""
+	entry.id = schema.NewEntryID(schema.SurfaceKindAxis, entry.key)
 	failure := sealEntries(t, []*Entry{entry})
-	if failure.Law != schema.LawEntryIdentity || failure.Disposition != schema.DispositionMalformed {
-		t.Fatalf("keyless entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	if failure.Law != LawCompositeIdentity || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("foreign entry identity sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
 

@@ -324,6 +324,7 @@ type Spec struct {
 // Entry is one admitted composite declaration. It is immutable once built.
 type Entry struct {
 	key schema.Key
+	id  schema.EntryID
 
 	roles         []Role
 	ordering      Ordering
@@ -341,6 +342,7 @@ func New(spec Spec) (*Entry, bool) {
 	}
 	entry := &Entry{
 		key:           spec.Key,
+		id:            schema.NewEntryID(schema.SurfaceKindComposite, spec.Key),
 		roles:         append([]Role(nil), spec.Roles...),
 		ordering:      spec.Ordering,
 		output:        spec.Output,
@@ -452,15 +454,7 @@ func symmetricRoles(roles []Role) bool {
 
 func (entry *Entry) Key() schema.Key { return entry.key }
 
-// ID derives the only identity this row owns from its authored key. The
-// surface kind is fixed by this package, so retaining a second id field would
-// create a mutable identity authority that can disagree with Key.
-func (entry *Entry) ID() schema.EntryID {
-	if entry == nil {
-		return schema.EntryID{}
-	}
-	return schema.NewEntryID(schema.SurfaceKindComposite, entry.key)
-}
+func (entry *Entry) ID() schema.EntryID { return entry.id }
 
 func (entry *Entry) Ordering() Ordering { return entry.ordering }
 
@@ -519,7 +513,7 @@ func (entry *Entry) DependencyAt(index int) (schema.Key, bool) {
 // surface's own law, stated by Seal, so an incomplete composite is reported as
 // the incomplete composite it is rather than as an unidentifiable row.
 func (entry *Entry) EntryAvailable() bool {
-	return entry != nil && entry.key.Available() && entry.ID().Available()
+	return entry != nil && entry.key.Available() && entry.id.Available()
 }
 
 // EntryContent writes this relation's declared data: its membership, the
@@ -697,7 +691,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		// that the identity a verdict carries is this surface's own derivation
 		// of this entry's key, so an entry cannot travel under another
 		// surface's identity.
-		entryID := entry.ID()
+		entryID := entry.id
 		if !entry.key.Available() || entryID != schema.NewEntryID(schema.SurfaceKindComposite, entry.key) {
 			return failure(entryID, LawCompositeIdentity, schema.DispositionMalformed)
 		}
@@ -723,10 +717,10 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 	for _, entry := range entries {
 		for _, dependency := range entry.dependencies {
 			if dependency == entry.key {
-				return failure(entry.ID(), LawDependencyResolves, schema.DispositionMalformed)
+				return failure(entry.id, LawDependencyResolves, schema.DispositionMalformed)
 			}
 			if _, declared := keys[dependency]; !declared {
-				return failure(entry.ID(), LawDependencyResolves, schema.DispositionIncomplete)
+				return failure(entry.id, LawDependencyResolves, schema.DispositionIncomplete)
 			}
 		}
 	}
@@ -735,40 +729,40 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 
 func (entry *Entry) sealMembership(axes schema.View) schema.SealFailure {
 	if len(entry.roles) == 0 {
-		return failure(entry.ID(), LawMembershipDeclared, schema.DispositionIncomplete)
+		return failure(entry.id, LawMembershipDeclared, schema.DispositionIncomplete)
 	}
 	roles := make(map[schema.Key]bool, len(entry.roles))
 	for _, role := range entry.roles {
 		if !role.Key.Available() || !role.Axis.Available() {
-			return failure(entry.ID(), LawMembershipDeclared, schema.DispositionIncomplete)
+			return failure(entry.id, LawMembershipDeclared, schema.DispositionIncomplete)
 		}
 		if roles[role.Key] {
-			return failure(entry.ID(), LawRoleUnique, schema.DispositionDuplicate)
+			return failure(entry.id, LawRoleUnique, schema.DispositionDuplicate)
 		}
 		roles[role.Key] = true
 		if !axisDeclared(axes, role.Axis) {
-			return failure(entry.ID(), LawMembershipResolves, schema.DispositionIncomplete)
+			return failure(entry.id, LawMembershipResolves, schema.DispositionIncomplete)
 		}
 	}
 	for _, role := range entry.roles {
 		if !role.Cone.Available() {
-			return failure(entry.ID(), LawConeForm, schema.DispositionMalformed)
+			return failure(entry.id, LawConeForm, schema.DispositionMalformed)
 		}
 		if role.Cone.Form != ConeDemand {
 			continue
 		}
 		if role.Cone.Source == role.Key {
-			return failure(entry.ID(), LawDemandSource, schema.DispositionMalformed)
+			return failure(entry.id, LawDemandSource, schema.DispositionMalformed)
 		}
 		if !roles[role.Cone.Source] {
-			return failure(entry.ID(), LawDemandSource, schema.DispositionIncomplete)
+			return failure(entry.id, LawDemandSource, schema.DispositionIncomplete)
 		}
 		// A demand cone is a fixpoint over the composite's own read set: the
 		// points it reads are derived from a read that the composite's own
 		// result may extend. Only a monotone composite reaches a fixpoint over
 		// that, so declaring one without monotonicity is malformed.
 		if entry.discipline.Monotonicity != MonotonicityMonotone {
-			return failure(entry.ID(), LawDemandMonotone, schema.DispositionMalformed)
+			return failure(entry.id, LawDemandMonotone, schema.DispositionMalformed)
 		}
 	}
 	return schema.SealFailure{}
@@ -776,42 +770,42 @@ func (entry *Entry) sealMembership(axes schema.View) schema.SealFailure {
 
 func (entry *Entry) sealOutput(axes schema.View) schema.SealFailure {
 	if !entry.output.Kind.Available() {
-		return failure(entry.ID(), LawOutputDiscipline, schema.DispositionIncomplete)
+		return failure(entry.id, LawOutputDiscipline, schema.DispositionIncomplete)
 	}
 	reducer, capability := !entry.output.Reducer.Absent(), !entry.output.Capability.Absent()
 	if reducer == capability {
-		return failure(entry.ID(), LawOutputDiscipline, schema.DispositionMalformed)
+		return failure(entry.id, LawOutputDiscipline, schema.DispositionMalformed)
 	}
 	if (entry.output.Kind == OutputReducer) != reducer {
-		return failure(entry.ID(), LawOutputDiscipline, schema.DispositionMalformed)
+		return failure(entry.id, LawOutputDiscipline, schema.DispositionMalformed)
 	}
 	switch entry.output.Kind {
 	case OutputReducer:
 		if !entry.output.Reducer.Axis.Available() || !axisDeclared(axes, entry.output.Reducer.Axis) {
-			return failure(entry.ID(), LawReducerOutputAxis, schema.DispositionIncomplete)
+			return failure(entry.id, LawReducerOutputAxis, schema.DispositionIncomplete)
 		}
 		// A reducer that writes an axis it also reads is a fixpoint over
 		// itself, wearing the shape of a one-way fold. Every role of a
 		// composite is a read, so the output axis must differ from all of them.
 		for _, role := range entry.roles {
 			if role.Axis == entry.output.Reducer.Axis {
-				return failure(entry.ID(), LawReducerOutputAxis, schema.DispositionMalformed)
+				return failure(entry.id, LawReducerOutputAxis, schema.DispositionMalformed)
 			}
 		}
 		if !entry.output.Reducer.Available() {
-			return failure(entry.ID(), LawReducerDescent, schema.DispositionMalformed)
+			return failure(entry.id, LawReducerDescent, schema.DispositionMalformed)
 		}
 	case OutputCapability:
 		if !entry.output.Capability.Closure.Available() || !entry.output.Capability.Commit.Available() {
-			return failure(entry.ID(), LawCapabilityContract, schema.DispositionIncomplete)
+			return failure(entry.id, LawCapabilityContract, schema.DispositionIncomplete)
 		}
 		for _, patch := range entry.output.Capability.Patches {
 			if !patch.Available() {
-				return failure(entry.ID(), LawCapabilityContract, schema.DispositionIncomplete)
+				return failure(entry.id, LawCapabilityContract, schema.DispositionIncomplete)
 			}
 		}
 		if !capabilityCoversRoles(entry.output.Capability, entry.roles) {
-			return failure(entry.ID(), LawCapabilityContract, schema.DispositionMalformed)
+			return failure(entry.id, LawCapabilityContract, schema.DispositionMalformed)
 		}
 	}
 	return schema.SealFailure{}
@@ -827,17 +821,17 @@ func (entry *Entry) sealOutput(axes schema.View) schema.SealFailure {
 func (entry *Entry) sealIntermediates(axes schema.View) schema.SealFailure {
 	for _, intermediate := range entry.intermediates {
 		if !intermediate.Available() {
-			return failure(entry.ID(), LawNoHiddenState, schema.DispositionIncomplete)
+			return failure(entry.id, LawNoHiddenState, schema.DispositionIncomplete)
 		}
 		if !axisDeclared(axes, intermediate) {
-			return failure(entry.ID(), LawNoHiddenState, schema.DispositionIncomplete)
+			return failure(entry.id, LawNoHiddenState, schema.DispositionIncomplete)
 		}
 		if entry.output.Kind == OutputReducer && intermediate == entry.output.Reducer.Axis {
-			return failure(entry.ID(), LawNoHiddenState, schema.DispositionDuplicate)
+			return failure(entry.id, LawNoHiddenState, schema.DispositionDuplicate)
 		}
 		for _, role := range entry.roles {
 			if role.Axis == intermediate {
-				return failure(entry.ID(), LawNoHiddenState, schema.DispositionDuplicate)
+				return failure(entry.id, LawNoHiddenState, schema.DispositionDuplicate)
 			}
 		}
 	}
