@@ -7,7 +7,10 @@ import (
 	sealedindex "github.com/wippyai/go-lua/analysis/program/source/index"
 )
 
-func installPositions(a *authority, index **sealedindex.Table, locations directLocations, input IndexInput) error {
+func installPositions(a *authority, input IndexInput) (*sealedindex.Table, error) {
+	if a == nil {
+		return nil, errors.New("program/source: invalid Source authority")
+	}
 	// Positions is the exact batch for Flow's reachable containment closure.
 	// Identity/span cardinality is a separate denominator; direct Body source
 	// occurrences are mandatory, while Terms outside that closure have no
@@ -23,32 +26,18 @@ func installPositions(a *authority, index **sealedindex.Table, locations directL
 	for position, row := range input.Positions {
 		if !a.validTerm(row.Term) || !a.validTerm(row.Root) || !a.validFamilyTerm(row.Body, keyspace.FamilyBody) ||
 			!a.validFamilyTerm(row.FrontierBody, keyspace.FamilyBody) ||
+			!a.validDirectBodyTerm(row.Root) || row.Offset > keyspace.MaxTermOrdinal || row.Cursor > keyspace.MaxTermOrdinal ||
 			keyspace.TermFamily(row.Term) == keyspace.FamilyOutcome {
-			return errors.New("program/source: invalid source position")
+			return nil, errors.New("program/source: invalid source position")
 		}
 		family, termOrdinal := keyspace.TermFamily(row.Term), keyspace.TermOrdinal(row.Term)
 		if previousFamily != keyspace.FamilyInvalid &&
 			(family < previousFamily || family == previousFamily && termOrdinal <= previousOrdinal) {
-			return errors.New("program/source: noncanonical source position order")
+			return nil, errors.New("program/source: noncanonical source position order")
 		}
 		previousFamily, previousOrdinal = family, termOrdinal
-		location, ok := locations.lookup(row.Root)
-		if !ok {
-			return errors.New("program/source: source position root is not a direct source Term")
-		}
-		if location.body != row.Body || location.offset != row.Offset || location.cursor != row.Cursor {
-			return errors.New("program/source: inconsistent source position")
-		}
-		// A direct Body source occurrence is its own canonical source root. The
-		// root lookup above proves that row.Term is a direct source row whenever
-		// row.Term == row.Root. Counting those rows per family, then requiring
-		// the exact direct-row count below, preserves direct omission,
-		// substitution, and uniqueness without a second direct membership scan.
 		if row.Term == row.Root {
 			directCounts[family]++
-		}
-		if err := validateFrontier(row, location); err != nil {
-			return err
 		}
 		entries[position] = sealedindex.NewRow(
 			row.Term, row.Root, row.Body, row.Offset, row.Cursor,
@@ -57,33 +46,32 @@ func installPositions(a *authority, index **sealedindex.Table, locations directL
 	}
 	table, err := sealedindex.Seal(entries)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	*index = table
-	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if directCounts[family] != len(locations[family].rows) {
-			return errors.New("program/source: direct source Term lacks position")
-		}
-	}
+	// The sealed table is the sole temporary and retained position row store.
+	// Validate roots against it directly: every root must be a direct Source
+	// row, and every descendant must inherit that row's complete coordinate.
 	for _, row := range input.Positions {
 		slot, ok := table.Lookup(row.Term)
 		if !ok {
-			return errors.New("program/source: retained source position is unavailable")
+			return nil, errors.New("program/source: retained source position is unavailable")
 		}
-		rootFamily := keyspace.TermFamily(slot.Root())
-		if rootFamily == keyspace.FamilyInvalid {
-			return errors.New("program/source: root lacks direct source position")
-		}
-		root, ok := table.Lookup(slot.Root())
-		if !ok || root.Root() != slot.Root() || root.Body() != slot.Body() || root.Offset() != slot.Offset() || root.Cursor() != slot.Cursor() ||
+		root, ok := table.Lookup(row.Root)
+		if !ok || root.Root() != row.Root || root.Body() != slot.Body() || root.Offset() != slot.Offset() || root.Cursor() != slot.Cursor() ||
 			root.FrontierBody() != slot.FrontierBody() || root.FrontierCursor() != slot.FrontierCursor() {
-			return errors.New("program/source: root position is not its direct source coordinate")
+			return nil, errors.New("program/source: root position is not its direct source coordinate")
+		}
+		if err := validateFrontier(row, root); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	if err := validateDirectSourceRows(a, table, directCounts); err != nil {
+		return nil, err
+	}
+	return table, nil
 }
 
-func validateFrontier(row Position, location directLocation) error {
+func validateFrontier(row Position, root sealedindex.Slot) error {
 	// Flow's position seal supplies Repeat's kind and the exact Loop-to-child
 	// selection. Source validates only the owner-local geometry represented by
 	// this row: a direct Loop root and a frontier Body distinct from the direct
@@ -97,68 +85,49 @@ func validateFrontier(row Position, location directLocation) error {
 		if row.Term != row.Root {
 			return nil
 		}
-		if row.FrontierBody != location.body || row.FrontierCursor != location.cursor {
+		if row.FrontierBody != root.Body() || row.FrontierCursor != root.Cursor() {
 			return errors.New("program/source: invalid ordinary source frontier")
 		}
 		return nil
 	}
-	if keyspace.TermFamily(row.Root) != keyspace.FamilyLoop || row.FrontierBody == location.body {
+	if keyspace.TermFamily(row.Root) != keyspace.FamilyLoop || row.FrontierBody == root.Body() {
 		return errors.New("program/source: invalid Repeat source frontier")
 	}
 	return nil
 }
 
-// buildDirectLocations makes one temporary sparse validation index containing
-// exactly the direct Body source occurrences. Build's authored order pass has
-// already proved that those occurrences are valid and unique, so Commit need
-// not allocate a second membership plane for every identity ordinal. The rows
-// are discarded after position installation.
-func buildDirectLocations(a *authority, positions []Position) (directLocations, error) {
-	if a == nil {
-		return directLocations{}, errors.New("program/source: invalid Source authority")
-	}
-	var result directLocations
-	for _, row := range positions {
-		if row.Term != row.Root {
-			continue
-		}
-		if !a.validDirectBodyTerm(row.Term) || !a.validFamilyTerm(row.Body, keyspace.FamilyBody) ||
-			row.Offset > keyspace.MaxTermOrdinal || row.Cursor > keyspace.MaxTermOrdinal {
-			return directLocations{}, errors.New("program/source: invalid direct source position")
-		}
-		bodyRange := a.order.bodyRanges[keyspace.TermOrdinal(row.Body)-1]
-		if !validRange(a.order.sourceTerms, bodyRange) || uint64(row.Offset) >= uint64(bodyRange.end-bodyRange.start) ||
-			a.order.sourceTerms[bodyRange.start+row.Offset] != row.Term {
-			return directLocations{}, errors.New("program/source: direct source position disagrees with authored order")
-		}
-		family := keyspace.TermFamily(row.Term)
-		location := directLocation{term: row.Term, body: row.Body, offset: row.Offset, cursor: row.Cursor}
-		if err := result[family].add(keyspace.TermOrdinal(row.Term), location); err != nil {
-			return directLocations{}, err
-		}
+// validateDirectSourceRows checks the authored direct Body sequence against
+// the one sealed position table. Looking up each authored row in that table
+// proves exact identity, Body owner, and source offset without a second
+// direct-location index or a full-denominator membership plane. The direct
+// count closes the converse: a sealed table cannot contain an extra direct
+// root that was not authored.
+func validateDirectSourceRows(a *authority, table *sealedindex.Table, directCounts [keyspace.FamilyCount]int) error {
+	if a == nil || table == nil {
+		return errors.New("program/source: invalid direct source table")
 	}
 	var expected [keyspace.FamilyCount]int
 	for bodyOrdinal, sourceRange := range a.order.bodyRanges {
 		if !validRange(a.order.sourceTerms, sourceRange) {
-			return directLocations{}, errors.New("program/source: invalid Body source range")
+			return errors.New("program/source: invalid Body source range")
 		}
 		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1))
 		for offset, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
 			family := keyspace.TermFamily(term)
 			if !a.validDirectBodyTerm(term) || family == keyspace.FamilyInvalid {
-				return directLocations{}, errors.New("program/source: invalid direct source Term")
+				return errors.New("program/source: invalid direct source Term")
 			}
 			expected[family]++
-			location, ok := result.lookup(term)
-			if !ok || location.body != body || location.offset != uint32(offset) {
-				return directLocations{}, errors.New("program/source: direct source Term lacks position")
+			row, ok := table.Lookup(term)
+			if !ok || row.Root() != term || row.Body() != body || row.Offset() != uint32(offset) {
+				return errors.New("program/source: direct source Term lacks position")
 			}
 		}
 	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		if expected[family] != len(result[family].rows) {
-			return directLocations{}, errors.New("program/source: direct source position has no authored occurrence")
+		if directCounts[family] != expected[family] {
+			return errors.New("program/source: direct source position has no authored occurrence")
 		}
 	}
-	return result, nil
+	return nil
 }

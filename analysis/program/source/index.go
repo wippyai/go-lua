@@ -4,22 +4,17 @@ import (
 	"errors"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	sealedindex "github.com/wippyai/go-lua/analysis/program/source/index"
 )
 
 func installIndex(a *authority, input IndexInput) error {
 	if a == nil || !input.SourceID.Available() || input.SourceID != a.content {
 		return errors.New("program/source: Index Source identity disagrees with authored authority")
 	}
-	var next *sealedindex.Table
-	locations, err := buildDirectLocations(a, input.Positions)
-	if err != nil {
-		return err
-	}
 	if err := installOutcomeIdentity(a, input.OutcomeOrigins); err != nil {
 		return err
 	}
-	if err := installPositions(a, &next, locations, input); err != nil {
+	next, err := installPositions(a, input)
+	if err != nil {
 		return err
 	}
 	a.index = next

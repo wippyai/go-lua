@@ -140,30 +140,3 @@ func TestSourceRejectsNoncanonicalPositionOrder(t *testing.T) {
 		t.Fatal("Finalize accepted noncanonical Position order")
 	}
 }
-
-func TestSourceDirectLocationScratchScalesWithDirectRows(t *testing.T) {
-	var retained []int
-	for _, unusedLoops := range []int{0, 100000} {
-		input, index := sparsePositionFixture(unusedLoops)
-		draft, err := Build(input)
-		if err != nil {
-			t.Fatalf("Build(%d): %v", unusedLoops, err)
-		}
-		a := draft.state.authority
-		locations, err := buildDirectLocations(a, index.Positions)
-		if err != nil {
-			t.Fatalf("buildDirectLocations(%d): %v", unusedLoops, err)
-		}
-		rows := 0
-		for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-			rows += len(locations[family].rows)
-		}
-		if rows != len(a.order.sourceTerms) {
-			t.Fatalf("direct rows(%d) = %d, want authored direct rows %d", unusedLoops, rows, len(a.order.sourceTerms))
-		}
-		retained = append(retained, rows)
-	}
-	if retained[0] != retained[1] || retained[0] != 1 {
-		t.Fatalf("direct-location scratch grew with non-direct family cardinality: %v", retained)
-	}
-}

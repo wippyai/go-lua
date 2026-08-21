@@ -17,16 +17,13 @@ func Build(input Input) (*Draft, error) {
 	if err := buildLiterals(a, input); err != nil {
 		return nil, err
 	}
-	if err := buildOrder(a, input); err != nil {
-		return nil, err
-	}
 	if err := buildSpellings(a, input); err != nil {
 		return nil, err
 	}
 	if err := buildKeyFault(a, input); err != nil {
 		return nil, err
 	}
-	if err := validateFaultSourceOwnership(a); err != nil {
+	if err := buildOrder(a, input); err != nil {
 		return nil, err
 	}
 	a.content = authoredContentID(a)
@@ -70,39 +67,6 @@ func buildSpellings(a *authority, input Input) error {
 		}
 		a.spellings.calls[index] = CallSpelling{Call: row.Call, Name: row.Name}
 		previous = row.Call
-	}
-	return nil
-}
-
-// validateFaultSourceOwnership closes the authored side of control-fault
-// containment. Every dense fault ordinal occurs once in its declared owner
-// Body's direct source sequence; Finalize then requires that same direct term
-// to have exactly one sealed source Position.
-func validateFaultSourceOwnership(a *authority) error {
-	if a == nil || a.count(keyspace.FamilyControlFault) == 0 {
-		return nil
-	}
-	owners := make([]keyspace.Term, a.count(keyspace.FamilyControlFault))
-	for bodyOrdinal, sourceRange := range a.order.bodyRanges {
-		if !validRange(a.order.sourceTerms, sourceRange) {
-			return errors.New("program/source: invalid Body source range")
-		}
-		body := keyspace.MakeTerm(keyspace.FamilyBody, uint32(bodyOrdinal+1))
-		for _, term := range a.order.sourceTerms[sourceRange.start:sourceRange.end] {
-			if keyspace.TermFamily(term) != keyspace.FamilyControlFault {
-				continue
-			}
-			ordinal := keyspace.TermOrdinal(term)
-			if ordinal == 0 || uint64(ordinal) > uint64(len(owners)) || owners[ordinal-1] != 0 {
-				return errors.New("program/source: duplicate or invalid direct control fault")
-			}
-			owners[ordinal-1] = body
-		}
-	}
-	for index, row := range a.keys.faults {
-		if owners[index] == 0 || owners[index] != row.Owner {
-			return errors.New("program/source: control fault lacks its owner Body source occurrence")
-		}
 	}
 	return nil
 }
@@ -207,6 +171,7 @@ func buildBodyOrder(a *authority, rows []BodySource) error {
 	}
 	a.order.bodyRanges = make([]termRange, count)
 	seen := newTermMarks(&a.identity)
+	faults := 0
 	for index, row := range rows {
 		if !a.validFamilyTerm(row.Body, keyspace.FamilyBody) || keyspace.TermOrdinal(row.Body) != uint32(index+1) {
 			return errors.New("program/source: invalid Body source owner")
@@ -216,6 +181,13 @@ func buildBodyOrder(a *authority, rows []BodySource) error {
 			if !a.validDirectBodyTerm(term) || seen.take(term) {
 				return errors.New("program/source: duplicate or invalid direct source Term")
 			}
+			if keyspace.TermFamily(term) == keyspace.FamilyControlFault {
+				ordinal := keyspace.TermOrdinal(term)
+				if ordinal == 0 || uint64(ordinal) > uint64(len(a.keys.faults)) || a.keys.faults[ordinal-1].Owner != row.Body {
+					return errors.New("program/source: control fault lacks its owner Body source occurrence")
+				}
+				faults++
+			}
 			a.order.sourceTerms = append(a.order.sourceTerms, term)
 		}
 		r, ok := makeRange(start, len(row.Terms))
@@ -223,6 +195,9 @@ func buildBodyOrder(a *authority, rows []BodySource) error {
 			return errors.New("program/source: Body source range overflow")
 		}
 		a.order.bodyRanges[index] = r
+	}
+	if faults != len(a.keys.faults) {
+		return errors.New("program/source: control fault lacks its owner Body source occurrence")
 	}
 	return nil
 }
