@@ -14,9 +14,9 @@ import (
 
 // Seal joins the already-existing Source formal order, authored Flow closure
 // rows, Body ownership, evaluation entries, and canonical Outcome exits. It
-// retains no input owner and introduces no new semantic identity. All Body
-// and Outcome rows are materialized once in canonical dense order, including
-// the assembly root/chunk Body.
+// retains only the canonical Outcome owner pointer and introduces no new
+// semantic identity. Body rows retain ranges into that owner rather than
+// copying Outcome rows or rebuilding their inverse indexes.
 func Seal(
 	preimage source.Preimage,
 	view authored.View,
@@ -51,8 +51,7 @@ func Seal(
 	result := &Result{
 		sourceID: sourceID, flowID: flowID, staticID: staticID, moduleID: moduleID, entry: entry,
 		functions: make([]functionRow, functionView.Count()), bodies: make([]bodyRow, bodyCount+1),
-		byBody: make([]uint32, bodyCount+1), byOutcome: make([]uint32, outcomes.Count()+1),
-		bodyByOutcome: make([]uint32, outcomes.Count()+1), outcomeAt: make([]uint32, outcomes.Count()+1),
+		byBody: make([]uint32, bodyCount+1), outcomes: outcomes,
 		contexts:     make(map[identity.ContentID]uint32, functionView.Count()),
 		bodyContexts: make(map[identity.ContentID]uint32, bodyCount),
 	}
@@ -69,30 +68,8 @@ func Seal(
 		if !ok || start < 0 || end < start || end > outcomes.Count() {
 			return nil, errors.New("program/flow/functionboundary: Body Outcome range is unavailable")
 		}
-		row := bodyRow{body: bodyTerm, entry: bodyEntry, outcomes: range32{start: uint32(len(result.outcomes))}}
-		for outcomeIndex := start; outcomeIndex < end; outcomeIndex++ {
-			outcomeTerm, ok := outcomes.At(outcomeIndex)
-			if !ok {
-				return nil, errors.New("program/flow/functionboundary: Outcome row disappeared")
-			}
-			bodyOwner, outcomeKind, target, ok := outcomes.Get(outcomeTerm)
-			if !ok || bodyOwner != bodyTerm {
-				return nil, errors.New("program/flow/functionboundary: Outcome owner disagrees with Body")
-			}
-			outcomeOrdinal := keyspace.TermOrdinal(outcomeTerm)
-			if keyspace.TermFamily(outcomeTerm) != keyspace.FamilyOutcome || outcomeOrdinal == 0 ||
-				uint64(outcomeOrdinal) >= uint64(len(result.outcomeAt)) || result.outcomeAt[outcomeOrdinal] != 0 {
-				return nil, errors.New("program/flow/functionboundary: Outcome denominator is not canonical")
-			}
-			result.outcomeAt[outcomeOrdinal] = uint32(len(result.outcomes) + 1)
-			result.bodyByOutcome[outcomeOrdinal] = uint32(ordinal)
-			result.outcomes = append(result.outcomes, outcomeRow{term: outcomeTerm, body: bodyOwner, kind: outcomeKind, target: target})
-		}
-		row.outcomes.end = uint32(len(result.outcomes))
+		row := bodyRow{body: bodyTerm, entry: bodyEntry, outcomes: range32{start: uint32(start), end: uint32(end)}}
 		result.bodies[ordinal] = row
-	}
-	if len(result.outcomes) != outcomes.Count() {
-		return nil, errors.New("program/flow/functionboundary: Body ranges do not cover Outcome rows")
 	}
 
 	cells := view.Storage().Cells()
@@ -163,7 +140,7 @@ func Seal(
 	}
 
 	// Hash all semantic rows after their canonical pools are complete, then
-	// build both inverse identity maps linearly with collision rejection.
+	// build both context maps linearly with collision rejection.
 	for ordinal := 1; ordinal <= bodyCount; ordinal++ {
 		row := result.bodies[ordinal]
 		row.context = hashBodyContext(result, row)
@@ -190,13 +167,6 @@ func Seal(
 		}
 		result.contexts[row.context] = uint32(index + 1)
 		result.functions[index] = row
-	}
-	for ordinal := uint32(1); ordinal < uint32(len(result.bodyByOutcome)); ordinal++ {
-		bodyOrdinal := result.bodyByOutcome[ordinal]
-		if bodyOrdinal == 0 || uint64(bodyOrdinal) >= uint64(len(result.bodies)) {
-			return nil, errors.New("program/flow/functionboundary: Outcome Body inverse is unavailable")
-		}
-		result.byOutcome[ordinal] = result.bodies[bodyOrdinal].function
 	}
 	if !result.validateResult() {
 		return nil, errors.New("program/flow/functionboundary: malformed sealed relation")

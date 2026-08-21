@@ -49,18 +49,19 @@ func (result *Result) ForFunctionBody(body keyspace.Term) (Boundary, bool) {
 
 // ForFunctionOutcome resolves the Function owning an existing Outcome.
 func (result *Result) ForFunctionOutcome(outcome keyspace.Term) (Boundary, bool) {
-	if !result.valid() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 ||
-		uint64(keyspace.TermOrdinal(outcome)) >= uint64(len(result.byOutcome)) {
+	if !result.valid() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 {
 		return Boundary{}, false
 	}
-	index := result.byOutcome[keyspace.TermOrdinal(outcome)]
+	body, _, _, ok := result.outcomes.Get(outcome)
+	if !ok || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 || uint64(keyspace.TermOrdinal(body)) >= uint64(len(result.byBody)) {
+		return Boundary{}, false
+	}
+	index := result.byBody[keyspace.TermOrdinal(body)]
 	if index == 0 || uint64(index) > uint64(len(result.functions)) {
 		return Boundary{}, false
 	}
 	row := result.functions[index-1]
-	poolIndex := result.outcomeAt[keyspace.TermOrdinal(outcome)]
-	if poolIndex == 0 || !rangeContains(row.outcomes, poolIndex-1, len(result.outcomes)) ||
-		result.outcomes[poolIndex-1].term != outcome {
+	if !rangeContains(row.outcomes, keyspace.TermOrdinal(outcome)-1, result.outcomeCount()) {
 		return Boundary{}, false
 	}
 	return result.At(int(index - 1))
@@ -80,18 +81,16 @@ func (result *Result) ForBody(body keyspace.Term) (BodyBoundary, bool) {
 // ForOutcome resolves the Body that owns any existing Outcome, including a
 // top-level Outcome. The returned BodyBoundary is the only owner relation.
 func (result *Result) ForOutcome(outcome keyspace.Term) (BodyBoundary, bool) {
-	if !result.valid() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 ||
-		uint64(keyspace.TermOrdinal(outcome)) >= uint64(len(result.bodyByOutcome)) {
+	if !result.valid() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 {
 		return BodyBoundary{}, false
 	}
-	bodyOrdinal := result.bodyByOutcome[keyspace.TermOrdinal(outcome)]
-	if bodyOrdinal == 0 || uint64(bodyOrdinal) >= uint64(len(result.bodies)) {
+	body, _, _, ok := result.outcomes.Get(outcome)
+	if !ok || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 || uint64(keyspace.TermOrdinal(body)) >= uint64(len(result.bodies)) {
 		return BodyBoundary{}, false
 	}
+	bodyOrdinal := keyspace.TermOrdinal(body)
 	row := result.bodies[bodyOrdinal]
-	poolIndex := result.outcomeAt[keyspace.TermOrdinal(outcome)]
-	if poolIndex == 0 || !rangeContains(row.outcomes, poolIndex-1, len(result.outcomes)) ||
-		result.outcomes[poolIndex-1].term != outcome {
+	if !rangeContains(row.outcomes, keyspace.TermOrdinal(outcome)-1, result.outcomeCount()) {
 		return BodyBoundary{}, false
 	}
 	boundary := BodyBoundary{result: result, index: bodyOrdinal}
@@ -156,7 +155,7 @@ func functionRowAvailable(result *Result, index uint32, row functionRow) bool {
 		keyspace.TermFamily(row.body) != keyspace.FamilyBody || keyspace.TermOrdinal(row.body) == 0 || row.entry == 0 ||
 		(row.vararg != 0 && (keyspace.TermFamily(row.vararg) != keyspace.FamilyCell || keyspace.TermOrdinal(row.vararg) == 0)) ||
 		!validRange(row.formals, len(result.formals)) || !validRange(row.captures, len(result.captures)) ||
-		!validRange(row.outcomes, len(result.outcomes)) || !row.context.Available() {
+		!validRange(row.outcomes, result.outcomeCount()) || !row.context.Available() {
 		return false
 	}
 	bodyOrdinal := keyspace.TermOrdinal(row.body)
@@ -174,7 +173,7 @@ func (boundary BodyBoundary) available() bool {
 
 func bodyRowAvailable(result *Result, index uint32, row bodyRow) bool {
 	return keyspace.TermFamily(row.body) == keyspace.FamilyBody && keyspace.TermOrdinal(row.body) == index && row.entry != 0 &&
-		validRange(row.outcomes, len(result.outcomes)) && row.context.Available()
+		validRange(row.outcomes, result.outcomeCount()) && row.context.Available()
 }
 
 func (boundary RootBoundary) available() bool {
@@ -278,8 +277,7 @@ func (boundary Boundary) OutcomeAt(index int) (OutcomeExit, bool) {
 	if !ok || index < 0 || uint64(index) >= uint64(row.outcomes.end-row.outcomes.start) {
 		return OutcomeExit{}, false
 	}
-	exit := boundary.result.outcomes[row.outcomes.start+uint32(index)]
-	return OutcomeExit{Outcome: exit.term, Body: exit.body, Kind: exit.kind, Target: exit.target}, true
+	return boundary.result.outcomeAt(row.outcomes.start + uint32(index))
 }
 
 // Available reports whether this Body handle belongs to its exact quartet.
@@ -341,29 +339,27 @@ func (boundary BodyBoundary) OutcomeAt(index int) (OutcomeExit, bool) {
 	if uint64(index) >= uint64(row.outcomes.end-row.outcomes.start) {
 		return OutcomeExit{}, false
 	}
-	exit := boundary.result.outcomes[row.outcomes.start+uint32(index)]
-	return OutcomeExit{Outcome: exit.term, Body: exit.body, Kind: exit.kind, Target: exit.target}, true
+	return boundary.result.outcomeAt(row.outcomes.start + uint32(index))
 }
 
 // OutcomeForTerm resolves one exact member of this Body's already-sealed
 // ordered Outcome range. The returned ordinal is relative to this Body and is
-// derived from Result's sole dense inverse; no range scan is performed.
+// derived from the canonical Outcome ordinal; no range scan is performed.
 func (boundary BodyBoundary) OutcomeForTerm(outcome keyspace.Term) (OutcomeExit, int, bool) {
-	if !boundary.available() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 ||
-		uint64(keyspace.TermOrdinal(outcome)) >= uint64(len(boundary.result.outcomeAt)) {
+	if !boundary.available() || keyspace.TermFamily(outcome) != keyspace.FamilyOutcome || keyspace.TermOrdinal(outcome) == 0 {
 		return OutcomeExit{}, 0, false
 	}
 	row := boundary.result.bodies[boundary.index]
-	poolIndex := boundary.result.outcomeAt[keyspace.TermOrdinal(outcome)]
-	if poolIndex == 0 || !rangeContains(row.outcomes, poolIndex-1, len(boundary.result.outcomes)) {
+	body, _, _, ok := boundary.result.outcomes.Get(outcome)
+	if !ok || body != row.body || !rangeContains(row.outcomes, keyspace.TermOrdinal(outcome)-1, boundary.result.outcomeCount()) {
 		return OutcomeExit{}, 0, false
 	}
-	exit := boundary.result.outcomes[poolIndex-1]
-	if exit.term != outcome || exit.body != row.body {
+	exit, ok := boundary.result.outcomeAt(keyspace.TermOrdinal(outcome) - 1)
+	if !ok || exit.Outcome != outcome || exit.Body != row.body {
 		return OutcomeExit{}, 0, false
 	}
-	ordinal := int(poolIndex - 1 - row.outcomes.start)
-	return OutcomeExit{Outcome: exit.term, Body: exit.body, Kind: exit.kind, Target: exit.target}, ordinal, true
+	ordinal := int(keyspace.TermOrdinal(outcome) - 1 - row.outcomes.start)
+	return exit, ordinal, true
 }
 
 // Available reports whether this Root handle is the exact assembly entry.

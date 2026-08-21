@@ -44,11 +44,14 @@ func hashContext(result *Result, row functionRow) identity.ContentID {
 	}
 	writeRangeCount(hash, row.outcomes.end-row.outcomes.start)
 	for index := row.outcomes.start; index < row.outcomes.end; index++ {
-		exit := result.outcomes[index]
-		writeTerm(hash, exit.term)
-		writeTerm(hash, exit.body)
-		hash.Write([]byte{byte(exit.kind)})
-		writeTerm(hash, exit.target)
+		exit, ok := result.outcomeAt(index)
+		if !ok {
+			return identity.ContentID{}
+		}
+		writeTerm(hash, exit.Outcome)
+		writeTerm(hash, exit.Body)
+		hash.Write([]byte{byte(exit.Kind)})
+		writeTerm(hash, exit.Target)
 	}
 	return identity.ContentID(hash.Sum(nil))
 }
@@ -70,11 +73,14 @@ func hashBodyContext(result *Result, row bodyRow) identity.ContentID {
 	writeTerm(hash, row.entry)
 	writeRangeCount(hash, row.outcomes.end-row.outcomes.start)
 	for index := row.outcomes.start; index < row.outcomes.end; index++ {
-		exit := result.outcomes[index]
-		writeTerm(hash, exit.term)
-		writeTerm(hash, exit.body)
-		hash.Write([]byte{byte(exit.kind)})
-		writeTerm(hash, exit.target)
+		exit, ok := result.outcomeAt(index)
+		if !ok {
+			return identity.ContentID{}
+		}
+		writeTerm(hash, exit.Outcome)
+		writeTerm(hash, exit.Body)
+		hash.Write([]byte{byte(exit.Kind)})
+		writeTerm(hash, exit.Target)
 	}
 	return identity.ContentID(hash.Sum(nil))
 }

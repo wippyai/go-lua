@@ -8,6 +8,7 @@ package functionboundary
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -23,15 +24,15 @@ type Result struct {
 
 	entry keyspace.Term
 
-	functions     []functionRow
-	bodies        []bodyRow
-	byBody        []uint32 // Body ordinal -> Function row + 1, zero for root/non-Function Bodies.
-	byOutcome     []uint32 // Outcome ordinal -> Function row + 1, zero for non-Function Bodies.
-	bodyByOutcome []uint32 // Outcome ordinal -> Body ordinal.
-	outcomeAt     []uint32 // Outcome ordinal -> ordered pool row + 1.
-	formals       []keyspace.Term
-	captures      []captureRow
-	outcomes      []outcomeRow
+	functions []functionRow
+	bodies    []bodyRow
+	byBody    []uint32 // Body ordinal -> Function row + 1, zero for root/non-Function Bodies.
+	formals   []keyspace.Term
+	captures  []captureRow
+	// outcomes remains the canonical owner. FunctionBoundary retains only
+	// ranges into that owner; it never copies Outcome rows or builds inverse
+	// sidecars over them.
+	outcomes *outcome.Result
 
 	// These maps are lookup-only indexes over one sealed Result. They are
 	// built linearly and reject collisions; no sorted row copy is retained.
@@ -66,13 +67,6 @@ type captureRow struct {
 	outer     keyspace.Term
 	innerBody keyspace.Term
 	outerBody keyspace.Term
-}
-
-type outcomeRow struct {
-	term   keyspace.Term
-	body   keyspace.Term
-	kind   kind.OutcomeKind
-	target keyspace.Term
 }
 
 // Boundary is an opaque handle into one immutable Function row.
@@ -119,7 +113,7 @@ func Matches(result *Result, sourceID, flowID, staticID, moduleID identity.Conte
 
 func (result *Result) available() bool {
 	return result != nil && result.sourceID.Available() && result.flowID.Available() &&
-		result.staticID.Available() && result.moduleID.Available()
+		result.staticID.Available() && result.moduleID.Available() && result.outcomes != nil
 }
 
 // valid is the O(1) publication fence. Complete structural validation runs
@@ -133,24 +127,23 @@ func (result *Result) valid() bool {
 // before publication. It checks every dense row, range, term, inverse, map,
 // and semantic context preimage.
 func (result *Result) validateResult() bool {
-	if !result.available() || keyspace.TermFamily(result.entry) != keyspace.FamilyBody || keyspace.TermOrdinal(result.entry) == 0 ||
-		len(result.bodies) < 2 || len(result.byBody) != len(result.bodies) || len(result.byOutcome) != len(result.bodyByOutcome) ||
-		len(result.byOutcome) != len(result.outcomeAt) || len(result.outcomes)+1 != len(result.outcomeAt) ||
+	if result == nil || !result.available() || keyspace.TermFamily(result.entry) != keyspace.FamilyBody || keyspace.TermOrdinal(result.entry) == 0 ||
+		len(result.bodies) < 2 || len(result.byBody) != len(result.bodies) ||
 		len(result.contexts) != len(result.functions) || len(result.bodyContexts) != len(result.bodies)-1 {
 		return false
 	}
+	outcomeCount := result.outcomes.Count()
 	entryOrdinal := keyspace.TermOrdinal(result.entry)
-	if uint64(entryOrdinal) >= uint64(len(result.bodies)) {
-		return false
-	}
-	if result.bodies[entryOrdinal].body != result.entry {
+	if uint64(entryOrdinal) >= uint64(len(result.bodies)) || result.bodies[entryOrdinal].body != result.entry {
 		return false
 	}
 	bodyOutcomeCursor := uint32(0)
 	for ordinal := uint32(1); ordinal < uint32(len(result.bodies)); ordinal++ {
 		row := result.bodies[ordinal]
+		start, end, rangeOK := result.outcomes.BodyRange(row.body)
 		if keyspace.TermFamily(row.body) != keyspace.FamilyBody || keyspace.TermOrdinal(row.body) != ordinal ||
-			!validExistingTerm(row.entry) || !validRange(row.outcomes, len(result.outcomes)) || row.outcomes.start != bodyOutcomeCursor || !row.context.Available() {
+			!validExistingTerm(row.entry) || !rangeOK || start < 0 || end < start || end > outcomeCount ||
+			row.outcomes.start != bodyOutcomeCursor || row.outcomes.start != uint32(start) || row.outcomes.end != uint32(end) || !row.context.Available() {
 			return false
 		}
 		bodyOutcomeCursor = row.outcomes.end
@@ -164,14 +157,11 @@ func (result *Result) validateResult() bool {
 			}
 		}
 		contextIndex, ok := result.bodyContexts[row.context]
-		if !ok || contextIndex != ordinal {
-			return false
-		}
-		if hashBodyContext(result, row) != row.context {
+		if !ok || contextIndex != ordinal || hashBodyContext(result, row) != row.context {
 			return false
 		}
 	}
-	if bodyOutcomeCursor != uint32(len(result.outcomes)) {
+	if bodyOutcomeCursor != uint32(outcomeCount) {
 		return false
 	}
 	formalCursor, captureCursor := uint32(0), uint32(0)
@@ -181,7 +171,7 @@ func (result *Result) validateResult() bool {
 			keyspace.TermFamily(row.body) != keyspace.FamilyBody || keyspace.TermOrdinal(row.body) == 0 || !validExistingTerm(row.entry) ||
 			(row.vararg != 0 && (keyspace.TermFamily(row.vararg) != keyspace.FamilyCell || keyspace.TermOrdinal(row.vararg) == 0)) ||
 			!validRange(row.formals, len(result.formals)) || row.formals.start != formalCursor || !validRange(row.captures, len(result.captures)) || row.captures.start != captureCursor ||
-			!validRange(row.outcomes, len(result.outcomes)) || !row.context.Available() {
+			!validRange(row.outcomes, outcomeCount) || !row.context.Available() {
 			return false
 		}
 		bodyOrdinal := keyspace.TermOrdinal(row.body)
@@ -213,43 +203,16 @@ func (result *Result) validateResult() bool {
 			return false
 		}
 	}
-	for index, row := range result.outcomes {
-		ordinal := uint32(index + 1)
-		if keyspace.TermFamily(row.term) != keyspace.FamilyOutcome || keyspace.TermOrdinal(row.term) != ordinal ||
-			keyspace.TermFamily(row.body) != keyspace.FamilyBody || keyspace.TermOrdinal(row.body) == 0 ||
-			row.kind < kind.OutcomeNormal || row.kind > kind.OutcomeCancel || !validTarget(row.kind, row.target) ||
-			uint64(keyspace.TermOrdinal(row.body)) >= uint64(len(result.bodies)) ||
-			!rangeContains(result.bodies[keyspace.TermOrdinal(row.body)].outcomes, uint32(index), len(result.outcomes)) {
+	for index := 0; index < outcomeCount; index++ {
+		exit, ok := result.outcomeAt(uint32(index))
+		if !ok || keyspace.TermOrdinal(exit.Outcome) != uint32(index+1) ||
+			uint64(keyspace.TermOrdinal(exit.Body)) >= uint64(len(result.bodies)) ||
+			exit.Kind < kind.OutcomeNormal || exit.Kind > kind.OutcomeCancel || !validTarget(exit.Kind, exit.Target) ||
+			!rangeContains(result.bodies[keyspace.TermOrdinal(exit.Body)].outcomes, uint32(index), outcomeCount) {
 			return false
 		}
-		outcomeOrdinal := keyspace.TermOrdinal(row.term)
-		if uint64(outcomeOrdinal) >= uint64(len(result.byOutcome)) || uint64(outcomeOrdinal) >= uint64(len(result.bodyByOutcome)) ||
-			result.bodyByOutcome[outcomeOrdinal] != keyspace.TermOrdinal(row.body) || result.outcomeAt[outcomeOrdinal] != ordinal ||
-			result.byOutcome[outcomeOrdinal] != result.bodies[keyspace.TermOrdinal(row.body)].function {
-			return false
-		}
-	}
-	for ordinal := uint32(1); ordinal < uint32(len(result.byOutcome)); ordinal++ {
-		functionIndex := result.byOutcome[ordinal]
-		if functionIndex == 0 {
-			continue
-		}
-		if uint64(functionIndex) > uint64(len(result.functions)) {
-			return false
-		}
-		row := result.functions[functionIndex-1]
-		poolIndex := result.outcomeAt[ordinal]
-		if poolIndex == 0 || !rangeContains(row.outcomes, poolIndex-1, len(result.outcomes)) || keyspace.TermOrdinal(result.outcomes[poolIndex-1].term) != ordinal {
-			return false
-		}
-	}
-	for ordinal := uint32(1); ordinal < uint32(len(result.bodyByOutcome)); ordinal++ {
-		bodyOrdinal := result.bodyByOutcome[ordinal]
-		if bodyOrdinal == 0 || uint64(bodyOrdinal) >= uint64(len(result.bodies)) {
-			return false
-		}
-		poolIndex := result.outcomeAt[ordinal]
-		if poolIndex == 0 || !rangeContains(result.bodies[bodyOrdinal].outcomes, poolIndex-1, len(result.outcomes)) {
+		body := result.bodies[keyspace.TermOrdinal(exit.Body)]
+		if body.function != 0 && !rangeContains(result.functions[body.function-1].outcomes, uint32(index), outcomeCount) {
 			return false
 		}
 	}
@@ -279,6 +242,28 @@ func (result *Result) validateResult() bool {
 		}
 	}
 	return true
+}
+
+func (result *Result) outcomeCount() int {
+	if result == nil || result.outcomes == nil {
+		return 0
+	}
+	return result.outcomes.Count()
+}
+
+func (result *Result) outcomeAt(index uint32) (OutcomeExit, bool) {
+	if result == nil || result.outcomes == nil || uint64(index) >= uint64(result.outcomes.Count()) {
+		return OutcomeExit{}, false
+	}
+	term, ok := result.outcomes.At(int(index))
+	if !ok || keyspace.TermFamily(term) != keyspace.FamilyOutcome || keyspace.TermOrdinal(term) != index+1 {
+		return OutcomeExit{}, false
+	}
+	body, outcomeKind, target, ok := result.outcomes.Get(term)
+	if !ok || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 {
+		return OutcomeExit{}, false
+	}
+	return OutcomeExit{Outcome: term, Body: body, Kind: outcomeKind, Target: target}, true
 }
 
 func validExistingTerm(term keyspace.Term) bool {
