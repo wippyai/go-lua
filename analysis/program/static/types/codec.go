@@ -113,7 +113,7 @@ func WriteContent(writer *framing.Writer, table Table) error {
 		if err := writer.Bool(row.ReadOnly); err != nil {
 			return err
 		}
-		if err := wire.WriteTermSpan(writer, table.fields, row.Fields); err != nil {
+		if err := wire.WriteTermSpan(writer, table.terms, row.Fields); err != nil {
 			return err
 		}
 	}

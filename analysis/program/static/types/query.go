@@ -187,7 +187,7 @@ func (view Records) Get(term keyspace.Term) (bool, int, bool) {
 	if !ok {
 		return false, 0, false
 	}
-	return row.ReadOnly, view.view.table.fields.Count(row.Fields), true
+	return row.ReadOnly, view.view.table.terms.Count(row.Fields), true
 }
 func (view Records) FieldAt(term keyspace.Term, index int) (keyspace.Term, bool) {
 	if !view.view.available {
@@ -197,7 +197,7 @@ func (view Records) FieldAt(term keyspace.Term, index int) (keyspace.Term, bool)
 	if !ok {
 		return 0, false
 	}
-	return view.view.table.fields.At(row.Fields, index)
+	return view.view.table.terms.At(row.Fields, index)
 }
 
 // spanCount and spanAt are the one member read shared by the two compound

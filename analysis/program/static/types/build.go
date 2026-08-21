@@ -65,7 +65,6 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 // hands every relation over as an immutable table.
 func seal(input Input) (Table, error) {
 	var terms rows.PoolBuilder[keyspace.Term]
-	var fields rows.PoolBuilder[keyspace.Term]
 
 	union := rows.NewTableBuilder[MembersRow](keyspace.FamilyTypeUnion)
 	for _, row := range input.Union {
@@ -99,7 +98,7 @@ func seal(input Input) (Table, error) {
 	}
 	record := rows.NewTableBuilder[RecordRow](keyspace.FamilyTypeRecord)
 	for _, row := range input.Record {
-		span, ok := fields.Append(row.Fields)
+		span, ok := terms.Append(row.Fields)
 		if !ok {
 			return Table{}, errors.New("program/static/types: oversized record")
 		}
@@ -114,7 +113,6 @@ func seal(input Input) (Table, error) {
 		generic:      generic.Seal(),
 		record:       record.Seal(),
 		terms:        terms.Seal(),
-		fields:       fields.Seal(),
 	}
 	var ok bool
 	if table.primitive, ok = rows.NewTable(keyspace.FamilyTypePrimitive, input.Primitive); !ok {
@@ -234,7 +232,7 @@ func (table Table) VisitContainment(attach, claimField func(parent, child keyspa
 		}
 	}
 	for owner, row := range table.record.Terms() {
-		for _, field := range table.fields.All(row.Fields) {
+		for _, field := range table.terms.All(row.Fields) {
 			if !claimField(owner, field) {
 				return false
 			}

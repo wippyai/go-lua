@@ -155,8 +155,8 @@ type RecordRow struct {
 }
 
 // Table is the sealed immutable type forest. Every relation is its own dense
-// table numbered by its canonical family, and the two variable-width columns
-// are shared pools the rows select windows of.
+// table numbered by its canonical family, and variable-width children select
+// windows from one shared term column.
 type Table struct {
 	primitive    rows.Table[Primitive]
 	literal      rows.Table[Literal]
@@ -169,7 +169,6 @@ type Table struct {
 	record       rows.Table[RecordRow]
 	field        rows.Table[Field]
 	terms        rows.Pool[keyspace.Term]
-	fields       rows.Pool[keyspace.Term]
 }
 
 // Primitive returns the authored primitive one canonical term names. It is
