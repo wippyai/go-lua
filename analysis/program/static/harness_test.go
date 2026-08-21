@@ -21,23 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/static/operators"
 )
 
-// The five altitudes of this package in ascending order. A file may reference
-// its own altitude and every altitude below it, never one above.
-const (
-	altitudeCore = iota
-	altitudeRead
-	altitudeCodec
-	altitudeIdentity
-	altitudeBuild
-)
-
-const (
-	staticArtifactTestDomain   = "program/static-artifact-test"
-	staticArtifactTestVersion  = 1
-	staticArtifactTestRoot     = 1
-	staticArtifactTestSentinel = 99
-)
-
 func staticFixture(t *testing.T) Input {
 	t.Helper()
 	input := publicationFixture(t)
