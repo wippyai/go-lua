@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
+	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
@@ -507,81 +508,13 @@ func validateFunctionObservationAt(
 	return nil
 }
 
+// annotationTarget reads Static's published AnnotationTarget surface over the
+// sealed Census, the one cardinality authority every Static child table is
+// already validated against.
 func annotationTarget(view staticquery.View, target keyspace.Term) bool {
-	family := keyspace.TermFamily(target)
-	ordinal := keyspace.TermOrdinal(target)
-	if ordinal == 0 {
+	snapshot, ok := view.Snapshot()
+	if !ok {
 		return false
 	}
-	if family == keyspace.FamilyTypeField {
-		return ordinal <= uint32(view.Types().Fields().Count())
-	}
-	if !annotationTypeFamily(family) {
-		return false
-	}
-	return ordinal <= staticFamilyCount(view, family)
-}
-
-func annotationTypeFamily(family keyspace.Family) bool {
-	switch family {
-	case keyspace.FamilyTypePrimitive, keyspace.FamilyTypeLiteral,
-		keyspace.FamilyTypeOptional, keyspace.FamilyTypeUnion,
-		keyspace.FamilyTypeIntersection, keyspace.FamilyTypeRef,
-		keyspace.FamilyTypeGeneric, keyspace.FamilyTypeArray,
-		keyspace.FamilyTypeMap, keyspace.FamilyTypeRecord,
-		keyspace.FamilyTypeFunction, keyspace.FamilyTypeAsserts,
-		keyspace.FamilyTypeOf, keyspace.FamilyTypeKeyOf,
-		keyspace.FamilyTypeIndexAccess, keyspace.FamilyTypeConditional:
-		return true
-	default:
-		return false
-	}
-}
-
-func staticFamilyCount(view staticquery.View, family keyspace.Family) uint32 {
-	var count int
-	switch family {
-	case keyspace.FamilyTypeAlias:
-		count = view.Declarations().Aliases().Count()
-	case keyspace.FamilyTypeInterface:
-		count = view.Declarations().Interfaces().Count()
-	case keyspace.FamilyTypeParam:
-		count = view.Declarations().TypeParams().Count()
-	case keyspace.FamilyTypePrimitive:
-		count = view.Types().Primitives().Count()
-	case keyspace.FamilyTypeLiteral:
-		count = view.Types().Literals().Count()
-	case keyspace.FamilyTypeOptional:
-		count = view.Types().Optionals().Count()
-	case keyspace.FamilyTypeUnion:
-		count = view.Types().Unions().Count()
-	case keyspace.FamilyTypeIntersection:
-		count = view.Types().Intersections().Count()
-	case keyspace.FamilyTypeRef:
-		count = view.References().Count()
-	case keyspace.FamilyTypeGeneric:
-		count = view.Types().Generics().Count()
-	case keyspace.FamilyTypeArray:
-		count = view.Types().Arrays().Count()
-	case keyspace.FamilyTypeMap:
-		count = view.Types().Maps().Count()
-	case keyspace.FamilyTypeRecord:
-		count = view.Types().Records().Count()
-	case keyspace.FamilyTypeFunction:
-		count = view.Signatures().TypeFunctions().Count()
-	case keyspace.FamilyTypeAsserts:
-		count = view.Signatures().Assertions().Count()
-	case keyspace.FamilyTypeOf:
-		count = view.Operators().TypeOfs().Count()
-	case keyspace.FamilyTypeKeyOf:
-		count = view.Operators().KeyOfs().Count()
-	case keyspace.FamilyTypeIndexAccess:
-		count = view.Operators().IndexAccesses().Count()
-	case keyspace.FamilyTypeConditional:
-		count = view.Operators().Conditionals().Count()
-	}
-	if count < 0 {
-		return 0
-	}
-	return uint32(count)
+	return staticrole.AnnotationTarget(snapshot.Census(), target)
 }

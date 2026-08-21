@@ -71,7 +71,7 @@ func buildGeometry(
 		return empty, errors.New("program/flow/sourcecontrol: empty coordinate space")
 	}
 
-	if err := mapSourceRoots(sourceView, bodies, forest, &result); err != nil {
+	if err := installSourceCoordinates(sourceView, &result); err != nil {
 		return empty, err
 	}
 	loops := flow.Control().Loops()
@@ -114,84 +114,58 @@ func buildGeometry(
 	return result, nil
 }
 
-func mapSourceRoots(
-	sourceView source.View,
-	bodies *body.Result,
-	forest *containment.Result,
-	result *geometry,
-) error {
-	if result == nil || bodies == nil || forest == nil {
+// installSourceCoordinates seals every declared Loop and Label term's exact
+// node coordinate through the already sealed source.Index, the same read
+// resume.go uses for the narrow resume projection. Index seals each term's
+// (Body, Cursor) position once, at Source construction, against the authored
+// Body root sequence; this package only converts that sealed pair into its
+// own dense node numbering.
+func installSourceCoordinates(sourceView source.View, result *geometry) error {
+	if result == nil {
 		return errors.New("program/flow/sourcecontrol: missing geometry owner")
 	}
-	order := sourceView.Order()
-	bodyCount := uint32(bodies.BodyCount())
-	var metadataSeen [keyspace.FamilyCount]uint32
-	for bodyOrdinal := uint32(1); bodyOrdinal <= bodyCount; bodyOrdinal++ {
-		owner := keyspace.MakeTerm(keyspace.FamilyBody, bodyOrdinal)
-		length, ok := order.BodyLen(owner)
-		if !ok || length < 0 {
-			return errors.New("program/flow/sourcecontrol: Source Body order is unavailable")
+	index := sourceView.Index()
+	for ordinal := uint32(1); ordinal <= result.counts[keyspace.FamilyLoop]; ordinal++ {
+		term := keyspace.MakeTerm(keyspace.FamilyLoop, ordinal)
+		node, err := directSourceCoordinate(index, result, term)
+		if err != nil {
+			return err
 		}
-		rootCount, ok := bodies.RootCount(owner)
-		if !ok || rootCount < 0 {
-			return errors.New("program/flow/sourcecontrol: Body roots are unavailable")
-		}
-		cursor := uint32(0)
-		for offset := 0; offset < length; offset++ {
-			term, termOK := order.BodyAt(owner, offset)
-			if !termOK || !validPreOutcomeTerm(term, result.counts) {
-				return errors.New("program/flow/sourcecontrol: malformed direct Source term")
-			}
-			parent, parentOK := forest.Parent(term)
-			if !parentOK || parent != owner {
-				return errors.New("program/flow/sourcecontrol: Source term owner disagrees with containment")
-			}
-			if cursor < uint32(rootCount) {
-				root, rootOK := bodies.RootAt(owner, int(cursor))
-				if !rootOK {
-					return errors.New("program/flow/sourcecontrol: Body root is unavailable")
-				}
-				if root == term {
-					if !body.RootFamily(keyspace.TermFamily(root)) {
-						return errors.New("program/flow/sourcecontrol: Body root family is invalid")
-					}
-					node := result.coordinates.bodyOffsets[bodyOrdinal-1] + cursor
-					if keyspace.TermFamily(term) == keyspace.FamilyLoop {
-						if err := installRoot(result, term, node); err != nil {
-							return err
-						}
-					}
-					cursor++
-					continue
-				}
-			}
-			if !directSourceMetadata(keyspace.TermFamily(term)) {
-				return errors.New("program/flow/sourcecontrol: Source order contains a non-root term")
-			}
-			metadataSeen[keyspace.TermFamily(term)]++
-			node := result.coordinates.bodyOffsets[bodyOrdinal-1] + cursor
-			if keyspace.TermFamily(term) == keyspace.FamilyLabel {
-				if err := installRoot(result, term, node); err != nil {
-					return err
-				}
-			}
-		}
-		if cursor != uint32(rootCount) {
-			return errors.New("program/flow/sourcecontrol: Body roots do not partition Source order")
+		if err := installRoot(result, term, node); err != nil {
+			return err
 		}
 	}
-	for _, family := range [...]keyspace.Family{
-		keyspace.FamilyLabel, keyspace.FamilyControlFault,
-		keyspace.FamilyTypeAlias, keyspace.FamilyTypeInterface,
-	} {
-		if metadataSeen[family] != result.counts[family] {
-			return errors.New("program/flow/sourcecontrol: Source declaration lacks a coordinate")
+	for ordinal := uint32(1); ordinal <= result.counts[keyspace.FamilyLabel]; ordinal++ {
+		term := keyspace.MakeTerm(keyspace.FamilyLabel, ordinal)
+		node, err := directSourceCoordinate(index, result, term)
+		if err != nil {
+			return err
+		}
+		if err := installRoot(result, term, node); err != nil {
+			return err
 		}
 	}
-	if err := validateLoopCoordinates(result); err != nil {
-		return err
+	return validateLoopCoordinates(result)
+}
+
+// directSourceCoordinate converts one declared term's sealed Index position
+// into this package's dense node numbering. Root(term) == term proves term is
+// its own direct Source occurrence rather than an inherited descendant.
+func directSourceCoordinate(index source.Index, result *geometry, term keyspace.Term) (uint32, error) {
+	root, rootOK := index.Root(term)
+	owner, offset, cursor, posOK := index.Position(term)
+	if !rootOK || root != term || !posOK || offset < 0 || cursor < 0 || !validBody(owner, result.counts[keyspace.FamilyBody]) {
+		return 0, errors.New("program/flow/sourcecontrol: Source coordinate is not an exact root")
 	}
-	return nil
+	ownerOrdinal := keyspace.TermOrdinal(owner)
+	if ownerOrdinal == 0 || uint64(ownerOrdinal) >= uint64(len(result.coordinates.bodyOffsets)) {
+		return 0, errors.New("program/flow/sourcecontrol: Source coordinate denominator is invalid")
+	}
+	start, end := result.coordinates.bodyOffsets[ownerOrdinal-1], result.coordinates.bodyOffsets[ownerOrdinal]
+	if end <= start || uint64(cursor) >= uint64(end-start) {
+		return 0, errors.New("program/flow/sourcecontrol: Source coordinate cursor is invalid")
+	}
+	return start + uint32(cursor), nil
 }
 
 // validateLoopCoordinates closes the one root family whose coordinates are
@@ -330,16 +304,6 @@ func validBody(term keyspace.Term, count uint32) bool {
 func validPreOutcomeTerm(term keyspace.Term, counts [keyspace.FamilyCount]uint32) bool {
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 	return family > keyspace.FamilyInvalid && family < keyspace.FamilyCount && family != keyspace.FamilyOutcome && ordinal != 0 && ordinal <= counts[family]
-}
-
-func directSourceMetadata(family keyspace.Family) bool {
-	switch family {
-	case keyspace.FamilyLabel, keyspace.FamilyControlFault,
-		keyspace.FamilyTypeAlias, keyspace.FamilyTypeInterface:
-		return true
-	default:
-		return false
-	}
 }
 
 func dynamicLoopKind(loopKind kind.LoopKind) bool {
