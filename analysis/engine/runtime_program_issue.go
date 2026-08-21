@@ -97,10 +97,10 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	pending := make([]pendingRuleIssuance, 0, len(admission.Link)+len(admission.Mounted)+len(admission.Activation))
 	anchored := make(map[equation.Surface]struct{})
 	claimedLink := make(map[identity.ContentID]RuleSlotCapability, len(admission.Link))
-	for _, row := range admission.Link {
+	for ordinal, row := range admission.Link {
 		issuance, ok := admitLinkRuleIssuance(rowsWorkspace, rows, state, row, claimedLink)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionLink, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureLinkIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionLink, false
 		}
 		pending = append(pending, issuance)
 	}
@@ -108,17 +108,17 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 	// artifact placed the row under. A placement therefore guarantees the
 	// owner seals an operand for it, and an owner that cannot refuses the
 	// whole assemble rather than being silently skipped here.
-	for _, row := range admission.Mounted {
+	for ordinal, row := range admission.Mounted {
 		issuance, ok := admitMountedRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureMountedIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
 		}
 		pending = append(pending, issuance)
 	}
-	for _, row := range admission.Activation {
+	for ordinal, row := range admission.Activation {
 		issuance, admitted, ok := admitActivationRuleIssuance(rowsWorkspace, rows, state, row)
 		if !ok || !claimAnchoredSurfaces(anchored, issuance.surfaces) {
-			return topologyDeclaration{}, programSealFailure{}, ProgramAdmissionMounted, false
+			return topologyDeclaration{}, programSealFailure{phase: programSealFailureActivationIssuance, ordinal: uint32(ordinal)}, ProgramAdmissionMounted, false
 		}
 		if !admitted {
 			continue

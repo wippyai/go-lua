@@ -92,6 +92,12 @@ const (
 	programSealFailureNone programSealFailurePhase = iota
 	programSealFailureSources
 	programSealFailureArtifactRows
+	// One issuance plane rejected a declared admission row before the source
+	// Batch sealed. The plane is the phase, so a Link row, a mounted row and an
+	// activation row never share one refusal identity.
+	programSealFailureLinkIssuance
+	programSealFailureMountedIssuance
+	programSealFailureActivationIssuance
 	programSealFailureRuleRow
 	programSealFailureQueryBatch
 )

@@ -166,8 +166,33 @@ func DiagnosticAxisForKey(compilation Compilation, key schema.Key) DiagnosticAxi
 	return DiagnosticAxis(slot)
 }
 
+// diagnosticAxisNames is the slot-to-key table of the authored axis inventory,
+// minted once. The slot is that inventory's own declaration position, so the
+// name a slot carries is fixed by the table every compilation seals rather than
+// by any one compilation instance.
+var diagnosticAxisNames = func() []schema.Key {
+	entries, _, ok := axisTemplates()
+	if !ok {
+		return nil
+	}
+	names := make([]schema.Key, len(entries)+1)
+	for position, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		names[position+1] = entry.Key()
+	}
+	return names
+}()
+
+// String spells the axis as its owner declared it. A slot outside the sealed
+// inventory names no axis and stays unknown.
 func (diagnostic DiagnosticAxis) String() string {
-	return "unknown"
+	slot := int(diagnostic)
+	if slot <= 0 || slot >= len(diagnosticAxisNames) || diagnosticAxisNames[slot] == "" {
+		return "unknown"
+	}
+	return string(diagnosticAxisNames[slot])
 }
 
 // axisAtSlot resolves one axis by its slot. The slot is the declaration

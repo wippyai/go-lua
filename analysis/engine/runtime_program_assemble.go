@@ -335,6 +335,17 @@ func (refusal ProgramAssembleRefusal) Commit() SolveFailure {
 	return refusal.construction.Failure()
 }
 
+// ConstructionRow is the ordinal of the declared row a refused construction
+// stopped on. The boundary itself travels as the Commit identity, so the row is
+// published as the data beside it and never as a second coordinate of that
+// identity.
+func (refusal ProgramAssembleRefusal) ConstructionRow() (uint32, bool) {
+	if !refusal.construction.Available() {
+		return 0, false
+	}
+	return refusal.construction.Ordinal(), true
+}
+
 // ScheduleRow is the ordinal of the composition-schedule row a refused
 // construction stopped on. It is zero for every other refusal.
 func (refusal ProgramAssembleRefusal) ScheduleRow() uint32 {

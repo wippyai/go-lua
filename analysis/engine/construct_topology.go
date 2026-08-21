@@ -149,6 +149,9 @@ const (
 	topologyConstructionStepGraph
 	topologyConstructionStepSchedule
 	topologyConstructionStepDirectory
+	// topologyConstructionStepCount bounds the closed step set. Nothing is
+	// declared past it.
+	topologyConstructionStepCount
 )
 
 // topologyConstructionRefusal is the closed refusal of one construction. It
@@ -171,11 +174,15 @@ func (refusal topologyConstructionRefusal) Step() topologyConstructionStep { ret
 
 func (refusal topologyConstructionRefusal) Ordinal() uint32 { return refusal.ordinal }
 
+// Failure projects the refusal onto the published vocabulary. The stage and
+// the step both enter the site identity, so two predicates of one stage are
+// two boundaries; the row ordinal is data the refusal publishes beside the
+// identity rather than a coordinate of the boundary.
 func (refusal topologyConstructionRefusal) Failure() SolveFailure {
 	if !refusal.Available() {
 		return SolveFailure{}
 	}
-	return ProgramStageFailure(refusal.stage)
+	return programConstructionFailure(refusal.stage, refusal.step)
 }
 
 // refuseAdmission closes one declaration-boundary refusal.

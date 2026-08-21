@@ -236,19 +236,34 @@ func ProgramStageFailure(stage ProgramSealStage) SolveFailure {
 	return boundaryFailure(SolveFailureFamilyCompile, programSealAuthority, uint64(stage))
 }
 
-// programSealStages is every stage's site digest, minted once. The
-// digest is the only seal coordinate that leaves the engine, so
-// recovering the stage is a lookup on it rather than a second published field.
-// An unencodable preimage yields the unavailable identity, which no stage may
-// occupy: one such entry would make every unavailable site classify as it.
+// programConstructionFailure mints the compile-family boundary for one seal
+// stage refused at one construction step. Both ordinals enter the site
+// preimage, so the exact predicate a construction failed survives to the
+// caller as its own identity instead of collapsing onto its stage.
+func programConstructionFailure(stage ProgramSealStage, step topologyConstructionStep) SolveFailure {
+	if stage <= ProgramSealStageNone || stage >= programSealStageCount || step >= topologyConstructionStepCount {
+		return SolveFailure{}
+	}
+	return boundaryFailure(SolveFailureFamilyCompile, programSealAuthority, uint64(stage), uint64(step))
+}
+
+// programSealStages is every seal boundary's site digest, minted once: the
+// stage alone, and the stage refused at each construction step. The digest is
+// the only seal coordinate that leaves the engine, so recovering the stage is a
+// lookup on it rather than a second published field. An unencodable preimage
+// yields the unavailable identity, which no stage may occupy: one such entry
+// would make every unavailable site classify as it.
 var programSealStages = func() map[identity.ContentID]ProgramSealStage {
-	sites := make(map[identity.ContentID]ProgramSealStage, programSealStageCount)
+	sites := make(map[identity.ContentID]ProgramSealStage, int(programSealStageCount)*int(topologyConstructionStepCount+1))
 	for stage := ProgramSealStageAdmission; stage < programSealStageCount; stage++ {
-		site := ProgramStageFailure(stage).Site
-		if !site.Available() {
-			continue
+		if site := ProgramStageFailure(stage).Site; site.Available() {
+			sites[site] = stage
 		}
-		sites[site] = stage
+		for step := topologyConstructionStepNone; step < topologyConstructionStepCount; step++ {
+			if site := programConstructionFailure(stage, step).Site; site.Available() {
+				sites[site] = stage
+			}
+		}
 	}
 	return sites
 }()
