@@ -101,10 +101,10 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: rows.ArtifactRuleStageIssued3, Point: output, Input: initial, ID: occurrence})
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(issuanceRefusalID(10), issuanceRefusalID(11))
-	programRule, programRuleOK := SealProgramRule(ruleImplementation)
+	cell, cellOK := ruleImplementation.sealedRuleCell()
 	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, issuanceRefusalID(12), mountID, output)
 	if !specOK || !roleOK || !stageLawsOK || !initialOK || !outputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowOK ||
-		!templateOK || !bootstrapOK || !programRuleOK || !queryAdmissionOK {
+		!templateOK || !bootstrapOK || !cellOK || cell == nil || !queryAdmissionOK {
 		t.Fatal("issuance refusal artifact")
 	}
 	return issuanceRefusalFixture{
@@ -112,7 +112,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 		mount:     MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: role, Capability: capability}}, Module: mountID},
 		bootstrap: bootstrap,
 		admission: MountedProgramAdmission{
-			Mounted: []MountedRuleAdmission{{Declaration: programRule, Capability: capability, Mount: mountID, Point: output, Occurrence: occurrence}},
+			Mounted: []MountedRuleAdmission{{Capability: capability, Mount: mountID, Point: output, Occurrence: occurrence}},
 			Queries: []ProgramQueryAdmission{queryAdmission},
 		},
 		capability: capability,
@@ -133,8 +133,8 @@ func TestIssuanceRefusalsNameTheirOwnPhase(t *testing.T) {
 	}
 	mounted := fixture.admission
 	mounted.Mounted = []MountedRuleAdmission{{
-		Declaration: fixture.admission.Mounted[0].Declaration, Capability: fixture.capability,
-		Mount: fixture.mountID, Point: fixture.point, Occurrence: issuanceRefusalID(99),
+		Capability: fixture.capability,
+		Mount:      fixture.mountID, Point: fixture.point, Occurrence: issuanceRefusalID(99),
 	}}
 	link := fixture.admission
 	link.Link = []LinkRuleAdmission{{}}
