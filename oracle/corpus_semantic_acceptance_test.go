@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestCanonicalCorpusSemanticAcceptance is the one complete fixture semantic
@@ -137,13 +138,15 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 // resolves every require against a mount name, so a fixture's declared file
 // order and its selected entry carry no obligation the sealed Link could hold
 // differently: the whole declared inventory is mounted, rooted, and wired.
-// The canonical fixture Target likewise admits the process, channel, uuid,
-// expr, and json host module contracts; other package names remain fenced
-// until their provider declarations are represented at that same boundary.
-// Placement is likewise not an input contract: its check is judged after the
-// solve through domain/placement/publication, where a missing family is an
-// operational mismatch and an unreadable leak dimension is an explicit
-// incomplete classification.
+// The canonical fixture Target declares its require-able host module set at
+// Target.InitialRootByModulePath, the same table the require-admission gate
+// consults; a manifest package name is supported exactly when that table
+// declares it, read here through corpusSemanticDeclaredHostModulePaths rather
+// than restated as a second, hand-copied list of names. Placement is likewise
+// not an input contract: its check is judged after the solve through
+// domain/placement/publication, where a missing family is an operational
+// mismatch and an unreadable leak dimension is an explicit incomplete
+// classification.
 func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectExpectations) []string {
 	if expectation == nil {
 		return []string{"fixture expectation unavailable"}
@@ -155,11 +158,15 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 	if expectation.manifest.Stdlib != nil {
 		unsupported = append(unsupported, "manifest stdlib contract is not preserved by the current fixture input adapter")
 	}
-	for _, packageName := range expectation.manifest.Packages {
-		switch packageName {
-		case "process", "channel", "uuid", "expr", "json":
-			// These host modules are mounted by the canonical fixture Target.
-		default:
+	if len(expectation.manifest.Packages) != 0 {
+		declared, err := corpusSemanticDeclaredHostModulePaths()
+		if err != nil {
+			unsupported = append(unsupported, fmt.Sprintf("canonical fixture Target profile unavailable: %v", err))
+		}
+		for _, packageName := range expectation.manifest.Packages {
+			if _, ok := declared[packageName]; ok {
+				continue
+			}
 			unsupported = append(unsupported, fmt.Sprintf("manifest package host contract %q has no canonical require-able host module surface", packageName))
 		}
 	}
@@ -170,6 +177,59 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 		unsupported = append(unsupported, "check.render_options requires an unavailable current rendering contract")
 	}
 	return unsupported
+}
+
+// corpusSemanticDeclaredHostModulePaths is the canonical fixture Target's
+// require-able module-path surface: every InitialRoot the sealed contract
+// names by a module path. It is a live projection of that one declaration
+// table, not a second authority a provider addition could drift out of sync
+// with.
+func corpusSemanticDeclaredHostModulePaths() (map[string]struct{}, error) {
+	target, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[string]struct{}, target.InitialRootCount())
+	for index := 0; index < target.InitialRootCount(); index++ {
+		root, ok := target.InitialRootAt(index)
+		if !ok {
+			continue
+		}
+		path, pathOK := target.InitialRootModulePath(root)
+		if !pathOK || path == "" {
+			continue
+		}
+		paths[path] = struct{}{}
+	}
+	return paths, nil
+}
+
+// TestCorpusSemanticFixtureInputSupportsDeclaredHostModulePaths pins the
+// package fence to the Target's own declaration table rather than a
+// hand-copied name list: a manifest naming any module path the Target
+// declares must not be fenced, and one naming a path the Target does not
+// declare must be, by that name.
+func TestCorpusSemanticFixtureInputSupportsDeclaredHostModulePaths(t *testing.T) {
+	declared, err := corpusSemanticDeclaredHostModulePaths()
+	if err != nil {
+		t.Fatalf("declared host module paths: %v", err)
+	}
+	if _, ok := declared["string"]; !ok {
+		t.Fatal("canonical fixture Target does not declare the stdlib \"string\" module path; fixture assumption stale")
+	}
+	supported := &corpusDiagnosticProjectExpectations{manifest: &corpusDiagnosticManifest{
+		Packages: []string{"uuid", "channel", "string", "table"},
+	}}
+	if got := corpusSemanticFixtureInputUnsupported(supported); len(got) != 0 {
+		t.Fatalf("declared packages fenced as unsupported: %v", got)
+	}
+	undeclared := &corpusDiagnosticProjectExpectations{manifest: &corpusDiagnosticManifest{
+		Packages: []string{"time"},
+	}}
+	got := corpusSemanticFixtureInputUnsupported(undeclared)
+	if len(got) != 1 || !strings.Contains(got[0], `"time"`) {
+		t.Fatalf("undeclared package fence = %v, want exactly one row naming \"time\"", got)
+	}
 }
 
 type corpusSemanticNativeRow struct {

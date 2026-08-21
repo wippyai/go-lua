@@ -374,23 +374,15 @@ func (a *authority) build(spec Spec) error {
 	return nil
 }
 
-// admitModuleRequests is the module-request admission gate. Every executable
-// authored require names one module, and exactly two declarations answer such
-// a name: a module path the Target declares, or a module this Link mounts. A
-// request neither declaration holds names a surface no authority owns, so the
-// seal refuses it here. Leaving it to resolve as an unknown value would admit
-// an undeclared host contract as a typed member plane.
-//
-// Only the authored literal request is admitted, which is the only request an
-// Import row carries. A require whose module is computed is an ordinary call
-// with no Import row and is unaffected.
-func (a *authority) admitModuleRequests(moduleByName map[string]linkproject.Shard) error {
-	if a == nil || a.project == nil || a.boundary == nil {
+// forEachExecutableModuleRequest visits every authored Import row across all
+// Project mounts whose Call is executable, naming the mounting Shard and
+// module, the exact Import term, and the requested module name. Admission and
+// composition completeness both decide over this same authored Import
+// relation, so they scan it through this one function rather than each
+// re-deriving the executable-request projection.
+func (a *authority) forEachExecutableModuleRequest(visit func(shard linkproject.Shard, name string, term keyspace.Term, request string) error) error {
+	if a == nil || a.project == nil {
 		return errors.New("link/module: missing module request authority")
-	}
-	target, targetOK := a.boundary.Target()
-	if !targetOK || target == nil {
-		return errors.New("link/module: unavailable Target module declaration")
 	}
 	mounts := a.project.Mounts()
 	for index := 0; index < mounts.Count(); index++ {
@@ -419,16 +411,46 @@ func (a *authority) admitModuleRequests(moduleByName map[string]linkproject.Shar
 			if !requestOK || request == "" {
 				return errors.New("link/module: Import carries no authored module request")
 			}
-			if _, mounted := moduleByName[request]; mounted {
-				continue
+			if err := visit(shard, name, term, request); err != nil {
+				return err
 			}
-			if _, declared := target.InitialRootByModulePath(request); declared {
-				continue
-			}
-			return fmt.Errorf("link/module: module %q requires %q, which is neither a declared host module nor a mounted module", name, request)
 		}
 	}
 	return nil
+}
+
+// admitModuleRequests is the module-request admission gate. Every executable
+// authored require names one module, and exactly two declarations answer such
+// a name: a module path the Target declares, or a module this Link mounts. A
+// request neither declaration holds names a surface no authority owns, so the
+// seal refuses it here. Leaving it to resolve as an unknown value would admit
+// an undeclared host contract as a typed member plane.
+//
+// Only the authored literal request is admitted, which is the only request an
+// Import row carries. A require whose module is computed is an ordinary call
+// with no Import row and is unaffected.
+//
+// Admission decides reachability by name alone. Whether a mounted sibling's
+// exact Import is backed by a module-cache entry is a separate question this
+// gate does not ask: that completeness is decided later, over Artifact-mount
+// facts, by compositionComplete.
+func (a *authority) admitModuleRequests(moduleByName map[string]linkproject.Shard) error {
+	if a == nil || a.boundary == nil {
+		return errors.New("link/module: missing module request authority")
+	}
+	target, targetOK := a.boundary.Target()
+	if !targetOK || target == nil {
+		return errors.New("link/module: unavailable Target module declaration")
+	}
+	return a.forEachExecutableModuleRequest(func(shard linkproject.Shard, name string, term keyspace.Term, request string) error {
+		if _, mounted := moduleByName[request]; mounted {
+			return nil
+		}
+		if _, declared := target.InitialRootByModulePath(request); declared {
+			return nil
+		}
+		return fmt.Errorf("link/module: module %q requires %q, which is neither a declared host module nor a mounted module", name, request)
+	})
 }
 
 // buildCompositionEntries seals the narrow relation that the later Snapshot

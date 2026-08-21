@@ -53,7 +53,55 @@ func (c *Component) compositionEntries() ([]compositionEntry, bool) {
 			return nil, false
 		}
 	}
+	if !c.authority.compositionComplete(entries) {
+		return nil, false
+	}
 	return entries, true
+}
+
+// siblingImportKey names one authored Import occurrence by its owning Shard
+// and exact Import term, which is the coordinate a module-cache entry resolves.
+type siblingImportKey struct {
+	shard linkproject.Shard
+	term  keyspace.Term
+}
+
+// compositionComplete is the Snapshot-composition completeness law model.go's
+// build defers here: a mounted-by-name sibling is a reachable declaration, but
+// its exact Import is only a resolvable value if some authored module-cache
+// entry names that same (Shard, Import) coordinate. An Import naming a mounted
+// sibling with no such entry passes admission by name alone and would
+// otherwise link with no resolved row backing it, so this relation refuses it
+// before publication rather than letting it stand as an unbacked value.
+func (a *authority) compositionComplete(entries []compositionEntry) bool {
+	if a == nil || a.project == nil {
+		return false
+	}
+	mounts := a.project.Mounts()
+	moduleByName := make(map[string]linkproject.Shard, mounts.Count())
+	for index := 0; index < mounts.Count(); index++ {
+		shard, shardOK := mounts.At(index)
+		name, nameOK := mounts.Name(shard)
+		if !shardOK || !nameOK {
+			return false
+		}
+		moduleByName[name] = shard
+	}
+	present := make(map[siblingImportKey]struct{}, len(entries))
+	for _, entry := range entries {
+		present[siblingImportKey{shard: entry.sourceShard, term: entry.importTerm}] = struct{}{}
+	}
+	complete := true
+	err := a.forEachExecutableModuleRequest(func(shard linkproject.Shard, name string, term keyspace.Term, request string) error {
+		if _, mounted := moduleByName[request]; !mounted {
+			return nil
+		}
+		if _, backed := present[siblingImportKey{shard: shard, term: term}]; !backed {
+			complete = false
+		}
+		return nil
+	})
+	return err == nil && complete
 }
 
 func (a *authority) validCompositionEntry(entry compositionEntry) bool {
