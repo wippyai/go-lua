@@ -11,7 +11,7 @@ func (compiler *compiler) copyAllocationRowsFailure() CompileFailure {
 	}
 	bundle, fault := allocation.Build(allocation.Input{
 		Program: compiler.input,
-		Values:  compiler.values,
+		Values:  compiler.publication.Values,
 	})
 	if fault.Failed() || bundle == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, fault.Row(), fault.Field(), CompileReasonOccurrenceAllocation)

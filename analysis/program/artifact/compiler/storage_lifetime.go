@@ -62,7 +62,7 @@ func (compiler *compiler) copyStorageCellLifetimesFailure() CompileFailure {
 	if bodyForest != nil {
 		entry, entryOK = bodyForest.Entry()
 	}
-	compiler.storageCellLifetimes = make([]lifecycle.StorageCellLifetime, 0, cells.Count())
+	compiler.publication.Lifecycle.StorageCellLifetimes = make([]lifecycle.StorageCellLifetime, 0, cells.Count())
 	for index := 0; index < cells.Count(); index++ {
 		term, termOK := cells.At(index)
 		if !termOK {

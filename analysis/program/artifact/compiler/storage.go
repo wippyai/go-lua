@@ -51,17 +51,17 @@ func (compiler *compiler) storageValueAt(values keyspace.Term, position int) (id
 	valuesID := valueRow.ID()
 	var tailValue identity.ContentID
 	tailMatches := 0
-	for _, result := range compiler.callResults {
+	for _, result := range compiler.publication.CallResults {
 		if result.ValuesID() != valuesID || result.Form() != programschema.CallResultValues {
 			continue
 		}
 		offset, count, spanOK := result.SlotSpan()
-		if !spanOK || uint64(offset) > uint64(len(compiler.callResultSlots)) ||
-			uint64(count) > uint64(len(compiler.callResultSlots))-uint64(offset) {
+		if !spanOK || uint64(offset) > uint64(len(compiler.publication.CallResultSlots)) ||
+			uint64(count) > uint64(len(compiler.publication.CallResultSlots))-uint64(offset) {
 			return identity.ContentID{}, false
 		}
 		for index := uint64(offset); index < uint64(offset)+uint64(count); index++ {
-			slot := compiler.callResultSlots[index]
+			slot := compiler.publication.CallResultSlots[index]
 			if slot.SourceKind() != programschema.CallResultSlotSourceValuesTail ||
 				slot.ConsumerKind() != programschema.CallResultSlotConsumerCell {
 				continue

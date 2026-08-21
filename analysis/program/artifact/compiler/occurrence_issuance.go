@@ -55,12 +55,12 @@ func (compiler *compiler) requirementAdmits(requirement issuance.Requirement, ro
 		return call.Form() == programschema.CallFormPlain && call.ArgumentCount() == 1 && !hasReceiver && !hasTail, true
 	case issuance.RequirementCallResultSlot:
 		if row.Kind() == programschema.OccurrenceStorageBindTransfer {
-			valueID, valueOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 1)
-			cellID, cellOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 2)
+			valueID, valueOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 1)
+			cellID, cellOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 2)
 			if !valueOK || !cellOK {
 				return false, false
 			}
-			for _, slot := range compiler.callResultSlots {
+			for _, slot := range compiler.publication.CallResultSlots {
 				slotValue, hasValue := slot.ValueID()
 				if slot.Available() && hasValue && slotValue == valueID &&
 					slot.SourceKind() == programschema.CallResultSlotSourceValuesTail &&
@@ -117,7 +117,7 @@ func (compiler *compiler) closureCaptureAdmits(row programschema.Occurrence) (bo
 
 	var target calltarget.Target
 	foundTarget := false
-	for _, candidate := range compiler.callTargets {
+	for _, candidate := range compiler.publication.CallTargets {
 		if !candidate.Available() || candidate.AllocationID() != row.ID() {
 			continue
 		}
@@ -159,7 +159,7 @@ func (compiler *compiler) callForID(id identity.ContentID) (programschema.Call, 
 		return programschema.Call{}, false
 	}
 	var found programschema.Call
-	for _, row := range compiler.calls {
+	for _, row := range compiler.publication.Calls {
 		if !row.Available() || row.ID() != id {
 			continue
 		}
@@ -176,7 +176,7 @@ func (compiler *compiler) callResultSlotFor(call identity.ContentID, ordinal uin
 		return programschema.CallResultSlot{}, false
 	}
 	var found programschema.CallResultSlot
-	for _, row := range compiler.callResultSlots {
+	for _, row := range compiler.publication.CallResultSlots {
 		rowOrdinal, ordinalOK := row.Ordinal()
 		if !row.Available() || !ordinalOK || row.CallID() != call || rowOrdinal != ordinal {
 			continue
@@ -266,8 +266,8 @@ func (compiler *compiler) appendLocalIssuance(ordinal uint32, geometry occurrenc
 }
 
 func (compiler *compiler) appendComputationIssuance(row programschema.Occurrence, ordinal uint32, finish []identity.ContentID, issued issuance.Placement) bool {
-	left, leftOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
-	right, rightOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 1)
+	left, leftOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
+	right, rightOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 1)
 	if len(finish) == 0 || !leftOK || !rightOK {
 		return false
 	}

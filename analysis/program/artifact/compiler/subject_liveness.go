@@ -26,7 +26,7 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 	if projection == nil || !projection.Available() {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	compiler.subjectLifetimes = make([]lifecycle.SubjectLiveness, 0, projection.LivenessCount())
+	compiler.publication.Lifecycle.SubjectLifetimes = make([]lifecycle.SubjectLiveness, 0, projection.LivenessCount())
 	for index := 0; index < projection.LivenessCount(); index++ {
 		flowRow, rowOK := projection.LivenessAt(index)
 		if !rowOK || !flowRow.ID.Available() || !flowRow.YieldRoute.Available() || !flowRow.Subject.ID.Available() {
@@ -50,7 +50,7 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 			if !idOK || !emitted {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
 			}
-			compiler.subjectLifetimes = append(compiler.subjectLifetimes, row)
+			compiler.publication.Lifecycle.SubjectLifetimes = append(compiler.publication.Lifecycle.SubjectLifetimes, row)
 		}
 	}
 	return CompileFailure{}
@@ -79,7 +79,7 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 		}
 		var aggregateIndex int
 		var aggregateFound bool
-		for index, aggregate := range compiler.values {
+		for index, aggregate := range compiler.publication.Values {
 			if aggregate.ID() != aggregateID {
 				continue
 			}
@@ -91,7 +91,7 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 		if !aggregateFound {
 			return nil, false
 		}
-		aggregate := compiler.values[aggregateIndex]
+		aggregate := compiler.publication.Values[aggregateIndex]
 		if _, open := aggregate.Tail(); !open {
 			return []subjectLivenessCoordinate{{kind: lifecycle.SubjectLivenessValues, id: aggregate.ID()}}, true
 		}
@@ -99,13 +99,13 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 		// aggregate/member coordinates, but do not turn its Call/Vararg producer
 		// into a fabricated Value. Pack owns that future runtime-width proof.
 		offset, count, spanOK := aggregate.MemberSpan()
-		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.valuesMembers)) {
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.publication.ValuesMembers)) {
 			return nil, false
 		}
 		coordinates := make([]subjectLivenessCoordinate, 0, count+1)
 		coordinates = append(coordinates, subjectLivenessCoordinate{kind: lifecycle.SubjectLivenessValue, id: aggregate.ID()})
 		for index := uint32(0); index < count; index++ {
-			member := compiler.valuesMembers[offset+index]
+			member := compiler.publication.ValuesMembers[offset+index]
 			if !member.Available() {
 				return nil, false
 			}
@@ -133,7 +133,7 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 	}
 	var resultIndex int
 	var resultFound bool
-	for index, result := range compiler.callResults {
+	for index, result := range compiler.publication.CallResults {
 		if result.CallID() != identities.Call {
 			continue
 		}
@@ -146,7 +146,7 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 		// A statement Call or a consumer admitting zero results has no Value.
 		return nil, true
 	}
-	result := compiler.callResults[resultIndex]
+	result := compiler.publication.CallResults[resultIndex]
 	open, openOK := result.ResultsOpen()
 	offset, count, spanOK := result.SlotSpan()
 	if !openOK || !spanOK || open {
@@ -154,13 +154,13 @@ func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentI
 		// scalar coordinate may be fabricated for them here.
 		return nil, openOK && spanOK && open
 	}
-	if uint64(offset)+uint64(count) > uint64(len(compiler.callResultSlots)) {
+	if uint64(offset)+uint64(count) > uint64(len(compiler.publication.CallResultSlots)) {
 		return nil, false
 	}
 	coordinates := make([]subjectLivenessCoordinate, 0, count)
 	seen := make(map[identity.ContentID]struct{}, count)
 	for index := uint32(0); index < count; index++ {
-		slot := compiler.callResultSlots[offset+index]
+		slot := compiler.publication.CallResultSlots[offset+index]
 		if !slot.Available() || slot.CallID() != identities.Call {
 			return nil, false
 		}

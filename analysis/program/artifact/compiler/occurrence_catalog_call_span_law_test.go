@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 )
 
 func occurrenceCatalogPlainCall(t testing.TB, seed byte, callID, span, member identity.ContentID, argumentOffset uint32) (programschema.Call, programschema.CallArgument) {
@@ -29,13 +30,13 @@ func TestOccurrenceCatalogCallSpanValidationPinsLaterConflict(t *testing.T) {
 	span, callID, member := valuesLawID(101), valuesLawID(102), valuesLawID(103)
 	first, firstArgument := occurrenceCatalogPlainCall(t, 110, callID, span, member, 0)
 	repeated, repeatedArgument := occurrenceCatalogPlainCall(t, 120, callID, span, member, 1)
-	accepted := compiler{calls: []programschema.Call{first, repeated}, callArguments: []programschema.CallArgument{firstArgument, repeatedArgument}}
+	accepted := compiler{publication: programpublication.Publication{Calls: []programschema.Call{first, repeated}, CallArguments: []programschema.CallArgument{firstArgument, repeatedArgument}}}
 	if failure := accepted.validateOccurrenceCausalInputsFailure(); failure.Available() {
 		t.Fatalf("equal call-span pair failed: %+v", failure)
 	}
 
 	conflicting, conflictingArgument := occurrenceCatalogPlainCall(t, 130, valuesLawID(104), span, member, 2)
-	rejected := compiler{calls: []programschema.Call{first, repeated, conflicting}, callArguments: []programschema.CallArgument{firstArgument, repeatedArgument, conflictingArgument}}
+	rejected := compiler{publication: programpublication.Publication{Calls: []programschema.Call{first, repeated, conflicting}, CallArguments: []programschema.CallArgument{firstArgument, repeatedArgument, conflictingArgument}}}
 	failure := rejected.validateOccurrenceCausalInputsFailure()
 	row, rowKnown := failure.Row()
 	if !failure.Available() || failure.Reason() != CompileReasonOccurrenceCall || !rowKnown || row != 2 {

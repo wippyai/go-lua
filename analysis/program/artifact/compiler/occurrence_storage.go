@@ -124,7 +124,7 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 	geometry := compiler.input.Flow().AccessGeometry()
 	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
-	compiler.heapIndexes = make([]heapindex.Index, 0, reads.Count()+writes.Count())
+	compiler.publication.HeapIndexes = make([]heapindex.Index, 0, reads.Count()+writes.Count())
 	for index := 0; index < reads.Count(); index++ {
 		occurrence, occurrenceOK := compiler.indexReadAt(index)
 		lensKind, exactKey := uint8(0), uint64(0)
@@ -138,7 +138,7 @@ func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 		if !occurrenceOK || !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		compiler.heapIndexes = append(compiler.heapIndexes, row)
+		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, row)
 	}
 	for index := 0; index < writes.Count(); index++ {
 		occurrence, occurrenceOK := compiler.indexWriteAt(index)
@@ -155,7 +155,7 @@ func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 		if !occurrenceOK || !valueRowOK || !valueSpanOK || !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		compiler.heapIndexes = append(compiler.heapIndexes, row)
+		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, row)
 	}
 	return CompileFailure{}
 }

@@ -46,7 +46,7 @@ return second
 		t.Fatalf("assignment transfer count = %d, want 2", len(assignment.transfers))
 	}
 	var tails []programschema.CallResultSlot
-	for _, slot := range transaction.callResultSlots {
+	for _, slot := range transaction.publication.CallResultSlots {
 		if slot.SourceKind() == programschema.CallResultSlotSourceValuesTail && slot.ConsumerKind() == programschema.CallResultSlotConsumerCell {
 			tails = append(tails, slot)
 		}
@@ -117,7 +117,7 @@ return second
 		t.Fatal("assignment Values parent was not authored")
 	}
 	var resultIndex = -1
-	for index, result := range transaction.callResults {
+	for index, result := range transaction.publication.CallResults {
 		if result.Form() == programschema.CallResultValues {
 			resultIndex = index
 			break
@@ -126,15 +126,15 @@ return second
 	if resultIndex < 0 {
 		t.Fatal("bounded tail CallResult was not compiled")
 	}
-	result := transaction.callResults[resultIndex]
+	result := transaction.publication.CallResults[resultIndex]
 	offset, count, spanOK := result.SlotSpan()
-	if !spanOK || count < 2 || uint64(offset)+uint64(count) > uint64(len(transaction.callResultSlots)) {
+	if !spanOK || count < 2 || uint64(offset)+uint64(count) > uint64(len(transaction.publication.CallResultSlots)) {
 		t.Fatalf("bounded tail slot span = (%d,%d,%v), want at least two canonical slots", offset, count, spanOK)
 	}
 	// Reusing a canonical slot at another ordinal preserves the parent span
 	// but creates two matches for Values position zero. Resolution must reject
 	// that ambiguity rather than selecting an arbitrary producer value.
-	transaction.callResultSlots[offset+1] = transaction.callResultSlots[offset]
+	transaction.publication.CallResultSlots[offset+1] = transaction.publication.CallResultSlots[offset]
 	valueID, valueAvailable := transaction.storageValueAt(values, 0)
 	if valueAvailable || valueID.Available() {
 		t.Fatalf("duplicate canonical tail slot resolved to %x", valueID[:4])
@@ -151,9 +151,9 @@ return require("module")
 		if !termOK {
 			continue
 		}
-		for _, result := range transaction.callResults {
+		for _, result := range transaction.publication.CallResults {
 			open, openOK := result.ResultsOpen()
-			if !openOK || !open || result.ValuesID() != transaction.values[index].ID() {
+			if !openOK || !open || result.ValuesID() != transaction.publication.Values[index].ID() {
 				continue
 			}
 			_, count, spanOK := result.SlotSpan()

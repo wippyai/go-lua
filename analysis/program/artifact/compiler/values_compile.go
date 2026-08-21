@@ -96,7 +96,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 		}
 		values[index] = row
 	}
-	compiler.values, compiler.valuesMembers = values, members
+	compiler.publication.Values, compiler.publication.ValuesMembers = values, members
 	return CompileFailure{}
 }
 

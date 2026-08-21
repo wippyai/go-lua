@@ -5,9 +5,6 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/localtransfer"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
-	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
-	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
-	staticnode "github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 )
 
 func (compiler *compiler) finalizeFailure() CompileFailure {
@@ -43,14 +40,54 @@ func (compiler *compiler) sealArtifact() (*programartifact.Artifact, CompileFail
 		}
 		points[index] = point
 	}
-	// points is the complete canonical materialization of the compile-only
-	// point directory. The map is not consulted by publication construction.
 	compiler.pointGeometry = nil
-	publication, publicationOK := canonicalPublication(compiler, points)
-	if !publicationOK {
+	if compiler.bodyBoundary == nil || compiler.allocations == nil || compiler.localTransfer == nil || compiler.exactScalar == nil {
 		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	result, published := programartifact.Publish(compiler.key, publication, compiler.counts)
+	allocations, allocationFields, allocationsOK := compiler.allocations.TakeCanonicalPlanes()
+	pointRows, pointDecisions, pointsOK := coldPointPlanes(points)
+	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
+	transfers, transferWrites, transfersOK := compiler.localTransfer.TakeCanonicalPlanes()
+	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
+	if !allocationsOK || !pointsOK || !edgesOK || !transfersOK || !regionsOK {
+		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	for index, row := range compiler.publication.Occurrences {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.publication.OccurrencePoints, compiler.publication.OccurrenceInputs) ||
+			uint64(index) > uint64(^uint32(0)) {
+			return nil, compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+	}
+	for index, row := range compiler.publication.RuleOccurrences {
+		if !row.Available() {
+			return nil, compileFailure(CompileStageSeal, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+	}
+	bodyPlanes, bodyPlanesOK := compiler.bodyBoundary.TakeCanonicalPlanes()
+	if !bodyPlanesOK {
+		return nil, compileFailure(CompileStageSeal, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
+	}
+	// ProgramPublication is the sole canonical row inventory. Only the
+	// compile-only child bundles and nested draft planes are transferred here;
+	// every other family was emitted directly into this schema-owned value.
+	compiler.publication.EntryBodyID = bodyPlanes.EntryBodyID
+	compiler.publication.HeapAllocations, compiler.publication.HeapFields = allocations, allocationFields
+	compiler.publication.Points, compiler.publication.PointDecisions = pointRows, pointDecisions
+	compiler.publication.EnvironmentEdges, compiler.publication.EnvironmentResets = edges, resets
+	compiler.publication.LocalTransfers, compiler.publication.LocalTransferWrites = transfers, transferWrites
+	compiler.publication.ExactScalarSummaries = compiler.exactScalar.Rows()
+	compiler.publication.Regions, compiler.publication.RegionMembers, compiler.publication.WTOEvents = regions, regionMembers, events
+	compiler.publication.Bodies = bodyPlanes.Bodies
+	compiler.publication.BodyEntries = bodyPlanes.BodyEntries
+	compiler.publication.BodyRoots = bodyPlanes.BodyRoots
+	compiler.publication.Outcomes = bodyPlanes.Outcomes
+	compiler.publication.OutcomeReturnValues = bodyPlanes.OutcomeReturnValues
+	compiler.publication.OutcomePoints = bodyPlanes.OutcomePoints
+	compiler.publication.FunctionBoundaries = bodyPlanes.FunctionBoundaries
+	compiler.publication.FunctionFormals = bodyPlanes.FunctionFormals
+	compiler.publication.FunctionVarargs = bodyPlanes.FunctionVarargs
+	compiler.publication.FunctionCaptures = bodyPlanes.FunctionCaptures
+	result, published := programartifact.Publish(compiler.key, compiler.publication, compiler.counts)
 	if !published {
 		return nil, compileFailure(CompileStageSeal, CompileRowAuthority, -1, -1, CompileReasonArtifactIdentity)
 	}
@@ -197,124 +234,4 @@ func coldRegionPlanes(rows []regionDraft, events []wtoEventDraft) ([]programsche
 		brackets = append(brackets, converted)
 	}
 	return regions, members, brackets, true
-}
-
-// freezeColdPublication seals the families that have moved onto the shared
-// publication substrate. The compiler's own slices are transient build state
-// and are not carried into the artifact beside it: the sealed publication is
-// the single authority for every family it holds.
-func canonicalPublication(compiler *compiler, pointRows []pointDraft) (programpublication.Publication, bool) {
-	if compiler == nil {
-		return programpublication.Publication{}, false
-	}
-	if compiler.bodyBoundary == nil {
-		return programpublication.Publication{}, false
-	}
-	if compiler.allocations == nil {
-		return programpublication.Publication{}, false
-	}
-	allocations, allocationFields, allocationsOK := compiler.allocations.TakeCanonicalPlanes()
-	values, valuesMembers := compiler.values, compiler.valuesMembers
-	indexes := compiler.heapIndexes
-	points, pointDecisions, pointsOK := coldPointPlanes(pointRows)
-	edges, resets, edgesOK := coldEnvironmentPlanes(compiler.environment)
-	if compiler.localTransfer == nil {
-		return programpublication.Publication{}, false
-	}
-	transfers, transferWrites, transfersOK := compiler.localTransfer.TakeCanonicalPlanes()
-	typeValues := compiler.staticTypeValues
-	regions, regionMembers, events, regionsOK := coldRegionPlanes(compiler.regions, compiler.events)
-	if !allocationsOK || !pointsOK || !edgesOK || !transfersOK || !regionsOK {
-		return programpublication.Publication{}, false
-	}
-	for index, row := range compiler.occurrences {
-		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
-			return programpublication.Publication{}, false
-		}
-		if uint64(index) > uint64(^uint32(0)) {
-			return programpublication.Publication{}, false
-		}
-	}
-	for _, row := range compiler.ruleOccurrences {
-		if !row.Available() {
-			return programpublication.Publication{}, false
-		}
-	}
-	bodyPlanes, bodyPlanesOK := compiler.bodyBoundary.TakeCanonicalPlanes()
-	if !bodyPlanesOK {
-		return programpublication.Publication{}, false
-	}
-	publication := programpublication.Publication{
-		EntryBodyID:     bodyPlanes.EntryBodyID,
-		CallTargets:     compiler.callTargets,
-		HeapAllocations: allocations, HeapFields: allocationFields,
-		Values: values, ValuesMembers: valuesMembers,
-		HeapIndexes:          indexes,
-		ExactScalarSummaries: compiler.exactScalar.Rows(),
-		ArithmeticSummaries:  compiler.arithmeticSummaries,
-		UnarySummaries:       compiler.unarySummaries,
-		Points:               points,
-		PointDecisions:       pointDecisions,
-		EnvironmentEdges:     edges,
-		EnvironmentResets:    resets,
-		LocalTransfers:       transfers,
-		LocalTransferWrites:  transferWrites,
-		Diagnostic:           compiler.diagnostic,
-		Occurrences:          compiler.occurrences,
-		OccurrencePoints:     compiler.occurrencePoints,
-		OccurrenceInputs:     compiler.occurrenceInputs,
-		RuleOccurrences:      compiler.ruleOccurrences,
-		StaticTypeValues:     typeValues,
-		StaticExpressions:    compiler.staticExpressions,
-		StaticInputs:         compiler.staticInputs,
-		Static: staticnode.Publication{
-			StaticTypeNodes:                          compiler.staticTypeNodes,
-			StaticTypeNodeUnionMembers:               compiler.staticTypeNodeUnionMembers,
-			StaticTypeNodeIntersectionMembers:        compiler.staticTypeNodeIntersectionMembers,
-			StaticTypeNodeGenericArguments:           compiler.staticTypeNodeGenericArguments,
-			StaticTypeNodeAliasParameters:            compiler.staticTypeNodeAliasParameters,
-			StaticTypeNodeInterfaceExtends:           compiler.staticTypeNodeInterfaceExtends,
-			StaticTypeNodeInterfaceMembers:           compiler.staticTypeNodeInterfaceMembers,
-			StaticTypeNodeTypeFunctionTypeParameters: compiler.staticTypeNodeTypeFunctionTypeParameters,
-			StaticTypeNodeTypeFunctionParameters:     compiler.staticTypeNodeTypeFunctionParameters,
-			StaticTypeNodeTypeFunctionReturns:        compiler.staticTypeNodeTypeFunctionReturns,
-			StaticTypeNodeRecordFields:               compiler.staticTypeNodeRecordFields,
-			StaticTypeNodeReferenceSourceKeys:        compiler.staticTypeNodeReferenceSourceKeys,
-			StaticTypeNodeReferenceCanonicalKeys:     compiler.staticTypeNodeReferenceCanonicalKeys,
-		},
-		Lifecycle: lifecycle.Publication{
-			StorageCellLifetimes: compiler.storageCellLifetimes,
-			SubjectLifetimes:     compiler.subjectLifetimes,
-			SubjectEvents:        compiler.subjectEvents,
-			AliasRouteScopes:     compiler.aliasRouteScopes,
-			AliasRouteMembers:    compiler.aliasRouteScopeMembers,
-			AliasCandidates:      compiler.aliasCandidates,
-		},
-		Regions:                  regions,
-		RegionMembers:            regionMembers,
-		WTOEvents:                events,
-		Calls:                    compiler.calls,
-		CallResults:              compiler.callResults,
-		CallResultSlots:          compiler.callResultSlots,
-		CallOperands:             compiler.callOperands,
-		CallArguments:            compiler.callArguments,
-		CallTypeArguments:        compiler.callTypeArguments,
-		ModuleImports:            compiler.moduleImports,
-		ModuleRequests:           compiler.moduleRequests,
-		ModuleEntries:            compiler.moduleEntries,
-		ModuleEntryRootCells:     compiler.moduleEntryRootCells,
-		ModuleEntryMembers:       compiler.moduleEntryMembers,
-		ModuleEntryRootFunctions: compiler.moduleEntryRootFunctions,
-		Bodies:                   bodyPlanes.Bodies,
-		BodyEntries:              bodyPlanes.BodyEntries,
-		BodyRoots:                bodyPlanes.BodyRoots,
-		Outcomes:                 bodyPlanes.Outcomes,
-		OutcomeReturnValues:      bodyPlanes.OutcomeReturnValues,
-		OutcomePoints:            bodyPlanes.OutcomePoints,
-		FunctionBoundaries:       bodyPlanes.FunctionBoundaries,
-		FunctionFormals:          bodyPlanes.FunctionFormals,
-		FunctionVarargs:          bodyPlanes.FunctionVarargs,
-		FunctionCaptures:         bodyPlanes.FunctionCaptures,
-	}
-	return publication, true
 }

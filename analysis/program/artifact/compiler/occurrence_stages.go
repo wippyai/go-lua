@@ -244,8 +244,8 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowEnvironment, edgeOrdinal, -1, CompileReasonEnvironmentUnavailable)
 		}
 	}
-	for index := range compiler.ruleOccurrences {
-		placement := compiler.ruleOccurrences[index]
+	for index := range compiler.publication.RuleOccurrences {
+		placement := compiler.publication.RuleOccurrences[index]
 		inputKind := placement.InputKind()
 		point := placement.PointID()
 		if inputKind == programschema.RuleInputNone {
@@ -314,7 +314,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		if local.Available() && point == local {
 			continue
 		}
-		if !compiler.replaceRuleOccurrenceInput(index, exit) || !compiler.ruleOccurrences[index].Available() {
+		if !compiler.replaceRuleOccurrenceInput(index, exit) || !compiler.publication.RuleOccurrences[index].Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 	}

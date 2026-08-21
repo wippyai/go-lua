@@ -11,6 +11,7 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
+	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
 )
 
 func closureRequirementID(value byte) identity.ContentID {
@@ -32,12 +33,12 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 	if failure := state.copyValuesFailure(); failure.Available() {
 		t.Fatalf("value fixture failed: %v", failure)
 	}
-	bundle, fault := allocation.Build(allocation.Input{Program: input, Values: state.values})
+	bundle, fault := allocation.Build(allocation.Input{Program: input, Values: state.publication.Values})
 	if fault.Failed() || bundle == nil {
 		t.Fatalf("allocation fixture fault=%#v bundle=%v", fault, bundle)
 	}
 	boundaryBundle, boundaryFault := bodyboundary.Build(bodyboundary.Input{
-		Program: input, ProgramID: input.ContentID(), Values: state.values, PointIDsBySite: state.pointIDsBySite,
+		Program: input, ProgramID: input.ContentID(), Values: state.publication.Values, PointIDsBySite: state.pointIDsBySite,
 	})
 	if boundaryFault.Failed() || boundaryBundle == nil {
 		t.Fatalf("boundary fixture fault=%#v bundle=%v", boundaryFault, boundaryBundle)
@@ -88,7 +89,7 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 			if !targetOK {
 				t.Fatalf("fixture call target")
 			}
-			return &compiler{allocations: bundle, callTargets: []calltarget.Target{target}, bodyBoundary: boundaryBundle}, template
+			return &compiler{allocations: bundle, publication: programpublication.Publication{CallTargets: []calltarget.Target{target}}, bodyBoundary: boundaryBundle}, template
 		}
 	}
 	t.Fatalf("fixture omitted allocation role %v", want)

@@ -17,7 +17,7 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 	if projection == nil || !projection.Available() {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	compiler.subjectEvents = make([]lifecycle.SubjectEvent, 0, projection.EventCount())
+	compiler.publication.Lifecycle.SubjectEvents = make([]lifecycle.SubjectEvent, 0, projection.EventCount())
 	for index := 0; index < projection.EventCount(); index++ {
 		flowRow, rowOK := projection.EventAt(index)
 		if rowOK && flowRow.Kind != subjectflow.EventAlias && flowRow.Kind != subjectflow.EventUnknown {
@@ -50,11 +50,11 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 		if !idOK || !emitted {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		compiler.subjectEvents = append(compiler.subjectEvents, row)
+		compiler.publication.Lifecycle.SubjectEvents = append(compiler.publication.Lifecycle.SubjectEvents, row)
 	}
 
-	compiler.aliasRouteScopes = make([]lifecycle.SubjectAliasRouteScope, 0, projection.AliasRouteScopeCount())
-	compiler.aliasRouteScopeMembers = nil
+	compiler.publication.Lifecycle.AliasRouteScopes = make([]lifecycle.SubjectAliasRouteScope, 0, projection.AliasRouteScopeCount())
+	compiler.publication.Lifecycle.AliasRouteMembers = nil
 	scopeBySource := make(map[identity.ContentID]identity.ContentID, projection.AliasRouteScopeCount())
 	var multiplicity map[identity.ContentID]int
 	var multiplicityOK bool
@@ -84,10 +84,10 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		id, idOK := lifecycle.SubjectAliasRouteScopeIdentity(flowScope.ID, kind, flowScope.Body, routes)
-		if uint64(len(compiler.aliasRouteScopeMembers)) > uint64(^uint32(0)) {
+		if uint64(len(compiler.publication.Lifecycle.AliasRouteMembers)) > uint64(^uint32(0)) {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		offset := uint32(len(compiler.aliasRouteScopeMembers))
+		offset := uint32(len(compiler.publication.Lifecycle.AliasRouteMembers))
 		row, emitted := lifecycle.NewSubjectAliasRouteScope(id, flowScope.ID, kind, flowScope.Body, offset, routes)
 		if !idOK || !emitted {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
@@ -95,7 +95,7 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 		if _, duplicate := scopeBySource[flowScope.ID]; duplicate {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		compiler.aliasRouteScopes = append(compiler.aliasRouteScopes, row)
+		compiler.publication.Lifecycle.AliasRouteScopes = append(compiler.publication.Lifecycle.AliasRouteScopes, row)
 		scopeBySource[flowScope.ID] = id
 		for routeIndex, route := range routes {
 			memberID, memberIDOK := lifecycle.SubjectAliasRouteScopeMemberIdentity(id, uint32(routeIndex), route)
@@ -103,11 +103,11 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 			if !memberIDOK || !memberOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, routeIndex, CompileReasonBodyUnavailable)
 			}
-			compiler.aliasRouteScopeMembers = append(compiler.aliasRouteScopeMembers, member)
+			compiler.publication.Lifecycle.AliasRouteMembers = append(compiler.publication.Lifecycle.AliasRouteMembers, member)
 		}
 	}
 
-	compiler.aliasCandidates = make([]lifecycle.SubjectAliasCandidate, 0, projection.AliasCandidateCount())
+	compiler.publication.Lifecycle.AliasCandidates = make([]lifecycle.SubjectAliasCandidate, 0, projection.AliasCandidateCount())
 	for index := 0; index < projection.AliasCandidateCount(); index++ {
 		flowRow, rowOK := projection.AliasCandidateAt(index)
 		if !rowOK || !flowRow.Available() || !compiler.authenticatedSubject(flowRow.Candidate) {
@@ -123,7 +123,7 @@ func (compiler *compiler) copySubjectAliasFailure() CompileFailure {
 		if !idOK || !emitted {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		compiler.aliasCandidates = append(compiler.aliasCandidates, row)
+		compiler.publication.Lifecycle.AliasCandidates = append(compiler.publication.Lifecycle.AliasCandidates, row)
 	}
 	return CompileFailure{}
 }

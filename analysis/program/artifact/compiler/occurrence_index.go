@@ -68,7 +68,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 			if _, duplicate := seenAttachments[key]; duplicate {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
-			if uint64(len(compiler.occurrences)) > uint64(^uint32(0)) {
+			if uint64(len(compiler.publication.Occurrences)) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
 			seenAttachments[key] = struct{}{}
@@ -94,7 +94,7 @@ func (compiler *compiler) appendOccurrence(kind programschema.OccurrenceKind, id
 }
 
 func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
-	if compiler == nil || !fitsUint32(len(compiler.occurrences)) || !fitsUint32(len(compiler.occurrencePoints)) || !fitsUint32(len(compiler.occurrenceInputs)) {
+	if compiler == nil || !fitsUint32(len(compiler.publication.Occurrences)) || !fitsUint32(len(compiler.publication.OccurrencePoints)) || !fitsUint32(len(compiler.publication.OccurrenceInputs)) {
 		return false
 	}
 	// A Rule occurrence is attached to a semantic phase, not once per route
@@ -105,8 +105,8 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 	// membership relation is a set.
 	points = canonicalPoints(points)
 	if !fitsUint32(len(points)) || !fitsUint32(len(inputs)) ||
-		uint64(len(compiler.occurrencePoints))+uint64(len(points)) > uint64(^uint32(0)) ||
-		uint64(len(compiler.occurrenceInputs))+uint64(len(inputs)) > uint64(^uint32(0)) {
+		uint64(len(compiler.publication.OccurrencePoints))+uint64(len(points)) > uint64(^uint32(0)) ||
+		uint64(len(compiler.publication.OccurrenceInputs))+uint64(len(inputs)) > uint64(^uint32(0)) {
 		return false
 	}
 	for _, pointID := range points {
@@ -119,7 +119,7 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 			return false
 		}
 	}
-	pointOffset, inputOffset := uint32(len(compiler.occurrencePoints)), uint32(len(compiler.occurrenceInputs))
+	pointOffset, inputOffset := uint32(len(compiler.publication.OccurrencePoints)), uint32(len(compiler.publication.OccurrenceInputs))
 	row, rowOK := programschema.NewOccurrence(kind, id, body, code, pointOffset, uint32(len(points)), inputOffset, uint32(len(inputs)), literalFamily, literal, literalOK)
 	if !rowOK || !programschema.OccurrenceSemanticAvailable(row) {
 		return false
@@ -129,36 +129,36 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 		if !pointOK {
 			return false
 		}
-		compiler.occurrencePoints = append(compiler.occurrencePoints, point)
+		compiler.publication.OccurrencePoints = append(compiler.publication.OccurrencePoints, point)
 	}
 	for _, inputID := range inputs {
 		input, inputOK := programschema.NewOccurrenceInput(inputID)
 		if !inputOK {
 			return false
 		}
-		compiler.occurrenceInputs = append(compiler.occurrenceInputs, input)
+		compiler.publication.OccurrenceInputs = append(compiler.publication.OccurrenceInputs, input)
 	}
-	compiler.occurrences = append(compiler.occurrences, row)
+	compiler.publication.Occurrences = append(compiler.publication.Occurrences, row)
 	return true
 }
 
 func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {
-	if compiler == nil || !fitsUint32(len(compiler.ruleOccurrences)) {
+	if compiler == nil || !fitsUint32(len(compiler.publication.RuleOccurrences)) {
 		return false
 	}
 	row, rowOK := programschema.NewRuleOccurrence(key, writes, occurrence, point, input, stage, inputKind, route)
 	if !rowOK {
 		return false
 	}
-	compiler.ruleOccurrences = append(compiler.ruleOccurrences, row)
+	compiler.publication.RuleOccurrences = append(compiler.publication.RuleOccurrences, row)
 	return true
 }
 
 func (compiler *compiler) replaceRuleOccurrenceInput(index int, input identity.ContentID) bool {
-	if compiler == nil || index < 0 || index >= len(compiler.ruleOccurrences) || !input.Available() {
+	if compiler == nil || index < 0 || index >= len(compiler.publication.RuleOccurrences) || !input.Available() {
 		return false
 	}
-	row := compiler.ruleOccurrences[index]
+	row := compiler.publication.RuleOccurrences[index]
 	occurrence, occurrenceOK := row.Occurrence()
 	if !occurrenceOK {
 		return false
@@ -170,7 +170,7 @@ func (compiler *compiler) replaceRuleOccurrenceInput(index int, input identity.C
 	if !replacedOK {
 		return false
 	}
-	compiler.ruleOccurrences[index] = replaced
+	compiler.publication.RuleOccurrences[index] = replaced
 	return true
 }
 

@@ -51,10 +51,10 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 	view := ownerProgram.Static()
 	programID := compiler.key.ProgramID()
 	rows := make([]staticnode.StaticTypeNode, 0, view.StaticTypes().Count())
-	compiler.staticExpressions = make([]programschema.StaticExpression, 0, view.StaticTypes().Count())
+	compiler.publication.StaticExpressions = make([]programschema.StaticExpression, 0, view.StaticTypes().Count())
 	typeOfs := view.Operators().TypeOfs()
 	annotations := view.Operands().Annotations()
-	compiler.staticInputs = make([]programschema.StaticInput, 0, typeOfs.Count())
+	compiler.publication.StaticInputs = make([]programschema.StaticInput, 0, typeOfs.Count())
 	operandRow := func(term keyspace.Term) (staticquery.StaticOperandKind, keyspace.LiteralValue, identity.ContentID, identity.ContentID, identity.ContentID, identity.ContentID, bool) {
 		operand, ok := artifactStaticOperandAt(ownerProgram, programID, term)
 		if !ok {
@@ -89,7 +89,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		if !expressionRowOK {
 			return compileFailure(CompileStageAuthority, CompileRowAuthority, expressionIndex, -1, CompileReasonProgramUnavailable)
 		}
-		compiler.staticExpressions = append(compiler.staticExpressions, expressionRow)
+		compiler.publication.StaticExpressions = append(compiler.publication.StaticExpressions, expressionRow)
 	}
 	for inputIndex := 0; inputIndex < typeOfs.Count(); inputIndex++ {
 		sourceTerm, inputOK := typeOfs.At(inputIndex)
@@ -121,7 +121,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				if !rowOK {
 					return compileFailure(CompileStageAuthority, CompileRowAuthority, inputIndex, -1, CompileReasonProgramUnavailable)
 				}
-				compiler.staticInputs = append(compiler.staticInputs, row)
+				compiler.publication.StaticInputs = append(compiler.publication.StaticInputs, row)
 				continue
 			}
 		}
@@ -173,7 +173,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			if !rowOK {
 				return compileFailure(CompileStageAuthority, CompileRowAuthority, annotationIndex, valueIndex, CompileReasonProgramUnavailable)
 			}
-			compiler.staticInputs = append(compiler.staticInputs, row)
+			compiler.publication.StaticInputs = append(compiler.publication.StaticInputs, row)
 		}
 	}
 	for index := 0; index < view.StaticTypes().Count(); index++ {
@@ -212,26 +212,26 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			spec.Kind = staticnode.StaticNodeOptional
 			spec.OptionalInner, ok = childID(child)
 		} else if count, found := view.Types().Unions().MemberCount(term); found {
-			spec.Kind, spec.UnionOffset = staticnode.StaticNodeUnion, uint32(len(compiler.staticTypeNodeUnionMembers))
+			spec.Kind, spec.UnionOffset = staticnode.StaticNodeUnion, uint32(len(compiler.publication.Static.StaticTypeNodeUnionMembers))
 			spec.UnionCount = uint32(count)
 			for n := 0; n < count && ok; n++ {
 				child, childOK := view.Types().Unions().MemberAt(term, n)
-				ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeUnionMembers, id, child, n, childID, staticnode.NewStaticTypeNodeUnionMember)
+				ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeUnionMembers, id, child, n, childID, staticnode.NewStaticTypeNodeUnionMember)
 			}
 		} else if count, found := view.Types().Intersections().MemberCount(term); found {
-			spec.Kind, spec.IntersectionOffset = staticnode.StaticNodeIntersection, uint32(len(compiler.staticTypeNodeIntersectionMembers))
+			spec.Kind, spec.IntersectionOffset = staticnode.StaticNodeIntersection, uint32(len(compiler.publication.Static.StaticTypeNodeIntersectionMembers))
 			spec.IntersectionCount = uint32(count)
 			for n := 0; n < count && ok; n++ {
 				child, childOK := view.Types().Intersections().MemberAt(term, n)
-				ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeIntersectionMembers, id, child, n, childID, staticnode.NewStaticTypeNodeIntersectionMember)
+				ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeIntersectionMembers, id, child, n, childID, staticnode.NewStaticTypeNodeIntersectionMember)
 			}
 		} else if base, count, found := view.Types().Generics().Get(term); found {
-			spec.Kind, spec.GenericBase, spec.GenericArgumentOffset = staticnode.StaticNodeGeneric, identity.ContentID{}, uint32(len(compiler.staticTypeNodeGenericArguments))
+			spec.Kind, spec.GenericBase, spec.GenericArgumentOffset = staticnode.StaticNodeGeneric, identity.ContentID{}, uint32(len(compiler.publication.Static.StaticTypeNodeGenericArguments))
 			spec.GenericArgumentCount = uint32(count)
 			spec.GenericBase, ok = childID(base)
 			for n := 0; n < count && ok; n++ {
 				child, childOK := view.Types().Generics().ArgAt(term, n)
-				ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeGenericArguments, id, child, n, childID, staticnode.NewStaticTypeNodeGenericArgument)
+				ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeGenericArguments, id, child, n, childID, staticnode.NewStaticTypeNodeGenericArgument)
 			}
 		} else if child, readonly, found := view.Types().Arrays().Get(term); found {
 			spec.Kind, spec.Flag = staticnode.StaticNodeArray, readonly
@@ -243,7 +243,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				spec.MapValue, ok = childID(value)
 			}
 		} else if readonly, count, found := view.Types().Records().Get(term); found {
-			spec.Kind, spec.Flag, spec.RecordFieldOffset, spec.RecordFieldCount = staticnode.StaticNodeRecord, readonly, uint32(len(compiler.staticTypeNodeRecordFields)), uint32(count)
+			spec.Kind, spec.Flag, spec.RecordFieldOffset, spec.RecordFieldCount = staticnode.StaticNodeRecord, readonly, uint32(len(compiler.publication.Static.StaticTypeNodeRecordFields)), uint32(count)
 			for n := 0; n < count && ok; n++ {
 				field, fieldOK := view.Types().Records().FieldAt(term, n)
 				fieldKey, fieldType, optional, fieldShapeOK := view.Types().Fields().Get(field)
@@ -258,14 +258,14 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					member, memberOK := staticnode.NewStaticTypeNodeRecordField(id, fieldID, fieldKey, text, optional, readonly, uint32(n))
 					ok = memberOK
 					if ok {
-						compiler.staticTypeNodeRecordFields = append(compiler.staticTypeNodeRecordFields, member)
+						compiler.publication.Static.StaticTypeNodeRecordFields = append(compiler.publication.Static.StaticTypeNodeRecordFields, member)
 					}
 				}
 			}
 		} else if resolution, target, _, found := view.References().Get(term); found {
 			spec.Kind, spec.Resolution = staticnode.StaticNodeReference, uint8(resolution)
 			if count, countOK := view.References().SourceCount(term); countOK {
-				spec.ReferenceSourceKeyOffset, spec.ReferenceSourceKeyCount = uint32(len(compiler.staticTypeNodeReferenceSourceKeys)), uint32(count)
+				spec.ReferenceSourceKeyOffset, spec.ReferenceSourceKeyCount = uint32(len(compiler.publication.Static.StaticTypeNodeReferenceSourceKeys)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					key, keyOK := view.References().SourceAt(term, n)
 					if !keyOK {
@@ -275,12 +275,12 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					member, memberOK := staticnode.NewStaticTypeNodeReferenceSourceKey(id, key, uint32(n))
 					ok = memberOK
 					if ok {
-						compiler.staticTypeNodeReferenceSourceKeys = append(compiler.staticTypeNodeReferenceSourceKeys, member)
+						compiler.publication.Static.StaticTypeNodeReferenceSourceKeys = append(compiler.publication.Static.StaticTypeNodeReferenceSourceKeys, member)
 					}
 				}
 			}
 			if count, countOK := view.References().CanonicalCount(term); countOK {
-				spec.ReferenceCanonicalKeyOffset, spec.ReferenceCanonicalKeyCount = uint32(len(compiler.staticTypeNodeReferenceCanonicalKeys)), uint32(count)
+				spec.ReferenceCanonicalKeyOffset, spec.ReferenceCanonicalKeyCount = uint32(len(compiler.publication.Static.StaticTypeNodeReferenceCanonicalKeys)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					key, keyOK := view.References().CanonicalAt(term, n)
 					if !keyOK {
@@ -290,7 +290,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					member, memberOK := staticnode.NewStaticTypeNodeReferenceCanonicalKey(id, key, uint32(n))
 					ok = memberOK
 					if ok {
-						compiler.staticTypeNodeReferenceCanonicalKeys = append(compiler.staticTypeNodeReferenceCanonicalKeys, member)
+						compiler.publication.Static.StaticTypeNodeReferenceCanonicalKeys = append(compiler.publication.Static.StaticTypeNodeReferenceCanonicalKeys, member)
 					}
 				}
 			}
@@ -301,10 +301,10 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 			spec.Kind, spec.Key, spec.Name = staticnode.StaticNodeAlias, nameKey, textForKey(nameKey)
 			spec.AliasTarget, ok = childID(target)
 			if count, countOK := view.Declarations().Aliases().ParamCount(term); countOK {
-				spec.SegmentCount, spec.Segments[0], spec.AliasParameterOffset, spec.AliasParameterCount = 1, uint32(count), uint32(len(compiler.staticTypeNodeAliasParameters)), uint32(count)
+				spec.SegmentCount, spec.Segments[0], spec.AliasParameterOffset, spec.AliasParameterCount = 1, uint32(count), uint32(len(compiler.publication.Static.StaticTypeNodeAliasParameters)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					param, paramOK := view.Declarations().Aliases().ParamAt(term, n)
-					ok = paramOK && appendStaticNodeChild(&compiler.staticTypeNodeAliasParameters, id, param, n, childID, staticnode.NewStaticTypeNodeAliasParameter)
+					ok = paramOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeAliasParameters, id, param, n, childID, staticnode.NewStaticTypeNodeAliasParameter)
 				}
 			}
 		} else if declOwner, nameKey, constraint, found := view.Declarations().TypeParams().Get(term); found {
@@ -321,14 +321,14 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				spec.Declaration, ok = staticquery.ScopeID(ownerIDForRow, interfaceOwner)
 			}
 			if count, shapeOK := view.Declarations().Interfaces().ExtendCount(term); shapeOK {
-				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.InterfaceExtendOffset, spec.InterfaceExtendCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.staticTypeNodeInterfaceExtends)), uint32(count)
+				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.InterfaceExtendOffset, spec.InterfaceExtendCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.publication.Static.StaticTypeNodeInterfaceExtends)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					child, childOK := view.Declarations().Interfaces().ExtendAt(term, n)
-					ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeInterfaceExtends, id, child, n, childID, staticnode.NewStaticTypeNodeInterfaceExtend)
+					ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeInterfaceExtends, id, child, n, childID, staticnode.NewStaticTypeNodeInterfaceExtend)
 				}
 			}
 			if count, shapeOK := view.Declarations().Interfaces().MemberCount(term); shapeOK {
-				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.InterfaceMemberOffset, spec.InterfaceMemberCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.staticTypeNodeInterfaceMembers)), uint32(count)
+				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.InterfaceMemberOffset, spec.InterfaceMemberCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.publication.Static.StaticTypeNodeInterfaceMembers)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					member, memberOK := view.Declarations().Interfaces().MemberAt(term, n)
 					if !memberOK {
@@ -352,7 +352,7 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					typed, typedOK := staticnode.NewStaticTypeNodeInterfaceMember(id, memberID, memberKey, textForKey(memberKey), memberOptional, false, uint8(member.Kind), uint32(n))
 					ok = typedOK
 					if ok {
-						compiler.staticTypeNodeInterfaceMembers = append(compiler.staticTypeNodeInterfaceMembers, typed)
+						compiler.publication.Static.StaticTypeNodeInterfaceMembers = append(compiler.publication.Static.StaticTypeNodeInterfaceMembers, typed)
 					}
 				}
 			}
@@ -366,14 +366,14 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 				spec.Segments[spec.SegmentCount], spec.SegmentCount = 0, spec.SegmentCount+1
 			}
 			if count, shapeOK := view.Signatures().TypeFunctions().TypeParamCount(term); shapeOK {
-				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionTypeParameterOffset, spec.TypeFunctionTypeParameterCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.staticTypeNodeTypeFunctionTypeParameters)), uint32(count)
+				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionTypeParameterOffset, spec.TypeFunctionTypeParameterCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.publication.Static.StaticTypeNodeTypeFunctionTypeParameters)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					child, childOK := view.Signatures().TypeFunctions().TypeParamAt(term, n)
-					ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeTypeFunctionTypeParameters, id, child, n, childID, staticnode.NewStaticTypeNodeTypeFunctionTypeParameter)
+					ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeTypeFunctionTypeParameters, id, child, n, childID, staticnode.NewStaticTypeNodeTypeFunctionTypeParameter)
 				}
 			}
 			if count, shapeOK := view.Signatures().TypeFunctions().ParameterCount(term); shapeOK {
-				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionParameterOffset, spec.TypeFunctionParameterCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.staticTypeNodeTypeFunctionParameters)), uint32(count)
+				spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionParameterOffset, spec.TypeFunctionParameterCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.publication.Static.StaticTypeNodeTypeFunctionParameters)), uint32(count)
 				for n := 0; n < count && ok; n++ {
 					parameter, parameterOK := view.Signatures().TypeFunctions().ParameterAt(term, n)
 					if !parameterOK {
@@ -388,16 +388,16 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 					typed, typedOK := staticnode.NewStaticTypeNodeTypeFunctionParameter(id, parameterID, parameter.Name, textForKey(parameter.Name), uint32(n))
 					ok = typedOK
 					if ok {
-						compiler.staticTypeNodeTypeFunctionParameters = append(compiler.staticTypeNodeTypeFunctionParameters, typed)
+						compiler.publication.Static.StaticTypeNodeTypeFunctionParameters = append(compiler.publication.Static.StaticTypeNodeTypeFunctionParameters, typed)
 					}
 				}
 			}
 			if returnsKnown {
 				if count, shapeOK := view.Signatures().TypeFunctions().ReturnCount(term); shapeOK {
-					spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionReturnOffset, spec.TypeFunctionReturnCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.staticTypeNodeTypeFunctionReturns)), uint32(count)
+					spec.Segments[spec.SegmentCount], spec.SegmentCount, spec.TypeFunctionReturnOffset, spec.TypeFunctionReturnCount = uint32(count), spec.SegmentCount+1, uint32(len(compiler.publication.Static.StaticTypeNodeTypeFunctionReturns)), uint32(count)
 					for n := 0; n < count && ok; n++ {
 						child, childOK := view.Signatures().TypeFunctions().ReturnAt(term, n)
-						ok = childOK && appendStaticNodeChild(&compiler.staticTypeNodeTypeFunctionReturns, id, child, n, childID, staticnode.NewStaticTypeNodeTypeFunctionReturn)
+						ok = childOK && appendStaticNodeChild(&compiler.publication.Static.StaticTypeNodeTypeFunctionReturns, id, child, n, childID, staticnode.NewStaticTypeNodeTypeFunctionReturn)
 					}
 				}
 			}
@@ -444,6 +444,6 @@ func (compiler *compiler) copyStaticGraphFailure() CompileFailure {
 		}
 		rows = append(rows, node)
 	}
-	compiler.staticTypeNodes = rows
+	compiler.publication.Static.StaticTypeNodes = rows
 	return CompileFailure{}
 }

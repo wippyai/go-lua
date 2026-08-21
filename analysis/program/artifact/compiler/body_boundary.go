@@ -12,7 +12,7 @@ func (compiler *compiler) copyBodyBoundaryFailure() CompileFailure {
 	bundle, fault := bodyboundary.Build(bodyboundary.Input{
 		Program:        compiler.input,
 		ProgramID:      compiler.key.ProgramID(),
-		Values:         compiler.values,
+		Values:         compiler.publication.Values,
 		PointIDsBySite: compiler.pointIDsBySite,
 	})
 	if !fault.Failed() {

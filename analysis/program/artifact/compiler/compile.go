@@ -112,7 +112,7 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	// fully reflected in canonical points, routes, WTO events, and rule rows.
 	transaction.stages = nil
 	transaction.environmentByRoute = nil
-	if transaction.ruleOccurrences == nil {
+	if transaction.publication.RuleOccurrences == nil {
 		return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	if failure := transaction.finalizeFailure(); failure.Available() {
@@ -144,7 +144,7 @@ func (compiler *compiler) copyCallTargetsFailure() CompileFailure {
 		}
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, fault.Row(), fault.Subrow(), reason)
 	}
-	compiler.callTargets = rows
+	compiler.publication.CallTargets = rows
 	return CompileFailure{}
 }
 

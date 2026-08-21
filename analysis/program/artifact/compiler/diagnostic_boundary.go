@@ -15,10 +15,10 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 	publication, fault := diagnostic.Compile(diagnostic.Input{
 		Program:        compiler.input,
 		ProgramID:      compiler.key.ProgramID(),
-		Values:         compiler.values,
-		ValuesMembers:  compiler.valuesMembers,
-		Calls:          compiler.calls,
-		CallArguments:  compiler.callArguments,
+		Values:         compiler.publication.Values,
+		ValuesMembers:  compiler.publication.ValuesMembers,
+		Calls:          compiler.publication.Calls,
+		CallArguments:  compiler.publication.CallArguments,
 		BodyBoundary:   compiler.bodyBoundary,
 		Allocations:    compiler.allocations,
 		PointIDsBySite: compiler.pointIDsBySite,
@@ -26,7 +26,7 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() CompileFailure {
 	if fault.Failed() {
 		return mapDiagnosticFault(fault)
 	}
-	compiler.diagnostic = publication
+	compiler.publication.Diagnostic = publication
 	return CompileFailure{}
 }
 

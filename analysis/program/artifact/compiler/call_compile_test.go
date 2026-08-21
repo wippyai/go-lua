@@ -62,13 +62,13 @@ return identity(true)
 	if callCount == 0 {
 		t.Fatal("fixture did not issue a call")
 	}
-	if len(transaction.calls) != callCount {
-		t.Fatalf("artifact call rows = %d, want authored denominator %d", len(transaction.calls), callCount)
+	if len(transaction.publication.Calls) != callCount {
+		t.Fatalf("artifact call rows = %d, want authored denominator %d", len(transaction.publication.Calls), callCount)
 	}
 	for index := 0; index < callCount; index++ {
 		callID, callOK := testCallIdentityAt(compiled, index)
 		callTerm, callTermOK := compiled.Flow().Authored().Calls().At(index)
-		row := transaction.calls[index]
+		row := transaction.publication.Calls[index]
 		spanID, entryTerm, finishTerm, spanOK := compiled.EvaluationSpan(callTerm)
 		entry, entryOK := compiled.Flow().Causal().Sites().ForTerm(entryTerm)
 		finish, finishOK := compiled.Flow().Causal().Sites().ForTerm(finishTerm)
@@ -105,12 +105,12 @@ return identity(true)
 			t.Fatalf("call %d published invalid child spans", index)
 		}
 		for childIndex := uint32(0); childIndex < operandWidth; childIndex++ {
-			operand := transaction.callOperands[int(operandOffset+childIndex)]
+			operand := transaction.publication.CallOperands[int(operandOffset+childIndex)]
 			if !operand.Available() || operand.CallID() != row.ID() || !operand.SpanID().Available() {
 				t.Fatalf("call %d operand %d is not a closed artifact child", index, childIndex)
 			}
 		}
-		argument := transaction.callArguments[argumentOffset]
+		argument := transaction.publication.CallArguments[argumentOffset]
 		if !argument.Available() || argument.CallID() != row.ID() || argument.ValuesID() != row.ValuesID() || argument.Index() != 0 {
 			t.Fatalf("call %d argument is not joined to its artifact call/value parent", index)
 		}
@@ -142,7 +142,7 @@ return result
 		t.Fatalf("copy call rows: %+v", failure)
 	}
 	var tail programschema.CallResultSlot
-	for _, slot := range transaction.callResultSlots {
+	for _, slot := range transaction.publication.CallResultSlots {
 		if slot.SourceKind() == programschema.CallResultSlotSourceValuesTail && slot.ConsumerKind() == programschema.CallResultSlotConsumerCell {
 			tail = slot
 			break
@@ -236,7 +236,7 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	}
 	var dispatch, activation, effect programschema.RuleOccurrence
 	var dispatchCount, activationCount, effectCount int
-	for _, placement := range transaction.ruleOccurrences {
+	for _, placement := range transaction.publication.RuleOccurrences {
 		switch placement.Key() {
 		case "call-dispatch":
 			dispatch, dispatchCount = placement, dispatchCount+1

@@ -51,12 +51,12 @@ func (compiler *compiler) copyModuleRowsFailure() CompileFailure {
 		return moduleFailure(CompileRowModuleImport, -1, -1, CompileReasonModuleImport)
 	}
 
-	compiler.moduleImports = make([]programschema.ModuleImport, 0, imports.Count())
-	compiler.moduleRequests = make([]programschema.ModuleRequest, 0, imports.Count())
-	compiler.moduleEntries = compiler.moduleEntries[:0]
-	compiler.moduleEntryRootCells = compiler.moduleEntryRootCells[:0]
-	compiler.moduleEntryRootFunctions = compiler.moduleEntryRootFunctions[:0]
-	compiler.moduleEntryMembers = compiler.moduleEntryMembers[:0]
+	compiler.publication.ModuleImports = make([]programschema.ModuleImport, 0, imports.Count())
+	compiler.publication.ModuleRequests = make([]programschema.ModuleRequest, 0, imports.Count())
+	compiler.publication.ModuleEntries = compiler.publication.ModuleEntries[:0]
+	compiler.publication.ModuleEntryRootCells = compiler.publication.ModuleEntryRootCells[:0]
+	compiler.publication.ModuleEntryRootFunctions = compiler.publication.ModuleEntryRootFunctions[:0]
+	compiler.publication.ModuleEntryMembers = compiler.publication.ModuleEntryMembers[:0]
 
 	values := authored.Values()
 	reads := authored.Storage().Reads()
@@ -142,19 +142,19 @@ func (compiler *compiler) copyModuleRowsFailure() CompileFailure {
 				return moduleFailure(CompileRowModuleImport, index, -1, CompileReasonModuleImport)
 			}
 		}
-		if !fitsUint32(len(compiler.moduleRequests)) {
+		if !fitsUint32(len(compiler.publication.ModuleRequests)) {
 			return moduleFailure(CompileRowModuleRequest, index, -1, CompileReasonModuleRequest)
 		}
 		requestRow, requestRowOK := programschema.NewModuleRequest(valueSource.id, importID, valueSource.id, requestKey)
 		if !requestRowOK {
 			return moduleFailure(CompileRowModuleRequest, index, -1, CompileReasonModuleRequest)
 		}
-		importRow, importRowOK := programschema.NewModuleImport(importID, construction.id, aliasID, uint32(len(compiler.moduleRequests)), 1, hasAlias)
+		importRow, importRowOK := programschema.NewModuleImport(importID, construction.id, aliasID, uint32(len(compiler.publication.ModuleRequests)), 1, hasAlias)
 		if !importRowOK {
 			return moduleFailure(CompileRowModuleImport, index, -1, CompileReasonModuleImport)
 		}
-		compiler.moduleRequests = append(compiler.moduleRequests, requestRow)
-		compiler.moduleImports = append(compiler.moduleImports, importRow)
+		compiler.publication.ModuleRequests = append(compiler.publication.ModuleRequests, requestRow)
+		compiler.publication.ModuleImports = append(compiler.publication.ModuleImports, importRow)
 	}
 
 	if failure := compiler.copyModuleEntriesFailure(moduleFailure); failure.Available() {
@@ -179,12 +179,12 @@ func (compiler *compiler) installModuleCounts() bool {
 		id    schema.EntryID
 		value int
 	}{
-		{ids.ProgramModuleImport, len(compiler.moduleImports)},
-		{ids.ProgramModuleRequest, len(compiler.moduleRequests)},
-		{ids.ProgramModuleEntry, len(compiler.moduleEntries)},
-		{ids.ProgramModuleEntryRootCell, len(compiler.moduleEntryRootCells)},
-		{ids.ProgramModuleEntryMember, len(compiler.moduleEntryMembers)},
-		{ids.ProgramModuleEntryRootFunction, len(compiler.moduleEntryRootFunctions)},
+		{ids.ProgramModuleImport, len(compiler.publication.ModuleImports)},
+		{ids.ProgramModuleRequest, len(compiler.publication.ModuleRequests)},
+		{ids.ProgramModuleEntry, len(compiler.publication.ModuleEntries)},
+		{ids.ProgramModuleEntryRootCell, len(compiler.publication.ModuleEntryRootCells)},
+		{ids.ProgramModuleEntryMember, len(compiler.publication.ModuleEntryMembers)},
+		{ids.ProgramModuleEntryRootFunction, len(compiler.publication.ModuleEntryRootFunctions)},
 	}
 	moduleRows := make([]denominator.CountRow, 0, len(counts))
 	for _, count := range counts {
@@ -294,7 +294,7 @@ func (compiler *compiler) copyModuleEntriesFailure(moduleFailure func(CompileRow
 			!returnedIDOK || !returnedID.Available() {
 			return moduleFailure(CompileRowModuleEntry, index, -1, CompileReasonModuleEntry)
 		}
-		rootCellOffset, rootFunctionOffset, memberOffset := len(compiler.moduleEntryRootCells), len(compiler.moduleEntryRootFunctions), len(compiler.moduleEntryMembers)
+		rootCellOffset, rootFunctionOffset, memberOffset := len(compiler.publication.ModuleEntryRootCells), len(compiler.publication.ModuleEntryRootFunctions), len(compiler.publication.ModuleEntryMembers)
 		for position := 0; position < fixedCount; position++ {
 			value, valueOK := authored.Values().Member(valuesTerm, position)
 			if !valueOK || !fitsUint32(position) {
@@ -318,7 +318,7 @@ func (compiler *compiler) copyModuleEntriesFailure(moduleFailure func(CompileRow
 				if !childOK {
 					return moduleFailure(CompileRowModuleRootFunction, index, position, CompileReasonModuleRootFunction)
 				}
-				compiler.moduleEntryRootFunctions = append(compiler.moduleEntryRootFunctions, child)
+				compiler.publication.ModuleEntryRootFunctions = append(compiler.publication.ModuleEntryRootFunctions, child)
 			}
 			if cell, cellOK := moduleEntryDirectCell(flowView, value); cellOK {
 				cellID, cellIDOK := rowidentity.StorageCellID(compiler.key.ProgramID(), flowView, cell)
@@ -329,7 +329,7 @@ func (compiler *compiler) copyModuleEntriesFailure(moduleFailure func(CompileRow
 				if !childOK {
 					return moduleFailure(CompileRowModuleRootCell, index, position, CompileReasonModuleRootCell)
 				}
-				compiler.moduleEntryRootCells = append(compiler.moduleEntryRootCells, child)
+				compiler.publication.ModuleEntryRootCells = append(compiler.publication.ModuleEntryRootCells, child)
 			}
 			if keyspace.TermFamily(value) == keyspace.FamilyTable && executable.Contains(value) {
 				if failure := compiler.appendModuleTable(value, value, entryID, uint32(position), &keyScratch, moduleFailure); failure.Available() {
@@ -338,19 +338,19 @@ func (compiler *compiler) copyModuleEntriesFailure(moduleFailure func(CompileRow
 			}
 		}
 		if !fitsUint32(rootCellOffset) || !fitsUint32(rootFunctionOffset) || !fitsUint32(memberOffset) ||
-			!fitsUint32(len(compiler.moduleEntryRootCells)-rootCellOffset) ||
-			!fitsUint32(len(compiler.moduleEntryRootFunctions)-rootFunctionOffset) ||
-			!fitsUint32(len(compiler.moduleEntryMembers)-memberOffset) {
+			!fitsUint32(len(compiler.publication.ModuleEntryRootCells)-rootCellOffset) ||
+			!fitsUint32(len(compiler.publication.ModuleEntryRootFunctions)-rootFunctionOffset) ||
+			!fitsUint32(len(compiler.publication.ModuleEntryMembers)-memberOffset) {
 			return moduleFailure(CompileRowModuleEntry, index, -1, CompileReasonModuleEntry)
 		}
 		row, rowOK := programschema.NewModuleEntry(entryID, returnedID, uint32(index+1), uint32(fixedCount),
-			uint32(rootCellOffset), uint32(len(compiler.moduleEntryRootCells)-rootCellOffset),
-			uint32(rootFunctionOffset), uint32(len(compiler.moduleEntryRootFunctions)-rootFunctionOffset),
-			uint32(memberOffset), uint32(len(compiler.moduleEntryMembers)-memberOffset))
+			uint32(rootCellOffset), uint32(len(compiler.publication.ModuleEntryRootCells)-rootCellOffset),
+			uint32(rootFunctionOffset), uint32(len(compiler.publication.ModuleEntryRootFunctions)-rootFunctionOffset),
+			uint32(memberOffset), uint32(len(compiler.publication.ModuleEntryMembers)-memberOffset))
 		if !rowOK {
 			return moduleFailure(CompileRowModuleEntry, index, -1, CompileReasonModuleEntry)
 		}
-		compiler.moduleEntries = append(compiler.moduleEntries, row)
+		compiler.publication.ModuleEntries = append(compiler.publication.ModuleEntries, row)
 	}
 	return CompileFailure{}
 }
@@ -486,8 +486,8 @@ func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID
 		at := len(stack) - 1
 		frame := &stack[at]
 		if frame.next >= len(frame.selected) {
-			if frame.containerAt >= 0 && len(compiler.moduleEntryMembers) == frame.containerAt+1 {
-				compiler.moduleEntryMembers = compiler.moduleEntryMembers[:frame.containerAt]
+			if frame.containerAt >= 0 && len(compiler.publication.ModuleEntryMembers) == frame.containerAt+1 {
+				compiler.publication.ModuleEntryMembers = compiler.publication.ModuleEntryMembers[:frame.containerAt]
 			}
 			stack = stack[:at]
 			continue
@@ -510,7 +510,7 @@ func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID
 			if !memberOK {
 				return moduleFailure(CompileRowModuleMember, -1, -1, CompileReasonModuleMember)
 			}
-			compiler.moduleEntryMembers = append(compiler.moduleEntryMembers, member)
+			compiler.publication.ModuleEntryMembers = append(compiler.publication.ModuleEntryMembers, member)
 			continue
 		}
 		if keyspace.TermFamily(candidate.value) != keyspace.FamilyTable || !compiler.input.Flow().Executable().Contains(candidate.value) {
@@ -524,8 +524,8 @@ func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID
 		if !memberOK {
 			return moduleFailure(CompileRowModuleMember, -1, -1, CompileReasonModuleMember)
 		}
-		compiler.moduleEntryMembers = append(compiler.moduleEntryMembers, member)
-		stack = append(stack, moduleTableFrame{table: candidate.value, parent: candidate.field, selected: nested, containerAt: len(compiler.moduleEntryMembers) - 1})
+		compiler.publication.ModuleEntryMembers = append(compiler.publication.ModuleEntryMembers, member)
+		stack = append(stack, moduleTableFrame{table: candidate.value, parent: candidate.field, selected: nested, containerAt: len(compiler.publication.ModuleEntryMembers) - 1})
 	}
 	return CompileFailure{}
 }

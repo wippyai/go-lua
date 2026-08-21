@@ -24,8 +24,8 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 	// occurrence runtime argument. Keep one authenticated pair per SpanID for
 	// this validation pass: equal pairs are repeatable; a distinct pair fails
 	// at the later Call row, exactly as the former prior-row scan did.
-	plainArgumentsBySpan := make(map[identity.ContentID]plainCallArgument, len(compiler.calls))
-	for callIndex, call := range compiler.calls {
+	plainArgumentsBySpan := make(map[identity.ContentID]plainCallArgument, len(compiler.publication.Calls))
+	for callIndex, call := range compiler.publication.Calls {
 		if !call.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
@@ -39,10 +39,10 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 			continue
 		}
 		argumentOffset, argumentCount, argumentSpanOK := call.ArgumentSpan()
-		if !argumentSpanOK || argumentCount != 1 || uint64(argumentOffset) >= uint64(len(compiler.callArguments)) {
+		if !argumentSpanOK || argumentCount != 1 || uint64(argumentOffset) >= uint64(len(compiler.publication.CallArguments)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
-		argument := compiler.callArguments[argumentOffset]
+		argument := compiler.publication.CallArguments[argumentOffset]
 		if !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, 0, CompileReasonOccurrenceCall)
 		}
@@ -68,20 +68,20 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 			}
 		}
 	}
-	for occurrenceIndex, row := range compiler.occurrences {
-		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+	for occurrenceIndex, row := range compiler.publication.Occurrences {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.publication.OccurrencePoints, compiler.publication.OccurrenceInputs) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
 		case programschema.OccurrenceValueSource:
 			if row.Code() == 1 {
-				_, spanOK := programschema.OccurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
+				_, spanOK := programschema.OccurrenceValueSourceSpanID(row, compiler.publication.OccurrenceInputs)
 				if !spanOK {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceValueSourceAppend)
 				}
 			}
 		case programschema.OccurrenceStorageRead:
-			cell, span, readOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
+			cell, span, readOK := programschema.OccurrenceStorageReadOperands(row, compiler.publication.OccurrenceInputs)
 			if !readOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceStorageRead)
 			}
@@ -91,7 +91,7 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 			}
 		case programschema.OccurrenceBinaryEquality:
 		case programschema.OccurrenceValueClaim:
-			operand, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
+			operand, operandOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
 			if !operandOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -141,7 +141,7 @@ func (compiler *compiler) occurrenceBinaryID(id identity.ContentID) bool {
 	if compiler == nil || !id.Available() {
 		return false
 	}
-	for _, row := range compiler.occurrences {
+	for _, row := range compiler.publication.Occurrences {
 		if row.Kind() == programschema.OccurrenceBinaryEquality && row.ID() == id {
 			return true
 		}
@@ -153,11 +153,11 @@ func (compiler *compiler) occurrenceClaimOperand(id identity.ContentID) (identit
 	if compiler == nil || !id.Available() {
 		return identity.ContentID{}, false
 	}
-	for _, row := range compiler.occurrences {
+	for _, row := range compiler.publication.Occurrences {
 		if row.Kind() != programschema.OccurrenceValueClaim || row.ID() != id {
 			continue
 		}
-		return programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
+		return programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
 	}
 	return identity.ContentID{}, false
 }
@@ -166,17 +166,17 @@ func (compiler *compiler) occurrenceClaimOperandBefore(limit int, id identity.Co
 	if compiler == nil || !id.Available() || limit < 0 {
 		return identity.ContentID{}, false, false
 	}
-	if limit > len(compiler.occurrences) {
-		limit = len(compiler.occurrences)
+	if limit > len(compiler.publication.Occurrences) {
+		limit = len(compiler.publication.Occurrences)
 	}
 	var operand identity.ContentID
 	found := false
 	for index := 0; index < limit; index++ {
-		row := compiler.occurrences[index]
+		row := compiler.publication.Occurrences[index]
 		if row.Kind() != programschema.OccurrenceValueClaim || row.ID() != id {
 			continue
 		}
-		candidate, ok := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
+		candidate, ok := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
 		if !ok {
 			continue
 		}
@@ -192,17 +192,17 @@ func (compiler *compiler) occurrenceStorageOriginBefore(limit int, span identity
 	if compiler == nil || !span.Available() || limit < 0 {
 		return identity.ContentID{}, false, false
 	}
-	if limit > len(compiler.occurrences) {
-		limit = len(compiler.occurrences)
+	if limit > len(compiler.publication.Occurrences) {
+		limit = len(compiler.publication.Occurrences)
 	}
 	var cell identity.ContentID
 	found := false
 	for index := 0; index < limit; index++ {
-		row := compiler.occurrences[index]
+		row := compiler.publication.Occurrences[index]
 		if row.Kind() != programschema.OccurrenceStorageRead {
 			continue
 		}
-		candidate, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
+		candidate, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.publication.OccurrenceInputs)
 		if rowOK && rowSpan == span {
 			if found && cell != candidate {
 				return cell, true, true
@@ -217,11 +217,11 @@ func (compiler *compiler) occurrenceStorageOrigin(span identity.ContentID) (iden
 	if compiler == nil || !span.Available() {
 		return identity.ContentID{}, false
 	}
-	for _, row := range compiler.occurrences {
+	for _, row := range compiler.publication.Occurrences {
 		if row.Kind() != programschema.OccurrenceStorageRead {
 			continue
 		}
-		cell, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
+		cell, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.publication.OccurrenceInputs)
 		if rowOK && rowSpan == span {
 			return cell, true
 		}
@@ -233,11 +233,11 @@ func (compiler *compiler) occurrenceNilSource(span identity.ContentID) bool {
 	if compiler == nil || !span.Available() {
 		return false
 	}
-	for _, row := range compiler.occurrences {
+	for _, row := range compiler.publication.Occurrences {
 		if row.Kind() != programschema.OccurrenceValueSource || row.Code() != 1 {
 			continue
 		}
-		rowSpan, rowOK := programschema.OccurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
+		rowSpan, rowOK := programschema.OccurrenceValueSourceSpanID(row, compiler.publication.OccurrenceInputs)
 		if rowOK && rowSpan == span {
 			return true
 		}
@@ -249,7 +249,7 @@ func (compiler *compiler) occurrenceRuntimeCallForSpan(span identity.ContentID) 
 	if compiler == nil || !span.Available() {
 		return identity.ContentID{}, identity.ContentID{}, false
 	}
-	for _, call := range compiler.calls {
+	for _, call := range compiler.publication.Calls {
 		if !call.Available() || call.Form() != programschema.CallFormPlain || call.ArgumentCount() != 1 || call.SpanID() != span {
 			continue
 		}
@@ -260,10 +260,10 @@ func (compiler *compiler) occurrenceRuntimeCallForSpan(span identity.ContentID) 
 			continue
 		}
 		argumentOffset, argumentCount, argumentSpanOK := call.ArgumentSpan()
-		if !argumentSpanOK || argumentCount != 1 || uint64(argumentOffset) >= uint64(len(compiler.callArguments)) {
+		if !argumentSpanOK || argumentCount != 1 || uint64(argumentOffset) >= uint64(len(compiler.publication.CallArguments)) {
 			continue
 		}
-		argument := compiler.callArguments[argumentOffset]
+		argument := compiler.publication.CallArguments[argumentOffset]
 		if argument.Available() && argument.CallID() == call.ID() && argument.Index() == 0 {
 			return call.ID(), argument.MemberID(), true
 		}
@@ -334,7 +334,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 	// Existing Values/Body/Outcome planes are copied first, then restated as
 	// generic rows so all later role derivations share exactly one catalog.
 	authoredValues := compiler.input.Flow().Authored().Values()
-	for valuesIndex, values := range compiler.values {
+	for valuesIndex, values := range compiler.publication.Values {
 		term, termOK := authoredValues.At(valuesIndex)
 		if !termOK || !values.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
@@ -399,9 +399,9 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	bundle, fault := exactscalar.Compile(exactscalar.Input{
-		Occurrences:        compiler.occurrences,
-		OccurrencePoints:   compiler.occurrencePoints,
-		OccurrenceInputs:   compiler.occurrenceInputs,
+		Occurrences:        compiler.publication.Occurrences,
+		OccurrencePoints:   compiler.publication.OccurrencePoints,
+		OccurrenceInputs:   compiler.publication.OccurrenceInputs,
 		FunctionBoundaries: compiler.bodyBoundary.FunctionBoundaries(),
 		FunctionFormals:    compiler.bodyBoundary.FunctionFormals(),
 		FunctionVarargs:    compiler.bodyBoundary.FunctionVarargs(),
@@ -435,11 +435,11 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure() CompileFa
 	if compiler == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	for binaryIndex, binary := range compiler.occurrences {
+	for binaryIndex, binary := range compiler.publication.Occurrences {
 		if binary.Kind() != programschema.OccurrenceBinaryEquality {
 			continue
 		}
-		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.occurrenceInputs)
+		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.publication.OccurrenceInputs)
 		if !equalityOK {
 			continue
 		}
@@ -485,11 +485,11 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure() CompileFailur
 	if compiler == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	for binaryIndex, binary := range compiler.occurrences {
+	for binaryIndex, binary := range compiler.publication.Occurrences {
 		if binary.Kind() != programschema.OccurrenceBinaryEquality {
 			continue
 		}
-		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.occurrenceInputs)
+		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.publication.OccurrenceInputs)
 		if !equalityOK {
 			continue
 		}

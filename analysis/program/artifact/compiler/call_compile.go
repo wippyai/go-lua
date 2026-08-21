@@ -16,14 +16,14 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
 	calls := compiler.input.Flow().Authored().Calls().Count()
-	compiler.calls = make([]programschema.Call, 0, calls)
-	compiler.callResults = compiler.callResults[:0]
-	compiler.callResultSlots = compiler.callResultSlots[:0]
+	compiler.publication.Calls = make([]programschema.Call, 0, calls)
+	compiler.publication.CallResults = compiler.publication.CallResults[:0]
+	compiler.publication.CallResultSlots = compiler.publication.CallResultSlots[:0]
 	callIDs := make([]identity.ContentID, calls+1)
 	callSpans := make([]identity.ContentID, calls+1)
-	compiler.callOperands = compiler.callOperands[:0]
-	compiler.callArguments = compiler.callArguments[:0]
-	compiler.callTypeArguments = compiler.callTypeArguments[:0]
+	compiler.publication.CallOperands = compiler.publication.CallOperands[:0]
+	compiler.publication.CallArguments = compiler.publication.CallArguments[:0]
+	compiler.publication.CallTypeArguments = compiler.publication.CallTypeArguments[:0]
 	for index := 0; index < calls; index++ {
 		call, ok := compiler.callConstruction(index)
 		if !ok {
@@ -33,18 +33,18 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		if !formOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		if !fitsUint32(len(compiler.callOperands)) || !fitsUint32(len(compiler.callArguments)) || !fitsUint32(len(compiler.callTypeArguments)) {
+		if !fitsUint32(len(compiler.publication.CallOperands)) || !fitsUint32(len(compiler.publication.CallArguments)) || !fitsUint32(len(compiler.publication.CallTypeArguments)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		operandStart := uint32(len(compiler.callOperands))
-		argumentStart := uint32(len(compiler.callArguments))
-		typeArgumentStart := uint32(len(compiler.callTypeArguments))
+		operandStart := uint32(len(compiler.publication.CallOperands))
+		argumentStart := uint32(len(compiler.publication.CallArguments))
+		typeArgumentStart := uint32(len(compiler.publication.CallTypeArguments))
 		appendOperand := func(operand callOperandConstruction) bool {
 			value, valueOK := programschema.NewCallOperand(operand.id, call.id, operand.id, operand.span, operand.kind)
 			if !valueOK {
 				return false
 			}
-			compiler.callOperands = append(compiler.callOperands, value)
+			compiler.publication.CallOperands = append(compiler.publication.CallOperands, value)
 			return true
 		}
 		if !appendOperand(call.callee) || !appendOperand(call.actuals) {
@@ -66,7 +66,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !argumentOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, argumentIndex, CompileReasonOccurrenceCall)
 			}
-			compiler.callArguments = append(compiler.callArguments, argumentRow)
+			compiler.publication.CallArguments = append(compiler.publication.CallArguments, argumentRow)
 		}
 		for typeIndex, argument := range call.typeArguments {
 			if !fitsUint32(typeIndex) {
@@ -76,14 +76,14 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !argumentOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, typeIndex, CompileReasonOccurrenceCall)
 			}
-			compiler.callTypeArguments = append(compiler.callTypeArguments, argumentRow)
+			compiler.publication.CallTypeArguments = append(compiler.publication.CallTypeArguments, argumentRow)
 		}
-		if !fitsUint32(len(compiler.callOperands)) || !fitsUint32(len(compiler.callArguments)) || !fitsUint32(len(compiler.callTypeArguments)) {
+		if !fitsUint32(len(compiler.publication.CallOperands)) || !fitsUint32(len(compiler.publication.CallArguments)) || !fitsUint32(len(compiler.publication.CallTypeArguments)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		operandEnd := uint32(len(compiler.callOperands))
-		argumentEnd := uint32(len(compiler.callArguments))
-		typeArgumentEnd := uint32(len(compiler.callTypeArguments))
+		operandEnd := uint32(len(compiler.publication.CallOperands))
+		argumentEnd := uint32(len(compiler.publication.CallArguments))
+		typeArgumentEnd := uint32(len(compiler.publication.CallTypeArguments))
 		tail := identity.ContentID{}
 		hasTail := false
 		if call.tail.Available() {
@@ -104,7 +104,7 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		}
 		callIDs[ordinal] = call.id
 		callSpans[ordinal] = call.span
-		compiler.calls = append(compiler.calls, row)
+		compiler.publication.Calls = append(compiler.publication.Calls, row)
 	}
 	// Flow already owns the complete ordered Call-result geometry walk. Join it
 	// once to the dense Call IDs compiled above instead of rebuilding a second
@@ -167,10 +167,10 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		if geometry.Multiplicity == programschema.CallResultMultiplicityExact {
 			wantSlots = geometry.Count
 		}
-		if (geometry.Form != programschema.CallResultDirectValue && uint64(len(slots)) != uint64(wantSlots)) || !fitsUint32(len(compiler.callResultSlots)) {
+		if (geometry.Form != programschema.CallResultDirectValue && uint64(len(slots)) != uint64(wantSlots)) || !fitsUint32(len(compiler.publication.CallResultSlots)) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, -1, CompileReasonOccurrenceCall)
 		}
-		slotOffset := uint32(len(compiler.callResultSlots))
+		slotOffset := uint32(len(compiler.publication.CallResultSlots))
 		if geometry.Multiplicity == programschema.CallResultMultiplicityOpen {
 			// Open tails have no finite child span. Their canonical zero-width
 			// span is independent of the dense slots emitted for other Calls.
@@ -192,8 +192,8 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !consumerOK || !consumerID.Available() || !slotOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, 0, CompileReasonOccurrenceCall)
 			}
-			compiler.callResultSlots = append(compiler.callResultSlots, slot)
-			compiler.callResults = append(compiler.callResults, parent)
+			compiler.publication.CallResultSlots = append(compiler.publication.CallResultSlots, slot)
+			compiler.publication.CallResults = append(compiler.publication.CallResults, parent)
 			continue
 		}
 		for slotIndex, slotGeometry := range slots {
@@ -227,9 +227,9 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			if !slotOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, slotIndex, CompileReasonOccurrenceCall)
 			}
-			compiler.callResultSlots = append(compiler.callResultSlots, slot)
+			compiler.publication.CallResultSlots = append(compiler.publication.CallResultSlots, slot)
 		}
-		compiler.callResults = append(compiler.callResults, parent)
+		compiler.publication.CallResults = append(compiler.publication.CallResults, parent)
 	}
 	return CompileFailure{}
 }

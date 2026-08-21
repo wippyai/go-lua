@@ -8,7 +8,7 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	compiler.staticTypeValues = make([]programschema.StaticTypeValue, 0)
+	compiler.publication.StaticTypeValues = make([]programschema.StaticTypeValue, 0)
 	typeValues := compiler.input.Flow().Authored().TypeValues()
 	for index := 0; index < typeValues.Count(); index++ {
 		source, referenceID, rootID, name, sourceOK := compiler.typeValueCompileRow(index)
@@ -22,7 +22,7 @@ func (compiler *compiler) copyStaticRowsFailure() CompileFailure {
 		if !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		compiler.staticTypeValues = append(compiler.staticTypeValues, row)
+		compiler.publication.StaticTypeValues = append(compiler.publication.StaticTypeValues, row)
 	}
 	return CompileFailure{}
 }

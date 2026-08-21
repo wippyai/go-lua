@@ -9,14 +9,14 @@ import (
 )
 
 func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
-	compiler.ruleOccurrences = []programschema.RuleOccurrence{}
-	for index, row := range compiler.occurrences {
-		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
-			compiler.ruleOccurrences = nil
+	compiler.publication.RuleOccurrences = []programschema.RuleOccurrence{}
+	for index, row := range compiler.publication.Occurrences {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.publication.OccurrencePoints, compiler.publication.OccurrenceInputs) {
+			compiler.publication.RuleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		if uint64(index) > uint64(^uint32(0)) {
-			compiler.ruleOccurrences = nil
+			compiler.publication.RuleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		ordinal := uint32(index)
@@ -24,7 +24,7 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 		finish := geometry.finish
 		if len(finish) == 0 {
 			var finishOK bool
-			finish, finishOK = programschema.OccurrencePointIDs(row, compiler.occurrencePoints)
+			finish, finishOK = programschema.OccurrencePointIDs(row, compiler.publication.OccurrencePoints)
 			if !finishOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -39,7 +39,7 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 			}
 		}
 	}
-	compiler.ruleOccurrences = orderPlacementsByDeclaration(compiler.issuance, compiler.ruleOccurrences)
+	compiler.publication.RuleOccurrences = orderPlacementsByDeclaration(compiler.issuance, compiler.publication.RuleOccurrences)
 	return CompileFailure{}
 }
 
