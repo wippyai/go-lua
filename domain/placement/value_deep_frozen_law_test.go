@@ -1,6 +1,7 @@
 package placement_test
 
 import (
+	"encoding/binary"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
@@ -135,6 +136,47 @@ func TestDeepFrozenValueDoesNotTreatExactAsAnAllocationProof(t *testing.T) {
 	}
 }
 
+// TestDeepFrozenValueDistinguishesAbsentProofFromUnknown is the tri-state
+// result law. A published allocation row whose DeepFrozen column no producer
+// decided carries absence across the wire; only a producer that authenticated
+// an undecidable verdict publishes Unknown. The value reduction preserves the
+// distinction, so a consumer can tell "no proof was produced" from "the proof
+// was produced and it decides nothing".
+func TestDeepFrozenValueDistinguishesAbsentProofFromUnknown(t *testing.T) {
+	fixture := newDeepFrozenValueFixture(t)
+	key := fixture.allocations[0]
+	atom, atomOK := fixture.values.Allocation(key, materialization.Recent)
+	if !atomOK {
+		t.Fatal("allocation atom")
+	}
+	fact, factOK := fixture.values.Singleton(atom)
+	if !factOK {
+		t.Fatal("allocation value")
+	}
+	id, idOK := fixture.placement.Heap().KeyID(key)
+	if !idOK {
+		t.Fatal("allocation identity")
+	}
+
+	undecided := fixture.summary(t, map[heapdomain.Key]placementdomain.EvidenceState{})
+	state, stateOK := undecided.DeepFrozenFor(id)
+	if !stateOK || state != placementdomain.EvidenceAbsent {
+		t.Fatalf("undecided DeepFrozen column = %v/%t, want absent/true", state, stateOK)
+	}
+	if got := placementdomain.DeepFrozenValue(fixture.placement, fixture.values, undecided, fact); got != placementdomain.EvidenceAbsent {
+		t.Fatalf("value verdict over an undecided row = %v, want absent", got)
+	}
+
+	authenticated := fixture.summary(t, map[heapdomain.Key]placementdomain.EvidenceState{key: placementdomain.EvidenceUnknown})
+	state, stateOK = authenticated.DeepFrozenFor(id)
+	if !stateOK || state != placementdomain.EvidenceUnknown {
+		t.Fatalf("authenticated DeepFrozen column = %v/%t, want unknown/true", state, stateOK)
+	}
+	if got := placementdomain.DeepFrozenValue(fixture.placement, fixture.values, authenticated, fact); got != placementdomain.EvidenceUnknown {
+		t.Fatalf("value verdict over an authenticated undecidable row = %v, want unknown", got)
+	}
+}
+
 // TestDeepFrozenValueMutableWitnessDominatesUnknown proves the three-valued
 // consumer join: one exact Refuted allocation alternative is a sound negative
 // witness even when another possible alternative has no proof at all.
@@ -177,8 +219,18 @@ func TestDeepFrozenValueRejectsForeignHeapAuthority(t *testing.T) {
 		t.Fatal("foreign allocation value")
 	}
 	foreignSummary := foreign.summary(t, map[heapdomain.Key]placementdomain.EvidenceState{key: placementdomain.EvidenceProven})
-	if got := placementdomain.DeepFrozenValue(local.placement, foreign.values, foreignSummary, fact); got != placementdomain.EvidenceUnknown {
-		t.Fatalf("foreign authority deep-frozen state = %v, want unknown", got)
+	if got := placementdomain.DeepFrozenValue(local.placement, foreign.values, foreignSummary, fact); got.Valid() {
+		t.Fatalf("foreign authority deep-frozen state = %v, want refusal sentinel", got)
+	}
+}
+
+func TestDeepFrozenValueRefusesUnavailableSummaryAndFact(t *testing.T) {
+	fixture := newDeepFrozenValueFixture(t)
+	if got := placementdomain.DeepFrozenValue(fixture.placement, fixture.values, placementdomain.SummaryResult{}, fixture.values.Bottom()); got.Valid() {
+		t.Fatalf("unavailable summary deep-frozen state = %v, want refusal sentinel", got)
+	}
+	if got := placementdomain.DeepFrozenValue(fixture.placement, fixture.values, fixture.summary(t, nil), valuedomain.Value{}); got.Valid() {
+		t.Fatalf("foreign/malformed Value deep-frozen state = %v, want refusal sentinel", got)
 	}
 }
 
@@ -290,4 +342,111 @@ func (fixture deepFrozenValueFixture) encodedSummary(t testing.TB, states map[he
 		t.Fatal("encode Placement summary")
 	}
 	return present, rows, payload
+}
+
+// TestPlacementSummaryRefusesUnpublishedAllocationRows keeps sparse-factor
+// absence separate from the authenticated Bottom/Unknown vocabulary. An
+// allocation coordinate must be present in the Placement fold before it can
+// receive evidence or cross the result boundary.
+func TestPlacementSummaryRefusesUnpublishedAllocationRows(t *testing.T) {
+	fixture := newDeepFrozenValueFixture(t)
+	observation := placementdomain.BeginPlacementSummary(fixture.placement)
+	count := fixture.placement.DenseKeyCount()
+	_, foldOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Placement, bool, bool) {
+		key, keyOK := fixture.placement.KeyAt(index)
+		if !keyOK {
+			return placementdomain.Bottom, false, false
+		}
+		if key.Kind() == heapdomain.RootAllocation {
+			return placementdomain.Bottom, false, true
+		}
+		return placementdomain.Bottom, true, true
+	})
+	if foldOK {
+		t.Fatal("Placement fold accepted an absent allocation factor cell")
+	}
+
+	for _, key := range fixture.allocations {
+		index, indexOK := fixture.placement.Heap().KeyIndex(key)
+		if !indexOK {
+			t.Fatal("allocation summary coordinate")
+		}
+		observation.Values[index] = placementdomain.OwnedHeap
+		observation.Present[index] = true
+	}
+	observation.Rows = 1
+	if _, _, _, encodedOK := placementdomain.EncodeSummaryResult(observation); encodedOK {
+		t.Fatal("Placement encoder published an un-authenticated evidence row")
+	}
+}
+
+// TestPlacementSummaryPublishesExplicitUnknownOnlyAfterEvidenceWrite proves
+// that EvidenceUnknown is a semantic producer result, not the observation's
+// zero value. Once every row is explicitly published, the result remains
+// encodable and decodable even when the proof columns are unknown.
+func TestPlacementSummaryPublishesExplicitUnknownOnlyAfterEvidenceWrite(t *testing.T) {
+	fixture := newDeepFrozenValueFixture(t)
+	observation := placementdomain.BeginPlacementSummary(fixture.placement)
+	for _, key := range fixture.allocations {
+		index, indexOK := fixture.placement.Heap().KeyIndex(key)
+		_, idOK := key.ContentID()
+		if !indexOK || !idOK {
+			t.Fatal("allocation summary coordinate")
+		}
+		observation.Values[index] = placementdomain.OwnedHeap
+		observation.Present[index] = true
+	}
+	observation.Rows = 1
+	key := fixture.allocations[0]
+	if evidence, available := placementdomain.PlacementSummaryEvidence(fixture.placement, observation, key); available || evidence.Valid() {
+		t.Fatalf("unpublished evidence row = %#v/%t, want refusal", evidence, available)
+	}
+
+	for _, key := range fixture.allocations {
+		id, idOK := key.ContentID()
+		if !idOK {
+			t.Fatal("allocation identity")
+		}
+		var updatedOK bool
+		observation, updatedOK = placementdomain.WithPlacementSummaryEvidence(fixture.placement, observation, key, placementdomain.AllocationEvidence{
+			OwnerIdentity:    id,
+			HasOwnerIdentity: true,
+			DeepFrozen:       placementdomain.EvidenceUnknown,
+		})
+		if !updatedOK {
+			t.Fatal("explicit unknown evidence publication")
+		}
+	}
+	if evidence, available := placementdomain.PlacementSummaryEvidence(fixture.placement, observation, key); !available || evidence.DeepFrozen != placementdomain.EvidenceUnknown {
+		t.Fatalf("published unknown evidence = %#v/%v", evidence, available)
+	}
+	present, rows, payload, encodedOK := placementdomain.EncodeSummaryResult(observation)
+	if !encodedOK || !present || rows != 1 {
+		t.Fatal("explicit unknown evidence summary did not encode")
+	}
+	if result, decodedOK := placementdomain.DecodeSummaryResult(fixture.placement, present, rows, string(payload)); !decodedOK || !result.Available() {
+		t.Fatal("explicit unknown evidence summary did not decode")
+	}
+}
+
+// TestPlacementSummaryDecoderRejectsAbsentAllocationState rejects a payload
+// that has the right wire shape but turns one complete allocation state into
+// sparse state zero. State zero is an unavailable cell, never a public row.
+func TestPlacementSummaryDecoderRejectsAbsentAllocationState(t *testing.T) {
+	fixture := newDeepFrozenValueFixture(t)
+	present, rows, payload := fixture.encodedSummary(t, nil)
+	const resultHeaderSize = 8 + 32 + 8
+	const allocationIDSize = 32
+	if len(payload) < resultHeaderSize+1 {
+		t.Fatal("summary payload too short")
+	}
+	allocationCount := int(binary.BigEndian.Uint64(payload[40:48]))
+	if allocationCount == 0 {
+		t.Fatal("summary fixture has no allocation rows")
+	}
+	stateOffset := resultHeaderSize + allocationCount*allocationIDSize
+	payload[stateOffset] = 0
+	if result, decodedOK := placementdomain.DecodeSummaryResult(fixture.placement, present, rows, string(payload)); decodedOK || result.Available() {
+		t.Fatal("decoder accepted absent allocation state")
+	}
 }

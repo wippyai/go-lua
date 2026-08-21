@@ -25,50 +25,93 @@ const (
 	EvidenceProven
 )
 
+const invalidEvidence Evidence = ^Evidence(0)
+
 func (state Evidence) Valid() bool { return state <= EvidenceProven }
 
 func (state Evidence) Known() bool {
 	return state == EvidenceRefuted || state == EvidenceProven
 }
 
+// Public projects this producer's private state into the public Placement
+// proof vocabulary. The projection is distinction-preserving: Missing is the
+// sparse Factor default and publishes as absence, while Unknown is the
+// authenticated all-routes verdict and publishes as Unknown. A state outside
+// this vocabulary has no public projection and yields an inadmissible state
+// that every public boundary rejects.
 func (state Evidence) Public() placement.EvidenceState {
 	switch state {
+	case EvidenceMissing:
+		return placement.EvidenceAbsent
+	case EvidenceUnknown:
+		return placement.EvidenceUnknown
 	case EvidenceRefuted:
 		return placement.EvidenceRefuted
 	case EvidenceProven:
 		return placement.EvidenceProven
 	default:
-		return placement.EvidenceUnknown
+		return placement.InvalidEvidenceState()
 	}
 }
 
-// Join is the all-routes law. Missing is the identity for a coordinate,
+// JoinChecked is the all-routes law. Missing is the identity for a coordinate,
 // Unknown absorbs opaque/missing/mixed evidence, and a proof survives only
-// when every contributing route has the same explicit answer.
-func (state Evidence) Join(other Evidence) Evidence {
+// when every contributing route has the same explicit answer. Invalid input
+// refuses and never becomes semantic Unknown.
+func (state Evidence) JoinChecked(other Evidence) (Evidence, bool) {
 	if !state.Valid() || !other.Valid() {
-		return EvidenceUnknown
+		return invalidEvidence, false
 	}
 	if state == EvidenceMissing {
-		return other
+		return other, true
 	}
 	if other == EvidenceMissing {
-		return state
+		return state, true
 	}
 	if state == EvidenceUnknown || other == EvidenceUnknown {
-		return EvidenceUnknown
+		return EvidenceUnknown, true
 	}
 	if state == other {
-		return state
+		return state, true
 	}
-	return EvidenceUnknown
+	return EvidenceUnknown, true
+}
+
+// Join is the generic lattice callback spelling. The engine admits only valid
+// states; the out-of-domain sentinel prevents a malformed direct invocation
+// from being normalized into a semantic verdict.
+func (state Evidence) Join(other Evidence) Evidence {
+	joined, ok := state.JoinChecked(other)
+	if !ok {
+		return invalidEvidence
+	}
+	return joined
+}
+
+func meetChecked(left, right Evidence) (Evidence, bool) {
+	if !left.Valid() || !right.Valid() {
+		return invalidEvidence, false
+	}
+	if left == EvidenceUnknown {
+		return right, true
+	}
+	if right == EvidenceUnknown {
+		return left, true
+	}
+	if left == EvidenceMissing || right == EvidenceMissing {
+		return EvidenceMissing, true
+	}
+	if left == right {
+		return left, true
+	}
+	return EvidenceMissing, true
 }
 
 func Lattice() lattice.Lattice[Evidence] {
 	return lattice.Lattice[Evidence]{
 		Bottom: func() Evidence { return EvidenceMissing },
 		Top:    func() Evidence { return EvidenceUnknown },
-		Equal:  func(left, right Evidence) bool { return left == right },
+		Equal:  func(left, right Evidence) bool { return left.Valid() && right.Valid() && left == right },
 		LessOrEq: func(left, right Evidence) bool {
 			if !left.Valid() || !right.Valid() {
 				return false
@@ -77,22 +120,11 @@ func Lattice() lattice.Lattice[Evidence] {
 		},
 		Join: func(left, right Evidence) Evidence { return left.Join(right) },
 		Meet: func(left, right Evidence) Evidence {
-			if !left.Valid() || !right.Valid() {
-				return EvidenceMissing
+			met, ok := meetChecked(left, right)
+			if !ok {
+				return invalidEvidence
 			}
-			if left == EvidenceUnknown {
-				return right
-			}
-			if right == EvidenceUnknown {
-				return left
-			}
-			if left == EvidenceMissing || right == EvidenceMissing {
-				return EvidenceMissing
-			}
-			if left == right {
-				return left
-			}
-			return EvidenceMissing
+			return met
 		},
 		Widen: func(left, right Evidence) Evidence { return left.Join(right) },
 	}

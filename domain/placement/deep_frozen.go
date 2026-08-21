@@ -105,7 +105,7 @@ func deepFrozenObjectHeader(object heapdomain.Object, facts *deepFrozenLocalFact
 
 func deepFrozenLocalState(facts deepFrozenLocalFacts) EvidenceState {
 	if facts.invalid {
-		return EvidenceState(^uint8(0))
+		return invalidEvidenceState
 	}
 	if facts.mutable {
 		return EvidenceRefuted
@@ -133,12 +133,17 @@ func finiteDeepFrozenStates(local []EvidenceState, adjacency [][]int) []Evidence
 // validDeepFrozenGraph authenticates the finite graph shape before the solver
 // allocates any projection state. Rows are required to be sorted and unique;
 // silently normalizing caller input would be a compensating graph rewrite.
+//
+// The solver's input alphabet is the decided triad: every local state is a
+// header fact its producer derived from an owner-authenticated Heap relation.
+// Absence is not in that alphabet, so an unwritten local row refuses the graph
+// instead of being propagated as an opaque Unknown component.
 func validDeepFrozenGraph(local []EvidenceState, adjacency [][]int) bool {
 	if len(adjacency) != len(local) {
 		return false
 	}
 	for _, state := range local {
-		if !state.Valid() {
+		if !state.Valid() || state == EvidenceAbsent {
 			return false
 		}
 	}
@@ -213,7 +218,10 @@ func finiteDeepFrozenStatesTrustedCanonicalWithScratch(local []EvidenceState, ad
 		for _, node := range componentNodes[componentNodeOffsets[component]:componentNodeOffsets[component+1]] {
 			for _, child := range adjacency[node] {
 				if child < 0 || child >= count {
-					continue
+					// validDeepFrozenGraph already rejects this. Keep the
+					// trusted seam fail-closed if a future caller mutates the
+					// private graph between validation and projection.
+					return nil
 				}
 				childComponent := componentOf[child]
 				if childComponent == component {
@@ -254,7 +262,7 @@ func finiteDeepFrozenStatesTrustedCanonicalWithScratch(local []EvidenceState, ad
 		for _, node := range componentNodes[componentNodeOffsets[component]:componentNodeOffsets[component+1]] {
 			for _, child := range adjacency[node] {
 				if child < 0 || child >= count {
-					continue
+					return nil
 				}
 				childComponent := componentOf[child]
 				if childComponent == component || componentEdgeMarks[childComponent] == mark {
@@ -272,6 +280,9 @@ func finiteDeepFrozenStatesTrustedCanonicalWithScratch(local []EvidenceState, ad
 	}
 	for parent := 0; parent < componentCount; parent++ {
 		for _, child := range componentChildren[componentChildOffsets[parent]:componentChildOffsets[parent+1]] {
+			if child < 0 || child >= componentCount {
+				return nil
+			}
 			position := componentParentCounts[child]
 			componentParents[position] = parent
 			componentParentCounts[child]++

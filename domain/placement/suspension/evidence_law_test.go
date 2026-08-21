@@ -26,15 +26,44 @@ func TestEvidenceAllRoutesLaw(t *testing.T) {
 			}
 		})
 	}
+	invalid := Evidence(99)
+	if got, ok := invalid.JoinChecked(EvidenceProven); ok || got.Valid() || got == EvidenceUnknown {
+		t.Fatalf("invalid checked join = %v/%t, want refusal", got, ok)
+	}
+	if got := invalid.Join(EvidenceProven); got.Valid() || got == EvidenceUnknown {
+		t.Fatalf("invalid lattice join = %v, want inadmissible sentinel", got)
+	}
+	lattice := Lattice()
+	if lattice.Equal(invalid, invalid) {
+		t.Fatal("invalid evidence became lattice-equivalent to itself")
+	}
+	if got := lattice.Meet(invalid, EvidenceProven); got.Valid() || got == EvidenceMissing {
+		t.Fatalf("invalid lattice meet = %v, want inadmissible sentinel", got)
+	}
 }
 
-func TestEvidencePublicProjectionKeepsMissingUnknown(t *testing.T) {
-	for _, state := range []Evidence{EvidenceMissing, EvidenceUnknown} {
-		if got := state.Public(); got != placementdomain.EvidenceUnknown {
-			t.Fatalf("Public(%v) = %v, want Unknown", state, got)
-		}
+// TestEvidencePublicProjectionSeparatesMissingFromUnknown is the publication
+// law for this producer's private vocabulary. Missing is the sparse Factor
+// default: no route published a row for the coordinate. Unknown is an
+// authenticated all-routes verdict that no polarity survives. The projection
+// into the public Placement plane must carry both distinctions across; it may
+// not collapse the producer's own join identity into a semantic verdict.
+func TestEvidencePublicProjectionSeparatesMissingFromUnknown(t *testing.T) {
+	if EvidenceMissing.Public() == EvidenceUnknown.Public() {
+		t.Fatal("the publication boundary erased the missing/unknown distinction")
+	}
+	if got := EvidenceMissing.Public(); got != placementdomain.EvidenceAbsent {
+		t.Fatalf("Public(missing) = %v, want Absent", got)
+	}
+	if got := EvidenceUnknown.Public(); got != placementdomain.EvidenceUnknown {
+		t.Fatalf("Public(unknown) = %v, want Unknown", got)
 	}
 	if EvidenceProven.Public() != placementdomain.EvidenceProven || EvidenceRefuted.Public() != placementdomain.EvidenceRefuted {
 		t.Fatal("explicit suspension evidence did not retain its public polarity")
+	}
+	// A private state outside this producer's vocabulary has no public
+	// projection. It must not be published as any admissible public state.
+	if got := Evidence(99).Public(); got.Valid() {
+		t.Fatalf("Public(invalid) = %v, want an inadmissible public state", got)
 	}
 }

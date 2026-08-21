@@ -128,10 +128,10 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 		}
 	}
 	if !graph.cellsComplete {
-		// A partial/revoked vector cannot establish either a finite depth or a
-		// negative DeepFrozen proof. Canonical allocation rows remain useful to
-		// the caller, with both optional columns left absent/Unknown.
-		return graph, true
+		// A partial/revoked vector is not a relation. Do not retain the
+		// allocation directory and quietly omit optional columns: that would
+		// turn an unavailable producer into a successful but weaker projection.
+		return staticHeapGraph{}, false
 	}
 
 	for dense := 0; dense < denseCount; dense++ {
@@ -140,28 +140,21 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 			return staticHeapGraph{}, false
 		}
 		value, present, available := at(dense)
-		if !available || !value.Valid() || value.IsTop() || !heapSchema.Admits(key, value) {
+		// OrderedCells is a borrowed, generation-fenced capability. Every
+		// coordinate must be readable, present, valid, and admitted by this
+		// exact Heap owner before any semantic extreme is inspected. In
+		// particular, a foreign or revoked Top must never become an
+		// authenticated Unknown.
+		if !available || !present || !value.Valid() || !heapSchema.OwnsKey(key) || !heapSchema.Admits(key, value) {
+			return staticHeapGraph{}, false
+		}
+		if value.IsTop() {
+			// Top is an owner-authenticated Heap relation, but it does not
+			// enumerate finite worlds. It is therefore semantic Unknown, not a
+			// malformed row and not evidence of an empty relation.
 			graph.deepLocal[dense] = EvidenceUnknown
 			if key.Kind() == heapdomain.RootAllocation {
 				graph.depthComplete = false
-			}
-			continue
-		}
-		if !present {
-			if key.Kind() == heapdomain.RootAllocation {
-				// Heap's admitted sparse default is Bottom: no worlds and no
-				// containment edges, so depth is an exact zero. A non-Bottom
-				// absent token is an unavailable relation and cannot be used.
-				if !value.IsBottom() {
-					graph.depthComplete = false
-					graph.deepLocal[dense] = EvidenceUnknown
-				} else {
-					graph.deepLocal[dense] = EvidenceProven
-				}
-			} else {
-				// A sealed Boot root has an object policy even when its cell is
-				// sparse; absence therefore cannot prove immutable publication.
-				graph.deepLocal[dense] = EvidenceUnknown
 			}
 			continue
 		}
@@ -178,7 +171,10 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 		if key.Kind() == heapdomain.RootBoot {
 			bootFrozen, bootFrozenOK := heapSchema.BootFrozen(key)
 			if !bootFrozenOK {
-				facts.unknown = true
+				// Boot policy is a required owner-issued header for every
+				// admitted Boot root. A missing policy is malformed Heap input,
+				// not an opaque semantic alternative.
+				return staticHeapGraph{}, false
 			} else {
 				switch bootFrozen {
 				case heapdomain.FrozenMutable:
@@ -186,12 +182,15 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 				case heapdomain.FrozenFrozen:
 					facts.frozen = true
 				default:
-					facts.unknown = true
+					return staticHeapGraph{}, false
 				}
 			}
 		}
-		if !deepFrozenValueHeaders(value, &facts) {
-			facts.unknown = true
+		if !deepFrozenValueHeaders(value, &facts) || facts.invalid {
+			// A malformed object/world/header is an invalid Heap relation, not
+			// an opaque semantic edge. Refuse the graph before publishing a
+			// conservative substitute.
+			return staticHeapGraph{}, false
 		}
 		local := deepFrozenLocalState(facts)
 		deepUnknown := local == EvidenceUnknown
@@ -201,47 +200,50 @@ func buildStaticHeapGraphRows(schema Schema, cellCount int, at func(int) (heapdo
 			deepUnknown = false
 		}
 		depthRowComplete := true
+		graphValid := true
 		visited := heapSchema.VisitContainments(value, func(observation heapdomain.ContainmentVisit) bool {
 			if !observation.Valid() {
-				depthRowComplete = false
-				deepUnknown = true
+				// VisitContainments is itself owner-authenticated. An invalid
+				// callback row therefore means the relation was malformed or
+				// revoked while being read; it is not an opaque semantic edge.
+				graphValid = false
 				return false
 			}
 			switch observation.Kind() {
 			case heapdomain.ContainmentNone:
 				return true
 			case heapdomain.ContainmentUnknown:
+				// Unknown is retained only for the Heap owner's explicit
+				// opaque-edge fact. It suppresses finite depth for this root
+				// but does not erase exact edges that can still refute
+				// DeepFrozen.
 				depthRowComplete = false
 				deepUnknown = true
-				// Continue collecting exact edges for DeepFrozen: an exact
-				// mutable descendant later in the stream is still a valid
-				// refutation even when another edge is opaque.
 				return true
 			case heapdomain.ContainmentExact:
 				reference, referenceOK := observation.Reference()
 				childKey, _, childOK := reference.Key()
 				if !referenceOK || !childOK || !heapSchema.OwnsKey(childKey) {
-					depthRowComplete = false
-					deepUnknown = true
-					return true
+					graphValid = false
+					return false
 				}
 				childDense, childDenseOK := heapSchema.KeyIndex(childKey)
 				if !childDenseOK || childDense < 0 || childDense >= denseCount {
-					depthRowComplete = false
-					deepUnknown = true
-					return true
+					graphValid = false
+					return false
 				}
 				graph.adjacency[dense] = append(graph.adjacency[dense], childDense)
 				return true
 			default:
-				depthRowComplete = false
-				deepUnknown = true
-				return true
+				graphValid = false
+				return false
 			}
 		})
-		if !visited {
-			depthRowComplete = false
-			deepUnknown = true
+		if !visited || !graphValid {
+			// A callback interruption is a revoked/incomplete relation unless
+			// the callback deliberately stopped only after a valid opaque edge;
+			// this builder never deliberately stops on semantic Unknown.
+			return staticHeapGraph{}, false
 		}
 		if key.Kind() == heapdomain.RootAllocation && !depthRowComplete {
 			graph.depthComplete = false
@@ -292,9 +294,8 @@ func containmentCacheSnapshot(schema Schema, cells engine.OrderedCells[heapdomai
 		value, isPresent, available := cells.At(index)
 		fingerprint, fingerprintOK := heapSchema.Fingerprint(value)
 		if !available || !fingerprintOK {
-			// The ordinary builder intentionally retains conservative unknown
-			// evidence for revoked or malformed rows. Such a row has no stable
-			// cache key, so let the uncached path preserve that behavior.
+			// A revoked or malformed row has no stable authenticated cache key.
+			// Refuse before publishing either a cached or an uncached projection.
 			return nil, nil, 0, false
 		}
 		values[index], present[index] = value, isPresent
@@ -309,16 +310,59 @@ func containmentCacheSnapshot(schema Schema, cells engine.OrderedCells[heapdomai
 	return values, present, hash, true
 }
 
-func projectStaticContainmentGraph(graph staticHeapGraph) staticContainmentProjection {
+func projectStaticContainmentGraph(graph staticHeapGraph) (staticContainmentProjection, bool) {
+	if !validStaticHeapGraph(graph) {
+		return staticContainmentProjection{}, false
+	}
 	var scratch containmentSCCScratch
 	depths, knownDepth := graph.depthStatesWithScratch(&scratch)
 	deepStates := graph.deepStatesWithScratch(&scratch)
+	if graph.depthComplete && (depths == nil || knownDepth == nil) {
+		return staticContainmentProjection{}, false
+	}
+	if deepStates == nil {
+		return staticContainmentProjection{}, false
+	}
 	return staticContainmentProjection{
 		graph:      graph,
 		depths:     depths,
 		knownDepth: knownDepth,
 		deepStates: deepStates,
+	}, true
+}
+
+// validStaticHeapGraph authenticates the complete private projection before
+// either solver publishes a result. The builder already establishes these
+// invariants; retaining the check here prevents a malformed synthetic/cache
+// entry from being weakened into an empty optional projection.
+func validStaticHeapGraph(graph staticHeapGraph) bool {
+	denseCount := len(graph.adjacency)
+	if !graph.cellsComplete || len(graph.evidence) != denseCount || len(graph.allocationOrdinal) != denseCount || len(graph.deepLocal) != denseCount || len(graph.allocationDense) != len(graph.allocationAdjacency) {
+		return false
 	}
+	if !validDeepFrozenGraph(graph.deepLocal, graph.adjacency) || !validContainmentGraph(graph.allocationAdjacency) {
+		return false
+	}
+	for dense, ordinal := range graph.allocationOrdinal {
+		if ordinal < 0 {
+			if ordinal != -1 {
+				return false
+			}
+			continue
+		}
+		if ordinal >= len(graph.allocationDense) || graph.allocationDense[ordinal] != dense {
+			return false
+		}
+	}
+	for ordinal, dense := range graph.allocationDense {
+		if dense < 0 || dense >= denseCount || graph.allocationOrdinal[dense] != ordinal {
+			return false
+		}
+		if !graph.evidence[dense].Valid() {
+			return false
+		}
+	}
+	return true
 }
 
 // projection resolves one complete, owner-authenticated Heap vector through
@@ -344,12 +388,16 @@ func (cache *StaticContainmentCache) projection(schema Schema, cells engine.Orde
 	if !graphOK {
 		return staticContainmentProjection{}, false
 	}
+	projection, projectionOK := projectStaticContainmentGraph(graph)
+	if !projectionOK {
+		return staticContainmentProjection{}, false
+	}
 	entry := &staticContainmentCacheEntry{
 		schema:     schema,
 		hash:       hash,
 		values:     values,
 		present:    present,
-		projection: projectStaticContainmentGraph(graph),
+		projection: projection,
 	}
 	// A racing miss may replace this entry before Store. Both entries are
 	// independently authenticated and immutable; replacing one complete entry
@@ -401,20 +449,28 @@ func AccumulatePlacementSummaryContainment(schema Schema, observation PlacementS
 	if !graphOK {
 		return PlacementSummaryObservation{}, false
 	}
-	return accumulateStaticContainmentProjection(schema, observation, projectStaticContainmentGraph(graph))
+	projection, projectionOK := projectStaticContainmentGraph(graph)
+	if !projectionOK {
+		return PlacementSummaryObservation{}, false
+	}
+	return accumulateStaticContainmentProjection(schema, observation, projection)
 }
 
 // AccumulatePlacementSummaryContainmentCached is the owner-level query seam.
-// It preserves the uncached builder's fail-closed behavior when the incoming
-// vector is incomplete or cannot receive a stable authenticated key.
+// A cache miss is not permission to reinterpret the same borrowed vector via
+// another authority. The cache and the uncached builder are deliberately
+// separate testable seams; the query path requires the owner-issued cache
+// projection so an unavailable/revoked vector fails at the same boundary as
+// every other malformed relation.
 func AccumulatePlacementSummaryContainmentCached(cache *StaticContainmentCache, schema Schema, observation PlacementSummaryObservation, cells engine.OrderedCells[heapdomain.Value]) (PlacementSummaryObservation, bool) {
-	if !summaryObservationShape(schema, observation) {
+	if cache == nil || cache.schema != schema || !summaryObservationShape(schema, observation) {
 		return PlacementSummaryObservation{}, false
 	}
-	if projection, cachedOK := cache.projection(schema, cells); cachedOK {
-		return accumulateStaticContainmentProjection(schema, observation, projection)
+	projection, projectionOK := cache.projection(schema, cells)
+	if !projectionOK {
+		return PlacementSummaryObservation{}, false
 	}
-	return AccumulatePlacementSummaryContainment(schema, observation, cells)
+	return accumulateStaticContainmentProjection(schema, observation, projection)
 }
 
 func accumulateStaticContainmentProjection(schema Schema, observation PlacementSummaryObservation, projection staticContainmentProjection) (PlacementSummaryObservation, bool) {
@@ -432,14 +488,12 @@ func accumulateStaticContainmentProjection(schema Schema, observation PlacementS
 		if dense < len(projection.deepStates) {
 			evidence.DeepFrozen = projection.deepStates[dense]
 		}
-		if !evidence.HasDepth && evidence.DeepFrozen == EvidenceUnknown {
-			continue
-		}
-		merged := result.evidence[dense].Merge(evidence)
-		if !merged.Valid() {
+		merged, mergedOK := ComposeAllocationEvidence(result.evidence[dense], evidence)
+		if !mergedOK {
 			return PlacementSummaryObservation{}, false
 		}
 		result.evidence[dense] = merged
+		result.evidencePublished[dense] = true
 	}
 	return result, true
 }
@@ -469,7 +523,28 @@ func finiteContainmentDepths(adjacency [][]int) ([]uint32, []bool) {
 	return finiteContainmentDepthsWithScratch(adjacency, nil)
 }
 
+// validContainmentGraph authenticates the private allocation projection
+// before the depth solver allocates result state. The builder emits sorted,
+// duplicate-free rows; accepting an unsorted or repeated row here would be a
+// normalization compensation for a producer that did not issue canonical
+// graph evidence.
+func validContainmentGraph(adjacency [][]int) bool {
+	for _, children := range adjacency {
+		previous := -1
+		for _, child := range children {
+			if child < 0 || child >= len(adjacency) || child <= previous {
+				return false
+			}
+			previous = child
+		}
+	}
+	return true
+}
+
 func finiteContainmentDepthsWithScratch(adjacency [][]int, scratch *containmentSCCScratch) ([]uint32, []bool) {
+	if !validContainmentGraph(adjacency) {
+		return nil, nil
+	}
 	count := len(adjacency)
 	depths := make([]uint32, count)
 	known := make([]bool, count)
@@ -479,10 +554,10 @@ func finiteContainmentDepthsWithScratch(adjacency [][]int, scratch *containmentS
 	for _, children := range adjacency {
 		for _, child := range children {
 			if child < 0 || child >= count {
-				// A child outside the solved allocation denominator is the
-				// graph equivalent of a missing/foreign root.  Never let an
-				// unchecked relation turn into a proof or a panic.
-				return depths, known
+				// validContainmentGraph already rejects this. Keep the solver
+				// defensive if its input contract changes in the future: a
+				// foreign root is refusal, never an Unknown depth vector.
+				return nil, nil
 			}
 		}
 	}
@@ -598,12 +673,10 @@ func finiteContainmentDepthsWithScratch(adjacency [][]int, scratch *containmentS
 		}
 	}
 	if processed != knownCount {
-		// This is defensive (Tarjan already removed every SCC), but retaining
-		// Unknown is preferable to publishing a partial topological proof.
-		for node := range known {
-			known[node] = false
-			depths[node] = 0
-		}
+		// This is defensive (Tarjan already removed every SCC), but a solver
+		// invariant violation is not semantic Unknown. Refuse the projection
+		// instead of publishing a partial topological proof.
+		return nil, nil
 	}
 	return depths, known
 }

@@ -18,12 +18,17 @@ type PlacementSummaryObservation struct {
 	Present []bool
 	Rows    uint32
 	Valid   bool
-	// evidence is dense Heap-aligned optional proof. It is intentionally
+	// evidence is dense Heap-aligned producer proof. It is intentionally
 	// private: callers may add a producer-owned row only through the
-	// owner-fenced helpers below, and the public codec projects one row per
-	// allocation root.
+	// owner-fenced helpers below, and evidencePublished records whether the
+	// zero-capable row was actually authenticated.
 	evidence []AllocationEvidence
-	owner    Schema
+	// evidencePublished is separate from evidence because the zero value of an
+	// AllocationEvidence is a valid all-absent row. A zero row in a dense fold
+	// is not, by itself, an authenticated publication: it is merely the absence
+	// of a producer write. Keep that distinction through the result boundary.
+	evidencePublished []bool
+	owner             Schema
 }
 
 // BeginPlacementSummary starts one Heap-aligned Placement summary fold.
@@ -35,11 +40,12 @@ func BeginPlacementSummary(schema Schema) PlacementSummaryObservation {
 	}
 	count := schema.DenseKeyCount()
 	return PlacementSummaryObservation{
-		Values:   make([]Placement, count),
-		Present:  make([]bool, count),
-		evidence: make([]AllocationEvidence, count),
-		Valid:    true,
-		owner:    schema,
+		Values:            make([]Placement, count),
+		Present:           make([]bool, count),
+		evidence:          make([]AllocationEvidence, count),
+		evidencePublished: make([]bool, count),
+		Valid:             true,
+		owner:             schema,
 	}
 }
 
@@ -80,26 +86,34 @@ func AccumulatePlacementSummaryRows(schema Schema, result PlacementSummaryObserv
 		if !available {
 			return PlacementSummaryObservation{}, false
 		}
+		kind := key.Kind()
+		if kind != heapdomain.RootAllocation && kind != heapdomain.RootBoot {
+			return PlacementSummaryObservation{}, false
+		}
 		if !present {
+			// Placement's allocation denominator is exact. The owner-issued
+			// sparse default is only a lawful omission for Boot coordinates;
+			// an absent allocation row means the factor did not publish the
+			// coordinate and cannot be treated as Bottom or Unknown here.
+			if kind == heapdomain.RootAllocation {
+				return PlacementSummaryObservation{}, false
+			}
 			continue
 		}
 		if !validAnalysisPlacement(value) {
 			return PlacementSummaryObservation{}, false
 		}
-		kind := key.Kind()
 		if kind == heapdomain.RootBoot && value != Bottom {
-			return PlacementSummaryObservation{}, false
-		}
-		if kind != heapdomain.RootAllocation && kind != heapdomain.RootBoot {
 			return PlacementSummaryObservation{}, false
 		}
 		if !result.Present[index] {
 			result.Values[index], result.Present[index] = value, true
 		} else {
-			result.Values[index] = Join(result.Values[index], value)
-			if !validAnalysisPlacement(result.Values[index]) {
+			joined, joinedOK := JoinChecked(result.Values[index], value)
+			if !joinedOK {
 				return PlacementSummaryObservation{}, false
 			}
+			result.Values[index] = joined
 		}
 		if kind == heapdomain.RootAllocation {
 			// Presence is monotone over the fold, so the public one-row
@@ -117,19 +131,21 @@ func ClonePlacementSummary(input PlacementSummaryObservation) PlacementSummaryOb
 	input.Values = append([]Placement(nil), input.Values...)
 	input.Present = append([]bool(nil), input.Present...)
 	input.evidence = append([]AllocationEvidence(nil), input.evidence...)
+	input.evidencePublished = append([]bool(nil), input.evidencePublished...)
 	return input
 }
 
-// PlacementSummaryEvidence returns the optional proof row for one existing
-// allocation coordinate. The returned row is a value detached from the fold;
-// an unavailable row is the explicit all-unknown state.
+// PlacementSummaryEvidence returns one producer-published proof row for an
+// existing allocation coordinate. A false result is unavailable, not an
+// all-absent row; a proof column carries EvidenceUnknown only after a producer
+// authenticated and published that state, and EvidenceAbsent until then.
 func PlacementSummaryEvidence(schema Schema, observation PlacementSummaryObservation, key heapdomain.Key) (AllocationEvidence, bool) {
 	if !summaryObservationBase(schema, observation) || key.Kind() != heapdomain.RootAllocation || !schema.Heap().OwnsKey(key) {
-		return AllocationEvidence{}, false
+		return invalidAllocationEvidence(), false
 	}
 	index, indexOK := schema.Heap().KeyIndex(key)
-	if !indexOK || index < 0 || index >= len(observation.evidence) {
-		return AllocationEvidence{}, false
+	if !indexOK || index < 0 || index >= len(observation.evidence) || !observation.evidencePublished[index] {
+		return invalidAllocationEvidence(), false
 	}
 	return observation.evidence[index], true
 }
@@ -172,6 +188,12 @@ func setPlacementSummaryEvidenceInPlace(schema Schema, observation *PlacementSum
 	if !indexOK || index < 0 || index >= len(observation.evidence) {
 		return false
 	}
+	// Evidence is a refinement of a published allocation row. A producer may
+	// not make an absent Placement coordinate look complete by attaching a
+	// proof record to it.
+	if !observation.Present[index] {
+		return false
+	}
 	canonical, canonicalOK := allocationEvidenceForKey(schema, key, observation.Values[index], observation.Present[index])
 	if !canonicalOK {
 		return false
@@ -191,11 +213,12 @@ func setPlacementSummaryEvidenceInPlace(schema Schema, observation *PlacementSum
 	if evidence.HasKind && canonical.HasKind && evidence.Kind != canonical.Kind {
 		return false
 	}
-	merged := observation.evidence[index].Merge(evidence)
-	if !merged.Valid() {
+	merged, mergedOK := ComposeAllocationEvidence(observation.evidence[index], evidence)
+	if !mergedOK {
 		return false
 	}
 	observation.evidence[index] = merged
+	observation.evidencePublished[index] = true
 	return true
 }
 
@@ -203,7 +226,7 @@ func setPlacementSummaryEvidenceInPlace(schema Schema, observation *PlacementSum
 // absent coordinates are deliberately ignored because absence is the public
 // fact at that coordinate.
 func EqualPlacementSummary(schema Schema, left, right PlacementSummaryObservation) bool {
-	if !summaryObservationShape(schema, left) || !summaryObservationShape(schema, right) || left.Rows != right.Rows || left.Valid != right.Valid || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) || len(left.evidence) != len(right.evidence) {
+	if !summaryObservationShape(schema, left) || !summaryObservationShape(schema, right) || left.Rows != right.Rows || left.Valid != right.Valid || len(left.Values) != len(right.Values) || len(left.Present) != len(right.Present) || len(left.evidence) != len(right.evidence) || len(left.evidencePublished) != len(right.evidencePublished) {
 		return false
 	}
 	for index := range left.Values {
@@ -216,13 +239,16 @@ func EqualPlacementSummary(schema Schema, left, right PlacementSummaryObservatio
 		if left.evidence[index] != right.evidence[index] {
 			return false
 		}
+		if left.evidencePublished[index] != right.evidencePublished[index] {
+			return false
+		}
 	}
 	return true
 }
 
 // FingerprintPlacementSummary is the frozen-result fingerprint contract. It
-// commits to row cardinality, validity, every presence bit, and every present
-// Placement class in dense Heap order.
+// commits to row cardinality, validity, every presence bit, every evidence
+// publication bit, and every present Placement class in dense Heap order.
 func FingerprintPlacementSummary(schema Schema, value PlacementSummaryObservation) uint64 {
 	if !summaryObservationShape(schema, value) {
 		return 0
@@ -237,6 +263,9 @@ func FingerprintPlacementSummary(schema Schema, value PlacementSummaryObservatio
 			result ^= (uint64(value.Values[index]) + 1) * 0xc2b2ae3d27d4eb4f
 		}
 		evidence := value.evidence[index]
+		if value.evidencePublished[index] {
+			result ^= uint64(index+1) * 0x6eed0e9da4d94a4f
+		}
 		result ^= uint64(evidence.Kind+1) * 0x165667b19e3779f9
 		if evidence.HasKind {
 			result ^= 1 << uint((index+1)%63)
@@ -267,6 +296,12 @@ func summaryObservationShape(schema Schema, observation PlacementSummaryObservat
 	}
 	anyAllocation := false
 	for index, present := range observation.Present {
+		if observation.evidencePublished[index] {
+			key, keyOK := schema.KeyAt(index)
+			if !keyOK || key.Kind() != heapdomain.RootAllocation || !present {
+				return false
+			}
+		}
 		if present && !validAnalysisPlacement(observation.Values[index]) {
 			return false
 		}
@@ -300,5 +335,5 @@ func summaryObservationBase(schema Schema, observation PlacementSummaryObservati
 		return false
 	}
 	count := schema.DenseKeyCount()
-	return len(observation.Values) == count && len(observation.Present) == count && len(observation.evidence) == count
+	return len(observation.Values) == count && len(observation.Present) == count && len(observation.evidence) == count && len(observation.evidencePublished) == count
 }

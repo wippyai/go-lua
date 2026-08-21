@@ -7,21 +7,88 @@ import (
 )
 
 func TestEvidenceStateJoinIsExhaustive(t *testing.T) {
-	states := []EvidenceState{EvidenceUnknown, EvidenceRefuted, EvidenceProven}
+	states := []EvidenceState{EvidenceAbsent, EvidenceUnknown, EvidenceRefuted, EvidenceProven}
+	// The composition is stated independently of the implementation: absence
+	// is the identity, exact authenticated repeats are idempotent, and every
+	// distinct pair of written verdicts is refused. In particular, Unknown is
+	// a completed producer verdict and cannot be erased by Proven or Refuted.
+	expect := func(left, right EvidenceState) (EvidenceState, bool) {
+		switch {
+		case left == EvidenceAbsent:
+			return right, true
+		case right == EvidenceAbsent:
+			return left, true
+		case left == right:
+			return left, true
+		default:
+			return invalidEvidenceState, false
+		}
+	}
 	for _, left := range states {
 		for _, right := range states {
-			got := left.Join(right)
-			want := EvidenceUnknown
-			if left == right && left != EvidenceUnknown {
-				want = left
+			got, ok := left.JoinChecked(right)
+			want, wantOK := expect(left, right)
+			if got != want || ok != wantOK || got.Valid() != want.Valid() {
+				t.Fatalf("evidence join(%v,%v)=%v/%t, want %v/%t", left, right, got, ok, want, wantOK)
 			}
-			if got != want || !got.Valid() {
-				t.Fatalf("evidence join(%v,%v)=%v, want %v", left, right, got, want)
+			// The join is commutative: no producer ordering may change a
+			// published proof column.
+			mirrored, mirroredOK := right.JoinChecked(left)
+			if mirrored != got || mirroredOK != ok {
+				t.Fatalf("evidence join(%v,%v)=%v/%t is not commutative with %v/%t", right, left, mirrored, mirroredOK, got, ok)
 			}
 		}
 	}
-	if EvidenceState(99).Valid() || EvidenceState(99).Join(EvidenceProven) != EvidenceUnknown {
-		t.Fatal("invalid evidence state crossed the conservative join")
+	if EvidenceAbsent.Known() || EvidenceAbsent != (EvidenceState(0)) || !EvidenceAbsent.Absent() {
+		t.Fatal("absence is not the zero value of the proof state")
+	}
+	if EvidenceState(99).Valid() {
+		t.Fatal("invalid evidence state admitted")
+	}
+	if got, ok := EvidenceState(99).JoinChecked(EvidenceProven); ok || got.Valid() || got == EvidenceUnknown {
+		t.Fatalf("invalid evidence state crossed the checked join: %v/%t", got, ok)
+	}
+}
+
+// TestEvidenceAbsenceIsNotUnknown is the tri-state publication law. A proof
+// column that no producer wrote is absence; a column a producer authenticated
+// as undecidable is Unknown. The two must remain distinguishable at every
+// boundary, and absence must be the join identity so that composing an
+// unwritten column can neither erase nor weaken an authenticated one.
+func TestEvidenceAbsenceIsNotUnknown(t *testing.T) {
+	unwritten := AllocationEvidence{}
+	authenticated := AllocationEvidence{DeepFrozen: EvidenceUnknown}
+	if unwritten.DeepFrozen == authenticated.DeepFrozen {
+		t.Fatal("an unwritten proof column is indistinguishable from producer-authenticated Unknown")
+	}
+	if unwritten.DeepFrozen.Known() || !unwritten.Valid() {
+		t.Fatalf("absent proof column = %v, want a valid state with no polarity", unwritten.DeepFrozen)
+	}
+	for _, state := range []EvidenceState{EvidenceUnknown, EvidenceRefuted, EvidenceProven} {
+		joined, ok := unwritten.DeepFrozen.JoinChecked(state)
+		if !ok || joined != state {
+			t.Fatalf("absence join %v = %v/%t, want %v/true", state, joined, ok, state)
+		}
+		joined, ok = state.JoinChecked(unwritten.DeepFrozen)
+		if !ok || joined != state {
+			t.Fatalf("%v join absence = %v/%t, want %v/true", state, joined, ok, state)
+		}
+	}
+	// Absence is the unique identity: joining it into an authenticated Unknown
+	// yields Unknown, so Unknown is strictly above absence rather than equal.
+	if joined, ok := EvidenceUnknown.JoinChecked(unwritten.DeepFrozen); !ok || joined != EvidenceUnknown {
+		t.Fatalf("Unknown join absence = %v/%t, want Unknown/true", joined, ok)
+	}
+	// Composing an unwritten producer row must retain every base proof, and an
+	// unwritten base must adopt the producer's authenticated states.
+	base := AllocationEvidence{FrameLocal: EvidenceProven, DiesBeforeSuspension: EvidenceRefuted, DeepFrozen: EvidenceUnknown}
+	merged, ok := ComposeAllocationEvidence(base, unwritten)
+	if !ok || merged != base {
+		t.Fatalf("composing an unwritten producer row = %#v/%t, want the base unchanged", merged, ok)
+	}
+	merged, ok = ComposeAllocationEvidence(unwritten, base)
+	if !ok || merged != base {
+		t.Fatalf("composing onto an unwritten base = %#v/%t, want the producer row", merged, ok)
 	}
 }
 
@@ -81,7 +148,7 @@ func TestAllocationEvidenceRejectsImplicitPresence(t *testing.T) {
 	}
 }
 
-func TestAllocationEvidenceMergeClearsConflictingOptionalScalarsToZero(t *testing.T) {
+func TestAllocationEvidenceCompositionRejectsConflictingOptionalScalars(t *testing.T) {
 	leftOwner := identity.ContentID{1}
 	rightOwner := identity.ContentID{2}
 	left := AllocationEvidence{
@@ -96,14 +163,28 @@ func TestAllocationEvidenceMergeClearsConflictingOptionalScalarsToZero(t *testin
 		OwnerIdentity:    rightOwner,
 		HasOwnerIdentity: true,
 	}
-	merged := left.Merge(right)
-	if !merged.Valid() {
-		t.Fatalf("conflicting evidence merge became invalid: %#v", merged)
+	if merged, ok := ComposeAllocationEvidence(left, right); ok || merged.Valid() {
+		t.Fatalf("conflicting evidence was composed: %#v/%t", merged, ok)
 	}
-	if merged.HasKind || merged.Kind != AllocationKindUnknown {
-		t.Fatalf("kind conflict retained stale scalar: %#v", merged)
+}
+
+func TestAllocationEvidenceCompositionRejectsInvalidAndConflictingProofs(t *testing.T) {
+	base := AllocationEvidence{FrameLocal: EvidenceProven}
+	if merged, ok := ComposeAllocationEvidence(base, AllocationEvidence{FrameLocal: EvidenceRefuted}); ok || merged.Valid() {
+		t.Fatalf("conflicting proof was composed: %#v/%t", merged, ok)
 	}
-	if merged.HasOwnerIdentity || merged.OwnerIdentity.Available() {
-		t.Fatalf("owner conflict retained stale identity: %#v", merged)
+	if merged, ok := ComposeAllocationEvidence(base, AllocationEvidence{FrameLocal: EvidenceUnknown}); ok || merged.Valid() {
+		t.Fatalf("authenticated Unknown was erased by a decided proof: %#v/%t", merged, ok)
+	}
+	if merged, ok := ComposeAllocationEvidence(AllocationEvidence{FrameLocal: EvidenceUnknown}, base); ok || merged.Valid() {
+		t.Fatalf("decided proof erased authenticated Unknown: %#v/%t", merged, ok)
+	}
+	if merged, ok := ComposeAllocationEvidence(base, AllocationEvidence{DeepFrozen: EvidenceState(99)}); ok || merged.Valid() {
+		t.Fatalf("invalid proof was composed: %#v/%t", merged, ok)
+	}
+	refinement := AllocationEvidence{DiesBeforeSuspension: EvidenceProven}
+	merged, ok := ComposeAllocationEvidence(base, refinement)
+	if !ok || !merged.Valid() || merged.FrameLocal != EvidenceProven || merged.DiesBeforeSuspension != EvidenceProven {
+		t.Fatalf("independent proof refinement = %#v/%t", merged, ok)
 	}
 }

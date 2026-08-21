@@ -14,7 +14,12 @@ import (
 const SummaryResultFamily schema.Key = "placement-summary"
 
 // placementSummaryResultFormat is the current evidence-aware wire revision.
-// Revision 7 replaces the revision-6 presence plus compact class planes with
+// Revision 8 gives every proof column a fourth state: the raw EvidenceState
+// ordinals in the evidence record now spell absence, unknown, refuted, proven,
+// so an unwritten column no longer occupies the ordinal that means "a producer
+// authenticated an undecidable verdict". Every ordinal in the proof bytes
+// moved by one, which is why this is a revision rather than an addition.
+// Revision 7 replaced the revision-6 presence plus compact class planes with
 // one fixed state byte per allocation row, so random row lookup never scans a
 // prefix of the presence plane. Revision 6 added the owner-authenticated
 // manifest-allocation kind for Target fresh roots. Revision 5 kept the
@@ -22,7 +27,7 @@ const SummaryResultFamily schema.Key = "placement-summary"
 // made the public allocation denominator canonical: complete allocation rows
 // are ordered by their owner-issued ContentID. Draft class-only images and
 // revision-3 declaration-order images are not part of this contract.
-const SummaryResultFormat uint64 = 7
+const SummaryResultFormat uint64 = 8
 
 const placementSummaryResultFormat uint64 = SummaryResultFormat
 
@@ -39,12 +44,15 @@ const (
 // EncodeSummaryResult canonically detaches one Placement summary. The wire
 // denominator contains allocation roots only: Heap Boot roots remain internal
 // coordinates and never become public Placement rows. Every allocation root
-// carries its stable Heap KeyID and one fixed state byte: zero means absent,
-// while nonzero states encode Bottom through Unknown explicitly. Revision 7
-// carries one fixed-width AllocationEvidence record for every row; fields
-// without a producer are encoded as explicit unknowns. The complete
-// coordinate record is sorted by its ContentID before any of the parallel
-// wire planes are written.
+// carries its stable Heap KeyID and one fixed state byte: every allocation row
+// must be present and nonzero, while the row's class encodes Bottom through
+// Unknown explicitly. Revision 8 carries one fixed-width AllocationEvidence
+// record for every row; an evidence record is emitted only after a producer
+// has authenticated/published that row. A proof column inside a published
+// record carries absence until some producer decides it, and explicit Unknown
+// remains a semantic producer state, never a replacement for an unavailable
+// row or an undecided column. The complete coordinate record is sorted by its
+// ContentID before any of the parallel wire planes are written.
 func EncodeSummaryResult(observation PlacementSummaryObservation) (present bool, rows uint64, payload []byte, ok bool) {
 	schemaOwner := observation.owner
 	coordinates, any, valid := placementSummaryCoordinates(schemaOwner, observation)
@@ -86,19 +94,26 @@ func EncodeSummaryResult(observation PlacementSummaryObservation) (present bool,
 		payload[cursor] = state
 		cursor++
 	}
-	// Evidence occupies a fixed-width row for every allocation denominator
-	// coordinate, including absent class rows. Unknown is therefore explicit
-	// on the wire and does not depend on a record being present at a query
-	// point.
+	// Evidence occupies a fixed-width row for every complete allocation
+	// denominator coordinate. A row is emitted only after the evidence producer
+	// (or an owner-fenced explicit evidence helper) published it; this prevents
+	// a zero private row from becoming an unauthenticated Unknown on the wire.
 	for _, coordinate := range coordinates {
+		if !observation.evidencePublished[coordinate.denseIndex] {
+			// The zero value of AllocationEvidence is wire-valid, so checking
+			// only Valid would publish a row no producer ever wrote.
+			// Publication must be authenticated by the fold or by the
+			// owner-fenced evidence helper first.
+			return false, 0, nil, false
+		}
 		evidence, evidenceOK := allocationEvidenceForKey(schemaOwner, coordinate.key, observation.Values[coordinate.denseIndex], observation.Present[coordinate.denseIndex])
 		if !evidenceOK {
 			return false, 0, nil, false
 		}
 		// The Heap-derived row is the evidence authority for this coordinate.
-		// Validate it before merging any optional producer row so a malformed
-		// private evidence plane cannot be turned into an all-unknown record by
-		// AllocationEvidence.Merge and then accidentally published.
+		// Validate it before composing any optional producer row so a malformed
+		// private evidence plane cannot be turned into a valid empty record and
+		// accidentally published after a failed composition.
 		if !placementSummaryEvidenceFenced(coordinate.id, evidence) {
 			return false, 0, nil, false
 		}
@@ -107,13 +122,16 @@ func EncodeSummaryResult(observation PlacementSummaryObservation) (present bool,
 			if !producerEvidence.Valid() {
 				return false, 0, nil, false
 			}
-			evidence = evidence.Merge(producerEvidence)
+			var composedOK bool
+			evidence, composedOK = ComposeAllocationEvidence(evidence, producerEvidence)
+			if !composedOK {
+				return false, 0, nil, false
+			}
 		}
-		// Merge conservatively clears owner identity on disagreement. That is
-		// useful inside the evidence algebra, but an encoded row must retain the
-		// owner-issued ID because the decoder uses it to pair the evidence plane
-		// with the canonical allocation denominator. Fail closed here rather than
-		// emitting a payload DecodeSummaryResult will reject.
+		// The composed row must retain the owner-issued ID because the decoder
+		// uses it to pair the evidence plane with the canonical allocation
+		// denominator. Fail closed rather than emitting a payload the decoder
+		// will reject.
 		if !placementSummaryEvidenceFenced(coordinate.id, evidence) || !encodeAllocationEvidence(payload[cursor:cursor+placementSummaryEvidenceRecordSize], evidence) {
 			return false, 0, nil, false
 		}
@@ -123,11 +141,10 @@ func EncodeSummaryResult(observation PlacementSummaryObservation) (present bool,
 }
 
 // placementSummaryEvidenceFenced validates the evidence that can cross the
-// Placement result boundary. Optional producer rows may be all-unknown before
-// they are merged into the Heap-derived row, but the final row must remain
-// valid and retain the exact owner-issued allocation identity used by the ID
-// plane. Keeping this check as one helper makes the before/after Merge fences
-// impossible to accidentally diverge.
+// Placement result boundary. The final row must remain valid and retain the
+// exact owner-issued allocation identity used by the ID plane. Keeping this
+// check as one helper makes the before/after composition fences impossible to
+// accidentally diverge.
 func placementSummaryEvidenceFenced(coordinateID identity.ContentID, evidence AllocationEvidence) bool {
 	return coordinateID.Available() && evidence.Valid() && evidence.HasOwnerIdentity && evidence.OwnerIdentity == coordinateID
 }
@@ -203,6 +220,12 @@ func placementSummaryCoordinates(schemaOwner Schema, observation PlacementSummar
 		}
 		if kind != heapdomain.RootAllocation {
 			continue
+		}
+		// A public denominator row is complete only when its Placement
+		// factor published the coordinate. Do not encode state zero for an
+		// absent allocation and let a decoder infer a weaker result.
+		if !present {
+			return nil, false, false
 		}
 		id, idOK := key.ContentID()
 		if !idOK || !id.Available() {

@@ -1,6 +1,9 @@
 package placement
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
+)
 
 // SummaryResult is an immutable, allocation-free view over one encoded
 // Placement summary. It retains only the caller's string and offsets into its
@@ -45,10 +48,10 @@ func DecodeSummaryResult(expected Schema, present bool, rows uint64, payload str
 	if !expected.Valid() {
 		return SummaryResult{}, false
 	}
-	return decodeSummaryResult(expected.ContentID(), present, rows, payload)
+	return decodeSummaryResult(expected, present, rows, payload)
 }
 
-func decodeSummaryResult(expectedID identity.ContentID, present bool, rows uint64, payload string) (SummaryResult, bool) {
+func decodeSummaryResult(expected Schema, present bool, rows uint64, payload string) (SummaryResult, bool) {
 	if len(payload) < placementSummaryResultHeaderSize || rows > 1 {
 		return SummaryResult{}, false
 	}
@@ -59,12 +62,29 @@ func decodeSummaryResult(expectedID identity.ContentID, present bool, rows uint6
 	if !placementSummaryIDAvailable(payload, 8) {
 		return SummaryResult{}, false
 	}
+	expectedID := expected.ContentID()
 	if !expectedID.Available() || !placementSummaryIDEquals(payload, 8, expectedID) {
 		return SummaryResult{}, false
 	}
 	count64 := placementSummaryUint64(payload, 8+32)
 	idOffset, stateOffset, evidenceOffset, count, ok := placementSummaryOffsets(len(payload), count64)
 	if !ok {
+		return SummaryResult{}, false
+	}
+	expectedAllocations := 0
+	for dense := 0; dense < expected.DenseKeyCount(); dense++ {
+		key, keyOK := expected.KeyAt(dense)
+		if !keyOK {
+			return SummaryResult{}, false
+		}
+		if key.Kind() == heapdomain.RootAllocation {
+			expectedAllocations++
+		}
+	}
+	// The result denominator is the exact owner-issued allocation universe.
+	// A payload that omits a root cannot be made sound by its row metadata or
+	// by treating the missing row as Unknown.
+	if count != expectedAllocations {
 		return SummaryResult{}, false
 	}
 	anyPresent := false
@@ -74,13 +94,22 @@ func decodeSummaryResult(expectedID identity.ContentID, present bool, rows uint6
 		if !placementSummaryIDAvailable(payload, idAt) {
 			return SummaryResult{}, false
 		}
+		rowID := identity.ContentID{}
+		copy(rowID[:], payload[idAt:idAt+placementSummaryAllocationIDSize])
+		key, keyOK := expected.Heap().KeyForID(rowID)
+		if !keyOK || key.Kind() != heapdomain.RootAllocation {
+			return SummaryResult{}, false
+		}
 		_, rowPresent, stateOK := placementFromWireState(payload[stateAt])
 		if !stateOK {
 			return SummaryResult{}, false
 		}
-		if rowPresent {
-			anyPresent = true
+		// Every denominator row is complete. State zero is reserved for an
+		// absent sparse cell and is not a legal public result row.
+		if !rowPresent {
+			return SummaryResult{}, false
 		}
+		anyPresent = true
 		if index > 0 {
 			previousAt := idAt - placementSummaryAllocationIDSize
 			// The wire is canonicalized by the complete owner-issued ID. A
@@ -95,7 +124,7 @@ func decodeSummaryResult(expectedID identity.ContentID, present bool, rows uint6
 		return SummaryResult{}, false
 	}
 
-	// Revision 7 carries one fixed evidence record for every denominator row.
+	// Revision 8 carries one fixed evidence record for every denominator row.
 	// There is no compact class suffix to scan or infer; the exact fixed-plane
 	// boundary is established by placementSummaryOffsets above.
 	if !validateAllocationEvidencePlane(payload, evidenceOffset, idOffset, count) {
@@ -173,7 +202,7 @@ func (result SummaryResult) Allocations() SummaryResultIterator {
 // Allocation opens the canonical row for one owner-issued Heap allocation
 // identity. The wire ID plane is strictly sorted, so identity lookup is
 // logarithmic and requires neither a retained inverse directory nor a
-// per-query allocation. The v7 fixed state plane is direct-addressed after
+// per-query allocation. The fixed state plane is direct-addressed after
 // the binary search; fixed-width evidence remains direct-addressed as well.
 func (result SummaryResult) Allocation(id identity.ContentID) (SummaryResultAllocation, bool) {
 	index, found := result.allocationIndex(id)
@@ -198,7 +227,10 @@ func (result SummaryResult) Allocation(id identity.ContentID) (SummaryResultAllo
 func (result SummaryResult) DeepFrozenFor(id identity.ContentID) (EvidenceState, bool) {
 	index, found := result.allocationIndex(id)
 	if !found {
-		return EvidenceUnknown, false
+		// An unreadable row has no proof column at all. Returning Unknown here
+		// would hand a caller that drops the boolean an authenticated verdict
+		// this result never carried.
+		return invalidEvidenceState, false
 	}
 	offset := result.evidenceOffset + index*placementSummaryEvidenceRecordSize
 	record := result.payload[offset : offset+placementSummaryEvidenceRecordSize]
@@ -269,36 +301,42 @@ func (allocation SummaryResultAllocation) AllocationID() identity.ContentID {
 	return id
 }
 
-// Present reports whether this allocation has a Placement class.
-func (allocation SummaryResultAllocation) Present() bool {
+// Present reports whether this readable allocation has a Placement class.
+// The second result distinguishes an absent class in a real row from an
+// unavailable row; callers may not use false as both meanings.
+func (allocation SummaryResultAllocation) Present() (bool, bool) {
 	if !allocation.Available() {
-		return false
+		return false, false
 	}
 	_, present, ok := placementFromWireState(allocation.payload[allocation.stateOffset])
-	return ok && present
+	return present, ok
 }
 
 // Placement returns the decoded Placement class for a present allocation.
 func (allocation SummaryResultAllocation) Placement() (Placement, bool) {
 	if !allocation.Available() {
-		return Bottom, false
+		return invalidPlacementResult, false
 	}
 	value, present, ok := placementFromWireState(allocation.payload[allocation.stateOffset])
-	return value, ok && present
+	if !ok || !present {
+		return invalidPlacementResult, false
+	}
+	return value, true
 }
 
-// Evidence returns this allocation's immutable proof row.
-func (allocation SummaryResultAllocation) Evidence() AllocationEvidence {
-	evidence := AllocationEvidence{}
+// Evidence returns this allocation's immutable proof row. An unavailable or
+// malformed row refuses; it is never represented as a valid all-absent row.
+func (allocation SummaryResultAllocation) Evidence() (AllocationEvidence, bool) {
 	if !allocation.Available() {
-		return evidence
+		return invalidAllocationEvidence(), false
 	}
+	evidence := AllocationEvidence{}
 	if class, present := allocation.Placement(); present {
 		evidence.Class = class
 		evidence.HasClass = true
 	}
 	if allocation.evidenceOffset < 0 || allocation.evidenceOffset+placementSummaryEvidenceRecordSize > len(allocation.payload) {
-		return evidence
+		return invalidAllocationEvidence(), false
 	}
 	return decodeAllocationEvidence(allocation.payload[allocation.evidenceOffset:allocation.evidenceOffset+placementSummaryEvidenceRecordSize], evidence)
 }
@@ -308,35 +346,52 @@ func (allocation SummaryResultAllocation) Evidence() AllocationEvidence {
 // kind; Target fresh-result roots use the canonical manifest.allocation kind
 // after Heap authenticates their FreshResult identity.
 func (allocation SummaryResultAllocation) Kind() (AllocationKind, bool) {
-	evidence := allocation.Evidence()
-	return evidence.Kind, evidence.HasKind
+	evidence, ok := allocation.Evidence()
+	return evidence.Kind, ok && evidence.HasKind
 }
 
 // OwnerIdentity returns the owner-issued Heap-root identity, not a guessed
 // containment-parent identity.
 func (allocation SummaryResultAllocation) OwnerIdentity() (identity.ContentID, bool) {
-	evidence := allocation.Evidence()
-	return evidence.OwnerIdentity, evidence.HasOwnerIdentity
+	evidence, ok := allocation.Evidence()
+	return evidence.OwnerIdentity, ok && evidence.HasOwnerIdentity
 }
 
 // Depth returns a static containment depth only when a producer supplied it.
 func (allocation SummaryResultAllocation) Depth() (uint32, bool) {
-	evidence := allocation.Evidence()
-	return evidence.Depth, evidence.HasDepth
+	evidence, ok := allocation.Evidence()
+	return evidence.Depth, ok && evidence.HasDepth
 }
 
-func (allocation SummaryResultAllocation) FrameLocal() EvidenceState {
-	return allocation.Evidence().FrameLocal
+// FrameLocal returns this row's frame-local proof column. An unreadable row
+// carries no column at all: absence is a statement about a row that exists, so
+// an unavailable row yields the inadmissible state rather than absence.
+func (allocation SummaryResultAllocation) FrameLocal() (EvidenceState, bool) {
+	evidence, ok := allocation.Evidence()
+	return proofColumn(evidence.FrameLocal, ok)
 }
 
-func (allocation SummaryResultAllocation) DiesBeforeSuspension() EvidenceState {
-	return allocation.Evidence().DiesBeforeSuspension
+// DiesBeforeSuspension returns this row's suspension-liveness proof column.
+func (allocation SummaryResultAllocation) DiesBeforeSuspension() (EvidenceState, bool) {
+	evidence, ok := allocation.Evidence()
+	return proofColumn(evidence.DiesBeforeSuspension, ok)
 }
 
 // DeepFrozen returns the transitive frozen-graph proof carried by this row.
-// Unknown is returned for an unavailable row or an explicit absence of proof.
-func (allocation SummaryResultAllocation) DeepFrozen() EvidenceState {
-	return allocation.Evidence().DeepFrozen
+func (allocation SummaryResultAllocation) DeepFrozen() (EvidenceState, bool) {
+	evidence, ok := allocation.Evidence()
+	return proofColumn(evidence.DeepFrozen, ok)
+}
+
+// proofColumn is the one projection every row-scoped proof accessor shares. It
+// keeps unavailability and absence apart in both results, so a caller that
+// drops the boolean still reads an inadmissible state instead of a column the
+// result never carried.
+func proofColumn(state EvidenceState, available bool) (EvidenceState, bool) {
+	if !available || !state.Valid() {
+		return invalidEvidenceState, false
+	}
+	return state, true
 }
 
 func (allocation SummaryResultAllocation) Available() bool {
@@ -404,9 +459,9 @@ func validAllocationEvidenceBytes(payload string) bool {
 	return true
 }
 
-func decodeAllocationEvidence(payload string, evidence AllocationEvidence) AllocationEvidence {
+func decodeAllocationEvidence(payload string, evidence AllocationEvidence) (AllocationEvidence, bool) {
 	if !validAllocationEvidenceBytes(payload) {
-		return AllocationEvidence{}
+		return invalidAllocationEvidence(), false
 	}
 	evidence.Kind = AllocationKind(payload[0])
 	evidence.HasKind = evidence.Kind != AllocationKindUnknown
@@ -423,7 +478,7 @@ func decodeAllocationEvidence(payload string, evidence AllocationEvidence) Alloc
 	evidence.FrameLocal = EvidenceState(payload[39])
 	evidence.DiesBeforeSuspension = EvidenceState(payload[40])
 	evidence.DeepFrozen = EvidenceState(payload[placementSummaryDeepFrozenOffset])
-	return evidence
+	return evidence, evidence.Valid()
 }
 
 func placementSummaryUint64(payload string, offset int) uint64 {

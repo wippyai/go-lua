@@ -98,9 +98,87 @@ func TestSuspensionBindRejectsEqualSchemaForeignBinding(t *testing.T) {
 	}
 }
 
+// TestSuspensionSummaryRefusesAbsentEvidence keeps a sparse/default Factor
+// cell from becoming an implicit "no suspension" answer. A non-empty Heap
+// summary must receive one authenticated Evidence cell per dense coordinate;
+// the empty OrderedCells value is a missing predecessor, not a result to
+// skip.
+func TestSuspensionSummaryRefusesAbsentEvidence(t *testing.T) {
+	placementSchema, _ := newSuspensionBindingLawSchemas(t)
+	if placementSchema.DenseKeyCount() == 0 {
+		t.Skip("fixture has no dense Heap coordinates")
+	}
+	observation := placementdomain.BeginPlacementSummary(placementSchema)
+	if _, ok := suspension.AccumulatePlacementSummarySuspension(placementSchema, observation, engine.OrderedCells[suspension.Evidence]{}); ok {
+		t.Fatal("suspension summary accepted absent Evidence predecessors")
+	}
+}
+
+// TestSuspensionSummaryPublishesAuthenticatedUnknown is the publication half
+// of the tri-state law. An all-routes verdict of Unknown is this producer's
+// own authenticated result: every route was read and none of them decided.
+// It must reach the public evidence plane as an explicit Unknown row. Leaving
+// it unpublished would make the consumer read the column's absence default and
+// so lose the distinction between "no route reported" and "every route
+// reported and none decided".
+func TestSuspensionSummaryPublishesAuthenticatedUnknown(t *testing.T) {
+	placementSchema, _ := newSuspensionAllocationLawSchemas(t)
+	denseCount := placementSchema.DenseKeyCount()
+	if denseCount == 0 {
+		t.Fatal("fixture has no dense Heap coordinates")
+	}
+	allocations := make([]heap.Key, 0, denseCount)
+	observation := placementdomain.BeginPlacementSummary(placementSchema)
+	for index := 0; index < denseCount; index++ {
+		key, keyOK := placementSchema.KeyAt(index)
+		if !keyOK {
+			t.Fatal("dense Heap coordinate")
+		}
+		if key.Kind() != heap.RootAllocation {
+			continue
+		}
+		observation.Values[index] = placementdomain.OwnedHeap
+		observation.Present[index] = true
+		observation.Rows = 1
+		allocations = append(allocations, key)
+	}
+	if len(allocations) == 0 {
+		t.Fatal("fixture has no allocation roots")
+	}
+
+	folded, foldedOK := suspension.AccumulatePlacementSummarySuspensionRows(placementSchema, observation, denseCount,
+		func(int) (suspension.Evidence, bool, bool) { return suspension.EvidenceUnknown, true, true })
+	if !foldedOK {
+		t.Fatal("suspension summary refused an authenticated all-routes Unknown")
+	}
+	for _, key := range allocations {
+		evidence, available := placementdomain.PlacementSummaryEvidence(placementSchema, folded, key)
+		if !available {
+			t.Fatal("authenticated Unknown suspension evidence was not published")
+		}
+		if evidence.DiesBeforeSuspension != placementdomain.EvidenceUnknown {
+			t.Fatalf("published suspension column = %v, want unknown", evidence.DiesBeforeSuspension)
+		}
+	}
+}
+
 func newSuspensionBindingLawSchemas(t testing.TB) (placementdomain.Schema, *valuedomain.Schema) {
 	t.Helper()
-	program, err := lower.Lower(lower.Source{Name: "placement-suspension-binding-law.lua", Text: []byte("return 1")})
+	return newSuspensionLawSchemasForSource(t, "return 1")
+}
+
+// newSuspensionAllocationLawSchemas seals the same fixture over a source whose
+// table constructors issue Heap allocation roots. The evidence plane is dense
+// over allocations, so a law about published evidence rows needs a program that
+// actually allocates.
+func newSuspensionAllocationLawSchemas(t testing.TB) (placementdomain.Schema, *valuedomain.Schema) {
+	t.Helper()
+	return newSuspensionLawSchemasForSource(t, "local first = {}; local second = {}; return first")
+}
+
+func newSuspensionLawSchemasForSource(t testing.TB, source string) (placementdomain.Schema, *valuedomain.Schema) {
+	t.Helper()
+	program, err := lower.Lower(lower.Source{Name: "placement-suspension-binding-law.lua", Text: []byte(source)})
 	if err != nil {
 		t.Fatal(err)
 	}

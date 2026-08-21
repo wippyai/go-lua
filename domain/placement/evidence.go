@@ -5,24 +5,40 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
-// EvidenceState is the three-valued state used by Placement-owned proof
-// columns. Unknown is different from Refuted: an absent producer must not be
-// turned into a negative fact merely because a consumer is conservative.
+// EvidenceState is the four-valued state used by Placement-owned proof
+// columns. The four states are three distinct answers plus the absence of an
+// answer, and the distinction between them is load-bearing:
+//
+//   - Absent: no producer wrote this column. Nothing was decided because
+//     nothing was asked. A consumer that needs the column refuses and the
+//     engine refires the query when the producing row arrives.
+//   - Unknown: a producer read its complete input and authenticated that no
+//     polarity survives. This is a settled semantic verdict, not a pending
+//     one.
+//   - Refuted / Proven: a producer established the property's negation or
+//     the property.
+//
+// Absence is the state's zero value and its join identity, mirroring the
+// suspension producer's own private vocabulary, where the sparse Factor
+// default is likewise the join identity. Collapsing Absent into Unknown at any
+// boundary publishes a verdict no producer reached.
 //
 // This state is part of Placement's query/result contract; it replaces the
 // older hand-built allocation-license projection.
 type EvidenceState uint8
 
 const (
-	EvidenceUnknown EvidenceState = iota
+	EvidenceAbsent EvidenceState = iota
+	EvidenceUnknown
 	EvidenceRefuted
 	EvidenceProven
 )
 
 // Valid reports whether s is one of the wire-safe proof states.
-func (s EvidenceState) Valid() bool {
-	return s == EvidenceUnknown || s == EvidenceRefuted || s == EvidenceProven
-}
+func (s EvidenceState) Valid() bool { return s <= EvidenceProven }
+
+// Absent reports whether no producer published this column.
+func (s EvidenceState) Absent() bool { return s == EvidenceAbsent }
 
 // Known reports whether a producer supplied either a positive or a negative
 // proof.
@@ -34,21 +50,39 @@ func (s EvidenceState) Proven() bool { return s == EvidenceProven }
 // Refuted reports whether the producer established the property's negation.
 func (s EvidenceState) Refuted() bool { return s == EvidenceRefuted }
 
-// Join is the conservative consensus join for alternate evidence sources.
-// Proven or Refuted survives only when every explicit source agrees; mixed
-// polarity and any Unknown source remain Unknown.
-func (s EvidenceState) Join(other EvidenceState) EvidenceState {
+// JoinChecked combines two authenticated proof states. Absence is the
+// identity: an unwritten column contributes nothing and can neither erase nor
+// weaken the state it joins with. An authenticated Unknown is a completed
+// semantic verdict, not a weaker spelling of Proven or Refuted. Consequently
+// two written states compose only when they are exactly equal; every distinct
+// pair is duplicate/conflicting authority and is refused.
+// A caller that has independently authenticated a semantic disagreement may
+// deliberately publish EvidenceUnknown, but that decision belongs to that
+// producer rather than to this scalar composition primitive.
+func (s EvidenceState) JoinChecked(other EvidenceState) (EvidenceState, bool) {
 	if !s.Valid() || !other.Valid() {
-		return EvidenceUnknown
+		return invalidEvidenceState, false
 	}
-	if s == EvidenceUnknown || other == EvidenceUnknown {
-		return EvidenceUnknown
+	if s == EvidenceAbsent {
+		return other, true
+	}
+	if other == EvidenceAbsent {
+		return s, true
 	}
 	if s == other {
-		return s
+		return s, true
 	}
-	return EvidenceUnknown
+	return invalidEvidenceState, false
 }
+
+const invalidEvidenceState EvidenceState = ^EvidenceState(0)
+
+// InvalidEvidenceState is the explicit refusal state for a producer whose own
+// private vocabulary has no public projection for a value. It is deliberately
+// outside the admissible states, so a boundary that forgets to check a
+// projection's provenance still refuses on Valid rather than publishing a
+// substituted verdict.
+func InvalidEvidenceState() EvidenceState { return invalidEvidenceState }
 
 // AllocationKind is the allocation-origin vocabulary backed by Heap. Program
 // roots retain their concrete Lua allocation role; Target-authored fresh roots
@@ -85,7 +119,8 @@ func (k AllocationKind) String() string {
 
 // AllocationEvidence is the Placement-owned evidence plane for one Heap
 // allocation root. Optional scalar columns carry explicit Has* bits; proof
-// columns carry EvidenceUnknown when their producer did not publish a row.
+// columns carry EvidenceAbsent when their producer did not publish a row, so
+// an unwritten column is never read as a producer-authenticated verdict.
 //
 // OwnerIdentity is the identity of this owner-issued Heap root. It is not a
 // containment-parent identity. Static containment depth, when available, is
@@ -132,9 +167,8 @@ func (e AllocationEvidence) Valid() bool {
 			return false
 		}
 	} else if e.Kind != AllocationKindUnknown {
-		// Do not let a stale scalar survive after its presence bit was cleared.
-		// This is especially important after a conservative Merge conflict:
-		// the absent value must be the exact zero/unknown sentinel.
+		// Do not let a stale scalar survive without its presence bit. Strict
+		// composition refuses conflicts; it never clears a conflicting field.
 		return false
 	}
 	if e.HasOwnerIdentity {
@@ -155,84 +189,90 @@ func (e AllocationEvidence) Valid() bool {
 	return true
 }
 
-// Merge overlays independently supplied optional evidence while preserving
-// the conservative unknown state on disagreement. A missing optional field in
-// the right operand does not erase a fact derived from Heap; this is what lets
-// the canonical Heap projection coexist with a future neutral proof producer.
-func (e AllocationEvidence) Merge(other AllocationEvidence) AllocationEvidence {
-	if !e.Valid() || !other.Valid() {
-		return AllocationEvidence{}
+// ComposeAllocationEvidence combines the canonical Heap row with one
+// producer-owned refinement. It is deliberately strict: absent optional
+// fields do not erase an existing fact, equal present scalars may be repeated,
+// but conflicting owner identity, kind, class, depth, or proof polarity
+// refuses the row. This prevents a malformed/foreign producer from being
+// "conservatively" erased into a valid empty record and later published.
+//
+// Semantic disagreement is not inferred here. A producer that has a real
+// authenticated alternate-world proof may set its own proof field to
+// EvidenceUnknown before calling this function; the generic composition
+// layer has no authority to manufacture that widening.
+func ComposeAllocationEvidence(base, producer AllocationEvidence) (AllocationEvidence, bool) {
+	if !base.Valid() || !producer.Valid() {
+		return invalidAllocationEvidence(), false
 	}
-	if other.HasKind {
-		if e.HasKind && e.Kind != other.Kind {
-			e.HasKind = false
-			e.Kind = AllocationKindUnknown
-		} else {
-			e.HasKind = true
-			e.Kind = other.Kind
+	result := base
+	if producer.HasKind {
+		if result.HasKind && result.Kind != producer.Kind {
+			return invalidAllocationEvidence(), false
 		}
+		result.HasKind = true
+		result.Kind = producer.Kind
 	}
-	if other.HasClass {
-		if e.HasClass && e.Class != other.Class {
-			e.HasClass = false
-			e.Class = Bottom
-		} else {
-			e.HasClass = true
-			e.Class = other.Class
+	if producer.HasClass {
+		if result.HasClass && result.Class != producer.Class {
+			return invalidAllocationEvidence(), false
 		}
+		result.HasClass = true
+		result.Class = producer.Class
 	}
-	if other.HasOwnerIdentity {
-		if e.HasOwnerIdentity && e.OwnerIdentity != other.OwnerIdentity {
-			e.HasOwnerIdentity = false
-			e.OwnerIdentity = identity.ContentID{}
-		} else {
-			e.HasOwnerIdentity = true
-			e.OwnerIdentity = other.OwnerIdentity
+	if producer.HasOwnerIdentity {
+		if result.HasOwnerIdentity && result.OwnerIdentity != producer.OwnerIdentity {
+			return invalidAllocationEvidence(), false
 		}
+		result.HasOwnerIdentity = true
+		result.OwnerIdentity = producer.OwnerIdentity
 	}
-	if other.HasDepth {
-		if e.HasDepth && e.Depth != other.Depth {
-			e.HasDepth = false
-			e.Depth = 0
-		} else {
-			e.HasDepth = true
-			e.Depth = other.Depth
+	if producer.HasDepth {
+		if result.HasDepth && result.Depth != producer.Depth {
+			return invalidAllocationEvidence(), false
 		}
+		result.HasDepth = true
+		result.Depth = producer.Depth
 	}
-	e.FrameLocal = mergeEvidenceState(e.FrameLocal, other.FrameLocal)
-	e.DiesBeforeSuspension = mergeEvidenceState(e.DiesBeforeSuspension, other.DiesBeforeSuspension)
-	e.DeepFrozen = mergeEvidenceState(e.DeepFrozen, other.DeepFrozen)
-	return e
+	var ok bool
+	if result.FrameLocal, ok = result.FrameLocal.JoinChecked(producer.FrameLocal); !ok {
+		return invalidAllocationEvidence(), false
+	}
+	if result.DiesBeforeSuspension, ok = result.DiesBeforeSuspension.JoinChecked(producer.DiesBeforeSuspension); !ok {
+		return invalidAllocationEvidence(), false
+	}
+	if result.DeepFrozen, ok = result.DeepFrozen.JoinChecked(producer.DeepFrozen); !ok {
+		return invalidAllocationEvidence(), false
+	}
+	if !result.Valid() {
+		return invalidAllocationEvidence(), false
+	}
+	return result, true
 }
 
-func mergeEvidenceState(left, right EvidenceState) EvidenceState {
-	if !left.Valid() || !right.Valid() {
-		return EvidenceUnknown
-	}
-	if right == EvidenceUnknown {
-		return left
-	}
-	if left == EvidenceUnknown || left == right {
-		return right
-	}
-	// Conflicting producers have not established a stable property. Preserve
-	// a negative fact only when both producers agree on the negation.
-	return EvidenceUnknown
+// invalidAllocationEvidence is the explicit refusal value for checked
+// evidence composition. The zero AllocationEvidence is valid all-absent
+// evidence, so it cannot represent failure without relying on callers to
+// inspect a boolean at every boundary.
+func invalidAllocationEvidence() AllocationEvidence {
+	return AllocationEvidence{Class: invalidPlacementResult, HasClass: true}
 }
 
 // allocationEvidenceForKey derives the complete evidence currently justified
 // by Placement's own factor and Heap coordinate. It intentionally leaves all
-// dimensions without a producer unknown.
+// columns without an authenticated producer absent.
 func allocationEvidenceForKey(schema Schema, key heapdomain.Key, class Placement, present bool) (AllocationEvidence, bool) {
 	if !schema.Valid() || !schema.Heap().OwnsKey(key) || key.Kind() != heapdomain.RootAllocation {
-		return AllocationEvidence{}, false
+		return invalidAllocationEvidence(), false
+	}
+	if !validAnalysisPlacement(class) {
+		return invalidAllocationEvidence(), false
 	}
 	id, idOK := key.ContentID()
 	if !idOK || !id.Available() {
-		return AllocationEvidence{}, false
+		return invalidAllocationEvidence(), false
 	}
 	evidence := AllocationEvidence{OwnerIdentity: id, HasOwnerIdentity: true}
-	if present && validAnalysisPlacement(class) {
+	if present {
 		evidence.Class, evidence.HasClass = class, true
 	}
 	if _, _, _, kind, _, originOK := schema.Heap().AllocationOriginForKey(key); originOK {
