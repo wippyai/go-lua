@@ -210,6 +210,12 @@ type codeStore struct { // {{{
 	codes *[]uint32
 	lines *[]int
 	pc    int
+	// lastTarget is the highest pc recorded as a jump-label position.
+	// Instruction-merging peepholes must not fold across it: an instruction
+	// at or before a label boundary can be skipped or jumped past, so
+	// extending it changes behavior on the jumping path. Mirrors PUC Lua's
+	// fs->lasttarget.
+	lastTarget int
 }
 
 func newCodeStore() *codeStore {
@@ -218,9 +224,10 @@ func newCodeStore() *codeStore {
 	*codes = (*codes)[:0]
 	*lines = (*lines)[:0]
 	return &codeStore{
-		codes: codes,
-		lines: lines,
-		pc:    0,
+		codes:      codes,
+		lines:      lines,
+		pc:         0,
+		lastTarget: -1,
 	}
 }
 
@@ -297,9 +304,15 @@ func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 	*reg = *reg + inc
 }
 
+func (cd *codeStore) MarkLabelPc(pc int) {
+	if pc > cd.lastTarget {
+		cd.lastTarget = pc
+	}
+}
+
 func (cd *codeStore) AddLoadNil(a, b, line int) {
 	last := cd.Last()
-	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a {
+	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a && cd.LastPC() > cd.lastTarget {
 		cd.SetB(cd.LastPC(), b)
 	} else {
 		cd.AddABC(OP_LOADNIL, a, b, 0, line)
@@ -592,6 +605,7 @@ func (fc *funcContext) NewLabel() int {
 
 func (fc *funcContext) SetLabelPc(label int, pc int) {
 	fc.labelPc[label] = pc
+	fc.Code.MarkLabelPc(pc)
 }
 
 func (fc *funcContext) GetLabelPc(label int) int {
