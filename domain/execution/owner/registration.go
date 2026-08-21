@@ -51,14 +51,6 @@ const (
 // row to state.
 type Reachable struct{}
 
-// SchemaFragment and HotAxis name the cold and hot halves an axis declaration
-// is typed against. This axis declares neither, so neither is ever produced;
-// they exist so the declaration reads at the same types a bound axis's does.
-type (
-	SchemaFragment struct{}
-	HotAxis        struct{}
-)
-
 // AxisEntry is this package's axis declaration. A is the composition's own Link
 // input record: this axis names nothing in it, because it mounts no authority of
 // its own and binds no factor against one.
