@@ -82,6 +82,11 @@ type runtimeRegion struct {
 	// publication that widens values along region.widen coarsens the head's
 	// guard partition along this relation.
 	discharge regionDischarge
+	// newton is the Region's closure basis, sealed only where the head's
+	// recurrence is transport alone and its publication widens no Factor. It
+	// is unavailable for every other Region, which keeps the exact solver path
+	// it already has.
+	newton regionNewton
 }
 
 type solverRuntime struct {

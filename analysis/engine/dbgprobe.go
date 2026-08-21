@@ -110,16 +110,13 @@ func dbgRegionReuseRefusal(epoch *executorEpoch, episode *regionEpoch) {
 }
 
 // dbgRegionBackComposition attributes one bound Region's back composition and
-// interior size to the Newton prototype Step 0 counters. widenTargets is the
-// authored Target count handed to SealWidening: carrier.MergeScope keeps its
-// selected slots package-private, so the pre-seal target count is the
-// observable proxy for an empty widen selection.
-func dbgRegionBackComposition(back, environmentBack, factorBack, points []int, widenTargets int) {
+// interior size to the Newton prototype Step 0 counters. widenFactorFree is
+// read from the sealed selection itself through carrier.MergeScope.FactorFree.
+func dbgRegionBackComposition(back, environmentBack, factorBack, points []int, widenFactorFree bool) {
 	dbgEngine.RegionsTotal++
 	dbgEngine.BackGroupTerms += uint64(len(back))
 	dbgEngine.BackEnvTerms += uint64(len(environmentBack))
 	dbgEngine.BackFactorTerms += uint64(len(factorBack))
-	widenFactorFree := widenTargets == 0
 	if widenFactorFree {
 		dbgEngine.RegionsWidenFactorFree++
 	}

@@ -30,6 +30,16 @@ type interfaceRef struct {
 	input int
 }
 
+// internalGroupRef is one Region-internal Group beside the exact half-open
+// interval of that Group's own ordered input ordinals which lie inside the
+// Region. inputBegin/inputEnd are Region-relative: they address
+// Graph.regionInternalInputs from regionData.internalInputBegin.
+type internalGroupRef struct {
+	group      int
+	inputBegin int
+	inputEnd   int
+}
+
 type regionData struct {
 	head   schedule.Node
 	parent int
@@ -49,6 +59,8 @@ type regionData struct {
 	backEnd                  int
 	internalBegin            int
 	internalEnd              int
+	internalInputBegin       int
+	internalInputEnd         int
 	environmentExternalBegin int
 	environmentExternalEnd   int
 	environmentBackBegin     int
@@ -70,7 +82,8 @@ type pendingRegion struct {
 	interfaces          []interfaceRef
 	external            []int
 	back                []int
-	internal            []int
+	internal            []internalGroupRef
+	internalInputs      []int
 	environmentExternal []int
 	environmentBack     []int
 	factorExternal      []int
@@ -80,7 +93,7 @@ type pendingRegion struct {
 }
 
 func (graph *Graph) deriveRegions() bool {
-	if !graph.valid() || len(graph.regions) != 0 || len(graph.regionInterfaces) != 0 || len(graph.regionExternal) != 0 || len(graph.regionBack) != 0 || len(graph.regionInternal) != 0 || len(graph.regionEnvironmentExternal) != 0 || len(graph.regionEnvironmentBack) != 0 || len(graph.regionFactorExternal) != 0 || len(graph.regionFactorBack) != 0 || len(graph.regionFactorInternal) != 0 || len(graph.regionFactors) != 0 || len(graph.eventPoints) != len(graph.points) || len(graph.pointOrder) != len(graph.points) || len(graph.pointRegion) != len(graph.points) {
+	if !graph.valid() || len(graph.regions) != 0 || len(graph.regionInterfaces) != 0 || len(graph.regionExternal) != 0 || len(graph.regionBack) != 0 || len(graph.regionInternal) != 0 || len(graph.regionInternalInputs) != 0 || len(graph.regionEnvironmentExternal) != 0 || len(graph.regionEnvironmentBack) != 0 || len(graph.regionFactorExternal) != 0 || len(graph.regionFactorBack) != 0 || len(graph.regionFactorInternal) != 0 || len(graph.regionFactors) != 0 || len(graph.eventPoints) != len(graph.points) || len(graph.pointOrder) != len(graph.points) || len(graph.pointRegion) != len(graph.points) {
 		return false
 	}
 	count := graph.schedule.RegionCount()
@@ -121,6 +134,10 @@ func (graph *Graph) deriveRegions() bool {
 	// A Group belongs only to ancestors of its output's innermost Region. That
 	// output relation is already a deterministic schedule fact. We therefore
 	// walk actual ancestry rather than scanning every Group for every Region.
+	// insideInputs is one reused scratch row of the current (Region, Group)
+	// pair's Region-internal input ordinals. It is copied into the staged
+	// Region row the moment that Group is classified internal.
+	insideInputs := make([]int, 0, 8)
 	for groupIndex, group := range graph.groups {
 		output, ok := graph.pointAt[group.output.key]
 		if !ok || output < 0 || int(output) >= len(graph.pointRegion) {
@@ -131,6 +148,7 @@ func (graph *Graph) deriveRegions() bool {
 				return false
 			}
 			inside := false
+			insideInputs = insideInputs[:0]
 			for inputIndex, input := range group.inputs {
 				point, indexed := graph.pointAt[input.point.key]
 				if !indexed || point < 0 || int(point) >= len(graph.pointOrder) {
@@ -138,6 +156,7 @@ func (graph *Graph) deriveRegions() bool {
 				}
 				if regionContainsPoint(graph, regions[regionIndex], point) {
 					inside = true
+					insideInputs = append(insideInputs, inputIndex)
 				} else {
 					pending[regionIndex].interfaces = append(pending[regionIndex].interfaces, interfaceRef{group: groupIndex, input: inputIndex})
 				}
@@ -159,7 +178,11 @@ func (graph *Graph) deriveRegions() bool {
 				}
 			}
 			if inside {
-				pending[regionIndex].internal = append(pending[regionIndex].internal, groupIndex)
+				// A Group may be internal purely through its environmentInput.
+				// The empty ordinal interval is then its exact membership.
+				begin := len(pending[regionIndex].internalInputs)
+				pending[regionIndex].internalInputs = append(pending[regionIndex].internalInputs, insideInputs...)
+				pending[regionIndex].internal = append(pending[regionIndex].internal, internalGroupRef{group: groupIndex, inputBegin: begin, inputEnd: len(pending[regionIndex].internalInputs)})
 				pending[regionIndex].factors = append(pending[regionIndex].factors, groupFactors[groupIndex]...)
 			}
 			regionIndex = regions[regionIndex].parent
@@ -231,6 +254,9 @@ func (graph *Graph) deriveRegions() bool {
 		data.internalBegin = len(graph.regionInternal)
 		graph.regionInternal = append(graph.regionInternal, staged.internal...)
 		data.internalEnd = len(graph.regionInternal)
+		data.internalInputBegin = len(graph.regionInternalInputs)
+		graph.regionInternalInputs = append(graph.regionInternalInputs, staged.internalInputs...)
+		data.internalInputEnd = len(graph.regionInternalInputs)
 		data.environmentExternalBegin = len(graph.regionEnvironmentExternal)
 		graph.regionEnvironmentExternal = append(graph.regionEnvironmentExternal, staged.environmentExternal...)
 		data.environmentExternalEnd = len(graph.regionEnvironmentExternal)
@@ -398,6 +424,18 @@ func (view RegionView) InterfaceCount() int {
 	return data.interfaceEnd - data.interfaceBegin
 }
 
+// InterfaceAt returns one exact external Group-input occurrence that can
+// affect this Region's head RHS. The opaque occurrence is reconstructed from
+// the sealed compact row, so no interface row retains a Graph pointer.
+func (view RegionView) InterfaceAt(index int) (InterfaceInput, bool) {
+	data, ok := view.data()
+	if !ok || index < 0 || data.interfaceBegin+index >= data.interfaceEnd {
+		return InterfaceInput{}, false
+	}
+	row := view.graph.regionInterfaces[data.interfaceBegin+index]
+	return InterfaceInput{graph: view.graph, group: row.group, input: row.input}, true
+}
+
 func (view RegionView) ExternalHeadProducerCount() int {
 	data, ok := view.data()
 	if !ok {
@@ -526,7 +564,32 @@ func (view RegionView) InternalHyperedgeAt(index int) (GroupNode, bool) {
 	if !ok || index < 0 || data.internalBegin+index >= data.internalEnd {
 		return GroupNode{}, false
 	}
-	return view.graph.HyperedgeAt(view.graph.regionInternal[data.internalBegin+index])
+	return view.graph.HyperedgeAt(view.graph.regionInternal[data.internalBegin+index].group)
+}
+
+// InternalGroupInputCount reports how many of the ordered inputs of the
+// internal Group at index have their own Point inside this Region.
+func (view RegionView) InternalGroupInputCount(index int) int {
+	data, ok := view.data()
+	if !ok || index < 0 || data.internalBegin+index >= data.internalEnd {
+		return 0
+	}
+	row := view.graph.regionInternal[data.internalBegin+index]
+	return row.inputEnd - row.inputBegin
+}
+
+// InternalGroupInputAt returns one Group-local input ordinal of the internal
+// Group at index whose input Point lies inside this Region.
+func (view RegionView) InternalGroupInputAt(index, member int) (int, bool) {
+	data, ok := view.data()
+	if !ok || index < 0 || data.internalBegin+index >= data.internalEnd || member < 0 {
+		return 0, false
+	}
+	row := view.graph.regionInternal[data.internalBegin+index]
+	if row.inputBegin+member >= row.inputEnd || data.internalInputBegin+row.inputEnd > data.internalInputEnd {
+		return 0, false
+	}
+	return view.graph.regionInternalInputs[data.internalInputBegin+row.inputBegin+member], true
 }
 
 func (view RegionView) FactorCount() int {

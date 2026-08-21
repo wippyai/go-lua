@@ -27,6 +27,14 @@ const (
 	formulaDecisionRecord = 1
 )
 
+const (
+	reindexIdentityDomain  = "analysis/engine/guard/reindex"
+	reindexIdentityVersion = 1
+
+	reindexScopeRecord = 1
+	reindexEntryRecord = 2
+)
+
 type formulaNode struct {
 	atom      Atom
 	low, high uint64
@@ -172,4 +180,74 @@ func IdentityWithCheckpoint(root Guard, checkpoint func() bool) (FormulaID, bool
 
 func identityLive(checkpoint func() bool) bool {
 	return checkpoint == nil || checkpoint()
+}
+
+// RelationIdentity derives the canonical identity of one sealed coordinate
+// relation. It is the relation-level counterpart of Identity: the source and
+// target coordinate spellings, then, for every source coordinate in its fixed
+// ascending rank order, that coordinate's own spelling beside the canonical
+// Identity of both sealed target regions the relation admits for it. Two
+// relations carrying the same identity relate the same coordinates the same
+// way, independent of BDD page addresses, Work generations, and the order the
+// composition that produced them was performed in.
+//
+// The identity names coordinate spellings, not issued Scope objects: two
+// separately issued Scopes over the same coordinates are one interface to
+// this digest. A caller that needs issued-scope identity proves it with
+// Scope.Same, which no digest can stand in for.
+func (plan Reindex) RelationIdentity() (FormulaID, bool) {
+	if !plan.Valid() {
+		return FormulaID{}, false
+	}
+	manager := plan.value.manager
+	hash := sha256.New()
+	var writer canonical.Writer
+	if writer.Reset(context.Background(), hash, reindexIdentityDomain, reindexIdentityVersion) != nil {
+		return FormulaID{}, false
+	}
+	if !writeReindexScope(&writer, manager, plan.value.source) || !writeReindexScope(&writer, manager, plan.value.target) {
+		return FormulaID{}, false
+	}
+	if writer.Count(uint64(len(plan.value.entries))) != nil {
+		return FormulaID{}, false
+	}
+	for _, entry := range plan.value.entries {
+		low, lowOK := Identity(entry.low)
+		high, highOK := Identity(entry.high)
+		if !lowOK || !highOK || entry.rank >= uint64(len(manager.order)) {
+			return FormulaID{}, false
+		}
+		if writer.Record(reindexEntryRecord) != nil || writer.Uint(uint64(manager.atom(entry.rank))) != nil ||
+			writer.Bytes(low[:]) != nil || writer.Bytes(high[:]) != nil {
+			return FormulaID{}, false
+		}
+	}
+	if writer.Finish() != nil {
+		return FormulaID{}, false
+	}
+	digest := hash.Sum(nil)
+	if len(digest) != len(FormulaID{}) {
+		return FormulaID{}, false
+	}
+	var result FormulaID
+	copy(result[:], digest)
+	return result, result.Available()
+}
+
+// writeReindexScope emits one coordinate namespace by spelling. Scope stays a
+// capability elsewhere; this is the sole cold digest boundary that needs its
+// members, and it never hands them back to a caller.
+func writeReindexScope(writer *canonical.Writer, manager *Manager, scope Scope) bool {
+	if writer == nil || manager == nil || !scope.Valid() || scope.Manager() != manager {
+		return false
+	}
+	if writer.Record(reindexScopeRecord) != nil || writer.Count(uint64(len(scope.value.ranks))) != nil {
+		return false
+	}
+	for _, rank := range scope.value.ranks {
+		if rank >= uint64(len(manager.order)) || writer.Uint(uint64(manager.atom(rank))) != nil {
+			return false
+		}
+	}
+	return true
 }

@@ -990,6 +990,16 @@ func (composition *Composition) sealRecurrence(kind MergeKind, targets []Target,
 	return MergeScope{composition: composition, members: members, scopes: scopes, kind: kind}, true
 }
 
+// FactorFree reports that this sealed selection names no Factor operation at
+// all, which is the lawful factor-free recurrence scope an empty target set
+// seals. The selected members stay private to Composition; this is the one
+// published emptiness proof, so a caller that needs to know whether a
+// recurrence publication widens anything reads it here instead of
+// approximating it from the pre-seal target count it handed to sealing.
+func (selection MergeScope) FactorFree() bool {
+	return selection.composition != nil && selection.members.Empty()
+}
+
 func (selection MergeScope) validFor(composition *Composition, kind MergeKind) bool {
 	if selection.composition != composition || len(selection.scopes) != composition.Count() || selection.kind != kind {
 		return false

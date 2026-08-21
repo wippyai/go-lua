@@ -102,6 +102,17 @@ func (plan Reindex) Valid() bool {
 // this proof; semantic equality of a partial plan is insufficient.
 func (plan Reindex) Identity() bool { return plan.Valid() && plan.value.identity }
 
+// CoordinateCount is the width of the source interface: one entry per source
+// coordinate, which Seal already proved complete. It is the relation's own
+// dimension, not an enumeration of its scope, so a caller can size a
+// derivation over the relation without gaining access to atom spellings.
+func (plan Reindex) CoordinateCount() int {
+	if !plan.Valid() {
+		return 0
+	}
+	return len(plan.value.entries)
+}
+
 // CoordinateIdentity proves the relation is the identity function over the
 // Boolean payload even when its source and target are distinct issued scopes.
 // It authorizes immutable BDD/FDD reuse only; callers must still publish the
