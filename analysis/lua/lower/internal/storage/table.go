@@ -289,14 +289,7 @@ func (w *TableWriter) expression(expr ast.Expr, host keyspace.Term, span source.
 }
 
 func (w *TableWriter) span(holder ast.PositionHolder) source.Span {
-	if holder == nil {
-		return source.Span{File: w.sourceName}
-	}
-	span, ok := coord.Build(w.sourceName, holder.Line(), holder.Column(), holder.LastLine(), holder.LastColumn())
-	if !ok {
-		return coord.Invalid(w.sourceName)
-	}
-	return span
+	return coord.Span(w.sourceName, holder)
 }
 
 // Clean reports whether this writer has no unconsumed private continuation.

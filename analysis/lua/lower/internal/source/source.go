@@ -496,14 +496,7 @@ func (o *Owner) ready() error {
 }
 
 func (o *Owner) span(holder ast.PositionHolder) source.Span {
-	if holder == nil {
-		return source.Span{File: o.name}
-	}
-	span, ok := coord.Build(o.name, holder.Line(), holder.Column(), holder.LastLine(), holder.LastColumn())
-	if !ok {
-		return coord.Invalid(o.name)
-	}
-	return span
+	return coord.Span(o.name, holder)
 }
 
 func (o *Owner) chunkSpan(statements []ast.Stmt) source.Span {

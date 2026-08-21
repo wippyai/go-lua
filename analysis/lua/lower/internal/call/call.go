@@ -426,14 +426,7 @@ func (w *Writer) Clean() bool {
 }
 
 func (w *Writer) span(holder ast.PositionHolder) source.Span {
-	if holder == nil {
-		return source.Span{File: w.file}
-	}
-	span, ok := coord.Build(w.file, holder.Line(), holder.Column(), holder.LastLine(), holder.LastColumn())
-	if !ok {
-		return coord.Invalid(w.file)
-	}
-	return span
+	return coord.Span(w.file, holder)
 }
 
 func (w *Writer) positionSpan(position ast.Position) source.Span {

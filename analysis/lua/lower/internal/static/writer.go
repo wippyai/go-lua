@@ -184,14 +184,7 @@ func (w *Writer) rangeTerms(mark, count int) ([]keyspace.Term, error) {
 }
 
 func (w *Writer) span(holder ast.PositionHolder) source.Span {
-	if holder == nil {
-		return source.Span{File: w.sourceName}
-	}
-	span, ok := coord.Build(w.sourceName, holder.Line(), holder.Column(), holder.LastLine(), holder.LastColumn())
-	if !ok {
-		return coord.Invalid(w.sourceName)
-	}
-	return span
+	return coord.Span(w.sourceName, holder)
 }
 
 func (w *Writer) nameSpan(position ast.Position) source.Span {

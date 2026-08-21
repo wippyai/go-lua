@@ -79,14 +79,7 @@ func (b *Bodies) Clean() bool {
 }
 
 func (b *Bodies) span(holder ast.PositionHolder) source.Span {
-	if holder == nil {
-		return source.Span{File: b.sourceName}
-	}
-	span, ok := coord.Build(b.sourceName, holder.Line(), holder.Column(), holder.LastLine(), holder.LastColumn())
-	if !ok {
-		return coord.Invalid(b.sourceName)
-	}
-	return span
+	return coord.Span(b.sourceName, holder)
 }
 
 func (b *Bodies) nameSpan(stmt *ast.LocalAssignStmt, index int) source.Span {
