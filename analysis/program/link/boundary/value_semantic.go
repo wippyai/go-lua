@@ -175,11 +175,25 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			}
 		}
 	}
+	// Every Boundary Value an evaluation span denotes is named downstream by
+	// that span's context identity: computation results, call results, and
+	// index reads all reach their coordinate through it. The span directory
+	// already holds exactly those Values, so the semantic inverse is published
+	// from it in one pass rather than re-enumerated one authored family at a
+	// time; a family the enumeration omits is a Value a consumer can name and
+	// never reach.
+	for key, ordinal := range table.spans {
+		if key.mount != mount {
+			continue
+		}
+		if err := add(key.context, ordinal, true); err != nil {
+			return err
+		}
+	}
 	// Computation and return rows are artifact-issued from the exact authored
-	// Span identities.  Publish the same semantic inverse here so mounted
-	// consumers join by ModuleKey+occurrence ID rather than reopening Terms.
-	// The rows are read directly from the canonical authored Flow relations;
-	// only the transient Span/Body ownership proofs come from Program queries.
+	// Span identities. The passes below state each family's structural law
+	// against the canonical authored Flow relations; only the transient
+	// Span/Body ownership proofs come from Program queries.
 	computationSpan := func(term keyspace.Term) (program.Span, bool) {
 		span, spanOK := input.Span(term)
 		body, bodyOK := input.ContainingBody(term)
@@ -324,6 +338,17 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		}
 		if addTerm("StorageRead", readID, readTerm, true) != nil {
 			return errors.New("link/boundary: malformed semantic StorageRead row")
+		}
+	}
+	indexReads := p.Flow().AccessGeometry().IndexAccesses().Reads()
+	for index := 0; index < indexReads.Count(); index++ {
+		term, termOK := indexReads.At(index)
+		span, spanOK := input.Span(term)
+		if !termOK || !spanOK || !input.OwnsSpan(span) {
+			return errors.New("link/boundary: malformed semantic IndexRead row")
+		}
+		if err := addSpan("IndexRead", span.ContextID(), span, true); err != nil {
+			return errors.New("link/boundary: malformed semantic IndexRead row")
 		}
 	}
 	return nil

@@ -192,6 +192,9 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 	binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source, compilation)
 	diagnostics.Binding = bindingFailure
 	diagnostics.AllocationCatalog = bindFailure.Allocation
+	// A per-rule verdict names the rule; the binder pass it rejected in is the
+	// other half of that rule's evidence and travels here beside it.
+	diagnostics.BindingRuleStage = bindFailure.RuleStage
 	// The mount phase's verdict carries the rejecting domain's own evidence
 	// erased. Recovering it at the value schema's own failure type is this
 	// projection's job; a verdict from another axis carries no value evidence

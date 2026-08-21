@@ -286,6 +286,14 @@ type AnalyzeDiagnosticRule = composite.DiagnosticRule
 
 const AnalyzeDiagnosticRuleUnknown = composite.DiagnosticRuleUnknown
 
+// AnalyzeDiagnosticRuleBindStage is the closed analyzer-owned classification of
+// the binder pass that rejected one rule. It is the rule binder's own stage
+// vocabulary: the rule table names which rule, this names which of that rule's
+// passes.
+type AnalyzeDiagnosticRuleBindStage = composite.RuleBindStage
+
+const AnalyzeDiagnosticRuleBindStageNone = composite.RuleBindStageNone
+
 // AnalyzeDiagnosticAxis is the closed analyzer-owned classification of one
 // axis. It is the sealed axis table's own classification: the inventory, the
 // slots, and the names all come from that one table, so an axis added there is
@@ -305,9 +313,13 @@ type AnalyzeDiagnostics struct {
 	Rule         AnalyzeDiagnosticRule
 	// Axis names the coordinate space a per-axis verdict is about. It is the
 	// identity half of ProgramBindingFailureAxisAuthority.
-	Axis              AnalyzeDiagnosticAxis
-	AssembleStage     AnalyzeDiagnosticAssembleStage
-	Binding           ProgramBindingFailure
+	Axis          AnalyzeDiagnosticAxis
+	AssembleStage AnalyzeDiagnosticAssembleStage
+	Binding       ProgramBindingFailure
+	// BindingRuleStage names the binder pass a per-rule verdict is about. It is
+	// the pass half of a ProgramBindingFailure rule ordinal, which names only
+	// which rule refused.
+	BindingRuleStage  AnalyzeDiagnosticRuleBindStage
 	ValueSeal         valuedomain.SealFailure
 	AllocationCatalog allocationcatalog.SealFailure
 	// AssembleSeal, AssembleLowering, AssembleCommit, and ObservationAttach

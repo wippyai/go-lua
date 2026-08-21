@@ -1,6 +1,8 @@
 package composite
 
 import (
+	"strconv"
+
 	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -321,8 +323,37 @@ func DiagnosticRuleForSemantic(compilation Compilation, key identity.SemanticKey
 	return DiagnosticRuleUnknown
 }
 
+// diagnosticRuleNames is the slot-to-key table of the authored rule inventory,
+// minted once. The slot is that inventory's own declaration position, so the
+// name a slot carries is fixed by the table every compilation seals rather than
+// by any one compilation instance.
+var diagnosticRuleNames = func() []schema.Key {
+	entries, _, ok := RuleTemplates[principals, authorities]()
+	if !ok {
+		return nil
+	}
+	names := make([]schema.Key, len(entries)+1)
+	for position, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		names[position+1] = entry.Key()
+	}
+	return names
+}()
+
+// String spells the rule as its owner declared it. A slot the sealed inventory
+// has no row for still names its ordinal: a refusal that reached a rule carries
+// that rule's position, and only the absent rule is unknown.
 func (classification DiagnosticRule) String() string {
-	return "unknown"
+	slot := int(classification)
+	if slot <= 0 {
+		return "unknown"
+	}
+	if slot >= len(diagnosticRuleNames) || diagnosticRuleNames[slot] == "" {
+		return "slot#" + strconv.Itoa(slot)
+	}
+	return string(diagnosticRuleNames[slot])
 }
 
 // declareRules runs the table's cold declaration pass and returns each rule's
@@ -358,6 +389,11 @@ type RuleBindStage uint8
 
 const (
 	RuleBindStageNone RuleBindStage = iota
+	// RuleBindStageTable is the pass's own precondition: the table, binding, or
+	// per-slot cell vector it was handed is not the shape the sealed table
+	// declares. No rule has been reached, so the verdict is the table's rather
+	// than a rule's.
+	RuleBindStageTable
 	RuleBindStagePrincipal
 	RuleBindStageFragment
 	RuleBindStageBind
@@ -370,6 +406,8 @@ const (
 
 func (stage RuleBindStage) String() string {
 	switch stage {
+	case RuleBindStageTable:
+		return "table"
 	case RuleBindStagePrincipal:
 		return "principal"
 	case RuleBindStageFragment:
@@ -495,7 +533,7 @@ func ruleContributorFor(state *catalog, key schema.Key) (RuleContributor[princip
 // only be sealed after the binding is terminal.
 func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCells, set authorities, seal func() bool) (*RuleBinding, DiagnosticRule, RuleBindStage) {
 	if state == nil || state.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(state.templates)+1 || len(state.ruleContributors) != len(state.templates) {
-		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
+		return nil, DiagnosticRuleUnknown, RuleBindStageTable
 	}
 	rules := &RuleBinding{catalog: state, binding: binding, hot: newRuleCells(state.templates)}
 	for position, entry := range state.templates {

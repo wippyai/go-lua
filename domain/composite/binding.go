@@ -164,6 +164,12 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	seal := func() bool { return binding.Seal() }
 	rules, failedRule, failedStage := bindRules(state, binding, compilation.catalog.ruleFragments, set, seal)
 	if failedStage != RuleBindStageNone {
+		// Only a pass that reached a rule is a per-rule verdict. The pass's own
+		// precondition names the table it was handed, so it is reported at the
+		// table's phase rather than as a rule this transaction cannot name.
+		if failedStage == RuleBindStageTable {
+			return catalogBinding{}, BindFailure{Stage: BindStageTable}
+		}
 		if failedStage == RuleBindStageSeal {
 			if !queriesBound {
 				return catalogBinding{}, BindFailure{Stage: BindStageQueries}
