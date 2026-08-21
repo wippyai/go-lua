@@ -34,33 +34,35 @@ func (arm Arm) valid() bool { return arm >= ArmLocal && arm <= ArmCancel }
 // proof and optional recurrence witness; no physical ordinal or raw endpoint
 // term is present in the neutral plan.
 type Origin struct {
-	from        sourcecontrol.PhaseRef
-	to          sourcecontrol.PhaseRef
+	// pair is shared storage for ordinary CSR pairs and normalized
+	// Outcome resumes. SourceControl subdivisions use Segment as their
+	// canonical endpoint owner and leave this pair empty.
+	pair        endpointPair
 	carrier     RecurrenceCarrier
 	subdivision subdivisionKind
 	segment     sourcecontrol.Segment
-	resume      outcomeResume
 }
 
-// outcomeResume is the resolved runtime-entry resume endpoint pair. RoutePlan
-// admits the four already-resolved values; the owner fence over the entry and
-// SourceControl relations belongs to the caller that owns both.
-type outcomeResume struct {
+// endpointPair is the resolved endpoint storage shared by CSR and runtime
+// entries. The term pair is populated only for a normalized Outcome resume;
+// the owner fence over the entry and SourceControl relations belongs to the
+// caller that owns both.
+type endpointPair struct {
 	from     sourcecontrol.PhaseRef
 	to       sourcecontrol.PhaseRef
 	fromTerm keyspace.Term
 	toTerm   keyspace.Term
 }
 
-func (resume outcomeResume) Available() bool {
-	return resume.fromTerm != 0 && resume.toTerm != 0 &&
-		resume.from.Available() && resume.to.Available() &&
-		resume.from.OutcomePhase() && !resume.to.OutcomePhase() &&
-		sourcecontrol.SamePhaseOwner(resume.from, resume.to)
+func (pair endpointPair) resumeAvailable() bool {
+	return pair.fromTerm != 0 && pair.toTerm != 0 &&
+		pair.from.Available() && pair.to.Available() &&
+		pair.from.OutcomePhase() && !pair.to.OutcomePhase() &&
+		sourcecontrol.SamePhaseOwner(pair.from, pair.to)
 }
 
-func (resume outcomeResume) MatchesRoute(from, to keyspace.Term) bool {
-	return resume.Available() && from == resume.fromTerm && to == resume.toTerm
+func (pair endpointPair) MatchesRoute(from, to keyspace.Term) bool {
+	return pair.resumeAvailable() && from == pair.fromTerm && to == pair.toTerm
 }
 
 type subdivisionKind uint8
@@ -72,7 +74,18 @@ const (
 )
 
 func (origin Origin) endpoints() (sourcecontrol.PhaseRef, sourcecontrol.PhaseRef, bool) {
-	return origin.from, origin.to, origin.from.Available() && origin.to.Available()
+	switch origin.subdivision {
+	case subdivisionSourceControl:
+		// Segment is the canonical owner of these endpoints. Do not copy its
+		// PhaseRef pair into Origin.
+		return origin.segment.Endpoints()
+	case subdivisionRuntimeEntry:
+		return origin.pair.from, origin.pair.to,
+			origin.pair.from.Available() && origin.pair.to.Available()
+	default:
+		return origin.pair.from, origin.pair.to,
+			origin.pair.from.Available() && origin.pair.to.Available()
+	}
 }
 
 type RecurrenceCarrierKind uint8
@@ -113,13 +126,13 @@ func (carrier RecurrenceCarrier) NodePair() (sourcecontrol.NodeRef, sourcecontro
 // catalog phases. Outcome phases are rejected by valid: their endpoint and
 // carrier relation must instead arrive through OutcomeSubdivision below.
 func CSRPhasePair(from, to sourcecontrol.PhaseRef) Origin {
-	return Origin{from: from, to: to, carrier: noRecurrenceCarrier()}
+	return Origin{pair: endpointPair{from: from, to: to}, carrier: noRecurrenceCarrier()}
 }
 func CSRArcPair(from, to sourcecontrol.PhaseRef, ref sourcecontrol.ArcRef) Origin {
-	return Origin{from: from, to: to, carrier: arcCarrier(ref)}
+	return Origin{pair: endpointPair{from: from, to: to}, carrier: arcCarrier(ref)}
 }
 func CSRNodePair(from, to sourcecontrol.PhaseRef, fromNode, toNode sourcecontrol.NodeRef) Origin {
-	return Origin{from: from, to: to, carrier: nodePairCarrier(fromNode, toNode)}
+	return Origin{pair: endpointPair{from: from, to: to}, carrier: nodePairCarrier(fromNode, toNode)}
 }
 
 // OutcomeSubdivision admits SourceControl's exact immutable route segment.
@@ -129,12 +142,14 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, segment sourcecontrol.Segme
 	if !segment.Valid(graph) {
 		return Origin{}, false
 	}
-	from, to, endpoints := segment.Endpoints()
+	_, _, endpoints := segment.Endpoints()
 	carrier, carrierOK := segment.Carrier()
 	if !endpoints || !carrierOK {
 		return Origin{}, false
 	}
-	origin := Origin{from: from, to: to, subdivision: subdivisionSourceControl, segment: segment}
+	// Segment is the canonical owner of these endpoints; retaining a second
+	// PhaseRef pair on Origin only duplicated the same sealed row.
+	origin := Origin{subdivision: subdivisionSourceControl, segment: segment}
 	switch carrier.Kind() {
 	case sourcecontrol.SegmentCarrierNone:
 		origin.carrier = noRecurrenceCarrier()
@@ -162,12 +177,12 @@ func OutcomeSubdivision(graph *sourcecontrol.Result, segment sourcecontrol.Segme
 // and has already proven the row against them.
 func OutcomeResumeSubdivision(from, to sourcecontrol.PhaseRef,
 	fromTerm, toTerm keyspace.Term) (Origin, keyspace.Term, bool) {
-	resume := outcomeResume{from: from, to: to, fromTerm: fromTerm, toTerm: toTerm}
-	if !resume.Available() {
+	endpoints := endpointPair{from: from, to: to, fromTerm: fromTerm, toTerm: toTerm}
+	if !endpoints.resumeAvailable() {
 		return Origin{}, 0, false
 	}
-	return Origin{from: from, to: to, carrier: noRecurrenceCarrier(),
-		subdivision: subdivisionRuntimeEntry, resume: resume}, toTerm, true
+	return Origin{pair: endpoints, carrier: noRecurrenceCarrier(),
+		subdivision: subdivisionRuntimeEntry}, toTerm, true
 }
 
 func (origin Origin) valid() bool {
@@ -176,7 +191,7 @@ func (origin Origin) valid() bool {
 		if (from.OutcomePhase() || to.OutcomePhase()) != (origin.subdivision != subdivisionNone) {
 			return false
 		}
-		if origin.subdivision == subdivisionRuntimeEntry && (!from.OutcomePhase() || to.OutcomePhase() || !origin.resume.Available()) {
+		if origin.subdivision == subdivisionRuntimeEntry && (!from.OutcomePhase() || to.OutcomePhase() || !origin.pair.resumeAvailable()) {
 			return false
 		}
 		switch origin.carrier.kind {
@@ -330,7 +345,7 @@ func validRoute(route Route, origin Origin, owner sourcecontrol.Owner) bool {
 				return false
 			}
 		case subdivisionRuntimeEntry:
-			if !origin.resume.MatchesRoute(route.From, route.To) {
+			if !origin.pair.MatchesRoute(route.From, route.To) {
 				return false
 			}
 		default:
