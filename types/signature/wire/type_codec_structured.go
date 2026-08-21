@@ -181,7 +181,13 @@ func (e *typeEncoder) encodeTypeParamWire(p *typ.TypeParam) (typeParamWire, erro
 	return typeParamWire{Name: p.Name, Constraint: constraint}, nil
 }
 
+// decodeTypeParamWireInEnv reads one type parameter. A parameter constrains its
+// argument or it does not, so an absent constraint node is the unconstrained
+// parameter itself and is not asked of the type decoder.
 func decodeTypeParamWireInEnv(w typeParamWire, env *typeDecodeEnv) (*typ.TypeParam, error) {
+	if w.Constraint == nil {
+		return typ.NewTypeParam(w.Name, nil), nil
+	}
 	constraint, err := decodeTypeInEnv(w.Constraint, env)
 	if err != nil {
 		return nil, err

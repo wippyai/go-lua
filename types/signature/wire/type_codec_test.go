@@ -68,6 +68,47 @@ func TestWireRejectsMalformedTypeWireMissingRequiredParts(t *testing.T) {
 	}
 }
 
+// TestWireRejectsAbsentTypeNodeInsteadOfDecodingIt states that an absent node
+// inside a payload is a decode failure, not a decoded type. Absence is the
+// caller's to express by not asking for a node at all; once a node is asked
+// for, the decoder either states what it carries or refuses. Standing in a
+// Go nil for it loses distinctions silently downstream: a union sheds the
+// member it could not read and narrows, and an optional over nothing states a
+// value that is definitely nil.
+func TestWireRejectsAbsentTypeNodeInsteadOfDecodingIt(t *testing.T) {
+	t.Run("absent node", func(t *testing.T) {
+		decoded, err := DecodeType(nil)
+		if err == nil {
+			t.Fatalf("DecodeType(nil) = %v, want a decode error", decoded)
+		}
+	})
+	t.Run("absent array element", func(t *testing.T) {
+		decoded, err := DecodeType(&TypeWire{Kind: "array"})
+		if err == nil {
+			t.Fatalf("DecodeType(array with no element) = %v, want a decode error", decoded)
+		}
+	})
+	t.Run("absent optional inner", func(t *testing.T) {
+		decoded, err := DecodeType(&TypeWire{Kind: "optional"})
+		if err == nil {
+			t.Fatalf("DecodeType(optional over no element) = %v, want a decode error", decoded)
+		}
+	})
+	t.Run("absent union member", func(t *testing.T) {
+		want := typeexpr.Union(typ.String, typ.Number)
+		decoded, err := DecodeType(&TypeWire{
+			Kind:    "union",
+			Members: []*TypeWire{{Kind: "string"}, nil, {Kind: "number"}},
+		})
+		if err == nil {
+			t.Fatalf("DecodeType(union with an absent member) = %v, want a decode error", decoded)
+		}
+		if decoded != nil && decoded.String() == want.String() {
+			t.Fatalf("union with an absent member decoded to the narrower %s", decoded)
+		}
+	})
+}
+
 func TestWireRecordStaticIntMemberRequiresExplicitIndex(t *testing.T) {
 	stringType, err := EncodeType(typ.String)
 	if err != nil {

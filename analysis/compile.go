@@ -10,11 +10,9 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
-	"github.com/wippyai/go-lua/domain/runtimekind"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/authority"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
-	typkind "github.com/wippyai/go-lua/domain/type/kind"
 	"github.com/wippyai/go-lua/domain/type/typ"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -352,14 +350,18 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 // declaredTypeProjection states one declaration in the vocabulary the
 // conformance judgment reads. The type domain owns both halves: the artifact
 // type authority resolves the declared graph, and Static projects the runtime
-// families that graph admits. A declaration the authority cannot resolve
-// admits the whole vocabulary, which is the same abstention the judgment
-// already gives an unnarrowed declaration.
+// families that graph admits.
+//
+// A declaration the authority cannot resolve is refused. The whole vocabulary
+// is the abstention an unnarrowed declaration earns, and a site measured
+// against it conforms for every observation; an unresolved declaration has
+// earned no such abstention, so publishing that mask for it would prove
+// conformance the declaration never stated.
 func declaredTypeProjection(types *typeauthority.Authority, declared identity.ContentID) (anadiag.DeclaredType, bool) {
 	ref, referenced := types.FindByReferenceID(declared)
 	value, resolved := types.Resolve(ref)
 	if !referenced || !resolved || value == nil {
-		return anadiag.DeclaredType{May: runtimekind.All, Spelling: typkind.Unknown.String()}, true
+		return anadiag.DeclaredType{}, false
 	}
 	row := anadiag.DeclaredType{May: staticdomain.MayRuntimeKinds(value), Spelling: declaredTypeSpelling(value)}
 	return row, row.Available()

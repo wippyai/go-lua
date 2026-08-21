@@ -303,7 +303,7 @@ func iterativeIndexMap(domain, value, key typ.Type, mode indexMode) fieldResult 
 		return fieldResult{}
 	}
 	if value == nil {
-		value = typ.Nil
+		value = typ.Unknown
 	}
 	return fieldResult{t: value, ok: true, nilable: mode != indexWrite}
 }

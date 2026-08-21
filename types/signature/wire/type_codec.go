@@ -256,10 +256,13 @@ func (e *typeDecodeEnv) withGeneric(generic *typ.Generic) *typeDecodeEnv {
 	}
 }
 
+// DecodeType states the type one wire node carries. Absence is the caller's to
+// express by not asking for a node; a node asked for and not present is a
+// malformed payload, so it is refused rather than decoded.
 func DecodeType(w *TypeWire) (typ.Type, error) {
 	decoded, err := decodeTypeInEnv(w, &typeDecodeEnv{recursives: make(map[uint64]*typ.Recursive)})
-	if err != nil || decoded == nil {
-		return decoded, err
+	if err != nil {
+		return nil, err
 	}
 	if err := typ.ValidateStaticGenericRecurrence(decoded); err != nil {
 		return nil, fmt.Errorf("invalid static generic recurrence: %w", err)
@@ -269,7 +272,7 @@ func DecodeType(w *TypeWire) (typ.Type, error) {
 
 func decodeTypeInEnv(w *TypeWire, env *typeDecodeEnv) (typ.Type, error) {
 	if w == nil {
-		return nil, nil
+		return nil, fmt.Errorf("type node missing")
 	}
 
 	switch w.Kind {
@@ -420,16 +423,15 @@ func decodeTypeInEnv(w *TypeWire, env *typeDecodeEnv) (typ.Type, error) {
 		if _, exists := registry[w.Binder]; exists {
 			return nil, fmt.Errorf("recursive binder %d is already in scope", w.Binder)
 		}
+		if w.Body == nil {
+			return nil, fmt.Errorf("recursive type %q is missing a body", w.Name)
+		}
 		recursive := typ.NewRecursivePlaceholder(w.Name)
 		registry[w.Binder] = recursive
 		body, err := decodeTypeInEnv(w.Body, env)
 		if err != nil {
 			delete(registry, w.Binder)
 			return nil, err
-		}
-		if body == nil {
-			delete(registry, w.Binder)
-			return nil, fmt.Errorf("recursive type %q is missing a body", w.Name)
 		}
 		recursive.SetBody(body)
 		return recursive, nil

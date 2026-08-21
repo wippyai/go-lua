@@ -3,6 +3,7 @@ package static
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	"github.com/wippyai/go-lua/domain/type/typ"
@@ -53,20 +54,38 @@ func (s *ClassSet) sealRuntimeAtomKinds() error {
 		if !ok {
 			return errors.New("static: Runtime atom-kind index unavailable")
 		}
-		encoded, ok := s.runtime.CanonicalEncoding(inner)
-		if !ok || len(encoded) == 0 {
-			masks[index] = runtimekind.All
-			continue
+		encoded, published := s.runtime.CanonicalEncoding(inner)
+		mask, err := runtimeAtomKindMask(encoded, published)
+		if err != nil {
+			return err
 		}
-		shape, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
-		if err != nil || shape == nil {
-			masks[index] = runtimekind.All
-			continue
-		}
-		masks[index] = typ.MayRuntimeKinds(shape)
+		masks[index] = mask
 	}
 	s.runtimeAtomKinds = masks
 	return nil
+}
+
+// runtimeAtomKindMask projects one canonical Runtime atom onto the closed
+// Value vocabulary. An atom that publishes no canonical encoding is open and
+// has no proven runtime representation, so All is the only sound projection,
+// the same abstention an opaque Class row earns.
+//
+// An atom that does publish an encoding has stated its structure, and the
+// projection is whatever that encoding decodes to. An encoding that does not
+// decode states nothing, so it is refused: answering it with All would let a
+// corrupt atom prove membership in every runtime family.
+func runtimeAtomKindMask(encoded []byte, published bool) (runtimekind.Set, error) {
+	if !published || len(encoded) == 0 {
+		return runtimekind.All, nil
+	}
+	shape, err := typ.DecodeCanonicalStructural(context.Background(), encoded)
+	if err != nil {
+		return 0, fmt.Errorf("static: Runtime atom-kind decode failed: %w", err)
+	}
+	if shape == nil {
+		return 0, errors.New("static: Runtime atom-kind decode carried no shape")
+	}
+	return typ.MayRuntimeKinds(shape), nil
 }
 
 // MayRuntimeKinds is the sound may-projection of one static type onto the
