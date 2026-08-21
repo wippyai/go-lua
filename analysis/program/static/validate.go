@@ -107,7 +107,7 @@ func (check *containment) markDirectReturn(parent, child keyspace.Term) bool {
 // localForest collects typed containment rows from their owning verticals,
 // then validates the one combined concrete relation. No central collector
 // knows how a Type, declaration, signature, operator, or sidecar is shaped.
-func localForest(component *Component) (*staticquery.Proof, bool) {
+func localForest(component *assembly) (*staticquery.Proof, bool) {
 	if component == nil {
 		return nil, false
 	}
@@ -128,7 +128,7 @@ func localForest(component *Component) (*staticquery.Proof, bool) {
 	return check.proof(), true
 }
 
-func emitOperatorsContainment(component *Component, check *containment) bool {
+func emitOperatorsContainment(component *assembly, check *containment) bool {
 	if component == nil || check == nil {
 		return false
 	}
@@ -267,7 +267,7 @@ func (check *containment) markIfAssertionReturn(parent, child keyspace.Term) boo
 // interface method's TypeFunction must be scoped to the interface that
 // declares it. Declarations publishes the pairs and Signatures publishes the
 // scope; neither reaches into the other's storage.
-func interfaceMethodScopes(component *Component) bool {
+func interfaceMethodScopes(component *assembly) bool {
 	return component.declarations.VisitInterfaceMethods(func(owner, signature keyspace.Term) bool {
 		scope, ok := component.signatures.Scope(signature)
 		return ok && scope == owner
@@ -277,7 +277,7 @@ func interfaceMethodScopes(component *Component) bool {
 // validBoundAssertions is a signature law rather than generic containment:
 // only a direct return may bind a parameter, and a TypeFunction binding uses
 // the binder-last formal-name rule its owner publishes.
-func validBoundAssertions(component *Component, check *containment) bool {
+func validBoundAssertions(component *assembly, check *containment) bool {
 	for index := 0; index < component.signatures.Count(keyspace.FamilyTypeAsserts); index++ {
 		assertion := keyspace.MakeTerm(keyspace.FamilyTypeAsserts, uint32(index+1))
 		row, ok := component.signatures.Assert(assertion)
@@ -315,7 +315,7 @@ func validBoundAssertions(component *Component, check *containment) bool {
 // aliases, static type functions, and Flow functions cannot each grow a
 // slightly different validator. Declarations owns the rows and publishes the
 // alias claims; this owner joins them with the two signature-side claimants.
-func completeTypeParamOwnership(component *Component, counts [keyspace.FamilyCount]uint32) bool {
+func completeTypeParamOwnership(component *assembly, counts [keyspace.FamilyCount]uint32) bool {
 	seen := make([]bool, component.declarations.Count(keyspace.FamilyTypeParam))
 	claimOne := func(owner, param keyspace.Term) bool {
 		if !hasFamily(counts, param, keyspace.FamilyTypeParam) {

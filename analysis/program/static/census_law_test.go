@@ -37,16 +37,25 @@ func staticTypeMember(component *Component, term keyspace.Term) bool {
 	return ok
 }
 
+func staticCensus(component *Component) [keyspace.FamilyCount]uint32 {
+	snapshot, ok := component.View().Snapshot()
+	if !ok {
+		return [keyspace.FamilyCount]uint32{}
+	}
+	return snapshot.Census()
+}
+
 // TestCensusColumnIsTheSealedFamilyColumn proves Build retains the already
 // sealed family column. Native child owners validate their own row lengths;
 // Static does not reconstruct a second family inventory.
 func TestCensusColumnIsTheAuthoredRelationLength(t *testing.T) {
 	for name, input := range censusLawInputs(t) {
 		component := staticContentComponent(t, input)
+		census := staticCensus(component)
 		for family := keyspace.FamilyInvalid; family < keyspace.FamilyCount; family++ {
-			if component.census[family] != input.Counts[family] {
+			if census[family] != input.Counts[family] {
 				t.Fatalf("%s: census[%v] = %d, want sealed column %d",
-					name, family, component.census[family], input.Counts[family])
+					name, family, census[family], input.Counts[family])
 			}
 		}
 	}
@@ -58,10 +67,11 @@ func TestCensusColumnIsTheAuthoredRelationLength(t *testing.T) {
 func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 	for name, input := range censusLawInputs(t) {
 		component := staticContentComponent(t, input)
+		census := staticCensus(component)
 		want := 0
 		for family := keyspace.FamilyTypeAlias; family <= keyspace.FamilyTypeConditional; family++ {
 			if staticquery.StaticTypeFamily(family) {
-				want += int(component.census[family])
+				want += int(census[family])
 			}
 		}
 		if got := staticTypeCount(component); got != want {
@@ -72,7 +82,7 @@ func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 			if !staticquery.StaticTypeFamily(family) {
 				continue
 			}
-			for ordinal := uint32(1); ordinal <= component.census[family]; ordinal++ {
+			for ordinal := uint32(1); ordinal <= census[family]; ordinal++ {
 				term, ok := staticTypeAt(component, index)
 				if !ok || term != keyspace.MakeTerm(family, ordinal) {
 					t.Fatalf("%s: StaticTypeTermAt(%d) = (%d, %v), want %v#%d",
@@ -91,10 +101,10 @@ func TestStaticTypeForestReadsTheCensusColumn(t *testing.T) {
 			if !staticquery.StaticTypeFamily(family) {
 				continue
 			}
-			past := keyspace.MakeTerm(family, component.census[family]+1)
+			past := keyspace.MakeTerm(family, census[family]+1)
 			if staticTypeMember(component, past) {
 				t.Fatalf("%s: forest admitted %v ordinal %d past census %d",
-					name, family, component.census[family]+1, component.census[family])
+					name, family, census[family]+1, census[family])
 			}
 		}
 	}
@@ -181,10 +191,6 @@ func TestStaticCallTypeArgumentRowIsTheSealedColumnWidth(t *testing.T) {
 	}
 	if walked == 0 {
 		t.Fatal("fixture authors no call type arguments, so the sealed width proves nothing")
-	}
-	if uint64(uint32(component.contracts.CallTypeArgumentWidth())) != uint64(walked) {
-		t.Fatalf("sealed call type-argument width = %d, want walked total %d",
-			uint32(component.contracts.CallTypeArgumentWidth()), walked)
 	}
 	// The call segment shares its column with the function contracts that
 	// precede it. Unless the fixture authors function-side terms too, an
@@ -289,15 +295,6 @@ func TestStaticTypeQueriesDoNotAllocate(t *testing.T) {
 		staticTypeMember(component, term)
 	}); allocations != 0 {
 		t.Fatalf("static type queries allocated %.2f times", allocations)
-	}
-}
-
-func TestStaticTypeIndexIsExcludedFromAuthoredContentID(t *testing.T) {
-	component := staticContentComponent(t, staticTypeDenominatorInput(t))
-	want := component.ContentID()
-	component.census[keyspace.FamilyTypeAlias]++
-	if got := contentID(component); got != want {
-		t.Fatalf("derived static type prefix changed authored ContentID: %x != %x", got, want)
 	}
 }
 

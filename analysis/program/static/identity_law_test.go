@@ -18,40 +18,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-type contentDelta struct {
-	name   string
-	build  func(*testing.T) *Component
-	mutate func(*Component)
-}
-
-func runContentDeltaLedger(t *testing.T, cases []contentDelta) {
-	t.Helper()
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			component := test.build(t)
-			before := component.ContentID()
-			test.mutate(component)
-			if after := contentID(component); after == before {
-				t.Fatal("retained authored field did not change ContentID")
-			}
-		})
-	}
-}
-
-// The same holds for every other vertical: each family package proves its
-// own distinctions against the same section schema this digest consumes.
-//
-// The per-field, per-arity, and per-order distinctions of the Declarations
-// vertical are proven by TestAuthoredDistinctionsReachTheSection in
-// analysis/program/static/declarations, against the same section schema this
-// digest consumes. They moved with the rows: a sealed declaration table cannot
-// be perturbed after Build, so the distinction is now stated over authored
-// input.
-func TestStaticContentIDNonTypeFieldLedger(t *testing.T) {
-	cases := []contentDelta{}
-	runContentDeltaLedger(t, cases)
-}
-
 // These close the remaining ordered-relation cases not exercised by the
 // field deltas above. Sparse staticoperands.ClaimTarget is different: builder input order is
 // not authored order, because its canonical relation is Flow Claim ordinal.
@@ -259,10 +225,10 @@ func TestStaticContentIDExcludesDerivativesAndExternalClaimCardinality(t *testin
 		t.Fatalf("external cell cardinality changed Static ContentID: %x != %x", got, baseline)
 	}
 
-	// The identity is a pure function of the authored relations, so rehashing
-	// the same published component reproduces it exactly. Each vertical proves
-	// separately that its own derived indexes stay out of the section stream.
-	if got := contentID(first); got != baseline {
+	// The identity is a pure function of the authored relations. Each vertical
+	// proves separately that its own derived indexes stay out of the section
+	// stream, while the published component exposes the sealed result directly.
+	if got := first.ContentID(); got != baseline {
 		t.Fatalf("rehashing a published component changed Static ContentID: %x != %x", got, baseline)
 	}
 }

@@ -36,12 +36,13 @@ func (component *Component) ContentID() identity.ContentID {
 	if component == nil {
 		return identity.ContentID{}
 	}
-	return component.contentID
+	return component.snapshot.ContentID()
 }
 
-// contentID coordinates exactly the eight typed authored verticals. Each
-// vertical owns its own scalar order and never hashes query derivatives.
-func contentID(component *Component) (id identity.ContentID) {
+// contentID coordinates exactly the eight typed authored verticals while the
+// build-only assembly is still live. Each vertical owns its own scalar order
+// and never hashes query derivatives.
+func contentID(component *assembly) (id identity.ContentID) {
 	if component == nil {
 		return identity.ContentID{}
 	}

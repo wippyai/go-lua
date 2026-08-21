@@ -1,7 +1,6 @@
 package static
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
@@ -28,13 +27,18 @@ type Input struct {
 	Publications staticpubs.Input
 }
 
-// Component is immutable authored Static syntax with no inferred/domain
-// resolution, query index, or construction state.
-// census is the sealed per-family cardinality column assigned once by Build;
-// it is the sole cardinality authority and retains no duplicate Term stream
-// or second graph.
+// Component is the immutable publication of Static's one canonical query
+// snapshot. It retains no second table image, census copy, or construction
+// ledger: the build-only assembly below is discarded when this value is
+// published.
 type Component struct {
-	contentID    identity.ContentID
+	snapshot staticquery.Snapshot
+}
+
+// assembly is construction-only state. It joins the typed child owners for
+// the cross-vertical Static laws, then disappears when the proof-bearing
+// query snapshot is published into Component.
+type assembly struct {
 	census       [keyspace.FamilyCount]uint32
 	types        statictypes.Table
 	references   staticrefs.Table
@@ -46,34 +50,12 @@ type Component struct {
 	publications staticpubs.Table
 }
 
-// View returns the immutable composed Static query surface. The query child
-// receives only the sealed canonical values and no root Component capability.
+// View returns the proof-bearing immutable Static query surface published at
+// Build time. Repeated reads reuse the same snapshot and cannot silently drop
+// the local containment proof.
 func (component *Component) View() staticquery.View {
 	if component == nil {
 		return staticquery.View{}
 	}
-	return component.querySnapshot().View()
-}
-
-func (component *Component) querySnapshot() staticquery.Snapshot {
-	return component.querySnapshotWithProof(nil)
-}
-
-func (component *Component) querySnapshotWithProof(proof *staticquery.Proof) staticquery.Snapshot {
-	if component == nil {
-		return staticquery.Snapshot{}
-	}
-	return staticquery.NewSnapshot(
-		component.contentID,
-		component.census,
-		component.types,
-		component.references,
-		component.declarations,
-		component.signatures,
-		component.contracts,
-		component.operators,
-		component.operands,
-		component.publications,
-		proof,
-	)
+	return component.snapshot.View()
 }

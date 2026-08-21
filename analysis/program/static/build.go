@@ -99,7 +99,7 @@ func Build(input Input) (*Component, staticquery.View, error) {
 		return nil, staticquery.View{}, errors.New("program/static: operand cardinality disagrees with sealed column")
 	}
 
-	component := &Component{
+	assembled := &assembly{
 		census:       census,
 		types:        typeTable,
 		references:   referenceTable,
@@ -110,22 +110,36 @@ func Build(input Input) (*Component, staticquery.View, error) {
 		operands:     operandTable,
 		publications: publicationTable,
 	}
-	if !interfaceMethodScopes(component) {
+	if !interfaceMethodScopes(assembled) {
 		return nil, staticquery.View{}, errors.New("program/static: interface method signature scope mismatch")
 	}
-	if !completeTypeParamOwnership(component, census) {
+	if !completeTypeParamOwnership(assembled, census) {
 		return nil, staticquery.View{}, errors.New("program/static: incomplete or multiply-owned type parameter")
 	}
-	localProof, ok := localForest(component)
+	localProof, ok := localForest(assembled)
 	if !ok {
 		return nil, staticquery.View{}, errors.New("program/static: cyclic, shared, or incomplete static declaration child")
 	}
 
-	component.contentID = contentID(component)
-	if !component.contentID.Available() {
+	id := contentID(assembled)
+	if !id.Available() {
 		return nil, staticquery.View{}, errors.New("program/static: unavailable content identity")
 	}
-	return component, staticquery.NewView(component.querySnapshotWithProof(localProof)), nil
+	snapshot := staticquery.NewSnapshot(
+		id,
+		assembled.census,
+		assembled.types,
+		assembled.references,
+		assembled.declarations,
+		assembled.signatures,
+		assembled.contracts,
+		assembled.operators,
+		assembled.operands,
+		assembled.publications,
+		localProof,
+	)
+	component := &Component{snapshot: snapshot}
+	return component, snapshot.View(), nil
 }
 
 func validCounts(counts [keyspace.FamilyCount]uint32) bool {
