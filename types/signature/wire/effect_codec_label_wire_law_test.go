@@ -290,7 +290,7 @@ func effectLabelWireCorpus() []effectLabelWireCase {
 					projection.InstantiateGeneric(typ.String),
 				}},
 			}},
-			wire: `{"kind":"returns.return","returnIndex":0,"returnType":{"kind":"returns.typeProjection","source":{"index":0},"projection":[{"kind":"field","field":"payload"},{"kind":"callableReturn"},{"kind":"genericArg","index":0},{"kind":"instantiateGeneric","type":{"kind":"string"}}]}}`,
+			wire: `{"kind":"returns.return","returnIndex":0,"returnType":{"kind":"returns.typeProjection","source":{"index":0},"projection":[{"kind":"field","field":"payload"},{"kind":"callableReturn"},{"kind":"genericArg","index":0},{"kind":"instantiateGeneric","type":{"kind":"string","integrity":"sha256/1:9bddc1fdfb55932e41cf34e4a0bf062564cf848d3e0070d86dcd3a998fdce008"}}]}}`,
 		},
 		{
 			name: "returns.Return.ConditionalType",
@@ -304,7 +304,7 @@ func effectLabelWireCorpus() []effectLabelWireCase {
 				When: typ.LiteralBool(true),
 				Then: typ.String,
 			}},
-			wire: `{"kind":"returns.return","returnIndex":1,"returnType":{"kind":"returns.conditionalType","source":{"index":1},"projection":[{"kind":"field","field":"message"}],"when":{"kind":"literal","base":"boolean","bool":true},"then":{"kind":"string"}}}`,
+			wire: `{"kind":"returns.return","returnIndex":1,"returnType":{"kind":"returns.conditionalType","source":{"index":1},"projection":[{"kind":"field","field":"message"}],"when":{"kind":"literal","integrity":"sha256/1:2515e8f0e379f2cf246fff522e6b759795122c42babdb8f8b32509688c16e60a","base":"boolean","bool":true},"then":{"kind":"string","integrity":"sha256/1:9bddc1fdfb55932e41cf34e4a0bf062564cf848d3e0070d86dcd3a998fdce008"}}}`,
 		},
 		{
 			name:  "returns.ReturnLength",

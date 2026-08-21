@@ -3,6 +3,7 @@
   "version": "wippy-v1-host",
   "export": {
     "kind": "record",
+    "integrity": "sha256/1:fd38a647a4b44d368bb1c591a3e7d067b9fa612fd5698976753b47ddc49408a0",
     "fields": [
       {
         "name": "compile",
@@ -226,6 +227,7 @@
       "name": "Program",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:75025a30e41de9616b7dce6b18a8c4b938923336adfca5d7707be7305c2aefd8",
         "name": "expr.Program",
         "binder": 1,
         "body": {
@@ -383,6 +385,7 @@
       "name": "Program.run",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:42414af58c84ab963a36f5fabfaa2c3be14aae4cd71d0bddd436ee252ba3d226",
         "params": [
           {
             "name": "self",
@@ -565,6 +568,7 @@
       "name": "compile",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:884cb79bd38fa41d495ab8d34b7bbb280362cddad7fc88a4effa6f03de6d1da9",
         "params": [
           {
             "name": "text",
@@ -747,6 +751,7 @@
       "name": "eval",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:224e8deb599d7633f26cc35dedbd08c20dbc38615365f824a85a61704f4685f8",
         "params": [
           {
             "name": "text",

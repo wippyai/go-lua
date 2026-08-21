@@ -3,6 +3,7 @@
   "version": "wippy-v1-host",
   "export": {
     "kind": "record",
+    "integrity": "sha256/1:ad2212ebb86aa48d92f1954bbff334ef17e6ab52f253512c902a901dde037590",
     "fields": [
       {
         "name": "decode",
@@ -250,6 +251,7 @@
       "name": "decode",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:be21c8863f78fd49b1f2f06a9fc034ec7767d367f3eccf2cefcf68e9fb139073",
         "params": [
           {
             "name": "str",
@@ -383,6 +385,7 @@
       "name": "encode",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:5170e7f8b8b62a227d7a0079692120b53fdcc20c7f995ebffbc49189004899ad",
         "params": [
           {
             "name": "value",
@@ -516,6 +519,7 @@
       "name": "validate",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:0da56e424c52a6c6570f137fabf319ad4476938d190a5053448053aa3c2dfcb7",
         "params": [
           {
             "name": "schema",
@@ -663,6 +667,7 @@
       "name": "validate_string",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:d3fa1fa705f9aff0e42f389805ec53fec9a58825c5c04f393e261c243a02dede",
         "params": [
           {
             "name": "schema",

@@ -14,7 +14,11 @@ import (
 // signature content identity. It is intentionally independent of the manifest
 // document schema: changing either projection requires an explicit version
 // decision instead of silently re-keying caches.
-const SignatureContentSchema = "go-lua.signature.content/v3"
+// v4 states string literals as bytes. A Lua string is a byte sequence, so the
+// projection that carried one as JSON text was keying content identity on a
+// literal with every non-UTF-8 byte replaced, and two literals that differ only
+// in those bytes shared an identity.
+const SignatureContentSchema = "go-lua.signature.content/v4"
 
 type signatureContentWire struct {
 	Schema       string         `json:"schema"`

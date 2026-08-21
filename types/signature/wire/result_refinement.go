@@ -28,7 +28,10 @@ import (
 // ResultRefinementSchema versions the standalone result-refinement payload. It
 // is independent of the manifest document schema and of the callable envelope:
 // the three are published separately and cannot share a version decision.
-const ResultRefinementSchema = "go-lua.result.refinement/v1"
+// v2 is the first revision whose embedded type payloads carry an integrity
+// witness. A v1 payload has none, so it is refused at the schema rather than at
+// the first refined type it states.
+const ResultRefinementSchema = "go-lua.result.refinement/v2"
 
 // RefinementKind is the closed catalog of predicates a result refinement may be
 // stated over. Each kind names one enumerable relation between caller data and

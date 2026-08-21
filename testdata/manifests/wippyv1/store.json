@@ -3,6 +3,7 @@
   "version": "wippy-v1-host",
   "export": {
     "kind": "record",
+    "integrity": "sha256/1:1de358042d86b3e1c23270056719664b38283f4361295ae8aa1ebeef25bc0ec0",
     "fields": [
       {
         "name": "backend",
@@ -706,6 +707,7 @@
       "name": "Entry",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:73f87f306ac13d5b151db66044e868b1d166c73adb3dc349f4f9fd6ab7b43bb8",
         "fields": [
           {
             "name": "key",
@@ -732,6 +734,7 @@
       "name": "Info",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:3b2b87faf5fc4697bddc138f0ec3b3d3dfd4d3cdae658ccb0458f077397da444",
         "fields": [
           {
             "name": "backend",
@@ -788,6 +791,7 @@
       "name": "ListOptions",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:9592787a56678a73dfbf89bbcf523aac95db67ff8b6b0193dd1c461e41d1b2a0",
         "fields": [
           {
             "name": "after",
@@ -817,6 +821,7 @@
       "name": "Page",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:a8a493193d1eef86da81c64fe5a80afa02af731e84f3c3160459e527a10f1301",
         "fields": [
           {
             "name": "cursor",
@@ -866,6 +871,7 @@
       "name": "PutOptions",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:425a215f91366111455d12cdf32bf6785cdd3d0a9bc6c0a0735f6772808f18fe",
         "fields": [
           {
             "name": "if_version",
@@ -895,6 +901,7 @@
       "name": "Store",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:3e0d52cfa6e1972e87cc2604b2d4a2f72f9683cf09413a088bf0390f66bd7116",
         "name": "store.Store",
         "binder": 1,
         "body": {
@@ -1502,6 +1509,7 @@
       "name": "Store.delete",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:6ead94124fce19415da9998b893103a4fe4a05aed2815ba1d78c5eabffe74f5c",
         "params": [
           {
             "name": "self",
@@ -2133,6 +2141,7 @@
       "name": "Store.entry",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:eaf2bd90329bdffdad75e627345129a5d2f0eb005b324f4cee3b4e24a4f4d0c9",
         "params": [
           {
             "name": "self",
@@ -2784,6 +2793,7 @@
       "name": "Store.get",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:500e040e3349a6addc7ae83288673a5f4c70a8ef9430df60e0fb43b7a7980326",
         "params": [
           {
             "name": "self",
@@ -3415,6 +3425,7 @@
       "name": "Store.has",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:6ead94124fce19415da9998b893103a4fe4a05aed2815ba1d78c5eabffe74f5c",
         "params": [
           {
             "name": "self",
@@ -4046,6 +4057,7 @@
       "name": "Store.info",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:d7c03df23fd830a6518193a384df96861bea304dd6fafc00603972c65f35e40e",
         "params": [
           {
             "name": "self",
@@ -4721,6 +4733,7 @@
       "name": "Store.list",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:97bb0b8eb15a2f9fafdd64dd52c11b59ec2634ee3c1337cb147eeadb2c3d55b1",
         "params": [
           {
             "name": "self",
@@ -5419,6 +5432,7 @@
       "name": "Store.put",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:28bbe2eb87dada0d9e097ceda43763a70fe5a2a6ac9490b85295d25e7279f781",
         "params": [
           {
             "name": "self",
@@ -6106,6 +6120,7 @@
       "name": "Store.release",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:e9ea22ff9653562de9c7b69cb862cb95bdc84f78534c8c2b3fb53e21e7a2b9a3",
         "params": [
           {
             "name": "self",
@@ -6724,6 +6739,7 @@
       "name": "Store.set",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ceb93eaccd84ae60b17598406024eeb77a10ea6167742833d8a87c6f25306bde",
         "params": [
           {
             "name": "self",
@@ -7368,6 +7384,7 @@
       "name": "get",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:32ae78b3234a713ad1e84fc76656db0ffb41a811f30464ce31684084d605c393",
         "params": [
           {
             "name": "name",

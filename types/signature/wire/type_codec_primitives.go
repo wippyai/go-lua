@@ -60,7 +60,8 @@ func encodeLiteral(l *typ.Literal) (*TypeWire, error) {
 		if !ok {
 			return nil, fmt.Errorf("literal string has %T", l.Value())
 		}
-		out.String = &v
+		value := []byte(v)
+		out.StringBytes = &value
 	default:
 		return nil, fmt.Errorf("unsupported literal base %s", l.Base())
 	}
@@ -85,10 +86,10 @@ func decodeLiteral(w *TypeWire) (typ.Type, error) {
 		}
 		return typ.LiteralNumber(*w.Number), nil
 	case "string":
-		if w.String == nil {
+		if w.StringBytes == nil {
 			return nil, fmt.Errorf("literal string missing value")
 		}
-		return typ.LiteralString(*w.String), nil
+		return typ.LiteralString(string(*w.StringBytes)), nil
 	default:
 		return nil, fmt.Errorf("unknown literal base %q", w.Base)
 	}

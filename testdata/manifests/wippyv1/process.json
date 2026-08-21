@@ -3,6 +3,7 @@
   "version": "wippy-v1-host",
   "export": {
     "kind": "record",
+    "integrity": "sha256/1:03ca9ebfafc3c62534f4830e9b7074487319f2881c91ab2ecf45df463d31d9ac",
     "fields": [
       {
         "name": "cancel",
@@ -1511,6 +1512,7 @@
       "name": "Event",
       "type": {
         "kind": "alias",
+        "integrity": "sha256/1:2015b98a930ea3d7c355e3a66a5132af981db49aa1cdc74917ee531f41b32b91",
         "name": "process.Event",
         "target": {
           "kind": "intersection",
@@ -1592,6 +1594,7 @@
       "name": "Message",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:e31568b22f4bf22eb328ad29f8f83b3d954a8d8363d7c6c68b974b87e8ab76f2",
         "name": "process.Message",
         "binder": 1,
         "body": {
@@ -1666,6 +1669,7 @@
       "name": "Options",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:4b87e19e89bb1ae972cef5317e5bdd49aed89ba28497db9ff28daa1a4ddcbd5a",
         "fields": [
           {
             "name": "trap_links",
@@ -1686,6 +1690,7 @@
       "name": "SpawnBuilder",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:fc568bd5e1e25d052d8825a465760d276a6278ac1bd3aa974787fe6a772e54f0",
         "name": "process.SpawnBuilder",
         "binder": 1,
         "body": {
@@ -2196,6 +2201,7 @@
       "name": "Event.payload",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:3829ccc287e31c153a39d9db767ff6df2f3c6223e2fd57a95085e9f253a2d3d6",
         "params": [
           {
             "name": "self",
@@ -2243,6 +2249,7 @@
       "name": "Message.from",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c6cb7f10b396ca6ffb275a254faf446e206a58c34a59c1a55b01bbb28cf7cb71",
         "params": [
           {
             "name": "self",
@@ -2330,6 +2337,7 @@
       "name": "Message.payload",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:00e994dc3d0cf6997aeb816b2e8438030f906ed647672ba14fa1a7f80a22fc24",
         "params": [
           {
             "name": "self",
@@ -2417,6 +2425,7 @@
       "name": "Message.topic",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c6cb7f10b396ca6ffb275a254faf446e206a58c34a59c1a55b01bbb28cf7cb71",
         "params": [
           {
             "name": "self",
@@ -2504,6 +2513,7 @@
       "name": "SpawnBuilder.exec",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c6dff8bdd8b95d51e58d34e2e1fa684b32fce8a937c0de3de47c4e1528a0b2c2",
         "params": [
           {
             "name": "self",
@@ -3047,6 +3057,7 @@
       "name": "SpawnBuilder.spawn",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:77693300df9c8704d195d5c7f0eeb005ebec5513db76d4c40f3d35a0aa4b1101",
         "params": [
           {
             "name": "self",
@@ -3590,6 +3601,7 @@
       "name": "SpawnBuilder.spawn_linked",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:77693300df9c8704d195d5c7f0eeb005ebec5513db76d4c40f3d35a0aa4b1101",
         "params": [
           {
             "name": "self",
@@ -4133,6 +4145,7 @@
       "name": "SpawnBuilder.spawn_linked_monitored",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:77693300df9c8704d195d5c7f0eeb005ebec5513db76d4c40f3d35a0aa4b1101",
         "params": [
           {
             "name": "self",
@@ -4676,6 +4689,7 @@
       "name": "SpawnBuilder.spawn_monitored",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:77693300df9c8704d195d5c7f0eeb005ebec5513db76d4c40f3d35a0aa4b1101",
         "params": [
           {
             "name": "self",
@@ -5219,6 +5233,7 @@
       "name": "SpawnBuilder.with_actor",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:0029b7463060e034116013eba1e47e669184a02b6deaecc4737e17ef6d8f09e2",
         "params": [
           {
             "name": "self",
@@ -5747,6 +5762,7 @@
       "name": "SpawnBuilder.with_context",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a0f578d4ff698ea430150863a2e8ca3350d27e0e29dfe46ff27f57bf2fa1fce1",
         "params": [
           {
             "name": "self",
@@ -6281,6 +6297,7 @@
       "name": "SpawnBuilder.with_message",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b2833dac250f794c9f5ba97ea443ead6b6e2135b58adc577e010f0083d5edb5b",
         "params": [
           {
             "name": "self",
@@ -6812,6 +6829,7 @@
       "name": "SpawnBuilder.with_name",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b10212fad2cd92b682bdec9d9b4dc2fe14506b826da1dc8078576400edb444d3",
         "params": [
           {
             "name": "self",
@@ -7340,6 +7358,7 @@
       "name": "SpawnBuilder.with_options",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a20a9440c4189f9acd24b60b616909f311463af241745738619855a5a917acb7",
         "params": [
           {
             "name": "self",
@@ -7874,6 +7893,7 @@
       "name": "SpawnBuilder.with_scope",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:d69fa22b46e8fb7ffb42b139823b7ea659e252088f43c36b6d5bcdb03448feb8",
         "params": [
           {
             "name": "self",
@@ -8402,6 +8422,7 @@
       "name": "cancel",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a00313b8c19754eaa5ea6f9f42168f0c593e9f9db2ce306d08ea2b9713cb383d",
         "params": [
           {
             "name": "pid",
@@ -8542,6 +8563,7 @@
       "name": "events",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:4b950144064cbff816128c81e4a63457274d3868540e67e5336f1cff396d91b0",
         "returns": [
           {
             "kind": "instantiated",
@@ -8646,6 +8668,7 @@
       "name": "exec",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c787a34a4439452f319b2554971529e8ff59e10c4d6fe867dcdc4d34d0616a71",
         "params": [
           {
             "name": "module",
@@ -8788,6 +8811,7 @@
       "name": "get_options",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:bd74caa3551d8e0291c07955442d96c3fea9774f279dd6785ed37562006e1a8c",
         "returns": [
           {
             "kind": "record",
@@ -8813,6 +8837,7 @@
       "name": "id",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:7f9132df9eaea8ef6a838de32507487219efc0cda68a072d0b39839480fad0ad",
         "returns": [
           {
             "kind": "string"
@@ -8938,6 +8963,7 @@
       "name": "inbox",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:2db734202437037d5667f622fe22d8559a174e42f992b29c8150f1307cb24cce",
         "returns": [
           {
             "kind": "instantiated",
@@ -9035,6 +9061,7 @@
       "name": "link",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:54838829110034460234662887b70bfe845bb257a0c6680ecedf96716c487a66",
         "params": [
           {
             "name": "pid",
@@ -9168,6 +9195,7 @@
       "name": "listen",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:4c4ff92a9b580362510e77e344cd84c40ef95fe63d864e6ef75d23baa1e405df",
         "params": [
           {
             "name": "topic",
@@ -9326,6 +9354,7 @@
       "name": "monitor",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:54838829110034460234662887b70bfe845bb257a0c6680ecedf96716c487a66",
         "params": [
           {
             "name": "pid",
@@ -9459,6 +9488,7 @@
       "name": "pid",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:7f9132df9eaea8ef6a838de32507487219efc0cda68a072d0b39839480fad0ad",
         "returns": [
           {
             "kind": "string"
@@ -9584,6 +9614,7 @@
       "name": "registry.lookup",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:89d9ace835b6066ee7f464163006f829c73871b9296d2b00db3df36376ec0510",
         "params": [
           {
             "name": "name",
@@ -9717,6 +9748,7 @@
       "name": "registry.register",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b8379f516873ea18aa3789177295df98c3191fab5d633645da1ba2224cc3c50b",
         "params": [
           {
             "name": "name",
@@ -9864,6 +9896,7 @@
       "name": "registry.unregister",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:5be84f047b9e1bf0bbb1541c42cd32c4509b2f117cc362afe09775b7c5491e03",
         "params": [
           {
             "name": "name",
@@ -10004,6 +10037,7 @@
       "name": "send",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:0007b7a1353ebb668764a1c626f15246f8ce5be01d72cd8b33bd1c6d15eaf160",
         "params": [
           {
             "name": "pid",
@@ -10146,6 +10180,7 @@
       "name": "set_options",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:6b912f143f87c93bd6330b968c5bf73e9822f89531b3a7609c6d77fb6c65df18",
         "params": [
           {
             "name": "opts",
@@ -10295,6 +10330,7 @@
       "name": "spawn",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ae4098a30d021377225a076876433d6be3c112f2f0f51f0e0d25293def56aa43",
         "params": [
           {
             "name": "module",
@@ -10437,6 +10473,7 @@
       "name": "spawn_linked",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ae4098a30d021377225a076876433d6be3c112f2f0f51f0e0d25293def56aa43",
         "params": [
           {
             "name": "module",
@@ -10579,6 +10616,7 @@
       "name": "spawn_linked_monitored",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ae4098a30d021377225a076876433d6be3c112f2f0f51f0e0d25293def56aa43",
         "params": [
           {
             "name": "module",
@@ -10721,6 +10759,7 @@
       "name": "spawn_monitored",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ae4098a30d021377225a076876433d6be3c112f2f0f51f0e0d25293def56aa43",
         "params": [
           {
             "name": "module",
@@ -10863,6 +10902,7 @@
       "name": "terminate",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:54838829110034460234662887b70bfe845bb257a0c6680ecedf96716c487a66",
         "params": [
           {
             "name": "pid",
@@ -10996,6 +11036,7 @@
       "name": "unlink",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:54838829110034460234662887b70bfe845bb257a0c6680ecedf96716c487a66",
         "params": [
           {
             "name": "pid",
@@ -11129,6 +11170,7 @@
       "name": "unlisten",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:f56f185bfeb246582dd0dc5aee6fa2db6f3d05978aca2328c60b5909731b0b30",
         "params": [
           {
             "name": "listener",
@@ -11262,6 +11304,7 @@
       "name": "unmonitor",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:54838829110034460234662887b70bfe845bb257a0c6680ecedf96716c487a66",
         "params": [
           {
             "name": "pid",
@@ -11395,6 +11438,7 @@
       "name": "upgrade",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ca83c6dd6500bbfa2bf64d3b145e4b8f1212ead5178cf0d664042a9373ad88e5",
         "params": [
           {
             "name": "path",
@@ -11532,6 +11576,7 @@
       "name": "with_context",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:65b92407f3f47506a8fc5a4e081b93ffedeebf2beca8101a3fa2e4616547b263",
         "params": [
           {
             "name": "context",
@@ -12059,6 +12104,7 @@
       "name": "with_options",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:eaf5f6b75491eab27139bb9a9b73a35d9a67cec1f82a686aeaae13886c00f158",
         "params": [
           {
             "name": "options",

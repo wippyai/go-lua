@@ -126,7 +126,7 @@ func projectionStepWireCorpus() []projectionStepWireCase {
 			name: "instantiateGeneric",
 			kind: projection.StepInstantiateGeneric,
 			step: projection.InstantiateGeneric(typ.String),
-			wire: `{"kind":"instantiateGeneric","type":{"kind":"string"}}`,
+			wire: `{"kind":"instantiateGeneric","type":{"kind":"string","integrity":"sha256/1:9bddc1fdfb55932e41cf34e4a0bf062564cf848d3e0070d86dcd3a998fdce008"}}`,
 		},
 	}
 }

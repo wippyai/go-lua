@@ -3,6 +3,7 @@
   "version": "wippy-v1-host",
   "export": {
     "kind": "record",
+    "integrity": "sha256/1:3ef8fedca1b54c10ab4770ad119b90f4ce95e7be17cf65f11cf67a7f74c8a2b2",
     "fields": [
       {
         "name": "CONTENT",
@@ -1606,6 +1607,7 @@
       "name": "MultipartFile",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:9ed1ca0b19009ce6642c9b246fa8d4bf57cc4f6f105d6b85f8383a6b191ae7be",
         "name": "http.MultipartFile",
         "binder": 1,
         "body": {
@@ -2034,6 +2036,7 @@
       "name": "MultipartForm",
       "type": {
         "kind": "record",
+        "integrity": "sha256/1:956f110aba8ff16a5ece5fc920063f36b3089532b9ba14ae5ae7d71e5432b30b",
         "fields": [
           {
             "name": "files",
@@ -2496,6 +2499,7 @@
       "name": "Request",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:859af9a20c29b8a832796a8ab82ba4cc453d4ccab81d4e630111720daaaf48f1",
         "name": "http.Request",
         "binder": 1,
         "body": {
@@ -3514,6 +3518,7 @@
       "name": "Response",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:a4839cedd87af95a9454d06066118f1530730f71aee7b8dcc94383b0616a5a29",
         "name": "http.Response",
         "binder": 1,
         "body": {
@@ -3875,6 +3880,7 @@
       "name": "Stream",
       "type": {
         "kind": "recursive",
+        "integrity": "sha256/1:31ab85978fd9c6600b9d79df314185ae29a1978ec85e9b2c3cb446095f886f48",
         "name": "stream.Stream",
         "binder": 1,
         "body": {
@@ -4187,6 +4193,7 @@
       "name": "MultipartFile.header",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:26e6a37f31621057c27b860202256c2d2f36d6257d8f55b997c165a2f147dfd8",
         "params": [
           {
             "name": "self",
@@ -4637,6 +4644,7 @@
       "name": "MultipartFile.name",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:6eb855ca024ae2b8bc7f382fea62c36682543aa86b97a4de979d4964ca392d7a",
         "params": [
           {
             "name": "self",
@@ -5085,6 +5093,7 @@
       "name": "MultipartFile.size",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:528dac1871de4c80a0f6566ce5c04fc04d9b81bc9406e730f9b36c8577173b86",
         "params": [
           {
             "name": "self",
@@ -5533,6 +5542,7 @@
       "name": "MultipartFile.stream",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ec7b8a969aac2a6baf0a6e7b5d15adb5c5c84f296ed55be939766b4233ba0853",
         "params": [
           {
             "name": "self",
@@ -5982,6 +5992,7 @@
       "name": "Request.accepts",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:23074b8d2967212bbfc0237c3f7bb1e9c6fa8bb0b621c49f81746541e9cd5b21",
         "params": [
           {
             "name": "self",
@@ -7026,6 +7037,7 @@
       "name": "Request.body",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b1c4af0f1452f3790538762d9d5444cf5ee6c540f8c9cc7c110c4954e625f5b7",
         "params": [
           {
             "name": "self",
@@ -8064,6 +8076,7 @@
       "name": "Request.body_json",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:98a4d571f8fc4767e072bd79a89b8d476a575e6468baa75a7f4c35cead1f74ed",
         "params": [
           {
             "name": "self",
@@ -9102,6 +9115,7 @@
       "name": "Request.content_length",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:9c35a130c53532481e158b4df0d10ec771db7cb20aea911b54402a022ce900c5",
         "params": [
           {
             "name": "self",
@@ -10140,6 +10154,7 @@
       "name": "Request.content_type",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c3864543d7b8786217165bf4df09bd6ada0813e6af3150a8f23fb7fef3dd5eac",
         "params": [
           {
             "name": "self",
@@ -11181,6 +11196,7 @@
       "name": "Request.has_body",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:c5fc4a1b9a567653466c3684ca9fa3bb116bdbbe5ebdb2ac9c4a9b12839b2b44",
         "params": [
           {
             "name": "self",
@@ -12219,6 +12235,7 @@
       "name": "Request.header",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a10c0cffa36daa7aa29e14960b14073cdef79c58d87442d616a5bb1c08036795",
         "params": [
           {
             "name": "self",
@@ -13266,6 +13283,7 @@
       "name": "Request.host",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b1c4af0f1452f3790538762d9d5444cf5ee6c540f8c9cc7c110c4954e625f5b7",
         "params": [
           {
             "name": "self",
@@ -14304,6 +14322,7 @@
       "name": "Request.is_content_type",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:23074b8d2967212bbfc0237c3f7bb1e9c6fa8bb0b621c49f81746541e9cd5b21",
         "params": [
           {
             "name": "self",
@@ -15348,6 +15367,7 @@
       "name": "Request.method",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b1c4af0f1452f3790538762d9d5444cf5ee6c540f8c9cc7c110c4954e625f5b7",
         "params": [
           {
             "name": "self",
@@ -16386,6 +16406,7 @@
       "name": "Request.param",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:beb74e65e874abd8bec3b8413ad55a2276b6e1b3f6d8906255db622f3fd6f92d",
         "params": [
           {
             "name": "self",
@@ -17433,6 +17454,7 @@
       "name": "Request.params",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:02d59d23dc4ae8a2f04542be27d1031249ed74a06e9b678b9f5a1f9f09d41719",
         "params": [
           {
             "name": "self",
@@ -18477,6 +18499,7 @@
       "name": "Request.parse_multipart",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:1e7826c159b4b9fd4bf73eedf5f3ee16e00fa127120908e19b885c72bec3b807",
         "params": [
           {
             "name": "self",
@@ -19557,6 +19580,7 @@
       "name": "Request.path",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b1c4af0f1452f3790538762d9d5444cf5ee6c540f8c9cc7c110c4954e625f5b7",
         "params": [
           {
             "name": "self",
@@ -20595,6 +20619,7 @@
       "name": "Request.query",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:beb74e65e874abd8bec3b8413ad55a2276b6e1b3f6d8906255db622f3fd6f92d",
         "params": [
           {
             "name": "self",
@@ -21642,6 +21667,7 @@
       "name": "Request.query_params",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:02d59d23dc4ae8a2f04542be27d1031249ed74a06e9b678b9f5a1f9f09d41719",
         "params": [
           {
             "name": "self",
@@ -22686,6 +22712,7 @@
       "name": "Request.remote_addr",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:b1c4af0f1452f3790538762d9d5444cf5ee6c540f8c9cc7c110c4954e625f5b7",
         "params": [
           {
             "name": "self",
@@ -23724,6 +23751,7 @@
       "name": "Request.stream",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:e6a0a1855c2c28ff162bab5dd72c742a60d02cae6156ba7a9b5c11dcf01970ea",
         "params": [
           {
             "name": "self",
@@ -24763,6 +24791,7 @@
       "name": "Response.flush",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:e960f7401a059403580cf7376d0b83d408bbc3bb45e3dd4a7758aa7e73c8035f",
         "params": [
           {
             "name": "self",
@@ -25141,6 +25170,7 @@
       "name": "Response.set_content_type",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:504d3f8b39e3130dc8f0cb82e83e5ff1640e339ec5f93c976cac77eb5d5130c5",
         "params": [
           {
             "name": "self",
@@ -25525,6 +25555,7 @@
       "name": "Response.set_header",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:6597fe0e11055b9ba5a083d70196dc68616f0289a095cc782815515cca4842f6",
         "params": [
           {
             "name": "self",
@@ -25915,6 +25946,7 @@
       "name": "Response.set_status",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:42bf3c1d40df91f0aa03f5464f408018eb75fdc27c5871971898abe806b03cb6",
         "params": [
           {
             "name": "self",
@@ -26299,6 +26331,7 @@
       "name": "Response.set_transfer",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:7ef11325cb8b0023a0138d1ba22081ed4260d6d4639ce4b9c32df2e3134cbcd8",
         "params": [
           {
             "name": "self",
@@ -26683,6 +26716,7 @@
       "name": "Response.write",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:fcf18d66d5efc12e007642a01195ca77ff4266da1176600ac6ddf3fd099465d9",
         "params": [
           {
             "name": "self",
@@ -27067,6 +27101,7 @@
       "name": "Response.write_event",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a0403ae9945baba97dbd03e89d2fb0f90b8c8dd82cd3aedc526e1073534b37af",
         "params": [
           {
             "name": "self",
@@ -27451,6 +27486,7 @@
       "name": "Response.write_json",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a0403ae9945baba97dbd03e89d2fb0f90b8c8dd82cd3aedc526e1073534b37af",
         "params": [
           {
             "name": "self",
@@ -27835,6 +27871,7 @@
       "name": "Stream.close",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:06fe5a9bd729dc67a86f1e00d5824ab0fa2d54437585759a555675a66da4e487",
         "params": [
           {
             "name": "self",
@@ -28165,6 +28202,7 @@
       "name": "Stream.flush",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:06fe5a9bd729dc67a86f1e00d5824ab0fa2d54437585759a555675a66da4e487",
         "params": [
           {
             "name": "self",
@@ -28495,6 +28533,7 @@
       "name": "Stream.read",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:bba52fb6c8d8f8569880aac4940b3348913d509d9bda0fcc320b0ea8728eeb05",
         "params": [
           {
             "name": "self",
@@ -28832,6 +28871,7 @@
       "name": "Stream.seek",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:91245228d41c8797577cab37f41bad478e05c691a793655c6dcaabc09178fcb3",
         "params": [
           {
             "name": "self",
@@ -29176,6 +29216,7 @@
       "name": "Stream.stat",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:3468072198e5303f5d04982928763fa5132315f8cd81e2ee714eb369ac74a68f",
         "params": [
           {
             "name": "self",
@@ -29506,6 +29547,7 @@
       "name": "Stream.write",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:fb44bda4f5f2296a17b418d43d84b2447ee18746d9514f75ececb100b8658c9f",
         "params": [
           {
             "name": "self",
@@ -29842,6 +29884,7 @@
       "name": "request",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:a2427eaabb8b58eeeaea35f1f2c5f0d55acec669ba41d404cbed4338e7ff4a6f",
         "params": [
           {
             "name": "config",
@@ -30881,6 +30924,7 @@
       "name": "response",
       "type": {
         "kind": "function",
+        "integrity": "sha256/1:ac6d7307edf95ea4015b280062f0dc282ad9a5c4a71fd32ea68deacc2b514ee6",
         "returns": [
           {
             "kind": "recursive",

@@ -32,8 +32,8 @@ func resultRefinementWireCorpus() []resultRefinementWireCase {
 			refinement: LiteralArgumentRefinement{
 				Result: 0, Argument: 0, Literal: "#", Type: typ.Integer,
 			},
-			wire: `{"schema":"go-lua.result.refinement/v1","kind":"refinement.literalArgument",` +
-				`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer"}}}`,
+			wire: `{"schema":"go-lua.result.refinement/v2","kind":"refinement.literalArgument",` +
+				`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer","integrity":"sha256/1:abce8d2e9ff69d0000e983e46f8a0b4bb6dcb409fc9482bba88595e7e7f7f101"}}}`,
 		},
 		{
 			name: "subjectLength",
@@ -41,7 +41,7 @@ func resultRefinementWireCorpus() []resultRefinementWireCase {
 			refinement: SubjectLengthRefinement{
 				Result: 0, Subject: 0, Position: 1, Default: 1,
 			},
-			wire: `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+			wire: `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 				`"subjectLength":{"result":0,"subject":0,"position":1,"default":1}}`,
 		},
 	}
@@ -127,25 +127,25 @@ func TestResultRefinementRejectsWhatItCannotCarry(t *testing.T) {
 		{"notJSON", "refinement"},
 		{"wrongSchema", `{"schema":"go-lua.result.refinement/v0","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1}}`},
-		{"unknownKind", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.patternCapture",` +
+		{"unknownKind", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.patternCapture",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1}}`},
-		{"missingArm", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength"}`},
-		{"foreignArm", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
-			`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer"}}}`},
-		{"bothArms", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+		{"missingArm", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength"}`},
+		{"foreignArm", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
+			`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer","integrity":"sha256/1:abce8d2e9ff69d0000e983e46f8a0b4bb6dcb409fc9482bba88595e7e7f7f101"}}}`},
+		{"bothArms", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1},` +
-			`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer"}}}`},
-		{"unknownField", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+			`"literalArgument":{"result":0,"argument":0,"literal":"#","type":{"kind":"integer","integrity":"sha256/1:abce8d2e9ff69d0000e983e46f8a0b4bb6dcb409fc9482bba88595e7e7f7f101"}}}`},
+		{"unknownField", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1},"provenance":"none"}`},
-		{"twoDocuments", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+		{"twoDocuments", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1}}` +
-			`{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+			`{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":1}}`},
-		{"negativeResult", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+		{"negativeResult", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":-1,"subject":0,"position":1,"default":1}}`},
-		{"absentDefaultPosition", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.subjectLength",` +
+		{"absentDefaultPosition", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.subjectLength",` +
 			`"subjectLength":{"result":0,"subject":0,"position":1,"default":0}}`},
-		{"untypedResult", `{"schema":"go-lua.result.refinement/v1","kind":"refinement.literalArgument",` +
+		{"untypedResult", `{"schema":"go-lua.result.refinement/v2","kind":"refinement.literalArgument",` +
 			`"literalArgument":{"result":0,"argument":0,"literal":"#"}}`},
 	}
 	for _, testCase := range rejected {

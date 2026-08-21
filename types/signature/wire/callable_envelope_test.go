@@ -164,7 +164,7 @@ func TestCallableEnvelopePreservesParameterPresentation(t *testing.T) {
 // is a published format: a field added, renamed or reordered is a different
 // payload, and this is where that shows.
 func TestCallableEnvelopeWireIsPinned(t *testing.T) {
-	const pinned = "0e5aae4c40b8657b4d059b7ccd63ce9e9d8e2b49d853d049a5d9f6abcf12130d"
+	const pinned = "18fd886c0f703ff6b44f29f097c2db926ad5184eac6841f50ca25f07d87108c6"
 	sig := signature.Function{Type: typ.Func().
 		Param("s", typ.String).
 		Param("i", typ.Integer).

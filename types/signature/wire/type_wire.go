@@ -3,11 +3,23 @@ package wire
 type TypeWire struct {
 	Kind string `json:"kind"`
 
+	// Integrity is the witness a root node carries over its own encoding. It
+	// is stated by EncodeType and required by DecodeType, and it is the only
+	// member of this struct that is about the payload rather than the type.
+	// Child nodes never carry one: the root's witness already covers them.
+	Integrity string `json:"integrity,omitempty"`
+
 	Base   string   `json:"base,omitempty"`
 	Bool   *bool    `json:"bool,omitempty"`
 	Int    *int64   `json:"int,omitempty"`
 	Number *float64 `json:"number,omitempty"`
-	String *string  `json:"string,omitempty"`
+
+	// StringBytes is a string literal's value. A Lua string is an arbitrary
+	// byte sequence and a JSON string is text, so the value travels as bytes:
+	// written as JSON text, every byte that is not valid UTF-8 is replaced by
+	// U+FFFD and the payload states a different literal than the one encoded.
+	// utf8.charpattern is that literal, so the loss is not hypothetical.
+	StringBytes *[]byte `json:"stringBytes,omitempty"`
 
 	Element  *TypeWire   `json:"element,omitempty"`
 	Key      *TypeWire   `json:"key,omitempty"`

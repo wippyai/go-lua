@@ -27,7 +27,11 @@ import (
 // content projection: an envelope is round-trippable and keeps parameter
 // presentation, where the content projection erases it, so the two cannot share
 // a version decision.
-const CallableEnvelopeSchema = "go-lua.callable.envelope/v2"
+// v3 is the first revision whose embedded type payloads carry an integrity
+// witness. A v2 envelope has none, so reading one would mean reading a type
+// payload that cannot state what it carries; the schema check refuses it at the
+// envelope instead of failing later at the first type node.
+const CallableEnvelopeSchema = "go-lua.callable.envelope/v3"
 
 // callableEnvelopeWire is the envelope document. The schema is written inside
 // the payload so a reader that holds only the bytes rejects a projection it was

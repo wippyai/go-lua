@@ -45,7 +45,7 @@ type returnWireCase struct {
 
 func returnWireCorpus() []returnWireCase {
 	proj := returnCorpusProjection()
-	projWire := `[{"kind":"field","field":"inner"},{"kind":"callableReturn"},{"kind":"genericArg","index":2},{"kind":"instantiateGeneric","type":{"kind":"string"}}]`
+	projWire := `[{"kind":"field","field":"inner"},{"kind":"callableReturn"},{"kind":"genericArg","index":2},{"kind":"instantiateGeneric","type":{"kind":"string","integrity":"sha256/1:9bddc1fdfb55932e41cf34e4a0bf062564cf848d3e0070d86dcd3a998fdce008"}}]`
 	return []returnWireCase{
 		{
 			name:      "elementOf",
@@ -105,7 +105,7 @@ func returnWireCorpus() []returnWireCase {
 			pointer: &returns.ConditionalType{
 				Source: returnParam(6), Projection: proj, When: typ.String, Then: typ.Number,
 			},
-			wire: `{"kind":"returns.conditionalType","source":{"index":6},"projection":` + projWire + `,"when":{"kind":"string"},"then":{"kind":"number"}}`,
+			wire: `{"kind":"returns.conditionalType","source":{"index":6},"projection":` + projWire + `,"when":{"kind":"string","integrity":"sha256/1:9bddc1fdfb55932e41cf34e4a0bf062564cf848d3e0070d86dcd3a998fdce008"},"then":{"kind":"number","integrity":"sha256/1:3ff6d7d287ad8417568931a988bef081c8067e7730909002a3834ef450eaae37"}}`,
 		},
 	}
 }

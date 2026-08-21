@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"errors"
 	"fmt"
 
 	typetable "github.com/wippyai/go-lua/domain/type/table"
@@ -25,15 +26,27 @@ func EncodeType(t typ.Type) (*TypeWire, error) {
 			return nil, fmt.Errorf("signature/wire: invalid static generic recurrence: %w", err)
 		}
 	}
-	return (&typeEncoder{
+	encoded, err := (&typeEncoder{
 		activeGenerics:   make(map[*typ.Generic]bool),
 		recursiveBinders: make(map[*typ.Recursive]uint64),
 	}).encode(t)
+	if err != nil {
+		return nil, err
+	}
+	if err := sealTypeWire(encoded); err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 // encodeSemanticType projects function parameter presentation out of every
 // function node while preserving the receiver convention observed by
 // typ.TypeEquals. It is for semantic content identity, not boundary display.
+//
+// The projection carries no integrity witness because it is never read back:
+// its bytes are hashed into a content identity and the identity is the witness.
+// Sealing it would put a digest inside a digest and re-key every cached content
+// identity for no distinction gained.
 func encodeSemanticType(t typ.Type) (*TypeWire, error) {
 	if t != nil {
 		if err := typ.ValidateStaticGenericRecurrence(t); err != nil {
@@ -79,12 +92,20 @@ func (e *typeEncoder) encode(t typ.Type) (*TypeWire, error) {
 		}
 		return &TypeWire{Kind: "optional", Element: inner}, nil
 	case *typ.Union:
+		if len(tt.Members) < typeWireLeastMembers {
+			return nil, fmt.Errorf(
+				"signature/wire: union node carries %d members; %w", len(tt.Members), errDegenerateMemberList)
+		}
 		members, err := e.encodeTypeList(tt.Members)
 		if err != nil {
 			return nil, err
 		}
 		return &TypeWire{Kind: "union", Members: members}, nil
 	case *typ.Intersection:
+		if len(tt.Members) < typeWireLeastMembers {
+			return nil, fmt.Errorf(
+				"signature/wire: intersection node carries %d members; %w", len(tt.Members), errDegenerateMemberList)
+		}
 		members, err := e.encodeTypeList(tt.Members)
 		if err != nil {
 			return nil, err
@@ -256,10 +277,31 @@ func (e *typeDecodeEnv) withGeneric(generic *typ.Generic) *typeDecodeEnv {
 	}
 }
 
+// typeWireLeastMembers is the shortest member list a union or an intersection
+// node can honestly carry. Both are materialized through typ, which collapses a
+// one-member list to that member and an empty one to never and to any
+// respectively, so no encoder ever emits fewer than two. A shorter list is one
+// that lost members, and reading it means answering with a strictly narrower
+// union or a strictly wider intersection than the one that was sent.
+const typeWireLeastMembers = 2
+
+// errDegenerateMemberList is the one statement of that law, shared by both
+// directions so the encoder cannot write a payload the decoder refuses.
+var errDegenerateMemberList = errors.New(
+	"a union or intersection is materialized from at least two members, so this list lost members")
+
 // DecodeType states the type one wire node carries. Absence is the caller's to
 // express by not asking for a node; a node asked for and not present is a
 // malformed payload, so it is refused rather than decoded.
+//
+// The payload is checked against its own integrity witness first. A type wire
+// carries no legitimate absence inside it, so a payload that no longer matches
+// what was written is refused whole rather than decoded down to the part of it
+// that survived.
 func DecodeType(w *TypeWire) (typ.Type, error) {
+	if err := verifyTypeWireIntegrity(w); err != nil {
+		return nil, err
+	}
 	decoded, err := decodeTypeInEnv(w, &typeDecodeEnv{recursives: make(map[uint64]*typ.Recursive)})
 	if err != nil {
 		return nil, err
@@ -313,12 +355,18 @@ func decodeTypeInEnv(w *TypeWire, env *typeDecodeEnv) (typ.Type, error) {
 		}
 		return typeexpr.Optional(inner), nil
 	case "union":
+		if len(w.Members) < typeWireLeastMembers {
+			return nil, fmt.Errorf("union payload states %d members; %w", len(w.Members), errDegenerateMemberList)
+		}
 		members, err := decodeTypeListInEnv(w.Members, env)
 		if err != nil {
 			return nil, err
 		}
 		return typeexpr.Union(members...), nil
 	case "intersection":
+		if len(w.Members) < typeWireLeastMembers {
+			return nil, fmt.Errorf("intersection payload states %d members; %w", len(w.Members), errDegenerateMemberList)
+		}
 		members, err := decodeTypeListInEnv(w.Members, env)
 		if err != nil {
 			return nil, err
