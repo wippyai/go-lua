@@ -3,9 +3,9 @@ package types
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals the authored typed static-syntax relations. Field
@@ -32,7 +32,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 		}
 	}
 	for _, row := range input.Generic {
-		if !hasFamily(counts, row.Base, keyspace.FamilyTypeRef) || len(row.Args) == 0 {
+		if !keyspace.ValidTerm(row.Base, keyspace.FamilyTypeRef, int(counts[keyspace.FamilyTypeRef])) || len(row.Args) == 0 {
 			return Table{}, errors.New("program/static/types: invalid generic base or arity")
 		}
 		for _, arg := range row.Args {
@@ -53,7 +53,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 	}
 	for _, row := range input.Record {
 		for _, field := range row.Fields {
-			if !hasFamily(counts, field, keyspace.FamilyTypeField) {
+			if !keyspace.ValidTerm(field, keyspace.FamilyTypeField, int(counts[keyspace.FamilyTypeField])) {
 				return Table{}, errors.New("program/static/types: invalid record field")
 			}
 		}
@@ -176,11 +176,6 @@ func validCompound(counts [keyspace.FamilyCount]uint32, members []keyspace.Term)
 		}
 	}
 	return true
-}
-
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
-		keyspace.TermOrdinal(term) <= counts[family]
 }
 
 // VisitContainment emits the concrete containment this vertical owns, in the

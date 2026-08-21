@@ -6,14 +6,6 @@ import (
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
-// hasFamily is the census-bounded family test the joint laws share. Each
-// family owner states its own admission; this is only the cross-vertical
-// bound the containment seal and the TypeParam ownership law both need.
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
-		keyspace.TermOrdinal(term) <= counts[family]
-}
-
 // containment is construction-only validation state. It is deliberately not a
 // Program representation: every concrete relation remains in its typed owner,
 // and this transient index merely proves that their combined containment is a
@@ -78,7 +70,7 @@ func (check *containment) attach(parent, child keyspace.Term) bool {
 // It is intentionally not represented as a generic type edge: a Field owns
 // its value while a Record or Interface owns the Field.
 func (check *containment) claimField(owner, field keyspace.Term) bool {
-	if owner == 0 || !hasFamily(check.counts, field, keyspace.FamilyTypeField) {
+	if owner == 0 || !keyspace.ValidTerm(field, keyspace.FamilyTypeField, int(check.counts[keyspace.FamilyTypeField])) {
 		return false
 	}
 	ordinal := keyspace.TermOrdinal(field) - 1
@@ -318,7 +310,7 @@ func validBoundAssertions(component *assembly, check *containment) bool {
 func completeTypeParamOwnership(component *assembly, counts [keyspace.FamilyCount]uint32) bool {
 	seen := make([]bool, component.declarations.Count(keyspace.FamilyTypeParam))
 	claimOne := func(owner, param keyspace.Term) bool {
-		if !hasFamily(counts, param, keyspace.FamilyTypeParam) {
+		if !keyspace.ValidTerm(param, keyspace.FamilyTypeParam, int(counts[keyspace.FamilyTypeParam])) {
 			return false
 		}
 		row, ok := component.declarations.TypeParamRow(param)

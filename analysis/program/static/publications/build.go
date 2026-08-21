@@ -3,9 +3,9 @@ package publications
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // slot is the construction-only write-pair identity used to reject a repeated
@@ -23,7 +23,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, refs staticrefs.Tab
 	seen := make(map[slot]struct{}, len(input.Type))
 	publication := rows.NewTableBuilder[Publication](keyspace.FamilyTypePublication)
 	for _, row := range input.Type {
-		if !hasFamily(counts, row.Assign, keyspace.FamilyAssign) || !resolvedTarget(refs, row.Target) {
+		if !keyspace.ValidTerm(row.Assign, keyspace.FamilyAssign, int(counts[keyspace.FamilyAssign])) || !resolvedTarget(refs, row.Target) {
 			return Table{}, errors.New("program/static/publications: invalid type publication")
 		}
 		position := slot{assign: row.Assign, pair: row.Pair}
@@ -44,9 +44,4 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, refs staticrefs.Tab
 func resolvedTarget(refs staticrefs.Table, target keyspace.Term) bool {
 	row, ok := refs.Ref(target)
 	return ok && row.Resolved()
-}
-
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
-		keyspace.TermOrdinal(term) <= counts[family]
 }

@@ -3,10 +3,10 @@ package declarations
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals the complete declaration denominator. Later
@@ -17,7 +17,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 	declaredType := rows.NewTableBuilder[DeclaredType](keyspace.FamilyDeclaredType)
 	byCell := make([]keyspace.Term, int(counts[keyspace.FamilyCell]))
 	for _, row := range input.DeclaredType {
-		if !hasFamily(counts, row.Cell, keyspace.FamilyCell) || !staticrole.Node(counts, row.Target) {
+		if !keyspace.ValidTerm(row.Cell, keyspace.FamilyCell, int(counts[keyspace.FamilyCell])) || !staticrole.Node(counts, row.Target) {
 			return Table{}, errors.New("program/static/declarations: invalid declared type")
 		}
 		ordinal := keyspace.TermOrdinal(row.Cell) - 1
@@ -44,7 +44,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 	var aliasParams rows.PoolBuilder[keyspace.Term]
 	alias := rows.NewTableBuilder[TypeAliasRow](keyspace.FamilyTypeAlias)
 	for _, row := range input.Alias {
-		if !hasFamily(counts, row.Owner, keyspace.FamilyBody) || !staticrole.Node(counts, row.Target) ||
+		if !keyspace.ValidTerm(row.Owner, keyspace.FamilyBody, int(counts[keyspace.FamilyBody])) || !staticrole.Node(counts, row.Target) ||
 			row.Name == 0 || !validCoordinate(row.NameCoordinate) {
 			return Table{}, errors.New("program/static/declarations: invalid type alias")
 		}
@@ -65,11 +65,11 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 	var members rows.PoolBuilder[InterfaceMember]
 	iface := rows.NewTableBuilder[InterfaceRow](keyspace.FamilyTypeInterface)
 	for _, row := range input.Interface {
-		if !hasFamily(counts, row.Owner, keyspace.FamilyBody) || row.Name == 0 || !validCoordinate(row.NameCoordinate) {
+		if !keyspace.ValidTerm(row.Owner, keyspace.FamilyBody, int(counts[keyspace.FamilyBody])) || row.Name == 0 || !validCoordinate(row.NameCoordinate) {
 			return Table{}, errors.New("program/static/declarations: invalid interface")
 		}
 		for _, ref := range row.Extends {
-			if !hasFamily(counts, ref, keyspace.FamilyTypeRef) {
+			if !keyspace.ValidTerm(ref, keyspace.FamilyTypeRef, int(counts[keyspace.FamilyTypeRef])) {
 				return Table{}, errors.New("program/static/declarations: invalid interface extension")
 			}
 		}
@@ -121,13 +121,13 @@ func validTypeParam(counts [keyspace.FamilyCount]uint32, row TypeParam) bool {
 func validInterfaceMember(counts [keyspace.FamilyCount]uint32, row InterfaceMember) bool {
 	switch row.Kind {
 	case InterfaceField:
-		return hasFamily(counts, row.Field, keyspace.FamilyTypeField) && row.Name == 0 &&
+		return keyspace.ValidTerm(row.Field, keyspace.FamilyTypeField, int(counts[keyspace.FamilyTypeField])) && row.Name == 0 &&
 			row.NameCoordinate == (source.Coordinate{}) && row.Signature == 0
 	case InterfaceMethod:
 		// Signatures later proves Scope is this interface. This vertical can
 		// only establish the exact typed edge without importing that owner.
 		return row.Field == 0 && row.Name != 0 && validCoordinate(row.NameCoordinate) &&
-			hasFamily(counts, row.Signature, keyspace.FamilyTypeFunction)
+			keyspace.ValidTerm(row.Signature, keyspace.FamilyTypeFunction, int(counts[keyspace.FamilyTypeFunction]))
 	default:
 		return false
 	}
@@ -142,11 +142,6 @@ func validCoordinate(value source.Coordinate) bool {
 	startLine, startColumn, endLine, endColumn := value.Parts()
 	rebuilt, ok := source.CoordinateFromParts(startLine, startColumn, endLine, endColumn)
 	return ok && rebuilt == value
-}
-
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
-		keyspace.TermOrdinal(term) <= counts[family]
 }
 
 // VisitContainment emits the concrete containment this vertical owns, in the

@@ -20,7 +20,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, types statictypes.T
 	// The retained semantic relation below remains sparse.
 	targets := make([]keyspace.Term, int(counts[keyspace.FamilyValueClaim]))
 	for _, row := range input.Claim {
-		if !hasFamily(counts, row.Claim, keyspace.FamilyValueClaim) || !staticrole.Node(counts, row.Target) {
+		if !keyspace.ValidTerm(row.Claim, keyspace.FamilyValueClaim, int(counts[keyspace.FamilyValueClaim])) || !staticrole.Node(counts, row.Target) {
 			return Table{}, errors.New("program/static/operands: invalid claim target")
 		}
 		ordinal := keyspace.TermOrdinal(row.Claim) - 1
@@ -95,7 +95,7 @@ func validTypeValueTarget(counts [keyspace.FamilyCount]uint32, types statictypes
 func validAnnotation(counts [keyspace.FamilyCount]uint32, row Annotation) bool {
 	return staticrole.ScopeHandle(counts, row.Scope) &&
 		staticrole.AnnotationTarget(counts, row.Target) &&
-		row.Name != 0 && hasFamily(counts, row.Values, keyspace.FamilyValues)
+		row.Name != 0 && keyspace.ValidTerm(row.Values, keyspace.FamilyValues, int(counts[keyspace.FamilyValues]))
 }
 
 // indexRow is construction-only pairing used to order the query index.
@@ -139,9 +139,4 @@ func buildAnnotationIndex(annotations rows.Table[Annotation]) (AnnotationIndex, 
 		windows: rows.NewRows(windows),
 		terms:   terms.Seal(),
 	}, true
-}
-
-func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {
-	return keyspace.TermFamily(term) == family && keyspace.TermOrdinal(term) != 0 &&
-		keyspace.TermOrdinal(term) <= counts[family]
 }

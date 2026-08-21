@@ -3,9 +3,9 @@ package references
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals the authored TypeRef relation.
@@ -57,8 +57,7 @@ func validRoot(counts [keyspace.FamilyCount]uint32, source []keyspace.Key, root 
 	if len(source) == 1 {
 		return root == 0
 	}
-	return keyspace.TermFamily(root) == keyspace.FamilyCell && keyspace.TermOrdinal(root) != 0 &&
-		keyspace.TermOrdinal(root) <= counts[keyspace.FamilyCell]
+	return keyspace.ValidTerm(root, keyspace.FamilyCell, int(counts[keyspace.FamilyCell]))
 }
 
 func validKeys(keys []keyspace.Key, minimum int) bool {
