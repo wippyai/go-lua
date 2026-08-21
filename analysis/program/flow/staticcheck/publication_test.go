@@ -54,7 +54,7 @@ func TestStaticCheckPublicationUsesExactWritePairAndCanonicalPath(t *testing.T) 
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -114,7 +114,7 @@ func TestStaticCheckPublicationAcceptsDeclarationTarget(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -191,7 +191,7 @@ func TestStaticCheckPublicationAcceptsQualifiedDeclarationTarget(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -241,7 +241,7 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathIdentity(t *testing
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err == nil {
 		t.Fatal("Validate accepted a publication with a foreign canonical path key")
@@ -294,7 +294,7 @@ func TestStaticCheckPublicationRejectsMismatchedCanonicalPathRoot(t *testing.T) 
 	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a publication with a foreign canonical path root")
 	}
@@ -341,7 +341,7 @@ func TestStaticCheckPublicationAcceptsVisibleLocalRoot(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -395,7 +395,7 @@ func TestStaticCheckPublicationAcceptsDeepDottedPath(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -440,7 +440,7 @@ func TestStaticCheckPublicationAcceptsAdjustedTailPair(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)

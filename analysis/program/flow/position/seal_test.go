@@ -12,11 +12,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
-	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
@@ -31,7 +29,6 @@ type positionFixture struct {
 	sourceFinalize source.Finalizer
 	flowFinalize   authored.Finalizer
 	staticView     staticquery.View
-	moduleFinalize imports.Finalizer
 }
 
 type positionSpec struct {
@@ -43,7 +40,7 @@ type positionSpec struct {
 	ints       []source.IntegerLiteral
 	faults     []source.ControlFault
 	exactAtoms []keyspace.LiteralValue
-	module     imports.Input
+	module     []authored.Import
 }
 
 func openPositionFixture(t *testing.T, spec positionSpec) *positionFixture {
@@ -75,6 +72,7 @@ func openPositionFixture(t *testing.T, spec positionSpec) *positionFixture {
 
 	flowInput := spec.flow
 	flowInput.Counts = counts
+	flowInput.Imports = append(flowInput.Imports, spec.module...)
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
 		_ = sourceFinalize.Abort()
@@ -89,57 +87,48 @@ func openPositionFixture(t *testing.T, spec positionSpec) *positionFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(spec.module)
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
+	moduleID := flowView.ModuleID()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
-		staticView.ContentID(), moduleFinalize.View().ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
-		staticView.ContentID(), moduleFinalize.View().ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 
 	fixture := &positionFixture{
 		preimage: preimage, flow: flowView, bodies: bodies, forest: forest, outcomes: outcomes, entry: entry,
 		sourceFinalize: sourceFinalize, staticView: staticView,
-		flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		flowFinalize: flowFinalize,
 	}
-	t.Cleanup(func() { flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize) })
+	t.Cleanup(func() { flowtest.CloseFinalizers(sourceFinalize, flowFinalize) })
 	return fixture
 }
 
 func sealPositionFixture(fixture *positionFixture) (source.IndexInput, error) {
 	return Seal(fixture.preimage, fixture.flow, fixture.bodies, fixture.forest, fixture.outcomes, fixture.entry,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.flow.ModuleID())
 }
 
 func sourceInputForPosition(counts [keyspace.FamilyCount]uint32, rows [][]keyspace.Term, ints []source.IntegerLiteral, faults []source.ControlFault, exactAtoms []keyspace.LiteralValue, nilOwners []keyspace.Term) source.Input {
@@ -162,6 +151,9 @@ func sourceInputForPosition(counts [keyspace.FamilyCount]uint32, rows [][]keyspa
 		input.Functions[index].Function = keyspace.MakeTerm(keyspace.FamilyFunction, uint32(index+1))
 	}
 	input.Integer = append([]source.IntegerLiteral(nil), ints...)
+	input.String = flowtest.LiteralRows(counts[keyspace.FamilyString], nil, keyspace.MakeTerm(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.StringLiteral {
+		return source.StringLiteral{Owner: owner, Value: "dep"}
+	})
 	input.Faults = append([]source.ControlFault(nil), faults...)
 	input.Nil = flowtest.LiteralRows(counts[keyspace.FamilyNil], nilOwners, keyspace.MakeTerm(keyspace.FamilyBody, 1), func(owner keyspace.Term, _ uint32) source.NilLiteral {
 		return source.NilLiteral{Owner: owner}
@@ -435,90 +427,6 @@ func TestSealPositionsIncludeControlFaultAfterOutcomeFamily(t *testing.T) {
 	if root, ok := component.View().Index().Root(fault); !ok || root != fault {
 		t.Fatalf("committed ControlFault root = %v/%v", root, ok)
 	}
-}
-
-func TestSealPositionsContainModuleImportThroughItsCall(t *testing.T) {
-	counts := positionCounts(1, 0, 1, 2, 0, 0, 1, 0, 0, 0)
-	counts[keyspace.FamilyImport] = 1
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
-	importTerm := keyspace.MakeTerm(keyspace.FamilyImport, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	callee := keyspace.MakeTerm(keyspace.FamilyInteger, 1)
-	actual := keyspace.MakeTerm(keyspace.FamilyInteger, 2)
-	fixture := openPositionFixture(t, positionSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{call}},
-		ints:   []source.IntegerLiteral{{Owner: body, Value: 1}, {Owner: body, Value: 2}},
-		flow: authored.Input{
-			Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}}, Terms: []keyspace.Term{actual}},
-			Calls:  []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
-		},
-		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
-		module: imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}},
-	})
-	index, err := sealPositionFixture(fixture)
-	if err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
-	for _, term := range []keyspace.Term{call, importTerm, values, callee, actual} {
-		row, ok := positionFor(index.Positions, term)
-		if !ok || row.Root != call || row.Body != body || row.FrontierBody != body {
-			t.Fatalf("Import closure position(%v) = %#v/%v", term, row, ok)
-		}
-	}
-	if _, err := fixture.sourceFinalize.Commit(index); err != nil {
-		t.Fatalf("Source Commit with Import: %v", err)
-	}
-}
-
-func TestSealMixedPostOutcomeFamiliesRemainCanonical(t *testing.T) {
-	counts := positionCounts(1, 0, 1, 2, 0, 0, 1, 0, 0, 0)
-	counts[keyspace.FamilyControlFault] = 1
-	counts[keyspace.FamilyImport] = 1
-	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
-	fault := keyspace.MakeTerm(keyspace.FamilyControlFault, 1)
-	importTerm := keyspace.MakeTerm(keyspace.FamilyImport, 1)
-	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
-	callee := keyspace.MakeTerm(keyspace.FamilyInteger, 1)
-	actual := keyspace.MakeTerm(keyspace.FamilyInteger, 2)
-	fixture := openPositionFixture(t, positionSpec{
-		counts: counts,
-		rows:   [][]keyspace.Term{{call, fault}},
-		ints:   []source.IntegerLiteral{{Owner: body, Value: 1}, {Owner: body, Value: 2}},
-		faults: []source.ControlFault{{Owner: body, Kind: source.ControlFaultUndefinedGoto}},
-		flow: authored.Input{
-			Values:  authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}}, Terms: []keyspace.Term{actual}},
-			Calls:   []authored.Call{{Owner: body, Callee: callee, Actuals: values}},
-			Control: authored.ControlInput{},
-		},
-		static: static.Input{Contracts: staticcontracts.Input{Call: []staticcontracts.CallContract{{}}}},
-		module: imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}},
-	})
-	index, err := sealPositionFixture(fixture)
-	if err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
-	want := []keyspace.Term{callee, actual, values, call, fault, importTerm}
-	if len(index.Positions) != len(want) {
-		t.Fatalf("Positions = %d, want %d", len(index.Positions), len(want))
-	}
-	for index, row := range index.Positions {
-		if row.Term != want[index] {
-			t.Fatalf("Positions[%d].Term = %v, want %v", index, row.Term, want[index])
-		}
-		if keyspace.TermFamily(row.Term) == keyspace.FamilyOutcome {
-			t.Fatalf("Outcome leaked at position %d", index)
-		}
-	}
-	callRow, _ := positionFor(index.Positions, call)
-	faultRow, _ := positionFor(index.Positions, fault)
-	if callRow.Offset != 0 || callRow.Cursor != 0 || faultRow.Offset != 1 || faultRow.Cursor != 1 {
-		t.Fatalf("mixed direct coordinates = Call %d/%d Fault %d/%d, want 0/0 and 1/1", callRow.Offset, callRow.Cursor, faultRow.Offset, faultRow.Cursor)
-	}
-	assertOutcomeOriginRows(t, fixture, index)
-	assertNoOutcomePositions(t, index)
 }
 
 func TestSealDeepClosureUsesIterativePathCompression(t *testing.T) {

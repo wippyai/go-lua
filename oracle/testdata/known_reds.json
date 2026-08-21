@@ -1,6 +1,6 @@
 {
   "measured": "2026-08-17",
-  "note": "Enumerated by running the covered sets themselves on 2026-08-17, re-measured after the preserve-kind repair and the two summary-receipt fixture repairs. The engine set carries no red: the preserve overlap-mismatch rejection now fires under its own binaryPreserve kind, and both summary receipt fixtures declare topologies their own bindings admit. Both anchor fixtures compile and solve; every remaining anchor red is a missing diagnostic or projection surface, not a seal or compile failure. The anchor set runs a nested go test over ./analysis, so it reports a package-level <build failed> key whenever any test source in that package does not compile; that key is deliberately never listed, because a set that cannot build has no verdict to compare.",
+  "note": "Enumerated by running the covered sets themselves on 2026-08-17, re-measured after the preserve-kind repair and the two summary-receipt fixture repairs. The engine set carries no red: the preserve overlap-mismatch rejection now fires under its own binaryPreserve kind, and both summary receipt fixtures declare topologies their own bindings admit. The Placement anchor now reads the declarative placement-summary family through domain/placement/publication; any remaining anchor red is a missing diagnostic or an operational query publication, not a stale unsupported adapter branch. The anchor set runs a nested go test over ./analysis, so it reports a package-level <build failed> key whenever any test source in that package does not compile; that key is deliberately never listed, because a set that cannot build has no verdict to compare.",
   "covered_sets": [
     {
       "name": "engine",
@@ -26,15 +26,15 @@
       "set": "anchor",
       "package": "github.com/wippyai/go-lua/oracle",
       "test": "TestAnchorTypesNarrowingDiagnosticsPlacement",
-      "reason": "both clauses below are red, so the parent is red",
-      "owner": "analysis/anchor_law_test.go"
+      "reason": "the multivariant diagnostic clause remains red; the placement clause now consumes the declarative query/publication surface",
+      "owner": "analysis/anchor_law_test.go; current child diagnostic lane"
     },
     {
       "set": "anchor",
       "package": "github.com/wippyai/go-lua/oracle",
       "test": "TestAnchorTypesNarrowingDiagnosticsPlacement/multivariant-dispatch",
-      "reason": "anchor clause 3: the acceptance policy cannot express the pinned contract and type.call.direct.argument_type at main.lua:36:22 matches 0 report rows, want exactly 1 (the type.call collector is missing); anchor clause 4: the placement Result surface is unavailable, a solved placement projection is required",
-      "owner": "analysis type.call diagnostic collector and the placement Result surface"
+      "reason": "anchor clause 3: the acceptance policy cannot express the pinned contract and type.call.direct.argument_type at main.lua:36:22 matches 0 report rows, want exactly 1 (the type.call collector is missing)",
+      "owner": "analysis type.call diagnostic collector"
     },
     {
       "set": "anchor",

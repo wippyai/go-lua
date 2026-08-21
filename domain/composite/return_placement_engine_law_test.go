@@ -1,0 +1,262 @@
+package composite
+
+import (
+	"context"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/snapshot"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
+)
+
+// TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine is the
+// engine-level return boundary law. The source is lowered, linked, mounted,
+// admitted into the canonical Program, solved, queried, and closed through
+// Placement's schema-bound result decoder. No Placement observation is
+// supplied by the test: the returned root must be the demand emitted by the
+// mounted placement-return-escape rule itself.
+func TestReturnPlacementPublishesOwnedHeapThroughTheCompositeEngine(t *testing.T) {
+	for _, fixture := range []struct {
+		name               string
+		source             string
+		alternate          bool
+		wantReturnBranches int
+	}{
+		{name: "exact", source: "local returned = {}; return returned", wantReturnBranches: 1},
+		// Both branches return the same allocation. The closed condition keeps
+		// fixture construction entirely canonical while giving the engine two
+		// independently issued return demands to join.
+		{name: "alternate-return-paths", source: "local returned = {}; if returned then return returned else return returned end", alternate: true, wantReturnBranches: 2},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			record := mountedRecord(t, "return-placement-engine-"+fixture.name, fixture.source)
+			bound := materializerBinding(t, record)
+			committed, sites := queryCanonicalProgram(t, record, bound)
+			sealed, failure, ok := committed.Seal(nil)
+			if !ok || sealed == nil {
+				t.Fatalf("seal: %v", failure)
+			}
+			state, status := sealed.Solve(context.Background())
+			if status != engine.SolveComplete || state == nil {
+				t.Fatalf("solve: %v", status)
+			}
+			published, ok := sealed.PublishedSnapshot(state)
+			if !ok {
+				t.Fatal("published snapshot")
+			}
+			view := published.Snapshot()
+			plan, ok := snapshot.OpenQuery[identity.ContentID, engine.Answer](&view, published.QueryFamily())
+			if !ok {
+				t.Fatal("query plan")
+			}
+			publications, ok := bound.QueryPublications(committed, sites)
+			if !ok {
+				t.Fatal("query publications")
+			}
+
+			allocationIDs := heapAllocationIDsForReturnLaw(t, record)
+			returnTargets := returnEscapeTargetsForLaw(t, record)
+			if len(allocationIDs) != 1 {
+				t.Fatalf("minimal return fixture sealed %d allocation roots, want one returned table root", len(allocationIDs))
+			}
+			var returnedID identity.ContentID
+			for id := range allocationIDs {
+				returnedID = id
+			}
+			if len(returnTargets) != fixture.wantReturnBranches {
+				t.Fatalf("return escape branches = %d, want %d", len(returnTargets), fixture.wantReturnBranches)
+			}
+			if fixture.alternate {
+				if returnTargets[0].point == returnTargets[1].point {
+					t.Fatal("alternate returns did not retain two distinct points for one allocation")
+				}
+			}
+
+			byPoint := make(map[identity.ContentID]QueryPublication)
+			valueByPoint := make(map[identity.ContentID]QueryPublication)
+			for _, publication := range publications {
+				if publication.Site.Family == QueryFamilyPlacementSummary {
+					byPoint[publication.Site.Point] = publication
+				} else if publication.Site.Family == QueryFamilyValueSummary {
+					valueByPoint[publication.Site.Point] = publication
+				}
+			}
+			joined := placementdomain.Bottom
+			for _, target := range returnTargets {
+				publication, publicationOK := byPoint[target.point]
+				if !publicationOK {
+					t.Fatalf("return escape point %s has no typed Placement publication", target.point)
+				}
+				answer, read := snapshot.Query(&view, plan, publication.Key)
+				if read != snapshot.ReadHit || !answer.Available() {
+					t.Fatalf("return escape point %s query status=%s available=%t", target.point, read, answer.Available())
+				}
+				cell, cellOK := publication.CanonicalCell(answer)
+				if !cellOK || !cell.Available() || cell.ContractID() != publication.Contract().ContentID() {
+					t.Fatalf("return escape point %s did not close its typed result contract", target.point)
+				}
+				result, resultOK := placementdomain.DecodeSummaryResult(record.PlacementSchema, cell.Present(), cell.RowCount(), cell.Payload())
+				if !resultOK || !result.Available() || result.SchemaID() != record.PlacementSchema.ContentID() {
+					t.Fatalf("return escape point %s did not decode under the mounted Placement schema", target.point)
+				}
+				if result.AllocationCount() != len(allocationIDs) {
+					t.Fatalf("return escape point %s allocation denominator=%d, want Heap denominator=%d", target.point, result.AllocationCount(), len(allocationIDs))
+				}
+				rows := placementRowsForReturnLaw(t, result)
+				if len(rows) != len(allocationIDs) {
+					t.Fatalf("return escape point %s decoded rows=%d, want Heap denominator=%d", target.point, len(rows), len(allocationIDs))
+				}
+				for allocationID := range allocationIDs {
+					if _, present := rows[allocationID]; !present {
+						t.Fatalf("return escape point %s omitted Heap allocation %s", target.point, allocationID)
+					}
+				}
+				got := rows[returnedID]
+				if got != placementdomain.OwnedHeap {
+					valueState := returnBoundaryValueStateForLaw(t, &view, plan, valueByPoint[target.point], record.ValueSchema, target.coordinate)
+					t.Fatalf("return escape point %s allocation %s=%s, want exact OwnedHeap demand (boundary value %s)", target.point, returnedID, got, valueState)
+				}
+				if !placementdomain.LessOrEq(joined, got) {
+					t.Fatalf("alternate return join descended from %s to %s at point %s", joined, got, target.point)
+				}
+				joined = placementdomain.Join(joined, got)
+			}
+			if joined != placementdomain.OwnedHeap {
+				t.Fatalf("joined return demand=%s, want OwnedHeap", joined)
+			}
+		})
+	}
+}
+
+type returnEscapeTarget struct {
+	point      identity.ContentID
+	coordinate valuedomain.Coordinate
+}
+
+func returnEscapeTargetsForLaw(t testing.TB, record LinkInputs) []returnEscapeTarget {
+	t.Helper()
+	var targets []returnEscapeTarget
+	for _, mount := range record.Artifacts {
+		count, ok := mount.Program.RuleOccurrenceCount()
+		if !ok {
+			t.Fatal("rule occurrences")
+		}
+		for index := 0; index < count; index++ {
+			row, ok := mount.Program.RuleOccurrenceAt(index)
+			if !ok || string(row.Key()) != "placement-return-escape" || row.Stage() != programschema.RuleStageLocal {
+				continue
+			}
+			point := row.PointID()
+			if !point.Available() {
+				t.Fatal("return escape point")
+			}
+			occurrenceOrdinal, occurrenceOK := row.Occurrence()
+			occurrence, occurrenceRowOK := mount.Program.OccurrenceAt(int(occurrenceOrdinal))
+			if !occurrenceOK || !occurrenceRowOK || occurrence.Kind() != programschema.OccurrenceReturnBoundary {
+				t.Fatal("return escape row is not backed by a return boundary")
+			}
+			boundary, boundaryOK := record.ValueSchema.ReturnBoundary(mount.ModuleKey, occurrence.ID())
+			boundaryCoordinate, returnedOK := boundary.Root()
+			if !boundaryOK || !returnedOK {
+				t.Fatal("return boundary has no canonical Value coordinate")
+			}
+			targets = append(targets, returnEscapeTarget{point: point, coordinate: boundaryCoordinate})
+		}
+	}
+	if len(targets) == 0 {
+		t.Fatal("no return escape points")
+	}
+	return targets
+}
+
+func heapAllocationIDsForReturnLaw(t testing.TB, record LinkInputs) map[identity.ContentID]struct{} {
+	t.Helper()
+	ids := make(map[identity.ContentID]struct{})
+	for dense := 0; dense < record.HeapSchema.KeyCount(); dense++ {
+		key, keyOK := record.HeapSchema.KeyAt(dense)
+		if !keyOK || key.Kind() != heapdomain.RootAllocation {
+			continue
+		}
+		id, idOK := key.ContentID()
+		receipt, receiptOK := record.ValueSchema.AllocationResultFor(key)
+		if !idOK || !id.Available() || !receiptOK || receipt == nil {
+			t.Fatal("Heap allocation has no canonical identity")
+		}
+		ids[id] = struct{}{}
+	}
+	if len(ids) == 0 {
+		t.Fatal("fixture sealed no Heap allocation roots")
+	}
+	return ids
+}
+
+func placementRowsForReturnLaw(t testing.TB, result placementdomain.SummaryResult) map[identity.ContentID]placementdomain.Placement {
+	t.Helper()
+	rows := make(map[identity.ContentID]placementdomain.Placement, result.AllocationCount())
+	iterator := result.Allocations()
+	for {
+		allocation, next := iterator.Next()
+		if !next {
+			break
+		}
+		if !allocation.Available() {
+			t.Fatal("typed Placement allocation row is unavailable")
+		}
+		class := placementdomain.Bottom
+		if allocation.Present() {
+			decoded, decodedOK := allocation.Placement()
+			if !decodedOK {
+				t.Fatal("typed Placement allocation row has no class")
+			}
+			class = decoded
+		}
+		id := allocation.AllocationID()
+		if _, duplicate := rows[id]; duplicate {
+			t.Fatalf("typed Placement allocation row %s is duplicated", id)
+		}
+		rows[id] = class
+	}
+	return rows
+}
+
+func returnBoundaryValueStateForLaw(t testing.TB, view *snapshot.Snapshot, plan snapshot.QueryPlan[identity.ContentID, engine.Answer], publication QueryPublication, schema *valuedomain.Schema, coordinate valuedomain.Coordinate) string {
+	t.Helper()
+	index, indexOK := schema.CoordinateIndex(coordinate)
+	if !indexOK || !publication.Key.Available() {
+		return "unaddressable"
+	}
+	answer, read := snapshot.Query(view, plan, publication.Key)
+	if read != snapshot.ReadHit || !answer.Available() {
+		return "query-absent"
+	}
+	cell, cellOK := publication.CanonicalCell(answer)
+	if !cellOK {
+		return "cell-invalid"
+	}
+	result, resultOK := valuedomain.DecodeSummaryResult(cell.Present(), cell.RowCount(), cell.Payload())
+	if !resultOK {
+		return "decode-invalid"
+	}
+	iterator := result.Coordinates()
+	for ordinal := uint32(0); ordinal <= index; ordinal++ {
+		row, next := iterator.Next()
+		if !next {
+			return "coordinate-missing"
+		}
+		if ordinal != index {
+			continue
+		}
+		if !row.Present() {
+			return "absent"
+		}
+		if row.Top() {
+			return "top"
+		}
+		return "present"
+	}
+	return "coordinate-missing"
+}

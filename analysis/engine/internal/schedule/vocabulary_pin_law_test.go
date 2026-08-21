@@ -20,7 +20,11 @@ import (
 // binds a Region: a reordered member here would enter a recurrence where the
 // artifact declared an exit.
 func TestScheduleVocabularyIsTheSealedTable(t *testing.T) {
-	sealed, failure := composite.Table()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed compilation unavailable")
+	}
+	sealed, failure := composite.Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}

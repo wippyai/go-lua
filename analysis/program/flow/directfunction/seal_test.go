@@ -60,7 +60,7 @@ func TestSealRejectsSameDenominatorForeignOwners(t *testing.T) {
 	left := openDirectFixture(t, base)
 	right := openDirectFixture(t, foreign)
 	staticID := left.staticView.ContentID()
-	moduleID := left.moduleFinalize.View().ContentID()
+	moduleID := left.flow.ModuleID()
 
 	if _, err := Seal(left.source, right.flow, left.bodies, left.bindings, left.forest, left.control, left.executable, staticID, moduleID); err == nil {
 		t.Fatal("foreign Flow with equal denominators was accepted")
@@ -111,13 +111,13 @@ func TestDirectFunctionProvenanceRejectsEqualDenominatorForeignOwners(t *testing
 	sourceID := base.source.Identity().ContentID()
 	flowID := base.flow.ContentID()
 	staticID := base.staticView.ContentID()
-	moduleID := base.moduleFinalize.View().ContentID()
+	moduleID := base.flow.ModuleID()
 	foreignSourceID := foreignSource.source.Identity().ContentID()
 	foreignFlowID := foreignFlow.flow.ContentID()
 	foreignSourceStaticID := foreignSource.staticView.ContentID()
-	foreignSourceModuleID := foreignSource.moduleFinalize.View().ContentID()
+	foreignSourceModuleID := foreignSource.flow.ModuleID()
 	foreignFlowStaticID := foreignFlow.staticView.ContentID()
-	foreignFlowModuleID := foreignFlow.moduleFinalize.View().ContentID()
+	foreignFlowModuleID := foreignFlow.flow.ModuleID()
 	if !Matches(base.result, sourceID, flowID, staticID, moduleID) ||
 		!Matches(foreignSource.result, foreignSourceID, flowID, foreignSourceStaticID, foreignSourceModuleID) ||
 		!Matches(foreignFlow.result, sourceID, foreignFlowID, foreignFlowStaticID, foreignFlowModuleID) {

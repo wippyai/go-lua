@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -74,7 +73,8 @@ func canonicalRootIDForLaw(t testing.TB, ids [4]identity.ContentID) identity.Con
 func TestProgramNilReceiverAndNilAssemblyFailClosed(t *testing.T) {
 	var program *Program
 	if program.Source() != (source.View{}) || program.Flow() != (flow.View{}) ||
-		program.Static().Available() || program.Module() != (imports.View{}) ||
+		program.Static().Available() || program.Flow().ModuleID().Available() ||
+		program.Flow().Authored().Imports().Count() != 0 ||
 		program.ContentID().Available() {
 		t.Fatal("nil Program exposed owner state")
 	}
@@ -95,7 +95,7 @@ func TestPublishRetainsExactOwnerQuartetViews(t *testing.T) {
 	sourceID := published.Source().Identity().ContentID()
 	flowID := published.Flow().ContentID()
 	staticID := published.Static().ContentID()
-	moduleID := published.Module().ContentID()
+	moduleID := published.Flow().ModuleID()
 	provenance := published.Flow().Provenance()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		t.Fatal("Publish exposed an unavailable owner view")
@@ -157,24 +157,12 @@ func rootAssembly(t *testing.T, name string) *flow.Assembly {
 		t.Fatalf("static.Build: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
+	flowDraft, err := authored.Build(authored.Input{Counts: counts})
 	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-
-	flowDraft, err := flow.Build(authored.Input{Counts: counts})
-	if err != nil {
-		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("flow.Build: %v", err)
 	}
-	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, flowDraft, entry)
 	if err != nil {
 		t.Fatalf("flow.Assemble: %v", err)
 	}

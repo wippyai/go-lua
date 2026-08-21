@@ -362,20 +362,62 @@ const (
 )
 
 // PublicationEffectSpec explicitly attaches memory-relevant semantics to one
-// effect occurrence. Subject and Destination are zero-based ValueFormal
-// selectors in the resolved effect target ABI; Destination is meaningful only
-// for PublicationDestinationValueFormal.
+// effect occurrence. Subject selects one existing ValueFormal or the target
+// input ValuesVar in the resolved effect target ABI; Destination is meaningful
+// only for PublicationDestinationValueFormal, whose Context remains a
+// ValueFormal selector.
 //
 // The exact valid combinations are checked while sealing. A nil Publication
 // remains absent rather than being inferred from generic effect metadata.
 type PublicationEffectSpec struct {
 	Kind        PublicationEffectKind
-	Subject     ValueFormal
+	Subject     InputSource
 	Destination PublicationDestinationRole
 	Context     ValueFormal
 	Escape      PublicationEscapeDisposition
 	Mutability  PublicationMutabilityDisposition
 	Lifetime    PublicationLifetimeDisposition
+}
+
+// FormalEffectKind is the closed ownership metadata vocabulary attached to an
+// operation declaration. Formal effects are deliberately separate from the
+// invocation Effects row and from PublicationEffectSpec: they describe the
+// operation's neutral ownership contract, not an effect occurrence or a
+// publication event.
+type FormalEffectKind uint8
+
+const (
+	FormalEffectInvalid FormalEffectKind = iota
+	FormalEffectBorrow
+	FormalEffectRetain
+	FormalEffectStore
+	FormalEffectBorrowAll
+	FormalEffectSendSuffix
+	FormalEffectSendParam
+	FormalEffectExport
+	FormalEffectOpaque
+	FormalEffectFreeze
+)
+
+// FormalEffectSpec is one canonical ownership metadata row. Param is retained
+// as a signed int32 because -1 is a meaningful neutral unknown parameter. Store
+// has an explicit optional Into coordinate; absent Into values are canonicalized
+// to -1 during Target seal. SendSuffix uses FromParam as a non-negative
+// parameter-list boundary.
+type FormalEffectSpec struct {
+	Kind      FormalEffectKind
+	Param     int32
+	Into      int32
+	HasInto   bool
+	FromParam int32
+}
+
+// FormalEffectRow is the operation-owned formal ownership row. Unlike an
+// invocation RowSpec it has no row-variable coordinate: only a finite closed
+// row or the explicit opaque unknown-open row is admitted.
+type FormalEffectRow struct {
+	Occurrences []FormalEffectSpec
+	Tail        RowTail
 }
 
 // RowSpec is an authored Koka effect row. Multiplicity in Occurrences is
@@ -408,6 +450,7 @@ type OperationSpec struct {
 	Transfers       []TransferSpec
 	SubedgeRelation *SubedgeRelationSpec
 	Effects         RowSpec
+	FormalEffects   FormalEffectRow
 }
 
 // TypeFormalSpec declares one operation-local formal coordinate. The

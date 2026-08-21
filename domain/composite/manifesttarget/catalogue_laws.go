@@ -13,6 +13,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/manifest"
@@ -129,7 +131,10 @@ func (catalogue *authoredCatalogue) selfEffects(declarations *manifest.Catalogue
 	producedEffects := make(map[string]bool)
 	for _, function := range declarations.Functions() {
 		for _, binding := range bindingsFromDeclaration(function) {
-			declaredEffects[bindingKey(binding)] = !function.Signature().Effect.Pure()
+			// Ownership labels are declaration-level formal metadata. They do
+			// not denote an invocation effect occurrence; only a non-ownership
+			// label or an open signature row makes the operation effectful here.
+			declaredEffects[bindingKey(binding)] = hasInvocationEffects(function.Signature().Effect)
 		}
 		if law, ok := function.Operation(); ok && law.SelfEffect {
 			producedEffects[function.CanonicalPath()] = true
@@ -157,6 +162,12 @@ func (catalogue *authoredCatalogue) selfEffects(declarations *manifest.Catalogue
 				continue
 			}
 		}
+		// An explicit invocation row is the provider's complete occurrence
+		// authority. Do not append a generic self row merely because the
+		// signature also carries an open/unknown effect label or SelfEffect.
+		if len(op.Effects.Occurrences) != 0 {
+			continue
+		}
 		values := make([]vocabulary.ValueFormal, len(op.Input.Fixed))
 		for i := range values {
 			values[i] = vocabulary.ValueFormal(i)
@@ -168,6 +179,30 @@ func (catalogue *authoredCatalogue) selfEffects(declarations *manifest.Catalogue
 		op.Effects = vocabulary.RowSpec{Occurrences: []vocabulary.EffectSpec{{Target: vocabulary.SpecRef(ref), ValueArgs: values, ValuesArgs: vars}}, Tail: vocabulary.RowClosed}
 	}
 	return nil
+}
+
+// hasInvocationEffects keeps the signature-to-operation distinction explicit:
+// ownership labels are formal contracts and are lowered to FormalEffects, not
+// to an operation's invocation Effects row. Other known labels retain the
+// existing self-effect projection, while any open/unknown tail remains an
+// invocation effect because its contents cannot be proven empty.
+func hasInvocationEffects(row effect.Row) bool {
+	if row.Tail != nil {
+		return true
+	}
+	for _, label := range row.Labels {
+		normalized := effect.NormalizeLabel(label)
+		switch normalized.(type) {
+		case ownership.Borrow, ownership.Retain, ownership.Store, ownership.BorrowAll,
+			ownership.Send, ownership.SendParam, ownership.Export, ownership.Opaque, ownership.Freeze:
+			continue
+		default:
+			if normalized != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func bindingKey(binding vocabulary.BindingSpec) string {

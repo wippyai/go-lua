@@ -134,6 +134,92 @@ func TestContainmentRuleEnumeratesEachAllocationRootOnce(t *testing.T) {
 	}
 }
 
+func TestContainmentRuleCatalogueKeepsCanonicalMountOrder(t *testing.T) {
+	fixture := newContainmentFixture(t)
+	rule := bindContainmentLaw(t, fixture)
+	if rule.catalogue == nil || rule.catalogue.count != rule.Count() || len(rule.catalogue.mounts) > fixture.heap.ArtifactMountCount() {
+		t.Fatalf("sealed containment catalogue = %#v, want count=%d with at most %d mount prefixes", rule.catalogue, rule.Count(), fixture.heap.ArtifactMountCount())
+	}
+	previousEnd := 0
+	for index, prefix := range rule.catalogue.mounts {
+		if prefix.start != previousEnd || prefix.end <= prefix.start || !prefix.issuer.Module().Available() || !prefix.issuer.ProgramID().Available() {
+			t.Fatalf("mount prefix %d = [%d,%d) module=%v program=%v after %d", index, prefix.start, prefix.end, prefix.issuer.Module(), prefix.issuer.ProgramID(), previousEnd)
+		}
+		previousEnd = prefix.end
+	}
+	if previousEnd != rule.catalogue.count {
+		t.Fatalf("mount prefix coverage ends at %d, want %d", previousEnd, rule.catalogue.count)
+	}
+
+	heapSchema := fixture.heap
+	want := make([]identity.ContentID, 0, rule.Count())
+	for mountIndex := 0; mountIndex < heapSchema.ArtifactMountCount(); mountIndex++ {
+		mount, mountOK := heapSchema.ArtifactMountAt(mountIndex)
+		if !mountOK {
+			t.Fatalf("mount %d", mountIndex)
+		}
+		issuer, issuerOK := heapSchema.OccurrenceMountForModule(mount.Module())
+		if !issuerOK {
+			t.Fatalf("issuer %d", mountIndex)
+		}
+		for allocationIndex := 0; allocationIndex < issuer.AllocationCount(); allocationIndex++ {
+			_, key, keyOK := issuer.AllocationAt(allocationIndex)
+			if !keyOK {
+				t.Fatalf("allocation %d/%d", mountIndex, allocationIndex)
+			}
+			id, idOK := key.ContentID()
+			if !idOK {
+				t.Fatalf("allocation identity %d/%d", mountIndex, allocationIndex)
+			}
+			want = append(want, id)
+		}
+	}
+	if len(want) != rule.Count() {
+		t.Fatalf("canonical catalogue width = %d, want %d", rule.Count(), len(want))
+	}
+	for index, wantID := range want {
+		gotID, gotOK := rule.IDAt(index)
+		if !gotOK || gotID != wantID {
+			t.Fatalf("catalogue row %d = %v/%t, want %v/true", index, gotID, gotOK, wantID)
+		}
+	}
+	if _, ok := rule.IDAt(-1); ok {
+		t.Fatal("negative catalogue index accepted")
+	}
+	if _, ok := rule.IDAt(rule.Count()); ok {
+		t.Fatal("catalogue end index accepted")
+	}
+}
+
+func TestContainmentCatalogueRejectsInvalidSchema(t *testing.T) {
+	catalogue, catalogueOK := buildCatalogue(placementdomain.Schema{})
+	if catalogueOK || catalogue != nil {
+		t.Fatal("invalid Placement schema produced a containment catalogue")
+	}
+}
+
+func TestContainmentCataloguePrefixLookupUsesHalfOpenMountRanges(t *testing.T) {
+	catalogue := &containmentCatalogue{
+		mounts: []catalogueMount{{start: 0, end: 2}, {start: 2, end: 5}, {start: 5, end: 6}},
+		count:  6,
+	}
+	for index, wantLocal := range []int{0, 1, 0, 1, 2, 0} {
+		mount, local, ok := catalogue.mountAt(index)
+		if !ok || local != wantLocal || index < mount.start || index >= mount.end {
+			t.Fatalf("prefix lookup %d = [%d,%d) local=%d/%t, want local=%d", index, mount.start, mount.end, local, ok, wantLocal)
+		}
+	}
+	for _, index := range []int{-1, catalogue.count} {
+		if mount, local, ok := catalogue.mountAt(index); ok {
+			t.Fatalf("out-of-range prefix lookup %d = %#v local=%d", index, mount, local)
+		}
+	}
+	broken := &containmentCatalogue{mounts: []catalogueMount{{start: 1, end: 2}}, count: 2}
+	if mount, local, ok := broken.mountAt(0); ok {
+		t.Fatalf("prefix gap acquired a mount: %#v local=%d", mount, local)
+	}
+}
+
 func TestContainmentEmptyLinkDenominatorRemainsValid(t *testing.T) {
 	heapSchema, placementSchema := newContainmentSchemas(t, "placement-containment-empty", "return 1")
 	for index := 0; index < heapSchema.KeyCount(); index++ {
@@ -155,25 +241,38 @@ func TestContainmentRuleRoutePlanExactAndUnknownBroadcast(t *testing.T) {
 	child := mustReference(t, fixture.heap, fixture.roots[1], materialization.Recent)
 	exact := mustExact(t, fixture.heap, child)
 	exactValue := mustValue(t, fixture, fixture.roots[0], none, exact, none)
-	uncertain := rule.containmentUncertainty(exactValue)
-	if uncertain.identityUnknown || uncertain.classUnknown {
-		t.Fatalf("exact route uncertainty = %#v, want resolved identity/class", uncertain)
+	if opaque, complete := rule.containmentEvidence(exactValue); opaque || !complete {
+		t.Fatalf("exact containment evidence = opaque:%t complete:%t, want false/true", opaque, complete)
+	}
+	if !rule.walkContainments(exactValue, nil) {
+		t.Fatal("exact route walk was not complete")
 	}
 	unknown := mustUnknown(t, fixture.heap)
 	unknownValue := mustValue(t, fixture, fixture.roots[0], none, unknown, none)
-	uncertain = rule.containmentUncertainty(unknownValue)
-	if !uncertain.identityUnknown || uncertain.classUnknown {
-		t.Fatalf("unknown identity uncertainty = %#v, want identity-only widening", uncertain)
+	if opaque, complete := rule.containmentEvidence(unknownValue); !opaque || !complete {
+		t.Fatalf("opaque containment evidence = opaque:%t complete:%t, want true/true", opaque, complete)
+	}
+	if rule.walkContainments(unknownValue, nil) {
+		t.Fatal("unknown identity route walk was treated as complete")
 	}
 	unknownMetaObject := mustObject(t, fixture.heap, unknown)
 	unknownMetaValue := mustRelation(t, fixture.heap, fixture.roots[0], unknownMetaObject)
-	uncertain = rule.containmentUncertainty(unknownMetaValue)
-	if !uncertain.identityUnknown || uncertain.classUnknown {
-		t.Fatalf("unknown metatable uncertainty = %#v, want identity-only widening", uncertain)
+	if rule.walkContainments(unknownMetaValue, nil) {
+		t.Fatal("unknown metatable route walk was treated as complete")
 	}
-	top := rule.containmentUncertainty(fixture.heap.Top())
-	if !top.identityUnknown || !top.classUnknown {
-		t.Fatalf("Top uncertainty = %#v, want identity and class widening", top)
+	top := fixture.heap.Top()
+	if opaque, complete := rule.containmentEvidence(top); opaque || complete {
+		t.Fatalf("Top containment walk = opaque:%t complete:%t, want false/false before authenticated Top widening", opaque, complete)
+	}
+	if rule.walkContainments(top, nil) {
+		t.Fatal("Top route walk was treated as complete")
+	}
+	// Unknown containment is identity uncertainty only. Both unknown values
+	// remain valid, non-Top Heap values, so the active Fold's class-widening
+	// branch (`!Valid || IsTop`) does not force Placement.Unknown; locate's
+	// authenticated opaque edge selects the conservative broadcast route set.
+	if !unknownValue.Valid() || unknownValue.IsTop() || !unknownMetaValue.Valid() || unknownMetaValue.IsTop() {
+		t.Fatal("unknown containment witness changed class uncertainty")
 	}
 
 	if rule == nil || rule.Count() == 0 {
@@ -200,6 +299,91 @@ func TestContainmentRuleRoutePlanExactAndUnknownBroadcast(t *testing.T) {
 	}
 	if len(seen) != rule.Count() {
 		t.Fatalf("unknown identity route plan = %d roots, Link = %d", len(seen), rule.Count())
+	}
+}
+
+func TestContainmentMissingOrForeignEvidenceRefusesWithoutWidening(t *testing.T) {
+	fixture := newContainmentFixture(t)
+	rule := bindContainmentLaw(t, fixture)
+	if opaque, complete := rule.containmentEvidence(heapdomain.Value{}); opaque || complete {
+		t.Fatalf("missing containment evidence = opaque:%t complete:%t, want false/false", opaque, complete)
+	}
+	foreign := newContainmentFixtureNamed(t, "placement-containment-foreign-evidence")
+	if opaque, complete := rule.containmentEvidence(foreign.heap.Top()); opaque || complete {
+		t.Fatalf("foreign containment evidence = opaque:%t complete:%t, want false/false", opaque, complete)
+	}
+}
+
+func TestContainmentExactRouteTagsRetainDuplicateEdgeOrdinals(t *testing.T) {
+	fixture := newContainmentFixture(t)
+	parent, child := fixture.roots[0], fixture.roots[1]
+	none := mustNone(t, fixture.heap)
+	reference := mustReference(t, fixture.heap, child, materialization.Recent)
+	exact := mustExact(t, fixture.heap, reference)
+	value := mustValue(t, fixture, parent, none, exact, exact)
+	childIndex, childIndexOK := fixture.heap.KeyIndex(child)
+	if !childIndexOK {
+		t.Fatal("child dense index")
+	}
+
+	ordinal := uint64(0)
+	matched := 0
+	if !fixture.heap.VisitContainments(value, func(observation heapdomain.ContainmentVisit) bool {
+		ordinal++
+		if observation.Kind() != heapdomain.ContainmentExact {
+			return true
+		}
+		reference, referenceOK := observation.Reference()
+		key, _, keyOK := reference.Key()
+		if !referenceOK || !keyOK || key != child {
+			return true
+		}
+		tag, tagOK := exactRouteTag(childIndex, ordinal)
+		if !tagOK || tag&1 != 0 {
+			t.Fatalf("duplicate exact edge ordinal %d produced invalid tag", ordinal)
+		}
+		matched++
+		return true
+	}) {
+		t.Fatal("complete duplicate edge walk")
+	}
+	if matched != 2 {
+		t.Fatalf("duplicate exact route edges = %d, want 2", matched)
+	}
+}
+
+func TestContainmentWideRouteWalkIsAllocationFree(t *testing.T) {
+	fixture, parent, child := newWideContainmentFixture(t)
+	value := mustWideValue(t, fixture, parent, child, 5)
+	exactEdges := countKind(visit(t, fixture.heap, value), heapdomain.ContainmentExact)
+	if exactEdges < 10 {
+		t.Fatalf("wide containment exact edges = %d, want at least 10", exactEdges)
+	}
+	rule := bindContainmentLaw(t, fixture)
+	seen := 0
+	firstOK := rule.walkContainments(value, nil)
+	secondOK := rule.walkContainments(value, func(_ heapdomain.Key, _ uint64) bool {
+		seen++
+		return true
+	})
+	if !firstOK || !secondOK || seen != exactEdges {
+		t.Fatalf("wide route walk complete=%t/%t routes=%d, want %d", firstOK, secondOK, seen, exactEdges)
+	}
+	complete := true
+	allocs := testing.AllocsPerRun(100, func() {
+		count := 0
+		if !rule.walkContainments(value, nil) || !rule.walkContainments(value, func(_ heapdomain.Key, _ uint64) bool {
+			count++
+			return true
+		}) || count != exactEdges {
+			complete = false
+		}
+	})
+	if !complete {
+		t.Fatal("wide route walk lost deterministic edges")
+	}
+	if allocs != 0 {
+		t.Fatalf("wide route walk allocations = %f, want 0", allocs)
 	}
 }
 
@@ -238,6 +422,58 @@ func BenchmarkContainmentLinkCount(b *testing.B) {
 	for index := 0; index < b.N; index++ {
 		if rule.Count() < 0 {
 			b.Fatal("negative Link denominator")
+		}
+	}
+}
+
+func BenchmarkContainmentLinkIDAt(b *testing.B) {
+	fixture := newContainmentFixture(b)
+	rule := bindContainmentLaw(b, fixture)
+	count := rule.Count()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		for index := 0; index < count; index++ {
+			if _, ok := rule.IDAt(index); !ok {
+				b.Fatal("canonical allocation identity")
+			}
+		}
+	}
+}
+
+func BenchmarkContainmentCataloguePrefixLookup4096Mounts(b *testing.B) {
+	const mountCount = 4096
+	mounts := make([]catalogueMount, mountCount)
+	for index := range mounts {
+		mounts[index].start = index * 3
+		mounts[index].end = mounts[index].start + 3
+	}
+	catalogue := &containmentCatalogue{mounts: mounts, count: mountCount * 3}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		index := (iteration * 7919) % catalogue.count
+		mount, local, ok := catalogue.mountAt(index)
+		if !ok || local != index-mount.start {
+			b.Fatal("canonical mount prefix lookup")
+		}
+	}
+}
+
+func BenchmarkContainmentWideRoutePlan(b *testing.B) {
+	fixture, parent, child := newWideContainmentFixture(b)
+	value := mustWideValue(b, fixture, parent, child, 5)
+	exactEdges := countKind(visit(b, fixture.heap, value), heapdomain.ContainmentExact)
+	rule := bindContainmentLaw(b, fixture)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for iteration := 0; iteration < b.N; iteration++ {
+		seen := 0
+		if !rule.walkContainments(value, nil) || !rule.walkContainments(value, func(_ heapdomain.Key, _ uint64) bool {
+			seen++
+			return true
+		}) || seen != exactEdges {
+			b.Fatal("wide route plan")
 		}
 	}
 }
@@ -298,6 +534,72 @@ return third
 	return containmentFixture{}
 }
 
+func newWideContainmentFixture(t testing.TB) (containmentFixture, heapdomain.Key, heapdomain.Key) {
+	heapSchema, placementSchema := newContainmentSchemas(t, "placement-containment-wide", `
+local first = {}
+local second = { a = first, b = first, c = first, d = first, e = first }
+return second
+	`)
+	var roots []heapdomain.Key
+	for index := 0; index < heapSchema.KeyCount(); index++ {
+		key, keyOK := heapSchema.KeyAt(index)
+		if keyOK && key.Kind() == heapdomain.RootAllocation {
+			roots = append(roots, key)
+		}
+	}
+	var parent, child heapdomain.Key
+	for _, key := range roots {
+		if heapSchema.FieldCount(key) >= 5 {
+			parent = key
+			break
+		}
+	}
+	for _, key := range roots {
+		if key != parent {
+			child = key
+			break
+		}
+	}
+	if !parent.Valid() || !child.Valid() {
+		t.Fatalf("wide fixture roots parent=%t child=%t", parent.Valid(), child.Valid())
+	}
+	return containmentFixture{heap: heapSchema, placement: placementSchema}, parent, child
+}
+
+func mustWideValue(t testing.TB, fixture containmentFixture, parent, child heapdomain.Key, minimumFields int) heapdomain.Value {
+	t.Helper()
+	none := mustNone(t, fixture.heap)
+	reference := mustReference(t, fixture.heap, child, materialization.Recent)
+	exact := mustExact(t, fixture.heap, reference)
+	initializer, initializerOK := fixture.heap.BeginObject(heapdomain.ShapeEligible, heapdomain.FrozenMutable, none)
+	if !initializerOK {
+		t.Fatal("wide Heap object initializer")
+	}
+	applied := 0
+	for index := 0; index < fixture.heap.FieldCount(parent); index++ {
+		field, fieldOK := fixture.heap.FieldAt(parent, index)
+		slot, slotOK := fixture.heap.SlotForField(field)
+		payload, payloadOK := fixture.heap.PayloadForField(field)
+		selector, selectorOK := fixture.heap.SelectorForSlot(slot)
+		if !fieldOK || !slotOK || !payloadOK || !selectorOK || selector.Kind() != heapdomain.KeySelectorAtom {
+			continue
+		}
+		cell, cellOK := fixture.heap.CellPresent(slot, payload, exact, exact)
+		if !cellOK || !initializer.Apply(selector, cell) {
+			t.Fatal("wide Heap exact field")
+		}
+		applied++
+	}
+	if applied < minimumFields {
+		t.Fatalf("wide Heap exact fields = %d, want at least %d", applied, minimumFields)
+	}
+	object, objectOK := initializer.Finish()
+	if !objectOK {
+		t.Fatal("wide Heap object finish")
+	}
+	return mustRelation(t, fixture.heap, parent, object)
+}
+
 func newContainmentSchemas(t testing.TB, name, source string) (heapdomain.Schema, placementdomain.Schema) {
 	t.Helper()
 	program, err := lower.Lower(lower.Source{Name: name + ".lua", Text: []byte(source)})
@@ -312,7 +614,7 @@ func newContainmentSchemas(t testing.TB, name, source string) (heapdomain.Schema
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+	grammar, grammarOK := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 	issuanceDirectory := issuance.Directory{}
 	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuanceDirectory)
 	shard, shardOK := linked.Project().Mounts().At(0)

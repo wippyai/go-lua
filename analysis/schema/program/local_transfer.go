@@ -65,16 +65,6 @@ func (row LocalTransfer) WriteSpan() (offset, count uint32, ok bool) {
 	return row.writeOffset, row.writeCount, row.Available()
 }
 
-const slotLocalTransfer = slotStaticInput + 1
-const slotLocalTransferWrite = slotLocalTransfer + 1
-
-var localTransferFamily = Family[LocalTransfer]{slot: slotLocalTransfer, name: "local-transfer"}
-var localTransferWriteFamily = Family[LocalTransferWrite]{slot: slotLocalTransferWrite, name: "local-transfer-write"}
-
-func LocalTransferFamily() Family[LocalTransfer] { return localTransferFamily }
-
-func LocalTransferWriteFamily() Family[LocalTransferWrite] { return localTransferWriteFamily }
-
 // LocalTransferWrite is one ordered factor key moved by a partial local
 // transport. Its ordinal is its position in LocalTransferWriteFamily.
 type LocalTransferWrite struct{ key schema.Key }

@@ -120,8 +120,8 @@ type Pairing[F any] struct {
 }
 
 // Binding is the hot binding context. Fragment is the cold fragment this
-// rule's Declare hook produced; Authorities is the composition's own Link
-// authority record. The schema binding is composition wiring.
+// rule's Declare hook produced; Authorities is the composition's authority
+// record. The schema binding is composition wiring.
 type Binding[A, F any] struct {
 	Fragment    F
 	Authorities A
@@ -212,8 +212,9 @@ type Spec struct {
 	// binding name one role.
 	Semantic schema.Key
 	// Roles are the further semantic roles this rule's Declare hook resolves:
-	// the operand and evidence forms its occurrences read and produce, and the
-	// transform form a normalized output is admitted under. They are content,
+	// the operand form its occurrences read and the transform form a normalized
+	// output is admitted under. Rule-admission evidence is not a semantic role.
+	// They are content,
 	// so the identity set a rule is declared against is part of the table
 	// digest, and the hook reaches no identity this list omits.
 	Roles []schema.Key
@@ -362,7 +363,10 @@ func (template *Template) EntryAvailable() bool {
 	if !template.semantic.Available() {
 		return false
 	}
-	return template.writes.Available() && template.owner.Available()
+	if !template.writes.Available() || !template.owner.Available() {
+		return false
+	}
+	return true
 }
 
 // DeclaredRoles is the whole role set this rule is declared against.

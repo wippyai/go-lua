@@ -3,6 +3,7 @@ package compiler
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -10,7 +11,7 @@ import (
 func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	compiler.ruleOccurrences = []programschema.RuleOccurrence{}
 	for index, row := range compiler.occurrences {
-		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			compiler.ruleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -23,7 +24,7 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 		finish := geometry.finish
 		if len(finish) == 0 {
 			var finishOK bool
-			finish, finishOK = occurrencePointIDs(row, compiler.occurrencePoints)
+			finish, finishOK = programschema.OccurrencePointIDs(row, compiler.occurrencePoints)
 			if !finishOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -42,7 +43,7 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	return CompileFailure{}
 }
 
-func orderPlacementsByDeclaration(directory IssuanceDirectory, rows []programschema.RuleOccurrence) []programschema.RuleOccurrence {
+func orderPlacementsByDeclaration(directory issuance.Directory, rows []programschema.RuleOccurrence) []programschema.RuleOccurrence {
 	if len(rows) == 0 {
 		return rows
 	}
@@ -53,7 +54,11 @@ func orderPlacementsByDeclaration(directory IssuanceDirectory, rows []programsch
 	}
 	ordered := make([]programschema.RuleOccurrence, 0, len(rows))
 	seen := make(map[schema.Key]struct{}, directory.Count())
-	for _, issued := range directory.placements {
+	for index := 0; index < directory.Count(); index++ {
+		issued, present := directory.At(index)
+		if !present {
+			return nil
+		}
 		if !issued.Key.Available() {
 			continue
 		}

@@ -57,21 +57,17 @@ func SealProgramRows(linkID identity.ContentID, programs []programschema.Program
 	}
 	type rowEntry struct{ owner, node identity.ContentID }
 	rows := make([]rowEntry, 0)
-	for _, program := range programs {
-		if !program.Available() {
-			return nil, errors.New("typeauthority: unavailable program")
-		}
-		owner := program.ProgramID
-		count, countOK := program.StaticTypeNodeCount()
+	for _, view := range artifact.views {
+		count, countOK := view.StaticTypeNodeCount()
 		if !countOK {
 			return nil, errors.New("typeauthority: unavailable program static graph")
 		}
 		for i := 0; i < count; i++ {
-			row, ok := program.StaticTypeNodeAt(i)
-			if !ok || !row.Available() || row.Owner() != owner {
+			row, ok := view.StaticTypeNodeAt(i)
+			if !ok || !row.Available() {
 				return nil, errors.New("typeauthority: malformed program row")
 			}
-			rows = append(rows, rowEntry{owner: owner, node: row.ID()})
+			rows = append(rows, rowEntry{owner: row.Owner(), node: row.ID()})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {

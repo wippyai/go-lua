@@ -27,8 +27,9 @@ type Input struct {
 }
 
 type rootRow struct {
-	identity string
-	shape    vocabulary.BootShape
+	identity   string
+	modulePath string
+	shape      vocabulary.BootShape
 }
 
 type shapeRow struct {
@@ -80,6 +81,7 @@ type bindingRange struct {
 // All row storage and canonical identity columns belong to this owner.
 type Table struct {
 	roots       sealedrows.Rows[rootRow]
+	moduleRoots map[string]vocabulary.InitialRoot
 	shapes      sealedrows.Rows[shapeRow]
 	values      sealedrows.Rows[valueRow]
 	valueBinds  sealedrows.Rows[bindingRange]

@@ -84,7 +84,7 @@ func TestMountedObservationCensusCapturesTheCompiledObservationSites(t *testing.
 		t.Run(name, func(t *testing.T) {
 			testCase := compileMountedPopulationCase(t, name)
 			defer testCase.plan.Close()
-			producerAxes, axesOK := composite.ProducedValueAxes()
+			producerAxes, axesOK := composite.ProducedValueAxes(testCase.state.compilation)
 			if !axesOK {
 				t.Fatal("declared produced-value axes")
 			}
@@ -212,7 +212,7 @@ func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 			// as many producers as it has measured values, so an anchor may
 			// repeat while an address may not.
 			for _, population := range [][]anadiag.Observation{geometry.BranchObservations, geometry.ConformanceObservations} {
-				got, ok := anadiag.Publications(population)
+				got, ok := anadiag.Publications(testCase.state.compilation, population)
 				if !ok {
 					t.Fatal("observation publications")
 				}
@@ -233,7 +233,7 @@ func TestObservationPublicationsDeriveFromSealedGeometry(t *testing.T) {
 						anchors[point] = struct{}{}
 					}
 					for _, producer := range producers {
-						want, wantOK := anadiag.ValueObservationAddress(observation.Kind, observation.Mount, producer.Point)
+						want, wantOK := anadiag.ValueObservationAddress(testCase.state.compilation, observation.Kind, observation.Mount, producer.Point)
 						anchor, published := seen[want]
 						if !wantOK || !published {
 							t.Fatalf("producing occurrence %s has no publication", producer.Point)

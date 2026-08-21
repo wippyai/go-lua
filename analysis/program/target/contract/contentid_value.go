@@ -322,7 +322,7 @@ func encodePublicationEffectDescriptor(w *framing.Writer, descriptor operationva
 	if err := w.Uint(uint64(descriptor.Kind())); err != nil {
 		return err
 	}
-	if err := w.Uint(uint64(descriptor.Subject())); err != nil {
+	if err := encodeInput(w, descriptor.Subject()); err != nil {
 		return err
 	}
 	if err := w.Uint(uint64(descriptor.DestinationRole())); err != nil {

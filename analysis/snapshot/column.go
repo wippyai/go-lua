@@ -84,6 +84,10 @@ type denominator[K comparable] struct {
 	ordinal bool
 	width   int
 	members *trie[K, struct{}]
+	// order is the publisher's canonical member order.  The trie above is
+	// deliberately only the membership authority; its hash layout is not a
+	// stable enumeration order.
+	order []K
 }
 
 // covers reports whether key is in the universe this denominator publishes.

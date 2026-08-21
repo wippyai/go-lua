@@ -4,6 +4,7 @@ package analysis
 // products; runtime assemble lives in analyze.go.
 
 import (
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
@@ -20,11 +21,15 @@ import (
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/program/link"
+	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
 	"github.com/wippyai/go-lua/analysis/result"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -76,7 +81,7 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 		return engine.ProgramBootstrap{}, false
 	}
 	catalogs, catalogsOK := binding.Rules().BootstrapCatalogs()
-	if !catalogsOK || len(catalogs) != 2 {
+	if !catalogsOK || len(catalogs) != len(composite.LinkKeys(state.compilation)) {
 		return engine.ProgramBootstrap{}, false
 	}
 	pointID, pointOK := identity.DeriveContentID("analysis/link-bootstrap-point/v1", state.sourceID[:])
@@ -89,73 +94,47 @@ func linkBootstrapWitness(state *compiledState, binding *composite.ProgramBindin
 // newProgramBinding constructs the Link-local typed owners required by
 // compile. Sealed ingress rows supply the identities those owners admit;
 // domain schemas are solve-local substitutions.
-func (state *compiledState) newProgramBinding(source *link.Link, compilation composite.Compilation) (composite.LinkInputs, *composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, composite.BindFailure) {
+func (state *compiledState) newProgramBinding(source *link.Link, compilation composite.Compilation) (*composite.ProgramBinding, anadiag.ProgramBindingFailure, composite.MountFailure, composite.BindFailure) {
 	if state == nil || source == nil || !compilation.Available() || state.artifacts == nil || len(state.artifacts.mounts) == 0 {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	types := state.artifacts.types
 	if types == nil || types.LinkID() != state.sourceID {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 	}
 	if len(state.artifacts.mounts) == 0 {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureInput, composite.MountFailure{}, composite.BindFailure{}
 	}
 	staticMounts := make([]staticdomain.MountedProgram, len(state.artifacts.mounts))
-	staticValueIDs := make([]staticdomain.MountedValueID, 0)
-	staticValues := source.Boundary().Values()
-	// Row shape and cross-family membership are sealed by the owning axes below;
-	// this loop retains only the Link-local semantic-value substitution Static
-	// must consume while it seals its own authority.
 	for index, published := range state.artifacts.mounts {
 		if !published.Available() {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
+			return nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 		}
 		product, have := state.artifacts.products[published.ProgramID]
 		artifact := product.Artifact
 		if !have || artifact == nil || !artifact.Available() ||
 			published.Snapshot.ArtifactID() != artifact.ID() ||
 			artifact.CompileKey().ProgramID() != published.ProgramID {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
+			return nil, anadiag.ProgramBindingFailureTypes, composite.MountFailure{}, composite.BindFailure{}
 		}
 		staticMounts[index] = staticdomain.MountedProgram{Program: published.Program.Program, ModuleID: published.ModuleKey, NamespaceID: published.ModuleKey}
-		snapshot := published.Snapshot
-		program := snapshot.Program()
-		typeValueCount, typeValuesPublished := program.StaticTypeValueCount()
-		if !program.Available() || !typeValuesPublished {
-			return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
-		}
-		for rowIndex := 0; rowIndex < typeValueCount; rowIndex++ {
-			row, rowOK := program.StaticTypeValueAt(rowIndex)
-			if !rowOK {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
-			}
-			value, valueOK := staticValues.ForMountedSemantic(published.ModuleKey, row.ID())
-			valueID, valueIDOK := staticValues.ID(value)
-			if !valueOK || !valueIDOK || !valueID.Available() {
-				return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
-			}
-			staticValueIDs = append(staticValueIDs, staticdomain.MountedValueID{
-				ModuleID: published.ModuleKey, SemanticID: row.ID(), ValueID: valueID,
-			})
-		}
 	}
 	staticTarget, staticTargetOK := source.Boundary().Target()
 	if !staticTargetOK {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
 	static, _, err := staticdomain.SealMountedPrograms(staticdomain.MountContext{
 		LinkID:   state.sourceID,
 		Target:   staticTarget,
-		ValueIDs: staticValueIDs,
 	}, types, staticMounts)
 	if err != nil || static == nil {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureStatic, composite.MountFailure{}, composite.BindFailure{}
 	}
 	// The neutral sealed artifact view is the mount phase's whole artifact
 	// input. Every axis that owns its mount seals its own Link authority from
 	// it and from the peers it declared an edge to, so no per-domain mount row
 	// is constructed here.
-	inputs, mountFailure := composite.MountLink(composite.LinkInputs{
+	inputs, mountFailure := composite.MountLink(compilation, composite.LinkInputs{
 		Source:          source,
 		Artifacts:       state.artifacts.mounts,
 		StaticAuthority: static,
@@ -165,24 +144,29 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 	// phase derives both itself, after every mount has sealed, and names the
 	// derivation that refused in its own verdict.
 	if mountFailure.Available() {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, composite.BindFailure{}
+		return nil, anadiag.ProgramBindingFailureFromMount(mountFailure), mountFailure, composite.BindFailure{}
 	}
 	binding, failure := composite.BindProgram(compilation, inputs)
 	if failure.Available() {
-		return composite.LinkInputs{}, nil, anadiag.ProgramBindingFailureFromBind(failure), composite.MountFailure{}, failure
+		return nil, anadiag.ProgramBindingFailureFromBind(failure), composite.MountFailure{}, failure
 	}
-	return inputs, binding, anadiag.ProgramBindingFailureNone, composite.MountFailure{}, composite.BindFailure{}
+	return binding, anadiag.ProgramBindingFailureNone, composite.MountFailure{}, composite.BindFailure{}
 }
 
 // publishComposition writes the Link-lifetime StorageEngine prefix. ChannelSelect
 // occupies snapshot slot 0, so a select-only column seals without factor facts.
-func (state *compiledState) publishComposition() bool {
-	if state == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil {
+func (state *compiledState) publishComposition(module *linkmodule.Component) bool {
+	if state == nil || module == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil {
 		return false
 	}
-	schemaID, schemaOK := composite.PublicationSchema()
+	publication, publicationOK := state.compilation.Publication()
+	schemaID, schemaOK := publication.SchemaID()
 	store, storeOK := identity.IssueStore()
-	if !schemaOK || !storeOK || !schemaID.Available() {
+	if !publicationOK || !schemaOK || !storeOK || !schemaID.Available() {
+		return false
+	}
+	selectColumn, selectProjected := analysiscatalog.ProjectAxis[identity.ContentID, channelselect.CaseFact](publication, selectapply.OutputKey)
+	if !selectProjected || !selectColumn.Available() {
 		return false
 	}
 	write, minted := engine.MintColumnWrite[identity.ContentID, channelselect.CaseFact](state.binding.SchemaBinding(), selectapply.OutputKey, selectapply.AxisKey)
@@ -207,11 +191,53 @@ func (state *compiledState) publishComposition() bool {
 	if !directoryOK {
 		return false
 	}
+	imports, caches, generations, outcomes, terminals, compositionOK := module.BuildCompositionRows(state.sourceID, state.artifacts.mounts)
+	if !compositionOK {
+		return false
+	}
+	importDenominator, importDenominatorOK := modulecomposition.ImportDenominatorID(state.sourceID)
+	cacheDenominator, cacheDenominatorOK := modulecomposition.CacheDenominatorID(state.sourceID)
+	generationDenominator, generationDenominatorOK := modulecomposition.GenerationDenominatorID(state.sourceID)
+	outcomeDenominator, outcomeDenominatorOK := modulecomposition.OutcomeDenominatorID(state.sourceID)
+	terminalDenominator, terminalDenominatorOK := modulecomposition.TerminalDenominatorID(state.sourceID)
+	importContent, importContentOK := modulecomposition.ImportContent(imports, importDenominator)
+	cacheContent, cacheContentOK := modulecomposition.CacheContent(caches, cacheDenominator)
+	generationContent, generationContentOK := modulecomposition.GenerationContent(generations, generationDenominator)
+	outcomeContent, outcomeContentOK := modulecomposition.OutcomeContent(outcomes, outcomeDenominator)
+	terminalContent, terminalContentOK := modulecomposition.TerminalContent(terminals, terminalDenominator)
+	if !importDenominatorOK || !cacheDenominatorOK || !generationDenominatorOK || !outcomeDenominatorOK || !terminalDenominatorOK ||
+		!importContentOK || !cacheContentOK || !generationContentOK || !outcomeContentOK || !terminalContentOK {
+		return false
+	}
+	importWrite, importMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ResolvedImport](state.binding.SchemaBinding(), modulecomposition.ImportOutputKey, modulecomposition.ImportAxisKey)
+	cacheWrite, cacheMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.CacheIngress](state.binding.SchemaBinding(), modulecomposition.CacheOutputKey, modulecomposition.CacheAxisKey)
+	generationWrite, generationMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitGeneration](state.binding.SchemaBinding(), modulecomposition.GenerationOutputKey, modulecomposition.GenerationAxisKey)
+	outcomeWrite, outcomeMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitOutcome](state.binding.SchemaBinding(), modulecomposition.OutcomeOutputKey, modulecomposition.OutcomeAxisKey)
+	terminalWrite, terminalMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitTerminal](state.binding.SchemaBinding(), modulecomposition.TerminalOutputKey, modulecomposition.TerminalAxisKey)
+	if !importMinted || !cacheMinted || !generationMinted || !outcomeMinted || !terminalMinted ||
+		!importWrite.Available() || !cacheWrite.Available() || !generationWrite.Available() || !outcomeWrite.Available() || !terminalWrite.Available() {
+		return false
+	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
 	if err := selectapply.Publish(write, &builder, apps); err != nil {
 		return false
 	}
 	if err := engine.PublishColumn(mountWrite, &builder, directory); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(importWrite, &builder, importContent); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(cacheWrite, &builder, cacheContent); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(generationWrite, &builder, generationContent); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(outcomeWrite, &builder, outcomeContent); err != nil {
+		return false
+	}
+	if err := engine.PublishColumn(terminalWrite, &builder, terminalContent); err != nil {
 		return false
 	}
 	sealed, err := builder.Seal()
@@ -232,6 +258,7 @@ func (state *compiledState) publishComposition() bool {
 		sites[index] = anadiag.SelectSite{Site: app.Site, Bound: bound}
 	}
 	state.composition = sealed
+	state.selectColumn = selectColumn
 	state.selectSites = sites
 	state.selectHandlers = handlers
 	return true
@@ -299,8 +326,10 @@ func (artifacts *compiledArtifactSet) sealDeclaredConformanceTypes() bool {
 		if !held || snapshot == nil {
 			return false
 		}
-		observation, observed := snapshot.Program().DiagnosticObservationForID(site.Local)
-		if !observed || observation.Kind() != structure.DiagnosticObservationTypeConformance {
+		cold, coldOK := snapshot.Program().ColdState()
+		view, viewOK := programdiagnostic.NewView(cold)
+		observation, observed := view.DiagnosticObservationForID(site.Local)
+		if !coldOK || !viewOK || !observed || observation.Kind() != structure.DiagnosticObservationTypeConformance {
 			return false
 		}
 		declaredID := observation.DeclaredStaticTypeID()
@@ -393,7 +422,7 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 			result.products[programID] = product
 		}
 		compiledProgram := artifact.Program()
-		catalog, catalogOK := programschema.CatalogID(compiledProgram.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(compiledProgram.SchemaID)
 		if !compiledProgram.Available() || !catalogOK || !catalog.Available() {
 			return nil, false
 		}
@@ -410,7 +439,7 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		}
 		result.mounts = append(result.mounts, mount)
 	}
-	producerAxes, axesOK := composite.ProducedValueAxes()
+	producerAxes, axesOK := composite.ProducedValueAxes(compilation)
 	if !axesOK {
 		return nil, false
 	}

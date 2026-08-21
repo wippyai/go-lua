@@ -95,16 +95,6 @@ func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.Ru
 	return implementation, true
 }
 
-// BindExactQuery binds a typed exact Pack query to this owner's Factor slot.
-// It is the narrow query counterpart to BindExactWriteRule and keeps the
-// Factor slot/coordinate authority inside Pack owner.
-func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec engine.HotExactQuerySpec[pack.Value, R]) bool {
-	if owner == nil || owner.binding == nil || owner.fragment == nil || query == nil {
-		return false
-	}
-	return engine.BindExactQuery(owner.binding, query, owner.fragment.slot, spec)
-}
-
 // BindHot admits Pack's concrete Factor algebra into the exact shared
 // SchemaBinding. The fragment's private slot and exact forms are checked
 // before binding; the resulting HotOwner exposes only typed capability and

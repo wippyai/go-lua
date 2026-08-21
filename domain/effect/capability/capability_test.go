@@ -37,9 +37,9 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		capability.OwnershipStore:     capability.StatusOperational,
 		capability.OwnershipSend:      capability.StatusImportOrStdlib,
 		capability.OwnershipSendParam: capability.StatusOperational,
-		capability.OwnershipExport:    capability.StatusReserved,
-		capability.OwnershipOpaque:    capability.StatusReservedHighRisk,
-		capability.OwnershipFreeze:    capability.StatusReserved,
+		capability.OwnershipExport:    capability.StatusOperational,
+		capability.OwnershipOpaque:    capability.StatusOperational,
+		capability.OwnershipFreeze:    capability.StatusOperational,
 		capability.OwnershipBorrowAll: capability.StatusImportOrStdlib,
 
 		capability.IterationIterator: capability.StatusImportOrStdlib,
@@ -73,6 +73,29 @@ func TestDescriptorsClassifyAuditedVocabularyExactlyOnce(t *testing.T) {
 		if got.Status != want {
 			t.Fatalf("%s status = %q, want %q", id, got.Status, want)
 		}
+	}
+}
+
+func TestFormalOwnershipLabelsAreManifestOperational(t *testing.T) {
+	for _, id := range []string{
+		capability.OwnershipExport,
+		capability.OwnershipOpaque,
+		capability.OwnershipFreeze,
+	} {
+		t.Run(id, func(t *testing.T) {
+			desc, ok := capability.Lookup(id)
+			if !ok {
+				t.Fatalf("missing descriptor %s", id)
+			}
+			if desc.Status != capability.StatusOperational {
+				t.Fatalf("%s status = %q, want %q", id, desc.Status, capability.StatusOperational)
+			}
+			for _, want := range []string{"Formal ownership declaration", "carried by manifests", "Target/Placement"} {
+				if !strings.Contains(desc.Rationale, want) {
+					t.Fatalf("%s rationale = %q, want to contain %q", id, desc.Rationale, want)
+				}
+			}
+		})
 	}
 }
 

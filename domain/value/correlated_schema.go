@@ -345,10 +345,17 @@ type atomRow struct {
 // this row lets Source, SourceValue, and CoordinateFor share one lookup
 // authority rather than retaining parallel maps or identity planes.
 type coordinateRow struct {
-	coordinate   uint32
-	atom         uint32
-	source       Value
-	sourceResult *SourceResult
+	coordinate uint32
+	atom       uint32
+	source     Value
+}
+
+// returnBoundaryMember is one already-issued Value coordinate in a sealed
+// ReturnBoundary's dense fixed-member arena. Keeping this row in Schema makes
+// member access owner-fenced and avoids retaining Program slices or a second
+// topology authority in the published operand.
+type returnBoundaryMember struct {
+	coordinate Coordinate
 }
 
 type mountedCoordinateKey struct {
@@ -382,8 +389,12 @@ type Schema struct {
 	atoms           []atomRow
 	atomByRow       map[atomRow]uint32
 	coordinateCount uint32
-	mountCount      uint32
-	coordinates     map[identity.ContentID]coordinateRow // complete detached Value identity range
+	// syntheticCoordinateCount is the mounted finite CallResult-slot suffix.
+	// These coordinates are declaration-only dynamic values and deliberately
+	// do not enter the Boundary coordinate/source map.
+	syntheticCoordinateCount uint32
+	mountCount               uint32
+	coordinates              map[identity.ContentID]coordinateRow // complete detached Value identity range
 	// mountedCoordinates is the detached semantic lookup consumed by downstream
 	// domains after the Boundary source graph has been released.
 	mountedCoordinates map[mountedCoordinateKey]uint32
@@ -407,15 +418,29 @@ type Schema struct {
 	// computation rows are Value-owned interpretations issued while the Link
 	// is still open during sealing.  Published operands resolve through these
 	// dense, owner-fenced maps; they never reopen a mounted Program.
-	binaryEqualities    map[computationKey]BinaryEquality
-	binaryArithmetics   map[computationKey]BinaryArithmetic
-	binaryOrders        map[computationKey]BinaryOrder
-	runtimeKindCalls    map[computationKey]RuntimeKindCall
-	presenceRefinements map[computationKey]PresenceRefinement
-	unaryNots           map[computationKey]UnaryNot
-	selectBranches      map[selectBranchKey]SelectBranch
-	valueClaims         map[computationKey]ValueClaim
-	returnBoundaries    map[computationKey]ReturnBoundary
+	binaryEqualities      map[computationKey]BinaryEquality
+	binaryArithmetics     map[computationKey]BinaryArithmetic
+	binaryOrders          map[computationKey]BinaryOrder
+	runtimeKindCalls      map[computationKey]RuntimeKindCall
+	moduleLoadCalls       map[computationKey]ModuleLoadCall
+	presenceRefinements   map[computationKey]PresenceRefinement
+	unaryNots             map[computationKey]UnaryNot
+	selectBranches        map[selectBranchKey]SelectBranch
+	valueClaims           map[computationKey]ValueClaim
+	returnBoundaries      map[computationKey]ReturnBoundary
+	returnBoundaryMembers []returnBoundaryMember
+	// freshResultCalls is the detached Value-owned admission directory for
+	// Target fresh results that have an existing fixed CallResultValue
+	// coordinate. Heap remains the sole issuer of the key; this map only joins
+	// that key to Call's operation and the existing Boundary Value coordinate.
+	freshResultCalls    map[heap.Key]FreshResultCall
+	freshResultCallKeys []heap.Key
+	// mountedCallResultSlots is the immutable, Value-owned projection of
+	// admitted Program CallResultSlot geometry. It carries only the mounted
+	// semantic IDs and the already-issued Value coordinate; the canonical
+	// Program CallResult/CallResultSlot rows remain in the cold builder
+	// directory.
+	mountedCallResultSlots map[mountedCallResultSlotKey]MountedCallResultSlot
 
 	references     []referenceRow
 	allocRefs      map[heap.Key]uint32
@@ -468,9 +493,22 @@ type Schema struct {
 // from a published Schema: Seal returns only builder.Schema.
 type valueBuilder struct {
 	*Schema
-	project  *linkproject.Component
-	boundary *linkboundary.Component
-	host     *linkhost.Component
+	project      *linkproject.Component
+	boundary     *linkboundary.Component
+	host         *linkhost.Component
+	module       *linkmodule.Component
+	moduleShards map[identity.ContentID]linkproject.Shard
+	moduleFacts  map[moduleLoadFactKey]Value
+	// mountedCallResultSlots is the one cold canonical CallResultSlot
+	// directory for every finite output coordinate carried by an admitted
+	// mounted Artifact/Snapshot. It is keyed by concrete module placement,
+	// reusable Program Call identity, and result ordinal.
+	mountedCallResultSlots map[mountedCallResultSlotKey]programschema.CallResultSlot
+	// mountedCallResultSlotOrder is the canonical parent/child publication
+	// order used by the post-mount Value projection. It includes structural
+	// slots whose ValueID is absent; those rows are deliberately omitted from
+	// Value's admitted directory after semantic coordinate resolution.
+	mountedCallResultSlotOrder []mountedCallResultSlotKey
 	// artifacts is the exact reusable ProgramArtifact substitution directory.
 	// It is cold builder state and cannot survive into the published Schema.
 	artifacts map[identity.ContentID]ArtifactMount
@@ -486,6 +524,87 @@ type valueBuilder struct {
 func (builder *valueBuilder) sealProject() *linkproject.Component   { return builder.project }
 func (builder *valueBuilder) sealBoundary() *linkboundary.Component { return builder.boundary }
 func (builder *valueBuilder) sealHost() *linkhost.Component         { return builder.host }
+func (builder *valueBuilder) sealModule() *linkmodule.Component     { return builder.module }
+
+// sealMountedCallResultGeometry indexes the canonical CallResultSlot family
+// carried by each admitted mounted Artifact/Snapshot exactly once while
+// validating its parent spans in publication order.
+// Program.CallResultForID and Program.CallResultSlotForID are intentionally not
+// used by consumers: their cold inverses are linear scans, while these
+// directories keep fresh-result and mounted-slot reads O(1) after one O(n)
+// seal walk. Duplicate module/call(/ordinal) keys or any mismatch between the
+// ArtifactMount's placement row and its Snapshot fail closed.
+func (builder *valueBuilder) sealMountedCallResultGeometry() bool {
+	if builder == nil || builder.Schema == nil || builder.sealProject() == nil || builder.artifacts == nil || builder.mountedCallResultSlots != nil {
+		return false
+	}
+	slots := make(map[mountedCallResultSlotKey]programschema.CallResultSlot)
+	slotOrder := make([]mountedCallResultSlotKey, 0)
+	mounts := builder.sealProject().Mounts()
+	for mountIndex := 0; mountIndex < mounts.Count(); mountIndex++ {
+		shard, shardOK := mounts.At(mountIndex)
+		module, moduleOK := builder.sealProject().ModuleKey(shard)
+		mount := builder.artifacts[module]
+		if !shardOK || !moduleOK || !module.Available() || !mount.Available() || mount.Module() != module {
+			return false
+		}
+		mounted := mount.Program()
+		snapshot := mount.Snapshot()
+		if snapshot == nil || !snapshot.Available() {
+			return false
+		}
+		program := snapshot.Program()
+		if !mounted.Available() || mounted.ModuleKey != module || !program.Available() ||
+			mounted.ProgramID != program.ProgramID || mounted.ArtifactID != program.ArtifactID || mounted.SchemaID != program.SchemaID {
+			return false
+		}
+		count, published := program.CallResultCount()
+		slotCount, slotsPublished := program.CallResultSlotCount()
+		if !published || !slotsPublished || count < 0 || slotCount < 0 {
+			return false
+		}
+		seenCalls := make(map[identity.ContentID]struct{}, count)
+		slotCursor := uint32(0)
+		for index := 0; index < count; index++ {
+			result, resultOK := program.CallResultAt(index)
+			callID := result.CallID()
+			offset, width, spanOK := result.SlotSpan()
+			if !resultOK || !result.Available() || !callID.Available() || !spanOK || offset != slotCursor || uint64(offset)+uint64(width) > uint64(slotCount) {
+				return false
+			}
+			if _, duplicate := seenCalls[callID]; duplicate {
+				return false
+			}
+			seenCalls[callID] = struct{}{}
+			for childIndex := uint32(0); childIndex < width; childIndex++ {
+				slot, slotOK := program.CallResultSlotAt(int(offset + childIndex))
+				ordinal, ordinalOK := slot.Ordinal()
+				if !slotOK || !slot.Available() || !ordinalOK || ordinal != childIndex || slot.CallID() != callID {
+					return false
+				}
+				slotKey := mountedCallResultSlotKey{module: module, call: callID, ordinal: ordinal}
+				if _, duplicate := slots[slotKey]; duplicate {
+					return false
+				}
+				slots[slotKey] = slot
+				slotOrder = append(slotOrder, slotKey)
+			}
+			slotCursor += width
+		}
+		if slotCursor > uint32(slotCount) {
+			return false
+		}
+		if slotCursor != uint32(slotCount) {
+			return false
+		}
+	}
+	if len(slotOrder) != len(slots) {
+		return false
+	}
+	builder.mountedCallResultSlots = slots
+	builder.mountedCallResultSlotOrder = slotOrder
+	return true
+}
 
 // ArtifactMount binds one immutable reusable compiled Program to one concrete
 // Link mount. Module is the mount qualifier: equal Programs may be
@@ -549,7 +668,7 @@ func (schema *Schema) LinkID() identity.ContentID {
 // Project or Boundary pointer.
 func (schema *Schema) Valid() bool {
 	return schema != nil && schema.linkID.Available() && schema.owner.Available() &&
-		len(schema.coordinates) == int(schema.coordinateCount) && schema.heap.Valid()
+		uint64(len(schema.coordinates))+uint64(schema.syntheticCoordinateCount) == uint64(schema.coordinateCount) && schema.heap.Valid()
 }
 
 func (schema *Schema) MountCount() int {
@@ -576,6 +695,16 @@ func (schema *Schema) LinkOwner() link.OwnerCapability {
 // atoms with Heap keys or index topology.
 func (schema *Schema) OwnsHeapSchema(candidate heap.Schema) bool {
 	return schema != nil && schema.heap.Valid() && candidate.Valid() && schema.heap == candidate
+}
+
+// Heap returns the exact immutable Heap authority retained when this Value
+// schema was sealed. Value does not issue a second key space; callers that
+// need to redeem a Heap occurrence receipt use this owner-fenced projection.
+func (schema *Schema) Heap() heap.Schema {
+	if schema == nil || !schema.heap.Valid() {
+		return heap.Schema{}
+	}
+	return schema.heap
 }
 
 // Coordinate is an exact Schema-issued Value Factor coordinate. Its dense
@@ -662,6 +791,10 @@ const (
 	// ordinal. The runtime-kind names are a schema-fed Value vocabulary, not a
 	// hot fallback, so their admission has its own closed failure boundary.
 	SealFailureRuntimeKindAtoms
+	// SealFailureFreshResultCalls is appended so existing failure ordinals stay
+	// stable while the Target fresh-result CallResult join gets its own closed
+	// construction boundary.
+	SealFailureFreshResultCalls
 )
 
 func (failure SealFailure) String() string {
@@ -671,6 +804,7 @@ func (failure SealFailure) String() string {
 		"storage-transfer-bind", "storage-transfer-write", "exact-keys", "capabilities", "sources", "bootstrap-callables",
 		"opaque-alternatives", "literal-source-atoms", "target-literal-atoms", "stored-unknown-atoms", "stored-exact-atoms",
 		"reference-source-atoms", "finish", "allocation-results", "source-values", "source-occurrences", "global-bootstrap-results", "runtime-kind-atoms",
+		"fresh-result-calls",
 	}
 	if int(failure) < 0 || int(failure) >= len(names) {
 		return "invalid"
@@ -721,11 +855,14 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		binaryArithmetics:          make(map[computationKey]BinaryArithmetic),
 		binaryOrders:               make(map[computationKey]BinaryOrder),
 		runtimeKindCalls:           make(map[computationKey]RuntimeKindCall),
+		moduleLoadCalls:            make(map[computationKey]ModuleLoadCall),
 		presenceRefinements:        make(map[computationKey]PresenceRefinement),
 		unaryNots:                  make(map[computationKey]UnaryNot),
 		selectBranches:             make(map[selectBranchKey]SelectBranch),
 		valueClaims:                make(map[computationKey]ValueClaim),
 		returnBoundaries:           make(map[computationKey]ReturnBoundary),
+		freshResultCalls:           make(map[heap.Key]FreshResultCall),
+		mountedCallResultSlots:     make(map[mountedCallResultSlotKey]MountedCallResultSlot),
 		allocRefs:                  make(map[heap.Key]uint32),
 		globalResults:              make(map[identity.ContentID]*GlobalBootstrapResult),
 		targetInitials:             make(map[targetInitialKey]Value),
@@ -735,11 +872,17 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		typeRefs:                   make(map[identity.ContentID]uint32),
 		capabilityID:               make(map[identity.ContentID]uint32),
 	}
-	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), artifacts: artifacts, structural: structural}
+	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleShards: make(map[identity.ContentID]linkproject.Shard), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural}
+	if !builder.sealMountedCallResultGeometry() {
+		return nil, SealFailureComputation
+	}
 	if !builder.sealCoordinates() {
 		return nil, SealFailureCoordinates
 	}
 	if !builder.sealMountedCoordinateDirectory() {
+		return nil, SealFailureCoordinates
+	}
+	if !builder.sealMountedCallResultSlots() {
 		return nil, SealFailureCoordinates
 	}
 	if !builder.sealFormalSourceDirectory() {
@@ -771,8 +914,13 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		{SealFailureStoredExactAtoms, builder.sealStoredExactAtoms},
 		{SealFailureReferenceSourceAtoms, builder.sealReferenceSourceAtoms},
 		{SealFailureFinish, builder.finish},
+		// Module-root operands contain canonical Value images. Build them only
+		// after reference atoms and the lattice potential are sealed; the cold
+		// literal and mounted-call directories remain builder-owned here.
+		{SealFailureComputation, builder.sealModuleLoadRows},
 		{SealFailureFinish, builder.sealTargetInitialResults},
 		{SealFailureAllocationResults, builder.sealAllocationResults},
+		{SealFailureFreshResultCalls, builder.sealFreshResultCalls},
 		{SealFailureSourceValues, builder.sealSourceValues},
 		{SealFailureSourceOccurrences, builder.sealSourceSeedOccurrences},
 		{SealFailureGlobalBootstrapResults, func() bool { return builder.sealGlobalBootstrapResults(source.Module()) }},
@@ -1116,7 +1264,7 @@ func (schema *valueBuilder) addAllocationReference(key heap.Key) bool {
 		// source coordinate. Its Heap key is nevertheless the exact owner-issued
 		// reference identity, while its nominal runtime kind remains guarded by
 		// Call/Target. Keep that uncertainty as one opaque reference family.
-		if _, _, _, _, fresh := key.FreshResultID(); !fresh {
+		if _, _, _, fresh := key.FreshResultID(); !fresh {
 			return false
 		}
 		refKind = ReferenceOpaque
@@ -1628,7 +1776,7 @@ func (schema *valueBuilder) sealSourceValues() bool {
 	}
 	for subject, row := range schema.coordinates {
 		if _, formal := schema.formalSources[subject]; formal {
-			if row.atom != 0 || row.source.schema != nil || row.sourceResult != nil {
+			if row.atom != 0 || row.source.schema != nil {
 				return false
 			}
 			fact := schema.Top()
@@ -1636,10 +1784,6 @@ func (schema *valueBuilder) sealSourceValues() bool {
 				return false
 			}
 			row.source = fact
-			row.sourceResult = &SourceResult{
-				schema: schema.Schema, valueID: subject, id: subject,
-				coordinate: Coordinate{schema: schema.Schema, index: row.coordinate}, fact: fact,
-			}
 			schema.coordinates[subject] = row
 			continue
 		}
@@ -1662,10 +1806,6 @@ func (schema *valueBuilder) sealSourceValues() bool {
 			return false
 		}
 		row.source = fact
-		row.sourceResult = &SourceResult{
-			schema: schema.Schema, valueID: id, id: id,
-			coordinate: Coordinate{schema: schema.Schema, index: row.coordinate}, fact: fact,
-		}
 		schema.coordinates[subject] = row
 	}
 	// These directories exist only to construct source atoms and immutable

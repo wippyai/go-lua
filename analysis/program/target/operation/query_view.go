@@ -361,6 +361,36 @@ func (core Core) EffectTail(op vocabulary.Operation) (vocabulary.RowTail, vocabu
 	return row.effectTail, row.effectVar, true
 }
 
+// FormalEffectCount returns the finite ownership metadata row count. It is
+// intentionally separate from EffectCount: formal rows are operation
+// declarations, not invocation effect occurrences.
+func (core Core) FormalEffectCount(op vocabulary.Operation) int {
+	row, ok := core.queryOperation(op)
+	if !ok {
+		return 0
+	}
+	return len(row.formalEffects)
+}
+
+// FormalEffectAt returns one sealed canonical formal ownership row in O(1).
+func (core Core) FormalEffectAt(op vocabulary.Operation, index int) (vocabulary.FormalEffectSpec, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok || index < 0 || index >= len(row.formalEffects) {
+		return vocabulary.FormalEffectSpec{}, false
+	}
+	return row.formalEffects[index], true
+}
+
+// FormalEffectTail returns the sealed closed or unknown-open ownership row
+// tail. Formal rows have no row-variable coordinate.
+func (core Core) FormalEffectTail(op vocabulary.Operation) (vocabulary.RowTail, bool) {
+	row, ok := core.queryOperation(op)
+	if !ok {
+		return 0, false
+	}
+	return row.formalEffectTail, true
+}
+
 func (core Core) effect(op vocabulary.Operation, index int) (queryEffectRow, bool) {
 	row, ok := core.queryOperation(op)
 	if !ok || index < 0 || index >= len(row.effects) {

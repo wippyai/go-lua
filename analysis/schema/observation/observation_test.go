@@ -49,8 +49,8 @@ const (
 
 func testStructure(t *testing.T) schema.Surface {
 	t.Helper()
-	specs := make([]structure.Spec, 0, int(structure.CategorySemanticRole))
-	for category := structure.CategoryArm; category <= structure.CategorySemanticRole; category++ {
+	specs := make([]structure.Spec, 0, int(structure.CategoryConformanceVerdict))
+	for category := structure.CategoryArm; category <= structure.CategoryConformanceVerdict; category++ {
 		specs = append(specs, structure.Spec{
 			Key:      schema.Key(fmt.Sprintf("test/category/%d", category)),
 			Category: category,

@@ -30,7 +30,7 @@ func bootLedger(catalogue authoredCatalogue, declarations *manifest.Catalogue) (
 	for _, module := range declarations.Modules() {
 		root := moduleio.ModuleRootIdentity(module.ProviderIdentity())
 		moduleRoots[module.Path()] = root
-		ledger.root(root, vocabulary.BootAggregateTable, module.Immutable())
+		ledger.moduleRoot(module.Path(), root, vocabulary.BootAggregateTable, module.Immutable())
 	}
 	for _, environment := range declarations.InitialEnvironments() {
 		for _, root := range environment.Roots() {
@@ -235,6 +235,17 @@ func (ledger *bootLedgerData) root(identity string, aggregate vocabulary.BootAgg
 	ledger.roots = append(ledger.roots, vocabulary.InitialRootSpec{
 		Identity: identity,
 		Shape:    vocabulary.BootShapeSpec{Aggregate: aggregate, Immutable: immutable, Value: rootValue(identity)},
+	})
+}
+
+// moduleRoot emits the manifest-authored path-to-root relation as Target data.
+// Value consumers query this relation by exact path during sealing; no hot
+// rule derives a path from the conventional ModuleRoot identity spelling.
+func (ledger *bootLedgerData) moduleRoot(path, identity string, aggregate vocabulary.BootAggregate, immutable bool) {
+	ledger.roots = append(ledger.roots, vocabulary.InitialRootSpec{
+		Identity:   identity,
+		ModulePath: path,
+		Shape:      vocabulary.BootShapeSpec{Aggregate: aggregate, Immutable: immutable, Value: rootValue(identity)},
 	})
 }
 

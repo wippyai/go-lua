@@ -252,11 +252,11 @@ func TestFlowNestedOutcomePropagationStaysInOutcomeOwner(t *testing.T) {
 		returned = child
 	}
 	exit, exitOK := p.Flow().Outcomes().ReturnExit(returned)
-	outcome, outcomeOK := p.Flow().Outcomes().Get(exit)
-	if !exitOK || !outcomeOK || outcome.Kind != kind.OutcomeReturn {
-		t.Fatalf("Return outcome = %#v/%v", outcome, outcomeOK)
+	outcomeBody, outcomeKind, _, outcomeOK := p.Flow().Outcomes().Get(exit)
+	if !exitOK || !outcomeOK || outcomeKind != kind.OutcomeReturn {
+		t.Fatalf("Return outcome = %v/%v/%v", outcomeBody, outcomeKind, outcomeOK)
 	}
-	if functionBody == outcome.Body {
+	if functionBody == outcomeBody {
 		t.Fatal("nested Return did not retain its immediate Body owner")
 	}
 }
@@ -354,9 +354,9 @@ func TestFlowControlRowsKeepExactOperandsAndOutcomes(t *testing.T) {
 		t.Fatalf("Break target = %v/%v, want %v", target, ok, loop)
 	}
 	exit, exitOK := p.Flow().Outcomes().BreakExit(breakTerm)
-	outcome, outcomeOK := p.Flow().Outcomes().Get(exit)
-	if !exitOK || !outcomeOK || outcome.Body != body || outcome.Kind != kind.OutcomeBreak || outcome.Target != loop {
-		t.Fatalf("Break outcome = %#v/%v", outcome, outcomeOK)
+	outcomeBody, outcomeKind, outcomeTarget, outcomeOK := p.Flow().Outcomes().Get(exit)
+	if !exitOK || !outcomeOK || outcomeBody != body || outcomeKind != kind.OutcomeBreak || outcomeTarget != loop {
+		t.Fatalf("Break outcome = %v/%v/%v/%v", outcomeBody, outcomeKind, outcomeTarget, outcomeOK)
 	}
 	if _, values, returnOK := control.Returns().Get(returned); !returnOK || values == 0 {
 		t.Fatalf("Return = values %v/%v", values, returnOK)

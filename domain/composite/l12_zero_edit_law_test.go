@@ -291,8 +291,8 @@ func TestL12ZeroEditWalk(t *testing.T) {
 		// Every role is a declared row, so a domain adds one by declaring it. The
 		// identity each derives is the unchanged derivation over its own declared
 		// spelling, and the spelling law over the one category is what proves the
-		// probe's four distinct from every role the analyzer declares.
-		for _, role := range [...]string{probe.FactorRole, probe.RuleRole, probe.OperandRole, probe.EvidenceRole} {
+		// probe's three distinct from every role the analyzer declares.
+		for _, role := range [...]string{probe.FactorRole, probe.RuleRole, probe.OperandRole} {
 			key := vocabulary.RoleKey(role)
 			walkStructureMember(t, sealed, key, structure.CategorySemanticRole)
 			resolved, resolvedOK := inventory.roles.Key(key)
@@ -321,7 +321,7 @@ func TestL12ZeroEditWalk(t *testing.T) {
 		// The mapping from a compiled occurrence family to an issued rule is
 		// declared data on the rule's own row: the family, the placement form, the
 		// operand polarity, and the execution cut each name a member of the
-		// vocabulary they belong to, and all four resolve against the sealed table.
+		// vocabulary they belong to, and all three resolve against the sealed table.
 		//
 		// What this does not state is emission. Placing the issued occurrence on
 		// the program's geometry is the artifact compiler's half, and it still

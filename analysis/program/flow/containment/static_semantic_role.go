@@ -5,7 +5,7 @@ import (
 
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 
-	"github.com/wippyai/go-lua/analysis/program/imports"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 )
@@ -61,7 +61,7 @@ const (
 	staticRoleAnnotationTarget
 )
 
-func sealStaticStructuralRoles(result *Result, view staticquery.View, moduleView imports.View) error {
+func sealStaticStructuralRoles(result *Result, view staticquery.View, moduleView authored.Imports) error {
 	if result == nil || !result.available() || !view.Available() || view.ContentID() != result.staticID || moduleView.ContentID() != result.moduleID {
 		return errors.New("program/flow/containment: Static semantic role owner mismatch")
 	}
@@ -92,7 +92,7 @@ func sealStaticStructuralRoles(result *Result, view staticquery.View, moduleView
 	}
 	for ordinal := uint32(1); ordinal <= uint32(moduleView.Count()); ordinal++ {
 		child := keyspace.MakeTerm(keyspace.FamilyImport, ordinal)
-		row, rowOK := moduleView.Import(child)
+		row, rowOK := moduleView.Get(child)
 		if !rowOK || row.Term != child || set(row.Call, child, structuralRoleImportCall, 1) != nil {
 			return errors.New("program/flow/containment: invalid Import semantic role")
 		}

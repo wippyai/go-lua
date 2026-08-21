@@ -12,14 +12,14 @@ import (
 func TestCandidateProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	first := openCandidateFixture(t, candidateIntegrationSpec())
 	firstResult, err := Seal(first.sourceView.Identity(), first.flowView, first.proof,
-		first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
+		first.staticView.ContentID(), first.moduleID)
 	if err != nil {
 		t.Fatalf("first candidates.Seal: %v", err)
 	}
 	sourceID := first.sourceView.Identity().ContentID()
 	flowID := first.flowView.ContentID()
 	staticID := first.staticView.ContentID()
-	moduleID := first.moduleFinalize.View().ContentID()
+	moduleID := first.moduleID
 	if !Matches(firstResult, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("candidate result did not retain its exact Source/Flow identities")
 	}
@@ -43,7 +43,7 @@ func TestCandidateProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		t.Fatal("foreign Source fixture did not preserve equal denominator with a distinct identity")
 	}
 	foreignSourceResult, err := Seal(foreignSource.sourceView.Identity(), foreignSource.flowView, foreignSource.proof,
-		foreignSource.staticView.ContentID(), foreignSource.moduleFinalize.View().ContentID())
+		foreignSource.staticView.ContentID(), foreignSource.moduleID)
 	if err != nil {
 		t.Fatalf("foreign Source candidates.Seal: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCandidateProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 		t.Fatal("foreign Flow fixture did not preserve equal denominator with a distinct identity")
 	}
 	foreignFlowResult, err := Seal(foreignFlow.sourceView.Identity(), foreignFlow.flowView, foreignFlow.proof,
-		foreignFlow.staticView.ContentID(), foreignFlow.moduleFinalize.View().ContentID())
+		foreignFlow.staticView.ContentID(), foreignFlow.moduleID)
 	if err != nil {
 		t.Fatalf("foreign Flow candidates.Seal: %v", err)
 	}

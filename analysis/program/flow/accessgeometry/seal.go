@@ -13,7 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/candidates"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	flowrole "github.com/wippyai/go-lua/analysis/program/flow/role"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -30,7 +29,7 @@ func Seal(
 	bodies *body.Result,
 	bindings binding.Result,
 	staticView staticquery.View,
-	moduleView imports.View,
+	moduleView authored.Imports,
 ) (*Result, error) {
 	staticID := staticView.ContentID()
 	moduleID := moduleView.ContentID()

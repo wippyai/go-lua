@@ -54,7 +54,7 @@ func contains(t typ.Type, pred func(typ.Type) bool, seen ScanSeen) bool {
 	if t == nil {
 		return false
 	}
-	t = unwrapTransparent(t)
+	t = typ.UnwrapTransparentWrappers(t)
 	if t == nil {
 		return false
 	}

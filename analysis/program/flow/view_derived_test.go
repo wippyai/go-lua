@@ -30,9 +30,9 @@ func TestDerivedOutcomeQueriesResolveAuthoredReturn(t *testing.T) {
 		if !ok {
 			t.Fatalf("Outcomes.At(%d) failed inside the body range", index)
 		}
-		outcome, ok := view.Outcomes().Get(term)
-		if !ok || outcome.Body != entry {
-			t.Fatalf("Outcomes.Get(%v) = %#v/%v, want entry-owned outcome", term, outcome, ok)
+		body, _, _, ok := view.Outcomes().Get(term)
+		if !ok || body != entry {
+			t.Fatalf("Outcomes.Get(%v) owner = %v/%v, want entry-owned outcome", term, body, ok)
 		}
 	}
 }

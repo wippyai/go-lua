@@ -205,11 +205,11 @@ func moduleCacheDeployment(t *testing.T, p, dependency *program.Program) (actors
 	representative := "cache-main"
 	aliases = []linkmodule.ModuleCacheAliasClassSpec{{Actor: "actor", Instances: []string{"cache-main", "cache-dependency"}, Representative: representative}}
 	roots = []linkmodule.AnalysisRootSpec{{Name: "main-root", Module: "main", Actor: "actor", Instance: "cache-main"}, {Name: "dependency-root", Module: "dependency", Actor: "actor", Instance: "cache-dependency"}}
-	importTerm, ok := p.Module().ImportAt(0)
+	importTerm, ok := p.Flow().Authored().Imports().At(0)
 	if !ok || dependency == nil {
 		t.Fatal("missing source Import")
 	}
-	entries = []linkmodule.ModuleCacheEntrySpec{{Module: "main", Import: importTerm.Term, FromRoot: "main-root", ToRoot: "dependency-root"}}
+	entries = []linkmodule.ModuleCacheEntrySpec{{Module: "main", Import: importTerm, FromRoot: "main-root", ToRoot: "dependency-root"}}
 	return actors, aliases, roots, entries
 }
 

@@ -72,10 +72,11 @@ func TestLinkBootstrapTransportRejectsMissingOrAmbiguousMountedInitialPoint(t *t
 	}
 }
 
-// TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical proves the
-// ordered transport catalog is copied into each immutable witness and that
-// resealing does not mutate the prior witness.
-func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) {
+// TestLinkBootstrapCatalogCopiesOccurrenceNamespacesAcrossReseal proves the
+// caller's catalog is copied into each immutable witness and that resealing
+// does not mutate the prior witness. Transport selection is deliberately not
+// part of this catalog law; the sealed Binding owns that smaller set.
+func TestLinkBootstrapCatalogCopiesOccurrenceNamespacesAcrossReseal(t *testing.T) {
 	first, second := bootstrapTransportCapability(t, 6), bootstrapTransportCapability(t, 7)
 	occurrences := []identity.ContentID{bootstrapTransportID(21), bootstrapTransportID(22)}
 	left, leftOK := NewProgramBootstrap(bootstrapTransportID(23), bootstrapTransportID(24),
@@ -84,14 +85,14 @@ func TestLinkBootstrapTransportTwoMountOrderAndResealAreCanonical(t *testing.T) 
 	right, rightOK := NewProgramBootstrap(bootstrapTransportID(23), bootstrapTransportID(24),
 		ProgramBootstrapCatalog{Capability: first, Occurrences: occurrences[:1]},
 		ProgramBootstrapCatalog{Capability: second, Occurrences: occurrences[1:]})
-	if !leftOK || !rightOK || left.witness.transportCapabilityCount() != 2 || right.witness.transportCapabilityCount() != 2 {
-		t.Fatal("ordered bootstrap transport pair did not seal")
+	if !leftOK || !rightOK || left.witness.catalogCapabilityCount() != 2 || right.witness.catalogCapabilityCount() != 2 {
+		t.Fatal("bootstrap catalog did not seal")
 	}
 	for index := 0; index < 2; index++ {
-		leftCapability, leftFound := left.witness.transportCapabilityAt(index)
-		rightCapability, rightFound := right.witness.transportCapabilityAt(index)
+		leftCapability, leftFound := left.witness.catalogCapabilityAt(index)
+		rightCapability, rightFound := right.witness.catalogCapabilityAt(index)
 		if !leftFound || !rightFound || leftCapability != rightCapability {
-			t.Fatalf("transport catalog index %d changed across reseal", index)
+			t.Fatalf("catalog index %d changed across reseal", index)
 		}
 	}
 	leftFirst, leftFirstOK := left.witness.OccurrenceAt(0)

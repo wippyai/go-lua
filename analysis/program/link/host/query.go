@@ -149,14 +149,6 @@ func (v CapabilitySeeds) InitialRoot(x ProviderCapabilitySeed) (vocabulary.Initi
 	r := c.authority.seeds[x.ordinal-1]
 	return r.root, r.source == ProviderCapabilitySourceInitialRoot && seedActive(c, r)
 }
-func (v CapabilitySeeds) ABIInput(x ProviderCapabilitySeed) (vocabulary.Operation, vocabulary.ValueFormal, bool) {
-	c := v.component
-	if !validSeed(c, x) {
-		return 0, 0, false
-	}
-	r := c.authority.seeds[x.ordinal-1]
-	return r.operation, r.formal, r.source == ProviderCapabilitySourceABIInput && seedActive(c, r)
-}
 func (v CapabilitySeeds) Result(x ProviderCapabilitySeed) (vocabulary.Operation, uint32, uint32, bool) {
 	c := v.component
 	if !validSeed(c, x) {

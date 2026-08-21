@@ -20,7 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -34,13 +33,12 @@ type accessGeometryFixture struct {
 	bodies     *flowbody.Result
 	bindings   binding.Result
 	staticView staticquery.View
-	moduleView imports.View
+	moduleView authored.Imports
 	staticID   identity.ContentID
 	moduleID   identity.ContentID
 
 	sourceFinal source.Finalizer
 	flowFinal   authored.Finalizer
-	moduleFinal imports.Finalizer
 }
 
 func openAccessGeometryFixture(t *testing.T) *accessGeometryFixture {
@@ -82,12 +80,12 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 
 	flowDraft, err := authored.Build(input)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinal, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinal.View()
@@ -95,73 +93,63 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 	entry := body
 	bodies, err := flowbody.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinal, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinal.View()
-	staticID, moduleID := staticView.ContentID(), moduleView.ContentID()
+	moduleView := flowView.Imports()
+	staticID, moduleID := staticView.ContentID(), flowView.ModuleID()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinal, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(sourceFinal, flowFinal)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinal.Commit(indexInput)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	controlProof, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
 		flowView.ContentID(), staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	proof, err := executable.Seal(sourceView, flowView, bodies, forest, controlProof, staticID, moduleID, paths)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, proof, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal, moduleFinal)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinal)
 		t.Fatalf("candidates.Seal: %v", err)
 	}
 	fixture := &accessGeometryFixture{
@@ -176,10 +164,9 @@ func openAccessGeometryFixtureWithStaticTypeOfs(t *testing.T, name string, typeO
 		moduleID:    moduleID,
 		sourceFinal: source.Finalizer{},
 		flowFinal:   flowFinal,
-		moduleFinal: moduleFinal,
 	}
 	t.Cleanup(func() {
-		flowtest.CloseFinalizers(fixture.sourceFinal, fixture.flowFinal, fixture.moduleFinal)
+		flowtest.CloseFinalizers(fixture.sourceFinal, fixture.flowFinal)
 	})
 	return fixture
 }

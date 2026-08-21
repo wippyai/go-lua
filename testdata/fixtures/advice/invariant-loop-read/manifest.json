@@ -8,10 +8,6 @@
         "severity": "hint"
       }
     ],
-    "placement": {
-      "min_hoistable_loads": 1,
-      "max_hoistable_loads": 1
-    },
     "diagnostics": [
       {
         "file": "main.lua",

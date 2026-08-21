@@ -181,6 +181,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
+	"github.com/wippyai/go-lua/domain/type/conformance"
 )
 
 // The identities this domain's row is declared against. The code is the
@@ -190,7 +191,7 @@ import (
 const (
 	// Code is the finding this domain publishes: an assignment whose value may
 	// carry a runtime family the declared type of its target does not admit.
-	Code diagnostic.Code = "type.assign.declared_type"
+	Code diagnostic.Code = "type.assignment"
 	// CallArgumentCode is the same judgment at a direct-call actual.
 	CallArgumentCode diagnostic.Code = "type.call.direct.argument_type"
 	// FamilyKey is the publication family the query boundary gates the code by.
@@ -238,6 +239,36 @@ var diagnosticRender = []diagnostic.Section{
 	diagnostic.SectionHelp,
 }
 
+// ConformanceVerdictStructureSpecs is this domain's second structure row set:
+// the assignment conformance verdict vocabulary. Composition hosts the
+// catalog; the ordinals and spellings are owned by the conformance package,
+// which is the judgment that produces them.
+func ConformanceVerdictStructureSpecs() []structure.Spec {
+	catalog := conformance.Catalog()
+	specs := make([]structure.Spec, 0, len(catalog))
+	for _, verdict := range catalog {
+		specs = append(specs, structure.Spec{
+			Key:      schema.Key(conformance.VerdictKey(verdict)),
+			Category: structure.CategoryConformanceVerdict,
+			Ordinal:  verdict.Ordinal(),
+			Spelling: verdict.Spelling(),
+			Accepted: true,
+		})
+	}
+	return specs
+}
+
+// ConformanceVerdictFor projects one declared row back to the answer it
+// declares. A consumer reading the sealed vocabulary recovers the verdict
+// through this rather than converting an ordinal of its own.
+func ConformanceVerdictFor(entry *structure.Entry) (conformance.Verdict, bool) {
+	if entry == nil || entry.Category() != structure.CategoryConformanceVerdict {
+		return conformance.VerdictInvalid, false
+	}
+	verdict := conformance.Verdict(entry.Ordinal())
+	return verdict, verdict.Available()
+}
+
 // ChannelSelectStructureSpecs is this domain's structure row: the
 // channel-select case fact family. Composition hosts the catalog; the
 // spelling lives in channelselect.
@@ -268,19 +299,55 @@ func DiagnosticSpec() diagnostic.Spec {
 		Lane:            diagnostic.LaneBranch,
 		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
 		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
-		Site:            diagnostic.SiteAssignment,
+		Sites:           []diagnostic.Site{diagnostic.SiteAssignment, diagnostic.SiteMember, diagnostic.SiteMemberAbsent},
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
-		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
-		Message:         "{subject} does not conform to its declared type {target}",
-		Help:            "Assign a value of the declared type, or widen the declaration to admit the value.",
-		Evidence: []diagnostic.Evidence{{
-			Anchor: diagnostic.AnchorPrimary,
-			Kind:   "abstract fact",
-			Trust:  "proven",
-			Reason: "unspecified",
-			Detail: "the value assigned to {subject} may carry a runtime type outside {target}",
-		}},
-		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "declared {target}"}},
+		Variants: []diagnostic.Variant{
+			{
+				Verdict:      conformance.VerdictViolates.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresActual,
+				Message:      "cannot assign {subject} because it is {actual}, not {target}",
+				Help:         "Use a value compatible with the expected type, or change the target type if `{subject}` is valid.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} is {actual}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{subject} is declared as {target}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies {target}"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "assigned value"}},
+			},
+			{
+				Verdict:      conformance.VerdictMayBeNil.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+				Message:      "cannot assign {subject} because it may be nil",
+				Help:         "Narrow {subject} to a non-nil value before assigning it, or declare the target as optional.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} may be nil on this path"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{subject} is declared as {target}, which does not admit nil"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "assigned value"}},
+			},
+			{
+				Verdict:      conformance.VerdictMemberAbsent.Ordinal(),
+				Requirements: diagnostic.RequiresMember | diagnostic.RequiresTarget,
+				Message:      "object literal is missing required field \"{member}\"",
+				Help:         "Supply {member}, or declare the field optional.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "the object literal establishes no field \"{member}\""},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{member} is declared as {target} and is required"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "object literal"}},
+			},
+			{
+				Verdict:      conformance.VerdictUnproven.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+				Message:      "cannot assign {subject} because it comes from any/unknown; no proof shows it satisfies the declared type",
+				Help:         "Narrow {subject} with a checked test before assigning it to {target}.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "unvalidated value", Trust: "unknown", Reason: "unspecified", Detail: "{subject} comes from any or unknown"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies {target}"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "assigned value"}},
+			},
+		},
 		Render: diagnosticRender,
 	}
 }
@@ -296,19 +363,55 @@ func DiagnosticCallArgumentSpec() diagnostic.Spec {
 		Lane:            diagnostic.LaneBranch,
 		Observation:     diagnostic.Reference{Surface: schema.SurfaceKindStructure, Key: ObservationKey},
 		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
-		Site:            diagnostic.SiteCallArgument,
+		Sites:           []diagnostic.Site{diagnostic.SiteCallArgument},
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
-		Requirements:    diagnostic.RequiresSubject | diagnostic.RequiresTarget,
-		Message:         "{subject} does not conform to parameter type {target}",
-		Help:            "Pass a value compatible with the parameter type, or change the callee signature.",
-		Evidence: []diagnostic.Evidence{{
-			Anchor: diagnostic.AnchorPrimary,
-			Kind:   "abstract fact",
-			Trust:  "proven",
-			Reason: "unspecified",
-			Detail: "the argument {subject} may carry a runtime type outside {target}",
-		}},
-		Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+		Variants: []diagnostic.Variant{
+			{
+				Verdict:      conformance.VerdictViolates.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresActual,
+				Message:      "{subject} is {actual}, not {target}",
+				Help:         "Pass a value compatible with the parameter type, or change the callee signature if that argument is valid.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} is {actual}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "the parameter expects {target}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies the parameter type"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+			},
+			{
+				Verdict:      conformance.VerdictMayBeNil.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+				Message:      "{subject} may be nil, and the parameter type {target} does not admit nil",
+				Help:         "Narrow {subject} to a non-nil value before passing it, or declare the parameter as optional.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} may be nil on this path"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "the parameter expects {target}, which does not admit nil"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+			},
+			{
+				Verdict:      conformance.VerdictMemberAbsent.Ordinal(),
+				Requirements: diagnostic.RequiresMember | diagnostic.RequiresTarget,
+				Message:      "object literal argument is missing required field \"{member}\"",
+				Help:         "Supply {member}, or declare the field optional.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "the object literal establishes no field \"{member}\""},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{member} is declared as {target} and is required"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+			},
+			{
+				Verdict:      conformance.VerdictUnproven.Ordinal(),
+				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget,
+				Message:      "{subject} comes from any/unknown; no proof shows it satisfies the parameter type",
+				Help:         "Narrow {subject} with a checked test before passing it as {target}.",
+				Evidence: []diagnostic.Evidence{
+					{Anchor: diagnostic.AnchorPrimary, Kind: "unvalidated value", Trust: "unknown", Reason: "unspecified", Detail: "{subject} comes from any or unknown"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies {target}"},
+				},
+				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},
+			},
+		},
 		Render: diagnosticRender,
 	}
 }

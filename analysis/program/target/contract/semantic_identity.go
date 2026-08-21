@@ -20,11 +20,13 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Version 8 adds opaque operation behavior rows to semantic operation
-// identities; version 7 added publication-effect descriptor bytes. Earlier
-// endpoint identities are deliberately distinct.
+// Version 10 adds the publication subject InputSource kind/ordinal pair to
+// semantic effect identities. Version 9 added operation-owned formal
+// ownership rows; version 8 added opaque operation behavior rows; version 7
+// added publication-effect descriptor bytes. Earlier endpoint identities are
+// deliberately distinct.
 
-const endpointIdentityCodecVersion uint64 = 8
+const endpointIdentityCodecVersion uint64 = 10
 
 const (
 	semanticCallbackSelector uint64 = iota + 83

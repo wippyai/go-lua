@@ -72,18 +72,6 @@ func AddSelectedRuleDirectExactRead[O any, RV any](issuer *RuleImplementation[O]
 	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
-// AddSelectedRuleDirectRead installs a static-selector predecessor at the
-// read's declared cold ordinal. The direct Rule cell is already present; no
-// transaction or append-order state is involved.
-func AddSelectedRuleDirectRead[O any, RV any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
-	}
-	return engine.BindSelectedRuleDirectSelectedRead[coordinate, value.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
-}
-
 // AddSelectedRuleDirectOperandRead installs an operand-dependent selector at
 // the read's declared cold ordinal. The operand is supplied only when the
 // sealed Rule executes; it is never captured in construction state.

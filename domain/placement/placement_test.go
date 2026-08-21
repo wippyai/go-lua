@@ -89,3 +89,30 @@ func TestPlacementCoversIsStrictAnalysisBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestPlacementLatticeRejectsOutOfDomainValues(t *testing.T) {
+	values := []Placement{Interpreter, Register, Placement(255)}
+	valid := []Placement{Bottom, Stack, OwnedHeap, SharedHeap, Unknown}
+	for _, outside := range values {
+		if Equal(outside, outside) {
+			t.Fatalf("invalid placement %v became lattice-equivalent to itself", outside)
+		}
+		for _, inside := range valid {
+			if LessOrEq(outside, inside) || LessOrEq(inside, outside) {
+				t.Fatalf("invalid placement %v entered order with %v", outside, inside)
+			}
+			for name, got := range map[string]Placement{
+				"join-left":   Join(outside, inside),
+				"join-right":  Join(inside, outside),
+				"meet-left":   Meet(outside, inside),
+				"meet-right":  Meet(inside, outside),
+				"widen-left":  Widen(outside, inside),
+				"widen-right": Widen(inside, outside),
+			} {
+				if got != Unknown {
+					t.Fatalf("%s(%v,%v) = %v, want fail-closed Unknown", name, outside, inside, got)
+				}
+			}
+		}
+	}
+}

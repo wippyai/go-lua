@@ -26,7 +26,7 @@ import (
 func TestTopologyReceiverCallDemandFencesExactStaticBottomAndForeign(t *testing.T) {
 	heap, values, calls, _, fresh, mounts := freshTopologyFixture(t)
 	topology, sealed := indexdomain.Seal(heap, values, calls, mounts.packs)
-	application, _, _, _, source := fresh.FreshResultID()
+	application, _, _, source := fresh.FreshResultID()
 	wantKey, keyed := calls.KeyForApplicationID(application)
 	atom, atomOK := values.Allocation(fresh, materialization.Recent)
 	receiver, receiverOK := values.Singleton(atom)
@@ -102,7 +102,7 @@ return first, second
 	var application identity.ContentID
 	for index := 0; index < heap.KeyCount(); index++ {
 		root, _ := heap.KeyAt(index)
-		candidate, _, _, _, fresh := root.FreshResultID()
+		candidate, _, _, fresh := root.FreshResultID()
 		if fresh {
 			application = candidate
 			break
@@ -325,7 +325,7 @@ func freshCallIDs(t testing.TB, heap heapdomain.Schema, calls *calldomain.Algebr
 		if !ok {
 			continue
 		}
-		application, _, _, _, fresh := root.FreshResultID()
+		application, _, _, fresh := root.FreshResultID()
 		if !fresh {
 			continue
 		}
@@ -364,7 +364,7 @@ func freshRootsForApplication(t testing.TB, heap heapdomain.Schema, application 
 		if !ok {
 			continue
 		}
-		candidate, _, _, _, fresh := root.FreshResultID()
+		candidate, _, _, fresh := root.FreshResultID()
 		if fresh && candidate == application {
 			roots = append(roots, root)
 		}

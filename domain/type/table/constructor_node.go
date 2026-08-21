@@ -1,6 +1,11 @@
 package table
 
-import "github.com/wippyai/go-lua/domain/type/typ"
+import (
+	"maps"
+	"slices"
+
+	"github.com/wippyai/go-lua/domain/type/typ"
+)
 
 type constructorNode struct {
 	value         typ.Type
@@ -90,7 +95,7 @@ func (n *constructorNode) build() (typ.Type, bool) {
 		return n.value, n.value != nil
 	}
 	if len(n.fields) == 0 && len(n.stringIndexes) == 0 && len(n.intIndexes) > 0 {
-		indexes := sortedConstructorIntKeys(n.intIndexes)
+		indexes := slices.Sorted(maps.Keys(n.intIndexes))
 		elems := make([]typ.Type, 0, len(indexes))
 		for _, idx := range indexes {
 			t, ok := n.intIndexes[idx].build()
@@ -105,21 +110,21 @@ func (n *constructorNode) build() (typ.Type, bool) {
 		return typ.NewTuple(elems...), true
 	}
 	builder := NewRecord()
-	for _, name := range sortedConstructorStringKeys(n.fields) {
+	for _, name := range slices.Sorted(maps.Keys(n.fields)) {
 		t, ok := n.fields[name].build()
 		if !ok {
 			return nil, false
 		}
 		builder.Field(name, t)
 	}
-	for _, name := range sortedConstructorStringKeys(n.stringIndexes) {
+	for _, name := range slices.Sorted(maps.Keys(n.stringIndexes)) {
 		t, ok := n.stringIndexes[name].build()
 		if !ok {
 			return nil, false
 		}
 		builder.StaticStringIndex(name, t)
 	}
-	for _, idx := range sortedConstructorIntKeys(n.intIndexes) {
+	for _, idx := range slices.Sorted(maps.Keys(n.intIndexes)) {
 		t, ok := n.intIndexes[idx].build()
 		if !ok {
 			return nil, false

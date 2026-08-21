@@ -10,7 +10,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -33,25 +32,6 @@ type ModuleCacheInstance struct {
 	component *Component
 	ordinal   uint32
 }
-type ModuleCacheEntry struct {
-	component *Component
-	ordinal   uint32
-}
-type ModuleCoordinate struct {
-	component *Component
-	ordinal   uint32
-}
-type ModuleInitGeneration struct {
-	component *Component
-	ordinal   uint32
-}
-type ModuleInitOutcome struct {
-	component  *Component
-	generation uint32
-	kind       flowkind.OutcomeKind
-	ordinal    uint32
-}
-type ModuleInitTerminal struct{ outcome ModuleInitOutcome }
 
 type ActorSpec struct{ Name string }
 type ModuleCacheAliasClassSpec struct {
@@ -95,17 +75,6 @@ type Cold struct {
 	fence   *coldFence
 }
 
-type ModuleInitGenerationRef struct {
-	component identity.ContentID
-	entry     identity.ContentID
-}
-
-type ModuleInitOutcomeRef struct {
-	generation ModuleInitGenerationRef
-	kind       flowkind.OutcomeKind
-	ordinal    uint32
-}
-
 type actorRow struct{ name string }
 type instanceRow struct {
 	name                  string
@@ -116,39 +85,40 @@ type rootRow struct {
 	shard           linkproject.Shard
 	actor, instance uint32
 }
-type entryRow struct {
-	application linkproject.Application
-	from, to    uint32
-}
-type coordinateRow struct {
-	actor          uint32
-	shard          linkproject.Shard
-	representative uint32
-}
-type outcomeCoordinate struct {
-	generation uint32
-	kind       flowkind.OutcomeKind
-	ordinal    uint32
+
+// compositionEntry is the private parent-issued relation consumed by the
+// publication phase.  It deliberately carries no authored module names and
+// no Program/source authority: the source Shard, issued Import term, and
+// owner-fenced root coordinates are all sealed while this Component is built.
+// Publication later joins those coordinates to mounted Program rows.
+type compositionEntry struct {
+	sourceShard       linkproject.Shard
+	sourceRootOrdinal uint32
+	importTerm        keyspace.Term
+	fromRootOrdinal   uint32
+	toRootOrdinal     uint32
+	fromRootID        identity.ContentID
+	toRootID          identity.ContentID
+	actorID           identity.ContentID
+	representativeID  identity.ContentID
 }
 type rootRange struct{ start, end uint32 }
 type authority struct {
-	component          *Component
-	project            *linkproject.Component
-	boundary           *linkboundary.Component
-	actors             []actorRow
-	instances          []instanceRow
-	roots              []rootRow
-	entries            []entryRow
-	rootRanges         []rootRange
-	rootIngress        []uint32
-	coordinates        []coordinateRow
-	coordinateOrdinals map[coordinateRow]uint32
-	terminals          []outcomeCoordinate
-	spec               Spec
-	content            identity.ContentID
-	counts             denominator.CountRows
-	hostRelation       identity.ContentID
-	fence              *coldFence
+	component       *Component
+	project         *linkproject.Component
+	boundary        *linkboundary.Component
+	actors          []actorRow
+	instances       []instanceRow
+	roots           []rootRow
+	rootRanges      []rootRange
+	rootIngress     []uint32
+	authoredEntries []ModuleCacheEntrySpec
+	composition     []compositionEntry
+	spec            Spec
+	content         identity.ContentID
+	counts          denominator.CountRows
+	hostRelation    identity.ContentID
+	fence           *coldFence
 }
 type draftState struct {
 	authority *authority
@@ -224,7 +194,7 @@ func Build(input Input) (*Draft, error) {
 }
 
 func (a *authority) build(spec Spec) error {
-	if len(spec.Actors) == 0 && len(spec.ModuleCacheAliases) == 0 && len(spec.AnalysisRoots) == 0 && len(spec.ModuleCacheEntries) == 0 {
+	if len(spec.Actors) == 0 && len(spec.ModuleCacheAliases) == 0 && len(spec.AnalysisRoots) == 0 {
 		spec = defaultSpec(a.project.Mounts())
 	}
 	if len(spec.Actors) == 0 || len(spec.ModuleCacheAliases) == 0 || len(spec.AnalysisRoots) == 0 {
@@ -335,109 +305,57 @@ func (a *authority) build(spec Spec) error {
 		a.rootIngress[at] = uint32(i + 1)
 		next[index]++
 	}
-	apps := a.project.Applications()
-	imports := apps.Imports()
-	if imports.Count() != 0 {
-		if _, ok := a.boundary.RequireOperation(); !ok {
-			return errors.New("link/module: Program require has no target authority")
-		}
+	// Module-cache entries remain authored Link configuration. Validate only
+	// their local source/root shape and Import term family here. Snapshot
+	// composition owns exact Program request-target joins, completeness, and
+	// cycle admission after Artifact facts are available.
+	type authoredEntryKey struct {
+		module     string
+		importTerm keyspace.Term
+		fromRoot   string
 	}
-	type required struct {
-		app      linkproject.Application
-		from, to uint32
-	}
-	type importOccurrence struct {
-		shard linkproject.Shard
-		term  keyspace.Term
-	}
-	needed := make([]required, 0)
-	// These resolvers exist only during admission.  They remove the former
-	// Import×Mount and Entry×Import rescans and are discarded before Finalize.
-	importsByOccurrence := make(map[importOccurrence]linkproject.Application, imports.Count())
-	targetByOccurrence := make(map[importOccurrence]linkproject.Shard, imports.Count())
-	for i := 0; i < imports.Count(); i++ {
-		app, ok := imports.At(i)
-		if !ok {
-			return errors.New("link/module: malformed project import")
-		}
-		shard, term, _, ok := apps.Import(app)
-		if !ok {
-			return errors.New("link/module: malformed project import")
-		}
-		occurrence := importOccurrence{shard, term}
-		if _, duplicate := importsByOccurrence[occurrence]; duplicate {
-			return errors.New("link/module: duplicate project import")
-		}
-		importsByOccurrence[occurrence] = app
-		loaded, ok := moduleImportTarget(moduleByName, mounts, shard, term)
-		if !ok {
-			continue
-		}
-		targetByOccurrence[occurrence] = loaded
-		index, _ := mounts.Index(shard)
-		for _, from := range a.rootIngress[a.rootRanges[index].start:a.rootRanges[index].end] {
-			needed = append(needed, required{app, from, 0})
-		}
-	}
-	// Resolve explicit ingress declarations against exact Program Import applications.
-	entryByPair := make(map[[2]uint32]entryRow, len(spec.ModuleCacheEntries))
+	seenEntries := make(map[authoredEntryKey]struct{}, len(spec.ModuleCacheEntries))
 	for _, row := range spec.ModuleCacheEntries {
-		shard, ok1 := moduleByName[row.Module]
-		from, ok2 := rootByName[row.FromRoot]
-		to, ok3 := rootByName[row.ToRoot]
-		if !ok1 || !ok2 || !ok3 || row.Import == 0 {
-			return errors.New("link/module: malformed cache entry")
+		shard, moduleOK := moduleByName[row.Module]
+		from, fromOK := rootByName[row.FromRoot]
+		to, toOK := rootByName[row.ToRoot]
+		if !moduleOK || !fromOK || !toOK || row.Import == 0 || keyspace.TermFamily(row.Import) != keyspace.FamilyImport {
+			return errors.New("link/module: malformed authored cache entry")
 		}
-		if a.roots[from-1].shard != shard || a.roots[from-1].actor != a.roots[to-1].actor {
-			return errors.New("link/module: cross-actor cache entry")
+		fromRoot, toRoot := a.roots[from-1], a.roots[to-1]
+		if fromRoot.shard != shard || fromRoot.actor != toRoot.actor {
+			return errors.New("link/module: malformed authored cache entry roots")
 		}
-		occurrence := importOccurrence{shard, row.Import}
-		app, ok := importsByOccurrence[occurrence]
-		if !ok {
-			return errors.New("link/module: unsealed cache import")
+		key := authoredEntryKey{module: row.Module, importTerm: row.Import, fromRoot: row.FromRoot}
+		if _, duplicate := seenEntries[key]; duplicate {
+			return errors.New("link/module: duplicate authored cache entry")
 		}
-		loaded, ok := targetByOccurrence[occurrence]
-		if !ok || loaded != a.roots[to-1].shard {
-			return errors.New("link/module: cache entry target mismatch")
-		}
-		index, ok := apps.Index(app)
-		if !ok {
-			return errors.New("link/module: malformed cache application")
-		}
-		key := [2]uint32{uint32(index + 1), from}
-		if _, dup := entryByPair[key]; dup {
-			return errors.New("link/module: duplicate cache entry")
-		}
-		entryByPair[key] = entryRow{application: app, from: from, to: to}
+		seenEntries[key] = struct{}{}
 	}
-	if len(entryByPair) != len(needed) {
-		return errors.New("link/module: incomplete cache ingress")
-	}
-	a.entries = make([]entryRow, 0, len(entryByPair))
-	for _, need := range needed {
-		index, _ := apps.Index(need.app)
-		row, ok := entryByPair[[2]uint32{uint32(index + 1), need.from}]
-		if !ok {
-			return errors.New("link/module: incomplete cache ingress")
+	sort.Slice(spec.ModuleCacheEntries, func(i, j int) bool {
+		left, right := spec.ModuleCacheEntries[i], spec.ModuleCacheEntries[j]
+		if left.Module != right.Module {
+			return left.Module < right.Module
 		}
-		a.entries = append(a.entries, row)
-	}
-	sort.Slice(a.entries, func(i, j int) bool {
-		ai, _ := apps.Index(a.entries[i].application)
-		aj, _ := apps.Index(a.entries[j].application)
-		if ai != aj {
-			return ai < aj
+		if left.Import != right.Import {
+			return left.Import < right.Import
 		}
-		return a.entries[i].from < a.entries[j].from
+		if left.FromRoot != right.FromRoot {
+			return left.FromRoot < right.FromRoot
+		}
+		return left.ToRoot < right.ToRoot
 	})
-	if err := a.acyclic(); err != nil {
-		return err
-	}
+	a.authoredEntries = append([]ModuleCacheEntrySpec(nil), spec.ModuleCacheEntries...)
 	a.spec = canonicalSpec(a)
 	a.content = content(a)
 	if !a.content.Available() {
 		return errors.New("link/module: unavailable content identity")
 	}
+	composition, compositionOK := buildCompositionEntries(a, spec, moduleByName, rootByName)
+	if !compositionOK {
+		return errors.New("link/module: unavailable parent composition relation")
+	}
+	a.composition = composition
 	a.hostRelation = hostRelationID(a)
 	if !a.hostRelation.Available() {
 		return errors.New("link/module: unavailable Host relation identity")
@@ -452,9 +370,54 @@ func (a *authority) build(spec Spec) error {
 	return nil
 }
 
+// buildCompositionEntries seals the narrow relation that the later Snapshot
+// publication phase is allowed to consume.  This is intentionally a Link
+// child construction step: authored names are resolved to the exact Project
+// Shard and root ordinals here, while Program request/target joins remain a
+// publication concern.
+func buildCompositionEntries(a *authority, spec Spec, moduleByName map[string]linkproject.Shard, rootByName map[string]uint32) ([]compositionEntry, bool) {
+	if a == nil || a.project == nil || !a.content.Available() {
+		return nil, false
+	}
+	entries := make([]compositionEntry, 0, len(spec.ModuleCacheEntries))
+	for _, authored := range spec.ModuleCacheEntries {
+		sourceShard, sourceOK := moduleByName[authored.Module]
+		fromOrdinal, fromOK := rootByName[authored.FromRoot]
+		toOrdinal, toOK := rootByName[authored.ToRoot]
+		if !sourceOK || !fromOK || !toOK || authored.Import == 0 ||
+			keyspace.TermFamily(authored.Import) != keyspace.FamilyImport || keyspace.TermOrdinal(authored.Import) == 0 ||
+			fromOrdinal > uint32(len(a.roots)) || toOrdinal > uint32(len(a.roots)) {
+			return nil, false
+		}
+		fromRoot := a.roots[fromOrdinal-1]
+		toRoot := a.roots[toOrdinal-1]
+		if fromRoot.shard != sourceShard || fromRoot.actor != toRoot.actor || fromRoot.actor == 0 ||
+			fromRoot.instance == 0 || uint64(fromRoot.instance) > uint64(len(a.instances)) {
+			return nil, false
+		}
+		representative := a.instances[fromRoot.instance-1].representative
+		if representative == 0 || uint64(representative) > uint64(len(a.instances)) {
+			return nil, false
+		}
+		fromRootID := denseID(a.content, 0x6d6f64756c652d72, uint64(fromOrdinal))
+		toRootID := denseID(a.content, 0x6d6f64756c652d72, uint64(toOrdinal))
+		actorID := denseID(a.content, 0x6d6f64756c652d61, uint64(fromRoot.actor))
+		representativeID := denseID(a.content, 0x6d6f64756c652d69, uint64(representative))
+		if !fromRootID.Available() || !toRootID.Available() || !actorID.Available() || !representativeID.Available() {
+			return nil, false
+		}
+		entries = append(entries, compositionEntry{
+			sourceShard: sourceShard, sourceRootOrdinal: fromOrdinal, importTerm: authored.Import,
+			fromRootOrdinal: fromOrdinal, toRootOrdinal: toOrdinal,
+			fromRootID: fromRootID, toRootID: toRootID, actorID: actorID, representativeID: representativeID,
+		})
+	}
+	return entries, true
+}
+
 // hostRelationID is the narrow actor/root projection consumed by Host boot
-// and globals. Cache aliases, ingress entries, coordinates, and init outcome
-// geometry deliberately cannot churn it.
+// and globals. Cache aliases, authored ingress configuration, and any
+// Snapshot-resolved geometry deliberately cannot churn it.
 func hostRelationID(a *authority) (id identity.ContentID) {
 	if a == nil || a.project == nil {
 		return identity.ContentID{}
@@ -522,57 +485,8 @@ func compareInstance(a, b string) int {
 	_ = w.Finish()
 	return bytes.Compare(ab.Bytes(), bb.Bytes())
 }
-func moduleImportTarget(moduleByName map[string]linkproject.Shard, mounts linkproject.Mounts, shard linkproject.Shard, term keyspace.Term) (linkproject.Shard, bool) {
-	p, ok := mounts.Program(shard)
-	if !ok || p == nil {
-		return linkproject.Shard{}, false
-	}
-	row, ok := p.Module().Import(term)
-	if !ok || row.Key == 0 {
-		return linkproject.Shard{}, false
-	}
-	name, ok := p.Source().Keys().Exact(row.Key)
-	if !ok || name.Kind != keyspace.LiteralString {
-		return linkproject.Shard{}, false
-	}
-	target, ok := moduleByName[name.String]
-	return target, ok
-}
-func (a *authority) acyclic() error {
-	n := len(a.roots)
-	edges := make([][]uint32, n)
-	degree := make([]int, n)
-	for _, e := range a.entries {
-		if e.from == 0 || e.to == 0 || int(e.from) > n || int(e.to) > n {
-			return errors.New("link/module: malformed ingress")
-		}
-		edges[e.from-1] = append(edges[e.from-1], e.to)
-		degree[e.to-1]++
-	}
-	ready := make([]uint32, 0, n)
-	for i, d := range degree {
-		if d == 0 {
-			ready = append(ready, uint32(i+1))
-		}
-	}
-	seen := 0
-	for i := 0; i < len(ready); i++ {
-		from := ready[i]
-		seen++
-		for _, to := range edges[from-1] {
-			degree[to-1]--
-			if degree[to-1] == 0 {
-				ready = append(ready, to)
-			}
-		}
-	}
-	if seen != n {
-		return errors.New("link/module: cache ingress cycle")
-	}
-	return nil
-}
 func canonicalSpec(a *authority) Spec {
-	s := Spec{Actors: make([]ActorSpec, len(a.actors)), AnalysisRoots: make([]AnalysisRootSpec, len(a.roots)), ModuleCacheEntries: make([]ModuleCacheEntrySpec, len(a.entries))}
+	s := Spec{Actors: make([]ActorSpec, len(a.actors)), AnalysisRoots: make([]AnalysisRootSpec, len(a.roots)), ModuleCacheEntries: append([]ModuleCacheEntrySpec(nil), a.authoredEntries...)}
 	for i, r := range a.actors {
 		s.Actors[i] = ActorSpec{r.name}
 	}
@@ -597,12 +511,6 @@ func canonicalSpec(a *authority) Spec {
 		name, _ := mounts.Name(r.shard)
 		s.AnalysisRoots[i] = AnalysisRootSpec{Name: r.name, Module: name, Actor: a.actors[r.actor-1].name, Instance: a.instances[r.instance-1].name}
 	}
-	apps := a.project.Applications()
-	for i, e := range a.entries {
-		sh, term, _, _ := apps.Import(e.application)
-		name, _ := mounts.Name(sh)
-		s.ModuleCacheEntries[i] = ModuleCacheEntrySpec{Module: name, Import: term, FromRoot: a.roots[e.from-1].name, ToRoot: a.roots[e.to-1].name}
-	}
 	return s
 }
 func cloneSpec(s Spec) Spec {
@@ -614,18 +522,16 @@ func cloneSpec(s Spec) Spec {
 	return out
 }
 func content(a *authority) (id identity.ContentID) {
-	if a == nil || a.project == nil || a.boundary == nil {
+	if a == nil || a.project == nil {
 		return
 	}
 	mountID, mountOK := a.project.MountRelationID()
-	applicationID, applicationOK := a.project.ApplicationRelationID()
-	moduleID, moduleOK := a.boundary.ModuleRelationID()
-	if !mountOK || !applicationOK || !moduleOK || !mountID.Available() || !applicationID.Available() || !moduleID.Available() {
+	if !mountOK || !mountID.Available() {
 		return
 	}
 	h := sha256.New()
 	var w framing.Writer
-	if w.Reset(h, "program/link/module", 3) != nil || w.Record(1) != nil || w.Bytes(mountID[:]) != nil || w.Bytes(applicationID[:]) != nil || w.Bytes(moduleID[:]) != nil {
+	if w.Reset(h, "program/link/module", 4) != nil || w.Record(1) != nil || w.Bytes(mountID[:]) != nil {
 		return
 	}
 	s := a.spec

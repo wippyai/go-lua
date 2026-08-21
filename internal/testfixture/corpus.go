@@ -245,24 +245,28 @@ func SealCorpusProject(contract *contract.Contract, project CorpusProject) (*lin
 	}
 	entries := make([]linkmodule.ModuleCacheEntrySpec, 0)
 	for _, module := range modules {
-		for index := 0; index < module.Program.Module().Count(); index++ {
-			item, ok := module.Program.Module().ImportAt(index)
+		imports := module.Program.Flow().Authored().Imports()
+		for index := 0; index < imports.Count(); index++ {
+			item, ok := imports.ImportAt(index)
 			if !ok {
 				return nil, fmt.Errorf("testfixture: fixture %s %s has malformed Program Import table", project.relative, module.Name)
 			}
-			row, ok := module.Program.Module().Import(item.Term)
+			row, ok := imports.Get(item.Term)
 			if !ok || row.Call == 0 {
 				return nil, fmt.Errorf("testfixture: fixture %s %s has malformed Program Import", project.relative, module.Name)
 			}
 			// Project admits an Import application exactly when its Call is
-			// executable, and resolves the requested module through the Key the
-			// Module finalizer derived. Both surfaces are read here, never
-			// recomputed, so the declared ingress matches the one Link builds.
+			// executable. The authored Request is joined to Source's canonical
+			// String literal and exact-key quotient; the derived Artifact Module
+			// row is produced later by compilation and is not needed to describe
+			// this fixture's Link ingress.
 			if !module.Program.Flow().Executable().Contains(row.Call) {
 				continue
 			}
-			requested, requestedOK := module.Program.Source().Keys().Exact(row.Key)
-			if !requestedOK || requested.Kind != keyspace.LiteralString {
+			_, _, requestedName, requestedStringOK := module.Program.Source().Literals().Strings().At(int(keyspace.TermOrdinal(row.Request) - 1))
+			requestedKey, requestKeyOK := module.Program.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: requestedName})
+			requested, requestedOK := module.Program.Source().Keys().Exact(requestedKey)
+			if !requestedStringOK || !requestKeyOK || !requestedOK || requested.Kind != keyspace.LiteralString {
 				return nil, fmt.Errorf("testfixture: fixture %s %s Import has non-string request", project.relative, module.Name)
 			}
 			name := requested.String

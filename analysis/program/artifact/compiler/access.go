@@ -107,9 +107,6 @@ func (compiler *compiler) indexWriteAt(index int) (artifactIndexWrite, bool) {
 	}
 	identityProof, identityOK := predecessor.Identity()
 	programID := compiler.key.ProgramID()
-	if !programID.Available() {
-		programID = compiler.input.ContentID()
-	}
 	predecessorID, route, predecessorIDOK := compiler.assignmentPredecessorIdentity(programID, term)
 	routeOK := route.Available()
 	finishTerm, finishTermOK = finish.Term()

@@ -21,7 +21,12 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if bound == nil || !bound.Available() || record.Source == nil || len(record.Artifacts) == 0 {
 		t.Fatal("query canonical fixture has no sealed binding")
 	}
-	vocabulary, vocabularyOK := StructureVocabulary()
+	compilation := bound.Compilation()
+	state := compilation.catalog
+	if state == nil {
+		t.Fatal("query canonical fixture has no compilation catalog")
+	}
+	vocabulary, vocabularyOK := StructureVocabulary(compilation)
 	if !vocabularyOK {
 		t.Fatal("sealed structure vocabulary")
 	}
@@ -29,7 +34,6 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if rules == nil {
 		t.Fatal("sealed rule binding")
 	}
-
 	templates := make(map[identity.ContentID]*rows.ArtifactScalarTemplate, len(record.Artifacts))
 	roles := make(map[identity.ContentID][]engine.MountedProgramRole, len(record.Artifacts))
 	mounts := make([]engine.MountedProgramArtifact, 0, len(record.Artifacts))
@@ -74,7 +78,7 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !witnessOK {
 		t.Fatal("link bootstrap witness")
 	}
-	sites, sitesOK := SelectedQuerySites(record.Artifacts)
+	sites, sitesOK := SelectedQuerySites(compilation, record.Artifacts)
 	if !sitesOK || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -97,14 +101,15 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 		Admission: engine.MountedProgramAdmission{Link: linkAdmissions, Mounted: mounted, Activation: activations, Queries: queries},
 	})
 	if !committed || program == nil {
-		t.Fatalf("construct committed query program: stage=%v lowered=%t refusal=%v", refusal.Stage(), refusal.Lowered(), refusal.Commit())
+		t.Fatalf("construct committed query program: stage=%v lowered=%t lowering=%v construction=%v", refusal.Stage(), refusal.Lowered(), refusal.LoweringFailure(), refusal.Commit())
 	}
 	return program, sites
 }
 
 func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testing.T) {
-	record := mountedRecord(t, "query-canonical-cell", "local function identity(value) return value end; return identity(1)")
+	record := mountedRecord(t, "query-canonical-cell", "local root = {}; local function identity(value) return value end; return identity(root)")
 	bound := materializerBinding(t, record)
+	catalogState := bound.Compilation().catalog
 	committed, sites := queryCanonicalProgram(t, record, bound)
 
 	publications, published := bound.QueryPublications(committed, sites)
@@ -113,16 +118,17 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 	}
 	valuePublications := make([]QueryPublication, 0, 1)
 	effectPublications := make([]QueryPublication, 0, 1)
+	placementPublications := make([]QueryPublication, 0, 1)
 	for index, publication := range publications {
 		contract := publication.Contract()
 		if !publication.Key.Available() || !contract.Available() || !contract.FamilyID().Available() || !contract.Codec().Available() {
 			t.Fatalf("publication %d does not carry complete address and codec identity", index)
 		}
-		position, positioned := queryPositionForFamily(publication.Site.Family)
-		if !positioned || position < 0 || position >= len(registry.queries) || registry.queries[position] == nil {
+		position, positioned := queryPositionForFamily(catalogState, publication.Site.Family)
+		if !positioned || position < 0 || position >= len(catalogState.queries) || catalogState.queries[position] == nil {
 			t.Fatalf("publication %d names no sealed query registration", index)
 		}
-		registration := registry.queries[position]
+		registration := catalogState.queries[position]
 		if contract.FamilyID() != identity.ContentID(registration.ID()) || contract.Codec() != registration.Freezer() {
 			t.Fatalf("publication %d does not carry its registration family and codec identity", index)
 		}
@@ -134,12 +140,14 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 			valuePublications = append(valuePublications, publication)
 		case QueryFamilyEffectExact:
 			effectPublications = append(effectPublications, publication)
+		case QueryFamilyPlacementSummary:
+			placementPublications = append(placementPublications, publication)
 		default:
 			t.Fatalf("publication %d names unknown family %q", index, publication.Site.Family)
 		}
 	}
-	if len(valuePublications) == 0 || len(effectPublications) == 0 {
-		t.Fatal("fixture did not publish both Value and Effect query families")
+	if len(valuePublications) == 0 || len(effectPublications) == 0 || len(placementPublications) == 0 {
+		t.Fatal("fixture did not publish Value, Effect, and Placement query families")
 	}
 
 	sealed, sealFailure, sealedOK := committed.Seal(nil)
@@ -166,6 +174,7 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 	}
 	valueHits := make([]queryHit, 0, len(valuePublications))
 	effectHits := make([]queryHit, 0, len(effectPublications))
+	placementHits := make([]queryHit, 0, len(placementPublications))
 	for _, publication := range publications {
 		answer, status := snapshot.Query(&view, queryPlan, publication.Key)
 		switch status {
@@ -184,12 +193,14 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 			valueHits = append(valueHits, hit)
 		case QueryFamilyEffectExact:
 			effectHits = append(effectHits, hit)
+		case QueryFamilyPlacementSummary:
+			placementHits = append(placementHits, hit)
 		default:
 			t.Fatalf("query answer names unknown family %q", publication.Site.Family)
 		}
 	}
-	if len(valueHits) == 0 || len(effectHits) == 0 {
-		t.Fatal("fixture yielded no borrowed answers for both query families")
+	if len(valueHits) == 0 || len(effectHits) == 0 || len(placementHits) == 0 {
+		t.Fatal("fixture yielded no borrowed answers for Value, Effect, and Placement query families")
 	}
 
 	for index, hit := range valueHits {
@@ -212,6 +223,21 @@ func TestQueryPublicationsSealFamilyCodecAndCanonicalizeBorrowedAnswers(t *testi
 		if index == 0 {
 			if _, wrong := hit.publication.CanonicalCell(valueHits[0].answer); wrong {
 				t.Fatal("Effect publication accepted a Value answer")
+			}
+		}
+		assertCanonicalCellHasNoCallback(t, cell)
+	}
+	for index, hit := range placementHits {
+		cell, encoded := hit.publication.CanonicalCell(hit.answer)
+		if !encoded || !cell.Available() || cell.ContractID() != hit.publication.Contract().ContentID() {
+			t.Fatal("Placement publication did not seal its borrowed answer under its complete identity")
+		}
+		if index == 0 {
+			if _, wrong := hit.publication.CanonicalCell(valueHits[0].answer); wrong {
+				t.Fatal("Placement publication accepted a Value answer")
+			}
+			if _, wrong := hit.publication.CanonicalCell(effectHits[0].answer); wrong {
+				t.Fatal("Placement publication accepted an Effect answer")
 			}
 		}
 		assertCanonicalCellHasNoCallback(t, cell)

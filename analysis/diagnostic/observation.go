@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
+	programstate "github.com/wippyai/go-lua/analysis/schema/program/state"
+	"github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -216,7 +218,14 @@ type Conformance struct {
 	Actual      uint32
 	DeclaredMay runtimekind.Set
 	Target      string
-	Evidence    []identity.ContentID
+	// Member is the declared field text a structural site names: the field the
+	// constructor did not establish, or the field its member was measured
+	// against. It is read from the declared record's own field row, which is
+	// the one place the analyzer holds a member's authored spelling after the
+	// program's source arena is dropped. A site measured against an array
+	// element or a map value names no field and carries none.
+	Member   string
+	Evidence []identity.ContentID
 	// Producers is the execution geometry of the measured value: the rule
 	// occurrences that produce it and the base evidence point each one anchors
 	// to. It is the same geometry a branch condition carries, because the
@@ -237,7 +246,8 @@ func (payload Conformance) Available() bool {
 func (payload Conformance) empty() bool {
 	return !payload.Site.Declared() && !payload.Owner.Available() && !payload.Measured.Available() && !payload.Declared.Available() &&
 		!payload.Span.Available() && payload.Position == 0 && payload.Actual == 0 &&
-		payload.DeclaredMay == 0 && payload.Target == "" && len(payload.Evidence) == 0 && len(payload.Producers) == 0
+		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" &&
+		len(payload.Evidence) == 0 && len(payload.Producers) == 0
 }
 
 // Observation is one mounted diagnostic observation row projected from a
@@ -397,6 +407,7 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 				Owner: observation.OwnerID(), Measured: observation.MeasuredValueID(),
 				Declared: observation.DeclaredStaticTypeID(), Span: observation.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
+				Member:    conformanceMemberText(cold, observation),
 				Evidence:  append([]identity.ContentID(nil), points...),
 				Producers: producers,
 			}
@@ -501,6 +512,51 @@ func diagnosticObservationSite(site programdiagnostic.DiagnosticObservationSite)
 	default:
 		return schemadiag.SiteNone
 	}
+}
+
+// conformanceMemberText is the authored field name a structural conformance
+// site names. The site publishes the member's own declared node and, for an
+// absent member, that member's ordinal in the declared record, so the field row
+// is recovered by matching both columns against the declared record-field
+// plane.
+//
+// An element of an array and a value of a map are declared by no field row, so
+// they name no member and the column stays empty rather than borrowing a
+// field's spelling from a sibling declaration.
+func conformanceMemberText(cold programstate.State, observation programdiagnostic.DiagnosticObservation) string {
+	if !observation.Site().Structural() {
+		return ""
+	}
+	view, viewOK := staticnode.NewView(cold)
+	count, countOK := view.StaticTypeNodeRecordFieldCount()
+	position, positionOK := observation.Position()
+	if !viewOK || !countOK || !positionOK {
+		return ""
+	}
+	matched := ""
+	for index := 0; index < count; index++ {
+		field, held := view.StaticTypeNodeRecordFieldAt(index)
+		if !held || !field.Available() || field.ChildID() != observation.DeclaredStaticTypeID() {
+			continue
+		}
+		// An absent member names its ordinal in the declared record, so the two
+		// columns together select one field row. An established member names the
+		// allocation's ordinal instead, which is a different denominator, so the
+		// child node alone selects it - and a node several records share names
+		// no single field, which is answered as no member rather than as one of
+		// them.
+		if observation.Site() == programdiagnostic.DiagnosticObservationSiteMemberAbsent {
+			if field.Position() != position {
+				continue
+			}
+			return field.Text()
+		}
+		if matched != "" && matched != field.Text() {
+			return ""
+		}
+		matched = field.Text()
+	}
+	return matched
 }
 
 // declaredMay reads one declaration out of the published declared-type column.

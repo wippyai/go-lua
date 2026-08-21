@@ -144,7 +144,7 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 	}
 	mounts := emptyArtifactMounts(t, linked)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -156,21 +156,22 @@ func emptyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, emptyFi
 }
 
 type emptyFixtureMounts struct {
-	linked *link.Link
-	heap   []heapdomain.ArtifactMount
-	value  []valuedomain.ArtifactMount
+	linked      *link.Link
+	compilation composite.Compilation
+	heap        []heapdomain.ArtifactMount
+	value       []valuedomain.ArtifactMount
 }
 
 func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("empty artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := emptyFixtureMounts{linked: linked, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
+	mounts := emptyFixtureMounts{linked: linked, compilation: compilation, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
@@ -179,7 +180,7 @@ func emptyArtifactMounts(t testing.TB, linked *link.Link) emptyFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("empty artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("empty artifact compile: %v", failure)
 		}

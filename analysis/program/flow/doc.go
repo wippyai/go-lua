@@ -1,6 +1,5 @@
 // Package flow owns the authored Flow relation and the one published Flow
-// component. It owns no query authority of its own beyond the two capability
-// fences named below.
+// component. It owns no second query authority over its child results.
 //
 // # Shape
 //
@@ -23,17 +22,11 @@
 //
 // # What this shell owns
 //
-//	the seal path     Build takes the authored vocabulary into a construction
-//	                  Draft; Assemble consumes that Draft with its Source,
+//	the seal path     Assemble consumes the authored Draft with its Source,
 //	                  Static, and Module siblings and publishes one Component
-//	                  and its View. View routes a query to its owner and
-//	                  applies the composition fence before handing the owner
-//	                  out.
-//	the fences        Draft withholds the authored Finalizer, Authored
-//	                  withholds the authored owner's internal storage, Outcomes withholds the
-//	                  owner's Find join, and Ports withholds the sealed term
-//	                  denominator. Each is a capability this altitude declines
-//	                  to publish, not a copy of an owner's rows.
+//	                  and its View. View validates the composition fence, then
+//	                  returns the sealed result owned by the child package;
+//	                  it does not redeclare or copy that result's vocabulary.
 //	the denominator   CountRows over sealed owner projections.
 //	the identities    the allocation-path, value-source, storage, call, and
 //	                  function content identities minted once at assembly.

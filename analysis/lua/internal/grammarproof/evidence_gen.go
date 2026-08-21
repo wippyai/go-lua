@@ -3,8 +3,8 @@
 package grammarproof
 
 var Generated = Evidence{
-	Digest:      "c3083c81ba3f275a125f8489df2bf3e73eecab8cb05274dda3a27b5e5bd19d63",
-	TraceDigest: "c27768a13f33958037c4308f026d0e8e1ea3e3eeb701fb7f476541eb0fc7fbff",
+	Digest:      "dec5ca103701db13a12fd414307d1783fc638195accff2c47a9b532577836927",
+	TraceDigest: "a43a673e19d15e82eb209cbeb42a0042ce8b5b133a75671dd51629e4f67f193f",
 	Productions: []Production{
 		{Key: "afunctioncall#1", Witness: "fixture:testdata/fixtures/semantic/call-result-callable-completion/main.lua"},
 		{Key: "annotation#1", Witness: "grammar:annotations"},
@@ -249,7 +249,7 @@ var Generated = Evidence{
 		{Key: "varlist#1", Witness: "fixture:testdata/fixtures/advice/always-true-guard/main.lua"},
 		{Key: "varlist#2", Witness: "fixture:testdata/fixtures/modules/google-client-metadata-regression/client.lua"},
 	},
-	IngressDigest: "0e8aad264b35e631bc5d2f7d416b327a3a4fb2b9d0bd1d30ec3f846ca70dbbec",
+	IngressDigest: "34a04feab69de32bcb69dab3b8a9712f1e8bbaa07458897b29d7e8be01c0f042",
 	Ingress: []Ingress{
 		{Source: "fixture:testdata/fixtures/advice/always-true-guard/main.lua", ProgramID: "61f95786700264c9fded8a7d446c71f11bca023fa02564dac9c0b3d6e0fbb4f1"},
 		{Source: "fixture:testdata/fixtures/advice/invariant-loop-read/main.lua", ProgramID: "366e8fcd294109eae739073512006efb583816ee1b9388090bc851cbf0d770de"},
@@ -359,7 +359,7 @@ var Generated = Evidence{
 		{Source: "fixture:testdata/fixtures/flow/uninitialized-local-nil-survives-branch-merge/main.lua", ProgramID: "033de4bffdb6dea21204194c0c133892c61a95e13df87a69e095fa1dd19d069f"},
 		{Source: "fixture:testdata/fixtures/frame-local/captured/main.lua", ProgramID: "df3374551684415c6c84edfb65882837232b39d0443aa26b420f0817d8401f44"},
 		{Source: "fixture:testdata/fixtures/frame-local/loop-suspension/main.lua", ProgramID: "7b260a2594a3c265505a6b08a94577fadf6498891fa2eefbbc3d26553e2be6a4"},
-		{Source: "fixture:testdata/fixtures/frame-local/pure-scratch-table/main.lua", ProgramID: "a43cee775b5ce7681c58ae8420cada5e9620aa6f532fbddfde8f7d4a02fbf6a3"},
+		{Source: "fixture:testdata/fixtures/frame-local/pure-scratch-table/main.lua", ProgramID: "ca6a14b98ede975b5a741216cf2d77601d91eec3683e3e2b96417e824a9a01c8"},
 		{Source: "fixture:testdata/fixtures/frame-local/receive-before-last-use/main.lua", ProgramID: "06163a90047f0e14747875848ef9f8c3904258b1c667a6c45d65717d034fc46a"},
 		{Source: "fixture:testdata/fixtures/frame-local/returned/main.lua", ProgramID: "9a25cc573194673662cafb9ac5f023ee43a6a81e07710343b1ffdddeb9bba4b3"},
 		{Source: "fixture:testdata/fixtures/frame-local/stored-module-state/main.lua", ProgramID: "bc166cbe72a086bda3fcfc822d4f32b093c849466e145e22c7548052730908e3"},
@@ -885,7 +885,7 @@ var Generated = Evidence{
 		{Source: "fixture:testdata/fixtures/placement/transitive-lib-local-chain/main.lua", ProgramID: "917b17f2aff81054eaf68ca1a004cacbf5038f9bd7a1b25b81962b6068a6218f"},
 		{Source: "fixture:testdata/fixtures/placement/transitive-lib-local-chain/pass.lua", ProgramID: "227e38919d96c44fb64221ec55229fdee72568fad460a91f5c0a61840718d1bd"},
 		{Source: "fixture:testdata/fixtures/placement/upload-materialized-row-clean/main.lua", ProgramID: "8c8b069627b6bd0c621239f23194127e9b11d4b44195a64ef7194fb241e1e31d"},
-		{Source: "fixture:testdata/fixtures/placement/webhooks-mlist-row-filter/main.lua", ProgramID: "7d7d5d345a75022f3c143510ed1625348708edfb1d1a5a038afe355872fdc9fc"},
+		{Source: "fixture:testdata/fixtures/placement/webhooks-mlist-row-filter/main.lua", ProgramID: "37fb69edda243a972c870983216dd442660ed851139fdbdb6db73e9f53b5fe50"},
 		{Source: "fixture:testdata/fixtures/realworld/advanced-type-system-stress/events.lua", ProgramID: "62b147347a322143d5aba78ac369ad11071fcdf13233f4f59849d8eae35fd392"},
 		{Source: "fixture:testdata/fixtures/realworld/advanced-type-system-stress/main.lua", ProgramID: "32a6bf28f9febbfbf1ac368a11cf861ccf4448046abf2e65e7b032d764c6baee"},
 		{Source: "fixture:testdata/fixtures/realworld/advanced-type-system-stress/pipeline.lua", ProgramID: "f52c0f2b67afe3d62a03d91eec7cc987c7cf3bfb605a84cbd561c29f37bb448f"},

@@ -1,6 +1,7 @@
 package diagnostic
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -176,6 +177,48 @@ func sealEntries(t *testing.T, entries []*Entry) schema.SealFailure {
 	t.Helper()
 	_, failure := sealSurfaces(t, entries, []schema.Key{"value", "heap"})
 	return failure
+}
+
+// sealEntriesWith seals one inventory against a chosen structural vocabulary,
+// so a law about a row keyed by a vocabulary member is stated against a table
+// that declares it.
+func sealEntriesWith(t *testing.T, entries []*Entry, vocabulary schema.Surface) schema.SealFailure {
+	t.Helper()
+	builder := schema.NewBuilder()
+	for kind := schema.SurfaceKind(1); kind.Available(); kind++ {
+		switch kind {
+		case schema.SurfaceKindDiagnostic:
+			builder.Register(NewSurface(entries))
+		case schema.SurfaceKindStructure:
+			builder.Register(vocabulary)
+		case schema.SurfaceKindAxis:
+			builder.Register(scratchSiblingSurface{kind: kind, keys: []schema.Key{"value", "heap"}})
+		case schema.SurfaceKindRule:
+			builder.Register(scratchSiblingSurface{kind: kind, keys: []schema.Key{"value-source"}})
+		default:
+			builder.Register(scratchSiblingSurface{kind: kind, keys: []schema.Key{"scratch"}})
+		}
+	}
+	_, failure := builder.Seal()
+	return failure
+}
+
+// scratchContent is one row's declared content, so a law about what enters a
+// digest compares the bytes the surface writes rather than the struct.
+func scratchContent(t *testing.T, entry *Entry) string {
+	t.Helper()
+	var content bytes.Buffer
+	writer := &framing.Writer{}
+	if err := writer.Reset(&content, "diagnostic/law/entry-content", 1); err != nil {
+		t.Fatalf("entry content: %v", err)
+	}
+	if err := entry.EntryContent(writer); err != nil {
+		t.Fatalf("entry content: %v", err)
+	}
+	if err := writer.Finish(); err != nil {
+		t.Fatalf("entry content: %v", err)
+	}
+	return content.String()
 }
 
 // TestDiagnosticSurfaceSealsCompleteInventory is the baseline: a complete
@@ -492,19 +535,19 @@ func TestDiagnosticStaticObservationIsUnique(t *testing.T) {
 // LaneBranch rows may share a population only when they declare distinct
 // sites, and that mixing a sited row with an unsited sibling is refused.
 func TestDiagnosticBranchSiteDiscriminatesSharedObservation(t *testing.T) {
-	assign := scratchSpec("type.assign.declared_type", scratchFamilyType)
+	assign := scratchSpec("type.assignment", scratchFamilyType)
 	assign.Observation = member(scratchObservationConformance)
-	assign.Site = SiteAssignment
+	assign.Sites = []Site{SiteAssignment, SiteMember, SiteMemberAbsent}
 	call := scratchSpec("type.call.direct.argument_type", scratchFamilyType)
 	call.Observation = member(scratchObservationConformance)
-	call.Site = SiteCallArgument
+	call.Sites = []Site{SiteCallArgument}
 	if failure := sealEntries(t, []*Entry{mustEntry(t, assign), mustEntry(t, call)}); failure.Available() {
 		t.Fatalf("distinct sites on a shared branch population rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 
 	duplicate := scratchSpec("type.call.direct.argument_type", scratchFamilyType)
 	duplicate.Observation = member(scratchObservationConformance)
-	duplicate.Site = SiteAssignment
+	duplicate.Sites = []Site{SiteMember}
 	failure := sealEntries(t, []*Entry{mustEntry(t, assign), mustEntry(t, duplicate)})
 	if failure.Law != LawSiteUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate branch site sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
@@ -522,7 +565,7 @@ func TestDiagnosticBranchSiteDiscriminatesSharedObservation(t *testing.T) {
 	}
 	declared := scratchSpec("lint.unused.local", scratchFamilyLint)
 	declared.Lane, declared.Observation, declared.Fact, declared.Collection = LaneDeclared, Reference{}, Reference{}, Reference{}
-	declared.Site = SiteAssignment
+	declared.Sites = []Site{SiteAssignment}
 	if _, ok := New(declared); ok {
 		t.Fatal("declared lane carrying a site admitted")
 	}
@@ -760,5 +803,161 @@ func TestDiagnosticTableProjectsEverySealedRow(t *testing.T) {
 	row, rowOK := table.ForCode(entries[0].Code())
 	if !rowOK || row != entries[0] {
 		t.Fatal("the derived table does not resolve a sealed row by its published code")
+	}
+}
+
+// scratchVerdictVocabulary names the conformance verdict members a variant row
+// is keyed by. It is the shape of the vocabulary a judgment contributes, not
+// that judgment's own catalog: what these laws are about is what the
+// diagnostic surface does with a member of it.
+func scratchVerdictVocabulary(t *testing.T) schema.Surface {
+	t.Helper()
+	base, baseOK := scratchVocabulary(t).(scratchVocabularySurface)
+	if !baseOK {
+		t.Fatal("scratch vocabulary is not a structural contribution")
+	}
+	specs := []structure.Spec{
+		{Key: "conformance-verdict/violates", Category: structure.CategoryConformanceVerdict, Ordinal: 1, Spelling: "violates", Accepted: true},
+		{Key: "conformance-verdict/member-absent", Category: structure.CategoryConformanceVerdict, Ordinal: 2, Spelling: "member absent", Accepted: true},
+	}
+	for _, spec := range specs {
+		entry, ok := structure.New(spec)
+		if !ok {
+			t.Fatalf("scratch verdict member %q rejected by construction", spec.Key)
+		}
+		base.entries = append(base.entries, entry)
+	}
+	return base
+}
+
+// scratchVariantSpec is one row whose presentation is per verdict: the two
+// answers below read different payloads, which is the whole reason a row
+// declares variants instead of one message.
+func scratchVariantSpec(code Code) Spec {
+	spec := scratchSpec(code, scratchFamilyType)
+	spec.Observation = member(scratchObservationConformance)
+	spec.Collection = Reference{Surface: schema.SurfaceKindObservation, Key: "value-summary/type-conformance"}
+	spec.Sites = []Site{SiteAssignment, SiteMemberAbsent}
+	spec.Requirements, spec.Message, spec.Help, spec.Evidence, spec.Labels = RequiresInvalid, "", "", nil, nil
+	spec.Variants = []Variant{
+		{
+			Verdict:      1,
+			Requirements: RequiresSubject | RequiresActual,
+			Message:      "cannot assign {subject} because it is {actual}",
+			Help:         "Assign a value of the declared type",
+			Evidence:     []Evidence{{Anchor: AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} is {actual}"}},
+			Labels:       []Label{{Anchor: AnchorPrimary, Text: "assigned value"}},
+		},
+		{
+			Verdict:      2,
+			Requirements: RequiresMember,
+			Message:      "object literal is missing required field \"{member}\"",
+			Help:         "Supply {member}",
+			Evidence:     []Evidence{{Anchor: AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no field \"{member}\" is established"}},
+			Labels:       []Label{{Anchor: AnchorPrimary, Text: "object literal"}},
+		},
+	}
+	return spec
+}
+
+// TestDiagnosticVariantRendersOnePresentationPerVerdict states the surface
+// extension a judgment with a verdict vocabulary needs: one code renders one
+// presentation per declared answer, each with its own payload contract, and an
+// answer the row does not declare renders nothing rather than borrowing
+// another answer's message.
+func TestDiagnosticVariantRendersOnePresentationPerVerdict(t *testing.T) {
+	entry := mustEntry(t, scratchVariantSpec("type.assignment"))
+	if entry.VariantCount() != 2 {
+		t.Fatalf("variant count = %d, want 2", entry.VariantCount())
+	}
+	violates, violatesOK := entry.Presentation(1)
+	absent, absentOK := entry.Presentation(2)
+	if !violatesOK || !absentOK {
+		t.Fatal("a declared answer has no presentation")
+	}
+	if violates.Message.Text() != "cannot assign {subject} because it is {actual}" || absent.Message.Text() != "object literal is missing required field \"{member}\"" {
+		t.Fatalf("presentations = %q and %q", violates.Message.Text(), absent.Message.Text())
+	}
+	if violates.Requirements != RequiresSubject|RequiresActual || absent.Requirements != RequiresMember {
+		t.Fatalf("payload contracts = %d and %d", violates.Requirements, absent.Requirements)
+	}
+	if _, undeclared := entry.Presentation(3); undeclared {
+		t.Fatal("an undeclared answer rendered a presentation")
+	}
+	if _, unkeyed := entry.Presentation(0); unkeyed {
+		t.Fatal("a variant row rendered a presentation for no answer at all")
+	}
+}
+
+// TestDiagnosticVariantPayloadIsExactlyWhatItsAnswerReads states the payload
+// law per answer. A variant that requires a field nothing in it reads would put
+// dead weight on its producer; one that reads a field it does not require would
+// leave a hole a renderer finds at render time.
+func TestDiagnosticVariantPayloadIsExactlyWhatItsAnswerReads(t *testing.T) {
+	unread := scratchVariantSpec("type.assignment")
+	unread.Variants[1].Requirements = RequiresMember | RequiresTarget
+	if _, ok := New(unread); ok {
+		t.Fatal("a variant requiring a field its presentation never reads was admitted")
+	}
+	unrequired := scratchVariantSpec("type.assignment")
+	unrequired.Variants[0].Requirements = RequiresSubject
+	if _, ok := New(unrequired); ok {
+		t.Fatal("a variant reading a field it does not require was admitted")
+	}
+}
+
+// TestDiagnosticRowDeclaresOnePresentationOrItsAnswers states that a code
+// carries one rendering. A row that authored both would leave a reader to
+// decide which one a finding rendered from, and a duplicate answer would give
+// one verdict two messages.
+func TestDiagnosticRowDeclaresOnePresentationOrItsAnswers(t *testing.T) {
+	both := scratchVariantSpec("type.assignment")
+	both.Message, both.Requirements = "unknown value {subject}", RequiresSubject
+	if _, ok := New(both); ok {
+		t.Fatal("a row authoring its own message beside its answers was admitted")
+	}
+	duplicate := scratchVariantSpec("type.assignment")
+	duplicate.Variants[1].Verdict = duplicate.Variants[0].Verdict
+	if _, ok := New(duplicate); ok {
+		t.Fatal("a row declaring one answer twice was admitted")
+	}
+	unkeyed := scratchVariantSpec("type.assignment")
+	unkeyed.Variants[0].Verdict = 0
+	if _, ok := New(unkeyed); ok {
+		t.Fatal("a variant naming no answer was admitted")
+	}
+}
+
+// TestDiagnosticVariantResolvesItsDeclaredVerdict states the cross-surface
+// law: a variant is keyed by a member of the sealed verdict vocabulary, so a
+// presentation no collector can ever select is a rejected build rather than
+// prose nothing reaches.
+func TestDiagnosticVariantResolvesItsDeclaredVerdict(t *testing.T) {
+	declared := mustEntry(t, scratchVariantSpec("type.assignment"))
+	if failure := sealEntriesWith(t, []*Entry{declared}, scratchVerdictVocabulary(t)); failure.Available() {
+		t.Fatalf("a row keyed by declared answers was rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	if failure := sealEntries(t, []*Entry{declared}); failure.Law != LawVariantDeclared {
+		t.Fatalf("a row keyed against an undeclared vocabulary sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	spec := scratchVariantSpec("type.assignment")
+	spec.Variants[1].Verdict = 7
+	foreign := mustEntry(t, spec)
+	failure := sealEntriesWith(t, []*Entry{foreign}, scratchVerdictVocabulary(t))
+	if failure.Law != LawVariantDeclared || failure.Disposition != schema.DispositionIncomplete {
+		t.Fatalf("a variant keyed by an undeclared answer sealed: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+}
+
+// TestDiagnosticVariantsAreDeclaredContent states that a row's answers enter
+// its digest. Two rows differing only in what one answer renders are two
+// declarations, not one.
+func TestDiagnosticVariantsAreDeclaredContent(t *testing.T) {
+	first := mustEntry(t, scratchVariantSpec("type.assignment"))
+	spec := scratchVariantSpec("type.assignment")
+	spec.Variants[0].Message = "cannot assign {subject}; it is {actual}"
+	second := mustEntry(t, spec)
+	if scratchContent(t, first) == scratchContent(t, second) {
+		t.Fatal("two rows whose answers render differently wrote one content")
 	}
 }

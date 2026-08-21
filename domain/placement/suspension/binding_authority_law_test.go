@@ -1,0 +1,143 @@
+package suspension_test
+
+import (
+	"crypto/sha256"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/lua/lower"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/link"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
+	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/heap"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
+	suspension "github.com/wippyai/go-lua/domain/placement/suspension"
+	valuedomain "github.com/wippyai/go-lua/domain/value"
+	valueowner "github.com/wippyai/go-lua/domain/value/owner"
+	"github.com/wippyai/go-lua/internal/testfixture"
+)
+
+// TestSuspensionBindRejectsEqualSchemaForeignBinding proves that schema and
+// heap/value equality are not sufficient authority for a hot suspension rule.
+// The two owners below share the exact same cold Schema and concrete domain
+// schemas, but their private engine bindings are distinct transactions.
+func TestSuspensionBindRejectsEqualSchemaForeignBinding(t *testing.T) {
+	placementSchema, values := newSuspensionBindingLawSchemas(t)
+	builder := engine.NewSchema()
+	placementFragment, placementOK := placementowner.DeclareSchema(builder, suspensionBindingLawSemantic(1), suspensionBindingLawSemantic(2))
+	evidenceFragment, evidenceFactorOK := suspension.DeclareEvidenceFactorSchema(builder, suspensionBindingLawSemantic(3), suspensionBindingLawSemantic(4))
+	valueFragment, valueOK := valueowner.DeclareSchema(builder, suspensionBindingLawSemantic(5), suspensionBindingLawSemantic(6), suspensionBindingLawSemantic(7))
+	fragment, fragmentOK := suspension.DeclareSchema(builder, suspensionBindingLawSemantic(8), suspensionBindingLawSemantic(9), valueFragment, placementFragment)
+	evidenceRuleFragment, evidenceRuleOK := suspension.DeclareEvidenceSchema(builder, suspensionBindingLawSemantic(10), suspensionBindingLawSemantic(11), valueFragment, evidenceFragment)
+	cold, coldOK := builder.Seal()
+	if !placementOK || !evidenceFactorOK || !valueOK || !fragmentOK || !evidenceRuleOK || !coldOK || cold == nil {
+		t.Fatalf("suspension binding law declaration placement=%t evidenceFactor=%t value=%t class=%t evidence=%t cold=%t", placementOK, evidenceFactorOK, valueOK, fragmentOK, evidenceRuleOK, coldOK)
+	}
+	localBinding := engine.NewSchemaBinding(cold)
+	foreignBinding := engine.NewSchemaBinding(cold)
+	localPlacement, localPlacementOK := placementowner.BindHot(localBinding, placementFragment, placementSchema)
+	foreignPlacement, foreignPlacementOK := placementowner.BindHot(foreignBinding, placementFragment, placementSchema)
+	localEvidence, localEvidenceOK := suspension.BindEvidenceFactorHot(localBinding, evidenceFragment, placementSchema)
+	foreignEvidence, foreignEvidenceOK := suspension.BindEvidenceFactorHot(foreignBinding, evidenceFragment, placementSchema)
+	localValues, localValuesOK := valueowner.BindHot(localBinding, valueFragment, values)
+	foreignValues, foreignValuesOK := valueowner.BindHot(foreignBinding, valueFragment, values)
+	if localBinding == nil || foreignBinding == nil || !localPlacementOK || !foreignPlacementOK || !localEvidenceOK || !foreignEvidenceOK || !localValuesOK || !foreignValuesOK || localPlacement == nil || foreignPlacement == nil || localEvidence == nil || foreignEvidence == nil || localValues == nil || foreignValues == nil {
+		t.Fatalf("suspension binding law owner setup localPlacement=%t foreignPlacement=%t localEvidence=%t foreignEvidence=%t localValues=%t foreignValues=%t", localPlacementOK, foreignPlacementOK, localEvidenceOK, foreignEvidenceOK, localValuesOK, foreignValuesOK)
+	}
+	classCases := []struct {
+		name      string
+		placement *placementowner.HotOwner
+		values    *valueowner.HotOwner
+	}{
+		{name: "foreign placement", placement: foreignPlacement, values: localValues},
+		{name: "foreign value", placement: localPlacement, values: foreignValues},
+		{name: "both foreign", placement: foreignPlacement, values: foreignValues},
+	}
+	for _, item := range classCases {
+		if rule, ok := suspension.BindHot(localBinding, fragment, item.placement, item.values, values, placementSchema); ok || rule != nil {
+			t.Fatalf("class bind accepted %s owner from an equal-schema foreign binding", item.name)
+		}
+	}
+	evidenceCases := []struct {
+		name     string
+		evidence *suspension.EvidenceOwner
+		values   *valueowner.HotOwner
+	}{
+		{name: "foreign evidence", evidence: foreignEvidence, values: localValues},
+		{name: "foreign value", evidence: localEvidence, values: foreignValues},
+		{name: "both foreign", evidence: foreignEvidence, values: foreignValues},
+	}
+	for _, item := range evidenceCases {
+		if rule, ok := suspension.BindEvidenceHot(localBinding, evidenceRuleFragment, item.evidence, item.values, values, placementSchema); ok || rule != nil {
+			t.Fatalf("evidence bind accepted %s owner from an equal-schema foreign binding", item.name)
+		}
+	}
+	classRule, classRuleOK := suspension.BindHot(localBinding, fragment, localPlacement, localValues, values, placementSchema)
+	evidenceRule, evidenceRuleOK := suspension.BindEvidenceHot(localBinding, evidenceRuleFragment, localEvidence, localValues, values, placementSchema)
+	sealed := localBinding.Seal()
+	if !classRuleOK || classRule == nil || !evidenceRuleOK || evidenceRule == nil || !sealed {
+		t.Fatalf("local suspension bind class=%t evidence=%t sealed=%t", classRuleOK, evidenceRuleOK, sealed)
+	}
+	if catalog := classRule.Catalog(); catalog == nil || catalog.Count() != 0 {
+		count := -1
+		if catalog != nil {
+			count = catalog.Count()
+		}
+		t.Fatalf("local class suspension catalog = %v count=%d, want empty", catalog, count)
+	}
+	if catalog := evidenceRule.Catalog(); catalog == nil || catalog.Count() != 0 {
+		count := -1
+		if catalog != nil {
+			count = catalog.Count()
+		}
+		t.Fatalf("local evidence suspension catalog = %v count=%d, want empty", catalog, count)
+	}
+}
+
+func newSuspensionBindingLawSchemas(t testing.TB) (placementdomain.Schema, *valuedomain.Schema) {
+	t.Helper()
+	program, err := lower.Lower(lower.Source{Name: "placement-suspension-binding-law.lua", Text: []byte("return 1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := link.Seal(&link.Spec{Target: target, Modules: []linkproject.Module{{Name: "placement-suspension-binding-law", Program: program}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, receiptOK := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	grammarOK := grammar.Available()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	shard, shardOK := linked.Project().Mounts().At(0)
+	module, moduleOK := linked.Project().ModuleKey(shard)
+	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
+	structural, structuralOK := composite.StructureVocabulary(receipt)
+	snapshot, lowered := ingress.Lower(artifact, structural)
+	mount, mountOK := heap.NewArtifactMount(snapshot, module, programID)
+	heapSchema, heapFailure := heap.SealWithArtifacts(linked, []heap.ArtifactMount{mount})
+	placementSchema, placementOK := placementdomain.NewSchema(heapSchema)
+	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshot, module, programID)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heapSchema, []valuedomain.ArtifactMount{valueMount}, structural)
+	if !receiptOK || !grammarOK || !issuanceOK || failure.Available() || artifact == nil || !lowered || !shardOK || !moduleOK || !programIDOK || !structuralOK || !mountOK || !valueMountOK || heapFailure != heap.SealFailureNone || !placementOK || valueFailure != valuedomain.SealFailureNone || values == nil {
+		t.Fatalf("suspension binding law fixture grammar=%t failure=%v artifact=%v ingress=%t shard=%t module=%t program=%t structural=%t mount=%t valueMount=%t heap=%v placement=%t value=%v", grammarOK, failure, artifact, lowered, shardOK, moduleOK, programIDOK, structuralOK, mountOK, valueMountOK, heapFailure, placementOK, valueFailure)
+	}
+	return placementSchema, values
+}
+
+func suspensionBindingLawSemantic(seed byte) identity.SemanticKey {
+	digest := sha256.Sum256([]byte{0xE5, seed})
+	key, ok := identity.NewSemanticKey(digest, 1)
+	if !ok {
+		panic("suspension binding law semantic key")
+	}
+	return key
+}

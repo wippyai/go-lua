@@ -16,8 +16,5 @@
       },
       "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }

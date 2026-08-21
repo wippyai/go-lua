@@ -3,6 +3,7 @@ package activation
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 )
@@ -167,22 +168,24 @@ func mountedTargetBatchRows(mount programmount.MountedArtifact, algebra *calldom
 	if algebra == nil || !mount.Program.Available() {
 		return nil, false
 	}
-	targetCount, targetsPublished := mount.CallTargetCount()
-	if !targetsPublished {
+	state, stateOK := mount.Program.ColdState()
+	targets, targetsOK := calltarget.NewView(state)
+	targetCount, targetsPublished := targets.Count()
+	if !stateOK || !targetsOK || !targetsPublished {
 		return nil, false
 	}
 	rows := make([]TargetBatchRow, 0, targetCount)
 	for index := 0; index < targetCount; index++ {
-		target, targetOK := mount.CallTargetAt(index)
-		capability, capabilityOK := algebra.TargetForAllocation(mount.ModuleKey, target.Allocation)
+		target, targetOK := targets.At(index)
+		capability, capabilityOK := algebra.TargetForAllocation(mount.ModuleKey, target.AllocationID())
 		body, bodyCapabilityOK := capability.Body()
 		role, roleOK := body.RoleID()
 		bodyPath, pathOK := body.BodyPath()
 		programID, programOK := body.ProgramID()
-		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.Body || programID != mount.ProgramID {
+		if !targetOK || !target.Available() || !capabilityOK || !bodyCapabilityOK || !roleOK || !pathOK || !programOK || bodyPath != target.BodyID() || programID != mount.ProgramID {
 			return nil, false
 		}
-		rows = append(rows, TargetBatchRow{Body: body, BodyPath: target.Body, Role: role})
+		rows = append(rows, TargetBatchRow{Body: body, BodyPath: target.BodyID(), Role: role})
 	}
 	return rows, true
 }

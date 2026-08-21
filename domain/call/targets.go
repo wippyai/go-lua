@@ -9,6 +9,7 @@ import (
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
@@ -59,6 +60,7 @@ type targetRow struct {
 	seedOperation   vocabulary.Operation
 	seedFormalID    identity.ContentID
 	seedKind        uint8
+	scopedLoader    bool
 }
 
 func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkboundary.Component) bool {
@@ -93,31 +95,33 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 			}
 			bodies[body.ID()] = body
 		}
-		targetCount, targetsPublished := mount.CallTargetCount()
-		if !targetsPublished {
+		state, stateOK := mount.Program.ColdState()
+		targets, targetsOK := calltarget.NewView(state)
+		targetCount, targetsPublished := targets.Count()
+		if !stateOK || !targetsOK || !targetsPublished {
 			return false
 		}
 		for index := 0; index < targetCount; index++ {
-			target, ok := mount.CallTargetAt(index)
-			body, bodyOK := bodies[target.Body]
+			target, ok := targets.At(index)
+			body, bodyOK := bodies[target.BodyID()]
 			function, functionOK := body.FunctionContextID()
 			formal, formalOK := body.CallFormalID()
-			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.Context != body.ContextID() || target.Function != function || target.Formal != formal {
+			if !ok || !target.Available() || !bodyOK || !body.Callable() || !functionOK || !formalOK || target.ContextID() != body.ContextID() || target.FunctionID() != function || target.FormalID() != formal {
 				return false
 			}
-			key := targetKey{kind: targetBody, moduleKey: mount.ModuleKey, bodyContext: target.Context}
-			if !programID.Available() || !target.Body.Available() || !target.Formal.Available() || !target.Context.Available() ||
+			key := targetKey{kind: targetBody, moduleKey: mount.ModuleKey, bodyContext: target.ContextID()}
+			if !programID.Available() || !target.BodyID().Available() || !target.FormalID().Available() || !target.ContextID().Available() ||
 				algebra.targetIndex[key].valid() || !algebra.appendTarget(targetRow{
-				key: key, functionContext: target.Function, bodyContext: target.Context,
+				key: key, functionContext: target.FunctionID(), bodyContext: target.ContextID(),
 				artifactID: mount.ArtifactID, programID: programID,
-				bodyPath: target.Body, formalID: target.Formal,
+				bodyPath: target.BodyID(), formalID: target.FormalID(),
 			}) {
 				return false
 			}
-			if algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.Allocation}].valid() {
+			if algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.AllocationID()}].valid() {
 				return false
 			}
-			algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.Allocation}] = selector(len(algebra.targets))
+			algebra.allocationIndex[allocationTargetKey{moduleKey: mount.ModuleKey, allocationID: target.AllocationID()}] = selector(len(algebra.targets))
 		}
 	}
 	// Executable function bodies are the sole body-target prefix.  Retaining
@@ -143,7 +147,14 @@ func (algebra *Algebra) buildTargets(mounts []MountedArtifact, boundary *linkbou
 		formal, formalOK := seeds.CallTarget(seed)
 		formalID, formalIDOK := formal.ID()
 		operationValue, _ := seeds.Operation(seed)
-		if !seedIDOK || !formalOK || !formalIDOK || !seedID.Available() || !algebra.appendTarget(targetRow{key: targetKey{kind: targetSeed, seedID: seedID}, seedOperation: operationValue, seedFormalID: formalID, seedKind: uint8(formal.Kind())}) {
+		// A scoped loader is the Target-authored require operation selected for
+		// this mounted shard. Retain that exact operation on the existing seed
+		// target so downstream factors can distinguish require from every other
+		// callable without reopening Boundary or forming a Call×operation table.
+		if loader && operationValue == 0 {
+			operationValue = algebra.requireOperation
+		}
+		if !seedIDOK || !formalOK || !formalIDOK || !seedID.Available() || !algebra.appendTarget(targetRow{key: targetKey{kind: targetSeed, seedID: seedID}, seedOperation: operationValue, seedFormalID: formalID, seedKind: uint8(formal.Kind()), scopedLoader: loader}) {
 			return false
 		}
 	}

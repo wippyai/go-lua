@@ -20,7 +20,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
-	"github.com/wippyai/go-lua/domain/call"
 	"github.com/wippyai/go-lua/domain/pack"
 	internalhash "github.com/wippyai/go-lua/internal/hash"
 )
@@ -341,20 +340,6 @@ func (a *Algebra) ContainsCallID(root Root, applicationID identity.ContentID) bo
 	return a.callInRootID(root, applicationID)
 }
 
-// OpaqueCallUnknown converts an exact admitted opaque Call alternative into
-// the Factor's one unknown vocabulary atom. Call is evidence only: it is not
-// retained, enumerated, or made into a Factor root.
-func (a *Algebra) OpaqueCallUnknown(root Root, calls *call.Algebra, applicationID identity.ContentID, value call.Value) (Atom, bool) {
-	if !a.ownsRoot(root) || calls == nil || !calls.Valid() || !calls.LinkOwner().Matches(a.linkOwner) || !value.HasOpaqueAlternative() {
-		return Atom{}, false
-	}
-	key, ok := calls.KeyForApplicationID(applicationID)
-	if !ok || !calls.Admits(key, value) || !a.callInRootID(root, applicationID) {
-		return Atom{}, false
-	}
-	return Atom{owner: a, root: root.slot, id: a.unknownID}, true
-}
-
 // OpenOperationUnknown requires an exact selected operation with its explicit
 // unknown-open effect row. Row variables remain unsupported and fail closed.
 func (a *Algebra) OpenOperationUnknown(root Root, applicationID identity.ContentID, owner vocabulary.Operation) (Atom, bool) {
@@ -408,104 +393,6 @@ func (a *Algebra) CallbackEffectAtom(root Root, applicationID identity.ContentID
 		return Atom{}, false
 	}
 	return binding.Atom()
-}
-
-// SelectedCallEffects reduces the explicit ordinary and callback effects of
-// one operation already selected by a Rule-owned Call target. It keeps no
-// selection state: every invocation revalidates the canonical witnesses.
-// Unsupported authored rows fail closed so a caller cannot silently omit them.
-func (a *Algebra) SelectedCallEffects(root Root, applicationID identity.ContentID, operation vocabulary.Operation) (Value, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
-		return Value{}, false
-	}
-	tail, _, ok := a.contract.Operations.EffectTail(operation)
-	if !ok || (tail != vocabulary.RowClosed && tail != vocabulary.RowUnknownOpen) {
-		return Value{}, false
-	}
-	atomCount := a.contract.Operations.EffectCount(operation)
-	callbacks := a.contract.Operations.CallbackCount(operation)
-	for callbackIndex := 0; callbackIndex < callbacks; callbackIndex++ {
-		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
-		if !ok {
-			return Value{}, false
-		}
-		callbackTail, _, ok := a.contract.Operations.CallbackEffectTail(callback)
-		if !ok || (callbackTail != vocabulary.RowClosed && callbackTail != vocabulary.RowUnknownOpen) {
-			return Value{}, false
-		}
-		var added bool
-		atomCount, added = checkedIntAdd(atomCount, a.contract.Operations.CallbackEffectCount(callback))
-		if !added {
-			return Value{}, false
-		}
-	}
-	atoms := make([]Atom, 0, atomCount)
-	for effect := 0; effect < a.contract.Operations.EffectCount(operation); effect++ {
-		atom, ok := a.CallEffectAtom(root, applicationID, operation, effect)
-		if !ok {
-			return Value{}, false
-		}
-		atoms = append(atoms, atom)
-	}
-	for callbackIndex := 0; callbackIndex < callbacks; callbackIndex++ {
-		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
-		if !ok {
-			return Value{}, false
-		}
-		for effect := 0; effect < a.contract.Operations.CallbackEffectCount(callback); effect++ {
-			atom, ok := a.CallbackEffectAtom(root, applicationID, operation, callback, effect)
-			if !ok {
-				return Value{}, false
-			}
-			atoms = append(atoms, atom)
-		}
-	}
-	return a.FromAtoms(atoms)
-}
-
-// SelectedCallOpaque reduces only explicit unknown-open Target rows for one
-// Rule-selected operation. Fully closed rows contribute Bottom; RowVariable
-// is unsupported and therefore rejects the whole selected operation.
-func (a *Algebra) SelectedCallOpaque(root Root, applicationID identity.ContentID, operation vocabulary.Operation) (Value, bool) {
-	if !a.ownsRoot(root) || !a.selectedCall(root, applicationID, operation) {
-		return Value{}, false
-	}
-	tail, _, ok := a.contract.Operations.EffectTail(operation)
-	if !ok || tail == vocabulary.RowVariable {
-		return Value{}, false
-	}
-	var unknown Atom
-	known := false
-	if tail == vocabulary.RowUnknownOpen {
-		atom, ok := a.OpenOperationUnknown(root, applicationID, operation)
-		if !ok {
-			return Value{}, false
-		}
-		unknown, known = atom, true
-	}
-	for callbackIndex := 0; callbackIndex < a.contract.Operations.CallbackCount(operation); callbackIndex++ {
-		callback, ok := a.contract.Operations.CallbackAt(operation, callbackIndex)
-		if !ok {
-			return Value{}, false
-		}
-		callbackTail, _, ok := a.contract.Operations.CallbackEffectTail(callback)
-		if !ok || callbackTail == vocabulary.RowVariable {
-			return Value{}, false
-		}
-		if callbackTail == vocabulary.RowUnknownOpen {
-			if !known {
-				atom, ok := a.OpenCallbackUnknown(root, applicationID, operation, callback)
-				if !ok {
-					return Value{}, false
-				}
-				unknown, known = atom, true
-			}
-		}
-	}
-	if !known {
-		return a.Bottom(), true
-	}
-	return a.Singleton(unknown)
 }
 
 func (a *Algebra) Bottom() Value {
@@ -606,20 +493,6 @@ func (a *Algebra) Transport(value Value, root Root) (Value, bool) {
 		atoms[i] = Atom{owner: a, root: root.slot, id: atom.id}
 	}
 	return a.value(root.slot, false, atoms), true
-}
-
-// CompareAtoms gives the canonical identity order for two owned atoms.
-func (a *Algebra) CompareAtoms(left, right Atom) (int, bool) {
-	if !left.validFor(a) || !right.validFor(a) {
-		return 0, false
-	}
-	if left.id == right.id {
-		return 0, true
-	}
-	if lessID(left.id, right.id) {
-		return -1, true
-	}
-	return 1, true
 }
 
 func (a *Algebra) Owns(value Value) bool { return a.owns(value) }

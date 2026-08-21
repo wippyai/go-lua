@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -32,6 +33,7 @@ type Projection struct {
 // Root rows come only from the mount-qualified result geometry. The
 // projection never reopens Link, Program, Source, or Flow to recover them.
 func Detach(
+	compilation composite.Compilation,
 	geometry Geometry,
 	mounts []programmount.MountedArtifact,
 	valueSchema *valuedomain.Schema,
@@ -41,14 +43,17 @@ func Detach(
 	queryPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	observationPlan snapshot.QueryPlan[identity.ContentID, engine.Answer],
 	selects anadiag.ChannelSelectInput,
+	vocabulary structure.Table,
+	declarations schemadiag.Table,
+	collections composite.DiagnosticCollections,
 ) (*Projection, bool) {
-	if !geometry.Valid() || len(queries) == 0 || published == nil || !published.Published() || !queryPlan.Available() || !observationPlan.Available() {
+	if !compilation.Available() || !geometry.Valid() || len(queries) == 0 || published == nil || !published.Published() || !queryPlan.Available() || !observationPlan.Available() || !declarations.Available() || !collections.Available() {
 		return nil, false
 	}
 	if !anadiag.BindConditionCoordinates(geometry.BranchObservations, valueSchema) {
 		return nil, false
 	}
-	diagnosticObservations, publicationsOK := anadiag.Publications(geometry.BranchObservations)
+	diagnosticObservations, publicationsOK := anadiag.Publications(compilation, geometry.BranchObservations)
 	if !publicationsOK {
 		return nil, false
 	}
@@ -62,7 +67,7 @@ func Detach(
 	}
 	projection := &Projection{Result: result}
 	if policy != nil && len(policy.Enabled) != 0 {
-		report := anadiag.NewReport(result.SourceID(), result.ContentID())
+		report := anadiag.NewReport(result.SourceID(), result.ContentID(), compilation, vocabulary, declarations, collections)
 		if !anadiag.CollectReport(report, *policy, geometry.BranchObservations, geometry.ConformanceObservations, geometry.StaticObservations,
 			diagnosticObservations, len(geometry.values), valueSchema, published, observationPlan, selects) {
 			return nil, false

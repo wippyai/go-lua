@@ -23,10 +23,11 @@ type valueDraft struct {
 }
 
 type rootDraft struct {
-	identity  string
-	aggregate vocabulary.BootAggregate
-	immutable bool
-	value     valueDraft
+	identity   string
+	modulePath string
+	aggregate  vocabulary.BootAggregate
+	immutable  bool
+	value      valueDraft
 }
 
 type entryDraft struct {
@@ -69,11 +70,18 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 	}
 	roots := make([]rootDraft, len(input.InitialRoots))
 	rootIndex := make(map[string]vocabulary.InitialRoot, len(input.InitialRoots))
+	moduleRoots := make(map[string]struct{}, len(input.InitialRoots))
 	for index, item := range input.InitialRoots {
 		if item.Identity == "" || !validAggregate(item.Shape.Aggregate) {
 			return frozenLedger{}, errors.New("target/boot: invalid initial root")
 		}
-		roots[index] = rootDraft{identity: item.Identity, aggregate: item.Shape.Aggregate, immutable: item.Shape.Immutable}
+		if item.ModulePath != "" {
+			if _, duplicate := moduleRoots[item.ModulePath]; duplicate {
+				return frozenLedger{}, errors.New("target/boot: duplicate module root path")
+			}
+			moduleRoots[item.ModulePath] = struct{}{}
+		}
+		roots[index] = rootDraft{identity: item.Identity, modulePath: item.ModulePath, aggregate: item.Shape.Aggregate, immutable: item.Shape.Immutable}
 	}
 	sort.Slice(roots, func(left, right int) bool { return roots[left].identity < roots[right].identity })
 	for index := range roots {
@@ -218,7 +226,7 @@ func freezeLedger(input Input, keys exactkey.Table, operations operation.Core) (
 		if !ok {
 			return frozenLedger{}, errors.New("target/boot: unresolved boot shape value")
 		}
-		rootRows[index] = rootRow{identity: root.identity, shape: vocabulary.BootShape(index + 1)}
+		rootRows[index] = rootRow{identity: root.identity, modulePath: root.modulePath, shape: vocabulary.BootShape(index + 1)}
 		shapeRows[index] = shapeRow{root: vocabulary.InitialRoot(index + 1), aggregate: root.aggregate, immutable: root.immutable, value: value}
 	}
 	valueRows := make([]valueRow, len(unique))

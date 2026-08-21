@@ -20,7 +20,9 @@ func TestCompileCatalogueStandardLibraryContentIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "880a480bb89838a325e5a96b601f60a46c59efb64f9878f99075fead0f866d9e"
+	// Formal ownership and the explicit authored module-path-to-root relation
+	// are both part of Target semantic identity.
+	const want = "21fc3c824d9a8016e4461085bfa1d71bd467638316ad23b53f8681780792269b"
 	if got := contract.ContentID().String(); got != want {
 		t.Fatalf("standard-library Target identity = %s, want %s", got, want)
 	}

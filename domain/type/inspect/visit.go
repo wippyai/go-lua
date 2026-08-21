@@ -28,7 +28,7 @@ type Visitor[R any] struct {
 
 // Visit applies the first matching handler in v to t.
 func Visit[R any](t typ.Type, v Visitor[R]) R {
-	t = unwrapTransparent(t)
+	t = typ.UnwrapTransparentWrappers(t)
 
 	switch tt := t.(type) {
 	case *typ.Optional:

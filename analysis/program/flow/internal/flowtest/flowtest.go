@@ -8,15 +8,14 @@ package flowtest
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-// CloseFinalizers aborts a Source/Authored/Imports finalizer set in reverse
-// construction order. Static is an immutable value and needs no abort.
-func CloseFinalizers(sourceFinal source.Finalizer, flowFinal authored.Finalizer, moduleFinal imports.Finalizer) {
-	_ = moduleFinal.Abort()
+// CloseFinalizers aborts a Source/Authored finalizer set in reverse
+// construction order. Static and authored Module identity are immutable
+// projections of the Flow draft and need no separate lifecycle owner.
+func CloseFinalizers(sourceFinal source.Finalizer, flowFinal authored.Finalizer) {
 	_ = flowFinal.Abort()
 	_ = sourceFinal.Abort()
 }

@@ -187,6 +187,13 @@ const (
 	// disciplines a native publication column names. Its ordinals are
 	// value.NumericOverflow's own numbering.
 	CategoryNativeNumericOverflow
+	// CategoryConformanceVerdict is the vocabulary of assignment conformance
+	// answers: what a measured value's runtime families say about the type its
+	// target declares. Its ordinals are the conformance judgment's own
+	// numbering, and a diagnostic row keyed by them declares one presentation
+	// per answer, so one published code renders the finding the verdict names
+	// rather than one message for every answer at once.
+	CategoryConformanceVerdict
 	categoryLimit
 )
 
@@ -350,6 +357,30 @@ func (entry *Entry) Key() schema.Key { return entry.key }
 func (entry *Entry) ID() schema.EntryID { return entry.id }
 
 func (entry *Entry) Category() Category { return entry.category }
+
+// Member resolves one vocabulary member by its category and ordinal against a
+// table this surface has already sealed into. It is the ordinal counterpart of
+// Resolve: a surface above this one that names a member by the ordinal its
+// owner assigned reaches the declaration through this rather than projecting a
+// whole table of its own, which a surface sealing mid-catalog cannot do.
+func Member(sealed schema.Sealed, category Category, ordinal uint16) (*Entry, schema.Disposition) {
+	if !category.Available() || ordinal == 0 {
+		return nil, schema.DispositionMalformed
+	}
+	view, registered := sealed.Surface(schema.SurfaceKindStructure)
+	if !registered || !view.Available() {
+		return nil, schema.DispositionIncomplete
+	}
+	for position := 0; position < view.Count(); position++ {
+		row, rowOK := view.At(position)
+		entry, entryOK := row.(*Entry)
+		if !rowOK || !entryOK || entry == nil || entry.category != category || entry.ordinal != ordinal {
+			continue
+		}
+		return entry, schema.DispositionAccepted
+	}
+	return nil, schema.DispositionIncomplete
+}
 
 func (entry *Entry) Ordinal() uint16 { return entry.ordinal }
 

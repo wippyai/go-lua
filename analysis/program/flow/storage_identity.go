@@ -19,7 +19,7 @@ func (view View) StorageAssignmentID(term keyspace.Term) (identity.ContentID, bo
 	width, widthOK := assigns.WriteCount(term)
 	body, bodyOK := view.FunctionBoundaries().ForBody(owner)
 	bodyPath, bodyPathOK := view.BodyPath(owner)
-	assignmentPath, assignmentPathOK := view.StorageAssignmentPath(term)
+	assignmentPath, assignmentPathOK := view.SemanticTermPath(term)
 	if !related || !widthOK || width <= 0 || !view.Executable().Contains(term) {
 		return identity.ContentID{}, false
 	}

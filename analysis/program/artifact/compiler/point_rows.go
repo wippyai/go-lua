@@ -1,24 +1,25 @@
 package compiler
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
-	"github.com/wippyai/go-lua/analysis/schema"
 )
 
-// pointDraft is an exact parent-issued LocalWTO phase vertex path. Its ordered
-// decision IDs and initial disposition are copied from canonical Flow point
-// sites; Link never has to reopen Program to recover point geometry.
+// pointDraft is an exact parent-issued LocalWTO phase vertex path. The base
+// row owns the final decision vector for decisionScope; synthetic stage rows
+// retain only that scope reference, so Link never has to reopen Program or
+// copy point geometry to recover a stage's logical decisions.
 type pointDraft struct {
-	id        identity.ContentID
-	decisions []identity.ContentID
-	initial   bool
+	id            identity.ContentID
+	decisionScope identity.ContentID
+	decisions     []identity.ContentID
+	initial       bool
 }
 
 func (point pointDraft) ID() identity.ContentID { return point.id }
-func (point pointDraft) Available() bool        { return point.id.Available() }
+func (point pointDraft) Available() bool {
+	return point.id.Available() && point.decisionScope.Available()
+}
 func (point pointDraft) DecisionCount() int {
 	if !point.Available() {
 		return 0
@@ -53,47 +54,6 @@ type environmentEdgeDraft struct {
 	hasReset  bool
 	mu        identity.ContentID
 	hasMu     bool
-}
-
-// localTransferDraft is compiler-only assembly state for one Program local
-// transport. The sealed Artifact does not retain this row: Freeze converts it
-// to programschema.LocalTransfer and the canonical Program publication owns
-// the resulting family.
-type localTransferDraft struct {
-	id     identity.ContentID
-	from   identity.ContentID
-	to     identity.ContentID
-	full   bool
-	writes []schema.Key
-}
-
-func (edge localTransferDraft) Available() bool {
-	if !edge.id.Available() || !edge.from.Available() || !edge.to.Available() || edge.from == edge.to || edge.full == (len(edge.writes) != 0) {
-		return false
-	}
-	for index, write := range edge.writes {
-		if !write.Available() || index != 0 && edge.writes[index-1] >= write {
-			return false
-		}
-	}
-	return true
-}
-
-// orderedWrites is the closed emission order of one factor transport: unique
-// available keys, strictly ascending. The transfer identity hashes this
-// sequence, so two emissions of the same set produce one ID.
-func orderedWrites(writes []schema.Key) ([]schema.Key, bool) {
-	if len(writes) == 0 {
-		return nil, true
-	}
-	ordered := append([]schema.Key(nil), writes...)
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
-	for index, write := range ordered {
-		if !write.Available() || index != 0 && ordered[index-1] >= write {
-			return nil, false
-		}
-	}
-	return ordered, true
 }
 
 func (edge environmentEdgeDraft) ID() identity.ContentID      { return edge.id }

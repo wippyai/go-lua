@@ -328,15 +328,3 @@ func (table Table) At(position int) (*Entry, bool) {
 	}
 	return table.entries[position], true
 }
-
-func (table Table) ByKey(key schema.Key) (*Entry, bool) {
-	if !table.available || !key.Available() {
-		return nil, false
-	}
-	for _, entry := range table.entries {
-		if entry != nil && entry.Key() == key {
-			return entry, true
-		}
-	}
-	return nil, false
-}

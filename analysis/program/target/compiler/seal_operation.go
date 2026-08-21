@@ -96,6 +96,10 @@ func freezeOperation(source int, input vocabulary.OperationSpec, semantics schem
 	if err := draft.freezeEffects(input.Effects); err != nil {
 		return operationDraft{}, err
 	}
+	draft.formalEffects, draft.formalEffectTail, err = freezeFormalEffects(input.FormalEffects)
+	if err != nil {
+		return operationDraft{}, err
+	}
 	if input.SubedgeRelation != nil {
 		branch := *input.SubedgeRelation
 		branch.EffectAliases = append([]uint32(nil), input.SubedgeRelation.EffectAliases...)

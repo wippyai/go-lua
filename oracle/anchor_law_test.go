@@ -117,7 +117,7 @@ func anchorMultivariantDispatch(t *testing.T) {
 	}
 	matched := make([]anchorFinding, 0, 1)
 	for _, finding := range findings {
-		if finding.code == want.Code && finding.line == uint32(want.Line) && finding.column == uint32(want.Column) && finding.severity == corpusDiagnosticSeverity(want.Severity) {
+		if finding.code == want.Code && finding.line == uint32(want.Line) && finding.column == uint32(want.Column) && finding.severity == corpusDiagnosticSeverity(run.compilation, want.Severity) {
 			matched = append(matched, finding)
 		}
 	}
@@ -146,15 +146,14 @@ func anchorMultivariantDispatch(t *testing.T) {
 		}
 	}
 
-	// Clause 4: the placement plane. This is the architect's anchor
-	// expectation, not an aspirational skip: Result must publish a solved
-	// placement projection for this fixture. The placement domain declares no
-	// axis, rule role, or factor, so Result has no placement surface at all and
-	// this clause is a standing red that defines done: it clears when the closed
-	// semantic transfer over Value, Heap, Residence, Footprint, and Effect
-	// converges into a placement factor (journal seq 2134) and Result publishes
-	// the projection that factor issues.
-	t.Error("anchor clause 4: placement Result surface is unavailable; a solved placement projection is required")
+	// Clause 4: the placement plane. Result must publish a solved Placement
+	// projection for this fixture through Placement's declarative query family
+	// and codec. If the leak consumers are still incomplete, the adapter names
+	// that classification gap separately; a missing family is an operational
+	// publication defect.
+	for _, mismatch := range corpusPlacementProjectionDefects(run) {
+		t.Errorf("anchor clause 4: %s", mismatch)
+	}
 }
 
 // anchorRecursiveUnion anchors the recursive Json union: the mu-type recurses
@@ -186,7 +185,7 @@ func anchorRecursiveUnion(t *testing.T) {
 	// same inline matcher the acceptance mode uses.
 	matched := 0
 	for _, finding := range findings {
-		if corpusSemanticInlineMatch(expectation, inline, corpusSemanticAcceptanceFinding{
+		if corpusSemanticInlineMatch(run.compilation, expectation, inline, corpusSemanticAcceptanceFinding{
 			file: finding.file, line: finding.line, column: finding.column, severity: finding.severity, code: finding.code, message: finding.message,
 		}) {
 			matched++

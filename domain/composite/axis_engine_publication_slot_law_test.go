@@ -3,6 +3,7 @@ package composite
 import (
 	"testing"
 
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -18,13 +19,15 @@ import (
 // the leading prefix, so a compile-time publication can seal that prefix
 // without filling factor columns that do not exist yet.
 func TestEnginePublishedColumnsLeadTheSnapshotSlotRange(t *testing.T) {
-	requests, ok := WriteRequests()
+	compilation, publication := publicationForTest(t)
+	state := compilation.catalog
+	requests, ok := publication.WriteRequests()
 	if !ok || len(requests) == 0 {
 		t.Fatal("the sealed table issues no write requests")
 	}
 	engineCount := 0
 	for _, request := range requests {
-		writer, writerOK := axisForKey(request.Writer)
+		writer, writerOK := axisForKey(state, request.Writer)
 		if !writerOK {
 			t.Fatalf("column %q is written by unknown axis %q", request.Output, request.Writer)
 		}
@@ -46,7 +49,7 @@ func TestEnginePublishedColumnsLeadTheSnapshotSlotRange(t *testing.T) {
 		t.Fatal("the sealed table publishes no engine-written column")
 	}
 
-	selectColumn, projected := ProjectAxis[identity.ContentID, channelselect.CaseFact](selectapply.OutputKey)
+	selectColumn, projected := analysiscatalog.ProjectAxis[identity.ContentID, channelselect.CaseFact](publication, selectapply.OutputKey)
 	if !projected || !selectColumn.Available() {
 		t.Fatal("channel-select-case/facts projects no address")
 	}
@@ -54,7 +57,7 @@ func TestEnginePublishedColumnsLeadTheSnapshotSlotRange(t *testing.T) {
 		t.Fatalf("channel-select-case/facts occupies slot %d, so a select-only publication cannot seal", selectColumn.Slot)
 	}
 
-	schemaID, schemaOK := PublicationSchema()
+	schemaID, schemaOK := publication.SchemaID()
 	if !schemaOK {
 		t.Fatal("publication schema")
 	}

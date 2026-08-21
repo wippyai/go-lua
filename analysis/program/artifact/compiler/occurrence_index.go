@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -71,7 +72,7 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
 			seenAttachments[key] = struct{}{}
-			id := digest("analysis/program-artifact/point-attachment", artifactFormat(), bytesField(key.site), bytesField(key.point))
+			id := artifactdigest.Digest("analysis/program-artifact/point-attachment", artifactFormat(), artifactdigest.ContentID(key.site), artifactdigest.ContentID(key.point))
 			if !id.Available() || !compiler.appendOccurrence(programschema.OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{key.point}, []identity.ContentID{key.site}, 0) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
@@ -120,7 +121,7 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 	}
 	pointOffset, inputOffset := uint32(len(compiler.occurrencePoints)), uint32(len(compiler.occurrenceInputs))
 	row, rowOK := programschema.NewOccurrence(kind, id, body, code, pointOffset, uint32(len(points)), inputOffset, uint32(len(inputs)), literalFamily, literal, literalOK)
-	if !rowOK || !occurrenceSemanticAvailable(row) {
+	if !rowOK || !programschema.OccurrenceSemanticAvailable(row) {
 		return false
 	}
 	for _, pointID := range points {

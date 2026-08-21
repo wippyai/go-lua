@@ -90,17 +90,6 @@ func AddSelectedRouteRuleDirectExactRead[O any, RV any](issuer *RuleImplementati
 	return engine.BindSelectedRuleDirectExactRead[coordinate](issuer.owner.binding, issuer.slot, slot, factor, project)
 }
 
-// AddSelectedRouteRuleDirectRead installs a static-selector predecessor at
-// its declared cold ordinal on a directly bound Heap Rule.
-func AddSelectedRouteRuleDirectRead[O any, RV any, Tag interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}](issuer *RuleImplementation[O], slot engine.SchemaReadSlot[RV], factor engine.FactorRef[RV], locate func(engine.SelectorContext) bool) (engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
-		return engine.Read[engine.Selection[Tag, engine.OrderedCells[RV]]]{}, false
-	}
-	return engine.BindSelectedRuleDirectSelectedRead[coordinate, heap.Value, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
-}
-
 // AddSelectedRouteRuleDirectOperandRead installs an operand-dependent
 // selector at its declared cold ordinal on a directly bound Heap Rule.
 func AddSelectedRouteRuleDirectOperandRead[O any, RV any, Tag interface {

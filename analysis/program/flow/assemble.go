@@ -26,18 +26,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
 	"github.com/wippyai/go-lua/analysis/program/flow/staticcheck"
-	"github.com/wippyai/go-lua/analysis/program/imports"
+	"github.com/wippyai/go-lua/analysis/program/flow/subjectflow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 )
 
-// Assemble is the one and only Flow publication transaction. The Source,
-// Module, and Flow owners use their construction capabilities; Static arrives
-// as an immutable component and its build-time validation view remains local
-// to this call. Assemble derives every cross-owner relation in the fixed DAG
-// and publishes no Assembly until all four child components exist.
+// Assemble is the one and only Flow publication transaction. Source and Flow
+// use their construction capabilities; Static arrives as an immutable
+// component and its build-time validation view remains local to this call.
+// Authored imports and their scalar ModuleID are read from the live Flow view;
+// no separate Module owner lifecycle participates in this transaction.
 //
 // The entry is the canonical top-level Body.  It is checked by every
 // structural owner that observes it; no owner is allowed to infer a different
@@ -46,23 +46,20 @@ func Assemble(
 	sourceFinalizer source.Finalizer,
 	staticComponent *static.Component,
 	staticView staticquery.View,
-	moduleFinalizer imports.Finalizer,
-	draft *Draft,
+	draft *authored.Draft,
 	entry keyspace.Term,
 ) (*Assembly, error) {
-	flowFinalizer, err := draft.claim()
+	flowFinalizer, err := draft.Finalizer()
 	if err != nil {
 		return nil, err
 	}
 
 	var (
 		sourceTerminal bool
-		moduleTerminal bool
 		flowTerminal   bool
 	)
 	abort := func() {
-		abortOwners(sourceFinalizer, moduleFinalizer, flowFinalizer,
-			sourceTerminal, moduleTerminal, flowTerminal)
+		abortOwners(sourceFinalizer, flowFinalizer, sourceTerminal, flowTerminal)
 	}
 	fail := func(stage string, cause error) (*Assembly, error) {
 		abort()
@@ -73,12 +70,12 @@ func Assemble(
 	}
 
 	preimage := sourceFinalizer.Preimage()
-	moduleView := moduleFinalizer.View()
 	authoredLive := flowFinalizer.View()
+	moduleView := authoredLive.Imports()
 	sourceID := preimage.Identity().ContentID()
 	flowID := authoredLive.ContentID()
 	staticID := staticView.ContentID()
-	moduleID := moduleView.ContentID()
+	moduleID := authoredLive.ModuleID()
 	if staticComponent == nil || staticComponent.ContentID() != staticID ||
 		!sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return fail("owner preflight", errors.New("one or more claimed owner views are unavailable"))
@@ -215,40 +212,21 @@ func Assemble(
 	if err != nil {
 		return fail("Continuation", err)
 	}
-	valueSourcePaths, err := sealCertificateValueSourcePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
-	if err != nil {
+	if err := validateCertificateValueSourcePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID); err != nil {
 		return fail("Value source paths", err)
 	}
-	storagePaths, err := sealCertificateStoragePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
-	if err != nil {
+	if err := validateCertificateStoragePaths(sourceView, authoredLive, pathCertificate, staticID, moduleID); err != nil {
 		return fail("Storage paths", err)
 	}
-	allocationPaths, err := sealCertificateAllocationPaths(sourceView, executableResult, authoredLive, pathCertificate, staticID, moduleID)
-	if err != nil {
+	if err := validateCertificateAllocationPaths(sourceView, executableResult, authoredLive, pathCertificate, staticID, moduleID); err != nil {
 		return fail("Allocation paths", err)
 	}
-	callPaths, err := sealCertificateCallPaths(sourceView, authoredLive, pathCertificate, staticID, moduleID)
-	if err != nil {
+	if err := validateCertificateCallPaths(sourceView, authoredLive, pathCertificate, staticID, moduleID); err != nil {
 		return fail("Call paths", err)
 	}
-
-	// Module entry is a private Flow assembly projection.  It is intentionally
-	// kept in module_entry.go; Assemble only invokes it and commits its typed
-	// owner input.  The helper must not return a second entry authority.
-	moduleInput, err := sealModuleEntry(sourceView, authoredLive, moduleView, bodies, executableResult, directFunctionResult, staticID, entry)
+	subjectFlowResult, err := subjectflow.Seal(sourceView, authoredLive, executableResult, causalResult, pathCertificate, sourceID, flowID, staticID, moduleID)
 	if err != nil {
-		return fail("Module entry", err)
-	}
-
-	// Module entry is the last Module consumer, so Module commits immediately.
-	// The successful component remains local until the complete quartet exists.
-	moduleTerminal = true
-	moduleComponent, err := moduleFinalizer.Commit(moduleInput)
-	if err != nil {
-		return fail("Module commit", err)
-	}
-	if moduleComponent == nil {
-		return fail("Module commit", errors.New("module returned no Component"))
+		return fail("Subject flow", err)
 	}
 
 	// Static validation consumes the full transient forest/scope proof and the
@@ -258,7 +236,7 @@ func Assemble(
 	if err != nil {
 		return fail("StaticCheck", err)
 	}
-	callResultAdmissions, callResultAdmissionsOK := deriveCallResultAdmissions(sourceView, authoredLive)
+	callResultAdmissions, callResultTailSlots, callResultAdmissionsOK := deriveCallResultAdmissions(sourceView, authoredLive)
 	if !callResultAdmissionsOK {
 		return fail("Call result geometry", errors.New("authored Values consumer geometry is unavailable or inconsistent"))
 	}
@@ -294,30 +272,24 @@ func Assemble(
 		accessGeometry:       accessGeometryResult,
 		binaryPrimitives:     binaryPrimitivesResult,
 		continuation:         continuationResult,
-		allocationPaths:      allocationPaths,
+		subjectFlow:          subjectFlowResult,
 		semanticPaths:        pathCertificate,
-		valueSourcePaths:     valueSourcePaths,
-		storagePaths:         storagePaths,
-		callPaths:            callPaths,
 		callResultAdmissions: callResultAdmissions,
+		callResultTailSlots:  callResultTailSlots,
 	}
 	return &Assembly{state: &assemblyState{
-		source: sourceComponent,
-		flow:   component,
-		static: staticComponent,
-		module: moduleComponent,
+		source:   sourceComponent,
+		flow:     component,
+		static:   staticComponent,
+		moduleID: moduleID,
 	}}, nil
 }
 
 func abortOwners(
 	sourceFinalizer source.Finalizer,
-	moduleFinalizer imports.Finalizer,
 	flowFinalizer authored.Finalizer,
-	sourceTerminal, moduleTerminal, flowTerminal bool,
+	sourceTerminal, flowTerminal bool,
 ) {
-	if !moduleTerminal {
-		_ = moduleFinalizer.Abort()
-	}
 	if !sourceTerminal {
 		_ = sourceFinalizer.Abort()
 	}

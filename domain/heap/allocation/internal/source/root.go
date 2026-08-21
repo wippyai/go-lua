@@ -9,8 +9,9 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
 	"github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
@@ -265,7 +266,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		field, fieldOK := schema.FieldAt(root.key, index)
 		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
 		program, values, valuesOK := schema.ArtifactValuesForField(field)
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		memberOffset, memberCount, memberSpanOK := values.MemberSpan()
 		member, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
 		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
@@ -274,7 +275,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 			return nil, nil, false
 		}
 		switch descriptor.Kind() {
-		case uint8(flowkind.FieldKey):
+		case heapallocation.FieldKindKey:
 			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
@@ -297,7 +298,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 			if !dynamicOK || !coordinateOK || !appendCoordinate(coordinate) {
 				return nil, nil, false
 			}
-		case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
+		case heapallocation.FieldKindList, heapallocation.FieldKindName, heapallocation.FieldKindExact:
 			// FieldExact nil/NaN is represented by a zero normalized key. It is
 			// non-storable and must not fall through to the dynamic branch.
 			normalized, normalizedOK := descriptor.NormalizedKey()
@@ -332,7 +333,7 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		payload, payloadOK := schema.PayloadForField(field)
 		descriptor, descriptorOK := schema.ArtifactFieldFor(field)
 		program, values, valuesOK := schema.ArtifactValuesForField(field)
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		memberOffset, memberCount, memberSpanOK := values.MemberSpan()
 		member, memberOK := programschema.ValuesMemberFamily().At(&program.Frozen, catalog, int(memberOffset))
 		value, valueRefOK := valueSchema.CoordinateForMountedSemantic(module, member.ID())
@@ -344,12 +345,12 @@ func closedFields(schema heap.Schema, valueSchema *valuedomain.Schema, root Root
 		kind := KeyExact
 		var exact heap.ExactKey
 		switch descriptor.Kind() {
-		case uint8(flowkind.FieldKey):
+		case heapallocation.FieldKindKey:
 			if normalized, normalizedOK := descriptor.NormalizedKey(); !normalizedOK || normalized != 0 {
 				return nil, nil, false
 			}
 			kind = KeyDynamic
-		case uint8(flowkind.FieldList), uint8(flowkind.FieldName), uint8(flowkind.FieldExact):
+		case heapallocation.FieldKindList, heapallocation.FieldKindName, heapallocation.FieldKindExact:
 			// A zero exact key is the non-storable nil/NaN outcome, never a
 			// dynamic selector.
 			normalized, normalizedOK := descriptor.NormalizedKey()

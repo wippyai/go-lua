@@ -308,12 +308,16 @@ func fixture(t testing.TB, module, text string) (heapdomain.Schema, *valuedomain
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
-	structural, structuralOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("keymatch compilation")
+	}
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked, compilation))
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("domain schema")
 	}
@@ -340,12 +344,16 @@ func bootFixture(t testing.TB, module string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
-	structural, structuralOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("keymatch compilation")
+	}
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked, compilation))
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, keymatchValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatal("boot domain schema")
 	}
@@ -371,24 +379,23 @@ func sourceAtom(t testing.TB, values *valuedomain.Schema, linked *link.Link, mat
 	return valuedomain.Atom{}
 }
 
-func keymatchHeapMounts(t testing.TB, linked *link.Link) []heapdomain.ArtifactMount {
+func keymatchHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []heapdomain.ArtifactMount {
 	t.Helper()
-	heapMounts, _ := keymatchArtifactMounts(t, linked)
+	heapMounts, _ := keymatchArtifactMounts(t, linked, compilation)
 	return heapMounts
 }
 
-func keymatchValueMounts(t testing.TB, linked *link.Link) []valuedomain.ArtifactMount {
+func keymatchValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []valuedomain.ArtifactMount {
 	t.Helper()
-	_, valueMounts := keymatchArtifactMounts(t, linked)
+	_, valueMounts := keymatchArtifactMounts(t, linked, compilation)
 	return valueMounts
 }
 
-func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
+func keymatchArtifactMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilation.Available() || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("keymatch artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -402,7 +409,7 @@ func keymatchArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artif
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("keymatch artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("keymatch artifact: %v", failure)
 		}

@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	programimports "github.com/wippyai/go-lua/analysis/program/imports"
+	flowauthored "github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -37,15 +37,10 @@ func (c *Collector) Publish() (*program.Program, error) {
 		sourceFinalizer source.Finalizer
 		staticComponent *static.Component
 		staticView      staticquery.View
-		moduleFinalizer programimports.Finalizer
 		sourceClaimed   bool
-		moduleClaimed   bool
 	)
 	abortClaimed := func() error {
 		var cleanup error
-		if moduleClaimed && !moduleFinalizer.Abort() {
-			cleanup = errors.Join(cleanup, errors.New("program/lower/collector: Module abort failed"))
-		}
 		if sourceClaimed {
 			cleanup = errors.Join(cleanup, sourceFinalizer.Abort())
 		}
@@ -110,27 +105,18 @@ func (c *Collector) Publish() (*program.Program, error) {
 	if err != nil {
 		return fail("Static freeze", err)
 	}
-	moduleInput, err := c.module.Freeze(c.counts)
+	moduleImports, err := c.module.Freeze(c.counts)
 	if err != nil {
 		return fail("Module freeze", err)
 	}
+	flowInput.Imports = moduleImports
 
 	staticComponent, staticView, err = static.Build(staticInput)
 	if err != nil {
 		return fail("Static build", err)
 	}
 
-	moduleDraft, err := programimports.Build(moduleInput)
-	if err != nil {
-		return fail("Module build", err)
-	}
-	moduleFinalizer, err = moduleDraft.Finalizer()
-	if err != nil {
-		return fail("Module claim", err)
-	}
-	moduleClaimed = true
-
-	flowDraft, err := flow.Build(flowInput)
+	flowDraft, err := flowauthored.Build(flowInput)
 	if err != nil {
 		return fail("Flow build", err)
 	}
@@ -139,7 +125,7 @@ func (c *Collector) Publish() (*program.Program, error) {
 	// The Collector scratch is no longer needed once all owner inputs and
 	// drafts are local. Flow owns cleanup for every claimed owner from here.
 	terminalize(c)
-	sealed, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
+	sealed, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, flowDraft, entry)
 	if err != nil {
 		return nil, fmt.Errorf("program/lower: Flow publication: %w", err)
 	}

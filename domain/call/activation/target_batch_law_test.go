@@ -34,10 +34,10 @@ invoke(callee)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !ok || !grammarOK || !issuanceOK {
+	receipt, ok := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !ok || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()

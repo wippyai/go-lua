@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 func TestCompileFailureIsClosedAndFailClosed(t *testing.T) {
@@ -13,7 +14,7 @@ func TestCompileFailureIsClosedAndFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, failure := artifactcompiler.CompileDetailed(published, programartifact.GrammarIdentity{}, artifactcompiler.IssuanceDirectory{})
+	_, failure := artifactcompiler.CompileDetailed(published, programartifact.ExecutionSchemaID{}, issuance.Directory{})
 	if !failure.Available() || failure.Stage() != artifactcompiler.CompileStageAuthority || failure.RowKind() != artifactcompiler.CompileRowAuthority || failure.Reason() != artifactcompiler.CompileReasonGrammarUnavailable {
 		t.Fatalf("invalid grammar did not produce a closed authority failure: %s", failure.Error())
 	}

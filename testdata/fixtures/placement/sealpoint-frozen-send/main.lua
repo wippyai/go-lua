@@ -12,5 +12,8 @@ local packet: Packet = {
     },
 }
 
+-- Luau freeze is shallow. Seal the child before the parent so the complete
+-- payload graph, rather than only its root header, is immutable at send.
+table.freeze(packet.meta)
 table.freeze(packet)
 process.send("worker-1", "packet.ready", packet)

@@ -5,7 +5,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link/mounted"
+	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -27,13 +30,13 @@ var structuralInitializerFixtures = []struct {
 // conformance site there rather than dropping the declaration for want of a
 // producing rule role.
 func TestStructuralInitializerDeclarationIssuesAConformanceSite(t *testing.T) {
-	axes, axesOK := composite.ProducedValueAxes()
-	if !axesOK || len(axes) == 0 {
-		t.Fatal("declared produced-value axes")
-	}
 	for _, fixture := range structuralInitializerFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			testCase := compileMountedPopulationCase(t, fixture.name)
+			axes, axesOK := composite.ProducedValueAxes(testCase.state.compilation)
+			if !axesOK || len(axes) == 0 {
+				t.Fatal("declared produced-value axes")
+			}
 			census, ok := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.mounts, axes)
 			if !ok || !census.Available() {
 				t.Fatalf("seal mounted observation sites: ok=%v available=%v", ok, census.Available())
@@ -64,17 +67,17 @@ func TestStructuralInitializerDeclarationIssuesAConformanceSite(t *testing.T) {
 // census admits those and no others: an allocation's heap placements observe
 // the heap, not the value the constructor denotes.
 func TestConformanceProducersAreTheValueWritingPlacementsAlone(t *testing.T) {
-	axes, axesOK := composite.ProducedValueAxes()
-	if !axesOK || len(axes) == 0 {
-		t.Fatal("declared produced-value axes")
-	}
-	admitted := make(map[string]struct{}, len(axes))
-	for _, axis := range axes {
-		admitted[string(axis)] = struct{}{}
-	}
 	for _, fixture := range structuralInitializerFixtures {
 		t.Run(fixture.name, func(t *testing.T) {
 			testCase := compileMountedPopulationCase(t, fixture.name)
+			axes, axesOK := composite.ProducedValueAxes(testCase.state.compilation)
+			if !axesOK || len(axes) == 0 {
+				t.Fatal("declared produced-value axes")
+			}
+			admitted := make(map[string]struct{}, len(axes))
+			for _, axis := range axes {
+				admitted[string(axis)] = struct{}{}
+			}
 			census, ok := mounted.SealObservationSites(testCase.linked.Boundary(), testCase.mounts, axes)
 			if !ok || !census.Available() {
 				t.Fatalf("seal mounted observation sites: ok=%v available=%v", ok, census.Available())
@@ -157,5 +160,144 @@ func TestEveryPublishedPlacementNamesTheAxisItWrites(t *testing.T) {
 	}
 	if _, sealed := programschema.NewRuleOccurrence("value-source", "value", 0, point, input, programschema.RuleStageLocal, programschema.RuleInputFinish, identity.ContentID{}); !sealed {
 		t.Fatal("a placement naming the axis it writes is refused")
+	}
+}
+
+// structuralMemberSite is one issued conformance row read back out of a
+// mounted artifact: the site it names, where it reports, and the declared node
+// it is measured against.
+type structuralMemberSite struct {
+	site     programdiagnostic.DiagnosticObservationSite
+	location programsource.Span
+	declared identity.ContentID
+	measured identity.ContentID
+	position uint32
+}
+
+// structuralMemberSites reads every conformance row one compiled fixture
+// publishes. The rows are the issuance population; no verdict is read here.
+func structuralMemberSites(t *testing.T, testCase mountedPopulationCase) []structuralMemberSite {
+	t.Helper()
+	rows := make([]structuralMemberSite, 0)
+	for _, mount := range testCase.mounts {
+		program := mount.Snapshot.Program()
+		cold, coldOK := program.ColdState()
+		view, viewOK := programdiagnostic.NewView(cold)
+		count, published := view.DiagnosticObservationCount()
+		if !coldOK || !viewOK || !published {
+			t.Fatal("diagnostic observation column")
+		}
+		for index := 0; index < count; index++ {
+			observation, held := view.DiagnosticObservationAt(index)
+			if !held {
+				t.Fatalf("diagnostic observation %d", index)
+			}
+			if observation.Kind() != structure.DiagnosticObservationTypeConformance {
+				continue
+			}
+			location, locationOK := observation.Location()
+			position, positionOK := observation.Position()
+			if !locationOK || !positionOK {
+				t.Fatalf("conformance observation %d carries no location", index)
+			}
+			rows = append(rows, structuralMemberSite{
+				site: observation.Site(), location: location,
+				declared: observation.DeclaredStaticTypeID(),
+				measured: observation.MeasuredValueID(),
+				position: position,
+			})
+		}
+	}
+	return rows
+}
+
+// recordFieldChild names the declared node one record field resolves to. It is
+// read out of the published static graph, so a member site's declaration is
+// compared against the same column a consumer reads.
+func recordFieldChild(t *testing.T, testCase mountedPopulationCase, field string) identity.ContentID {
+	t.Helper()
+	child := identity.ContentID{}
+	found := 0
+	for _, mount := range testCase.mounts {
+		program := mount.Snapshot.Program()
+		cold, coldOK := program.ColdState()
+		view, viewOK := staticnode.NewView(cold)
+		if !coldOK || !viewOK {
+			t.Fatal("static node cold view")
+		}
+		count, published := view.StaticTypeNodeRecordFieldCount()
+		if !published {
+			t.Fatal("static record field column")
+		}
+		for index := 0; index < count; index++ {
+			row, held := view.StaticTypeNodeRecordFieldAt(index)
+			if !held {
+				t.Fatalf("static record field %d", index)
+			}
+			if row.Text() != field {
+				continue
+			}
+			child = row.ChildID()
+			found++
+		}
+	}
+	if found != 1 || !child.Available() {
+		t.Fatalf("declared field %q resolves to %d nodes", field, found)
+	}
+	return child
+}
+
+// A constructor member is measured where it is written, against the node the
+// declaration gives that member. The offending member of a wrong-field-type
+// initializer therefore reports at its own value, and its declaration is the
+// field's child node -- not the record's, which the whole value already carries.
+func TestConstructorMemberIsMeasuredAtItsOwnSpanAgainstTheFieldNode(t *testing.T) {
+	testCase := compileMountedPopulationCase(t, "types/wrong-field-type")
+	declared := recordFieldChild(t, testCase, "x")
+	members := 0
+	for _, row := range structuralMemberSites(t, testCase) {
+		if row.site != programdiagnostic.DiagnosticObservationSiteMember {
+			continue
+		}
+		if row.location.StartLine != 2 || row.location.StartCol != 23 {
+			continue
+		}
+		members++
+		if row.declared != declared {
+			t.Fatalf("member site at 2:23 is measured against %x, want the field node %x", row.declared, declared)
+		}
+	}
+	if members != 1 {
+		t.Fatalf("wrong-field-type issues %d member sites at 2:23, want 1", members)
+	}
+}
+
+// A required declared field the constructor's key set does not establish is
+// named once, at the constructor, against the missing field's node. An optional
+// field is not required, so its absence names nothing.
+func TestAbsentRequiredMemberIsNamedOnceAndOptionalAbsenceIsNot(t *testing.T) {
+	missing := compileMountedPopulationCase(t, "types/missing-field")
+	declared := recordFieldChild(t, missing, "y")
+	absent := make([]structuralMemberSite, 0)
+	for _, row := range structuralMemberSites(t, missing) {
+		if row.site == programdiagnostic.DiagnosticObservationSiteMemberAbsent {
+			absent = append(absent, row)
+		}
+	}
+	if len(absent) != 1 {
+		t.Fatalf("missing-field issues %d absent-member sites, want 1", len(absent))
+	}
+	if absent[0].declared != declared {
+		t.Fatalf("absent-member site names %x, want the declared field y %x", absent[0].declared, declared)
+	}
+	if absent[0].location.StartLine != 2 {
+		t.Fatalf("absent-member site reports at line %d, want the constructor's line 2", absent[0].location.StartLine)
+	}
+
+	optional := compileMountedPopulationCase(t, "types/record-optional-field")
+	for _, row := range structuralMemberSites(t, optional) {
+		if row.site == programdiagnostic.DiagnosticObservationSiteMemberAbsent {
+			t.Fatalf("an optional declared field is named absent at line %d", row.location.StartLine)
+		}
 	}
 }

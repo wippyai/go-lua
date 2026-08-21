@@ -319,8 +319,11 @@ func (topology *Topology) build() bool {
 				}
 				continue
 			}
-			applicationID, _, _, _, fresh := key.FreshResultID()
+			applicationID, outcomeResultID, _, fresh := key.FreshResultID()
 			if !fresh {
+				return false
+			}
+			if !outcomeResultID.Available() {
 				return false
 			}
 			// Fresh rows are valid only when their source application is an

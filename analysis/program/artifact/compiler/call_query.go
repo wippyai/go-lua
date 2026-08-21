@@ -107,12 +107,6 @@ func (compiler *compiler) callConstruction(index int) (callConstruction, bool) {
 		return callConstruction{}, false
 	}
 	programID := compiler.key.ProgramID()
-	// CompileDetailed always supplies the same root through CompileKey. The
-	// input fallback keeps this construction seam usable by its direct cold
-	// tests, which intentionally omit the surrounding compile-key wrapper.
-	if !programID.Available() {
-		programID = compiler.input.ContentID()
-	}
 	form := accessgeometry.CallFormPlain
 	if receiverTerm != 0 {
 		form = accessgeometry.CallFormMethod

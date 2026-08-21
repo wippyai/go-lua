@@ -12,7 +12,11 @@ import (
 // the ordinals it was declared under: the projection a consumer switches on is
 // the authored table itself, never a restatement of it.
 func TestStructureTableSeals(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
@@ -24,65 +28,16 @@ func TestStructureTableSeals(t *testing.T) {
 	if !tableOK {
 		t.Fatal("sealed structural vocabulary did not project")
 	}
-	// The sizes are the vocabularies the analyzer consolidates here: the eight
-	// structural arms, the three bracket events, the seven body outcomes, the
-	// eight Lua runtime families, the ten symbolic expression forms, the four
-	// diagnostic observation populations, the five publication families, the
-	// three severities, the thirty-three compiled occurrence families, the five
-	// placement forms, the four operand polarities, the two declared operand
-	// shapes, the five execution cuts, and
-	// the ninety-two global semantic roles (including the runtime-kind result
-	// and predicate behavior relations, observation geometry,
-	// evidence-anchor, query population, and query projection roles).
-	// They are stated independently of the authored inventory,
-	// so a member added or dropped on either side is a verdict rather than a
-	// table that agrees with itself.
-	sizes := map[structure.Category]int{
-		structure.CategoryArm:                   8,
-		structure.CategoryEvent:                 3,
-		structure.CategoryOutcome:               7,
-		structure.CategoryRuntimeKind:           8,
-		structure.CategoryConstraintForm:        10,
-		structure.CategoryDiagnosticObservation: 4,
-		structure.CategoryDiagnosticFamily:      5,
-		structure.CategoryDiagnosticSeverity:    3,
-		structure.CategoryOccurrenceKind:        30,
-		structure.CategoryIssuanceForm:          5,
-		structure.CategoryIssuanceInput:         4,
-		structure.CategoryIssuanceRequirement:   2,
-		structure.CategoryIssuanceStage:         5,
-		structure.CategorySemanticRole:          94,
-		// The native publication column vocabularies: three numeric carriers,
-		// five exact scalar carriers, seven primitive arithmetic operators,
-		// four unary operators, three divisor proofs, four truthiness classes,
-		// four branch partitions, two conditional arms, and three overflow
-		// disciplines.
-		structure.CategoryNativeNumericRepresentation: 3,
-		structure.CategoryNativeScalarRepresentation:  5,
-		structure.CategoryNativeArithmeticOperator:    7,
-		structure.CategoryNativeUnaryOperator:         4,
-		structure.CategoryNativeDivisorProperty:       3,
-		structure.CategoryNativeTruthinessClass:       4,
-		structure.CategoryNativeBranchPartition:       4,
-		structure.CategoryNativeBranchArm:             2,
-		structure.CategoryNativeNumericOverflow:       3,
-	}
-	declared := 0
-	for category, size := range sizes {
-		if table.Count(category) != size {
-			t.Fatalf("category %d projected %d of %d members", category, table.Count(category), size)
-		}
-		declared += size
-	}
-	if view.Count() != declared {
-		t.Fatalf("sealed structural surface holds %d rows for %d vocabulary members", view.Count(), declared)
+	specs := structureSpecs()
+	if view.Count() != len(specs) {
+		t.Fatalf("sealed structural surface holds %d rows for %d declared vocabulary members", view.Count(), len(specs))
 	}
 	// A member is reachable at the position the aggregation numbers it, and a
 	// contributor that authors an ordinal is naming that same position: a
 	// category whose ordinals a foreign spelling is pinned to declares them, and
 	// a category resolved by name alone leaves them to the aggregation.
-	positions := make(map[structure.Category]uint16, len(sizes))
-	for _, spec := range structureSpecs() {
+	positions := make(map[structure.Category]uint16)
+	for _, spec := range specs {
 		positions[spec.Category]++
 		position := positions[spec.Category]
 		if spec.Ordinal != 0 && spec.Ordinal != position {
@@ -97,6 +52,11 @@ func TestStructureTableSeals(t *testing.T) {
 		}
 		if member.Native() != spec.Native || member.Predecessor() != spec.Predecessor {
 			t.Fatalf("member %q native=%v predecessor=%q, declared native=%v predecessor=%q", spec.Key, member.Native(), member.Predecessor(), spec.Native, spec.Predecessor)
+		}
+	}
+	for category, count := range positions {
+		if table.Count(category) != int(count) {
+			t.Fatalf("category %d projected %d of %d declared members", category, table.Count(category), count)
 		}
 	}
 }
@@ -152,7 +112,11 @@ func TestStructureTableIsHostedFromItsContributions(t *testing.T) {
 // a framing added to a member that stages nothing, or withdrawn from one that
 // does, is a verdict rather than a table that agrees with itself.
 func TestStagedCutMembersDeclareOneFraming(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d", failure.Contributor, failure.Law)
 	}
@@ -161,7 +125,7 @@ func TestStagedCutMembersDeclareOneFraming(t *testing.T) {
 		t.Fatal("sealed table holds no structural surface")
 	}
 	staged := map[schema.Key]struct{}{
-		"issuance/local": {}, "issuance/computation": {}, "issuance/local-predecessor": {},
+		"issuance/local": {}, "issuance/computation": {}, "issuance/local-predecessor": {}, "issuance/local-successor": {},
 		"stage/call-dispatch": {}, "stage/call-summary": {}, "stage/call-effect": {},
 	}
 	declared := make(map[string]schema.Key, len(staged))

@@ -1,0 +1,116 @@
+package catalog
+
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
+)
+
+// Declarations is one explicit, environment-owned declaration input. It is
+// intentionally just an ordered set of schema surfaces: the concrete owner
+// supplies the rows, while this package supplies the one seal boundary. A
+// Declarations value is not shared between environments and has no process
+// lifetime.
+//
+// Register preserves the caller's phase order. schema.Builder rejects a
+// duplicate, out-of-order, or malformed surface at Seal; this wrapper does
+// not sort or reconstruct a second inventory.
+type Declarations struct {
+	surfaces []schema.Surface
+	rejected bool
+	sealed   bool
+}
+
+// NewDeclarations opens an empty declaration input for one environment.
+func NewDeclarations() *Declarations { return &Declarations{} }
+
+// Register adds one concrete owner surface in schema catalog order. A
+// declaration input cannot be changed after Seal, so a compiled result is
+// immutable and its digest is stable for the exact authored order.
+func (declarations *Declarations) Register(surface schema.Surface) bool {
+	if declarations == nil || declarations.sealed || declarations.rejected || surface == nil {
+		return false
+	}
+	if surface.Kind() == schema.SurfaceKindInvalid {
+		declarations.rejected = true
+		return false
+	}
+	declarations.surfaces = append(declarations.surfaces, surface)
+	return true
+}
+
+// Compilation is the immutable result of sealing one explicit declaration
+// input. It carries the sealed declaration table and its neutral publication
+// projection. No domain roster, executable callback, or process-global state
+// is retained here.
+type Compilation struct {
+	schema      *schema.Schema
+	publication Publication
+	digest      identity.ContentID
+	ok          bool
+}
+
+// Available reports whether this compilation sealed completely.
+func (compilation Compilation) Available() bool {
+	return compilation.ok && compilation.schema != nil && compilation.schema.Available() && compilation.digest.Available()
+}
+
+// Schema returns the immutable declaration table.
+func (compilation Compilation) Schema() *schema.Schema {
+	if !compilation.Available() {
+		return nil
+	}
+	return compilation.schema
+}
+
+// Publication returns the immutable neutral projection derived from the same
+// declaration table. It is not recomputed by consumers.
+func (compilation Compilation) Publication() (Publication, bool) {
+	if !compilation.Available() || !compilation.publication.Available() {
+		return Publication{}, false
+	}
+	return compilation.publication, true
+}
+
+// Digest is the declaration identity carried by the compiled environment.
+func (compilation Compilation) Digest() identity.ContentID {
+	if !compilation.Available() {
+		return identity.ContentID{}
+	}
+	return compilation.digest
+}
+
+// Seal validates and freezes the explicit declaration input. The first
+// failure is returned unchanged; no partial Schema or publication escapes.
+func (declarations *Declarations) Seal() (Compilation, schema.SealFailure) {
+	if declarations == nil || declarations.sealed || declarations.rejected {
+		return Compilation{}, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+	}
+	declarations.sealed = true
+	if len(declarations.surfaces) == 0 {
+		return Compilation{}, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionIncomplete}
+	}
+	builder := schema.NewBuilder()
+	registrationFailed := false
+	for _, surface := range declarations.surfaces {
+		if !builder.Register(surface) {
+			registrationFailed = true
+			break
+		}
+	}
+	sealed, failure := builder.Seal()
+	if registrationFailed && !failure.Available() {
+		return Compilation{}, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+	}
+	if failure.Available() || sealed == nil || !sealed.Available() {
+		return Compilation{}, failure
+	}
+	publication, ok := CompilePublication(sealed)
+	if !ok {
+		return Compilation{}, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+	}
+	digest := identity.ContentID(sealed.Digest())
+	if !digest.Available() {
+		return Compilation{}, schema.SealFailure{Law: schema.LawSurfaceCatalog, Disposition: schema.DispositionMalformed}
+	}
+	return Compilation{schema: sealed, publication: publication, digest: digest, ok: true}, schema.SealFailure{}
+}

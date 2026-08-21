@@ -36,6 +36,7 @@ type Operation struct {
 	InputTailType     typ.Type `json:"-"`
 	OutcomeTailTypes  []OutcomeTailType
 	OutcomeAmendments []OutcomeAmendment
+	Transfers         []TransferSpec
 	// Behavior carries provider-owned result and predicate correspondences.
 	// The relation is deliberately a plain wire key: this package is a
 	// portable module boundary and must not import the analyzer's schema
@@ -111,7 +112,9 @@ const (
 
 type (
 	ValueFormal uint32
+	TypeFormal  uint32
 	ValuesVar   uint32
+	RowVar      uint32
 	CallbackRef uint32
 	SubedgeRef  uint32
 )
@@ -135,6 +138,147 @@ const (
 type InputSource struct {
 	Kind    InputSourceKind
 	Ordinal uint32
+}
+
+// EffectSpec is one explicit operation-local invocation row. Target is the
+// canonical manifest operation path of the invoked operation; it is resolved
+// by manifesttarget against the same catalogue that owns all operations. A
+// publication is never inferred from a signature label or from the target
+// operation's name: it is present only when the provider supplies the typed
+// consequence below.
+type EffectSpec struct {
+	Target      string
+	ValueArgs   []ValueFormal
+	TypeArgs    []TypeFormal
+	ValuesArgs  []ValuesVar
+	RowArgs     []RowVar
+	Publication *PublicationEffectSpec
+}
+
+// PublicationEffectKind is the portable manifest spelling of Target's
+// explicit publication operation. The adapter converts it to the canonical
+// Target vocabulary; the wire package carries no placement or runtime proof.
+type PublicationEffectKind uint8
+
+const (
+	PublicationEffectInvalid PublicationEffectKind = iota
+	PublicationEffectSendTransfer
+	PublicationEffectReturnEscape
+	PublicationEffectCallbackEscape
+	PublicationEffectFreezeSeal
+	PublicationEffectWriteMutation
+	PublicationEffectCloseRelease
+)
+
+type PublicationDestinationRole uint8
+
+const (
+	PublicationDestinationInvalid PublicationDestinationRole = iota
+	PublicationDestinationNone
+	PublicationDestinationValueFormal
+)
+
+type PublicationEscapeDisposition uint8
+
+const (
+	PublicationEscapeInvalid PublicationEscapeDisposition = iota
+	PublicationEscapeNone
+	PublicationEscapeSendTransfer
+	PublicationEscapeReturn
+	PublicationEscapeCallback
+)
+
+type PublicationMutabilityDisposition uint8
+
+const (
+	PublicationMutabilityInvalid PublicationMutabilityDisposition = iota
+	PublicationMutabilityPreserve
+	PublicationMutabilitySeal
+	PublicationMutabilityWrite
+	PublicationMutabilityCopyOnWrite
+)
+
+type PublicationLifetimeDisposition uint8
+
+const (
+	PublicationLifetimeInvalid PublicationLifetimeDisposition = iota
+	PublicationLifetimePreserve
+	PublicationLifetimeRelease
+)
+
+// PublicationEffectSpec carries all seven fields needed to construct the
+// Target-owned PublicationEffectSpec. Subject selects either one target
+// ValueFormal or the target input ValuesVar; Context remains a target
+// ValueFormal when Destination is meaningful. These declarations are static
+// semantic inputs only, never runtime delivery or placement conclusions.
+type PublicationEffectSpec struct {
+	Kind        PublicationEffectKind
+	Subject     InputSource
+	Destination PublicationDestinationRole
+	Context     ValueFormal
+	Escape      PublicationEscapeDisposition
+	Mutability  PublicationMutabilityDisposition
+	Lifetime    PublicationLifetimeDisposition
+}
+
+// TransferPossibility is the provider-owned outcome relation of one
+// observable transfer. It intentionally mirrors the neutral Target
+// vocabulary without importing analyzer packages into this portable wire
+// package.
+type TransferPossibility uint8
+
+const (
+	TransferMayDeliver TransferPossibility = 1 << iota
+	TransferMayReject
+)
+
+type TransferOutcomeSpec struct {
+	Outcome     uint32
+	Possibility TransferPossibility
+}
+
+type TransferEndpointKind uint8
+
+const (
+	TransferEndpointInvalid TransferEndpointKind = iota
+	TransferEndpointInput
+	TransferEndpointExternal
+)
+
+type TransferEndpoint struct {
+	Kind  TransferEndpointKind
+	Input uint32
+}
+
+type TransferIdentity uint8
+
+const (
+	TransferIdentityInvalid TransferIdentity = iota
+	TransferIdentityUnspecified
+	TransferIdentitySame
+	TransferIdentityDistinct
+)
+
+type TransferCapabilities uint8
+
+const (
+	TransferCapabilitiesInvalid TransferCapabilities = iota
+	TransferCapabilitiesUnspecified
+	TransferCapabilitiesPreserveAll
+	TransferCapabilitiesLoseAll
+)
+
+// TransferSpec declares one provider-authored transfer relation. Endpoint,
+// payload, alias, and outcome coordinates are all neutral operation-local
+// references; the Lua Target adapter resolves them without inferring a
+// transfer from a callable name or an ownership label.
+type TransferSpec struct {
+	Endpoint     TransferEndpoint
+	Payload      InputSource
+	Alias        InputSource
+	Identity     TransferIdentity
+	Capabilities TransferCapabilities
+	Outcomes     []TransferOutcomeSpec
 }
 
 type Terminal struct {
@@ -449,7 +593,9 @@ const (
 // labels remain in the exact signature Effect row; this row represents
 // invocation correspondence and is therefore a distinct relation.
 type RowSpec struct {
-	Tail RowTail
+	Occurrences []EffectSpec
+	Tail        RowTail
+	Var         RowVar
 }
 
 // CloneOperation makes provider data ownership explicit. Type values are
@@ -470,6 +616,11 @@ func CloneOperation(in Operation) Operation {
 		out.OutcomeAmendments[i].ResultAliases = append([]ResultAlias(nil), in.OutcomeAmendments[i].ResultAliases...)
 	}
 	out.Input = cloneValues(in.Input)
+	out.Effects = cloneRow(in.Effects)
+	out.Transfers = append([]TransferSpec(nil), in.Transfers...)
+	for index := range out.Transfers {
+		out.Transfers[index].Outcomes = append([]TransferOutcomeSpec(nil), in.Transfers[index].Outcomes...)
+	}
 	if in.Behavior != nil {
 		behavior := &OperationBehavior{
 			Results:    append([]OperationResult(nil), in.Behavior.Results...),
@@ -498,6 +649,7 @@ func CloneOperation(in Operation) Operation {
 	for i := range out.Callbacks {
 		out.Callbacks[i].Arguments = cloneValues(in.Callbacks[i].Arguments)
 		out.Callbacks[i].Outcomes = cloneTerminals(in.Callbacks[i].Outcomes)
+		out.Callbacks[i].Effects = cloneRow(in.Callbacks[i].Effects)
 	}
 	out.Subedges = append([]Subedge(nil), in.Subedges...)
 	for i := range out.Subedges {
@@ -525,6 +677,27 @@ func CloneOperation(in Operation) Operation {
 		value := *in.SubedgeRelation
 		value.EffectAliases = append([]uint32(nil), value.EffectAliases...)
 		out.SubedgeRelation = &value
+	}
+	return out
+}
+
+func cloneRow(in RowSpec) RowSpec {
+	out := in
+	if len(in.Occurrences) == 0 {
+		out.Occurrences = nil
+		return out
+	}
+	out.Occurrences = make([]EffectSpec, len(in.Occurrences))
+	for index, effect := range in.Occurrences {
+		out.Occurrences[index] = effect
+		out.Occurrences[index].ValueArgs = append([]ValueFormal(nil), effect.ValueArgs...)
+		out.Occurrences[index].TypeArgs = append([]TypeFormal(nil), effect.TypeArgs...)
+		out.Occurrences[index].ValuesArgs = append([]ValuesVar(nil), effect.ValuesArgs...)
+		out.Occurrences[index].RowArgs = append([]RowVar(nil), effect.RowArgs...)
+		if effect.Publication != nil {
+			publication := *effect.Publication
+			out.Occurrences[index].Publication = &publication
+		}
 	}
 	return out
 }

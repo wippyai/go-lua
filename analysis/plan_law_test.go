@@ -114,7 +114,7 @@ func TestCompiledMountsCarrySealedSnapshot(t *testing.T) {
 		if artifact == nil || !artifact.Available() ||
 			mount.Snapshot.ArtifactID() != artifact.ID() ||
 			mount.Snapshot.ProgramID() != mount.ProgramID ||
-			mount.Snapshot.SchemaID() != artifact.CompileKey().SchemaDigest() {
+			mount.Snapshot.SchemaID() != artifact.CompileKey().ExecutionSchemaID().ContentID() {
 			t.Fatalf("mount %d snapshot identities do not match the compile product", index)
 		}
 	}

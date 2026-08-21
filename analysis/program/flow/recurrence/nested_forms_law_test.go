@@ -61,7 +61,7 @@ func TestSealNestedGenericHeaderIsOutsideInnerReset(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestSealNestedRepeatUsesBodyThenConditionInsideOuterMu(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSealTranslatesIndependentSCCBoundariesThroughOwners(t *testing.T) {
 		},
 	})
 	recurrence, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.graph,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("recurrence.Seal: %v", err)
 	}

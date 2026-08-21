@@ -6,16 +6,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/valuesource"
 )
-
-func (compiler *compiler) returnValueAt(outcome programschema.Outcome, index int) (programschema.OutcomeReturnValue, bool) {
-	offset, count, ok := outcome.ReturnValueSpan()
-	if !ok || index < 0 || uint64(index) >= uint64(count) || uint64(offset)+uint64(index) >= uint64(len(compiler.outcomeReturnValues)) {
-		return programschema.OutcomeReturnValue{}, false
-	}
-	value := compiler.outcomeReturnValues[int(offset)+index]
-	return value, value.Available() && value.OutcomeID() == outcome.ID()
-}
 
 func (compiler *compiler) copyValueSources() CompileFailure {
 	input, view := compiler.input, compiler.input.Flow()
@@ -58,21 +50,21 @@ func (compiler *compiler) copyValueSources() CompileFailure {
 // points and storage coordinate already issued by Program. The row contains
 // no abstract Value policy; its subscribing domain owns that interpretation.
 func (compiler *compiler) copyFormalEntrySources() CompileFailure {
-	for boundaryIndex, boundary := range compiler.functionBoundaries {
+	for boundaryIndex, boundary := range compiler.bodyBoundary.FunctionBoundaries() {
 		if !boundary.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourceAppend)
 		}
 		var points []identity.ContentID
-		for _, body := range compiler.bodies {
+		for _, body := range compiler.bodyBoundary.Bodies() {
 			if body.ID() != boundary.BodyID() {
 				continue
 			}
 			offset, count, spanOK := body.EntrySpan()
-			if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+			if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyBoundary.BodyEntries())) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourcePoints)
 			}
 			for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
-				entry := compiler.bodyEntries[offset+pointIndex]
+				entry := compiler.bodyBoundary.BodyEntries()[offset+pointIndex]
 				point := entry.PointID()
 				if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, int(pointIndex), CompileReasonOccurrenceValueSourcePoints)
@@ -85,7 +77,7 @@ func (compiler *compiler) copyFormalEntrySources() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, boundaryIndex, -1, CompileReasonOccurrenceValueSourcePoints)
 		}
 		for formalIndex := 0; formalIndex < boundary.FormalCount(); formalIndex++ {
-			formal, ok := compiler.functionFormalAt(boundary, formalIndex)
+			formal, ok := compiler.bodyBoundary.FunctionFormalAt(boundary, formalIndex)
 			if !ok || !compiler.appendOccurrence(
 				programschema.OccurrenceFormalEntry,
 				formal.StorageCellID(),
@@ -114,8 +106,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.valueSubjectID(operation.Left)
-		rightID, rightOK := compiler.valueSubjectID(operation.Right)
+		leftID, leftOK := valuesource.SubjectSpan(compiler.input, operation.Left)
+		rightID, rightOK := valuesource.SubjectSpan(compiler.input, operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryArithmetic(operation.Op) ||
@@ -143,8 +135,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.valueSubjectID(operation.Left)
-		rightID, rightOK := compiler.valueSubjectID(operation.Right)
+		leftID, leftOK := valuesource.SubjectSpan(compiler.input, operation.Left)
+		rightID, rightOK := valuesource.SubjectSpan(compiler.input, operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK ||
@@ -171,7 +163,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 				hasComparison, invert = true, comparison.Invert
 			}
 		}
-		code, codeOK := binaryEqualityCode(operation.Op, hasComparison, invert)
+		code, codeOK := programschema.OccurrenceBinaryEqualityCode(operation.Op, hasComparison, invert)
 		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
 		if !codeOK || !compiler.appendOccurrence(programschema.OccurrenceBinaryEquality, span.ContextID(), body.PathID(), points, inputs, code) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
@@ -186,8 +178,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		operation, operationOK := primitive.Operation()
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.valueSubjectID(operation.Left)
-		rightID, rightOK := compiler.valueSubjectID(operation.Right)
+		leftID, leftOK := valuesource.SubjectSpan(compiler.input, operation.Left)
+		rightID, rightOK := valuesource.SubjectSpan(compiler.input, operation.Right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !termOK || !primitiveOK || !sourceOK || source != term || !operationOK || !flowkind.IsBinaryOrder(operation.Op) ||
@@ -216,7 +208,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, op, operand, rowOK := unaries.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		operandID, operandOK := compiler.valueSubjectID(operand)
+		operandID, operandOK := valuesource.SubjectSpan(compiler.input, operand)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
@@ -243,8 +235,8 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, op, left, right, rowOK := selects.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		leftID, leftOK := compiler.valueSubjectID(left)
-		rightID, rightOK := compiler.valueSubjectID(right)
+		leftID, leftOK := valuesource.SubjectSpan(compiler.input, left)
+		rightID, rightOK := valuesource.SubjectSpan(compiler.input, right)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
@@ -267,7 +259,7 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		_, operand, claimKind, rowOK := claims.Get(term)
 		span, spanOK := compiler.input.Span(term)
 		body, bodyOK := compiler.input.ContainingBody(term)
-		operandID, operandOK := compiler.valueSubjectID(operand)
+		operandID, operandOK := valuesource.SubjectSpan(compiler.input, operand)
 		entry, entryOK := span.Entry()
 		finish, finishOK := span.Finish()
 		if !rowOK || !spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||

@@ -93,48 +93,25 @@ type Authority struct {
 	runtimeKindValue []bool            // exact RuntimeTypeOf result membership.
 	typeArguments    typeArgumentFormalTable
 
-	classes    *ClassSet
-	runtime    *typeauthority.Runtime
-	typeValues []typeValueRow
-	mounts     []MountedProgram
-	valueIDs   map[mountedValueKey]identity.ContentID // construction-only scalar substitution
+	classes *ClassSet
+	runtime *typeauthority.Runtime
+	mounts  []MountedProgram
 }
 
-// MountedValueID is the complete scalar Link substitution receipt for one
-// artifact semantic occurrence.  It intentionally carries no Boundary Value:
-// Static consumes this relation while sealing and retains only its own issued
-// result identities thereafter.
-type MountedValueID struct {
-	ModuleID   identity.ContentID
-	SemanticID identity.ContentID
-	ValueID    identity.ContentID
-}
-
-type mountedValueKey struct {
-	module   identity.ContentID
-	semantic identity.ContentID
-}
-
-// MountContext is the complete Link-local substitution receipt Static needs
-// during construction. It contains scalar identity, target semantics, and
-// detached mounted-value identities only; it never exposes or retains a Link
-// or Boundary authority.
+// MountContext is the complete Link-local receipt Static needs during
+// construction. It carries the owner fence and target semantics only; it
+// never exposes or retains a Link or Boundary authority.
 type MountContext struct {
-	LinkID   identity.ContentID
-	Target   *contract.Contract
-	ValueIDs []MountedValueID
+	LinkID identity.ContentID
+	Target *contract.Contract
 }
 
 func sealMounted(context MountContext, types *typeauthority.Authority, mounts []MountedProgram) (*Authority, *typeauthority.Runtime, error) {
 	if !context.LinkID.Available() || context.Target == nil || !context.Target.ContentID().Available() || types == nil || types.LinkID() != context.LinkID {
 		return nil, nil, errors.New("static: Link/type authority mismatch")
 	}
-	valueIDs, valuesOK := sealMountedValueIDs(context.ValueIDs)
-	if !valuesOK {
-		return nil, nil, errors.New("static: malformed mounted-value substitution receipt")
-	}
 	a := &Authority{
-		linkID: context.LinkID, types: types, valueIDs: valueIDs,
+		linkID: context.LinkID, types: types,
 		results:       []resultRow{{kind: KindBottom}, {kind: KindTop}},
 		closedByBytes: make(map[string]Value), symbolicByKey: make(map[Symbolic]Value),
 		memo:            make(map[evaluationKey]Value),
@@ -191,25 +168,7 @@ func sealMounted(context MountContext, types *typeauthority.Authority, mounts []
 	a.operands = nil
 	a.typeOfOutputs = nil
 	a.mounts = nil
-	// Mounted-value substitution is construction-only and must not retain any
-	// Link coordinate, even indirectly through a capability-bearing wrapper.
-	a.valueIDs = nil
 	return a, runtime, nil
-}
-
-func sealMountedValueIDs(rows []MountedValueID) (map[mountedValueKey]identity.ContentID, bool) {
-	sealed := make(map[mountedValueKey]identity.ContentID, len(rows))
-	for _, row := range rows {
-		if !row.ModuleID.Available() || !row.SemanticID.Available() || !row.ValueID.Available() {
-			return nil, false
-		}
-		key := mountedValueKey{module: row.ModuleID, semantic: row.SemanticID}
-		if _, duplicate := sealed[key]; duplicate {
-			return nil, false
-		}
-		sealed[key] = row.ValueID
-	}
-	return sealed, true
 }
 
 // MountedProgram is the canonical compiled Program together with the
@@ -244,16 +203,6 @@ func SealMountedPrograms(context MountContext, types *typeauthority.Authority, m
 			row, rowOK := mount.Program.CallTypeArgumentAt(rowIndex)
 			if !rowOK || !row.Available() {
 				return nil, nil, errors.New("static: malformed mounted type-argument row")
-			}
-		}
-		typeValueCount, typeValuesOK := mount.Program.StaticTypeValueCount()
-		if !typeValuesOK {
-			return nil, nil, errors.New("static: unavailable mounted TypeValue family")
-		}
-		for rowIndex := 0; rowIndex < typeValueCount; rowIndex++ {
-			row, rowOK := mount.Program.StaticTypeValueAt(rowIndex)
-			if !rowOK || !row.Available() {
-				return nil, nil, errors.New("static: malformed mounted TypeValue row")
 			}
 		}
 		if _, duplicate := seenModules[mount.ModuleID]; duplicate {
@@ -736,17 +685,6 @@ func (a *Authority) contentID() (id identity.ContentID) {
 			return identity.ContentID{}
 		}
 		h.Write(resultID[:])
-	}
-	// Static owns the complete executable TypeValue occurrence interpretation.
-	// These portable row identities commit both exact Runtime and explicit Other
-	// outcomes without teaching Runtime about Program occurrence facts.
-	binary.BigEndian.PutUint64(word[:], uint64(len(a.typeValues)))
-	h.Write(word[:])
-	for _, row := range a.typeValues {
-		if !row.id.Available() {
-			return identity.ContentID{}
-		}
-		h.Write(row.id[:])
 	}
 	copy(id[:], h.Sum(nil))
 	return id

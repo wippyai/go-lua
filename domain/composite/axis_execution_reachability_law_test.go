@@ -3,6 +3,7 @@ package composite
 import (
 	"testing"
 
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/snapshot"
@@ -45,14 +46,19 @@ var (
 // and the composition's inventory carries it beside the factor axes rather than
 // as one of them.
 func TestExecutionReachabilityIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
-	entry, declared := axisForKey(axisKeyExecutionReachability)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	entry, declared := axisForKey(state, axisKeyExecutionReachability)
 	if !declared {
 		t.Fatalf("the composition declares no axis %q", axisKeyExecutionReachability)
 	}
 	if entry.Key() != executionowner.AxisKey {
 		t.Fatalf("the registered axis is keyed %q, its owner declares %q", entry.Key(), executionowner.AxisKey)
 	}
-	storage, storageOK := AxisStorage(axisKeyExecutionReachability)
+	storage, storageOK := AxisStorage(compilation, axisKeyExecutionReachability)
 	if !storageOK || storage != axis.StorageEngine {
 		t.Fatalf("axis %q declares storage %d, not the engine-published one", axisKeyExecutionReachability, storage)
 	}
@@ -67,12 +73,12 @@ func TestExecutionReachabilityIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
 	if entry.Storage().Bound() {
 		t.Fatal("the engine-published axis recorded a cold shape")
 	}
-	roles, rolesOK := SemanticRoles()
+	roles, rolesOK := SemanticRoles(compilation)
 	if !rolesOK {
 		t.Fatal("semantic role vocabulary")
 	}
 	expected, expectedOK := roles.Key("semantic/axis/execution-reachability")
-	semantic, semanticOK := AxisSemantic(axisKeyExecutionReachability)
+	semantic, semanticOK := AxisSemantic(compilation, axisKeyExecutionReachability)
 	if !expectedOK || !semanticOK || semantic != expected {
 		t.Fatalf("axis %q publishes %x, the vocabulary declares the axis role", axisKeyExecutionReachability, semantic.Digest())
 	}
@@ -84,7 +90,9 @@ func TestExecutionReachabilityIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
 // fills the column is admitted as the axis it is declared as, and the write
 // request the composition issues names that same pair.
 func TestExecutionReachabilityPublishesOneEngineWrittenColumn(t *testing.T) {
-	entry, declared := axisForKey(axisKeyExecutionReachability)
+	compilation, publication := publicationForTest(t)
+	state := compilation.catalog
+	entry, declared := axisForKey(state, axisKeyExecutionReachability)
 	if !declared {
 		t.Fatalf("the composition declares no axis %q", axisKeyExecutionReachability)
 	}
@@ -95,10 +103,10 @@ func TestExecutionReachabilityPublishesOneEngineWrittenColumn(t *testing.T) {
 	if !outputOK || output.Key != executionowner.OutputKey || output.Writer != executionowner.AxisKey {
 		t.Fatalf("axis %q publishes column %q written by %q", axisKeyExecutionReachability, output.Key, output.Writer)
 	}
-	if _, resolves := axisForKey(output.Writer); !resolves {
+	if _, resolves := axisForKey(state, output.Writer); !resolves {
 		t.Fatalf("column %q is written by %q, which no declared axis is", output.Key, output.Writer)
 	}
-	requests, requestsOK := WriteRequests()
+	requests, requestsOK := publication.WriteRequests()
 	if !requestsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
@@ -124,28 +132,29 @@ func TestExecutionReachabilityPublishesOneEngineWrittenColumn(t *testing.T) {
 // point costs one unit row and an unreachable one costs none, which is the whole
 // of what the column stores.
 func TestExecutionReachabilityColumnIsTotalOverItsMountedPoints(t *testing.T) {
-	cardinality, cardinalityOK := AxisCardinality(axisKeyExecutionReachability)
+	compilation, publication := publicationForTest(t)
+	cardinality, cardinalityOK := AxisCardinality(compilation, axisKeyExecutionReachability)
 	if !cardinalityOK || cardinality != axis.CardinalityDense {
 		t.Fatalf("axis %q declares cardinality %d, so its column proves no absence", axisKeyExecutionReachability, cardinality)
 	}
-	coverage, coverageOK := PublicationCoverage(executionowner.OutputKey)
+	coverage, coverageOK := publication.Coverage(executionowner.OutputKey)
 	if !coverageOK || coverage != axis.CoverageTotal {
 		t.Fatalf("column %q publishes coverage %d, not the total coverage its dense axis declares", executionowner.OutputKey, coverage)
 	}
 
-	schemaID, schemaOK := PublicationSchema()
+	schemaID, schemaOK := publication.SchemaID()
 	if !schemaOK || !schemaID.Available() {
 		t.Fatal("the sealed table publishes no schema identity")
 	}
-	column, projected := ProjectAxis[mountedExecutionPoint, executionowner.Reachable](executionowner.OutputKey)
+	column, projected := analysiscatalog.ProjectAxis[mountedExecutionPoint, executionowner.Reachable](publication, executionowner.OutputKey)
 	if !projected || !column.Available() {
 		t.Fatalf("the declared column %q projects no address", executionowner.OutputKey)
 	}
-	if int(column.Slot) >= PublicationColumns() {
-		t.Fatalf("column %q projects slot %d outside the %d published columns", executionowner.OutputKey, column.Slot, PublicationColumns())
+	if int(column.Slot) >= publication.Columns() {
+		t.Fatalf("column %q projects slot %d outside the %d published columns", executionowner.OutputKey, column.Slot, publication.Columns())
 	}
 
-	requests, requestsOK := WriteRequests()
+	requests, requestsOK := publication.WriteRequests()
 	if !requestsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}

@@ -26,7 +26,7 @@ import (
 // SemanticFormat is the version of the global semantic vocabulary.  Changing
 // the role list, framing domain, or interpretation of a role requires bumping
 // this value.
-const SemanticFormat uint64 = 6
+const SemanticFormat uint64 = 7
 
 // rolePrefix is the key namespace a semantic role row is declared under. A
 // row's spelling is the role, and its key is the role inside this namespace,
@@ -39,16 +39,16 @@ const rolePrefix = "semantic/"
 // sealed table, so no surface derives an identity from text of its own.
 func RoleKey(role string) schema.Key { return schema.Key(rolePrefix + role) }
 
-// RuleSemantics is the closed identity tuple for one rule: its rule identity,
-// operand form, and evidence form.
+// RuleSemantics is the closed identity tuple for one rule: its rule identity
+// and operand form. Rule-admission evidence is an engine concern rather than
+// a semantic role, so it is intentionally absent from this vocabulary.
 type RuleSemantics struct {
-	Rule     identity.SemanticKey
-	Operand  identity.SemanticKey
-	Evidence identity.SemanticKey
+	Rule    identity.SemanticKey
+	Operand identity.SemanticKey
 }
 
 func (semantics RuleSemantics) Available() bool {
-	return semantics.Rule.Available() && semantics.Operand.Available() && semantics.Evidence.Available()
+	return semantics.Rule.Available() && semantics.Operand.Available()
 }
 
 // TransformedRuleSemantics adds the transform form used by rules whose output
@@ -79,14 +79,14 @@ func RoleSpecs(roles ...string) []structure.Spec {
 	return specs
 }
 
-// RuleRoleSpecs declares the three roles one rule is identified by: the rule
-// itself, the operand form its occurrences read, and the evidence form they
-// produce. A rule that declares these three declares its whole identity tuple.
+// RuleRoleSpecs declares the two roles one rule is identified by: the rule
+// itself and the operand form its occurrences read. Rule-admission evidence is
+// deliberately not a semantic role.
 func RuleRoleSpecs(role string) []structure.Spec {
-	return RoleSpecs("rule/"+role, "operand/"+role, "evidence/"+role)
+	return RoleSpecs("rule/"+role, "operand/"+role)
 }
 
-// TransformedRuleRoleSpecs declares the four roles a rule whose output is
+// TransformedRuleRoleSpecs declares the three roles a rule whose output is
 // normalized before admission is identified by.
 func TransformedRuleRoleSpecs(role string) []structure.Spec {
 	return append(RuleRoleSpecs(role), RoleSpecs("transform/"+role)...)
@@ -158,18 +158,17 @@ func (roles Roles) Restrict(keys ...schema.Key) (Roles, bool) {
 	return Roles{keys: narrowed}, len(narrowed) != 0
 }
 
-// Rule resolves the three roles one rule is identified by. The rule names the
-// role once and receives its whole identity tuple, so the three forms cannot
-// be resolved against three different roles.
+// Rule resolves the two roles one rule is identified by. The rule names the
+// role once and receives its whole identity tuple, so the two forms cannot be
+// resolved against two different roles.
 func (roles Roles) Rule(role string) (RuleSemantics, bool) {
 	rule, ruleOK := roles.Key(RoleKey("rule/" + role))
 	operand, operandOK := roles.Key(RoleKey("operand/" + role))
-	evidence, evidenceOK := roles.Key(RoleKey("evidence/" + role))
-	semantics := RuleSemantics{Rule: rule, Operand: operand, Evidence: evidence}
-	return semantics, ruleOK && operandOK && evidenceOK && semantics.Available()
+	semantics := RuleSemantics{Rule: rule, Operand: operand}
+	return semantics, ruleOK && operandOK && semantics.Available()
 }
 
-// Transformed resolves the four roles a rule whose output is normalized before
+// Transformed resolves the three roles a rule whose output is normalized before
 // admission is identified by.
 func (roles Roles) Transformed(role string) (TransformedRuleSemantics, bool) {
 	base, baseOK := roles.Rule(role)

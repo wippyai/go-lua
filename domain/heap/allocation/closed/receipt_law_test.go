@@ -62,7 +62,7 @@ func TestClosedMountedReceiptAdmission(t *testing.T) {
 func TestClosedMountedReceiptRejectsForeignSchemaInstance(t *testing.T) {
 	heapSchema, valueSchema, mounts := closedReceiptFixture(t, `return { answer = 1 }`)
 	foreignHeap, heapFailure := heapdomain.SealWithArtifacts(mounts.linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -80,9 +80,10 @@ func TestClosedMountedReceiptRejectsForeignSchemaInstance(t *testing.T) {
 }
 
 type closedFixtureMounts struct {
-	linked *link.Link
-	heap   []heapdomain.ArtifactMount
-	value  []valuedomain.ArtifactMount
+	linked      *link.Link
+	compilation composite.Compilation
+	heap        []heapdomain.ArtifactMount
+	value       []valuedomain.ArtifactMount
 }
 
 func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.Schema, closedFixtureMounts) {
@@ -101,7 +102,7 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	}
 	mounts := closedArtifactMounts(t, linked)
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -109,19 +110,19 @@ func closedReceiptFixture(t testing.TB, text string) (heapdomain.Schema, *valued
 	if heapFailure != heapdomain.SealFailureNone || valueFailure != valuedomain.SealFailureNone {
 		t.Fatalf("closed schemas heap=%v value=%v", heapFailure, valueFailure)
 	}
-	return heapSchema, valueSchema, closedFixtureMounts{linked: linked, heap: mounts.heap, value: mounts.value}
+	return heapSchema, valueSchema, closedFixtureMounts{linked: linked, compilation: mounts.compilation, heap: mounts.heap, value: mounts.value}
 }
 
 func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("closed artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := closedFixtureMounts{linked: linked, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
+	mounts := closedFixtureMounts{linked: linked, compilation: compilation, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
@@ -130,7 +131,7 @@ func closedArtifactMounts(t testing.TB, linked *link.Link) closedFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("closed artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("closed artifact compile: %v", failure)
 		}

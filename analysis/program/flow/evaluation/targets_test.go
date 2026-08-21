@@ -25,7 +25,7 @@ func TestPortsLocalCellWriteOwnershipMatrix(t *testing.T) {
 			fixture := openLocalCellWriteFixture(t, test.owner)
 			defer fixture.close()
 			ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-				fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+				fixture.staticView.ContentID(), fixture.view.ModuleID())
 			if test.wantReject {
 				if err == nil {
 					t.Fatal("SealPorts accepted a local Cell write across the ownership frontier")

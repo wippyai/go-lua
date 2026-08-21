@@ -20,7 +20,6 @@ func TestPublishedValueRowsDoNotRetainLinkAuthorityCarriers(t *testing.T) {
 		reflect.TypeOf(capabilitySeedRow{}),
 		reflect.TypeOf(hostMember{}),
 		reflect.TypeOf(SourceSeed{}),
-		reflect.TypeOf(SourceResult{}),
 		reflect.TypeOf(GlobalBootstrapResult{}),
 	} {
 		assertDetachedValueRow(t, row, map[reflect.Type]bool{})

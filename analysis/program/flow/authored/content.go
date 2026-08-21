@@ -14,6 +14,7 @@ const contentVersion = 8
 
 var (
 	errInvalidArtifactComponent = errors.New("program/flow: invalid artifact component")
+	errInvalidImportComponent   = errors.New("program/flow: invalid authored import component")
 )
 
 func contentID(component *component) (id identity.ContentID) {
@@ -30,6 +31,55 @@ func contentID(component *component) (id identity.ContentID) {
 		return identity.ContentID{}
 	}
 	return id
+}
+
+// moduleID is the independent authored-import identity.  Its framing is
+// intentionally byte-for-byte identical to the historical
+// program/imports codec: same tag, version, count, row order, and four uint
+// fields.  It is kept separate from Flow ContentID so the historical Flow
+// identity remains unchanged when the Module rows move owners.
+func moduleID(imports []Import) (id identity.ContentID) {
+	hash := sha256.New()
+	var writer framing.Writer
+	if writer.Reset(hash, "program/imports", 2) != nil || writeImports(&writer, imports) != nil || writer.Finish() != nil {
+		return identity.ContentID{}
+	}
+	if sum := hash.Sum(id[:0]); len(sum) != len(id) {
+		return identity.ContentID{}
+	}
+	return id
+}
+
+func writeImports(writer *framing.Writer, imports []Import) error {
+	if writer == nil {
+		return framing.ErrNilDestination
+	}
+	if uint64(len(imports)) > uint64(keyspace.MaxTermOrdinal) {
+		return errInvalidImportComponent
+	}
+	if err := writer.Count(uint64(len(imports))); err != nil {
+		return err
+	}
+	for index, row := range imports {
+		if !validImport(row, index) {
+			return errInvalidImportComponent
+		}
+		for _, term := range [...]keyspace.Term{row.Term, row.Call, row.Alias, row.Request} {
+			if err := writer.Uint(uint64(term)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validImport(row Import, index int) bool {
+	return row.Term == keyspace.MakeTerm(keyspace.FamilyImport, uint32(index+1)) &&
+		row.Call != 0 && keyspace.TermFamily(row.Call) == keyspace.FamilyCall &&
+		keyspace.TermOrdinal(row.Call) != 0 &&
+		(row.Alias == 0 || (keyspace.TermFamily(row.Alias) == keyspace.FamilyCell && keyspace.TermOrdinal(row.Alias) != 0)) &&
+		row.Request != 0 && keyspace.TermFamily(row.Request) == keyspace.FamilyString &&
+		keyspace.TermOrdinal(row.Request) != 0
 }
 
 // writeContent is the authored row writer used by ContentID. Its record and

@@ -97,7 +97,8 @@ type MountedArtifact struct {
 
 func (row MountedArtifact) Available() bool {
 	return row.Program.Available() && row.Snapshot != nil && row.Snapshot.Available() &&
-		row.Snapshot.ProgramID() == row.ProgramID && row.Snapshot.ArtifactID() == row.ArtifactID
+		row.Snapshot.ProgramID() == row.ProgramID && row.Snapshot.ArtifactID() == row.ArtifactID &&
+		row.Snapshot.EntryBodyID() == row.EntryBodyID
 }
 
 // AxisEntry is this package's axis declaration. A is the composition's own

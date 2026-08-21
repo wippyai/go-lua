@@ -106,8 +106,10 @@ func appendOperation(builder *operationvalue.QueryBuilder, core operationvalue.C
 	query := operationvalue.QueryOperationInput{
 		Input: operationInput, RowFormals: draft.rowFormals,
 		EffectTail: draft.effectTail, EffectVar: draft.effectVar,
-		EffectIndices:  operationEffects,
-		CallbackValues: callbackValues, Subedges: subedges, SubedgeRelation: subedgeRelation,
+		FormalEffects:    append([]vocabulary.FormalEffectSpec(nil), draft.formalEffects...),
+		FormalEffectTail: draft.formalEffectTail,
+		EffectIndices:    operationEffects,
+		CallbackValues:   callbackValues, Subedges: subedges, SubedgeRelation: subedgeRelation,
 		Semantics:   draft.semantics,
 		TypeFormals: make([]vocabulary.Type, len(draft.constraints)),
 		ValuesTypes: make([]vocabulary.Type, len(draft.valuesTypes)),
@@ -287,6 +289,7 @@ func appendOpaque(builder *operationvalue.QueryBuilder, core operationvalue.Core
 			{Kind: flowkind.OutcomeCancel, Values: unknown},
 		},
 		Transfers: transfers, EffectTail: vocabulary.RowUnknownOpen,
+		FormalEffectTail: vocabulary.RowUnknownOpen,
 	})
 }
 

@@ -3,7 +3,7 @@ package composite
 import (
 	"testing"
 
-	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -18,13 +18,17 @@ import (
 // slot, and a requirement member declared in a second category would be read as
 // one of the vocabularies the placement ordinals are pinned to.
 func TestIssuanceRequirementIsAdmissionVocabularyNotIdentity(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
 	view, viewOK := sealed.Surface(schema.SurfaceKindStructure)
 	table, tableOK := structure.NewTable(view)
-	roles, rolesOK := SemanticRoles()
+	roles, rolesOK := SemanticRoles(compilation)
 	if !viewOK || !tableOK || !rolesOK {
 		t.Fatal("sealed table published no structural vocabulary")
 	}
@@ -63,7 +67,11 @@ func TestIssuanceRequirementIsAdmissionVocabularyNotIdentity(t *testing.T) {
 // declared member at each ordinal is the shape that ordinal spells. A member
 // reordered here would silently retarget every placement declared against it.
 func TestIssuanceRequirementOrdinalsPinTheArtifactVocabulary(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
@@ -75,10 +83,12 @@ func TestIssuanceRequirementOrdinalsPinTheArtifactVocabulary(t *testing.T) {
 	pinned := []struct {
 		key      schema.Key
 		spelling string
-		ordinal  artifactcompiler.IssuanceRequirement
+		ordinal  issuance.Requirement
 	}{
 		{"requirement/unrestricted", "unrestricted", 1},
 		{"requirement/call-plain-unary", "call-plain-unary", 2},
+		{"requirement/closure-capture", "closure-capture", 3},
+		{"requirement/call-result-slot", "call-result-slot", 4},
 	}
 	if table.Count(structure.CategoryIssuanceRequirement) != len(pinned) {
 		t.Fatalf("the requirement vocabulary declares %d members, %d are pinned", table.Count(structure.CategoryIssuanceRequirement), len(pinned))

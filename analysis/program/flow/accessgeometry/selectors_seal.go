@@ -10,7 +10,6 @@ import (
 	binding "github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -25,7 +24,7 @@ func sealSelectors(
 	bodies *body.Result,
 	bindings binding.Result,
 	staticView staticquery.View,
-	moduleView imports.View,
+	moduleView authored.Imports,
 ) (*Result, error) {
 	if err := validateSelectorInputs(sourceView, flow, bodies, bindings, staticView, moduleView); err != nil {
 		return nil, err
@@ -113,7 +112,7 @@ func SealSelectors(
 	bodies *body.Result,
 	bindings binding.Result,
 	staticView staticquery.View,
-	moduleView imports.View,
+	moduleView authored.Imports,
 ) (*Result, error) {
 	return sealSelectors(sourceView, flow, bodies, bindings, staticView, moduleView)
 }

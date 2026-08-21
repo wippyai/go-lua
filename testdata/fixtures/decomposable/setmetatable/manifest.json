@@ -4,7 +4,6 @@
     "placement": {
       "require_complete": true,
       "min_allocation_sites": 2,
-      "max_decomposable": 0,
       "max_unknown": 0
     }
   },

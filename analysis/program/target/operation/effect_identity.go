@@ -231,9 +231,18 @@ func encodePublicationEffectDescriptor(w *framing.Writer, descriptor Publication
 	if !descriptor.Valid() {
 		return errors.New("target/operation: malformed publication effect descriptor")
 	}
+	if err := w.Uint(uint64(descriptor.Kind())); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.Subject().Kind)); err != nil {
+		return err
+	}
+	if err := w.Uint(uint64(descriptor.Subject().Ordinal)); err != nil {
+		return err
+	}
 	for _, value := range []uint64{
-		uint64(descriptor.Kind()), uint64(descriptor.Subject()), uint64(descriptor.DestinationRole()),
-		uint64(descriptor.Context()), uint64(descriptor.Escape()), uint64(descriptor.Mutability()), uint64(descriptor.Lifetime()),
+		uint64(descriptor.DestinationRole()), uint64(descriptor.Context()),
+		uint64(descriptor.Escape()), uint64(descriptor.Mutability()), uint64(descriptor.Lifetime()),
 	} {
 		if err := w.Uint(value); err != nil {
 			return err

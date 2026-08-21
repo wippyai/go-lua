@@ -127,16 +127,19 @@ type IssuedObservation struct {
 	Codec      schema.Key
 }
 
-// ObservationIssuance returns the sealed observation inventory in catalog
-// order.
-func ObservationIssuance() []IssuedObservation {
-	sealRegistry()
-	if !registry.observations.Available() {
+// ObservationIssuance returns this compilation's sealed observation inventory
+// in catalog order.
+func ObservationIssuance(compilation Compilation) []IssuedObservation {
+	return observationIssuance(compilation.catalog)
+}
+
+func observationIssuance(state *catalog) []IssuedObservation {
+	if state == nil || !state.observations.Available() {
 		return nil
 	}
-	issued := make([]IssuedObservation, 0, registry.observations.Count())
-	for position := 0; position < registry.observations.Count(); position++ {
-		entry, ok := registry.observations.At(position)
+	issued := make([]IssuedObservation, 0, state.observations.Count())
+	for position := 0; position < state.observations.Count(); position++ {
+		entry, ok := state.observations.At(position)
 		if !ok || entry == nil {
 			continue
 		}
@@ -161,17 +164,17 @@ func ObservationIssuance() []IssuedObservation {
 // domain's result by this set. The chain is declared end to end - population
 // names its producing query family, the family names the axes it reads, a rule
 // names the axis it writes - so nothing here is a name this package chose.
-func ProducedValueAxes() ([]schema.Key, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func ProducedValueAxes(compilation Compilation) ([]schema.Key, bool) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
 		return nil, false
 	}
 	subjects := make(map[schema.Key]struct{})
-	for _, issued := range ObservationIssuance() {
+	for _, issued := range observationIssuance(state) {
 		if !issued.Producer.Available() {
 			continue
 		}
-		registration, found := queryRegistrationFor(issued.Producer)
+		registration, found := queryRegistrationFor(state, issued.Producer)
 		if !found {
 			return nil, false
 		}
@@ -195,8 +198,11 @@ func ProducedValueAxes() ([]schema.Key, bool) {
 
 // queryRegistrationFor resolves one sealed query family by the key its
 // declaration is identified by.
-func queryRegistrationFor(family schema.Key) (*query.Registration, bool) {
-	for _, registration := range registry.queries {
+func queryRegistrationFor(state *catalog, family schema.Key) (*query.Registration, bool) {
+	if state == nil {
+		return nil, false
+	}
+	for _, registration := range state.queries {
 		if registration != nil && registration.Key() == family {
 			return registration, true
 		}
@@ -206,11 +212,12 @@ func queryRegistrationFor(family schema.Key) (*query.Registration, bool) {
 
 // ObservationProducerForPopulationKind returns the query family that produces
 // the sealed observation whose population kind is kind.
-func ObservationProducerForPopulationKind(kind schema.Key) (schema.Key, bool) {
+func ObservationProducerForPopulationKind(compilation Compilation, kind schema.Key) (schema.Key, bool) {
+	state := compilation.catalog
 	if !kind.Available() {
 		return "", false
 	}
-	for _, issued := range ObservationIssuance() {
+	for _, issued := range observationIssuance(state) {
 		if issued.Population.Kind.Key == kind && issued.Producer.Available() {
 			return issued.Producer, true
 		}

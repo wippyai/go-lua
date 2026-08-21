@@ -33,7 +33,8 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Owner:  "value",
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/storage-read", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
-			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
+			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "requirement/unrestricted", Form: "issuance/local-successor", Input: "input/finish", Stage: "stage/local"},
+			{Occurrence: "occurrence/storage-bind-transfer", Requirement: "requirement/call-result-slot", Form: "issuance/call-stage", Input: "input/finish", Stage: "stage/call-effect"},
 			{Occurrence: "occurrence/storage-write", Requirement: "requirement/unrestricted", Form: "issuance/local-predecessor", Input: "input/predecessor", Stage: "stage/local"},
 		},
 		Lane:     rule.LaneMounted,

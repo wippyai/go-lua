@@ -2,23 +2,6 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// The append-only slots this family occupies. They are derived from the last
-// slot declared before them so a family added later cannot reuse a slot a
-// consumer already addresses.
-const (
-	slotEnvironmentEdge  = slotCallTypeArgument + 1
-	slotEnvironmentReset = slotEnvironmentEdge + 1
-)
-
-var (
-	environmentEdgeFamily  = Family[EnvironmentEdge]{slot: slotEnvironmentEdge, name: "environment-edge"}
-	environmentResetFamily = Family[EnvironmentReset]{slot: slotEnvironmentReset, name: "environment-reset"}
-)
-
-func EnvironmentEdgeFamily() Family[EnvironmentEdge] { return environmentEdgeFamily }
-
-func EnvironmentResetFamily() Family[EnvironmentReset] { return environmentResetFamily }
-
 // Environment arm ordinals retain the historical Flow boundary-arm ordinals.
 // They are kept as plain bytes: the cold column preserves the value and shape
 // but does not import or reinterpret the Program vocabulary.

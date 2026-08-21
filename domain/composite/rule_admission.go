@@ -61,8 +61,11 @@ func (rules *RuleBinding) LinkAdmissions() ([]engine.LinkRuleAdmission, bool) {
 // BootstrapCatalogs is the Link-lane occurrence inventory assemble uses as the
 // bootstrap witness.
 func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog, bool) {
-	keys := LinkKeys()
-	if rules == nil || len(keys) == 0 {
+	if rules == nil {
+		return nil, false
+	}
+	keys := linkKeys(rules.catalog)
+	if len(keys) == 0 {
 		return nil, false
 	}
 	catalogs := make([]engine.ProgramBootstrapCatalog, len(keys))
@@ -104,14 +107,17 @@ func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifac
 		return true
 	})
 	if !ok {
-		return nil, nil, DiagnosticRuleForKey(key), false
+		return nil, nil, diagnosticRuleForKey(rules.catalog, key), false
 	}
 	return mounted, activations, DiagnosticRuleUnknown, true
 }
 
 func walkLinkCatalogs(rules *RuleBinding, admit func(schema.Key, identity.ContentID) bool) bool {
-	keys := LinkKeys()
-	if rules == nil || len(keys) == 0 {
+	if rules == nil {
+		return false
+	}
+	keys := linkKeys(rules.catalog)
+	if len(keys) == 0 {
 		return false
 	}
 	for _, key := range keys {

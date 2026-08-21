@@ -69,7 +69,7 @@ func TestStaticScopeProofCellIntroductionAndSourceOccurrence(t *testing.T) {
 	}
 	sourceID := fixture.preimage.Identity().ContentID()
 	flowID := fixture.flowView.ContentID()
-	moduleID := fixture.moduleView.ContentID()
+	moduleID := fixture.flowView.ModuleID()
 	staticID := fixture.staticView.ContentID()
 	if !proof.Matches(sourceID, flowID, staticID, moduleID) {
 		t.Fatal("scope proof does not match its exact Source/Flow/Module/Static owners")

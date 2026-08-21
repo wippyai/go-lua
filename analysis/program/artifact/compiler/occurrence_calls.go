@@ -6,19 +6,27 @@ import (
 )
 
 func (compiler *compiler) copyAllocations() CompileFailure {
-	if compiler == nil || len(compiler.allocationRows) != len(compiler.heapAllocations) {
+	if compiler == nil || compiler.allocations == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAllocation)
 	}
-	for index, allocation := range compiler.allocationRows {
-		entryPoints, finishPoints := compiler.pointIDs(allocation.entry), compiler.pointIDs(allocation.finish)
-		if !allocation.occurrence.Available() || !allocation.template.Available() || len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.appendOccurrence(programschema.OccurrenceAllocation, allocation.template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{allocation.template, allocation.occurrence}, uint64(allocation.form)) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceAllocation, allocation.template, entryPoints, finishPoints) {
+	for index := 0; index < compiler.allocations.Count(); index++ {
+		allocation, allocationOK := compiler.allocations.RowAt(index)
+		entry, entryOK := allocation.Entry()
+		finish, finishOK := allocation.Finish()
+		occurrence, occurrenceOK := allocation.Occurrence()
+		template, templateOK := allocation.Template()
+		form, formOK := allocation.Form()
+		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
+		if !allocationOK || !entryOK || !finishOK || !occurrenceOK || !templateOK || !formOK || len(entryPoints) == 0 || len(finishPoints) == 0 ||
+			!compiler.appendOccurrence(programschema.OccurrenceAllocation, template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{template, occurrence}, uint64(form)) ||
+			!compiler.recordOccurrenceSpan(programschema.OccurrenceAllocation, template, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
-		for fieldIndex, field := range allocation.fields {
-			values := field.valuesRow
-			inputs := []identity.ContentID{allocation.template}
+		for fieldIndex := 0; fieldIndex < allocation.FieldCount(); fieldIndex++ {
+			field, fieldOK := allocation.FieldAt(fieldIndex)
+			values, valuesOK := field.Values()
+			fieldID, fieldIDOK := field.ID()
+			inputs := []identity.ContentID{template}
 			if values.Available() {
 				inputs = append(inputs, values.ID())
 				for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
@@ -29,7 +37,7 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 					inputs = append(inputs, member.ID())
 				}
 			}
-			if field.term == 0 || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceAllocationField, field.id, identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
+			if !fieldOK || !valuesOK || !fieldIDOK || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceAllocationField, fieldID, identity.ContentID{}, nil, inputs, uint64(fieldIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, fieldIndex, CompileReasonOccurrenceAllocation)
 			}
 		}

@@ -277,11 +277,11 @@ func canonicalValueTerms(t testing.TB, p *program.Program) []keyspace.Term {
 			if !ok {
 				t.Fatal("malformed Outcome family")
 			}
-			outcome, ok := outcomes.Get(term)
+			_, outcomeKind, _, ok := outcomes.Get(term)
 			if !ok {
 				t.Fatal("malformed Outcome")
 			}
-			if outcome.Kind == kind {
+			if outcomeKind == kind {
 				result = append(result, term)
 			}
 		}

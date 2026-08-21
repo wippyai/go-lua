@@ -25,9 +25,13 @@ import (
 // rather than a wire commitment - and agreement is what every projection
 // across the boundary rests on.
 
-func sealedVocabulary(t *testing.T) structure.Table {
+func sealedVocabulary(t *testing.T) (composite.Compilation, structure.Table) {
 	t.Helper()
-	sealed, failure := composite.Table()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := composite.Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
@@ -39,7 +43,7 @@ func sealedVocabulary(t *testing.T) structure.Table {
 	if !tableOK {
 		t.Fatal("sealed structural vocabulary did not project")
 	}
-	return table
+	return compilation, table
 }
 
 // pinned states that one foreign spelling's ordinal resolves to the sealed
@@ -83,7 +87,7 @@ func counted(t *testing.T, table structure.Table, category structure.Category, l
 // The Program compiles these ordinals at load, so this law is what keeps its
 // numbering and the declaration's the same numbering.
 func TestProgramVocabularyIsTheSealedTable(t *testing.T) {
-	table := sealedVocabulary(t)
+	_, table := sealedVocabulary(t)
 	for _, member := range []struct {
 		key      schema.Key
 		ordinal  uint8
@@ -137,7 +141,7 @@ func TestProgramVocabularyIsTheSealedTable(t *testing.T) {
 // scalar template is written by ordinal, so a drift here is a mistranslated
 // artifact rather than a rejected one.
 func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
-	table := sealedVocabulary(t)
+	_, table := sealedVocabulary(t)
 	for _, member := range []struct {
 		key      schema.Key
 		ordinal  rows.ArtifactStructuralArm
@@ -191,7 +195,7 @@ func TestEngineArtifactVocabularyIsTheSealedTable(t *testing.T) {
 // predecessor chain as declared structure data. Engine admission reads this
 // relation rather than naming CallDispatch, CallSummary, and CallEffect.
 func TestIssuanceStagePredecessorIsTheSealedTable(t *testing.T) {
-	table := sealedVocabulary(t)
+	_, table := sealedVocabulary(t)
 	stage := func(ordinal rows.ArtifactRuleStage) *structure.Entry {
 		t.Helper()
 		entry, ok := table.At(structure.CategoryIssuanceStage, uint16(ordinal))
@@ -223,7 +227,7 @@ func TestIssuanceStagePredecessorIsTheSealedTable(t *testing.T) {
 // projection. Diagnostic observation identities are canonical structure
 // declarations and therefore need no cross-package pin law.
 func TestDiagnosticSeverityVocabularyIsTheSealedTable(t *testing.T) {
-	table := sealedVocabulary(t)
+	_, table := sealedVocabulary(t)
 	for _, member := range []struct {
 		key      schema.Key
 		spelling string
@@ -246,8 +250,8 @@ func TestDiagnosticSeverityVocabularyIsTheSealedTable(t *testing.T) {
 // first segment is the declared spelling of the family its row names, which is
 // what makes publishing under a new family one more declared row.
 func TestDiagnosticFamiliesAreResolvedByName(t *testing.T) {
-	table := sealedVocabulary(t)
-	diagnostics, diagnosticsOK := composite.Diagnostics()
+	compilation, table := sealedVocabulary(t)
+	diagnostics, diagnosticsOK := compilation.Diagnostics()
 	if !diagnosticsOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}

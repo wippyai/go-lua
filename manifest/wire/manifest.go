@@ -289,6 +289,7 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 	wm := manifestWire{
 		Path:                       m.Path,
 		Version:                    m.Version,
+		SchemaRevision:             manifestWireRevision(m),
 		Globals:                    append([]string(nil), m.Globals...),
 		CallbackPhaseRegistrations: encodeCallbackPhaseRegistrations(m.CallbackPhaseRegistrations),
 		CallbackPhaseInvocations:   encodeCallbackPhaseInvocations(m.CallbackPhaseInvocations),
@@ -443,6 +444,9 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("manifest: decode empty data")
 	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return nil, err
+	}
 
 	var wm manifestWire
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -455,6 +459,15 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 			return nil, errors.New("manifest: decode multiple JSON values")
 		}
 		return nil, err
+	}
+	if wm.SchemaRevision != 0 && wm.SchemaRevision != manifestWireRevisionPublicationEffects {
+		return nil, fmt.Errorf("manifest: unsupported schema revision %d", wm.SchemaRevision)
+	}
+	if wm.SchemaRevision != 0 && !manifestWireHasEffectOccurrences(wm) {
+		return nil, fmt.Errorf("manifest: schema revision %d is superfluous without effect occurrences", wm.SchemaRevision)
+	}
+	if manifestWireHasEffectOccurrences(wm) && wm.SchemaRevision != manifestWireRevisionPublicationEffects {
+		return nil, fmt.Errorf("manifest: effect occurrences require schema revision %d, got %d", manifestWireRevisionPublicationEffects, wm.SchemaRevision)
 	}
 
 	m := New(wm.Path)
@@ -514,7 +527,12 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 		}
 		m.DetachedFunctions[named.Name] = sig
 	}
+	seenOperations := make(map[string]struct{}, len(wm.FunctionOperations))
 	for _, named := range wm.FunctionOperations {
+		if _, exists := seenOperations[named.Name]; exists {
+			return nil, fmt.Errorf("manifest: duplicate function operation %q", named.Name)
+		}
+		seenOperations[named.Name] = struct{}{}
 		m.DefineFunctionOperation(named.Name, named.Operation)
 	}
 	for _, alias := range wm.FunctionAliases {
@@ -534,6 +552,7 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 type manifestWire struct {
 	Path                       string                          `json:"path"`
 	Version                    string                          `json:"version,omitempty"`
+	SchemaRevision             uint8                           `json:"schemaRevision,omitempty"`
 	Export                     *wire.TypeWire                  `json:"export,omitempty"`
 	Types                      []namedTypeWire                 `json:"types,omitempty"`
 	GlobalTypes                []namedTypeWire                 `json:"globalTypes,omitempty"`
@@ -548,6 +567,35 @@ type manifestWire struct {
 	Globals                    []string                        `json:"globals,omitempty"`
 	CallbackPhaseRegistrations []callbackPhaseRegistrationWire `json:"callbackPhaseRegistrations,omitempty"`
 	CallbackPhaseInvocations   []callbackPhaseInvocationWire   `json:"callbackPhaseInvocations,omitempty"`
+}
+
+// manifestWireRevision is intentionally separate from Manifest.Version. The
+// latter is provider metadata; this marker fences the manifest wire shape so
+// older readers reject effect occurrence rows instead of silently dropping
+// them. It is emitted only for manifests that carry occurrence rows.
+// Revision 2 carries publication Subject as an explicit InputSource
+// kind/ordinal pair inside operation effect rows.
+const manifestWireRevisionPublicationEffects uint8 = 2
+
+func manifestWireRevision(m *Manifest) uint8 {
+	if m == nil {
+		return 0
+	}
+	for _, operation := range m.FunctionOperations {
+		if hasEffectOccurrences(operation) {
+			return manifestWireRevisionPublicationEffects
+		}
+	}
+	return 0
+}
+
+func manifestWireHasEffectOccurrences(value manifestWire) bool {
+	for _, named := range value.FunctionOperations {
+		if hasEffectOccurrences(named.Operation) {
+			return true
+		}
+	}
+	return false
 }
 
 type namedOperationWire struct {

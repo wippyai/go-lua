@@ -249,17 +249,25 @@ func classify(values *valuedomain.Schema, callFact call.Value, input valuedomain
 	if callFact.IsEmpty() {
 		return values.Bottom(), decisionNoCandidate, true
 	}
-	if callFact.HasOpaqueAlternative() {
-		return values.Top(), decisionStage, true
-	}
 	if callFact.KnownTargetCount() == 0 {
 		return values.Bottom(), decisionNoCandidate, true
 	}
+	owned := false
 	for index := 0; index < callFact.KnownTargetCount(); index++ {
 		target, targetOK := callFact.KnownTargetAt(index)
-		if !targetOK || !targetProducesRuntimeKind(target, expectedRelation) {
-			return values.Top(), decisionStage, true
+		if !targetOK {
+			return valuedomain.Value{}, decisionInvalid, false
 		}
+		if targetProducesRuntimeKind(target, expectedRelation) {
+			owned = true
+		}
+	}
+	// RuntimeKind is a compositional result producer, not the fallback result
+	// authority. Targets and opaque alternatives outside its declared relation
+	// are left to their owning result domains; emitting Top here would erase an
+	// exact ModuleLoad (or any other independent result producer).
+	if !owned {
+		return values.Bottom(), decisionNoCandidate, true
 	}
 	projected, projectedOK := values.RuntimeKindNames(input)
 	if !projectedOK {

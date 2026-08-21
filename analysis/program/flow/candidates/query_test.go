@@ -12,7 +12,7 @@ import (
 func TestCandidateGenericLoopFixedHeaderLaw(t *testing.T) {
 	fixture := openCandidateFixture(t, genericLoopCandidateSpec())
 	result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("candidates.Seal: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestCandidateGenericLoopFixedHeaderLaw(t *testing.T) {
 func TestCandidateGenericLoopFixedPrefixOpenTailLaw(t *testing.T) {
 	fixture := openCandidateFixture(t, genericLoopFixedPrefixOpenTailSpec())
 	result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("candidates.Seal: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestCandidateGenericLoopRejectsOpenTailOtherFormsAndDeadRows(t *testing.T) 
 		t.Run(row.name, func(t *testing.T) {
 			fixture := openCandidateFixture(t, row.spec())
 			result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
-				fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+				fixture.staticView.ContentID(), fixture.moduleID)
 			if err != nil {
 				t.Fatalf("candidates.Seal: %v", err)
 			}
@@ -147,11 +147,11 @@ func TestCandidateGenericLoopForeignProvenanceRejected(t *testing.T) {
 	first := openCandidateFixture(t, genericLoopCandidateSpec())
 	foreign := openCandidateFixture(t, candidateIntegrationSpec())
 	if _, err := Seal(first.sourceView.Identity(), foreign.flowView, first.proof,
-		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleID); err == nil {
 		t.Fatal("GenericLoop Seal accepted a foreign Flow proof")
 	}
 	if _, err := Seal(foreign.sourceView.Identity(), first.flowView, first.proof,
-		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleID); err == nil {
 		t.Fatal("GenericLoop Seal accepted a foreign Source identity")
 	}
 }

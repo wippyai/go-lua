@@ -6,6 +6,8 @@ package signature
 // Ownership. Bump it only with joint cross-repo signoff per fence #1425 when a
 // label is added, removed, renamed, or changes boundary meaning.
 //
-// D2: Export, Opaque, and Freeze changed from claimed-operational to reserved
-// because the placement switch has no decision reader for those labels.
-const EscapeVocabVersion = 2
+// D3: Export, Opaque, and Freeze are active formal ownership declarations now
+// that Target/Placement consume the declaration row. Export and Opaque require
+// shared placement; Freeze is non-escaping and constrains mutability without
+// changing placement. All three therefore survive serialized manifests.
+const EscapeVocabVersion = 3

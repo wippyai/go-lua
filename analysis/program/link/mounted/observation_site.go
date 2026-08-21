@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
@@ -234,12 +235,14 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 	var anchors map[identity.ContentID]identity.ContentID
 	rows := make([]ObservationSite, 0)
 	program := mount.Snapshot.Program()
-	observationCount, observationsPublished := program.DiagnosticObservationCount()
-	if !program.Available() || !observationsPublished {
+	cold, coldOK := program.ColdState()
+	view, viewOK := programdiagnostic.NewView(cold)
+	observationCount, observationsPublished := view.DiagnosticObservationCount()
+	if !program.Available() || !coldOK || !viewOK || !observationsPublished {
 		return nil, false
 	}
 	for index := 0; index < observationCount; index++ {
-		observation, observationOK := program.DiagnosticObservationAt(index)
+		observation, observationOK := view.DiagnosticObservationAt(index)
 		if !observationOK || !observation.Available() {
 			return nil, false
 		}
@@ -257,7 +260,7 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 					return nil, false
 				}
 			}
-			evidence, evidenceOK := diagnosticEvidencePoints(program, index)
+			evidence, evidenceOK := diagnosticEvidencePoints(view, index)
 			if !evidenceOK {
 				return nil, false
 			}
@@ -285,7 +288,7 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 			site.ValueID = valueID
 			site.producers = producers
 		case structure.DiagnosticObservationTypeReferenceUnresolved:
-			path, pathOK := diagnosticPathComponents(program, index)
+			path, pathOK := diagnosticPathComponents(view, index)
 			if !pathOK || len(path) == 0 || !observation.StaticReferenceID().Available() {
 				return nil, false
 			}
@@ -306,7 +309,7 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 				return nil, false
 			}
 			valueID, valueOK := conformanceValueID(values, mount, observation.MeasuredValueID(), observation.SpanID())
-			evidence, evidenceOK := diagnosticEvidencePoints(program, index)
+			evidence, evidenceOK := diagnosticEvidencePoints(view, index)
 			if !valueOK || !evidenceOK || len(evidence) == 0 {
 				return nil, false
 			}
@@ -347,8 +350,8 @@ func mountObservationSites(values linkboundary.Values, contract *contract.Contra
 	return rows, true
 }
 
-func diagnosticEvidencePoints(program programschema.Program, observationIndex int) ([]identity.ContentID, bool) {
-	observation, ok := program.DiagnosticObservationAt(observationIndex)
+func diagnosticEvidencePoints(view programdiagnostic.View, observationIndex int) ([]identity.ContentID, bool) {
+	observation, ok := view.DiagnosticObservationAt(observationIndex)
 	if !ok {
 		return nil, false
 	}
@@ -358,7 +361,7 @@ func diagnosticEvidencePoints(program programschema.Program, observationIndex in
 	}
 	points := make([]identity.ContentID, count)
 	for index := uint32(0); index < count; index++ {
-		child, childOK := program.DiagnosticEvidenceAt(int(offset + index))
+		child, childOK := view.DiagnosticEvidenceAt(int(offset + index))
 		if !childOK || !child.Available() {
 			return nil, false
 		}
@@ -367,8 +370,8 @@ func diagnosticEvidencePoints(program programschema.Program, observationIndex in
 	return points, true
 }
 
-func diagnosticPathComponents(program programschema.Program, observationIndex int) ([]string, bool) {
-	observation, ok := program.DiagnosticObservationAt(observationIndex)
+func diagnosticPathComponents(view programdiagnostic.View, observationIndex int) ([]string, bool) {
+	observation, ok := view.DiagnosticObservationAt(observationIndex)
 	if !ok {
 		return nil, false
 	}
@@ -378,7 +381,7 @@ func diagnosticPathComponents(program programschema.Program, observationIndex in
 	}
 	path := make([]string, count)
 	for index := uint32(0); index < count; index++ {
-		child, childOK := program.DiagnosticPathAt(int(offset + index))
+		child, childOK := view.DiagnosticPathAt(int(offset + index))
 		if !childOK || !child.Available() {
 			return nil, false
 		}
@@ -394,7 +397,7 @@ func branchProducers(
 	values linkboundary.Values,
 	producersByValue map[identity.ContentID][]BranchProducer,
 	mount programmount.MountedArtifact,
-	observation programschema.DiagnosticObservation,
+	observation programdiagnostic.DiagnosticObservation,
 	evidence []identity.ContentID,
 ) ([]BranchProducer, []identity.ContentID, identity.ContentID, bool) {
 	if !observation.Available() || observation.Kind() != structure.DiagnosticObservationBranchCondition {

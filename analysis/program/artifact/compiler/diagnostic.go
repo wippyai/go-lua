@@ -15,6 +15,7 @@ const (
 	CompileStageCanonicalize
 	CompileStageSeal
 	CompileStageOccurrences
+	CompileStageModule
 )
 
 func (stage CompileStage) valid() bool {
@@ -39,6 +40,8 @@ func (stage CompileStage) String() string {
 		return "seal"
 	case CompileStageOccurrences:
 		return "occurrences"
+	case CompileStageModule:
+		return "module"
 	default:
 		return "invalid"
 	}
@@ -60,6 +63,12 @@ const (
 	CompileRowOutcome
 	CompileRowReturnValue
 	CompileRowOccurrence
+	CompileRowModuleImport
+	CompileRowModuleRequest
+	CompileRowModuleEntry
+	CompileRowModuleRootCell
+	CompileRowModuleRootFunction
+	CompileRowModuleMember
 )
 
 func (kind CompileRowKind) valid() bool {
@@ -90,6 +99,18 @@ func (kind CompileRowKind) String() string {
 		return "return-value"
 	case CompileRowOccurrence:
 		return "occurrence"
+	case CompileRowModuleImport:
+		return "module-import"
+	case CompileRowModuleRequest:
+		return "module-request"
+	case CompileRowModuleEntry:
+		return "module-entry"
+	case CompileRowModuleRootCell:
+		return "module-root-cell"
+	case CompileRowModuleRootFunction:
+		return "module-root-function"
+	case CompileRowModuleMember:
+		return "module-member"
 	default:
 		return "invalid"
 	}
@@ -193,6 +214,13 @@ const (
 	CompileReasonOccurrenceIndexAppend
 	CompileReasonOccurrenceAllocation
 	CompileReasonOccurrenceCall
+	CompileReasonModuleUnavailable
+	CompileReasonModuleImport
+	CompileReasonModuleRequest
+	CompileReasonModuleEntry
+	CompileReasonModuleRootCell
+	CompileReasonModuleRootFunction
+	CompileReasonModuleMember
 )
 
 func (reason CompileReason) valid() bool {
@@ -385,6 +413,20 @@ func (reason CompileReason) String() string {
 		return "occurrence-allocation"
 	case CompileReasonOccurrenceCall:
 		return "occurrence-call"
+	case CompileReasonModuleUnavailable:
+		return "module-unavailable"
+	case CompileReasonModuleImport:
+		return "module-import"
+	case CompileReasonModuleRequest:
+		return "module-request"
+	case CompileReasonModuleEntry:
+		return "module-entry"
+	case CompileReasonModuleRootCell:
+		return "module-root-cell"
+	case CompileReasonModuleRootFunction:
+		return "module-root-function"
+	case CompileReasonModuleMember:
+		return "module-member"
 	default:
 		return "invalid"
 	}

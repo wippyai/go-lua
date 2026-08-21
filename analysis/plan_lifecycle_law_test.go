@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
@@ -280,13 +279,12 @@ func TestWorkspaceChangedFullKeyDoesNotAlias(t *testing.T) {
 	}
 	defer leftPlan.Close()
 	defer rightPlan.Close()
-	receipt, receiptOK := composite.Global()
 	leftInput := planLifecycleInput(t, left)
 	rightInput := planLifecycleInput(t, right)
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
+	grammar := workspace.compilation.ExecutionSchemaID()
 	leftKey, leftKeyOK := programartifact.NewCompileKey(leftInput, grammar)
 	rightKey, rightKeyOK := programartifact.NewCompileKey(rightInput, grammar)
-	if !receiptOK || !grammarOK || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
+	if !grammar.Available() || !leftKeyOK || !rightKeyOK || leftKey.ID() == rightKey.ID() {
 		t.Fatal("changed Program did not issue a distinct full compiler key")
 	}
 	leftProduct := leftPlan.state.artifacts.products[leftInput.ContentID()]

@@ -36,9 +36,8 @@ func compareEffect(left, right effectDraft) int {
 }
 
 // comparePublicationEffectSpec orders authored publication declarations. It is
-// the ordering the sealed projection used to carry, and it is the same ordering:
-// freezePublicationEffect copies the seven fields one-for-one with no
-// transformation, so comparing the declaration compares the projection.
+// the ordering the sealed projection carries; the Subject source is ordered by
+// its closed kind/ordinal pair before the remaining consequence fields.
 func comparePublicationEffectSpec(left, right vocabulary.PublicationEffectSpec) int {
 	if left.Kind != right.Kind {
 		if left.Kind < right.Kind {
@@ -46,11 +45,8 @@ func comparePublicationEffectSpec(left, right vocabulary.PublicationEffectSpec) 
 		}
 		return 1
 	}
-	if left.Subject != right.Subject {
-		if left.Subject < right.Subject {
-			return -1
-		}
-		return 1
+	if order := compareInputSource(left.Subject, right.Subject); order != 0 {
+		return order
 	}
 	if left.Destination != right.Destination {
 		if left.Destination < right.Destination {

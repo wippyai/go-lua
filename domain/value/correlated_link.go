@@ -5,15 +5,17 @@ import (
 	"encoding/binary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
 // SourceSeed is one unconditional, result-bearing Link Value admitted by this
 // exact Schema. It is a cold Rule operand over the existing Link Value; Value
 // introduces neither a source row nor a second source identity.
 type SourceSeed struct {
-	schema  *Schema
-	valueID identity.ContentID
-	result  *SourceResult
+	schema     *Schema
+	valueID    identity.ContentID
+	module     identity.ContentID
+	occurrence identity.ContentID
 }
 
 // SourceSeed admits exactly Program literals and binder-authorized runtime
@@ -24,10 +26,10 @@ func (schema *Schema) SourceSeedForValueID(id identity.ContentID) (SourceSeed, b
 		return SourceSeed{}, false
 	}
 	row, ok := schema.coordinates[id]
-	if !ok || row.sourceResult == nil || !row.sourceResult.validFor(schema, id) {
+	if !ok || row.coordinate == 0 || row.source.schema != schema || !row.source.valid() {
 		return SourceSeed{}, false
 	}
-	return SourceSeed{schema: schema, valueID: id, result: row.sourceResult}, true
+	return SourceSeed{schema: schema, valueID: id}, true
 }
 
 func (schema *Schema) unconditionalValueID(value identity.ContentID) bool {
@@ -45,7 +47,11 @@ func (schema *Schema) unconditionalValueID(value identity.ContentID) bool {
 }
 
 func (seed SourceSeed) valid() bool {
-	return seed.schema != nil && seed.result != nil && seed.result.validFor(seed.schema, seed.valueID)
+	if seed.schema == nil || !seed.valueID.Available() {
+		return false
+	}
+	row, ok := seed.schema.coordinates[seed.valueID]
+	return ok && row.coordinate != 0 && row.source.schema == seed.schema && row.source.valid()
 }
 
 // ID returns the existing canonical Link Value identity of this source.
@@ -53,17 +59,17 @@ func (seed SourceSeed) ID() (identity.ContentID, bool) {
 	if !seed.valid() {
 		return identity.ContentID{}, false
 	}
-	return seed.result.id, true
+	return seed.valueID, true
 }
 
 // Occurrence returns the exact mount-qualified ProgramArtifact row that
 // issued this source. Raw shard/term coordinates never cross this receipt
 // boundary.
 func (seed SourceSeed) Occurrence() (identity.ContentID, identity.ContentID, bool) {
-	if !seed.valid() || !seed.result.module.Available() || !seed.result.occurrence.Available() {
+	if !seed.valid() || !seed.module.Available() || !seed.occurrence.Available() {
 		return identity.ContentID{}, identity.ContentID{}, false
 	}
-	return seed.result.module, seed.result.occurrence, true
+	return seed.module, seed.occurrence, true
 }
 
 // Result rederives both the existing Value Factor coordinate and its immutable
@@ -72,17 +78,25 @@ func (seed SourceSeed) Result() (Coordinate, Value, bool) {
 	if !seed.valid() {
 		return Coordinate{}, Value{}, false
 	}
-	return seed.result.coordinate, seed.result.fact, true
+	row := seed.schema.coordinates[seed.valueID]
+	return Coordinate{schema: seed.schema, index: row.coordinate}, row.source, true
 }
 
-// ReturnBoundary is Value's direct coordinate for one executable Program
-// return. Link supplies the sealed shard topology only: no Link return row,
-// identity, or projection mediates this domain operand.
+// ReturnBoundary is Value's direct heterogeneous topology for one executable
+// Program return. Link supplies the sealed shard topology only: no Link
+// return row, identity, or projection mediates this domain operand. The root
+// and every fixed Values member are already-issued Value coordinates; the
+// optional open tail is represented only by its closed Program ordinal and is
+// intentionally not exposed as another coordinate.
 type ReturnBoundary struct {
-	schema  *Schema
-	key     computationKey
-	content identity.ContentID
-	values  Coordinate
+	schema       *Schema
+	key          computationKey
+	content      identity.ContentID
+	root         Coordinate
+	memberOffset uint32
+	memberCount  uint32
+	hasTail      bool
+	tailKind     programschema.ValuesTailKind
 }
 
 func (schema *Schema) ReturnBoundary(module, occurrence identity.ContentID) (ReturnBoundary, bool) {
@@ -98,7 +112,19 @@ func (boundary ReturnBoundary) valid() bool {
 		return false
 	}
 	expected, ok := boundary.schema.returnBoundaries[boundary.key]
-	return ok && expected == boundary
+	if !ok || expected != boundary || !boundary.root.Valid() {
+		return false
+	}
+	if uint64(boundary.memberOffset)+uint64(boundary.memberCount) > uint64(len(boundary.schema.returnBoundaryMembers)) {
+		return false
+	}
+	if !boundary.hasTail && boundary.tailKind != programschema.ValuesTailInvalid {
+		return false
+	}
+	if boundary.hasTail && !boundary.tailKind.Valid() {
+		return false
+	}
+	return true
 }
 
 func (schema *Schema) OwnsReturnBoundary(boundary ReturnBoundary) bool {
@@ -112,13 +138,56 @@ func (boundary ReturnBoundary) ID() (identity.ContentID, bool) {
 	return boundary.content, true
 }
 
-// Values returns the already-issued Value coordinate for the exact returned
-// Pack.  A caller never receives a Link projection row or raw Program term.
-func (boundary ReturnBoundary) Values() (Coordinate, bool) {
+// Root returns the already-issued Value coordinate for the canonical Values
+// root. A caller never receives a Link projection row or raw Program term.
+func (boundary ReturnBoundary) Root() (Coordinate, bool) {
 	if !boundary.valid() {
 		return Coordinate{}, false
 	}
-	return boundary.values, true
+	return boundary.root, true
+}
+
+// MemberCount returns the fixed member width of this exact owner-fenced
+// return boundary. Foreign or malformed boundaries expose no rows.
+func (boundary ReturnBoundary) MemberCount() int {
+	if !boundary.valid() {
+		return 0
+	}
+	return int(boundary.memberCount)
+}
+
+// MemberAt returns one ordered fixed Values member from the Schema-owned
+// dense member arena. The arena is immutable after sealing and remains fenced
+// by the exact Schema that issued this boundary.
+func (boundary ReturnBoundary) MemberAt(index int) (Coordinate, bool) {
+	if !boundary.valid() || index < 0 || index >= int(boundary.memberCount) {
+		return Coordinate{}, false
+	}
+	position := uint64(boundary.memberOffset) + uint64(index)
+	if position >= uint64(len(boundary.schema.returnBoundaryMembers)) {
+		return Coordinate{}, false
+	}
+	member := boundary.schema.returnBoundaryMembers[position]
+	if !member.coordinate.Valid() {
+		return Coordinate{}, false
+	}
+	return member.coordinate, true
+}
+
+// HasTail reports whether the canonical Values row has an open tail. The
+// tail's producer topology is retained as metadata so consumers can widen
+// without reconstructing Program rows or inventing a finite coordinate.
+func (boundary ReturnBoundary) HasTail() bool {
+	return boundary.valid() && boundary.hasTail
+}
+
+// TailKind returns the canonical open-tail producer ordinal. Closed or
+// foreign boundaries return ValuesTailInvalid rather than leaking metadata.
+func (boundary ReturnBoundary) TailKind() programschema.ValuesTailKind {
+	if !boundary.valid() || !boundary.hasTail {
+		return programschema.ValuesTailInvalid
+	}
+	return boundary.tailKind
 }
 
 // CapabilitySeed is one existing Link capability source.  The associated

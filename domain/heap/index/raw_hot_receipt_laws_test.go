@@ -639,10 +639,10 @@ return b.source`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("program schema")
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
@@ -651,7 +651,7 @@ return b.source`)})
 	if !shardOK || !moduleOK || !programIDOK {
 		t.Fatal("mount identity")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 	if failure.Available() || artifact == nil {
 		t.Fatalf("artifact: %v", failure)
 	}
@@ -659,7 +659,7 @@ return b.source`)})
 	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	callMount := calldomain.MountedArtifact{Program: snapshottest.MustMount(t, artifact, module), Snapshot: snapshottest.MustLower(t, artifact)}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

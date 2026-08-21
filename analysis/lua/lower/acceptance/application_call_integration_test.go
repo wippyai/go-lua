@@ -131,8 +131,7 @@ func applicationOutcome(
 	next keyspace.Term,
 ) {
 	t.Helper()
-	got, ok := p.Flow().Outcomes().Get(exit)
-	gotBody, gotKind, target := got.Body, got.Kind, got.Target
+	gotBody, gotKind, target, ok := p.Flow().Outcomes().Get(exit)
 	if !ok || gotBody != body || gotKind != kind || target != 0 {
 		t.Fatalf("Outcome(%v) = %v/%v/%v/%v, want %v/%v/0/true", exit, gotBody, gotKind, target, ok, body, kind)
 	}

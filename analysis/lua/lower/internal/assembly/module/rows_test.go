@@ -33,10 +33,10 @@ func TestRowsUseCensusSlotsRatherThanVisitOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index, row := range input.Imports {
+	for index, row := range input {
 		wantTerm := keyspace.MakeTerm(keyspace.FamilyImport, uint32(index+1))
 		wantCall := keyspace.MakeTerm(keyspace.FamilyCall, uint32(index+1))
-		if row.Term != wantTerm || row.Call != wantCall || row.Request != keyspace.MakeTerm(keyspace.FamilyString, uint32(index+1)) || row.Alias != 0 || row.Key != 0 {
+		if row.Term != wantTerm || row.Call != wantCall || row.Request != keyspace.MakeTerm(keyspace.FamilyString, uint32(index+1)) || row.Alias != 0 {
 			t.Fatalf("Import[%d] = %#v, want census order", index, row)
 		}
 	}
@@ -97,13 +97,13 @@ func TestRowsFreezeOwnsFreshInputAndExcludesDerivedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Imports[0].Alias = 0
+	first[0].Alias = 0
 	second, err := rows.Freeze(counts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Imports[0].Alias != keyspace.MakeTerm(keyspace.FamilyCell, 1) || second.Imports[0].Key != 0 {
-		t.Fatalf("fresh freeze retained caller mutation: %#v", second.Imports[0])
+	if second[0].Alias != keyspace.MakeTerm(keyspace.FamilyCell, 1) {
+		t.Fatalf("fresh freeze retained caller mutation: %#v", second[0])
 	}
 }
 

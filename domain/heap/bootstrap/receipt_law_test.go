@@ -187,10 +187,10 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("bootstrap artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -203,7 +203,7 @@ func bootstrapFixture(t testing.TB) (heapdomain.Schema, bootstrapFixtureMounts) 
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("bootstrap artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("bootstrap artifact compile: %v", failure)
 		}

@@ -54,21 +54,22 @@ func TestFlowSelectorsKeepDirectSelectorCalls(t *testing.T) {
 
 func TestModuleImportAndStaticPublicationUseTheirFinalOwners(t *testing.T) {
 	p := parseBindLower(t, "\nlocal M = require(\"pkg.core\")\ntype User = M.Schema.User\nM.Schema.User = User\nreturn M\n")
-	module := p.Module()
-	if module.Count() != 1 {
-		t.Fatalf("Module Import count = %d, want one", module.Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("Module Import count = %d, want one", imports.Count())
 	}
-	imported, ok := module.ImportAt(0)
-	if !ok || imported.Call == 0 || imported.Alias == 0 || imported.Request == 0 || imported.Key == 0 {
+	imported, ok := imports.ImportAt(0)
+	if !ok || imported.Call == 0 || imported.Alias == 0 || imported.Request == 0 {
 		t.Fatalf("Module Import = %#v/%v", imported, ok)
 	}
 	request, _, text, requestOK := p.Source().Literals().Strings().At(int(keyspace.TermOrdinal(imported.Request) - 1))
 	if !requestOK || request != imported.Request || text != "pkg.core" {
 		t.Fatalf("Module Import request = %v/%q/%v", request, text, requestOK)
 	}
-	value, keyOK := p.Source().Keys().Exact(imported.Key)
-	if !keyOK || value.Kind != keyspace.LiteralString || value.String != "pkg.core" {
-		t.Fatalf("Module Import key = %#v/%v", value, keyOK)
+	key, keyOK := p.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
+	value, valueOK := p.Source().Keys().Exact(key)
+	if !keyOK || key == 0 || !valueOK || value.Kind != keyspace.LiteralString || value.String != "pkg.core" {
+		t.Fatalf("Module Import key = %#v/%v", value, valueOK)
 	}
 	publication, publicationOK := p.Static().Publications().At(0)
 	if !publicationOK {
@@ -95,18 +96,39 @@ func TestModuleImportAndStaticPublicationUseTheirFinalOwners(t *testing.T) {
 
 func TestModuleEntryKeepsReturnedRootAndMembers(t *testing.T) {
 	p := parseBindLower(t, "return { api = { f = function() end }, value = 1 }")
-	entry := p.Module().Entry()
-	returned, ok := entry.ReturnAt(0)
-	if !ok || returned == 0 {
-		t.Fatalf("Module Entry return = %v/%v", returned, ok)
+	flow := p.Flow()
+	entry, entryOK := flow.Body().Entry()
+	if !entryOK {
+		t.Fatal("Flow has no entry Body")
 	}
-	if count, ok := entry.MemberCount(returned); !ok || count != 2 {
-		t.Fatalf("Module Entry member count = %d/%v, want 2", count, ok)
+	returns := flow.Authored().Control().Returns()
+	returned, ok := returns.At(0)
+	if !ok || returned == 0 {
+		t.Fatalf("Flow Entry return = %v/%v", returned, ok)
+	}
+	owner, values, returnOK := returns.Get(returned)
+	if !returnOK || owner != entry || values == 0 {
+		t.Fatalf("Flow Entry Return = owner %v values %v/%v, want entry Body", owner, values, returnOK)
+	}
+	valuesView := flow.Authored().Values()
+	if valuesOwner, tail, valuesOK := valuesView.Get(values); !valuesOK || valuesOwner != entry || tail != 0 {
+		t.Fatalf("Flow Entry Values = owner %v tail %v/%v, want entry fixed values", valuesOwner, tail, valuesOK)
+	}
+	root, rootOK := valuesView.Member(values, 0)
+	if !rootOK || root == 0 || keyspace.TermFamily(root) != keyspace.FamilyTable {
+		t.Fatalf("Flow Entry root = %v/%v, want authored Table", root, rootOK)
+	}
+	if count, countOK := valuesView.Len(values); !countOK || count != 1 {
+		t.Fatalf("Flow Entry fixed root count = %d/%v, want 1", count, countOK)
+	}
+	tables := flow.Authored().Tables()
+	if count, countOK := tables.FieldCount(root); !countOK || count != 2 {
+		t.Fatalf("Flow Entry root member count = %d/%v, want 2 authored fields", count, countOK)
 	}
 	for index := 0; index < 2; index++ {
-		member, memberOK := entry.MemberAt(returned, index)
+		member, memberOK := tables.FieldAt(root, index)
 		if !memberOK || member == 0 {
-			t.Fatalf("Module Entry member[%d] = %v/%v", index, member, memberOK)
+			t.Fatalf("Flow Entry member[%d] = %v/%v", index, member, memberOK)
 		}
 	}
 }

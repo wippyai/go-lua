@@ -3,7 +3,7 @@
 type Opts = { proto: string, timeout: number }
 
 local function negotiate(a: Opts, b: Opts): string
-    local proto: string = a.proto        -- Scalar borrow
+    local proto: string = a.proto        -- no Heap root; borrowed scalar
     if a.timeout < b.timeout then
         proto = b.proto
     end

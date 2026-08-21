@@ -9,7 +9,6 @@ import (
 	programflow "github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	programimports "github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programsource "github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -103,19 +102,20 @@ func TestFlowModuleRequestFollowsCallValuesToSourceString(t *testing.T) {
 		t.Fatal("Module request construction failed")
 	}
 	_, _, moduleView := publishedViews(t, c)
-	row, ok := moduleView.Import(importTerm)
+	row, ok := moduleView.Get(importTerm)
 	if !ok || row.Request != request || row.Call != call {
 		t.Fatalf("Module Import = %#v/%v, want request/call %v/%v", row, ok, request, call)
 	}
 }
 
-func publishedViews(t *testing.T, c *assembly.Collector) (programsource.View, programflow.View, programimports.View) {
+func publishedViews(t *testing.T, c *assembly.Collector) (programsource.View, programflow.View, authored.Imports) {
 	t.Helper()
 	published, err := c.Publish()
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	return published.Source(), published.Flow(), published.Module()
+	flowView := published.Flow()
+	return published.Source(), flowView, flowView.Authored().Imports()
 }
 
 func TestFlowExactAccessAdmitsSourceAtomWithoutCandidateStorage(t *testing.T) {

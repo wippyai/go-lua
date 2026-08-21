@@ -6,7 +6,6 @@
       "require_complete": true,
       "min_shared_heap": 1,
       "min_shared_depth": 2,
-      "min_seal_before_share": 1,
       "max_unknown": 0
     }
   },

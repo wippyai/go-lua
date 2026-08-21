@@ -11,8 +11,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
+	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	targetcontract "github.com/wippyai/go-lua/analysis/program/target/contract"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 )
@@ -21,10 +22,10 @@ const maxUint32 = uint64(^uint32(0))
 
 // Root is one exact Target fresh-result coordinate selected by a mounted
 // ordinary Call application. ApplicationID is the existing Project
-// application identity; OutcomeResultID is the exact Target identity already
-// authenticated by Boundary.CallResult. Ordinal is the fresh occurrence
-// within that identity. Kinds is the Target fresh-class projection used by
-// Heap's runtime-kind lattice.
+// application identity; OutcomeResultID is the exact Target identity joined
+// to the canonical Program CallResult admission. Ordinal is the fresh
+// occurrence within that identity. Kinds is the Target fresh-class projection
+// used by Heap's runtime-kind lattice.
 //
 // Root contains no Heap key or dense Heap selector. The parent Heap package
 // issues those coordinates and owns their content identity.
@@ -59,6 +60,31 @@ type setValue struct {
 	kinds    runtimekind.Set
 }
 
+// MountedProgram is the neutral seal-time projection Heap supplies from its
+// artifact mounts. It carries the canonical immutable Program publication and
+// the concrete module key that places it in the Link. The projection contains
+// no Heap mount authority and no copied CallResult rows; Build indexes the
+// Program's existing CallResult family once for its cold admission walk.
+type MountedProgram struct {
+	Module  identity.ContentID
+	Program programschema.Program
+}
+
+func (mounted MountedProgram) available() bool {
+	return mounted.Module.Available() && mounted.Program.Available()
+}
+
+type mountedCallKey struct {
+	module identity.ContentID
+	call   identity.ContentID
+}
+
+type callResultAdmissionShape struct {
+	form         programschema.CallResultForm
+	multiplicity programschema.CallResultMultiplicity
+	count        uint32
+}
+
 // Catalog is the immutable, factorized fresh-root denominator. Templates are
 // interned by Target OutcomeResultID plus fresh ordinal. Each admitted
 // Project application points at one sorted, interned set of templates, and
@@ -75,12 +101,14 @@ type Catalog struct {
 	count           uint64
 }
 
-// Build seals the fresh-root catalog from one exact Link. A nil or malformed
-// source fails closed. CallResult is the only admission path for an ordinary
-// Call's Target result identity: ApplicationOperationAvailable alone is not
-// sufficient because statement calls and unconsumed fixed/open result tails
-// do not issue Heap fresh roots.
-func Build(source *link.Link) (*Catalog, bool) {
+// Build seals the fresh-root catalog from one exact Link and its owner-issued
+// mounted Program projections. A nil or malformed source fails closed.
+// CallResult is the only admission path for an ordinary Call's Target result
+// identity: Project application membership and Target OutcomeResultID
+// coordinates are joined with the canonical Program CallResult row, whose
+// AdmitsResult law decides the admitted ordinal. The row is read from the
+// mounted Program publication and is not rebuilt as a Link-level relation.
+func Build(source *link.Link, mounted []MountedProgram) (*Catalog, bool) {
 	if source == nil || source.Project() == nil || source.Boundary() == nil {
 		return nil, false
 	}
@@ -88,6 +116,10 @@ func Build(source *link.Link) (*Catalog, bool) {
 	boundary := source.Boundary()
 	contract, contractOK := boundary.Target()
 	if !contractOK || contract == nil {
+		return nil, false
+	}
+	callResults, mountsOK := indexMountedCallResults(project, mounted)
+	if !mountsOK {
 		return nil, false
 	}
 
@@ -100,7 +132,7 @@ func Build(source *link.Link) (*Catalog, bool) {
 	}
 
 	applications := project.Applications().Calls()
-	callResults := boundary.Calls()
+	selectedByShape := make(map[callResultAdmissionShape][]setValue)
 	for applicationIndex := 0; applicationIndex < applications.Count(); applicationIndex++ {
 		application, applicationOK := applications.At(applicationIndex)
 		applicationID, moduleID, callID, mountedOK := applications.MountedIdentity(application)
@@ -108,31 +140,23 @@ func Build(source *link.Link) (*Catalog, bool) {
 			return nil, false
 		}
 
-		selected, selectedOK := catalog.authenticatedApplication(contract, callResults, applicationID, moduleID, callID)
+		selected, selectedOK := catalog.authenticatedApplication(contract, callResults, selectedByShape, applicationID, moduleID, callID)
 		if !selectedOK {
 			return nil, false
 		}
 		if len(selected) == 0 {
 			continue
 		}
-		values := make([]setValue, 0, len(selected))
-		for templateID, kinds := range selected {
-			if templateID == 0 || uint64(templateID) > uint64(len(catalog.templates)) || kinds == 0 || !kinds.Valid() || kinds&^runtimekind.NonNil != 0 {
-				return nil, false
-			}
-			values = append(values, setValue{template: templateID, kinds: kinds})
-		}
-		sort.Slice(values, func(left, right int) bool { return values[left].template < values[right].template })
-		setID, setOK := catalog.internSet(values)
+		setID, setOK := catalog.internSet(selected)
 		if !setOK || setID == 0 || uint64(len(catalog.applications)) >= maxUint32 {
 			return nil, false
 		}
 		catalog.applications = append(catalog.applications, applicationID)
 		catalog.applicationSets = append(catalog.applicationSets, setID)
-		if catalog.count > ^uint64(0)-uint64(len(values)) {
+		if catalog.count > ^uint64(0)-uint64(len(selected)) {
 			return nil, false
 		}
-		catalog.count += uint64(len(values))
+		catalog.count += uint64(len(selected))
 		catalog.offsets = append(catalog.offsets, catalog.count)
 	}
 	return catalog, true
@@ -187,15 +211,98 @@ func (catalog *Catalog) internTargetTemplates(contract *targetcontract.Contract)
 	return true
 }
 
-// authenticatedApplication visits the Target fresh rows and asks Boundary to
-// authenticate each corresponding mounted CallResult. A valid CallResult
-// proves the exact application, module, call, and Target result identity; no
-// Project/Target membership approximation is accepted here.
-func (catalog *Catalog) authenticatedApplication(contract *targetcontract.Contract, callResults linkboundary.Calls, applicationID, moduleID, callID identity.ContentID) (map[uint32]runtimekind.Set, bool) {
+// indexMountedCallResults validates the exact Project mount substitution and
+// indexes each canonical Program CallResult once by its concrete module and
+// authored Call identity. The index is a cold-build accelerator, not a second
+// schema plane: every value is the immutable row already owned by Program.
+func indexMountedCallResults(project *linkproject.Component, mounted []MountedProgram) (map[mountedCallKey]programschema.CallResult, bool) {
+	if project == nil || len(mounted) != project.Mounts().Count() {
+		return nil, false
+	}
+	callResults := make(map[mountedCallKey]programschema.CallResult)
+	seenModules := make(map[identity.ContentID]struct{}, len(mounted))
+	for index, mountedProgram := range mounted {
+		if !mountedProgram.available() {
+			return nil, false
+		}
+		if _, duplicate := seenModules[mountedProgram.Module]; duplicate {
+			return nil, false
+		}
+		seenModules[mountedProgram.Module] = struct{}{}
+		shard, shardOK := project.Mounts().At(index)
+		module, moduleOK := project.ModuleKey(shard)
+		programID, programIDOK := project.Mounts().ProgramID(shard)
+		if !shardOK || !moduleOK || !programIDOK || module != mountedProgram.Module || programID != mountedProgram.Program.ProgramID {
+			return nil, false
+		}
+
+		program := mountedProgram.Program
+		callCount, callsPublished := program.CallCount()
+		if !callsPublished || callCount < 0 {
+			return nil, false
+		}
+		callIDs := make(map[identity.ContentID]struct{}, callCount)
+		for callIndex := 0; callIndex < callCount; callIndex++ {
+			call, callOK := program.CallAt(callIndex)
+			callID := call.ID()
+			if !callOK || !call.Available() || !callID.Available() {
+				return nil, false
+			}
+			if _, duplicate := callIDs[callID]; duplicate {
+				return nil, false
+			}
+			callIDs[callID] = struct{}{}
+		}
+
+		resultCount, resultsPublished := program.CallResultCount()
+		if !resultsPublished || resultCount < 0 {
+			return nil, false
+		}
+		for resultIndex := 0; resultIndex < resultCount; resultIndex++ {
+			result, resultOK := program.CallResultAt(resultIndex)
+			callID := result.CallID()
+			if !resultOK || !result.Available() || !callID.Available() {
+				return nil, false
+			}
+			if _, callExists := callIDs[callID]; !callExists {
+				return nil, false
+			}
+			key := mountedCallKey{module: mountedProgram.Module, call: callID}
+			if _, duplicate := callResults[key]; duplicate {
+				return nil, false
+			}
+			callResults[key] = result
+		}
+	}
+	return callResults, true
+}
+
+// authenticatedApplication visits Target fresh rows and authenticates each
+// corresponding canonical Program CallResult. Project's exact ordinary-call
+// application supplies the module/call key; Target supplies the exact
+// OutcomeResultID and coordinates; CallResult.AdmitsResult supplies the only
+// output-ordinal admission law. Selected template sets are cached by their
+// target-independent CallResult shape, so repeated applications do not
+// rescan the Target rows.
+func (catalog *Catalog) authenticatedApplication(contract *targetcontract.Contract, callResults map[mountedCallKey]programschema.CallResult, selectedByShape map[callResultAdmissionShape][]setValue, applicationID, moduleID, callID identity.ContentID) ([]setValue, bool) {
 	if catalog == nil || contract == nil || !applicationID.Available() || !moduleID.Available() || !callID.Available() {
 		return nil, false
 	}
-	selected := make(map[uint32]runtimekind.Set)
+	callResult, callResultOK := callResults[mountedCallKey{module: moduleID, call: callID}]
+	if !callResultOK {
+		return nil, true
+	}
+	if !callResult.Available() || callResult.CallID() != callID {
+		return nil, false
+	}
+	shape := callResultAdmissionShape{form: callResult.Form(), multiplicity: callResult.Multiplicity()}
+	if count, countOK := callResult.ResultCount(); countOK {
+		shape.count = count
+	}
+	if selected, cached := selectedByShape[shape]; cached {
+		return selected, true
+	}
+	selectedByTemplate := make(map[uint32]runtimekind.Set)
 	operations := contract.Operations.OperationCount()
 	for operationIndex := 0; operationIndex < operations; operationIndex++ {
 		operation, operationOK := contract.Operations.OperationAt(operationIndex)
@@ -218,26 +325,30 @@ func (catalog *Catalog) authenticatedApplication(contract *targetcontract.Contra
 				if !outcomeResultOK || !outcomeResultID.Available() {
 					return nil, false
 				}
-				callResult, callResultOK := callResults.CallResult(moduleID, callID, outcomeResultID)
-				if !callResultOK {
-					continue
-				}
-				rowApplicationID, applicationOK := callResult.ApplicationID()
-				rowModuleID, moduleOK := callResult.ModuleID()
-				rowCallID, callOK := callResult.CallID()
-				rowOutcomeResultID, outcomeResultIDOK := callResult.OutcomeResultID()
-				rowOperation, rowOutcome, rowResult, coordinatesOK := callResult.OutcomeResult()
-				if !applicationOK || !moduleOK || !callOK || !outcomeResultIDOK || !coordinatesOK || rowApplicationID != applicationID || rowModuleID != moduleID || rowCallID != callID || rowOutcomeResultID != outcomeResultID || rowOperation != operation || rowOutcome != outcome || rowResult != int(result) {
+				rowOperation, rowOutcome, rowResult, targetOK := contract.FindOutcomeResultID(outcomeResultID)
+				if !targetOK || rowOperation != operation || rowOutcome != outcome || rowResult != int(result) {
 					return nil, false
+				}
+				if !callResult.AdmitsResult(uint32(result)) {
+					continue
 				}
 				templateID := catalog.templateBy[templateKey{outcomeResultID: outcomeResultID, ordinal: ordinal}]
 				if templateID == 0 {
 					return nil, false
 				}
-				selected[templateID] |= mask
+				selectedByTemplate[templateID] |= mask
 			}
 		}
 	}
+	selected := make([]setValue, 0, len(selectedByTemplate))
+	for templateID, kinds := range selectedByTemplate {
+		if templateID == 0 || uint64(templateID) > uint64(len(catalog.templates)) || kinds == 0 || !kinds.Valid() || kinds&^runtimekind.NonNil != 0 {
+			return nil, false
+		}
+		selected = append(selected, setValue{template: templateID, kinds: kinds})
+	}
+	sort.Slice(selected, func(left, right int) bool { return selected[left].template < selected[right].template })
+	selectedByShape[shape] = selected
 	return selected, true
 }
 

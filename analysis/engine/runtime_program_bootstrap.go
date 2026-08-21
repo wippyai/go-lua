@@ -16,11 +16,11 @@ type LinkBootstrapPoint struct {
 // The owner also supplies a closed catalog of occurrence IDs; the engine may
 // admit those IDs only via its sealed Batch occurrence constructors.
 type LinkBootstrapWitness struct {
-	owner                 identity.ContentID
-	point                 LinkBootstrapPoint
-	occurrences           []identity.ContentID
-	byCapability          map[RuleSlotCapability]map[identity.ContentID]struct{}
-	transportCapabilities []RuleSlotCapability
+	owner               identity.ContentID
+	point               LinkBootstrapPoint
+	occurrences         []identity.ContentID
+	byCapability        map[RuleSlotCapability]map[identity.ContentID]struct{}
+	catalogCapabilities []RuleSlotCapability
 }
 
 func (witness LinkBootstrapWitness) Available() bool {
@@ -64,8 +64,9 @@ type LinkBootstrapCatalog struct {
 // under parent-issued slot capabilities, retaining the caller's catalog order.
 // A combined catalog is insufficient: an occurrence admitted for one slot must
 // not be claimable by another slot, so each capability keeps a namespace of its
-// own and the namespaces stay disjoint. How many transport catalogs one Binding
-// authorizes is the registered transport pair's law, checked at assembly.
+// own and the namespaces stay disjoint. This inventory contains every Link
+// rule; the smaller bootstrap transport set is a separate sealed Binding
+// property and is never inferred from these catalogs.
 func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBootstrapPoint, catalogs ...LinkBootstrapCatalog) (LinkBootstrapWitness, bool) {
 	if !owner.Available() || !point.Known || !point.PointID.Available() || len(catalogs) == 0 {
 		return LinkBootstrapWitness{}, false
@@ -106,21 +107,21 @@ func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBoo
 		capabilities = append(capabilities, catalog.Capability)
 	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	return LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, transportCapabilities: capabilities}, true
+	return LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, catalogCapabilities: capabilities}, true
 }
 
-func (witness LinkBootstrapWitness) transportCapabilityCount() int {
+func (witness LinkBootstrapWitness) catalogCapabilityCount() int {
 	if !witness.Available() {
 		return 0
 	}
-	return len(witness.transportCapabilities)
+	return len(witness.catalogCapabilities)
 }
 
-func (witness LinkBootstrapWitness) transportCapabilityAt(index int) (RuleSlotCapability, bool) {
-	if !witness.Available() || index < 0 || index >= len(witness.transportCapabilities) {
+func (witness LinkBootstrapWitness) catalogCapabilityAt(index int) (RuleSlotCapability, bool) {
+	if !witness.Available() || index < 0 || index >= len(witness.catalogCapabilities) {
 		return RuleSlotCapability{}, false
 	}
-	capability := witness.transportCapabilities[index]
+	capability := witness.catalogCapabilities[index]
 	return capability, capability.link()
 }
 

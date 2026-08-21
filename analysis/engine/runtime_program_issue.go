@@ -232,7 +232,8 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 	if !row.Declaration.Available() || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
 		return pendingRuleIssuance{}, false
 	}
-	if !rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence) {
+	mountedRuleOK := rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence)
+	if !mountedRuleOK {
 		return pendingRuleIssuance{}, false
 	}
 	site, sited := rows.mountedSite(row.Mount, row.Point)
@@ -252,7 +253,8 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 		member: member, activationID: activation,
 		binder: row.Declaration, coords: coords,
 	}
-	return declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, coords, site, entity, issuance)
+	result, ok := declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, coords, site, entity, issuance)
+	return result, ok
 }
 
 // admitLinkRuleIssuance mints one Link-global issuance from the sealed

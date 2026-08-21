@@ -2,27 +2,6 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// The append-only slots these families occupy. They are derived from the last
-// slot declared before them so a family added later cannot reuse a slot a
-// consumer already addresses.
-const (
-	slotRegion       = slotStaticExpression + 1
-	slotRegionMember = slotRegion + 1
-	slotWTOEvent     = slotRegionMember + 1
-)
-
-var (
-	regionFamily       = Family[Region]{slot: slotRegion, name: "region"}
-	regionMemberFamily = Family[RegionMember]{slot: slotRegionMember, name: "region-member"}
-	wtoEventFamily     = Family[WTOEvent]{slot: slotWTOEvent, name: "wto-event"}
-)
-
-func RegionFamily() Family[Region] { return regionFamily }
-
-func RegionMemberFamily() Family[RegionMember] { return regionMemberFamily }
-
-func WTOEventFamily() Family[WTOEvent] { return wtoEventFamily }
-
 // RegionMember is one point identity a region contains. Its position is its
 // ordinal in RegionMemberFamily and the parent region names the half-open
 // span it owns, so no region retains a slice header.

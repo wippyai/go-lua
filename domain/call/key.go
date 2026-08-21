@@ -35,6 +35,16 @@ func (key Key) Resume() (vocabulary.Operation, vocabulary.ResumeID, bool) {
 	return row.operation, row.resume, true
 }
 
+// Operation returns the Target operation owning this Call source arm. It is
+// useful to neutral consumers that need to classify operation declarations
+// without reopening Call's private key row.
+func (key Key) Operation() (vocabulary.Operation, bool) {
+	if !key.Valid() {
+		return 0, false
+	}
+	return key.owner.keys[key.slot-1].operation, true
+}
+
 // IsApplication reports the arm discriminator without exposing the private
 // dense coordinate.
 func (key Key) IsApplication() bool {

@@ -31,10 +31,6 @@ func TestAllocationPathsUseTheSealedFlowCertificate(t *testing.T) {
 	if _, ok := flow.BodyPath(keyspace.MakeTerm(keyspace.FamilyCall, 1)); ok {
 		t.Fatal("BodyPath accepted a non-Body term")
 	}
-	if _, ok := flow.StorageAssignmentPath(keyspace.MakeTerm(keyspace.FamilyCall, 1)); ok {
-		t.Fatal("StorageAssignmentPath accepted a non-assignment term")
-	}
-
 	var table keyspace.Term
 	tables := flow.Authored().Tables()
 	for index := 0; index < tables.Count(); index++ {

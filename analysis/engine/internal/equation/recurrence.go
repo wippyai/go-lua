@@ -43,8 +43,6 @@ type regionData struct {
 
 	interfaceBegin           int
 	interfaceEnd             int
-	faceBegin                int
-	faceEnd                  int
 	externalBegin            int
 	externalEnd              int
 	backBegin                int
@@ -70,7 +68,6 @@ type regionData struct {
 // before Graph becomes observable.
 type pendingRegion struct {
 	interfaces          []interfaceRef
-	faces               []int
 	external            []int
 	back                []int
 	internal            []int
@@ -83,7 +80,7 @@ type pendingRegion struct {
 }
 
 func (graph *Graph) deriveRegions() bool {
-	if !graph.valid() || len(graph.regions) != 0 || len(graph.regionInterfaces) != 0 || len(graph.regionFaces) != 0 || len(graph.regionExternal) != 0 || len(graph.regionBack) != 0 || len(graph.regionInternal) != 0 || len(graph.regionEnvironmentExternal) != 0 || len(graph.regionEnvironmentBack) != 0 || len(graph.regionFactorExternal) != 0 || len(graph.regionFactorBack) != 0 || len(graph.regionFactorInternal) != 0 || len(graph.regionFactors) != 0 || len(graph.eventPoints) != len(graph.points) || len(graph.pointOrder) != len(graph.points) || len(graph.pointRegion) != len(graph.points) {
+	if !graph.valid() || len(graph.regions) != 0 || len(graph.regionInterfaces) != 0 || len(graph.regionExternal) != 0 || len(graph.regionBack) != 0 || len(graph.regionInternal) != 0 || len(graph.regionEnvironmentExternal) != 0 || len(graph.regionEnvironmentBack) != 0 || len(graph.regionFactorExternal) != 0 || len(graph.regionFactorBack) != 0 || len(graph.regionFactorInternal) != 0 || len(graph.regionFactors) != 0 || len(graph.eventPoints) != len(graph.points) || len(graph.pointOrder) != len(graph.points) || len(graph.pointRegion) != len(graph.points) {
 		return false
 	}
 	count := graph.schedule.RegionCount()
@@ -143,7 +140,6 @@ func (graph *Graph) deriveRegions() bool {
 					inside = true
 				} else {
 					pending[regionIndex].interfaces = append(pending[regionIndex].interfaces, interfaceRef{group: groupIndex, input: inputIndex})
-					pending[regionIndex].faces = append(pending[regionIndex].faces, int(point))
 				}
 			}
 			if group.environmentInput.Available() {
@@ -153,8 +149,6 @@ func (graph *Graph) deriveRegions() bool {
 				}
 				if regionContainsPoint(graph, regions[regionIndex], point) {
 					inside = true
-				} else {
-					pending[regionIndex].faces = append(pending[regionIndex].faces, int(point))
 				}
 			}
 			if output == regions[regionIndex].head {
@@ -191,11 +185,8 @@ func (graph *Graph) deriveRegions() bool {
 				if target == regions[regionIndex].head {
 					pending[regionIndex].environmentBack = append(pending[regionIndex].environmentBack, edgeIndex)
 				}
-			} else {
-				pending[regionIndex].faces = append(pending[regionIndex].faces, int(source))
-				if target == regions[regionIndex].head {
-					pending[regionIndex].environmentExternal = append(pending[regionIndex].environmentExternal, edgeIndex)
-				}
+			} else if target == regions[regionIndex].head {
+				pending[regionIndex].environmentExternal = append(pending[regionIndex].environmentExternal, edgeIndex)
 			}
 			regionIndex = regions[regionIndex].parent
 		}
@@ -217,11 +208,8 @@ func (graph *Graph) deriveRegions() bool {
 				if target == regions[regionIndex].head {
 					pending[regionIndex].factorBack = append(pending[regionIndex].factorBack, edgeIndex)
 				}
-			} else {
-				pending[regionIndex].faces = append(pending[regionIndex].faces, int(source))
-				if target == regions[regionIndex].head {
-					pending[regionIndex].factorExternal = append(pending[regionIndex].factorExternal, edgeIndex)
-				}
+			} else if target == regions[regionIndex].head {
+				pending[regionIndex].factorExternal = append(pending[regionIndex].factorExternal, edgeIndex)
 			}
 			regionIndex = regions[regionIndex].parent
 		}
@@ -234,9 +222,6 @@ func (graph *Graph) deriveRegions() bool {
 		data.interfaceBegin = len(graph.regionInterfaces)
 		graph.regionInterfaces = append(graph.regionInterfaces, staged.interfaces...)
 		data.interfaceEnd = len(graph.regionInterfaces)
-		data.faceBegin = len(graph.regionFaces)
-		graph.regionFaces = append(graph.regionFaces, staged.faces...)
-		data.faceEnd = len(graph.regionFaces)
 		data.externalBegin = len(graph.regionExternal)
 		graph.regionExternal = append(graph.regionExternal, staged.external...)
 		data.externalEnd = len(graph.regionExternal)
@@ -411,27 +396,6 @@ func (view RegionView) InterfaceCount() int {
 		return 0
 	}
 	return data.interfaceEnd - data.interfaceBegin
-}
-
-// FaceAt returns one external source Point version that can affect this
-// Region's exact head RHS. Faces include ordinary Group inputs, designated
-// environment inputs, structural environment edges, and Factor edges;
-// InterfaceAt remains
-// the typed Group-input projection for callers that need the original port.
-func (view RegionView) FaceCount() int {
-	data, ok := view.data()
-	if !ok {
-		return 0
-	}
-	return data.faceEnd - data.faceBegin
-}
-
-func (view RegionView) FaceAt(index int) (Point, bool) {
-	data, ok := view.data()
-	if !ok || index < 0 || data.faceBegin+index >= data.faceEnd {
-		return Point{}, false
-	}
-	return view.graph.PointAt(schedule.Node(view.graph.regionFaces[data.faceBegin+index]))
 }
 
 func (view RegionView) ExternalHeadProducerCount() int {

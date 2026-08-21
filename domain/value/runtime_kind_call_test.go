@@ -3,15 +3,13 @@ package value_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
-	"github.com/wippyai/go-lua/analysis/program/link"
-	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/composite/snapshottest"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
 
 // TestRuntimeKindCallUsesMountedCallGeometry seals a real plain unary call
@@ -19,18 +17,18 @@ import (
 // and CallArgument rows. The test intentionally checks the detached API, not
 // a second call catalog or a reconstructed Program occurrence.
 func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
-	published, err := lower.Lower(lower.Source{Name: "runtime_kind_call.lua", Text: []byte("local function send(x) return x end\nsend({})\n")})
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
-	linked, err := link.Seal(&link.Spec{Target: allocationMembershipContract(t), Modules: []linkproject.Module{{Name: "runtime_kind_call", Program: published}}})
+	linked, err := testfixture.SealSource(contract, "runtime_kind_call.lua", []byte("local function send(x) return x end\nlocal result = send({})\nreturn result\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := composite.Global()
-	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !grammarOK || !artifactGrammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	grammar := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -41,7 +39,7 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -52,7 +50,7 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 		t.Fatal("artifact mounts")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -83,6 +81,13 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 		if _, resultOK := values.CoordinateIndex(result); !resultOK {
 			t.Fatal("runtime-kind result coordinate")
 		}
+		slot, slotOK := values.MountedCallResultSlotFor(module, occurrence.ID(), 0)
+		slotResult, slotResultOK := slot.Coordinate()
+		slotIndex, slotIndexOK := values.CoordinateIndex(slotResult)
+		resultIndex, resultIndexOK := values.CoordinateIndex(result)
+		if !slotOK || !slotResultOK || !slotIndexOK || !resultIndexOK || slotIndex != resultIndex {
+			t.Fatalf("runtime-kind result is not canonical slot 0: result=%d slot=%d", resultIndex, slotIndex)
+		}
 		if _, inputOK := values.CoordinateIndex(input); !inputOK {
 			t.Fatal("runtime-kind input coordinate")
 		}
@@ -98,18 +103,18 @@ func TestRuntimeKindCallUsesMountedCallGeometry(t *testing.T) {
 // sealed refinement must carry the coordinate Boundary's mounted span
 // directory publishes for it.
 func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
-	published, err := lower.Lower(lower.Source{Name: "runtime_kind_predicate.lua", Text: []byte("local function classify(x) return \"number\" end\nlocal kind = \"number\"\nlocal v = 5\nif classify(v) == kind then\n\tv = 1\nend\nreturn v\n")})
+	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
 		t.Fatal(err)
 	}
-	linked, err := link.Seal(&link.Spec{Target: allocationMembershipContract(t), Modules: []linkproject.Module{{Name: "runtime_kind_predicate", Program: published}}})
+	linked, err := testfixture.SealSource(contract, "runtime_kind_predicate.lua", []byte("local function classify(x) return \"number\" end\nlocal kind = \"number\"\nlocal v = 5\nif classify(v) == kind then\n\tv = 1\nend\nreturn v\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := composite.Global()
-	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !grammarOK || !artifactGrammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	grammar := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -120,7 +125,7 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -131,7 +136,7 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 		t.Fatal("artifact mounts")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -152,7 +157,8 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 			continue
 		}
 		operandID, operandOK := canonical.OccurrenceInputID(index, 2)
-		if !operandOK || !operandID.Available() {
+		sourceCallID, sourceCallOK := canonical.OccurrenceInputID(index, 0)
+		if !operandOK || !operandID.Available() || !sourceCallOK || !sourceCallID.Available() {
 			t.Fatal("operation predicate refinement row")
 		}
 		row, rowFound := values.RuntimeKindCall(module, occurrence.ID())
@@ -160,8 +166,16 @@ func TestRuntimeKindPredicateOperandIsMountedSpan(t *testing.T) {
 			t.Fatal("sealed refinement operand")
 		}
 		comparison, _, _, refinementOK := row.Refinement()
+		result, _, endpointsOK := row.Endpoints()
+		slot, slotOK := values.MountedCallResultSlotFor(module, sourceCallID, 0)
+		slotResult, slotResultOK := slot.Coordinate()
+		resultIndex, resultIndexOK := values.CoordinateIndex(result)
+		slotIndex, slotIndexOK := values.CoordinateIndex(slotResult)
 		if !refinementOK {
 			t.Fatal("sealed refinement comparison")
+		}
+		if !endpointsOK || !slotOK || !slotResultOK || !resultIndexOK || !slotIndexOK || resultIndex != slotIndex {
+			t.Fatal("predicate Call result is not canonical direct scalar slot 0")
 		}
 		operand, operandOK := linked.Boundary().Values().ForMountedSpan(module, operandID)
 		operandValueID, operandValueOK := linked.Boundary().Values().ID(operand)

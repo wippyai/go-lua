@@ -1,180 +1,140 @@
 package programschema
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/snapshot"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programfamily "github.com/wippyai/go-lua/analysis/schema/program/family"
 )
 
-// Ordinal is the position of one row inside its cold family. A cold family is
-// a dense sequence the compiler emitted in one order, and that order is part
-// of what the artifact's content identity commits to, so the coordinate is
-// the position and not a derived identity.
-type Ordinal uint32
-
-// Row is what every cold family's element answers: whether it names a proof.
-// A row that is missing any identity it needs proves nothing, so a family
-// never seals one and a consumer never reads one.
-type Row interface {
-	Available() bool
+// The accessors below are the complete typed binding of the root Program
+// family catalog. Their definitions and slot/name values are owned solely by
+// analysis/schema/program/catalog; the neutral family operations live in
+// analysis/schema/program/family.
+func ValuesFamily() programfamily.Family[Values] {
+	return programfamily.New[Values](programcatalog.Values())
 }
-
-// Family is one cold column's whole declaration: the slot it occupies, the
-// derivation its key universe is named by, and every operation over it. The
-// families differ only in their row type, their slot and their name, so they
-// are one declaration parameterised rather than one copy per family -- a new
-// family is a line, and none of them can drift from the others in how it
-// seals, sizes or reads.
-type Family[V Row] struct {
-	slot uint32
-	name string
+func ValuesMemberFamily() programfamily.Family[ValuesMember] {
+	return programfamily.New[ValuesMember](programcatalog.ValuesMember())
 }
-
-// Axis is the address of this family's column in a cold catalog.
-func (family Family[V]) Axis(catalog identity.ContentID) snapshot.Axis[Ordinal, V] {
-	return snapshot.Axis[Ordinal, V]{SchemaID: catalog, Slot: family.slot}
+func ExactScalarSummaryFamily() programfamily.Family[ExactScalarSummary] {
+	return programfamily.New[ExactScalarSummary](programcatalog.ExactScalarSummary())
 }
-
-// Denominator is the identity of this family's key universe within one cold
-// catalog. The universe is the family's own ordinal range, so its identity is
-// derived from the catalog and the family name alone.
-func (family Family[V]) Denominator(catalog identity.ContentID) (identity.ContentID, bool) {
-	if !catalog.Available() {
-		return identity.ContentID{}, false
-	}
-	return identity.DeriveContentID(catalogDomain+"/"+family.name, catalog[:])
+func ArithmeticSummaryFamily() programfamily.Family[ArithmeticSummary] {
+	return programfamily.New[ArithmeticSummary](programcatalog.ArithmeticSummary())
 }
-
-// Content seals an emitted sequence into the column's payload. The
-// denominator's membership is that sequence's ordinal range, so the column is
-// total over exactly what it publishes: every ordinal it holds is a row, and
-// an ordinal past the end is outside the universe the family names.
-//
-// A sequence containing an unavailable row seals nothing: a compiled program
-// either proved every row it emitted or it did not compile.
-func (family Family[V]) Content(rows []V, catalog identity.ContentID) (snapshot.Content[Ordinal, V], bool) {
-	denominator, derived := family.Denominator(catalog)
-	if !derived {
-		return snapshot.Content[Ordinal, V]{}, false
-	}
-	for _, row := range rows {
-		if !row.Available() {
-			return snapshot.Content[Ordinal, V]{}, false
-		}
-	}
-	if rows == nil {
-		// An empty plane still publishes a column that is total over the
-		// empty universe, which a sequence states by being one.
-		rows = []V{}
-	}
-	return snapshot.Content[Ordinal, V]{Sequence: rows, Denominator: denominator}, true
+func UnarySummaryFamily() programfamily.Family[UnarySummary] {
+	return programfamily.New[UnarySummary](programcatalog.UnarySummary())
 }
-
-// Put seals this family into a publication under construction.
-func (family Family[V]) Put(builder *snapshot.FrozenBuilder, rows []V, catalog identity.ContentID) bool {
-	content, sealed := family.Content(rows, catalog)
-	if !sealed {
-		return false
-	}
-	return snapshot.PutFrozenColumn(builder, family.Axis(catalog), content) == nil
+func PointFamily() programfamily.Family[Point] {
+	return programfamily.New[Point](programcatalog.Point())
 }
-
-// Count is the sealed width of this family: the cardinality of the key
-// universe the column is total over. A catalog the publication does not hold
-// reports nothing rather than an empty family.
-func (family Family[V]) Count(frozen *snapshot.Frozen, catalog identity.ContentID) (int, bool) {
-	denominator, derived := family.Denominator(catalog)
-	if !derived || frozen == nil {
-		return 0, false
-	}
-	return frozen.Denominators().Size(denominator)
+func PointDecisionFamily() programfamily.Family[PointDecision] {
+	return programfamily.New[PointDecision](programcatalog.PointDecision())
 }
-
-// At returns one row by its position in the emitted sequence. An ordinal
-// outside the sealed family, and a publication that holds no such column at
-// all, both report nothing.
-func (family Family[V]) At(frozen *snapshot.Frozen, catalog identity.ContentID, index int) (V, bool) {
-	var absent V
-	if index < 0 {
-		return absent, false
-	}
-	row, status := snapshot.ReadFrozen(frozen, family.Axis(catalog), Ordinal(index))
-	if status != snapshot.ReadHit {
-		return absent, false
-	}
-	return row, true
+func CallFamily() programfamily.Family[Call] {
+	return programfamily.New[Call](programcatalog.Call())
 }
-
-// Span returns the rows a parent row names by offset and count. A span that
-// runs past the sealed family is not a short read: the parent named rows the
-// publication does not hold, so it reports nothing at all.
-//
-// The rows are borrowed out of the sealed plane rather than copied out of it,
-// so a span costs no allocation however wide it is. Like every value read out
-// of a publication they are transitively immutable, and a caller that needs a
-// mutable form copies them itself.
-func (family Family[V]) Span(frozen *snapshot.Frozen, catalog identity.ContentID, offset, count uint32) ([]V, bool) {
-	return snapshot.ReadSpan(frozen, family.Axis(catalog), offset, count)
+func CallOperandFamily() programfamily.Family[CallOperand] {
+	return programfamily.New[CallOperand](programcatalog.CallOperand())
 }
-
-// The dense slot each cold family occupies in a compiled program's
-// publication. Slots are append-only: a family added later takes the next
-// slot, and no family ever moves, because a slot is half of the address every
-// consumer holds.
-const (
-	slotCallTarget uint32 = iota
-	slotHeapAllocation
-	slotHeapField
-	slotValues
-	slotValuesMember
-	slotHeapIndex
-)
-
-// The declarations below are the complete cold family catalog. Each accessor
-// returns one typed Family value, not a second per-family implementation or a
-// registry; callers use its Axis, Content, Count, At, and Span methods
-// directly. The values remain private-field declarations, so callers cannot
-// replace a family or mutate the catalog's slot and name.
-//
-// Slots are append-only and names are part of the denominator derivation, so
-// both are kept here beside the row type they address. A newly published
-// family gets one declaration and cannot accidentally drift in sealing or
-// reading semantics from the other families.
-func CallTargetFamily() Family[CallTarget] {
-	return Family[CallTarget]{slot: slotCallTarget, name: "call-target"}
+func CallArgumentFamily() programfamily.Family[CallArgument] {
+	return programfamily.New[CallArgument](programcatalog.CallArgument())
 }
-
-func HeapAllocationFamily() Family[HeapAllocation] {
-	return Family[HeapAllocation]{slot: slotHeapAllocation, name: "heap-allocation"}
+func CallTypeArgumentFamily() programfamily.Family[CallTypeArgument] {
+	return programfamily.New[CallTypeArgument](programcatalog.CallTypeArgument())
 }
-
-func HeapFieldFamily() Family[HeapField] {
-	return Family[HeapField]{slot: slotHeapField, name: "heap-field"}
+func EnvironmentEdgeFamily() programfamily.Family[EnvironmentEdge] {
+	return programfamily.New[EnvironmentEdge](programcatalog.EnvironmentEdge())
 }
-
-func ValuesFamily() Family[Values] {
-	return Family[Values]{slot: slotValues, name: "values"}
+func EnvironmentResetFamily() programfamily.Family[EnvironmentReset] {
+	return programfamily.New[EnvironmentReset](programcatalog.EnvironmentReset())
 }
-
-func ValuesMemberFamily() Family[ValuesMember] {
-	return Family[ValuesMember]{slot: slotValuesMember, name: "values-member"}
+func StaticTypeValueFamily() programfamily.Family[StaticTypeValue] {
+	return programfamily.New[StaticTypeValue](programcatalog.StaticTypeValue())
 }
-
-func HeapIndexFamily() Family[HeapIndex] {
-	return Family[HeapIndex]{slot: slotHeapIndex, name: "heap-index"}
+func StaticExpressionFamily() programfamily.Family[StaticExpression] {
+	return programfamily.New[StaticExpression](programcatalog.StaticExpression())
 }
-
-func OccurrenceFamily() Family[Occurrence] {
-	return Family[Occurrence]{slot: slotOccurrence, name: "occurrence"}
+func RegionFamily() programfamily.Family[Region] {
+	return programfamily.New[Region](programcatalog.Region())
 }
-
-func OccurrencePointFamily() Family[OccurrencePoint] {
-	return Family[OccurrencePoint]{slot: slotOccurrencePoint, name: "occurrence-point"}
+func RegionMemberFamily() programfamily.Family[RegionMember] {
+	return programfamily.New[RegionMember](programcatalog.RegionMember())
 }
-
-func OccurrenceInputFamily() Family[OccurrenceInput] {
-	return Family[OccurrenceInput]{slot: slotOccurrenceInput, name: "occurrence-input"}
+func WTOEventFamily() programfamily.Family[WTOEvent] {
+	return programfamily.New[WTOEvent](programcatalog.WTOEvent())
 }
-
-func RuleOccurrenceFamily() Family[RuleOccurrence] {
-	return Family[RuleOccurrence]{slot: slotRuleOccurrence, name: "rule-occurrence"}
+func BodyFamily() programfamily.Family[Body] {
+	return programfamily.New[Body](programcatalog.Body())
+}
+func BodyEntryFamily() programfamily.Family[BodyEntry] {
+	return programfamily.New[BodyEntry](programcatalog.BodyEntry())
+}
+func BodyRootFamily() programfamily.Family[BodyRoot] {
+	return programfamily.New[BodyRoot](programcatalog.BodyRoot())
+}
+func OutcomeFamily() programfamily.Family[Outcome] {
+	return programfamily.New[Outcome](programcatalog.Outcome())
+}
+func OutcomeReturnValueFamily() programfamily.Family[OutcomeReturnValue] {
+	return programfamily.New[OutcomeReturnValue](programcatalog.OutcomeReturnValue())
+}
+func OutcomePointFamily() programfamily.Family[OutcomePoint] {
+	return programfamily.New[OutcomePoint](programcatalog.OutcomePoint())
+}
+func FunctionBoundaryFamily() programfamily.Family[FunctionBoundary] {
+	return programfamily.New[FunctionBoundary](programcatalog.FunctionBoundary())
+}
+func FunctionFormalFamily() programfamily.Family[FunctionFormal] {
+	return programfamily.New[FunctionFormal](programcatalog.FunctionFormal())
+}
+func FunctionVarargFamily() programfamily.Family[FunctionVararg] {
+	return programfamily.New[FunctionVararg](programcatalog.FunctionVararg())
+}
+func FunctionCaptureFamily() programfamily.Family[FunctionCapture] {
+	return programfamily.New[FunctionCapture](programcatalog.FunctionCapture())
+}
+func StaticInputFamily() programfamily.Family[StaticInput] {
+	return programfamily.New[StaticInput](programcatalog.StaticInput())
+}
+func LocalTransferFamily() programfamily.Family[LocalTransfer] {
+	return programfamily.New[LocalTransfer](programcatalog.LocalTransfer())
+}
+func LocalTransferWriteFamily() programfamily.Family[LocalTransferWrite] {
+	return programfamily.New[LocalTransferWrite](programcatalog.LocalTransferWrite())
+}
+func OccurrenceFamily() programfamily.Family[Occurrence] {
+	return programfamily.New[Occurrence](programcatalog.Occurrence())
+}
+func OccurrencePointFamily() programfamily.Family[OccurrencePoint] {
+	return programfamily.New[OccurrencePoint](programcatalog.OccurrencePoint())
+}
+func OccurrenceInputFamily() programfamily.Family[OccurrenceInput] {
+	return programfamily.New[OccurrenceInput](programcatalog.OccurrenceInput())
+}
+func RuleOccurrenceFamily() programfamily.Family[RuleOccurrence] {
+	return programfamily.New[RuleOccurrence](programcatalog.RuleOccurrence())
+}
+func CallResultFamily() programfamily.Family[CallResult] {
+	return programfamily.New[CallResult](programcatalog.CallResult())
+}
+func ModuleImportFamily() programfamily.Family[ModuleImport] {
+	return programfamily.New[ModuleImport](programcatalog.ModuleImport())
+}
+func ModuleRequestFamily() programfamily.Family[ModuleRequest] {
+	return programfamily.New[ModuleRequest](programcatalog.ModuleRequest())
+}
+func ModuleEntryFamily() programfamily.Family[ModuleEntry] {
+	return programfamily.New[ModuleEntry](programcatalog.ModuleEntry())
+}
+func ModuleEntryRootCellFamily() programfamily.Family[ModuleEntryRootCell] {
+	return programfamily.New[ModuleEntryRootCell](programcatalog.ModuleEntryRootCell())
+}
+func ModuleEntryRootFunctionFamily() programfamily.Family[ModuleEntryRootFunction] {
+	return programfamily.New[ModuleEntryRootFunction](programcatalog.ModuleEntryRootFunction())
+}
+func CallResultSlotFamily() programfamily.Family[CallResultSlot] {
+	return programfamily.New[CallResultSlot](programcatalog.CallResultSlot())
+}
+func ModuleEntryMemberFamily() programfamily.Family[ModuleEntryMember] {
+	return programfamily.New[ModuleEntryMember](programcatalog.ModuleEntryMember())
 }

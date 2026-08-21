@@ -2,10 +2,9 @@
   "description": "CLEAN: a fold over rows that returns a scalar; rows are borrowed and dropped, no allocation escapes.",
   "check": {
     "placement": {
-      "min_stack": 1
+      "require_complete": true,
+      "min_stack": 1,
+      "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }

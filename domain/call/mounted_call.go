@@ -53,6 +53,35 @@ func (algebra *Algebra) MountedCallForOccurrence(moduleID, callID identity.Conte
 	return mounted, ok && row.moduleID == moduleID && row.callID == callID
 }
 
+// MountedCallKeyForOccurrence authenticates one mounted artifact-call
+// occurrence and resolves its corresponding Call source key in one owner
+// fenced operation.  ModuleID qualifies reusable artifact call IDs; the
+// mounted receipt round-trip then proves that the occurrence came from this
+// exact Algebra before the application arm is projected into a Key.
+//
+// The application/key checks are intentionally repeated here rather than
+// delegated to detached IDs.  A caller must not be able to pair a mounted
+// occurrence from one Call owner with an equal-looking application key from a
+// foreign or resealed owner.
+func (algebra *Algebra) MountedCallKeyForOccurrence(moduleID, callID identity.ContentID) (MountedCall, Key, bool) {
+	if algebra == nil || !algebra.Valid() || !moduleID.Available() || !callID.Available() {
+		return MountedCall{}, Key{}, false
+	}
+	mounted, mountedOK := algebra.MountedCallForOccurrence(moduleID, callID)
+	application, issuedCallID, issuedModuleID, _, _, identityOK := algebra.MountedCallIdentity(mounted)
+	canonical, canonicalOK := algebra.MountedCallForOccurrence(issuedModuleID, issuedCallID)
+	key, keyOK := algebra.KeyForApplicationID(application)
+	keyApplication, keyApplicationOK := key.ApplicationID()
+	ok := mountedOK && identityOK && canonicalOK && canonical == mounted &&
+		issuedModuleID == moduleID && issuedCallID == callID && algebra.OwnsMountedModule(moduleID) &&
+		application.Available() && keyOK && key.IsApplication() && algebra.OwnsKey(key) &&
+		keyApplicationOK && keyApplication == application
+	if !ok {
+		return MountedCall{}, Key{}, false
+	}
+	return mounted, key, true
+}
+
 // MountedCallOrdinalForOccurrence is the dense address of one module-scoped
 // artifact call in this Algebra's canonical mounted-call order.  It is the
 // direct form of MountedCallForOccurrence for owners that key their own
@@ -72,6 +101,18 @@ func (algebra *Algebra) MountedCallOrdinalForOccurrence(moduleID, callID identit
 func (algebra *Algebra) MountedCallIdentity(mounted MountedCall) (applicationID, callID, moduleID, calleeValueID, loaderSeedID identity.ContentID, ok bool) {
 	row, ok := algebra.mountedCallRow(mounted)
 	return row.applicationID, row.callID, row.moduleID, row.calleeValueID, row.loaderSeedID, ok
+}
+
+// KeyForMountedCall resolves the mounted application arm through the exact
+// Algebra that issued the receipt. It is the sole bridge from mounted-call
+// identity to Call's closed source-sum key; callers cannot synthesize a key
+// from detached application bytes.
+func (algebra *Algebra) KeyForMountedCall(mounted MountedCall) (Key, bool) {
+	applicationID, _, _, _, _, ok := algebra.MountedCallIdentity(mounted)
+	if !ok {
+		return Key{}, false
+	}
+	return algebra.KeyForApplicationID(applicationID)
 }
 
 // OwnsMountedModule authenticates a Link mount identity against this exact

@@ -53,7 +53,7 @@ func TestShapeProvenanceRejectsEqualDenominatorForeignOwners(t *testing.T) {
 	sourceID := current.preimage.Identity().ContentID()
 	flowID := current.flow.ContentID()
 	staticID := current.staticView.ContentID()
-	moduleID := current.moduleFinalize.View().ContentID()
+	moduleID := current.flow.ModuleID()
 	if !Matches(shape, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("Shape did not retain its exact Source/Flow identities")
 	}

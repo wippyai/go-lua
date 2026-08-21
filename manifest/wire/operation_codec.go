@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -59,6 +60,11 @@ func (value *Values) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Revision 2 changes publication Subject from an implicit ValueFormal to an
+// explicit InputSource kind/ordinal pair. All operation effect occurrences
+// use this revision so an older reader cannot silently reinterpret a row.
+const operationWireRevisionPublicationEffects uint8 = 2
+
 type outcomeTailTypeJSON struct {
 	Outcome uint32             `json:"outcome"`
 	Type    *typewire.TypeWire `json:"type,omitempty"`
@@ -97,16 +103,23 @@ func (value Operation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		plain
 		InputTailType *typewire.TypeWire `json:"inputTailType,omitempty"`
-	}{plain: plain(value), InputTailType: encoded})
+		WireRevision  uint8              `json:"wireRevision,omitempty"`
+	}{plain: plain(value), InputTailType: encoded, WireRevision: operationWireRevision(value)})
 }
 
 func (value *Operation) UnmarshalJSON(data []byte) error {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	type plain Operation
 	var encoded struct {
 		plain
 		InputTailType *typewire.TypeWire `json:"inputTailType,omitempty"`
+		WireRevision  uint8              `json:"wireRevision,omitempty"`
 	}
-	if err := json.Unmarshal(data, &encoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&encoded); err != nil {
 		return err
 	}
 	decoded, err := decodeOptionalType(encoded.InputTailType)
@@ -114,9 +127,37 @@ func (value *Operation) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	decodedOperation := CloneOperation(Operation(encoded.plain))
+	if encoded.WireRevision != 0 && encoded.WireRevision != operationWireRevisionPublicationEffects {
+		return fmt.Errorf("manifest: unsupported operation wire revision %d", encoded.WireRevision)
+	}
+	if encoded.WireRevision != 0 && !hasEffectOccurrences(decodedOperation) {
+		return fmt.Errorf("manifest: operation wire revision %d is superfluous without effect occurrences", encoded.WireRevision)
+	}
+	if hasEffectOccurrences(decodedOperation) && encoded.WireRevision != operationWireRevisionPublicationEffects {
+		return fmt.Errorf("manifest: operation effect occurrences require wire revision %d, got %d", operationWireRevisionPublicationEffects, encoded.WireRevision)
+	}
 	decodedOperation.InputTailType = decoded
 	*value = decodedOperation
 	return nil
+}
+
+func operationWireRevision(value Operation) uint8 {
+	if hasEffectOccurrences(value) {
+		return operationWireRevisionPublicationEffects
+	}
+	return 0
+}
+
+func hasEffectOccurrences(value Operation) bool {
+	if len(value.Effects.Occurrences) != 0 {
+		return true
+	}
+	for _, callback := range value.Callbacks {
+		if len(callback.Effects.Occurrences) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func encodeTypes(values []typ.Type) ([]*typewire.TypeWire, error) {

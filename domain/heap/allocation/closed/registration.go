@@ -38,7 +38,7 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Writes: "heap",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/allocation", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/finish", Stage: "stage/local", Code: uint64(heapdomain.AllocationFormClosed), HasCode: true},
+			{Occurrence: "occurrence/allocation", Requirement: "requirement/unrestricted", Form: "issuance/local-successor", Input: "input/finish", Stage: "stage/local", Code: uint64(heapdomain.AllocationFormClosed), HasCode: true},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/allocation-closed",

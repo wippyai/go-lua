@@ -244,10 +244,23 @@ type OperatorsInput struct {
 	Selects  []Select
 }
 
+// Import is one dense authored module occurrence.  Module identity is owned
+// by Flow assembly, but the occurrence itself is part of the authored Flow
+// input so every consumer observes the same immutable row plane.  Source
+// exact-key resolution remains a later assembly projection and is therefore
+// deliberately absent here.
+type Import struct {
+	Term    keyspace.Term
+	Call    keyspace.Term
+	Alias   keyspace.Term
+	Request keyspace.Term
+}
+
 // Input is the authored Flow boundary. Counts is an allocation plan used to
 // validate canonical Terms. It is not retained by the component.
 type Input struct {
 	Counts     [keyspace.FamilyCount]uint32
+	Imports    []Import
 	Values     ValuesInput
 	Access     AccessInput
 	Storage    StorageInput
@@ -300,6 +313,11 @@ type operatorStore struct {
 	selects  []Select
 }
 
+type importStore struct {
+	rows     []Import
+	moduleID identity.ContentID
+}
+
 type authoredControlStore struct {
 	returns  []Return
 	breaks   []Break
@@ -314,6 +332,7 @@ type authoredControlStore struct {
 // deliberately unexported: only a committed View may retain it.
 type component struct {
 	contentID       identity.ContentID
+	imports         importStore
 	values          valueStore
 	access          accessStore
 	storage         storageStore
@@ -377,6 +396,9 @@ func (view viewAccess) active() bool {
 // Finalizer.Commit is direct immutable storage and remains valid.
 type View struct{ viewAccess }
 
+// Imports is the direct authored Import relation view.
+type Imports struct{ viewAccess }
+
 // Values is the direct Values relation view.
 type Values struct{ viewAccess }
 
@@ -436,6 +458,17 @@ func (view View) ContentID() identity.ContentID {
 	return view.component.contentID
 }
 
+// ModuleID returns the separately-authenticated authored import identity. It
+// is independent from Flow ContentID so adding or changing imports cannot
+// silently change the historical Flow codec.
+func (view View) ModuleID() identity.ContentID {
+	if !view.active() {
+		return identity.ContentID{}
+	}
+	return view.component.imports.moduleID
+}
+
+func (view View) Imports() Imports       { return Imports(view) }
 func (view View) Values() Values         { return Values(view) }
 func (view View) Access() Access         { return Access(view) }
 func (view View) Storage() Storage       { return Storage(view) }

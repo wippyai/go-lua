@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
-	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
 
 // View is the immutable query surface over a sealed operand table. It holds
@@ -120,31 +119,4 @@ func (view Annotations) Get(term keyspace.Term) (Annotation, bool) {
 		return Annotation{}, false
 	}
 	return view.view.table.annotation.Row(term)
-}
-
-// ForCount distinguishes a valid target with no annotations (0, true) from an
-// invalid target (0, false). The index is only an allocation-free query
-// acceleration; Annotation rows remain the sole semantic relation.
-func (view Annotations) ForCount(target keyspace.Term) (int, bool) {
-	if !view.view.available || !view.targetPresent(target) {
-		return 0, false
-	}
-	count, ok := view.view.table.index.Count(target)
-	if !ok {
-		return 0, true
-	}
-	return count, true
-}
-
-func (view Annotations) ForAt(target keyspace.Term, index int) (keyspace.Term, bool) {
-	if !view.view.available || index < 0 || !view.targetPresent(target) {
-		return 0, false
-	}
-	return view.view.table.index.At(target, index)
-}
-
-// targetPresent binds the authored Annotation target role to the sealed
-// census column its owner assigned.
-func (view Annotations) targetPresent(target keyspace.Term) bool {
-	return staticrole.AnnotationTarget(view.view.census, target)
 }

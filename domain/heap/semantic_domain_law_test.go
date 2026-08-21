@@ -552,14 +552,14 @@ func newSemanticHeapFixture(t testing.TB, name, text string, spec declaration.Sp
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programOK := linked.Project().Mounts().ProgramID(shard)
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	compiled, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	compiled, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, compiled), module, programID)
 	schema, sealFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
-	if !shardOK || !moduleOK || !programOK || !receiptOK || !grammarOK || !issuanceOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
-		t.Fatalf("receipt Heap fixture shard=%t module=%t program=%t receipt=%t artifact=%v mount=%t seal=%v", shardOK, moduleOK, programOK, receiptOK, failure, mountOK, sealFailure)
+	if !shardOK || !moduleOK || !programOK || !compilationOK || !executionSchemaID.Available() || !issuanceOK || failure.Available() || !mountOK || sealFailure != heapdomain.SealFailureNone {
+		t.Fatalf("receipt Heap fixture shard=%t module=%t program=%t compilation=%t artifact=%v mount=%t seal=%v", shardOK, moduleOK, programOK, compilationOK, failure, mountOK, sealFailure)
 	}
 	return semanticHeapFixtureRecord{linked: linked, schema: schema, mount: mount, module: module, program: programID}
 }

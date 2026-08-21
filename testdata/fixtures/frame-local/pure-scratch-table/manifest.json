@@ -1,5 +1,6 @@
 {
-  "description": "A pure-compute scratch table used only in the current body qualifies for FrameLocal.",
+  "description": "A scratch table whose last use precedes a channel receive qualifies for Stack/FrameLocal and dies-before-suspension.",
+  "packages": ["channel"],
   "check": {
     "placement": {
       "require_complete": true,

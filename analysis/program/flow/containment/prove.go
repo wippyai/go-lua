@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -37,7 +36,7 @@ func Prove(
 	view authored.View,
 	bodies *body.Result,
 	bindingResult binding.Result,
-	moduleView imports.View,
+	moduleView authored.Imports,
 	entry keyspace.Term,
 ) (*Result, *StaticScopeProof, error) {
 	// Fence the upstream structural owners before any cardinality walk or
@@ -118,7 +117,7 @@ func Prove(
 	return result, scopeProof, nil
 }
 
-func liveCounts(preimage source.Preimage, staticView staticquery.View, view authored.View, moduleView imports.View) ([keyspace.FamilyCount]uint32, error) {
+func liveCounts(preimage source.Preimage, staticView staticquery.View, view authored.View, moduleView authored.Imports) ([keyspace.FamilyCount]uint32, error) {
 	var counts [keyspace.FamilyCount]uint32
 	identity := preimage.Identity()
 	if !identity.ContentID().Available() || identity.Name() == "" || identity.TermCount() == 0 ||
@@ -149,7 +148,7 @@ func validateOwnerCardinalities(
 	view authored.View,
 	bodies *body.Result,
 	bindingResult binding.Result,
-	moduleView imports.View,
+	moduleView authored.Imports,
 	counts [keyspace.FamilyCount]uint32,
 ) error {
 	if err := validateSourceCounts(preimage, counts); err != nil {

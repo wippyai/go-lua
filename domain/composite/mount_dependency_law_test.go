@@ -24,12 +24,16 @@ import (
 // after the axes it declared an edge to, so a mount that seals over a peer's
 // authority finds that authority already sealed.
 func TestMountPhaseWalksAxesInDependencyOrder(t *testing.T) {
-	sealRegistry()
-	if registry.sealed == nil {
-		t.Fatalf("declaration table did not seal: %v", registry.failure)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
 	}
-	order, ok := axis.DependencyOrder(registry.axes)
-	if !ok || len(order) != len(registry.axes) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
+		t.Fatal("declaration table did not seal")
+	}
+	order, ok := axis.DependencyOrder(state.axes)
+	if !ok || len(order) != len(state.axes) {
 		t.Fatalf("mount order rejected the sealed inventory: ok=%v placed=%d", ok, len(order))
 	}
 	positions := make(map[schema.Key]int, len(order))
@@ -37,7 +41,7 @@ func TestMountPhaseWalksAxesInDependencyOrder(t *testing.T) {
 		positions[entry.Key()] = index
 	}
 	edges := 0
-	for _, entry := range registry.axes {
+	for _, entry := range state.axes {
 		for index := 0; index < entry.DependencyCount(); index++ {
 			dependency, dependencyOK := entry.DependencyAt(index)
 			if !dependencyOK {
@@ -75,7 +79,7 @@ func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 		activation:      &callactivation.TargetBatchCatalog{},
 	}
 	neutral := inputs.neutral()
-	if neutral.ValueSchema != nil || neutral.PackSchema != nil || neutral.CallAlgebra != nil || neutral.EffectAlgebra != nil {
+	if neutral.ValueSchema != nil || neutral.PlacementSchema.Valid() || neutral.PackSchema != nil || neutral.CallAlgebra != nil || neutral.EffectAlgebra != nil {
 		t.Fatalf("the phase's neutral input half carried a mounted factor authority")
 	}
 	if neutral.HeapSchema.Valid() || neutral.topology != nil || neutral.activation != nil {
@@ -83,6 +87,47 @@ func TestMountScopeCarriesNoUndeclaredAuthority(t *testing.T) {
 	}
 	if neutral.StaticAuthority == nil || len(neutral.Artifacts) != len(inputs.Artifacts) {
 		t.Fatalf("the phase's neutral input half dropped an input every mount reads")
+	}
+}
+
+// TestMountScopeCarriesDeclaredDependencyClosure states that a mount receives
+// the sealed transitive prerequisites of each dependency it declares. The
+// evidence axis names Placement only, yet Placement's own Heap prerequisite is
+// available for the Placement adopter's owner-fence check. An unrelated axis
+// remains absent from the scoped record.
+func TestMountScopeCarriesDeclaredDependencyClosure(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
+		t.Fatal("declaration table did not seal")
+	}
+	evidence, evidenceOK := axisForKey(state, axisKeyPlacementEvidence)
+	if !evidenceOK || evidence == nil {
+		t.Fatal("evidence axis was not declared")
+	}
+	sealed := newAxisCells(state.axes)
+	for _, key := range []schema.Key{axisKeyHeap, axisKeyPlacement, axisKeyValue} {
+		slot, slotOK := axisSlotForKey(state, key)
+		if !slotOK {
+			t.Fatalf("axis %q was not assigned a slot", key)
+		}
+		sealed[slot] = axis.NewCell(key)
+	}
+	scoped := dependencyCells(state, evidence, sealed)
+	heapSlot, heapOK := axisSlotForKey(state, axisKeyHeap)
+	placementSlot, placementOK := axisSlotForKey(state, axisKeyPlacement)
+	valueSlot, valueOK := axisSlotForKey(state, axisKeyValue)
+	if !heapOK || !placementOK || !valueOK {
+		t.Fatal("dependency closure fixture axes were not assigned slots")
+	}
+	if !scoped[heapSlot].Available() || !scoped[placementSlot].Available() {
+		t.Fatal("Placement dependency did not carry its Heap prerequisite")
+	}
+	if scoped[valueSlot].Available() {
+		t.Fatal("undeclared unrelated axis crossed the mount scope")
 	}
 }
 
@@ -94,7 +139,11 @@ func TestMountPhaseRejectsAnAbsentStaticInventory(t *testing.T) {
 	if inputs.mountable() {
 		t.Fatalf("the mount phase admitted a record with no static inventory")
 	}
-	mounted, failure := MountLink(inputs)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	mounted, failure := MountLink(compilation, inputs)
 	if !failure.Available() || failure.Stage != MountStageInput {
 		t.Fatalf("mount phase admitted an incomplete neutral half: %v", failure)
 	}

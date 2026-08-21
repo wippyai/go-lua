@@ -1,0 +1,223 @@
+{
+  "measured": "2026-08-20 recovery track lane 1, go test ./oracle -run TestCanonicalCorpusAcceptanceHighWaterMark -count=1",
+  "note": "Per-family acceptance high-water. clean_min is a floor; the other four are ceilings. A fixture that reached no acceptance verdict is counted as unjudged and contributes its whole source-authored expectation set as missing, so a repair anywhere else in the analyzer can only lower these counts. Raising a floor or lowering a ceiling is a deliberate edit made by whoever measured the better run; widening a ceiling is not, and the one column this mark refuses to widen is core.unexpected_max, which the analyzer currently exceeds by reporting one finding per wrong element of core/annotation-array-mismatch where the fixture declares one inline marker. Corpus totals recorded here: clean=161 unjudged=669 missing-inline=702 missing-structured=128 unexpected=15.",
+  "corpus_projects": 912,
+  "families": {
+    "advice": {
+      "projects": 6,
+      "clean_min": 0,
+      "unjudged_max": 6,
+      "missing_inline_max": 0,
+      "missing_structured_max": 8,
+      "unexpected_max": 0
+    },
+    "assignments": {
+      "projects": 1,
+      "clean_min": 0,
+      "unjudged_max": 1,
+      "missing_inline_max": 0,
+      "missing_structured_max": 1,
+      "unexpected_max": 0
+    },
+    "basic": {
+      "projects": 1,
+      "clean_min": 0,
+      "unjudged_max": 1,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "bench": {
+      "projects": 1,
+      "clean_min": 0,
+      "unjudged_max": 1,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "core": {
+      "projects": 66,
+      "clean_min": 31,
+      "unjudged_max": 32,
+      "missing_inline_max": 3,
+      "missing_structured_max": 0,
+      "unexpected_max": 1
+    },
+    "decomposable": {
+      "projects": 9,
+      "clean_min": 5,
+      "unjudged_max": 3,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "errors": {
+      "projects": 1,
+      "clean_min": 1,
+      "unjudged_max": 0,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "flow": {
+      "projects": 20,
+      "clean_min": 9,
+      "unjudged_max": 9,
+      "missing_inline_max": 2,
+      "missing_structured_max": 1,
+      "unexpected_max": 1
+    },
+    "frame-local": {
+      "projects": 6,
+      "clean_min": 0,
+      "unjudged_max": 5,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "functions": {
+      "projects": 72,
+      "clean_min": 24,
+      "unjudged_max": 41,
+      "missing_inline_max": 19,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "generics": {
+      "projects": 27,
+      "clean_min": 14,
+      "unjudged_max": 12,
+      "missing_inline_max": 3,
+      "missing_structured_max": 1,
+      "unexpected_max": 0
+    },
+    "loops": {
+      "projects": 3,
+      "clean_min": 0,
+      "unjudged_max": 3,
+      "missing_inline_max": 3,
+      "missing_structured_max": 1,
+      "unexpected_max": 0
+    },
+    "modules": {
+      "projects": 25,
+      "clean_min": 0,
+      "unjudged_max": 25,
+      "missing_inline_max": 2,
+      "missing_structured_max": 6,
+      "unexpected_max": 0
+    },
+    "narrowing": {
+      "projects": 140,
+      "clean_min": 9,
+      "unjudged_max": 122,
+      "missing_inline_max": 112,
+      "missing_structured_max": 10,
+      "unexpected_max": 2
+    },
+    "narrowing-recovery": {
+      "projects": 4,
+      "clean_min": 0,
+      "unjudged_max": 4,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "native": {
+      "projects": 173,
+      "clean_min": 25,
+      "unjudged_max": 108,
+      "missing_inline_max": 2,
+      "missing_structured_max": 0,
+      "unexpected_max": 7
+    },
+    "origins": {
+      "projects": 4,
+      "clean_min": 0,
+      "unjudged_max": 4,
+      "missing_inline_max": 0,
+      "missing_structured_max": 4,
+      "unexpected_max": 0
+    },
+    "placement": {
+      "projects": 23,
+      "clean_min": 0,
+      "unjudged_max": 20,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "realworld": {
+      "projects": 47,
+      "clean_min": 3,
+      "unjudged_max": 43,
+      "missing_inline_max": 57,
+      "missing_structured_max": 30,
+      "unexpected_max": 0
+    },
+    "regression": {
+      "projects": 60,
+      "clean_min": 11,
+      "unjudged_max": 48,
+      "missing_inline_max": 21,
+      "missing_structured_max": 6,
+      "unexpected_max": 0
+    },
+    "sealpoints": {
+      "projects": 4,
+      "clean_min": 0,
+      "unjudged_max": 3,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 1
+    },
+    "semantic": {
+      "projects": 81,
+      "clean_min": 2,
+      "unjudged_max": 69,
+      "missing_inline_max": 347,
+      "missing_structured_max": 49,
+      "unexpected_max": 3
+    },
+    "sendsafety": {
+      "projects": 3,
+      "clean_min": 1,
+      "unjudged_max": 2,
+      "missing_inline_max": 0,
+      "missing_structured_max": 9,
+      "unexpected_max": 0
+    },
+    "soundness": {
+      "projects": 33,
+      "clean_min": 0,
+      "unjudged_max": 32,
+      "missing_inline_max": 124,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "threshold-widening": {
+      "projects": 3,
+      "clean_min": 0,
+      "unjudged_max": 3,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "transitive-libs": {
+      "projects": 2,
+      "clean_min": 0,
+      "unjudged_max": 2,
+      "missing_inline_max": 0,
+      "missing_structured_max": 0,
+      "unexpected_max": 0
+    },
+    "types": {
+      "projects": 97,
+      "clean_min": 26,
+      "unjudged_max": 70,
+      "missing_inline_max": 7,
+      "missing_structured_max": 2,
+      "unexpected_max": 0
+    }
+  }
+}

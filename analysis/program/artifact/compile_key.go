@@ -6,6 +6,9 @@ package artifact
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program"
+	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programdiagnostic "github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 )
 
 const (
@@ -14,16 +17,12 @@ const (
 	GrammarABIVersion = uint64(5)
 
 	artifactFormat = uint64(33)
-	// Region heads are derived from the canonical first member; the former
-	// duplicate head/sourceHead scalars no longer enter the artifact identity.
-	pointGeometryLawVersion = uint64(2)
-	// Attachment relations are emitted directly into the generic occurrence
-	// catalog; v2 removes the former retained Site-to-WTO projection from the
-	// artifact identity preimage.
-	pointAttachmentLawVersion = uint64(2)
 	// Dead structural Boundary, StaticTypeArgument, and duplicated Static node
 	// field metadata projections no longer survive the compiler.
-	compilerLawVersion     = uint64(5)
+	// Module rows now participate in the canonical Program/Artifact identity
+	// and seal contract. Keep the existing compile-key shape and advance the
+	// compiler law so older artifacts cannot be reused under the new geometry.
+	compilerLawVersion     = uint64(6)
 	operatorLawVersion     = uint64(1)
 	substitutionLawVersion = uint64(1)
 	summaryLawVersion      = uint64(1)
@@ -31,80 +30,65 @@ const (
 	routeLawVersion        = uint64(3)
 	valuesLawVersion       = uint64(1)
 	bodyOutcomeLawVersion  = uint64(4)
-	// Function boundaries reference the canonical Body outcome range instead
-	// of retaining a second ordered outcome-ID slice.
-	functionBoundaryLawVersion = uint64(3)
 	// Heap allocation geometry now commits the parent-issued
 	// SharesFirstValueCell relation. Keep this generic occurrence law separate
 	// from Pack's row law: changing Heap rows must invalidate only the
 	// reusable occurrence/artifact identity contract.
-	occurrenceLawVersion = uint64(12)
-	// v3 records the closed DiagnosticObservation union, including detached
-	// unresolved-reference proof and exact branch payload masks.
-	diagnosticLawVersion     = uint64(5)
-	callRowsLawVersion       = uint64(2)
-	callResultRowsLawVersion = uint64(2)
-
+	occurrenceLawVersion  = uint64(12)
 	compileKeyDomain      = "analysis/program-artifact/compile-key"
 	artifactIDDomain      = "analysis/program-artifact/artifact"
-	grammarIdentityDomain = "analysis/program-artifact/grammar"
+	executionSchemaDomain = "analysis/program-artifact/execution-schema"
 )
 
 // ArtifactFormatVersion is the immutable representation version committed by
 // every CompileKey and Artifact identity.
 const ArtifactFormatVersion = artifactFormat
 
-// GrammarIdentity is the pointer-free cold grammar admitted by the Program
-// artifact compiler. It carries only the sealed schema digest and ABI; live
-// SchemaBinding authority is joined later by the composition root.
-type GrammarIdentity struct {
-	schema identity.ContentID
-	abi    uint64
-	id     identity.ContentID
-}
+// ExecutionSchemaID is the one foreign-consumer admission identity for a
+// sealed execution schema. It is deliberately a content identity, rather
+// than a wrapper carrying the fields from which it was derived: the cold
+// Compilation digest and the order-sensitive Publication schema ID are
+// already sealed at the composition root, and the artifact boundary must
+// retain only their atomic result.
+type ExecutionSchemaID [32]byte
 
-// NewGrammarIdentity constructs the exact cold grammar identity from the
-// sealed schema's digest and ABI. A zero digest or foreign ABI is rejected so
-// a caller cannot compile under an unavailable or mismatched schema.
-func NewGrammarIdentity(schema identity.ContentID, abi uint64) (GrammarIdentity, bool) {
-	if !schema.Available() || abi != GrammarABIVersion {
-		return GrammarIdentity{}, false
+// NewExecutionSchemaID folds exactly the cold meaning, snapshot layout, and
+// ABI into the artifact admission identity. Derived publication plans are not
+// part of this preimage. A foreign or unavailable ABI fails closed.
+func NewExecutionSchemaID(cold, publication identity.ContentID, abi uint64) (ExecutionSchemaID, bool) {
+	if !cold.Available() || !publication.Available() || abi != GrammarABIVersion {
+		return ExecutionSchemaID{}, false
 	}
-	grammar := GrammarIdentity{schema: schema, abi: abi}
-	grammar.id = digest(grammarIdentityDomain, artifactFormat, bytesField(grammar.schema), uintField(grammar.abi))
-	return grammar, grammar.Available()
+	id := artifactdigest.Digest(
+		executionSchemaDomain,
+		artifactFormat,
+		artifactdigest.ContentID(cold),
+		artifactdigest.ContentID(publication),
+		artifactdigest.Uint(abi),
+	)
+	if !id.Available() {
+		return ExecutionSchemaID{}, false
+	}
+	return ExecutionSchemaID(id), true
 }
 
-func (grammar GrammarIdentity) Available() bool {
-	return grammar.schema.Available() && grammar.abi == GrammarABIVersion && grammar.id.Available()
-}
+// Available reports whether the ID names a sealed execution schema.
+func (id ExecutionSchemaID) Available() bool { return identity.ContentID(id).Available() }
 
-func (grammar GrammarIdentity) SchemaDigest() identity.ContentID {
-	if !grammar.Available() {
+// ContentID returns the canonical shared identity carried by the artifact
+// admission token.
+func (id ExecutionSchemaID) ContentID() identity.ContentID {
+	if !id.Available() {
 		return identity.ContentID{}
 	}
-	return grammar.schema
-}
-
-func (grammar GrammarIdentity) ABIVersion() uint64 {
-	if !grammar.Available() {
-		return 0
-	}
-	return grammar.abi
-}
-
-func (grammar GrammarIdentity) ID() identity.ContentID {
-	if !grammar.Available() {
-		return identity.ContentID{}
-	}
-	return grammar.id
+	return identity.ContentID(id)
 }
 
 // CompileKey is the complete reusable cold compiler identity. Every law
 // version is retained as data and committed by both the key and Artifact ID.
 type CompileKey struct {
 	program             identity.ContentID
-	grammar             GrammarIdentity
+	executionSchema     ExecutionSchemaID
 	format              uint64
 	compilerLaw         uint64
 	operatorLaw         uint64
@@ -121,39 +105,38 @@ type CompileKey struct {
 	id                  identity.ContentID
 }
 
-func NewCompileKey(input *program.Program, grammar GrammarIdentity) (CompileKey, bool) {
-	if !input.Available() || !grammar.Available() {
+func NewCompileKey(input *program.Program, executionSchema ExecutionSchemaID) (CompileKey, bool) {
+	if !input.Available() || !executionSchema.Available() {
 		return CompileKey{}, false
 	}
 	key := CompileKey{
-		program: input.ContentID(), grammar: grammar, format: artifactFormat,
+		program: input.ContentID(), executionSchema: executionSchema, format: artifactFormat,
 		compilerLaw: compilerLawVersion, operatorLaw: operatorLawVersion,
 		substituteLaw: substitutionLawVersion, summaryLaw: summaryLawVersion,
 		wtoLaw: wtoLawVersion, routeLaw: routeLawVersion, valuesLaw: valuesLawVersion,
-		bodyOutcomeLaw: bodyOutcomeLawVersion, functionBoundaryLaw: functionBoundaryLawVersion, occurrenceLaw: occurrenceLawVersion, diagnosticLaw: diagnosticLawVersion,
-		callRowsLaw: callRowsLawVersion,
+		bodyOutcomeLaw: bodyOutcomeLawVersion, functionBoundaryLaw: programschema.FunctionBoundaryLawVersion, occurrenceLaw: occurrenceLawVersion, diagnosticLaw: programdiagnostic.DiagnosticRowsLawVersion,
+		callRowsLaw: programschema.CallRowsLawVersion,
 	}
-	key.id = digest(compileKeyDomain, artifactFormat, key.identityFields()...)
+	key.id = artifactdigest.Digest(compileKeyDomain, artifactFormat, key.identityFields()...)
 	return key, key.Available()
 }
 
-func (key CompileKey) identityFields() []field {
-	return []field{
-		bytesField(key.program), bytesField(key.grammar.ID()), bytesField(key.grammar.SchemaDigest()),
-		uintField(key.grammar.ABIVersion()), uintField(key.format), uintField(key.compilerLaw),
-		uintField(key.operatorLaw), uintField(key.substituteLaw), uintField(key.summaryLaw),
-		uintField(key.wtoLaw), uintField(key.routeLaw), uintField(key.valuesLaw), uintField(key.bodyOutcomeLaw), uintField(key.functionBoundaryLaw), uintField(key.occurrenceLaw), uintField(key.diagnosticLaw),
-		uintField(key.callRowsLaw),
+func (key CompileKey) identityFields() []artifactdigest.Field {
+	return []artifactdigest.Field{
+		artifactdigest.ContentID(key.program), artifactdigest.ContentID(key.executionSchema.ContentID()), artifactdigest.Uint(key.format), artifactdigest.Uint(key.compilerLaw),
+		artifactdigest.Uint(key.operatorLaw), artifactdigest.Uint(key.substituteLaw), artifactdigest.Uint(key.summaryLaw),
+		artifactdigest.Uint(key.wtoLaw), artifactdigest.Uint(key.routeLaw), artifactdigest.Uint(key.valuesLaw), artifactdigest.Uint(key.bodyOutcomeLaw), artifactdigest.Uint(key.functionBoundaryLaw), artifactdigest.Uint(key.occurrenceLaw), artifactdigest.Uint(key.diagnosticLaw),
+		artifactdigest.Uint(key.callRowsLaw),
 	}
 }
 
 func (key CompileKey) Available() bool {
-	return key.program.Available() && key.grammar.Available() && key.format == artifactFormat &&
+	return key.program.Available() && key.executionSchema.Available() && key.format == artifactFormat &&
 		key.compilerLaw == compilerLawVersion && key.operatorLaw == operatorLawVersion &&
 		key.substituteLaw == substitutionLawVersion && key.summaryLaw == summaryLawVersion &&
 		key.wtoLaw == wtoLawVersion && key.routeLaw == routeLawVersion && key.valuesLaw == valuesLawVersion &&
-		key.bodyOutcomeLaw == bodyOutcomeLawVersion && key.functionBoundaryLaw == functionBoundaryLawVersion && key.occurrenceLaw == occurrenceLawVersion &&
-		key.diagnosticLaw == diagnosticLawVersion && key.callRowsLaw == callRowsLawVersion && key.id.Available()
+		key.bodyOutcomeLaw == bodyOutcomeLawVersion && key.functionBoundaryLaw == programschema.FunctionBoundaryLawVersion && key.occurrenceLaw == occurrenceLawVersion &&
+		key.diagnosticLaw == programdiagnostic.DiagnosticRowsLawVersion && key.callRowsLaw == programschema.CallRowsLawVersion && key.id.Available()
 }
 
 func (key CompileKey) ProgramID() identity.ContentID {
@@ -163,18 +146,12 @@ func (key CompileKey) ProgramID() identity.ContentID {
 	return key.program
 }
 
-func (key CompileKey) Grammar() GrammarIdentity {
+func (key CompileKey) ExecutionSchemaID() ExecutionSchemaID {
 	if !key.Available() {
-		return GrammarIdentity{}
+		return ExecutionSchemaID{}
 	}
-	return key.grammar
+	return key.executionSchema
 }
-
-func (key CompileKey) SchemaDigest() identity.ContentID {
-	return key.Grammar().SchemaDigest()
-}
-
-func (key CompileKey) ABIVersion() uint64 { return key.Grammar().ABIVersion() }
 
 func (key CompileKey) ID() identity.ContentID {
 	if !key.Available() {

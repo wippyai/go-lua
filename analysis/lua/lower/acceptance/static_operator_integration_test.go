@@ -85,12 +85,6 @@ func TestSourceStaticAnnotationRowsAreOwnedByStaticOperands(t *testing.T) {
 	if !rowOK || row.Target == 0 || row.Values == 0 {
 		t.Fatalf("Static Annotation row = %#v/%v", row, rowOK)
 	}
-	if count, ok := annotations.ForCount(row.Target); !ok || count != 1 {
-		t.Fatalf("annotation target count = %d/%v, want one", count, ok)
-	}
-	if indexed, ok := annotations.ForAt(row.Target, 0); !ok || indexed != annotation {
-		t.Fatalf("annotation target row = %v/%v, want %v", indexed, ok, annotation)
-	}
 }
 
 func TestSourceStaticOperatorContentIDIsDeterministic(t *testing.T) {

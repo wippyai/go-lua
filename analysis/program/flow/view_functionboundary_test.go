@@ -64,11 +64,11 @@ return finish()
 		if !exitOK || !globalOK {
 			t.Fatalf("root Outcome[%d] = %#v/%v global=%v/%v", index, exit, exitOK, global, globalOK)
 		}
-		outcome, outcomeOK := flow.Outcomes().Get(global)
-		if !outcomeOK || exit.Outcome != global || exit.Body != outcome.Body || exit.Kind != outcome.Kind || exit.Target != outcome.Target || outcome.Body != entry {
-			t.Fatalf("root Outcome[%d] = %#v; global = %v/%#v", index, exit, global, outcome)
+		outcomeBody, outcomeKind, outcomeTarget, outcomeOK := flow.Outcomes().Get(global)
+		if !outcomeOK || exit.Outcome != global || exit.Body != outcomeBody || exit.Kind != outcomeKind || exit.Target != outcomeTarget || outcomeBody != entry {
+			t.Fatalf("root Outcome[%d] = %#v; global = %v/%v/%v/%v", index, exit, global, outcomeBody, outcomeKind, outcomeTarget)
 		}
-		found[uint8(outcome.Kind)] = true
+		found[uint8(outcomeKind)] = true
 		got, gotOK := boundaries.ForOutcome(global)
 		gotBody, gotBodyOK := got.Body()
 		if !gotOK || !gotBodyOK || gotBody != entry {
@@ -217,33 +217,5 @@ func TestFunctionBoundaryContextReplayAndAllocation(t *testing.T) {
 		_, functionBoundaryBoolSink = root.OutcomeAt(0)
 	}); allocations != 0 {
 		t.Fatalf("Function boundary queries allocate %v times", allocations)
-	}
-}
-
-func TestBodyReturnProjectionThreadsExactBodyOwnerInConstantTime(t *testing.T) {
-	text := `return finish()`
-	left, right := lowerFunctionBoundaryLaw(t, text), lowerFunctionBoundaryLaw(t, text)
-	leftRoot, leftRootOK := left.Flow().FunctionBoundaries().Root()
-	rightRoot, rightRootOK := right.Flow().FunctionBoundaries().Root()
-	leftBodyTerm, leftTermOK := leftRoot.Body()
-	rightBodyTerm, rightTermOK := rightRoot.Body()
-	leftBody, leftBodyOK := left.Flow().FunctionBoundaries().ForBody(leftBodyTerm)
-	rightBody, rightBodyOK := right.Flow().FunctionBoundaries().ForBody(rightBodyTerm)
-	if !leftRootOK || !rightRootOK || !leftTermOK || !rightTermOK || !leftBodyOK || !rightBodyOK || !leftBody.Equal(rightBody) {
-		t.Fatal("equivalent replay did not publish equal root Body proofs")
-	}
-	returned, returnedOK := left.Flow().BodyReturns().ForBody(leftBody)
-	if !returnedOK || !returned.Available() || returned.ValuesCount() != 1 {
-		t.Fatalf("left Body Return = %#v/%v values=%d", returned, returnedOK, returned.ValuesCount())
-	}
-	if _, ok := left.Flow().BodyReturns().ForBody(rightBody); ok {
-		t.Fatal("Body Return projection accepted an equal foreign-owner Body")
-	}
-	if allocations := testing.AllocsPerRun(1000, func() {
-		_, functionBoundaryBoolSink = left.Flow().BodyReturns().ForBody(leftBody)
-		_ = returned.ValuesCount()
-		_, functionBoundaryBoolSink = returned.ValueAt(0)
-	}); allocations != 0 {
-		t.Fatalf("Body Return projection queries allocate %v times", allocations)
 	}
 }

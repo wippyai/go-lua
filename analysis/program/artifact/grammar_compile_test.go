@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	programstatic "github.com/wippyai/go-lua/analysis/program/static"
@@ -41,23 +40,12 @@ func compileKeyProgram(t *testing.T, name string) *program.Program {
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
-	moduleDraft, err := imports.Build(imports.Input{})
+	flowDraft, err := authored.Build(authored.Input{Counts: counts})
 	if err != nil {
 		_ = sourceFinalizer.Abort()
 		t.Fatal(err)
 	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatal(err)
-	}
-	flowDraft, err := flow.Build(authored.Input{Counts: counts})
-	if err != nil {
-		_ = moduleFinalizer.Abort()
-		_ = sourceFinalizer.Abort()
-		t.Fatal(err)
-	}
-	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, flowDraft, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +56,8 @@ func compileKeyProgram(t *testing.T, name string) *program.Program {
 	return published
 }
 
-func TestCompileKeyIsProgramAndGrammarOnly(t *testing.T) {
-	grammar, grammarOK := NewGrammarIdentity(identity.ContentID{1}, GrammarABIVersion)
+func TestCompileKeyIsProgramAndExecutionSchemaOnly(t *testing.T) {
+	grammar, grammarOK := NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, GrammarABIVersion)
 	if !grammarOK {
 		t.Fatal("grammar identity unavailable")
 	}
@@ -88,7 +76,7 @@ func TestCompileKeyIsProgramAndGrammarOnly(t *testing.T) {
 	if changed.ContentID() == left.ContentID() || changedKey.ID() == leftKey.ID() {
 		t.Fatal("changed Program reused a compile key")
 	}
-	foreignGrammar, foreignOK := NewGrammarIdentity(identity.ContentID{2}, GrammarABIVersion)
+	foreignGrammar, foreignOK := NewExecutionSchemaID(identity.ContentID{2}, identity.ContentID{2}, GrammarABIVersion)
 	foreignKey, foreignKeyed := NewCompileKey(left, foreignGrammar)
 	if !foreignOK || !foreignKeyed || foreignKey.ID() == leftKey.ID() {
 		t.Fatal("grammar digest did not enter the compile key")
@@ -97,7 +85,7 @@ func TestCompileKeyIsProgramAndGrammarOnly(t *testing.T) {
 	for index := 0; index < keyType.NumField(); index++ {
 		name := keyType.Field(index).Name
 		switch name {
-		case "program", "grammar", "format", "compilerLaw", "operatorLaw", "substituteLaw", "summaryLaw",
+		case "program", "executionSchema", "format", "compilerLaw", "operatorLaw", "substituteLaw", "summaryLaw",
 			"wtoLaw", "routeLaw", "valuesLaw", "bodyOutcomeLaw", "functionBoundaryLaw", "occurrenceLaw",
 			"diagnosticLaw", "callRowsLaw", "id":
 		default:
@@ -106,12 +94,17 @@ func TestCompileKeyIsProgramAndGrammarOnly(t *testing.T) {
 	}
 }
 
-func TestGrammarIdentityRejectsWrongABI(t *testing.T) {
-	if grammar, ok := NewGrammarIdentity(identity.ContentID{1}, GrammarABIVersion-1); ok || grammar.Available() {
+func TestExecutionSchemaIdentityRejectsWrongABIAndCommitsBothIdentities(t *testing.T) {
+	if grammar, ok := NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, GrammarABIVersion-1); ok || grammar.Available() {
 		t.Fatal("wrong grammar ABI was admitted")
 	}
-	grammar, ok := NewGrammarIdentity(identity.ContentID{1}, GrammarABIVersion)
-	if !ok || !grammar.Available() || grammar.SchemaDigest() != (identity.ContentID{1}) {
+	grammar, ok := NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, GrammarABIVersion)
+	if !ok || !grammar.Available() || !grammar.ContentID().Available() {
 		t.Fatal("valid grammar identity unavailable")
+	}
+	changedCold, changedColdOK := NewExecutionSchemaID(identity.ContentID{3}, identity.ContentID{2}, GrammarABIVersion)
+	changedLayout, changedLayoutOK := NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{3}, GrammarABIVersion)
+	if !changedColdOK || !changedLayoutOK || changedCold.ContentID() == grammar.ContentID() || changedLayout.ContentID() == grammar.ContentID() {
+		t.Fatal("execution schema identity omitted cold meaning or publication layout")
 	}
 }

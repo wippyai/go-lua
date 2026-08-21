@@ -3,14 +3,17 @@ package diagnostic
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/domain/runtimekind"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 )
 
@@ -44,13 +47,12 @@ const (
 // findingSeveritySpelling is the declared name one severity renders under. The
 // severity vocabulary is declared on the structural surface, so a rendered
 // label is read from the declaration rather than from a switch kept here.
-func FindingSeverityName(severity FindingSeverity) (string, bool) {
-	return findingSeveritySpelling(severity)
+func FindingSeverityName(vocabulary structure.Table, severity FindingSeverity) (string, bool) {
+	return findingSeveritySpelling(vocabulary, severity)
 }
 
-func findingSeveritySpelling(severity FindingSeverity) (string, bool) {
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
-	if !vocabularyOK || !severity.Available() {
+func findingSeveritySpelling(vocabulary structure.Table, severity FindingSeverity) (string, bool) {
+	if !severity.Available() {
 		return "", false
 	}
 	member, memberOK := vocabulary.At(structure.CategoryDiagnosticSeverity, severity.Ordinal())
@@ -63,8 +65,8 @@ func findingSeveritySpelling(severity FindingSeverity) (string, bool) {
 // diagnosticDeclaration resolves one published code in the sealed declaration
 // table. It is the only per-code lookup in Analysis; nothing here restates the
 // inventory.
-func Declaration(code DiagnosticCode) (*schemadiag.Entry, bool) {
-	return diagnosticDeclaration(code)
+func Declaration(table schemadiag.Table, code DiagnosticCode) (*schemadiag.Entry, bool) {
+	return diagnosticDeclaration(table, code)
 }
 
 func ForgedFinding(report *DiagnosticReport, ordinal uint32) Finding {
@@ -75,9 +77,8 @@ func UnsafeTemplateData(subject, target string, claim diagnosticClaimForm, proof
 	return diagnosticTemplateData{subject: diagnosticSemanticName{value: subject}, target: diagnosticTargetType{value: target}, claim: claim, proof: proof}
 }
 
-func diagnosticDeclaration(code DiagnosticCode) (*schemadiag.Entry, bool) {
-	table, tableOK := composite.Diagnostics()
-	if !tableOK {
+func diagnosticDeclaration(table schemadiag.Table, code DiagnosticCode) (*schemadiag.Entry, bool) {
+	if !table.Available() {
 		return nil, false
 	}
 	return table.ForCode(code)
@@ -173,22 +174,85 @@ func (form diagnosticClaimForm) text() string {
 	}
 }
 
+// diagnosticObservedSpelling is the spelling of the value a finding measured.
+// It is closed the same way the claim vocabulary is: a producer names either
+// one exact scalar constant or the runtime families the value may carry, and
+// this file renders it. A producer cannot hand in a rendered fragment of its
+// own, so the observed half of a message stays as declarative as the declared
+// half.
+type diagnosticObservedSpelling struct{ value string }
+
+func (spelling diagnosticObservedSpelling) valid() bool { return spelling.value != "" }
+
+func (spelling diagnosticObservedSpelling) text() string { return spelling.value }
+
+// ObservedLiteral is the spelling of a proved scalar constant. The rendering
+// is Lua's own: a string constant renders quoted, a float renders in the
+// shortest form that reads back, and an integer and a boolean render as
+// themselves.
+func ObservedLiteral(literal keyspace.LiteralValue) (diagnosticObservedSpelling, bool) {
+	switch literal.Kind {
+	case keyspace.LiteralBool:
+		return diagnosticObservedSpelling{value: strconv.FormatBool(literal.Bool)}, true
+	case keyspace.LiteralInteger:
+		return diagnosticObservedSpelling{value: strconv.FormatInt(literal.Integer, 10)}, true
+	case keyspace.LiteralFloat:
+		return diagnosticObservedSpelling{value: strconv.FormatFloat(math.Float64frombits(literal.FloatBits), 'g', -1, 64)}, true
+	case keyspace.LiteralString:
+		return diagnosticObservedSpelling{value: strconv.Quote(literal.String)}, true
+	default:
+		return diagnosticObservedSpelling{}, false
+	}
+}
+
+// ObservedNil is the spelling of the one value that has no literal of its own.
+func ObservedNil() diagnosticObservedSpelling {
+	return diagnosticObservedSpelling{value: "nil"}
+}
+
+// ObservedFamilies is the spelling of a value that narrowed to families rather
+// than to a constant. The names are the declared spellings of the runtime
+// family vocabulary, read from the sealed structural table, so this file holds
+// no second list of them.
+func ObservedFamilies(vocabulary structure.Table, kinds runtimekind.Set) (diagnosticObservedSpelling, bool) {
+	if !kinds.Valid() || kinds == 0 {
+		return diagnosticObservedSpelling{}, false
+	}
+	var rendered strings.Builder
+	for index := 0; index < kinds.Members(); index++ {
+		kind, kindOK := kinds.MemberAt(index)
+		if !kindOK {
+			return diagnosticObservedSpelling{}, false
+		}
+		member, memberOK := vocabulary.At(structure.CategoryRuntimeKind, uint16(kind))
+		if !memberOK || member.Spelling() == "" {
+			return diagnosticObservedSpelling{}, false
+		}
+		if index > 0 {
+			rendered.WriteString(" or ")
+		}
+		rendered.WriteString(member.Spelling())
+	}
+	spelling := diagnosticObservedSpelling{value: rendered.String()}
+	return spelling, spelling.valid()
+}
+
 // DiagnosticPolicy is opt-in. A zero policy never collects semantic reports.
 type DiagnosticPolicy struct {
 	Enabled  []DiagnosticCode
 	Severity map[DiagnosticCode]FindingSeverity
 }
 
-func (policy DiagnosticPolicy) EnabledFor(code DiagnosticCode) (FindingSeverity, bool) {
-	return policy.enabled(code)
+func (policy DiagnosticPolicy) EnabledFor(table schemadiag.Table, code DiagnosticCode) (FindingSeverity, bool) {
+	return policy.enabled(table, code)
 }
 
-func (policy DiagnosticPolicy) enabled(code DiagnosticCode) (FindingSeverity, bool) {
+func (policy DiagnosticPolicy) enabled(table schemadiag.Table, code DiagnosticCode) (FindingSeverity, bool) {
 	for _, candidate := range policy.Enabled {
 		if candidate != code {
 			continue
 		}
-		entry, entryOK := diagnosticDeclaration(code)
+		entry, entryOK := diagnosticDeclaration(table, code)
 		if !entryOK {
 			return FindingSeverityInvalid, false
 		}
@@ -207,17 +271,20 @@ func (policy DiagnosticPolicy) enabled(code DiagnosticCode) (FindingSeverity, bo
 // producer for this code. A presentation row alone is deliberately
 // insufficient: accepting a dormant code would let an API caller receive a
 // clean empty report for a family no producer has collected yet.
-func diagnosticCollectable(code DiagnosticCode) bool {
-	entry, ok := diagnosticDeclaration(code)
+func diagnosticCollectable(table schemadiag.Table, code DiagnosticCode) bool {
+	entry, ok := diagnosticDeclaration(table, code)
 	return ok && entry.Collectable()
 }
 
 // Valid rejects ambiguous policy authority before a solve starts: every code
 // is known and unique, and overrides may only refine an enabled known code.
-func (policy DiagnosticPolicy) Valid() bool {
+func (policy DiagnosticPolicy) Valid(table schemadiag.Table) bool {
+	if !table.Available() {
+		return false
+	}
 	enabled := make(map[DiagnosticCode]struct{}, len(policy.Enabled))
 	for _, code := range policy.Enabled {
-		if !diagnosticCollectable(code) {
+		if !diagnosticCollectable(table, code) {
 			return false
 		}
 		if _, duplicate := enabled[code]; duplicate {
@@ -226,7 +293,7 @@ func (policy DiagnosticPolicy) Valid() bool {
 		enabled[code] = struct{}{}
 	}
 	for code, severity := range policy.Severity {
-		if !diagnosticCollectable(code) || !severity.Available() {
+		if !diagnosticCollectable(table, code) || !severity.Available() {
 			return false
 		}
 		if _, selected := enabled[code]; !selected {
@@ -239,9 +306,14 @@ func (policy DiagnosticPolicy) Valid() bool {
 type diagnosticFinding struct {
 	id, subject identity.ContentID
 	code        DiagnosticCode
-	severity    FindingSeverity
-	location    DiagnosticLocation
-	data        diagnosticTemplateData
+	// verdict is the declared answer this finding renders under. A row with one
+	// presentation of its own answers under none; a row whose collector answers
+	// in a declared vocabulary carries the member it answered with, and the
+	// declaration decides every rendered byte from it.
+	verdict  uint16
+	severity FindingSeverity
+	location DiagnosticLocation
+	data     diagnosticTemplateData
 }
 
 // diagnosticTemplateData is the complete typed payload a declaration may use.
@@ -285,16 +357,24 @@ type diagnosticTemplateData struct {
 	proof   DiagnosticLocation
 	handled diagnosticNameList
 	missing diagnosticNameList
+	actual  diagnosticObservedSpelling
+	member  diagnosticSemanticName
 }
 
 // validFor states the payload contract of one declaration: exactly the fields
-// the row requires are supplied, and nothing else is.
-func (data diagnosticTemplateData) ValidFor(entry *schemadiag.Entry) bool {
-	return data.validFor(entry)
+// the presentation this finding renders from requires are supplied, and
+// nothing else is. A row that renders per verdict states that contract per
+// answer, so the payload one answer names is never owed by another's producer.
+func (data diagnosticTemplateData) ValidFor(entry *schemadiag.Entry, verdict uint16) bool {
+	return data.validFor(entry, verdict)
 }
 
-func (data diagnosticTemplateData) validFor(entry *schemadiag.Entry) bool {
-	requirements := entry.Requirements()
+func (data diagnosticTemplateData) validFor(entry *schemadiag.Entry, verdict uint16) bool {
+	presentation, presentationOK := entry.Presentation(verdict)
+	if !presentationOK {
+		return false
+	}
+	requirements := presentation.Requirements
 	if !payloadFieldValid(requirements&schemadiag.RequiresSubject != 0, data.subject.valid(), data.subject == diagnosticSemanticName{}) {
 		return false
 	}
@@ -308,6 +388,12 @@ func (data diagnosticTemplateData) validFor(entry *schemadiag.Entry) bool {
 		return false
 	}
 	if !payloadFieldValid(requirements&schemadiag.RequiresMissing != 0, data.missing.valid(), len(data.missing.names) == 0) {
+		return false
+	}
+	if !payloadFieldValid(requirements&schemadiag.RequiresActual != 0, data.actual.valid(), data.actual == diagnosticObservedSpelling{}) {
+		return false
+	}
+	if !payloadFieldValid(requirements&schemadiag.RequiresMember != 0, data.member.valid(), data.member == diagnosticSemanticName{}) {
 		return false
 	}
 	return payloadFieldValid(requirements&schemadiag.RequiresProofLocation != 0, data.proof.Available(), data.proof == DiagnosticLocation{})
@@ -359,6 +445,10 @@ func renderDiagnosticLine(line schemadiag.Line, data diagnosticTemplateData) str
 			rendered.WriteString(data.handled.text())
 		case schemadiag.PlaceholderMissing:
 			rendered.WriteString(data.missing.text())
+		case schemadiag.PlaceholderActual:
+			rendered.WriteString(data.actual.text())
+		case schemadiag.PlaceholderMember:
+			rendered.WriteString(data.member.value)
 		default:
 			return ""
 		}
@@ -428,6 +518,10 @@ func (label DiagnosticLabel) Text() string {
 
 type DiagnosticReport struct {
 	source, result    identity.ContentID
+	compilation       composite.Compilation
+	vocabulary        structure.Table
+	declarations      schemadiag.Table
+	collections       composite.DiagnosticCollections
 	findings          []diagnosticFinding
 	collectionFailure DiagnosticCollectionFailure
 	sealed            bool
@@ -486,11 +580,11 @@ func (location DiagnosticLocation) End() (line, column uint32, ok bool) {
 }
 
 func (report *DiagnosticReport) Available() bool {
-	if report == nil || !report.sealed || !report.source.Available() || !report.result.Available() {
+	if report == nil || !report.sealed || !report.source.Available() || !report.result.Available() || !report.declarations.Available() || !report.collections.Available() {
 		return false
 	}
 	for _, finding := range report.findings {
-		if !validDiagnosticFinding(finding) {
+		if !validDiagnosticFinding(report, finding) {
 			return false
 		}
 	}
@@ -525,12 +619,12 @@ func (finding Finding) row() (diagnosticFinding, bool) {
 		return diagnosticFinding{}, false
 	}
 	row := finding.owner.findings[finding.ordinal-1]
-	return row, validDiagnosticFinding(row)
+	return row, validDiagnosticFinding(finding.owner, row)
 }
 
-func validDiagnosticFinding(row diagnosticFinding) bool {
-	entry, entryOK := diagnosticDeclaration(row.code)
-	if !row.id.Available() || !row.subject.Available() || !entryOK || !row.severity.Available() || !row.location.Available() || !row.data.validFor(entry) {
+func validDiagnosticFinding(owner *DiagnosticReport, row diagnosticFinding) bool {
+	entry, entryOK := owner.declarations.ForCode(row.code)
+	if owner == nil || !row.id.Available() || !row.subject.Available() || !entryOK || !row.severity.Available() || !row.location.Available() || !row.data.validFor(entry, row.verdict) {
 		return false
 	}
 	return true
@@ -559,69 +653,68 @@ func (finding Finding) Location() (DiagnosticLocation, bool) {
 	return row.location, ok
 }
 
-// declaration resolves the sealed row this finding publishes under.
-func (finding Finding) declaration() (diagnosticFinding, *schemadiag.Entry, bool) {
+// declaration resolves the sealed presentation this finding publishes from:
+// the row its code names, under the answer its verdict selects.
+func (finding Finding) declaration() (diagnosticFinding, schemadiag.Presentation, bool) {
 	row, rowOK := finding.row()
 	if !rowOK {
-		return diagnosticFinding{}, nil, false
+		return diagnosticFinding{}, schemadiag.Presentation{}, false
 	}
-	entry, entryOK := diagnosticDeclaration(row.code)
-	return row, entry, entryOK
+	entry, entryOK := finding.owner.declarations.ForCode(row.code)
+	if !entryOK {
+		return diagnosticFinding{}, schemadiag.Presentation{}, false
+	}
+	presentation, presentationOK := entry.Presentation(row.verdict)
+	return row, presentation, presentationOK
 }
 func (finding Finding) EvidenceCount() int {
-	_, entry, ok := finding.declaration()
+	_, presentation, ok := finding.declaration()
 	if !ok {
 		return 0
 	}
-	return entry.EvidenceCount()
+	return len(presentation.Evidence)
 }
 func (finding Finding) EvidenceAt(index int) (DiagnosticEvidence, bool) {
-	row, entry, ok := finding.declaration()
-	if !ok {
+	row, presentation, ok := finding.declaration()
+	if !ok || index < 0 || index >= len(presentation.Evidence) {
 		return DiagnosticEvidence{}, false
 	}
-	declared, declaredOK := entry.EvidenceAt(index)
-	if !declaredOK {
-		return DiagnosticEvidence{}, false
-	}
+	declared := presentation.Evidence[index]
 	location, locationOK := row.data.location(declared.Anchor, row.location)
 	detail := renderDiagnosticLine(declared.Detail, row.data)
 	evidence := DiagnosticEvidence{location: location, kind: declared.Kind, trust: declared.Trust, reason: declared.Reason, detail: detail}
 	return evidence, locationOK && evidence.Available()
 }
 func (finding Finding) LabelCount() int {
-	_, entry, ok := finding.declaration()
+	_, presentation, ok := finding.declaration()
 	if !ok {
 		return 0
 	}
-	return entry.LabelCount()
+	return len(presentation.Labels)
 }
 func (finding Finding) LabelAt(index int) (DiagnosticLabel, bool) {
-	row, entry, ok := finding.declaration()
-	if !ok {
+	row, presentation, ok := finding.declaration()
+	if !ok || index < 0 || index >= len(presentation.Labels) {
 		return DiagnosticLabel{}, false
 	}
-	declared, declaredOK := entry.LabelAt(index)
-	if !declaredOK {
-		return DiagnosticLabel{}, false
-	}
+	declared := presentation.Labels[index]
 	location, locationOK := row.data.location(declared.Anchor, row.location)
 	label := DiagnosticLabel{location: location, text: renderDiagnosticLine(declared.Text, row.data)}
 	return label, locationOK && label.Available()
 }
 func (finding Finding) Message() string {
-	row, entry, ok := finding.declaration()
+	row, presentation, ok := finding.declaration()
 	if !ok {
 		return ""
 	}
-	return renderDiagnosticLine(entry.Message(), row.data)
+	return renderDiagnosticLine(presentation.Message, row.data)
 }
 func (finding Finding) Help() string {
-	row, entry, ok := finding.declaration()
+	row, presentation, ok := finding.declaration()
 	if !ok {
 		return ""
 	}
-	return renderDiagnosticLine(entry.Help(), row.data)
+	return renderDiagnosticLine(presentation.Help, row.data)
 }
 
 // Render returns the stable Analysis-owned diagnostic presentation. It uses
@@ -668,9 +761,13 @@ func sourceLine(sourceText string, line uint32) (string, bool) {
 
 func (finding Finding) render(row diagnosticFinding, sourceLineText string, includeSource bool) string {
 	line, column := row.location.Start()
-	entry, entryOK := diagnosticDeclaration(row.code)
-	severity, severityOK := findingSeveritySpelling(row.severity)
+	entry, entryOK := finding.owner.declarations.ForCode(row.code)
+	severity, severityOK := findingSeveritySpelling(finding.owner.vocabulary, row.severity)
 	if !entryOK || !severityOK {
+		return ""
+	}
+	presentation, presentationOK := entry.Presentation(row.verdict)
+	if !presentationOK {
 		return ""
 	}
 	var rendered strings.Builder
@@ -681,7 +778,7 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 		}
 		switch section {
 		case schemadiag.SectionSummary:
-			fmt.Fprintf(&rendered, "%s[%s]: %s\n", severity, row.code, renderDiagnosticLine(entry.Message(), row.data))
+			fmt.Fprintf(&rendered, "%s[%s]: %s\n", severity, row.code, renderDiagnosticLine(presentation.Message, row.data))
 		case schemadiag.SectionLocation:
 			fmt.Fprintf(&rendered, "--> %s:%d:%d\n", row.location.File(), line, column)
 		case schemadiag.SectionSource:
@@ -689,11 +786,11 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 				fmt.Fprintf(&rendered, "%d | %s\n", line, sourceLineText)
 			}
 		case schemadiag.SectionEvidence:
-			if entry.EvidenceCount() == 0 {
+			if len(presentation.Evidence) == 0 {
 				continue
 			}
 			rendered.WriteString("because:\n")
-			for index := 0; index < entry.EvidenceCount(); index++ {
+			for index := 0; index < len(presentation.Evidence); index++ {
 				evidence, evidenceOK := finding.EvidenceAt(index)
 				if !evidenceOK {
 					return ""
@@ -701,7 +798,7 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 				fmt.Fprintf(&rendered, "%d. %s: %s\n", index+1, evidenceRenderLabel(evidence), evidence.Detail())
 			}
 		case schemadiag.SectionHelp:
-			if help := renderDiagnosticLine(entry.Help(), row.data); help != "" {
+			if help := renderDiagnosticLine(presentation.Help, row.data); help != "" {
 				fmt.Fprintf(&rendered, "help: %s\n", help)
 			}
 		}
@@ -710,8 +807,8 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 }
 
 // NewReport opens one sealed collector for a completed Result.
-func NewReport(source, result identity.ContentID) *DiagnosticReport {
-	return &DiagnosticReport{source: source, result: result, findings: make([]diagnosticFinding, 0), sealed: true}
+func NewReport(source, result identity.ContentID, compilation composite.Compilation, vocabulary structure.Table, declarations schemadiag.Table, collections composite.DiagnosticCollections) *DiagnosticReport {
+	return &DiagnosticReport{source: source, result: result, compilation: compilation, vocabulary: vocabulary, declarations: declarations, collections: collections, findings: make([]diagnosticFinding, 0), sealed: true}
 }
 
 // SetCollectionFailure records a collector refusal. An empty report stays
@@ -789,5 +886,24 @@ func TypeClaim() diagnosticClaimForm { return diagnosticClaimFormTypeClaim }
 func NewFindingRow(id, subject identity.ContentID, code DiagnosticCode, severity FindingSeverity, location DiagnosticLocation, data diagnosticTemplateData) FindingRow {
 	return FindingRow{id: id, subject: subject, code: code, severity: severity, location: location, data: data}
 }
+
+// NewVerdictFindingRow is one finding of a row whose presentation is per
+// verdict. The verdict is the declared answer the collector reached, and it
+// selects the presentation rather than contributing to it.
+func NewVerdictFindingRow(id, subject identity.ContentID, code DiagnosticCode, verdict uint16, severity FindingSeverity, location DiagnosticLocation, data diagnosticTemplateData) FindingRow {
+	return FindingRow{id: id, subject: subject, code: code, verdict: verdict, severity: severity, location: location, data: data}
+}
+
+// NewConformanceTemplateData is the payload one conformance finding renders
+// from: the subject the finding names, the declared type it was measured
+// against, the spelling of what was observed, and the member an absent-member
+// answer names. A field an answer does not read is left absent, which is the
+// same contract every other payload is admitted under.
+func NewConformanceTemplateData(subject diagnosticSemanticName, target diagnosticTargetType, actual diagnosticObservedSpelling, member diagnosticSemanticName) diagnosticTemplateData {
+	return diagnosticTemplateData{subject: subject, target: target, actual: actual, member: member}
+}
+
+// EmptyObservedSpelling is the absent observed spelling.
+func EmptyObservedSpelling() diagnosticObservedSpelling { return diagnosticObservedSpelling{} }
 
 func (row FindingRow) ID() identity.ContentID { return row.id }

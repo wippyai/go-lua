@@ -34,12 +34,11 @@ func (cells queryCells) available(entries []*query.Registration) bool {
 
 // queryPositionForFamily resolves one family's dense declaration position in
 // the sealed inventory.
-func queryPositionForFamily(family schema.Key) (int, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func queryPositionForFamily(state *catalog, family schema.Key) (int, bool) {
+	if state == nil || state.sealed == nil {
 		return 0, false
 	}
-	position, declared := registry.queryPositions[family]
+	position, declared := state.queryPositions[family]
 	return position, declared
 }
 
@@ -47,7 +46,7 @@ func queryPositionForFamily(family schema.Key) (int, bool) {
 // axis's authored key. Every bound axis of the pass reaches the view; each
 // family is then narrowed to exactly the subjects its own declaration named, so
 // a contributor reads no coordinate space its registration omits.
-func (cells axisCells) subjects(entries []*axisTemplate) (query.Subjects, bool) {
+func (cells axisCells) subjects(_ *catalog, entries []*axisTemplate) (query.Subjects, bool) {
 	if len(cells) != len(entries)+1 {
 		return query.Subjects{}, false
 	}
@@ -71,30 +70,29 @@ func (cells axisCells) subjects(entries []*axisTemplate) (query.Subjects, bool) 
 // and the fold behind them belong to the domain that owns the facts it answers
 // from; what this pass owns is that every declared family is asked exactly once
 // and in the table's order.
-func declareQueries(builder *engine.SchemaBuilder, fragments axisCells) (queryCells, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func declareQueries(state *catalog, builder *engine.SchemaBuilder, fragments axisCells) (queryCells, bool) {
+	if state == nil || state.sealed == nil {
 		return nil, false
 	}
-	subjects, subjectsOK := fragments.subjects(registry.axes)
+	subjects, subjectsOK := fragments.subjects(state, state.axes)
 	if !subjectsOK {
 		return nil, false
 	}
-	cells := newQueryCells(registry.queries)
+	cells := newQueryCells(state.queries)
 	if builder == nil {
 		return cells, false
 	}
-	if len(registry.queryContributors) != len(registry.queries) {
+	if len(state.queryContributors) != len(state.queries) {
 		return cells, false
 	}
-	for position, contributor := range registry.queryContributors {
+	for position, contributor := range state.queryContributors {
 		fragment, ok := contributor.declare(builder, subjects)
 		if !ok {
 			return cells, false
 		}
 		cells[position] = fragment
 	}
-	return cells, cells.available(registry.queries)
+	return cells, cells.available(state.queries)
 }
 
 // bindQueries runs the table's hot query pass: every declared family installs
@@ -102,19 +100,18 @@ func declareQueries(builder *engine.SchemaBuilder, fragments axisCells) (queryCe
 // produced. It runs inside the binding transaction, after every rule slot is
 // registered and paired and before the binding becomes terminal, which is the
 // one position a query may be bound at.
-func bindQueries(binding *engine.SchemaBinding, fragments queryCells, bound axisCells) bool {
-	sealRegistry()
-	if registry.sealed == nil || !fragments.available(registry.queries) {
+func bindQueries(state *catalog, binding *engine.SchemaBinding, fragments queryCells, bound axisCells) bool {
+	if state == nil || state.sealed == nil || !fragments.available(state.queries) {
 		return false
 	}
-	subjects, subjectsOK := bound.subjects(registry.axes)
+	subjects, subjectsOK := bound.subjects(state, state.axes)
 	if !subjectsOK {
 		return false
 	}
-	if len(registry.queryContributors) != len(registry.queries) {
+	if len(state.queryContributors) != len(state.queries) {
 		return false
 	}
-	for position, contributor := range registry.queryContributors {
+	for position, contributor := range state.queryContributors {
 		if !contributor.bind(binding, fragments[position], subjects) {
 			return false
 		}

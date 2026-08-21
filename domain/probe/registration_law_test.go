@@ -30,7 +30,7 @@ var declarationSurfaces = []string{
 // domain's zero-row law, and the sharpest single statement of the identity-row
 // revision. Typestate declares nothing and therefore imports nothing; this
 // package declares a row on every surface a domain can reach - an axis, a rule,
-// four semantic roles, an observation population, a publication family, and a
+// three semantic roles, an observation population, a publication family, and a
 // published code - and still imports nothing but the declaration surfaces.
 //
 // The load-bearing half is the artifact. A row's identity used to come from a

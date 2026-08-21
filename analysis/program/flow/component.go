@@ -21,15 +21,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/provenance"
 	"github.com/wippyai/go-lua/analysis/program/flow/returnprojection"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
-	"github.com/wippyai/go-lua/analysis/program/imports"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/flow/subjectflow"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 )
 
 // Assembly is an opaque one-shot transfer capability for one successfully
-// sealed owner quartet. Copies share the same terminal fence; no component is
-// individually queryable through this token.
+// sealed Source/Flow/Static set plus scalar authored ModuleID. Copies share
+// the same terminal fence; no component is individually queryable through
+// this token.
 type Assembly struct{ state *assemblyState }
 
 type assemblyState struct {
@@ -38,31 +38,32 @@ type assemblyState struct {
 	source   *source.Component
 	flow     *Component
 	static   *static.Component
-	module   *imports.Component
+	moduleID identity.ContentID
 }
 
 // Take atomically consumes the transfer capability and returns the complete
-// Source/Flow/Static/Module quartet. A nil, malformed, or previously consumed
+// Source/Flow/Static owners plus the scalar authored Module identity. A nil,
+// malformed, or previously consumed
 // token returns no component. Successful and failed terminal transitions both
 // clear every retained pointer before releasing the fence.
-func (assembly *Assembly) Take() (*source.Component, *Component, *static.Component, *imports.Component, error) {
+func (assembly *Assembly) Take() (*source.Component, *Component, *static.Component, identity.ContentID, error) {
 	if assembly == nil || assembly.state == nil {
-		return nil, nil, nil, nil, errors.New("program/flow: invalid Assembly token")
+		return nil, nil, nil, identity.ContentID{}, errors.New("program/flow: invalid Assembly token")
 	}
 	state := assembly.state
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.terminal {
-		return nil, nil, nil, nil, errors.New("program/flow: Assembly token is consumed")
+		return nil, nil, nil, identity.ContentID{}, errors.New("program/flow: Assembly token is consumed")
 	}
 	state.terminal = true
 	sourceComponent, flowComponent := state.source, state.flow
-	staticComponent, moduleComponent := state.static, state.module
-	state.source, state.flow, state.static, state.module = nil, nil, nil, nil
-	if sourceComponent == nil || flowComponent == nil || staticComponent == nil || moduleComponent == nil {
-		return nil, nil, nil, nil, errors.New("program/flow: malformed Assembly token")
+	staticComponent, moduleID := state.static, state.moduleID
+	state.source, state.flow, state.static, state.moduleID = nil, nil, nil, identity.ContentID{}
+	if sourceComponent == nil || flowComponent == nil || staticComponent == nil || !moduleID.Available() {
+		return nil, nil, nil, identity.ContentID{}, errors.New("program/flow: malformed Assembly token")
 	}
-	return sourceComponent, flowComponent, staticComponent, moduleComponent, nil
+	return sourceComponent, flowComponent, staticComponent, moduleID, nil
 }
 
 // Component is the sole published Flow semantic authority. Its field count is
@@ -86,12 +87,10 @@ type Component struct {
 	accessGeometry       *accessgeometry.Result
 	binaryPrimitives     *binaryprimitive.Result
 	continuation         *continuation.Result
-	allocationPaths      [keyspace.FamilyCount][]allocationPath
+	subjectFlow          *subjectflow.Result
 	semanticPaths        *semanticpath.Certificate
-	valueSourcePaths     [keyspace.FamilyCount][]identity.ContentID
-	storagePaths         [keyspace.FamilyCount][]identity.ContentID
-	callPaths            []identity.ContentID
 	callResultAdmissions []callResultAdmission
+	callResultTailSlots  []callResultTailSlotAdmission
 }
 
 // programStructureProjection is Flow's sole retained Program-local structural
@@ -127,6 +126,15 @@ func (view View) ContentID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return view.component.authored.ContentID()
+}
+
+// ModuleID returns the scalar authored-import identity carried by this Flow
+// component. It is independent from the historical Flow ContentID.
+func (view View) ModuleID() identity.ContentID {
+	if !view.available() {
+		return identity.ContentID{}
+	}
+	return view.component.authored.ModuleID()
 }
 
 func (view View) Provenance() provenance.Provenance {
@@ -166,7 +174,8 @@ func (view View) projectionAvailable() bool {
 		!accessgeometry.Matches(component.accessGeometry, fence.Source, fence.Flow, fence.Static, fence.Module) ||
 		!causal.Matches(component.programStructure.causal, fence.Source, fence.Flow, fence.Static, fence.Module) ||
 		!binaryprimitive.Matches(component.binaryPrimitives, fence.Source, fence.Flow, fence.Static, fence.Module) ||
-		!continuation.Matches(component.continuation, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		!continuation.Matches(component.continuation, fence.Source, fence.Flow, fence.Static, fence.Module) ||
+		!subjectflow.Matches(component.subjectFlow, fence.Source, fence.Flow, fence.Static, fence.Module) {
 		return false
 	}
 	if !flowbody.Matches(component.body, fence.Source, fence.Flow) {
@@ -175,11 +184,11 @@ func (view View) projectionAvailable() bool {
 	return containment.Matches(component.containment, fence.Source, fence.Flow, fence.Static, fence.Module)
 }
 
-func (view View) Authored() Authored {
+func (view View) Authored() authored.View {
 	if !view.available() {
-		return Authored{}
+		return authored.View{}
 	}
-	return Authored{view: view.component.authored}
+	return view.component.authored
 }
 
 // Body returns Flow's immutable sealed Body result. It is the sole published
@@ -208,18 +217,18 @@ func (view View) Containment() *containment.Result {
 	return view.component.containment
 }
 
-func (view View) Outcomes() Outcomes {
+func (view View) Outcomes() *outcome.Result {
 	if !view.available() {
-		return Outcomes{}
+		return nil
 	}
-	return Outcomes{result: view.component.outcomes}
+	return view.component.outcomes
 }
 
-func (view View) Ports() Ports {
+func (view View) Ports() *evaluation.Ports {
 	if !view.available() {
-		return Ports{}
+		return nil
 	}
-	return Ports{result: view.component.ports}
+	return view.component.ports
 }
 
 // FunctionBoundaries is the sole published Function/Body-boundary join. It
@@ -236,20 +245,18 @@ func (view View) FunctionBoundaries() *functionboundary.Result {
 	return view.component.programStructure.boundaries
 }
 
-// BodyReturns is the sole sealed projection from a Body boundary to its
-// targetless OutcomeReturn and ordered executable Values alternatives.
-func (view View) BodyReturns() BodyReturns {
+// ReturnProjection is Flow's sealed Body-to-Return relation. Consumers join
+// its authored terms to the already sealed boundary and causal owners.
+func (view View) ReturnProjection() *returnprojection.Result {
 	if !view.available() {
-		return BodyReturns{}
+		return nil
 	}
 	fence := view.component.provenance
 	structure := view.component.programStructure
-	if !view.projectionFence() || !returnprojection.Matches(structure.returns, fence.Source, fence.Flow, fence.Static, fence.Module) ||
-		!functionboundary.Matches(structure.boundaries, fence.Source, fence.Flow, fence.Static, fence.Module) ||
-		!causal.Matches(structure.causal, fence.Source, fence.Flow, fence.Static, fence.Module) {
-		return BodyReturns{}
+	if !view.projectionFence() || !returnprojection.Matches(structure.returns, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
 	}
-	return BodyReturns{result: structure.returns, causal: structure.causal, boundaries: structure.boundaries}
+	return structure.returns
 }
 
 func (view View) Pending() *evaluation.Pending {
@@ -337,4 +344,18 @@ func (view View) Continuation() *continuation.Result {
 		return nil
 	}
 	return view.component.continuation
+}
+
+// SubjectFlow returns Flow's neutral local Define/Use/Alias facts and exact
+// Yield/re-entry route pairs. It is intentionally policy-free: Placement
+// domains consume these rows and decide their own allocation semantics.
+func (view View) SubjectFlow() *subjectflow.Result {
+	if !view.available() {
+		return nil
+	}
+	fence := view.component.provenance
+	if !view.projectionFence() || !subjectflow.Matches(view.component.subjectFlow, fence.Source, fence.Flow, fence.Static, fence.Module) {
+		return nil
+	}
+	return view.component.subjectFlow
 }

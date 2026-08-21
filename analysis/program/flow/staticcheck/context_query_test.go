@@ -100,7 +100,7 @@ func TestStaticCheckNestedStaticFunctionSelfCaptureValidate(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("nested self-capture Validate: %v", err)

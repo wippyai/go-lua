@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 )
 
@@ -68,7 +69,7 @@ func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table) (*rows.Artifa
 		return nil, nil, false
 	}
 	program := snapshot.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	bodyCount, bodiesPublished := program.BodyCount()
 	transferCount, transfersPublished := program.LocalTransferCount()
 	pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)

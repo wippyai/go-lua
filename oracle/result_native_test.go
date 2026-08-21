@@ -3,12 +3,11 @@ package oracle
 import (
 	"sort"
 	"testing"
-
-	"github.com/wippyai/go-lua/analysis/result"
 )
 
 func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
-	result := nativePublicationCorpusResult(t, "advice/always-true-guard")
+	run := nativePublicationCorpusResult(t, "advice/always-true-guard")
+	result := run.result
 	if !result.NativePublicationAvailable() || result.NativePublicationCount() == 0 {
 		t.Fatal("completed branch solve did not expose its typed native publication")
 	}
@@ -16,7 +15,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 	for index := 0; index < result.NativePublicationCount(); index++ {
 		row, rowOK := result.NativePublicationAt(index)
 		id, idOK := row.ID()
-		columns, columnsOK := corpusNativeColumns(row)
+		columns, columnsOK := corpusNativeColumns(run.compilation, row)
 		provenance, provenanceOK := row.Provenance()
 		validity, validityOK := row.Validity()
 		byID, byIDOK := result.NativePublicationByID(id)
@@ -35,7 +34,7 @@ func TestCorpusNativePublicationUsesTypedBranchValueIssuerLaw(t *testing.T) {
 		t.Fatalf("native branch families=%v, want constant/representation/truthiness/partition", seen)
 	}
 
-	foreign := nativePublicationCorpusResult(t, "advice/always-true-guard")
+	foreign := nativePublicationCorpusResult(t, "advice/always-true-guard").result
 	row, _ := result.NativePublicationAt(0)
 	if _, ok := foreign.NativePublicationByToken(row.Token()); ok {
 		t.Fatal("foreign equal-content Result accepted native row token")
@@ -110,14 +109,15 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 		},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			result := nativePublicationCorpusResult(t, fixture.name)
+			run := nativePublicationCorpusResult(t, fixture.name)
+			result := run.result
 			if result == nil || !result.NativePublicationAvailable() {
 				t.Fatal("solved fixture exposes no native publication")
 			}
 			published := make([]string, 0, result.NativePublicationCount())
 			for index := 0; index < result.NativePublicationCount(); index++ {
 				row, rowOK := result.NativePublicationAt(index)
-				columns, columnsOK := corpusNativeColumns(row)
+				columns, columnsOK := corpusNativeColumns(run.compilation, row)
 				if !rowOK || !columnsOK {
 					t.Fatalf("native row[%d] is unreadable", index)
 				}
@@ -139,11 +139,11 @@ func TestCorpusNativePublicationRenderingIsPinnedLaw(t *testing.T) {
 // nativePublicationCorpusResult keeps these Result-owned assertions on the
 // oracle's one canonical corpus spine; it does not rebuild a publication or
 // retain an analyzer implementation handle.
-func nativePublicationCorpusResult(t *testing.T, name string) *result.Result {
+func nativePublicationCorpusResult(t *testing.T, name string) *corpusHarnessRun {
 	t.Helper()
 	run, _, err := corpusHarnessExecuteDetached(t, corpusHarnessFixture(t, name), corpusHarnessDiagnosticMode())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return run.result
+	return run
 }

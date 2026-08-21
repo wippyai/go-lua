@@ -22,7 +22,7 @@ func (relation *relation) valid() bool {
 }
 
 // sealRelation validates the complete target vector once and freezes a
-// private copy. Hot Value/SourceResult authentication thereafter checks only
+// private copy. Hot Value/Source authentication thereafter checks only
 // immutable scalar fences; it never rescans the target denominator.
 func sealRelation(owner *algebra, index uint32, targets []equationTarget) (*relation, bool) {
 	if owner == nil || !owner.valid() || index == 0 || len(targets) == 0 {

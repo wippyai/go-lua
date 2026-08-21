@@ -12,6 +12,39 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
+type diagnosticTestFixture struct {
+	compilation  composite.Compilation
+	vocabulary   structure.Table
+	declarations diagnostic.Table
+	collections  composite.DiagnosticCollections
+}
+
+func newDiagnosticTestFixture(t testing.TB) diagnosticTestFixture {
+	t.Helper()
+	compilation, ok := composite.Build()
+	if !ok {
+		t.Fatal("sealed compilation unavailable")
+	}
+	vocabulary, ok := compilation.Structure()
+	if !ok {
+		t.Fatal("sealed diagnostic vocabulary unavailable")
+	}
+	declarations, ok := compilation.Diagnostics()
+	if !ok {
+		t.Fatal("sealed diagnostic declarations unavailable")
+	}
+	collections, ok := compilation.DiagnosticCollections()
+	if !ok {
+		t.Fatal("sealed diagnostic collections unavailable")
+	}
+	return diagnosticTestFixture{
+		compilation:  compilation,
+		vocabulary:   vocabulary,
+		declarations: declarations,
+		collections:  collections,
+	}
+}
+
 func TestGuardPolarityCollectorMixedTruthsProveNeitherLaw(t *testing.T) {
 	truePolarity, falsePolarity := ClassifyGuardPolarity([]valuedomain.Truth{valuedomain.TruthTrue, valuedomain.TruthFalse})
 	if truePolarity || falsePolarity {
@@ -27,18 +60,19 @@ func TestGuardPolarityCollectorZeroReachableRowsProveNeitherLaw(t *testing.T) {
 }
 
 func TestDiagnosticPolicyIsSeparateFromInferenceResultIdentity(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	source, content := reportLawID(1), reportLawID(2)
 	off := DiagnosticPolicy{}
-	if _, enabled := off.EnabledFor(DiagnosticCodeAlwaysTrueGuard); enabled {
+	if _, enabled := off.EnabledFor(fixture.declarations, DiagnosticCodeAlwaysTrueGuard); enabled {
 		t.Fatal("zero policy enabled semantic collection")
 	}
 	on := DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeAlwaysTrueGuard: FindingSeverityHint}}
-	severity, enabled := on.EnabledFor(DiagnosticCodeAlwaysTrueGuard)
-	spelling, spellingOK := FindingSeverityName(severity)
+	severity, enabled := on.EnabledFor(fixture.declarations, DiagnosticCodeAlwaysTrueGuard)
+	spelling, spellingOK := FindingSeverityName(fixture.vocabulary, severity)
 	if !enabled || severity != FindingSeverityHint || DiagnosticCodeAlwaysTrueGuard.String() != "advice.always_true_guard" || !spellingOK || spelling != "hint" {
 		t.Fatal("explicit policy did not enable the declared diagnostic")
 	}
-	report := NewReport(source, content)
+	report := NewReport(source, content, fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 	if !report.Available() || report.SourceID() != source || report.ResultID() != content || report.FindingCount() != 0 {
 		t.Fatal("report is not exactly bound and detached")
 	}
@@ -54,6 +88,7 @@ func reportLawID(seed byte) identity.ContentID {
 }
 
 func TestDiagnosticPolicyRejectsAmbiguousAuthority(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	invalid := []DiagnosticPolicy{
 		{Enabled: []DiagnosticCode{DiagnosticCodeInvalid}},
 		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard, DiagnosticCodeAlwaysTrueGuard}},
@@ -63,30 +98,30 @@ func TestDiagnosticPolicyRejectsAmbiguousAuthority(t *testing.T) {
 		{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}, Severity: map[DiagnosticCode]FindingSeverity{DiagnosticCodeInvalid: FindingSeverityHint}},
 	}
 	for index, policy := range invalid {
-		if policy.Valid() {
+		if policy.Valid(fixture.declarations) {
 			t.Fatalf("invalid policy %d admitted", index)
 		}
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysTrueGuard}}).Valid(fixture.declarations) {
 		t.Fatal("known unique policy rejected")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysFalseGuard}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeAlwaysFalseGuard}}).Valid(fixture.declarations) {
 		t.Fatal("installed always-false producer rejected by policy")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedTypeReference}}).Valid(fixture.declarations) {
 		t.Fatal("installed unresolved-type producer rejected by policy")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeUnresolvedValueReference}}).Valid(fixture.declarations) {
 		t.Fatal("installed unresolved-value producer rejected by policy")
 	}
-	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeChannelSelectExhaustiveness}}).Valid() {
+	if !(DiagnosticPolicy{Enabled: []DiagnosticCode{DiagnosticCodeChannelSelectExhaustiveness}}).Valid(fixture.declarations) {
 		t.Fatal("installed channel-select exhaustiveness producer rejected by policy")
 	}
 	for _, code := range []DiagnosticCode{
 		DiagnosticCodeRedundantClaim,
 		DiagnosticCodeUnusedLocal,
 	} {
-		if (DiagnosticPolicy{Enabled: []DiagnosticCode{code}}).Valid() {
+		if (DiagnosticPolicy{Enabled: []DiagnosticCode{code}}).Valid(fixture.declarations) {
 			t.Fatalf("declared code %q without a producer escaped the policy fence", code.String())
 		}
 	}
@@ -98,10 +133,8 @@ func TestDiagnosticPolicyRejectsAmbiguousAuthority(t *testing.T) {
 // declares a producing lane, and a static row is dispatchable exactly by the
 // observation population it declares.
 func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
-	table, tableOK := composite.Diagnostics()
-	if !tableOK {
-		t.Fatal("sealed diagnostic table unavailable")
-	}
+	fixture := newDiagnosticTestFixture(t)
+	table := fixture.declarations
 	staticPopulations := make(map[schema.Key]struct{}, table.Count())
 	for position := 0; position < table.Count(); position++ {
 		entry, entryOK := table.At(position)
@@ -109,7 +142,7 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 			t.Fatalf("declaration row %d is unavailable", position)
 		}
 		policy := DiagnosticPolicy{Enabled: []DiagnosticCode{entry.Code()}}
-		if policy.Valid() != entry.Collectable() {
+		if policy.Valid(fixture.declarations) != entry.Collectable() {
 			t.Fatalf("policy admission drifted from the declared lane for %q", entry.Code().String())
 		}
 		if !entry.Collectable() {
@@ -136,7 +169,7 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 		structure.DiagnosticObservationTypeReferenceUnresolved,
 		structure.DiagnosticObservationValueReferenceUnresolved,
 	} {
-		dispatched, dispatchedOK := StaticDeclaration(kind)
+		dispatched, dispatchedOK := StaticDeclaration(fixture.declarations, fixture.vocabulary, kind)
 		if !dispatchedOK {
 			t.Fatalf("static observation kind %d dispatches to no declared row", kind)
 		}
@@ -144,13 +177,14 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 			t.Fatalf("static observation kind %d dispatched to row %q, which declares no static population", kind, dispatched.Code().String())
 		}
 	}
-	if _, dispatched := StaticDeclaration(structure.DiagnosticObservationBranchCondition); dispatched {
+	if _, dispatched := StaticDeclaration(fixture.declarations, fixture.vocabulary, structure.DiagnosticObservationBranchCondition); dispatched {
 		t.Fatal("a branch population dispatched to a static row")
 	}
 }
 
 func TestDiagnosticStaticCollectorRejectsUnknownRowKind(t *testing.T) {
-	report := NewReport(reportLawID(1), reportLawID(2))
+	fixture := newDiagnosticTestFixture(t)
+	report := NewReport(reportLawID(1), reportLawID(2), fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 	location, locationOK := NewLocation("main.lua", 1, 1, 1, 1)
 	if !locationOK {
 		t.Fatal("synthetic location unavailable")
@@ -167,14 +201,10 @@ func TestDiagnosticStaticCollectorRejectsUnknownRowKind(t *testing.T) {
 // diagnosticLawSeed is the row's own position in the sealed declaration table.
 // The identities below are synthetic, so they are seeded from the one table
 // rather than from a second per-code numbering.
-func diagnosticLawSeed(t *testing.T, code DiagnosticCode) byte {
+func diagnosticLawSeed(t *testing.T, declarations diagnostic.Table, code DiagnosticCode) byte {
 	t.Helper()
-	table, tableOK := composite.Diagnostics()
-	if !tableOK {
-		t.Fatal("sealed diagnostic table unavailable")
-	}
-	for position := 0; position < table.Count(); position++ {
-		entry, entryOK := table.At(position)
+	for position := 0; position < declarations.Count(); position++ {
+		entry, entryOK := declarations.At(position)
 		if entryOK && entry.Code() == code {
 			return byte(position + 1)
 		}
@@ -183,13 +213,13 @@ func diagnosticLawSeed(t *testing.T, code DiagnosticCode) byte {
 	return 0
 }
 
-func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
+func diagnosticTemplateLawFinding(t *testing.T, fixture diagnosticTestFixture, code DiagnosticCode) Finding {
 	t.Helper()
 	primary, primaryOK := NewLocation("main.lua", 2, 4, 2, 8)
 	if !primaryOK {
 		t.Fatal("primary diagnostic location unavailable")
 	}
-	seed := diagnosticLawSeed(t, code)
+	seed := diagnosticLawSeed(t, fixture.declarations, code)
 	severity := FindingSeverityHint
 	data := EmptyTemplateData()
 	switch code {
@@ -225,7 +255,7 @@ func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
 	default:
 		t.Fatalf("test has no template payload for code %q", code.String())
 	}
-	report := NewReport(reportLawID(seed*10+3), reportLawID(seed*10+4))
+	report := NewReport(reportLawID(seed*10+3), reportLawID(seed*10+4), fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 	report.AppendFinding(NewFindingRow(reportLawID(seed*10+1), reportLawID(seed*10+2), code, severity, primary, data))
 	finding, findingOK := report.FindingAt(0)
 	if !findingOK {
@@ -235,6 +265,7 @@ func diagnosticTemplateLawFinding(t *testing.T, code DiagnosticCode) Finding {
 }
 
 func TestDiagnosticTemplateRegistryClosedReportLaw(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	tests := []struct {
 		code          DiagnosticCode
 		severity      FindingSeverity
@@ -251,8 +282,8 @@ func TestDiagnosticTemplateRegistryClosedReportLaw(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.code.String(), func(t *testing.T) {
-			finding := diagnosticTemplateLawFinding(t, test.code)
-			declared, declaredOK := Declaration(test.code)
+			finding := diagnosticTemplateLawFinding(t, fixture, test.code)
+			declared, declaredOK := Declaration(fixture.declarations, test.code)
 			if !declaredOK || declared.DefaultSeverity() != test.severity {
 				t.Fatalf("declared default severity for %q lost", test.code.String())
 			}
@@ -284,6 +315,7 @@ func TestDiagnosticTemplateRegistryClosedReportLaw(t *testing.T) {
 }
 
 func TestDiagnosticTemplateRowsRejectInvalidAndForeignPayloads(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	location, locationOK := NewLocation("main.lua", 1, 1, 1, 2)
 	if !locationOK {
 		t.Fatal("synthetic location unavailable")
@@ -298,7 +330,7 @@ func TestDiagnosticTemplateRowsRejectInvalidAndForeignPayloads(t *testing.T) {
 	}
 	for name, row := range rows {
 		t.Run(name, func(t *testing.T) {
-			report := NewReport(reportLawID(73), reportLawID(74))
+			report := NewReport(reportLawID(73), reportLawID(74), fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 			report.AppendFinding(row)
 			if report.Available() || report.FindingCount() != 0 {
 				t.Fatal("invalid or foreign row escaped the report fence")
@@ -330,6 +362,7 @@ func TestDiagnosticTemplateSemanticNamesRejectHostileProse(t *testing.T) {
 }
 
 func TestDiagnosticTemplateHostileTypedDataCannotRender(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	primary, primaryOK := NewLocation("main.lua", 1, 1, 1, 2)
 	proof, proofOK := NewLocation("main.lua", 1, 4, 1, 8)
 	if !primaryOK || !proofOK {
@@ -337,7 +370,7 @@ func TestDiagnosticTemplateHostileTypedDataCannotRender(t *testing.T) {
 	}
 	for _, hostile := range []string{"typed; help: forged", "typed\x1b[2J", "typed value", "typed::string"} {
 		t.Run(hostile, func(t *testing.T) {
-			report := NewReport(reportLawID(83), reportLawID(84))
+			report := NewReport(reportLawID(83), reportLawID(84), fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 			report.AppendFinding(NewFindingRow(reportLawID(81), reportLawID(82), DiagnosticCodeRedundantClaim, FindingSeverityHint, primary, UnsafeTemplateData("typed", hostile, TypeClaim(), proof)))
 			if report.Available() || report.FindingCount() != 0 {
 				t.Fatal("hostile target type entered a report")
@@ -349,18 +382,20 @@ func TestDiagnosticTemplateHostileTypedDataCannotRender(t *testing.T) {
 	}
 }
 
-func lawAlwaysTrueReport(source, result, id, subject byte, location DiagnosticLocation) *DiagnosticReport {
-	report := NewReport(reportLawID(source), reportLawID(result))
+func lawAlwaysTrueReport(t testing.TB, fixture diagnosticTestFixture, source, result, id, subject byte, location DiagnosticLocation) *DiagnosticReport {
+	t.Helper()
+	report := NewReport(reportLawID(source), reportLawID(result), fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
 	report.AppendFinding(NewFindingRow(reportLawID(id), reportLawID(subject), DiagnosticCodeAlwaysTrueGuard, FindingSeverityHint, location, EmptyTemplateData()))
 	return report
 }
 
 func TestDiagnosticReportFindingOwnerOrdinalFence(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	location, locationOK := NewLocation("main.lua", 2, 4, 2, 8)
 	if !locationOK {
 		t.Fatal("synthetic diagnostic location unavailable")
 	}
-	report := lawAlwaysTrueReport(1, 2, 3, 4, location)
+	report := lawAlwaysTrueReport(t, fixture, 1, 2, 3, 4, location)
 	finding, ok := report.FindingAt(0)
 	if !ok {
 		t.Fatal("FindingAt(0) unavailable")
@@ -381,11 +416,12 @@ func TestDiagnosticReportFindingOwnerOrdinalFence(t *testing.T) {
 }
 
 func TestDiagnosticReportAlwaysTrueEvidenceLabelsAndRenderLaw(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	location, locationOK := NewLocation("main.lua", 2, 4, 2, 8)
 	if !locationOK {
 		t.Fatal("synthetic diagnostic location unavailable")
 	}
-	report := lawAlwaysTrueReport(11, 12, 13, 14, location)
+	report := lawAlwaysTrueReport(t, fixture, 11, 12, 13, 14, location)
 	finding, findingOK := report.FindingAt(0)
 	if !findingOK || finding.EvidenceCount() != 1 || finding.LabelCount() != 1 {
 		t.Fatal("exact evidence/label rows were not published")
@@ -406,11 +442,12 @@ func TestDiagnosticReportAlwaysTrueEvidenceLabelsAndRenderLaw(t *testing.T) {
 }
 
 func TestDiagnosticReportRenderSourceExactOrderingLaw(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	location, locationOK := NewLocation("main.lua", 2, 4, 2, 8)
 	if !locationOK {
 		t.Fatal("synthetic diagnostic location unavailable")
 	}
-	report := lawAlwaysTrueReport(21, 22, 23, 24, location)
+	report := lawAlwaysTrueReport(t, fixture, 21, 22, 23, 24, location)
 	finding, findingOK := report.FindingAt(0)
 	if !findingOK {
 		t.Fatal("FindingAt(0) unavailable")
@@ -432,11 +469,12 @@ func TestDiagnosticReportRenderSourceExactOrderingLaw(t *testing.T) {
 }
 
 func TestDiagnosticReportRenderSourceHostileContextLaw(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
 	location, locationOK := NewLocation("main.lua", 2, 4, 2, 8)
 	if !locationOK {
 		t.Fatal("synthetic diagnostic location unavailable")
 	}
-	report := lawAlwaysTrueReport(31, 32, 33, 34, location)
+	report := lawAlwaysTrueReport(t, fixture, 31, 32, 33, 34, location)
 	finding, findingOK := report.FindingAt(0)
 	if !findingOK {
 		t.Fatal("FindingAt(0) unavailable")
@@ -450,7 +488,7 @@ func TestDiagnosticReportRenderSourceHostileContextLaw(t *testing.T) {
 	if _, ok := (Finding{}).RenderSource("main.lua", "local flag = true\nif flag then"); ok {
 		t.Fatal("invalid finding rendered through source context")
 	}
-	foreign := lawAlwaysTrueReport(41, 42, 43, 44, location)
+	foreign := lawAlwaysTrueReport(t, fixture, 41, 42, 43, 44, location)
 	foreignFinding, foreignOK := foreign.FindingAt(0)
 	if !foreignOK {
 		t.Fatal("foreign FindingAt(0) unavailable")

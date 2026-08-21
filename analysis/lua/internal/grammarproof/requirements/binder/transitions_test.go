@@ -99,14 +99,15 @@ func TestDirectRequirePreservesOneGlobalIdentityIntoProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sealed.Module().Count() != 1 {
-		t.Fatalf("direct require ImportCount = %d, want 1", sealed.Module().Count())
+	imports := sealed.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("direct require ImportCount = %d, want 1", imports.Count())
 	}
-	importRow, ok := sealed.Module().ImportAt(0)
+	importRow, ok := imports.ImportAt(0)
 	if !ok {
 		t.Fatal("direct require Import missing")
 	}
-	row, ok := sealed.Module().Import(importRow.Term)
+	row, ok := imports.Get(importRow.Term)
 	if !ok || row.Call == 0 {
 		t.Fatalf("direct require Import = %#v/%v", row, ok)
 	}
@@ -129,8 +130,9 @@ func TestDirectRequirePreservesOneGlobalIdentityIntoProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shadowProgram.Module().Count() != 0 {
-		t.Fatalf("shadowed require ImportCount = %d, want 0", shadowProgram.Module().Count())
+	shadowImports := shadowProgram.Flow().Authored().Imports()
+	if shadowImports.Count() != 0 {
+		t.Fatalf("shadowed require ImportCount = %d, want 0", shadowImports.Count())
 	}
 }
 

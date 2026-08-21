@@ -48,7 +48,7 @@ func (compiler *compiler) copyValuesFailure() CompileFailure {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesDuplicate)
 		}
 		seenRows[rowID] = struct{}{}
-		if !valuesFitsUint32(len(members)) || !valuesFitsUint32(width) || uint64(len(members))+uint64(width) > uint64(^uint32(0)) {
+		if !fitsUint32(len(members)) || !fitsUint32(width) || uint64(len(members))+uint64(width) > uint64(^uint32(0)) {
 			return compileFailure(CompileStageValues, CompileRowValues, index, -1, CompileReasonValuesUnavailable)
 		}
 		memberOffset := uint32(len(members))
@@ -109,8 +109,4 @@ func valuesTailKind(family keyspace.Family) (programschema.ValuesTailKind, bool)
 	default:
 		return programschema.ValuesTailInvalid, false
 	}
-}
-
-func valuesFitsUint32(value int) bool {
-	return value >= 0 && uint64(value) <= uint64(^uint32(0))
 }

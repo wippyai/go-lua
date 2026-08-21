@@ -6,6 +6,8 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
+	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
@@ -28,15 +30,20 @@ type schemaBindingAuthority struct{ marker byte }
 type SchemaBinding struct{ state *schemaBindingState }
 
 type schemaBindingState struct {
-	mu         sync.Mutex
-	schema     *Schema
-	phase      schemaBindingPhase
-	authority  *schemaBindingAuthority
-	factors    []schemaFactorBinding
-	rules      []schemaBindingCell
-	queries    []schemaBindingCell
-	activation []schemaBindingCell
-	roleSlots  map[RuleSlotCapability]composition.Key
+	mu     sync.Mutex
+	schema *Schema
+	// artifactSchema is the exact cold execution-schema identity admitted by
+	// this binding. The engine Schema digest names equation topology; a
+	// reusable Program Artifact names the wider ExecutionSchema contract that
+	// also commits publication layout and ABI. They are deliberately distinct.
+	artifactSchema identity.ContentID
+	phase          schemaBindingPhase
+	authority      *schemaBindingAuthority
+	factors        []schemaFactorBinding
+	rules          []schemaBindingCell
+	queries        []schemaBindingCell
+	activation     []schemaBindingCell
+	roleSlots      map[RuleSlotCapability]composition.Key
 	// linkBootstrapTransports is the sole ordered transport authorization for
 	// the Link-global bootstrap seam. The engine retains opaque capabilities,
 	// never domain role names; the program owner registers the exact pair once
@@ -57,18 +64,46 @@ func NewSchemaBinding(schema *Schema) *SchemaBinding {
 	if schema == nil || !schema.Available() {
 		return nil
 	}
+	// Engine-local callers that construct scalar templates directly use the
+	// engine Schema itself as their cold admission identity. Composition roots
+	// carrying reusable Program Artifacts must use NewSchemaBindingForExecution.
+	return newSchemaBinding(schema, identity.ContentID(schema.ID().Digest()))
+}
+
+// NewSchemaBindingForExecution binds one reusable Program Artifact contract
+// to its engine Schema. This is the only constructor for composition roots:
+// it prevents an Artifact compiled for the same equation topology but a
+// different publication layout or ABI from entering the program.
+func NewSchemaBindingForExecution(schema *Schema, execution programartifact.ExecutionSchemaID) *SchemaBinding {
+	return newSchemaBinding(schema, execution.ContentID())
+}
+
+func newSchemaBinding(schema *Schema, artifactSchema identity.ContentID) *SchemaBinding {
+	if schema == nil || !schema.Available() || !artifactSchema.Available() {
+		return nil
+	}
 	factors, rules, queries, activations, ok := schema.shapeCount()
 	if !ok {
 		return nil
 	}
 	return &SchemaBinding{state: &schemaBindingState{
-		schema: schema, phase: schemaBindingOpen, authority: &schemaBindingAuthority{},
+		schema: schema, artifactSchema: artifactSchema, phase: schemaBindingOpen, authority: &schemaBindingAuthority{},
 		factors:    make([]schemaFactorBinding, factors),
 		rules:      make([]schemaBindingCell, rules),
 		queries:    make([]schemaBindingCell, queries),
 		activation: make([]schemaBindingCell, activations),
 		roleSlots:  make(map[RuleSlotCapability]composition.Key),
 	}}
+}
+
+func bindingArtifactSchemaID(binding *SchemaBinding) (identity.ContentID, bool) {
+	state := bindingState(binding)
+	if state == nil {
+		return identity.ContentID{}, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.artifactSchema, state.phase == schemaBindingSealed && state.artifactSchema.Available()
 }
 
 func bindingState(binding *SchemaBinding) *schemaBindingState {

@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
-	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // StaticSubject is one owner-issued static observation the collector projects.
@@ -18,10 +17,8 @@ type StaticSubject struct {
 // StaticDeclaration resolves the declared row one artifact-issued observation
 // population feeds. The sealed table is the sole authority: a population no
 // row claims is a collector hole, not a row to skip.
-func StaticDeclaration(kind structure.DiagnosticObservationKind) (*schemadiag.Entry, bool) {
-	table, tableOK := composite.Diagnostics()
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
-	if !tableOK || !vocabularyOK {
+func StaticDeclaration(table schemadiag.Table, vocabulary structure.Table, kind structure.DiagnosticObservationKind) (*schemadiag.Entry, bool) {
+	if !table.Available() {
 		return nil, false
 	}
 	population, populationOK := structure.DiagnosticObservationEntry(vocabulary, kind)
@@ -42,11 +39,11 @@ func CollectStatic(report *DiagnosticReport, subjects []StaticSubject, policy Di
 		if !subject.ID.Available() || !subject.FindingID.Available() || !subject.Location.Available() || subject.Name == "" {
 			return false
 		}
-		entry, known := StaticDeclaration(subject.Kind)
+		entry, known := StaticDeclaration(report.declarations, report.vocabulary, subject.Kind)
 		if !known {
 			return false
 		}
-		severity, enabled := policy.EnabledFor(entry.Code())
+		severity, enabled := policy.EnabledFor(report.declarations, entry.Code())
 		if !enabled {
 			continue
 		}

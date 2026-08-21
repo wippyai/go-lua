@@ -439,21 +439,6 @@ func (term Term) Tail() (Rest, []Scalar, bool) {
 	return term.rest, append([]Scalar(nil), term.suffix...), true
 }
 
-func (term Term) SuffixCount() int {
-	if !term.valid() || term.kind != TermOpen {
-		return 0
-	}
-	return len(term.suffix)
-}
-
-func (term Term) SuffixAt(index int) (Scalar, bool) {
-	if !term.valid() || term.kind != TermOpen || index < 0 || index >= len(term.suffix) {
-		return Scalar{}, false
-	}
-	scalar := term.suffix[index]
-	return scalar, scalar.valid()
-}
-
 func cloneScalars(values []Scalar) []Scalar {
 	if len(values) == 0 {
 		return nil

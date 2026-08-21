@@ -7,6 +7,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -37,16 +39,16 @@ func mountLawIdentity(t *testing.T, tag string) identity.ContentID {
 func mountLawProgram(t *testing.T, module string) Program {
 	t.Helper()
 	schema := mountLawIdentity(t, "runtime-schema")
-	catalog, derived := programschema.CatalogID(schema)
+	catalog, derived := programcatalog.CatalogID(schema)
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	content, sealed := programschema.CallTargetFamily().Content(nil, catalog)
+	content, sealed := calltarget.Family().Content(nil, catalog)
 	if !sealed {
 		t.Fatal("cold family")
 	}
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(3))
-	if err := snapshot.PutFrozenColumn(&builder, programschema.CallTargetFamily().Axis(catalog), content); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, calltarget.Family().Axis(catalog), content); err != nil {
 		t.Fatalf("put cold column: %v", err)
 	}
 	frozen, err := builder.Seal()
@@ -56,7 +58,7 @@ func mountLawProgram(t *testing.T, module string) Program {
 	return Program{
 		ModuleKey: mountLawIdentity(t, module),
 		Program: programschema.Program{
-			Frozen: frozen,
+			Frozen:     frozen,
 			ArtifactID: mountLawIdentity(t, "artifact"), ProgramID: mountLawIdentity(t, "program"),
 			SchemaID: schema,
 		},

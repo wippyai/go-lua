@@ -8,6 +8,8 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
+	"github.com/wippyai/go-lua/domain/effect"
+	"github.com/wippyai/go-lua/domain/effect/ownership"
 	"github.com/wippyai/go-lua/domain/type/subst"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
@@ -39,12 +41,18 @@ func operations(declarations *manifest.Catalogue) (authoredCatalogue, error) {
 		if err := applyProducedRelations(&catalogue, declaration.CanonicalPath(), law); err != nil {
 			return authoredCatalogue{}, err
 		}
+		if err := applyEffectRelations(&catalogue, declaration.CanonicalPath(), law); err != nil {
+			return authoredCatalogue{}, err
+		}
 	}
 	return catalogue, nil
 }
 
 func operationFromManifest(declaration manifest.Function) (vocabulary.OperationSpec, error) {
-	base := operationFromDeclaration(declaration)
+	base, err := operationFromDeclaration(declaration)
+	if err != nil {
+		return vocabulary.OperationSpec{}, fmt.Errorf("target catalogue: %s: %w", declaration.CanonicalPath(), err)
+	}
 	law, ok := declaration.Operation()
 	if !ok {
 		return base, nil
@@ -55,7 +63,20 @@ func operationFromManifest(declaration manifest.Function) (vocabulary.OperationS
 			return vocabulary.OperationSpec{}, fmt.Errorf("target catalogue: %s: %w", declaration.CanonicalPath(), err)
 		}
 		converted.Bindings = base.Bindings
+		// Replacement changes the provider-owned operational envelope only.
+		// Formal ownership belongs to the declaration signature and therefore
+		// survives even when the replacement carries no such authored rows.
+		converted.FormalEffects = base.FormalEffects
 		base = converted
+	} else if len(law.Transfers) != 0 {
+		// Transfer rows are provider-authored declarations on the signature-
+		// derived operation. They amend that envelope without replacing its
+		// canonical input/outcome geometry.
+		base.Transfers = append(base.Transfers, convertTransfers(law.Transfers)...)
+	}
+	if !law.Replace && law.Effects.Tail != 0 {
+		base.Effects.Tail = vocabulary.RowTail(law.Effects.Tail)
+		base.Effects.Var = vocabulary.RowVar(law.Effects.Var)
 	}
 	applyOperationAmendments(&base, law)
 	// Behavior is a generic amendment to the operation envelope. Apply it
@@ -77,7 +98,7 @@ func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
 	out := vocabulary.OperationSpec{
 		ValuesVars: in.ValuesVars,
 		Input:      convertValues(in.Input),
-		Effects:    vocabulary.RowSpec{Tail: vocabulary.RowTail(in.Effects.Tail)},
+		Effects:    convertRow(in.Effects),
 	}
 	for _, value := range in.Outcomes {
 		out.Outcomes = append(out.Outcomes, convertOutcome(value))
@@ -113,6 +134,7 @@ func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
 		}
 		out.Resumes = append(out.Resumes, resume)
 	}
+	out.Transfers = convertTransfers(in.Transfers)
 	out.Behavior = convertBehavior(in.Behavior)
 	if value := in.SubedgeRelation; value != nil {
 		out.SubedgeRelation = &vocabulary.SubedgeRelationSpec{
@@ -122,6 +144,36 @@ func convertOperation(in moduleio.Operation) (vocabulary.OperationSpec, error) {
 		}
 	}
 	return out, nil
+}
+
+func convertTransfers(input []moduleio.TransferSpec) []vocabulary.TransferSpec {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]vocabulary.TransferSpec, 0, len(input))
+	for _, value := range input {
+		transfer := vocabulary.TransferSpec{
+			Endpoint: vocabulary.TransferEndpoint{
+				Kind:  vocabulary.TransferEndpointKind(value.Endpoint.Kind),
+				Input: vocabulary.ValueFormal(value.Endpoint.Input),
+			},
+			Payload: vocabulary.InputSource{
+				Kind: vocabulary.InputSourceKind(value.Payload.Kind), Ordinal: value.Payload.Ordinal,
+			},
+			Alias: vocabulary.InputSource{
+				Kind: vocabulary.InputSourceKind(value.Alias.Kind), Ordinal: value.Alias.Ordinal,
+			},
+			Identity:     vocabulary.TransferIdentity(value.Identity),
+			Capabilities: vocabulary.TransferCapabilities(value.Capabilities),
+		}
+		for _, outcome := range value.Outcomes {
+			transfer.Outcomes = append(transfer.Outcomes, vocabulary.TransferOutcomeSpec{
+				Outcome: outcome.Outcome, Possibility: vocabulary.TransferPossibility(outcome.Possibility),
+			})
+		}
+		out = append(out, transfer)
+	}
+	return out
 }
 
 // convertBehavior crosses the portable manifest boundary. Providers carry a
@@ -188,7 +240,7 @@ func convertCallback(in moduleio.Callback) vocabulary.CallbackSpec {
 	out := vocabulary.CallbackSpec{
 		Function: convertInputSource(in.Function), Admission: schematype.CallableAdmission(in.Admission),
 		Arguments: convertValues(in.Arguments), Lifecycle: vocabulary.CallbackLifecycle(in.Lifecycle),
-		Effects: vocabulary.RowSpec{Tail: vocabulary.RowTail(in.Effects.Tail)},
+		Effects: convertRow(in.Effects),
 	}
 	for _, value := range in.Outcomes {
 		out.Outcomes = append(out.Outcomes, vocabulary.TerminalSpec{Kind: flowkind.OutcomeKind(value.Kind), Values: convertValues(value.Values)})
@@ -236,6 +288,93 @@ func convertSubedge(in moduleio.Subedge) vocabulary.SubedgeSpec {
 
 func convertInputSource(in moduleio.InputSource) vocabulary.InputSource {
 	return vocabulary.InputSource{Kind: vocabulary.InputSourceKind(in.Kind), Ordinal: in.Ordinal}
+}
+
+// convertRow carries row-tail authority through the manifest boundary.
+// Occurrences retain their portable target paths in the source Operation and
+// are resolved by appendResolvedEffects only after the complete catalogue is
+// indexed; no temporary Target row is published.
+func convertRow(in moduleio.RowSpec) vocabulary.RowSpec {
+	return vocabulary.RowSpec{
+		Tail: vocabulary.RowTail(in.Tail),
+		Var:  vocabulary.RowVar(in.Var),
+	}
+}
+
+func convertEffectSpec(input moduleio.EffectSpec) vocabulary.EffectSpec {
+	out := vocabulary.EffectSpec{}
+	for _, value := range input.ValueArgs {
+		out.ValueArgs = append(out.ValueArgs, vocabulary.ValueFormal(value))
+	}
+	for _, value := range input.TypeArgs {
+		out.TypeArgs = append(out.TypeArgs, vocabulary.TypeFormal(value))
+	}
+	for _, value := range input.ValuesArgs {
+		out.ValuesArgs = append(out.ValuesArgs, vocabulary.ValuesVar(value))
+	}
+	for _, value := range input.RowArgs {
+		out.RowArgs = append(out.RowArgs, vocabulary.RowVar(value))
+	}
+	if input.Publication != nil {
+		publication := convertPublicationEffect(*input.Publication)
+		out.Publication = &publication
+	}
+	return out
+}
+
+func convertPublicationEffect(input moduleio.PublicationEffectSpec) vocabulary.PublicationEffectSpec {
+	return vocabulary.PublicationEffectSpec{
+		Kind:        vocabulary.PublicationEffectKind(input.Kind),
+		Subject:     convertInputSource(input.Subject),
+		Destination: vocabulary.PublicationDestinationRole(input.Destination),
+		Context:     vocabulary.ValueFormal(input.Context),
+		Escape:      vocabulary.PublicationEscapeDisposition(input.Escape),
+		Mutability:  vocabulary.PublicationMutabilityDisposition(input.Mutability),
+		Lifetime:    vocabulary.PublicationLifetimeDisposition(input.Lifetime),
+	}
+}
+
+// applyEffectRelations resolves the explicit manifest operation paths against
+// the already-indexed catalogue. This is the only point where portable string
+// references become Target SpecRefs; no provider name, ownership label, or
+// operation kind is inspected to invent an effect row.
+func applyEffectRelations(catalogue *authoredCatalogue, owner string, law moduleio.Operation) error {
+	ownerRef, err := catalogue.require(owner)
+	if err != nil {
+		return err
+	}
+	operation := catalogue.at(ownerRef)
+	if err := appendResolvedEffects(catalogue, owner, &operation.Effects, law.Effects.Occurrences, "ordinary"); err != nil {
+		return err
+	}
+	for index := range operation.Callbacks {
+		if index >= len(law.Callbacks) {
+			break
+		}
+		if err := appendResolvedEffects(catalogue, owner, &operation.Callbacks[index].Effects, law.Callbacks[index].Effects.Occurrences, fmt.Sprintf("callback %d", index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendResolvedEffects(catalogue *authoredCatalogue, owner string, row *vocabulary.RowSpec, input []moduleio.EffectSpec, relation string) error {
+	if len(input) == 0 {
+		return nil
+	}
+	for index, authored := range input {
+		if authored.Target == "" {
+			return fmt.Errorf("target catalogue: %s %s effect %d has empty target path", owner, relation, index)
+		}
+		target, ok := catalogue.lookup(authored.Target)
+		if !ok {
+			return fmt.Errorf("target catalogue: %s %s effect %d references unknown target %q", owner, relation, index, authored.Target)
+		}
+		converted := convertEffectSpec(authored)
+		converted.Target = vocabulary.SpecRef(target)
+		row.Occurrences = append(row.Occurrences, converted)
+	}
+	return nil
 }
 
 func convertLiteral(in moduleio.Literal) keyspace.LiteralValue {
@@ -316,11 +455,16 @@ func applyProducedRelations(catalogue *authoredCatalogue, producer string, law m
 	return nil
 }
 
-func operationFromDeclaration(declaration manifest.Function) vocabulary.OperationSpec {
+func operationFromDeclaration(declaration manifest.Function) (vocabulary.OperationSpec, error) {
 	binding := vocabulary.OperationSpec{Bindings: bindingsFromDeclaration(declaration)}
 	function := declaration.Signature()
+	formal, err := formalEffects(function.Effect)
+	if err != nil {
+		return vocabulary.OperationSpec{}, err
+	}
+	binding.FormalEffects = formal
 	if function.Type == nil {
-		return normal(binding, nil, false, nil, false)
+		return normal(binding, nil, false, nil, false), nil
 	}
 	fixed := make([]typ.Type, 0, len(function.Type.Params))
 	optional := make([]typ.Type, 0)
@@ -374,7 +518,7 @@ func operationFromDeclaration(declaration manifest.Function) vocabulary.Operatio
 	if len(returns) == 1 && typ.TypeEquals(returns[0], typ.Never) {
 		operation.Outcomes = operation.Outcomes[1:]
 	}
-	return operation
+	return operation, nil
 }
 
 func normal(op vocabulary.OperationSpec, in []typ.Type, openIn bool, out []typ.Type, openOut bool) vocabulary.OperationSpec {
@@ -409,6 +553,94 @@ func bindingsFromDeclaration(declaration manifest.Function) []vocabulary.Binding
 		}
 	}
 	return out
+}
+
+// formalEffects projects only ownership labels from a declaration signature.
+// These rows describe the callable's formal ownership contract; they are not
+// invocation effects and must never become EffectSpec or PublicationEffectSpec
+// rows. ParamRef indexes intentionally cross the boundary without resolving
+// variadic/tail references: -1 (and any other signed source index) remains the
+// authored value. A Store Into selector is optional exactly when its source
+// index is negative.
+func formalEffects(row effect.Row) (vocabulary.FormalEffectRow, error) {
+	out := vocabulary.FormalEffectRow{Tail: vocabulary.RowClosed}
+	if row.Tail != nil {
+		out.Tail = vocabulary.RowUnknownOpen
+	}
+	for _, label := range row.Labels {
+		switch value := effect.NormalizeLabel(label).(type) {
+		case ownership.Borrow:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("borrow parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectBorrow, Param: param})
+		case ownership.Retain:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("retain parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectRetain, Param: param})
+		case ownership.Store:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("store parameter: %w", err)
+			}
+			into, err := checkedFormalInt32(value.Into.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("store destination: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{
+				Kind: vocabulary.FormalEffectStore, Param: param,
+				Into: into, HasInto: value.Into.Index >= 0,
+			})
+		case ownership.BorrowAll:
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectBorrowAll})
+		case ownership.Send:
+			from, err := checkedFormalInt32(value.FromParam)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("send suffix boundary: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendSuffix, FromParam: from})
+		case ownership.SendParam:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("send parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectSendParam, Param: param})
+		case ownership.Export:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("export parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectExport, Param: param})
+		case ownership.Opaque:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("opaque parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectOpaque, Param: param})
+		case ownership.Freeze:
+			param, err := checkedFormalInt32(value.Param.Index)
+			if err != nil {
+				return vocabulary.FormalEffectRow{}, fmt.Errorf("freeze parameter: %w", err)
+			}
+			out.Occurrences = append(out.Occurrences, vocabulary.FormalEffectSpec{Kind: vocabulary.FormalEffectFreeze, Param: param})
+		}
+	}
+	return out, nil
+}
+
+// checkedFormalInt32 is the only signed-width crossing for declaration-level
+// formal coordinates. ParamRef and Send.FromParam are Go ints at the manifest
+// boundary, while Target stores them as signed int32 (with -1 retained as a
+// meaningful neutral selector). Rejecting before conversion prevents a
+// platform-width value from wrapping into a different formal coordinate.
+func checkedFormalInt32(value int) (int32, error) {
+	if int64(value) < int64(-1<<31) || int64(value) > int64(1<<31-1) {
+		return 0, fmt.Errorf("value %d is outside signed int32 range", value)
+	}
+	return int32(value), nil
 }
 
 func successfulResultType(value typ.Type) typ.Type {

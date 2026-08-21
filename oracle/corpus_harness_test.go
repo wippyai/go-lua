@@ -14,13 +14,19 @@ import (
 	"time"
 
 	"github.com/wippyai/go-lua/analysis"
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/result"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/snapshot"
+	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/effect/factor"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/internal/testfixture"
 )
@@ -79,7 +85,7 @@ type corpusHarnessMode struct {
 	// policy derives the per-fixture diagnostic policy of a report execution.
 	// Contracts it cannot express are carried into the run and judged after the
 	// fixture has passed through the current analyzer, never before.
-	policy func(*corpusHarnessProject) (anadiag.DiagnosticPolicy, []string)
+	policy func(*corpusHarnessRun) (anadiag.DiagnosticPolicy, []string)
 	// judge is the mode's verdict on one completed run.
 	judge func(*corpusHarnessRun) []string
 }
@@ -109,9 +115,11 @@ func (cost corpusHarnessCost) total() time.Duration {
 
 type corpusHarnessRun struct {
 	project            corpusHarnessProject
+	compilation        composite.Compilation
 	linked             *link.Link
 	plan               *analysis.Plan
 	result             *result.Result
+	placementSchema    placementdomain.Schema
 	report             *anadiag.DiagnosticReport
 	status             analysis.AnalyzeStatus
 	compileDiagnostics anadiag.AnalyzeDiagnostics
@@ -294,31 +302,67 @@ func TestCorpusFixtureDeclaredModulesAreSealed(t *testing.T) {
 func corpusHarnessModuleClosure(t *testing.T, linked *link.Link, entry linkproject.Shard) map[string]bool {
 	t.Helper()
 	mounts := linked.Project().Mounts()
-	roots := linked.Module().Roots()
-	cache := linked.Module().Cache()
-	loads := make(map[linkproject.Shard][]linkproject.Shard, mounts.Count())
-	for index := 0; index < cache.EntryCount(); index++ {
-		entryRow, ok := cache.EntryAt(index)
-		if !ok {
-			t.Fatalf("module cache entry %d is not addressable", index)
+	plan, status := analysis.Compile(linked)
+	if status != analysis.CompileComplete || plan == nil {
+		t.Fatalf("compile canonical module composition: status=%v", status)
+	}
+	publication, publicationOK := plan.Publication()
+	if !publicationOK {
+		_ = plan.Close()
+		t.Fatal("canonical module composition Publication is unavailable")
+	}
+	mountAxis, mountFound := analysiscatalog.ProjectAxis[identity.ContentID, programmount.Program](publication, programmount.OutputKey)
+	cacheAxis, cacheFound := analysiscatalog.ProjectAxis[identity.ContentID, modulecomposition.CacheIngress](publication, modulecomposition.CacheOutputKey)
+	published, publishedOK := plan.Snapshot()
+	_ = plan.Close()
+	if !publishedOK {
+		t.Fatal("canonical module composition Snapshot is unavailable")
+	}
+	if !mountFound || !cacheFound || mountAxis.SchemaID != published.Schema() || cacheAxis.SchemaID != published.Schema() {
+		t.Fatal("canonical mount/cache axes are unavailable")
+	}
+	loads := make(map[identity.ContentID][]identity.ContentID, mounts.Count())
+	cacheCount, cacheCountOK := snapshot.MemberCountAtAxis(&published, cacheAxis)
+	if !cacheCountOK {
+		t.Fatal("canonical cache denominator is unavailable")
+	}
+	for index := 0; index < cacheCount; index++ {
+		cacheKey, keyOK := snapshot.MemberAtAxis(&published, cacheAxis, index)
+		if !keyOK {
+			t.Fatalf("module cache row key %d is not addressable", index)
 		}
-		_, from, to, ok := cache.EntryMapping(entryRow)
-		if !ok {
-			t.Fatalf("module cache entry %d has no root mapping", index)
+		entryRow, rowOK := modulecomposition.CacheAt(&published, cacheAxis, cacheKey)
+		if !rowOK {
+			t.Fatalf("module cache row %d is unavailable", index)
 		}
-		fromShard, _, _, fromOK := roots.Mapping(from)
-		toShard, _, _, toOK := roots.Mapping(to)
-		if !fromOK || !toOK {
-			t.Fatalf("module cache entry %d has no mount mapping", index)
+		if _, sourceMounted := programmount.Mounted(&published, mountAxis, entryRow.SourceModuleKey()); !sourceMounted {
+			t.Fatalf("module cache row %d has no published source mount", index)
 		}
-		loads[fromShard] = append(loads[fromShard], toShard)
+		if _, targetMounted := programmount.Mounted(&published, mountAxis, entryRow.TargetModuleKey()); !targetMounted {
+			t.Fatalf("module cache row %d has no published target mount", index)
+		}
+		loads[entryRow.SourceModuleKey()] = append(loads[entryRow.SourceModuleKey()], entryRow.TargetModuleKey())
+	}
+	entryKey, entryOK := linked.Project().ModuleKey(entry)
+	if !entryOK {
+		t.Fatal("entry mount has no canonical module key")
+	}
+	moduleNames := make(map[identity.ContentID]string, mounts.Count())
+	for index := 0; index < mounts.Count(); index++ {
+		shard, shardOK := mounts.At(index)
+		name, nameOK := mounts.Name(shard)
+		moduleKey, keyOK := linked.Project().ModuleKey(shard)
+		if !shardOK || !nameOK || !keyOK {
+			t.Fatal("published mount has no canonical identity")
+		}
+		moduleNames[moduleKey] = name
 	}
 	reached := make(map[string]bool, mounts.Count())
-	frontier := []linkproject.Shard{entry}
+	frontier := []identity.ContentID{entryKey}
 	for len(frontier) != 0 {
 		shard := frontier[len(frontier)-1]
 		frontier = frontier[:len(frontier)-1]
-		name, ok := mounts.Name(shard)
+		name, ok := moduleNames[shard]
 		if !ok {
 			t.Fatal("reached mount has no module name")
 		}
@@ -393,6 +437,11 @@ func corpusHarnessExecuteDetached(t testing.TB, project corpusHarnessProject, mo
 func corpusHarnessExecuteWithPlanCleanup(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode, cleanupPlan bool) (*corpusHarnessRun, string, error) {
 	t.Helper()
 	run := &corpusHarnessRun{project: project}
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		return run, "composition", fmt.Errorf("sealed composition unavailable")
+	}
+	run.compilation = compilation
 	if project.name == "" || project.expectation == nil {
 		return run, "fixture", fmt.Errorf("unavailable fixture project or expectation")
 	}
@@ -439,6 +488,11 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 				compileDiagnostics.AssembleSeal, compileDiagnostics.AssembleScheduleOrdinal, compileDiagnostics)
 		}
 		run.plan = plan
+		placementSchema, placementSchemaOK := plan.PlacementSchema()
+		if !placementSchemaOK {
+			return run, "compile", fmt.Errorf("compiled plan has no Placement schema authority")
+		}
+		run.placementSchema = placementSchema
 		// A fixture is a sequential acceptance unit. Close the assembled Link
 		// topology on every post-compile path, including policy, solve, report,
 		// and matcher failures; the owning ephemeral Workspace releases its
@@ -480,7 +534,7 @@ func corpusHarnessSolve(run *corpusHarnessRun, mode corpusHarnessMode) (string, 
 		run.result, run.status, run.solveDiagnostics = run.plan.SolveWithDiagnostics(context.Background(), mode.options)
 	case corpusHarnessReportSolve:
 		if mode.policy != nil {
-			run.policy, run.policyUnsupported = mode.policy(&run.project)
+			run.policy, run.policyUnsupported = mode.policy(run)
 		}
 		run.result, run.report, run.status, run.solveDiagnostics = run.plan.SolveWithReport(context.Background(), mode.options, run.policy)
 	default:

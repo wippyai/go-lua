@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+	"github.com/wippyai/go-lua/analysis/program/valuesource"
 )
 
 type valueSourceCompileRow struct {
@@ -72,11 +73,7 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 	}
 	body, bodyOK := input.Body(owner)
 	bodyPath, bodyPathOK := view.BodyPath(owner)
-	programID := compiler.key.ProgramID()
-	if !programID.Available() {
-		programID = input.ContentID()
-	}
-	canonicalID, canonicalSpanID, canonicalTerm, canonicalOK := valueSourceIdentityAt(input, programID, keyspace.TermFamily(term), index)
+	canonicalID, canonicalSpanID, canonicalTerm, canonicalOK := valuesource.IdentityAt(input, keyspace.TermFamily(term), index)
 	if !bodyOK || !bodyPathOK || !bodyPath.Available() || !canonicalOK || canonicalTerm != term || !canonicalID.Available() || !canonicalSpanID.Available() {
 		return valueSourceCompileRow{}, false
 	}
@@ -87,7 +84,7 @@ func (compiler *compiler) valueSourceAt(code uint64, index int) (valueSourceComp
 	id := canonicalID
 	row := valueSourceCompileRow{code: code, term: term, target: target, body: bodyPath, bodyContext: body.ContextID(), spanID: canonicalSpanID, finish: finish, id: id}
 	if code < 6 {
-		family, literal, literalOK := sourceLiteral(input, term)
+		family, literal, literalOK := valuesource.Literal(input, term)
 		if !literalOK {
 			return valueSourceCompileRow{}, false
 		}

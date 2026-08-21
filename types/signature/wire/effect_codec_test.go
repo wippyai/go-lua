@@ -38,6 +38,9 @@ func TestWireEffectLabelRoundTripPreservesRowsAndSelectors(t *testing.T) {
 		{"ownership borrow all", ownership.BorrowAll{}},
 		{"ownership send", ownership.Send{FromParam: 1}},
 		{"ownership send param", ownership.SendParam{Param: p2}},
+		{"ownership export", ownership.Export{Param: p0}},
+		{"ownership opaque", ownership.Opaque{Param: p1}},
+		{"ownership freeze", ownership.Freeze{Param: p2}},
 		{"postcondition normal return present", postcondition.NormalReturnRefinement{Target: p0, Refinement: postcondition.Present{}}},
 		{"postcondition normal return absent", postcondition.NormalReturnRefinement{Target: p1, Refinement: postcondition.Absent{}}},
 		{"returns return", returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: p0}}},
@@ -165,18 +168,12 @@ func TestWireEffectLabelRoundTripCoversActiveReturnMatrix(t *testing.T) {
 }
 
 func TestWireRejectsInactiveEffectLabels(t *testing.T) {
-	p0 := effect.ParamRef{Index: 0}
-	p1 := effect.ParamRef{Index: 1}
-	p2 := effect.ParamRef{Index: 2}
 	tests := []struct {
 		name  string
 		label effect.Label
 	}{
 		{"control throw", control.Throw{}},
 		{"control io", control.IO{}},
-		{"ownership export", ownership.Export{Param: p0}},
-		{"ownership opaque", ownership.Opaque{Param: p1}},
-		{"ownership freeze", ownership.Freeze{Param: p2}},
 		{"return length", returns.ReturnLength{ReturnIndex: 0, Length: expr.MinExpr(expr.PL(0), expr.C(3))}},
 		{"correlated return", returns.CorrelatedReturn{Indices: []int{0, 2}}},
 	}
@@ -200,9 +197,6 @@ func TestWireRejectsInactiveDecodedEffectLabels(t *testing.T) {
 	}{
 		{"control throw", effectLabelWire{Kind: "control.throw"}},
 		{"control io", effectLabelWire{Kind: "control.io"}},
-		{"ownership export", effectLabelWire{Kind: "ownership.export", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
-		{"ownership opaque", effectLabelWire{Kind: "ownership.opaque", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
-		{"ownership freeze", effectLabelWire{Kind: "ownership.freeze", Param: encodeParamRef(effect.ParamRef{Index: 0})}},
 		{"return length", effectLabelWire{Kind: "returns.returnLength", Length: encodeExprForTest(t, expr.C(1))}},
 		{"correlated return", effectLabelWire{Kind: "returns.correlatedReturn", Indices: []int{0, 1}}},
 	}

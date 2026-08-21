@@ -1084,17 +1084,6 @@ type grammarproofSemanticEvent struct {
 	Occurrences []grammarproofSemanticOccurrence ` + "`json:\"occurrences\"`" + `
 }
 
-const (
-	grammarproofFieldAbsent = iota + 1
-	grammarproofFieldPresent
-	grammarproofFieldEmpty
-	grammarproofFieldNonEmpty
-	grammarproofFieldFalse
-	grammarproofFieldTrue
-	grammarproofFieldZero
-	grammarproofFieldNonZero
-)
-
 func grammarproofReduction(_ yyLexer, production int) {
 	grammarproofReductions = append(grammarproofReductions, production)
 }

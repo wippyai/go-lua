@@ -1,7 +1,7 @@
 package composite
 
 import (
-	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
@@ -15,52 +15,55 @@ import (
 // Each row carries the operand shape its rule declared, so the compiler places
 // the rows an owner can seal an operand for and no others: the placement set
 // and the owner-issued operand set are one denominator declared once.
-func ArtifactIssuanceDirectory() (artifactcompiler.IssuanceDirectory, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
-		return artifactcompiler.IssuanceDirectory{}, false
+func ArtifactIssuanceDirectory(compilation Compilation) (issuance.Directory, bool) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
+		return issuance.Directory{}, false
 	}
-	var placements []artifactcompiler.IssuancePlacement
-	for _, entry := range registry.templates {
+	var placements []issuance.Placement
+	for _, entry := range state.templates {
 		if entry == nil || entry.Lane() == rule.LaneLink {
 			continue
 		}
 		if !entry.Key().Available() {
-			return artifactcompiler.IssuanceDirectory{}, false
+			return issuance.Directory{}, false
 		}
 		for index := 0; index < entry.IssuanceCount(); index++ {
 			issued, ok := entry.IssuanceAt(index)
 			if !ok {
-				return artifactcompiler.IssuanceDirectory{}, false
+				return issuance.Directory{}, false
 			}
-			placement, ok := issuancePlacement(issued, entry.Key(), entry.Writes(), entry.Lane() == rule.LaneMounted)
+			placement, ok := issuancePlacement(state, issued, entry.Key(), entry.Writes(), entry.Lane() == rule.LaneMounted)
 			if !ok {
-				return artifactcompiler.IssuanceDirectory{}, false
+				return issuance.Directory{}, false
 			}
 			placements = append(placements, placement)
 		}
 	}
-	forms, formsOK := structureFramings(structure.CategoryIssuanceForm)
-	stages, stagesOK := structureFramings(structure.CategoryIssuanceStage)
+	forms, formsOK := structureFramings(state, structure.CategoryIssuanceForm)
+	stages, stagesOK := structureFramings(state, structure.CategoryIssuanceStage)
 	if !formsOK || !stagesOK {
-		return artifactcompiler.IssuanceDirectory{}, false
+		return issuance.Directory{}, false
 	}
-	formFraming := make(map[artifactcompiler.IssuanceForm]string, len(forms))
+	formFraming := make(map[issuance.Form]string, len(forms))
 	for ordinal, framing := range forms {
-		formFraming[artifactcompiler.IssuanceForm(ordinal)] = framing
+		formFraming[issuance.Form(ordinal)] = framing
 	}
 	stageFraming := make(map[programschema.RuleStage]string, len(stages))
 	for ordinal, framing := range stages {
 		stageFraming[programschema.RuleStage(ordinal)] = framing
 	}
-	return artifactcompiler.NewIssuanceDirectory(placements, formFraming, stageFraming)
+	return issuance.NewDirectory(placements, formFraming, stageFraming)
 }
 
 // structureFramings projects the declared digest framing of every member of one
 // category that names a staged execution cut. A member that stages nothing
 // declares none and contributes no row.
-func structureFramings(category structure.Category) (map[uint16]string, bool) {
-	view, viewOK := registry.sealed.Surface(schema.SurfaceKindStructure)
+func structureFramings(state *catalog, category structure.Category) (map[uint16]string, bool) {
+	if state == nil || state.sealed == nil {
+		return nil, false
+	}
+	view, viewOK := state.sealed.Surface(schema.SurfaceKindStructure)
 	table, tableOK := structure.NewTable(view)
 	if !viewOK || !tableOK {
 		return nil, false
@@ -78,21 +81,21 @@ func structureFramings(category structure.Category) (map[uint16]string, bool) {
 	return framings, true
 }
 
-func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport bool) (artifactcompiler.IssuancePlacement, bool) {
-	occurrence, occurrenceOK := structureOrdinal(issued.Occurrence, structure.CategoryOccurrenceKind)
-	form, formOK := structureOrdinal(issued.Form, structure.CategoryIssuanceForm)
-	input, inputOK := structureOrdinal(issued.Input, structure.CategoryIssuanceInput)
-	stage, stageOK := structureOrdinal(issued.Stage, structure.CategoryIssuanceStage)
-	requirement, requirementOK := structureOrdinal(issued.Requirement, structure.CategoryIssuanceRequirement)
+func issuancePlacement(state *catalog, issued rule.Issuance, key, writes schema.Key, transport bool) (issuance.Placement, bool) {
+	occurrence, occurrenceOK := structureOrdinal(state, issued.Occurrence, structure.CategoryOccurrenceKind)
+	form, formOK := structureOrdinal(state, issued.Form, structure.CategoryIssuanceForm)
+	input, inputOK := structureOrdinal(state, issued.Input, structure.CategoryIssuanceInput)
+	stage, stageOK := structureOrdinal(state, issued.Stage, structure.CategoryIssuanceStage)
+	requirement, requirementOK := structureOrdinal(state, issued.Requirement, structure.CategoryIssuanceRequirement)
 	if !occurrenceOK || !formOK || !inputOK || !stageOK || !requirementOK {
-		return artifactcompiler.IssuancePlacement{}, false
+		return issuance.Placement{}, false
 	}
-	placement := artifactcompiler.IssuancePlacement{
+	placement := issuance.Placement{
 		Occurrence:  programschema.OccurrenceKind(occurrence),
-		Form:        artifactcompiler.IssuanceForm(form),
+		Form:        issuance.Form(form),
 		Input:       programschema.RuleInputKind(input),
 		Stage:       programschema.RuleStage(stage),
-		Requirement: artifactcompiler.IssuanceRequirement(requirement),
+		Requirement: issuance.Requirement(requirement),
 		Code:        issued.Code,
 		HasCode:     issued.HasCode,
 		Key:         key,
@@ -102,8 +105,11 @@ func issuancePlacement(issued rule.Issuance, key, writes schema.Key, transport b
 	return placement, placement.Available()
 }
 
-func structureOrdinal(key schema.Key, category structure.Category) (uint16, bool) {
-	view, viewOK := registry.sealed.Surface(schema.SurfaceKindStructure)
+func structureOrdinal(state *catalog, key schema.Key, category structure.Category) (uint16, bool) {
+	if state == nil || state.sealed == nil {
+		return 0, false
+	}
+	view, viewOK := state.sealed.Surface(schema.SurfaceKindStructure)
 	table, tableOK := structure.NewTable(view)
 	if !viewOK || !tableOK {
 		return 0, false

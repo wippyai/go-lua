@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	callowner "github.com/wippyai/go-lua/domain/call/owner"
@@ -15,6 +16,8 @@ import (
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
+	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
+	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -28,6 +31,8 @@ const (
 	axisKeyValue                 schema.Key = "value"
 	axisKeyPack                  schema.Key = "pack"
 	axisKeyHeap                  schema.Key = "heap"
+	axisKeyPlacement             schema.Key = "placement"
+	axisKeyPlacementEvidence     schema.Key = "placement-suspension-evidence"
 	axisKeyCall                  schema.Key = "call"
 	axisKeyEffect                schema.Key = "effect"
 	axisKeyExecutionReachability schema.Key = "execution-reachability"
@@ -75,8 +80,8 @@ func axisPayload[T any](cells axisCells, slot int) (T, bool) {
 // axisPayloadForKey recovers one axis's cell by the key its owner declared it
 // under. The composition addresses its own axes by their declared identity, so
 // no lane vocabulary outside this table names them.
-func axisPayloadForKey[T any](cells axisCells, key schema.Key) (T, bool) {
-	slot, ok := axisSlotForKey(key)
+func axisPayloadForKey[T any](state *catalog, cells axisCells, key schema.Key) (T, bool) {
+	slot, ok := axisSlotForKey(state, key)
 	if !ok {
 		var absent T
 		return absent, false
@@ -110,21 +115,32 @@ func axisTemplates() ([]*axisTemplate, []axisContributor, bool) {
 		admitted = append(admitted, entry)
 		contributors = append(contributors, axisContributor{})
 	}
+	addPublishedSpec := func(spec axis.Spec[LinkInputs]) {
+		entry, ok := axis.New(spec)
+		addPublished(entry, ok)
+	}
 
 	addBound(wireAxis(valueowner.AxisEntry[LinkInputs](), valueowner.DeclareAxis, valueowner.BindAxis[LinkInputs], valueowner.AlgebraAxis))
 	addBound(wireAxis(packowner.AxisEntry[LinkInputs](), packowner.DeclareAxis, packowner.BindAxis[LinkInputs], packowner.AlgebraAxis))
 	addBound(wireAxis(heapowner.AxisEntry[LinkInputs](), heapowner.DeclareAxis, heapowner.BindAxis[LinkInputs], heapowner.AlgebraAxis))
 	addBound(wireAxis(callowner.AxisEntry[LinkInputs](), callowner.DeclareAxis, callowner.BindAxis[LinkInputs], callowner.AlgebraAxis))
 	addBound(wireAxis(effectowner.AxisEntry[LinkInputs](), effectowner.DeclareAxis, effectowner.BindAxis[LinkInputs], effectowner.AlgebraAxis))
+	addBound(wireAxis(placementowner.AxisEntry[LinkInputs](), placementowner.DeclareAxis, placementowner.BindAxis[LinkInputs], placementowner.AlgebraAxis))
+	addBound(wireAxis(placementsuspension.AxisEntry[LinkInputs](), placementsuspension.DeclareAxis, placementsuspension.BindAxis[LinkInputs], placementsuspension.AlgebraAxis))
 	// Engine-published axes are declared after the factor axes so artifact
 	// lane ordinals keep the prefix they address. Snapshot slots are assigned
 	// separately: engine-published outputs lead that range, and the first
 	// engine axis is the compile-time ChannelSelect column so a select-only
 	// publication can seal the prefix.
-	addPublished(axis.New(selectapply.AxisEntry[LinkInputs]()))
-	addPublished(axis.New(programmount.AxisEntry[LinkInputs]()))
-	addPublished(axis.New(executionowner.AxisEntry[LinkInputs]()))
-	addPublished(axis.New(denominatorpublication.AxisEntry[LinkInputs]()))
+	addPublishedSpec(selectapply.AxisEntry[LinkInputs]())
+	addPublishedSpec(programmount.AxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.ImportAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.CacheAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.GenerationAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.OutcomeAxisEntry[LinkInputs]())
+	addPublishedSpec(modulecomposition.TerminalAxisEntry[LinkInputs]())
+	addPublishedSpec(executionowner.AxisEntry[LinkInputs]())
+	addPublishedSpec(denominatorpublication.AxisEntry[LinkInputs]())
 
 	if rejected {
 		return nil, nil, false
@@ -142,8 +158,8 @@ const DiagnosticAxisUnknown DiagnosticAxis = 0
 
 // DiagnosticAxisForKey classifies one axis by the key its owner declared it
 // under.
-func DiagnosticAxisForKey(key schema.Key) DiagnosticAxis {
-	slot, ok := axisSlotForKey(key)
+func DiagnosticAxisForKey(compilation Compilation, key schema.Key) DiagnosticAxis {
+	slot, ok := axisSlotForKey(compilation.catalog, key)
 	if !ok {
 		return DiagnosticAxisUnknown
 	}
@@ -151,32 +167,27 @@ func DiagnosticAxisForKey(key schema.Key) DiagnosticAxis {
 }
 
 func (diagnostic DiagnosticAxis) String() string {
-	if entry, ok := axisAtSlot(int(diagnostic)); ok {
-		return string(entry.Key())
-	}
 	return "unknown"
 }
 
 // axisAtSlot resolves one axis by its slot. The slot is the declaration
 // position numbered from one, so slot zero names no axis.
-func axisAtSlot(slot int) (*axisTemplate, bool) {
-	sealRegistry()
-	if registry.sealed == nil || slot <= 0 || slot > len(registry.axes) {
+func axisAtSlot(state *catalog, slot int) (*axisTemplate, bool) {
+	if state == nil || state.sealed == nil || slot <= 0 || slot > len(state.axes) {
 		return nil, false
 	}
-	entry := registry.axes[slot-1]
+	entry := state.axes[slot-1]
 	return entry, entry != nil
 }
 
 // axisSlotForKey resolves one axis's slot from its declared key. It is the one
 // place the composition turns an authored axis identity into the dense index
 // every per-axis projection is held at.
-func axisSlotForKey(key schema.Key) (int, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func axisSlotForKey(state *catalog, key schema.Key) (int, bool) {
+	if state == nil || state.sealed == nil {
 		return 0, false
 	}
-	for position, entry := range registry.axes {
+	for position, entry := range state.axes {
 		if entry.Key() == key {
 			return position + 1, true
 		}
@@ -184,33 +195,36 @@ func axisSlotForKey(key schema.Key) (int, bool) {
 	return 0, false
 }
 
-func axisForKey(key schema.Key) (*axisTemplate, bool) {
-	slot, ok := axisSlotForKey(key)
+func axisForKey(state *catalog, key schema.Key) (*axisTemplate, bool) {
+	slot, ok := axisSlotForKey(state, key)
 	if !ok {
 		return nil, false
 	}
-	return axisAtSlot(slot)
+	return axisAtSlot(state, slot)
 }
 
 // AxisCount is the size of the sealed axis inventory.
-func AxisCount() int {
-	sealRegistry()
-	return len(registry.axes)
+func AxisCount(compilation Compilation) int {
+	state := compilation.catalog
+	if state == nil {
+		return 0
+	}
+	return len(state.axes)
 }
 
 // AxisKeyAt returns the declared key of one axis at its table position. The
 // position is the axis's slot less one; the key is the identity.
-func AxisKeyAt(position int) (schema.Key, bool) {
-	sealRegistry()
-	if position < 0 || position >= len(registry.axes) {
+func AxisKeyAt(compilation Compilation, position int) (schema.Key, bool) {
+	state := compilation.catalog
+	if state == nil || position < 0 || position >= len(state.axes) {
 		return "", false
 	}
-	return registry.axes[position].Key(), true
+	return state.axes[position].Key(), true
 }
 
 // AxisEntryID returns one axis's stable table identity.
-func AxisEntryID(key schema.Key) (schema.EntryID, bool) {
-	entry, ok := axisForKey(key)
+func AxisEntryID(compilation Compilation, key schema.Key) (schema.EntryID, bool) {
+	entry, ok := axisForKey(compilation.catalog, key)
 	if !ok {
 		return schema.EntryID{}, false
 	}
@@ -218,19 +232,23 @@ func AxisEntryID(key schema.Key) (schema.EntryID, bool) {
 }
 
 // AxisSemantic returns one axis's canonical Engine identity.
-func AxisSemantic(key schema.Key) (identity.SemanticKey, bool) {
-	entry, ok := axisForKey(key)
+func AxisSemantic(compilation Compilation, key schema.Key) (identity.SemanticKey, bool) {
+	state := compilation.catalog
+	entry, ok := axisForKey(state, key)
 	if !ok {
 		return identity.SemanticKey{}, false
 	}
-	return registry.roles.Key(entry.Semantic())
+	if state == nil {
+		return identity.SemanticKey{}, false
+	}
+	return state.roles.Key(entry.Semantic())
 }
 
 // AxisMountDeclared reports whether one axis seals its own Link authority from
 // the mounted artifacts. A derived inventory reads this to tell an axis whose
 // authority is composed for it from one that composes its own.
-func AxisMountDeclared(key schema.Key) (bool, bool) {
-	entry, ok := axisForKey(key)
+func AxisMountDeclared(compilation Compilation, key schema.Key) (bool, bool) {
+	entry, ok := axisForKey(compilation.catalog, key)
 	if !ok {
 		return false, false
 	}
@@ -238,8 +256,8 @@ func AxisMountDeclared(key schema.Key) (bool, bool) {
 }
 
 // AxisStorage returns where one axis's facts live.
-func AxisStorage(key schema.Key) (axis.Storage, bool) {
-	entry, ok := axisForKey(key)
+func AxisStorage(compilation Compilation, key schema.Key) (axis.Storage, bool) {
+	entry, ok := axisForKey(compilation.catalog, key)
 	if !ok {
 		return axis.StorageInvalid, false
 	}
@@ -249,8 +267,8 @@ func AxisStorage(key schema.Key) (axis.Storage, bool) {
 // AxisCardinality returns the shape of one axis's key space. A later inventory
 // that materializes its own coordinates reads this rather than assuming a
 // dense ordinal range.
-func AxisCardinality(key schema.Key) (axis.Cardinality, bool) {
-	entry, ok := axisForKey(key)
+func AxisCardinality(compilation Compilation, key schema.Key) (axis.Cardinality, bool) {
+	entry, ok := axisForKey(compilation.catalog, key)
 	if !ok {
 		return axis.CardinalityInvalid, false
 	}
@@ -258,8 +276,8 @@ func AxisCardinality(key schema.Key) (axis.Cardinality, bool) {
 }
 
 // AxisLifetime returns the scope one axis's facts are valid for.
-func AxisLifetime(key schema.Key) (axis.Lifetime, bool) {
-	entry, ok := axisForKey(key)
+func AxisLifetime(compilation Compilation, key schema.Key) (axis.Lifetime, bool) {
+	entry, ok := axisForKey(compilation.catalog, key)
 	if !ok {
 		return axis.LifetimeInvalid, false
 	}
@@ -270,33 +288,31 @@ func AxisLifetime(key schema.Key) (axis.Lifetime, bool) {
 // cell at its principal. It is the only place a factor's Schema shape is
 // recorded, and it runs before the rule pass because a rule declares against
 // the principals produced here.
-func axisContributorFor(key schema.Key) (axisContributor, bool) {
-	sealRegistry()
-	if len(registry.axisContributors) != len(registry.axes) {
+func axisContributorFor(state *catalog, key schema.Key) (axisContributor, bool) {
+	if state == nil || len(state.axisContributors) != len(state.axes) {
 		return axisContributor{}, false
 	}
-	for index, entry := range registry.axes {
+	for index, entry := range state.axes {
 		if entry != nil && entry.Key() == key {
-			contributor := registry.axisContributors[index]
+			contributor := state.axisContributors[index]
 			return contributor, contributor.complete()
 		}
 	}
 	return axisContributor{}, false
 }
 
-func declareAxes(builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func declareAxes(state *catalog, builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
+	if state == nil || state.sealed == nil {
 		return nil, DiagnosticAxisUnknown, false
 	}
-	return declareAxisInventory(registry.axes, builder, roles)
+	return declareAxisInventory(state, state.axes, builder, roles)
 }
 
 // declareAxisInventory is the cold pass over one axis inventory. A bound axis
 // records its Schema shape and returns its fragment; an engine-published axis
 // instantiates no factor binding, so the pass passes over it and the column its
 // own publisher fills reaches the record without a cold half here.
-func declareAxisInventory(entries []*axisTemplate, builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
+func declareAxisInventory(state *catalog, entries []*axisTemplate, builder *engine.SchemaBuilder, roles vocabulary.Roles) (axisCells, DiagnosticAxis, bool) {
 	fragments := newAxisCells(entries)
 	if builder == nil {
 		return fragments, DiagnosticAxisUnknown, false
@@ -305,7 +321,7 @@ func declareAxisInventory(entries []*axisTemplate, builder *engine.SchemaBuilder
 		if !entry.Storage().Bound() {
 			continue
 		}
-		contributor, contributorOK := axisContributorFor(entry.Key())
+		contributor, contributorOK := axisContributorFor(state, entry.Key())
 		if !contributorOK {
 			return fragments, DiagnosticAxis(position + 1), false
 		}
@@ -325,19 +341,18 @@ func declareAxisInventory(entries []*axisTemplate, builder *engine.SchemaBuilder
 // typed factor binding and publishes the algebra of that binding. It is the
 // first pass of the binding transaction, so every later pass binds against a
 // declared axis rather than a hand-ordered owner sequence.
-func bindAxes(binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func bindAxes(state *catalog, binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
+	if state == nil || state.sealed == nil {
 		return nil, DiagnosticAxisUnknown, false
 	}
-	return bindAxisInventory(registry.axes, binding, fragments, inputs)
+	return bindAxisInventory(state, state.axes, binding, fragments, inputs)
 }
 
 // bindAxisInventory is the hot pass over one axis inventory. It binds exactly
 // the axes the cold pass declared a fragment for: an engine-published axis has
 // no factor binding to instantiate and no algebra to publish, so the pass
 // passes over it here as well.
-func bindAxisInventory(entries []*axisTemplate, binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
+func bindAxisInventory(state *catalog, entries []*axisTemplate, binding *engine.SchemaBinding, fragments axisCells, inputs LinkInputs) (axisCells, DiagnosticAxis, bool) {
 	bound := newAxisCells(entries)
 	if binding == nil || !fragments.available(entries) {
 		return bound, DiagnosticAxisUnknown, false
@@ -347,7 +362,7 @@ func bindAxisInventory(entries []*axisTemplate, binding *engine.SchemaBinding, f
 			continue
 		}
 		slot := position + 1
-		contributor, contributorOK := axisContributorFor(entry.Key())
+		contributor, contributorOK := axisContributorFor(state, entry.Key())
 		if !contributorOK {
 			return bound, DiagnosticAxis(slot), false
 		}
@@ -365,35 +380,40 @@ func bindAxisInventory(entries []*axisTemplate, binding *engine.SchemaBinding, f
 
 // coldPrincipals projects the declared axis fragments into the rule surface's
 // principal record.
-func (cells axisCells) coldPrincipals() (principals, bool) {
-	value, valueOK := axisPayloadForKey[*valueowner.SchemaFragment](cells, axisKeyValue)
-	call, callOK := axisPayloadForKey[*callowner.SchemaFragment](cells, axisKeyCall)
-	heap, heapOK := axisPayloadForKey[*heapowner.SchemaFragment](cells, axisKeyHeap)
-	pack, packOK := axisPayloadForKey[*packowner.SchemaFragment](cells, axisKeyPack)
-	effect, effectOK := axisPayloadForKey[*effectowner.SchemaFragment](cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !packOK || !effectOK {
+func (cells axisCells) coldPrincipals(state *catalog) (principals, bool) {
+	value, valueOK := axisPayloadForKey[*valueowner.SchemaFragment](state, cells, axisKeyValue)
+	call, callOK := axisPayloadForKey[*callowner.SchemaFragment](state, cells, axisKeyCall)
+	heap, heapOK := axisPayloadForKey[*heapowner.SchemaFragment](state, cells, axisKeyHeap)
+	placement, placementOK := axisPayloadForKey[*placementowner.SchemaFragment](state, cells, axisKeyPlacement)
+	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceFactorFragment](state, cells, axisKeyPlacementEvidence)
+	pack, packOK := axisPayloadForKey[*packowner.SchemaFragment](state, cells, axisKeyPack)
+	effect, effectOK := axisPayloadForKey[*effectowner.SchemaFragment](state, cells, axisKeyEffect)
+	if !valueOK || !callOK || !heapOK || !placementOK || !evidenceOK || !packOK || !effectOK {
 		return principals{}, false
 	}
-	set := principals{value: value, call: call, heap: heap, pack: pack, effect: effect}
+	set := principals{value: value, call: call, heap: heap, placement: placement, evidence: evidence, pack: pack, effect: effect}
 	return set, set.available()
 }
 
 // hotPrincipals projects the bound axes into the rule surface's authority
 // record. The Link inputs and the allocation catalog are the caller's; the
 // factor authorities are the table's.
-func (cells axisCells) hotPrincipals(inputs LinkInputs, allocations *allocationcatalog.Catalog) (authorities, bool) {
-	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](cells, axisKeyValue)
-	call, callOK := axisPayloadForKey[*callowner.HotOwner](cells, axisKeyCall)
-	heap, heapOK := axisPayloadForKey[*heapowner.HotOwner](cells, axisKeyHeap)
-	pack, packOK := axisPayloadForKey[*packowner.HotOwner](cells, axisKeyPack)
-	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](cells, axisKeyEffect)
-	if !valueOK || !callOK || !heapOK || !packOK || !effectOK {
+func (cells axisCells) hotPrincipals(state *catalog, inputs LinkInputs, allocations *allocationcatalog.Catalog) (authorities, bool) {
+	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](state, cells, axisKeyValue)
+	call, callOK := axisPayloadForKey[*callowner.HotOwner](state, cells, axisKeyCall)
+	heap, heapOK := axisPayloadForKey[*heapowner.HotOwner](state, cells, axisKeyHeap)
+	placement, placementOK := axisPayloadForKey[*placementowner.HotOwner](state, cells, axisKeyPlacement)
+	evidence, evidenceOK := axisPayloadForKey[*placementsuspension.EvidenceOwner](state, cells, axisKeyPlacementEvidence)
+	pack, packOK := axisPayloadForKey[*packowner.HotOwner](state, cells, axisKeyPack)
+	effect, effectOK := axisPayloadForKey[*effectowner.HotOwner](state, cells, axisKeyEffect)
+	if !valueOK || !callOK || !heapOK || !placementOK || !evidenceOK || !packOK || !effectOK {
 		return authorities{}, false
 	}
 	set := authorities{
-		value: value, call: call, heap: heap, pack: pack, effect: effect,
-		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, packSchema: inputs.PackSchema,
+		value: value, call: call, heap: heap, placement: placement, evidence: evidence, pack: pack, effect: effect,
+		valueSchema: inputs.ValueSchema, heapSchema: inputs.HeapSchema, placementSchema: inputs.PlacementSchema, packSchema: inputs.PackSchema,
 		topology: inputs.topology, allocations: allocations, activation: inputs.activation,
+		targetContract: inputs.targetContract,
 	}
-	return set, set.available()
+	return set, set.available() && mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema)
 }

@@ -542,6 +542,18 @@ func sealDenominator[K comparable](b *builderCore, plan *keyPlan, id identity.Co
 			covered = append(covered, trieEntry[K, struct{}]{hash: hashKey(plan, member), key: member})
 		}
 		sealed.members = trieBuild(covered, make([]trieEntry[K, struct{}], len(covered)), 0)
+		// Retain the first occurrence of each member in publisher order.  The
+		// trie remains the authority for membership and de-duplicates keys;
+		// this projection gives sealed consumers the same canonical order
+		// without exposing the trie layout.
+		sealed.order = make([]K, 0, len(universe.members))
+		seen := make(map[K]struct{}, len(universe.members))
+		for _, member := range universe.members {
+			if _, held := seen[member]; !held {
+				seen[member] = struct{}{}
+				sealed.order = append(sealed.order, member)
+			}
+		}
 	}
 	return sealed, denominatorEntry{set: sealed, size: trieCount(sealed.members), slots: []uint32{slot}}, nil
 }

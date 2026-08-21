@@ -8,12 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	binding "github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-func validateSelectorInputs(sourceView sourceColumns, flow authored.View, bodies *body.Result, bindings binding.Result, staticView staticquery.View, moduleView imports.View) error {
+func validateSelectorInputs(sourceView sourceColumns, flow authored.View, bodies *body.Result, bindings binding.Result, staticView staticquery.View, moduleView authored.Imports) error {
 	identity := sourceView.Identity()
 	if !identity.ContentID().Available() || identity.TermCount() == 0 {
 		return errors.New("program/flow/accessgeometry: Source sourceView is unavailable")

@@ -414,6 +414,9 @@ func encodeOperation(w *framing.Writer, c *Contract, op vocabulary.Operation) er
 			return err
 		}
 	}
+	if err := c.encodeFormalEffectRow(w, op); err != nil {
+		return err
+	}
 	if operand, selector, subedge, resultOutcome, result, present := c.Operations.OperationSubedgeRelation(op); present {
 		if err := w.Bool(true); err != nil {
 			return err

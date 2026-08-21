@@ -2,7 +2,10 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/exactscalar"
+	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/valuesource"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -13,6 +16,15 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 	if compiler == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
+	type plainCallArgument struct {
+		call   identity.ContentID
+		member identity.ContentID
+	}
+	// A plain one-argument call is the sole Call shape that supplies an
+	// occurrence runtime argument. Keep one authenticated pair per SpanID for
+	// this validation pass: equal pairs are repeatable; a distinct pair fails
+	// at the later Call row, exactly as the former prior-row scan did.
+	plainArgumentsBySpan := make(map[identity.ContentID]plainCallArgument, len(compiler.calls))
 	for callIndex, call := range compiler.calls {
 		if !call.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
@@ -34,38 +46,22 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 		if !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, 0, CompileReasonOccurrenceCall)
 		}
-		for priorIndex := 0; priorIndex < callIndex; priorIndex++ {
-			prior := compiler.calls[priorIndex]
-			if !prior.Available() || prior.Form() != programschema.CallFormPlain || prior.ArgumentCount() != 1 || prior.SpanID() != call.SpanID() {
-				continue
-			}
-			if _, hasReceiver := prior.ReceiverID(); hasReceiver {
-				continue
-			}
-			if _, hasTail := prior.TailID(); hasTail {
-				continue
-			}
-			priorOffset, priorCount, priorSpanOK := prior.ArgumentSpan()
-			if !priorSpanOK || priorCount != 1 || uint64(priorOffset) >= uint64(len(compiler.callArguments)) {
-				continue
-			}
-			priorArgument := compiler.callArguments[priorOffset]
-			if priorArgument.Available() && priorArgument.CallID() == prior.ID() && priorArgument.Index() == 0 &&
-				(prior.ID() != call.ID() || priorArgument.MemberID() != argument.MemberID()) {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
-			}
+		span := call.SpanID()
+		if prior, duplicate := plainArgumentsBySpan[span]; duplicate && (prior.call != call.ID() || prior.member != argument.MemberID()) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, callIndex, -1, CompileReasonOccurrenceCall)
 		}
+		plainArgumentsBySpan[span] = plainCallArgument{call: call.ID(), member: argument.MemberID()}
 	}
-	for bodyIndex, body := range compiler.bodies {
+	for bodyIndex, body := range compiler.bodyBoundary.Bodies() {
 		if !body.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
 		offset, count, spanOK := body.EntrySpan()
-		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyBoundary.BodyEntries())) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceAttachment)
 		}
 		for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
-			entry := compiler.bodyEntries[offset+pointIndex]
+			entry := compiler.bodyBoundary.BodyEntries()[offset+pointIndex]
 			point := entry.PointID()
 			if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, int(pointIndex), CompileReasonOccurrenceAttachment)
@@ -73,19 +69,19 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 		}
 	}
 	for occurrenceIndex, row := range compiler.occurrences {
-		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
 		case programschema.OccurrenceValueSource:
 			if row.Code() == 1 {
-				_, spanOK := occurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
+				_, spanOK := programschema.OccurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
 				if !spanOK {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceValueSourceAppend)
 				}
 			}
 		case programschema.OccurrenceStorageRead:
-			cell, span, readOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
+			cell, span, readOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
 			if !readOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceStorageRead)
 			}
@@ -95,7 +91,7 @@ func (compiler *compiler) validateOccurrenceCausalInputsFailure() CompileFailure
 			}
 		case programschema.OccurrenceBinaryEquality:
 		case programschema.OccurrenceValueClaim:
-			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+			operand, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, occurrenceIndex, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -161,7 +157,7 @@ func (compiler *compiler) occurrenceClaimOperand(id identity.ContentID) (identit
 		if row.Kind() != programschema.OccurrenceValueClaim || row.ID() != id {
 			continue
 		}
-		return occurrenceInputID(row, compiler.occurrenceInputs, 0)
+		return programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 	}
 	return identity.ContentID{}, false
 }
@@ -180,7 +176,7 @@ func (compiler *compiler) occurrenceClaimOperandBefore(limit int, id identity.Co
 		if row.Kind() != programschema.OccurrenceValueClaim || row.ID() != id {
 			continue
 		}
-		candidate, ok := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+		candidate, ok := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 		if !ok {
 			continue
 		}
@@ -206,7 +202,7 @@ func (compiler *compiler) occurrenceStorageOriginBefore(limit int, span identity
 		if row.Kind() != programschema.OccurrenceStorageRead {
 			continue
 		}
-		candidate, rowSpan, rowOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
+		candidate, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
 		if rowOK && rowSpan == span {
 			if found && cell != candidate {
 				return cell, true, true
@@ -225,7 +221,7 @@ func (compiler *compiler) occurrenceStorageOrigin(span identity.ContentID) (iden
 		if row.Kind() != programschema.OccurrenceStorageRead {
 			continue
 		}
-		cell, rowSpan, rowOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
+		cell, rowSpan, rowOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
 		if rowOK && rowSpan == span {
 			return cell, true
 		}
@@ -241,7 +237,7 @@ func (compiler *compiler) occurrenceNilSource(span identity.ContentID) bool {
 		if row.Kind() != programschema.OccurrenceValueSource || row.Code() != 1 {
 			continue
 		}
-		rowSpan, rowOK := occurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
+		rowSpan, rowOK := programschema.OccurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
 		if rowOK && rowSpan == span {
 			return true
 		}
@@ -282,13 +278,13 @@ func (compiler *compiler) occurrenceBodyForPoint(point identity.ContentID) (iden
 	var bodyID identity.ContentID
 	found := false
 	ambiguous := false
-	for _, body := range compiler.bodies {
+	for _, body := range compiler.bodyBoundary.Bodies() {
 		offset, count, spanOK := body.EntrySpan()
-		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyBoundary.BodyEntries())) {
 			continue
 		}
 		for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
-			entry := compiler.bodyEntries[offset+pointIndex]
+			entry := compiler.bodyBoundary.BodyEntries()[offset+pointIndex]
 			if !entry.Available() || entry.PointID() != point {
 				continue
 			}
@@ -359,7 +355,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {
 			member, ok := compiler.valueMemberAt(values, memberIndex)
 			memberTerm, memberTermOK := authoredValues.Member(term, memberIndex)
-			memberID, memberIDOK := compiler.valueSubjectID(memberTerm)
+			memberID, memberIDOK := valuesource.SubjectSpan(compiler.input, memberTerm)
 			if !ok || !memberTermOK || !memberIDOK ||
 				!compiler.appendOccurrence(programschema.OccurrenceValuesMember, member.ID(), values.BodyPathID(), nil, []identity.ContentID{values.ID(), memberID}, uint64(memberIndex)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, memberIndex, CompileReasonOccurrenceValues)
@@ -399,9 +395,33 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 	if failure := compiler.deriveOperationPredicateRefinementsFailure(); failure.Available() {
 		return failure
 	}
-	if failure := compiler.deriveExactScalarSummariesFailure(); failure.Available() {
-		return failure
+	if compiler.exactScalar != nil {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
+	bundle, fault := exactscalar.Compile(exactscalar.Input{
+		Occurrences:        compiler.occurrences,
+		OccurrencePoints:   compiler.occurrencePoints,
+		OccurrenceInputs:   compiler.occurrenceInputs,
+		FunctionBoundaries: compiler.bodyBoundary.FunctionBoundaries(),
+		FunctionFormals:    compiler.bodyBoundary.FunctionFormals(),
+		FunctionVarargs:    compiler.bodyBoundary.FunctionVarargs(),
+		FunctionCaptures:   compiler.bodyBoundary.FunctionCaptures(),
+	})
+	if fault.Failed() {
+		reason := CompileReasonOccurrenceUnavailable
+		switch fault.Reason() {
+		case exactscalar.ReasonValueSourceAppend:
+			reason = CompileReasonOccurrenceValueSourceAppend
+		case exactscalar.ReasonValues:
+			reason = CompileReasonOccurrenceValues
+		case exactscalar.ReasonStorageRead:
+			reason = CompileReasonOccurrenceStorageRead
+		case exactscalar.ReasonStorageBind:
+			reason = CompileReasonOccurrenceStorageBind
+		}
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, fault.Row(), fault.Subrow(), reason)
+	}
+	compiler.exactScalar = bundle
 	return CompileFailure{}
 }
 
@@ -419,7 +439,7 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure() CompileFa
 		if binary.Kind() != programschema.OccurrenceBinaryEquality {
 			continue
 		}
-		left, right, op, equalityOK := occurrenceBinaryEquality(binary, compiler.occurrenceInputs)
+		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.occurrenceInputs)
 		if !equalityOK {
 			continue
 		}
@@ -439,17 +459,14 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure() CompileFa
 			if !truthOK || !bodyOK || ambiguousBody || !routeID.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, binaryIndex, armIndex, CompileReasonOccurrenceUnavailable)
 			}
-			id := digest("analysis/program-artifact/operation-predicate-refinement", artifactFormat(),
-				bytesField(callID), bytesField(binary.ID()), bytesField(selected.ID()), bytesField(subject), bytesField(operand), boolField(truth))
+			id := artifactdigest.Digest("analysis/program-artifact/operation-predicate-refinement", artifactFormat(),
+				artifactdigest.ContentID(callID), artifactdigest.ContentID(binary.ID()), artifactdigest.ContentID(selected.ID()), artifactdigest.ContentID(subject), artifactdigest.ContentID(operand), artifactdigest.Bool(truth))
 			if !id.Available() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, armIndex, CompileReasonOccurrenceUnavailable)
 			}
-			code := uint64(op) | operationPredicateCodeTruth
-			if !truth {
-				code = uint64(op)
-			}
+			code, codeOK := programschema.OccurrenceOperationPredicateCode(op, truth)
 			inputs := []identity.ContentID{callID, subject, operand, routeID}
-			appended := compiler.appendOccurrence(programschema.OccurrenceOperationPredicateRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code)
+			appended := codeOK && compiler.appendOccurrence(programschema.OccurrenceOperationPredicateRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code)
 			if !appended ||
 				!compiler.recordOccurrencePredecessor(programschema.OccurrenceOperationPredicateRefinement, id, routeID, []identity.ContentID{selected.To()}) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, armIndex, CompileReasonOccurrenceUnavailable)
@@ -472,7 +489,7 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure() CompileFailur
 		if binary.Kind() != programschema.OccurrenceBinaryEquality {
 			continue
 		}
-		left, right, op, equalityOK := occurrenceBinaryEquality(binary, compiler.occurrenceInputs)
+		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(binary, compiler.occurrenceInputs)
 		if !equalityOK {
 			continue
 		}
@@ -501,8 +518,8 @@ func (compiler *compiler) deriveBinaryPresenceRefinementsFailure() CompileFailur
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, binaryIndex, armIndex, CompileReasonOccurrenceUnavailable)
 			}
 			present := truth == (op == flowkind.BinaryNotEqual)
-			id := digest("analysis/program-artifact/binary-presence-refinement", artifactFormat(),
-				bytesField(binary.ID()), bytesField(selected.ID()), bytesField(target), boolField(present))
+			id := artifactdigest.Digest("analysis/program-artifact/binary-presence-refinement", artifactFormat(),
+				artifactdigest.ContentID(binary.ID()), artifactdigest.ContentID(selected.ID()), artifactdigest.ContentID(target), artifactdigest.Bool(present))
 			routeID := selected.RouteID()
 			inputs := []identity.ContentID{binary.ID(), target, operand, routeID}
 			code := uint64(0)

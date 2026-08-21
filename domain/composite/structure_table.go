@@ -1,11 +1,10 @@
 package composite
 
 import (
-	"sync"
-
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/schema"
 	denominatorpublication "github.com/wippyai/go-lua/analysis/schema/denominator/publication"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
@@ -19,16 +18,30 @@ import (
 	heapempty "github.com/wippyai/go-lua/domain/heap/allocation/empty"
 	heapingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
+	heapformalfreeze "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
+	heappublicationfreeze "github.com/wippyai/go-lua/domain/heap/publicationfreeze"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	packsource "github.com/wippyai/go-lua/domain/pack/source"
+	placementallocation "github.com/wippyai/go-lua/domain/placement/allocation"
+	placementcapture "github.com/wippyai/go-lua/domain/placement/capture"
+	placementcontainment "github.com/wippyai/go-lua/domain/placement/containment"
+	placementformal "github.com/wippyai/go-lua/domain/placement/formal"
+	placementfresh "github.com/wippyai/go-lua/domain/placement/fresh"
+	placementowner "github.com/wippyai/go-lua/domain/placement/owner"
+	placementpublicationescape "github.com/wippyai/go-lua/domain/placement/publicationescape"
+	placementquery "github.com/wippyai/go-lua/domain/placement/query"
+	placementreturnescape "github.com/wippyai/go-lua/domain/placement/returnescape"
+	placementstore "github.com/wippyai/go-lua/domain/placement/store"
+	placementsuspension "github.com/wippyai/go-lua/domain/placement/suspension"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
+	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
@@ -134,11 +147,12 @@ func occurrenceVocabulary() []structure.Spec {
 		structure.Spec{Key: "issuance/computation", Category: structure.CategoryIssuanceForm, Ordinal: 3, Spelling: "computation", Accepted: true, Framing: "analysis/program-artifact/local-computation-stage"},
 		structure.Spec{Key: "issuance/local-predecessor", Category: structure.CategoryIssuanceForm, Ordinal: 4, Spelling: "local-predecessor", Accepted: true, Framing: "analysis/program-artifact/local-predecessor-stage"},
 		structure.Spec{Key: "issuance/call-stage", Category: structure.CategoryIssuanceForm, Ordinal: 5, Spelling: "call-stage", Accepted: true},
+		structure.Spec{Key: "issuance/local-successor", Category: structure.CategoryIssuanceForm, Ordinal: 6, Spelling: "local-successor", Accepted: true, Framing: "analysis/program-artifact/local-successor-stage"},
 	)
 	declare(structure.CategoryIssuanceInput,
 		"none", "finish", "entry", "predecessor")
 	declare(structure.CategoryIssuanceRequirement,
-		"unrestricted", "call-plain-unary")
+		"unrestricted", "call-plain-unary", "closure-capture", "call-result-slot")
 	declare(structure.CategoryIssuanceStage,
 		"base", "local")
 	specs = append(specs,
@@ -173,7 +187,7 @@ func occurrenceCategoryPrefix(category structure.Category) string {
 // semanticRoleVocabulary is the analyzer's semantic role catalog, aggregated
 // from the domains that own the roles. Each axis owner contributes the identity
 // its coordinate space is bound under and the forms its schema is declared
-// with, and each rule owner the three or four forms its rules are identified
+// with, and each rule owner the two or three forms its rules are identified
 // by. An engine-published axis contributes its identity alone: it declares no
 // schema, so it declares none of the forms one is declared with.
 //
@@ -187,6 +201,8 @@ func semanticRoleVocabulary() []structure.Spec {
 		valueowner.StructureSpecs(),
 		packowner.StructureSpecs(),
 		heapowner.StructureSpecs(),
+		placementowner.StructureSpecs(),
+		placementquery.StructureSpecs(),
 		callowner.StructureSpecs(),
 		effectowner.StructureSpecs(),
 		executionowner.StructureSpecs(),
@@ -194,6 +210,7 @@ func semanticRoleVocabulary() []structure.Spec {
 		packsource.StructureSpecs(),
 		heapingress.StructureSpecs(),
 		valueallocation.StructureSpecs(),
+		placementallocation.StructureSpecs(),
 		heapempty.StructureSpecs(),
 		heapclosed.StructureSpecs(),
 		heapindex.StructureSpecs(),
@@ -212,6 +229,20 @@ func semanticRoleVocabulary() []structure.Spec {
 		typedomain.ChannelSelectStructureSpecs(),
 		selectapply.StructureSpecs(),
 		programmount.StructureSpecs(),
+		modulecomposition.StructureSpecs(),
+		placementreturnescape.StructureSpecs(),
+		placementcapture.StructureSpecs(),
+		placementformal.StructureSpecs(),
+		placementcontainment.StructureSpecs(),
+		placementstore.StructureSpecs(),
+		placementsuspension.StructureSpecs(),
+		// Keep the fresh-root Link producer's role identities at the end so
+		// existing semantic-role ordinals remain stable.
+		placementfresh.StructureSpecs(),
+		valuemoduleload.StructureSpecs(),
+		heapformalfreeze.StructureSpecs(),
+		placementpublicationescape.StructureSpecs(),
+		heappublicationfreeze.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {
@@ -252,31 +283,15 @@ func structureSpecs() []structure.Spec {
 	return specs
 }
 
-// structuralVocabulary holds the one projection of the sealed structural table. The
-// declaration is sealed once, so its projection is built once and handed out
-// by value; a consumer receives the catalog rather than restating it.
-var structuralVocabulary struct {
-	once  sync.Once
-	table structure.Table
-	ok    bool
-}
-
 // StructureVocabulary is the sealed structural vocabulary the composition hands
 // to the boundaries that read it. It is the only way a consumer reaches the
 // arm, event, and outcome catalogs.
-func StructureVocabulary() (structure.Table, bool) {
-	structuralVocabulary.once.Do(func() {
-		sealed, failure := Table()
-		if failure.Available() || sealed == nil {
-			return
-		}
-		view, viewOK := sealed.Surface(schema.SurfaceKindStructure)
-		if !viewOK {
-			return
-		}
-		structuralVocabulary.table, structuralVocabulary.ok = structure.NewTable(view)
-	})
-	return structuralVocabulary.table, structuralVocabulary.ok
+func StructureVocabulary(compilation Compilation) (structure.Table, bool) {
+	state := compilation.catalog
+	if state == nil {
+		return structure.Table{}, false
+	}
+	return state.structure, state.structureOK
 }
 
 // structureEntries admits the contributed inventory. The surface numbers each

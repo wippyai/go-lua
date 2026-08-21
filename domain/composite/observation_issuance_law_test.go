@@ -14,11 +14,15 @@ import (
 // family names stay on their owning registrations.
 
 func TestObservationConstructionUsesSealedProducers(t *testing.T) {
-	issued := ObservationIssuance()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	issued := ObservationIssuance(compilation)
 	if len(issued) == 0 {
 		t.Fatal("sealed table declares no observation rows")
 	}
-	producer, producerOK := ObservationProducerForPopulationKind(structure.DiagnosticObservationBranchCondition.Key())
+	producer, producerOK := ObservationProducerForPopulationKind(compilation, structure.DiagnosticObservationBranchCondition.Key())
 	if !producerOK || !producer.Available() {
 		t.Fatal("sealed table names no producer for the branch-condition population")
 	}

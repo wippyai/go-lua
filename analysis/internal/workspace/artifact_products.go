@@ -14,6 +14,7 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
 )
 
@@ -50,18 +51,20 @@ func NewArtifacts() *Artifacts {
 // Compile returns the one immutable product for input's complete CompileKey in
 // this directory. Concurrent callers for an equal key join the first compile.
 func (artifacts *Artifacts) Compile(input *program.Program, compilation composite.Compilation) (ArtifactProduct, bool) {
-	grammar, grammarOK := composite.ArtifactGrammar(compilation)
+	grammar := compilation.ExecutionSchemaID()
+	grammarOK := compilation.Available() && grammar.Available()
+	structural, structuralOK := compilation.Structure()
 	compileKey, keyOK := programartifact.NewCompileKey(input, grammar)
-	if !grammarOK || !keyOK || !compileKey.Available() || input == nil || !input.Available() || !compilation.Available() {
+	if !grammarOK || !structuralOK || !keyOK || !compileKey.Available() || input == nil || !input.Available() || !compilation.Available() {
 		return ArtifactProduct{}, false
 	}
 	programID := input.ContentID()
-	schemaID := compileKey.SchemaDigest()
-	if !programID.Available() || !schemaID.Available() || artifacts == nil {
+	executionSchemaID := compileKey.ExecutionSchemaID().ContentID()
+	if !programID.Available() || !executionSchemaID.Available() || artifacts == nil {
 		return ArtifactProduct{}, false
 	}
 	return artifacts.compile(compileKey.ID(), func() (ArtifactProduct, bool) {
-		return compileArtifactProduct(input, compileKey, programID, schemaID)
+		return compileArtifactProduct(input, compileKey, programID, executionSchemaID, structural, compilation)
 	})
 }
 
@@ -124,14 +127,10 @@ func (artifacts *Artifacts) compile(key identity.ContentID, build func() (Artifa
 	return entry.product, entry.valid
 }
 
-func compileArtifactProduct(input *program.Program, compileKey programartifact.CompileKey, programID, schemaID identity.ContentID) (ArtifactProduct, bool) {
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	artifact, failure := artifactcompiler.CompileDetailed(input, compileKey.Grammar(), issuance)
+func compileArtifactProduct(input *program.Program, compileKey programartifact.CompileKey, programID, executionSchemaID identity.ContentID, structural structure.Table, compilation composite.Compilation) (ArtifactProduct, bool) {
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	artifact, failure := artifactcompiler.CompileDetailed(input, compileKey.ExecutionSchemaID(), issuance)
 	if !issuanceOK || artifact == nil || failure.Available() {
-		return ArtifactProduct{}, false
-	}
-	structural, structuralOK := composite.StructureVocabulary()
-	if !structuralOK {
 		return ArtifactProduct{}, false
 	}
 	snapshot, lowered := ingress.Lower(artifact, structural)
@@ -140,21 +139,21 @@ func compileArtifactProduct(input *program.Program, compileKey programartifact.C
 	}
 	template, roles, lowered := scalarlower.Lower(snapshot, structural)
 	product := ArtifactProduct{Artifact: artifact, Snapshot: snapshot, Template: template, Roles: roles}
-	return product, lowered && artifactProductMatches(product, compileKey, programID, schemaID)
+	return product, lowered && artifactProductMatches(product, compileKey, programID, executionSchemaID)
 }
 
-func artifactProductMatches(product ArtifactProduct, compileKey programartifact.CompileKey, programID, schemaID identity.ContentID) bool {
-	if !(compileKey.Available() && programID.Available() && schemaID.Available() &&
+func artifactProductMatches(product ArtifactProduct, compileKey programartifact.CompileKey, programID, executionSchemaID identity.ContentID) bool {
+	if !(compileKey.Available() && programID.Available() && executionSchemaID.Available() &&
 		product.Artifact != nil && product.Artifact.Available() &&
 		product.Artifact.CompileKey().ID() == compileKey.ID() &&
 		product.Artifact.CompileKey().ProgramID() == programID &&
-		product.Artifact.CompileKey().SchemaDigest() == schemaID &&
+		product.Artifact.CompileKey().ExecutionSchemaID().ContentID() == executionSchemaID &&
 		product.Snapshot != nil && product.Snapshot.Available() &&
 		product.Snapshot.ArtifactID() == product.Artifact.ID() &&
-		product.Snapshot.ProgramID() == programID && product.Snapshot.SchemaID() == schemaID &&
+		product.Snapshot.ProgramID() == programID && product.Snapshot.SchemaID() == executionSchemaID &&
 		product.Template != nil && product.Template.Available() &&
 		product.Template.ArtifactID() == product.Artifact.ID() &&
-		product.Template.ProgramID() == programID && product.Template.SchemaID() == schemaID &&
+		product.Template.ProgramID() == programID && product.Template.SchemaID() == executionSchemaID &&
 		product.Roles != nil && product.Roles.Count() == product.Template.RoleCount()) {
 		return false
 	}

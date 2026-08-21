@@ -21,15 +21,20 @@ import (
 // declared axis projects onto the same verdict, and the axis that raised it is
 // recoverable from the phase's own record, named as its owner declared it.
 func TestAxisAuthorityIsOneVerdictCarryingTheAxis(t *testing.T) {
-	if composite.AxisCount() == 0 {
+	compilation, ok := composite.Build()
+	if !ok {
+		t.Fatal("sealed compilation unavailable")
+	}
+	axisCount := composite.AxisCount(compilation)
+	if axisCount == 0 {
 		t.Fatal("the sealed table declares no axis; the law measures nothing")
 	}
-	for position := 0; position < composite.AxisCount(); position++ {
-		key, keyOK := composite.AxisKeyAt(position)
+	for position := 0; position < axisCount; position++ {
+		key, keyOK := composite.AxisKeyAt(compilation, position)
 		if !keyOK {
 			t.Fatalf("axis position %d publishes no key", position)
 		}
-		classification := composite.DiagnosticAxisForKey(key)
+		classification := composite.DiagnosticAxisForKey(compilation, key)
 		if classification == composite.DiagnosticAxisUnknown {
 			t.Fatalf("axis %q classifies as unknown", key)
 		}
@@ -147,16 +152,20 @@ func TestConformanceObservationRequiresProducerGeometry(t *testing.T) {
 // occurrence that produces their value, so an address derived from the shared
 // point would give both the same column. The address is the producer's.
 func TestConformanceSubjectsAddressTheirOwnProducer(t *testing.T) {
+	compilation, ok := composite.Build()
+	if !ok {
+		t.Fatal("sealed compilation unavailable")
+	}
 	mount := identity.ContentID{20}
-	first, firstOK := ValueObservationAddress(structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{21})
-	second, secondOK := ValueObservationAddress(structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{22})
+	first, firstOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{21})
+	second, secondOK := ValueObservationAddress(compilation, structure.DiagnosticObservationTypeConformance, mount, identity.ContentID{22})
 	if !firstOK || !secondOK || !first.Available() || !second.Available() {
 		t.Fatal("the type-conformance population issues no observation address")
 	}
 	if first == second {
 		t.Fatal("two producing occurrences of one mount share an observation address")
 	}
-	branch, branchOK := ValueObservationAddress(structure.DiagnosticObservationBranchCondition, mount, identity.ContentID{21})
+	branch, branchOK := ValueObservationAddress(compilation, structure.DiagnosticObservationBranchCondition, mount, identity.ContentID{21})
 	if !branchOK || branch != first {
 		t.Fatal("one produced value at one occurrence is published on two columns")
 	}

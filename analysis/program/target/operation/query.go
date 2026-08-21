@@ -52,6 +52,8 @@ type queryOperationRow struct {
 	rowFormals         uint32
 	effectTail         vocabulary.RowTail
 	effectVar          vocabulary.RowVar
+	formalEffects      []vocabulary.FormalEffectSpec
+	formalEffectTail   vocabulary.RowTail
 }
 
 type querySubedgeRow struct {

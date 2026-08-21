@@ -16,7 +16,7 @@ func TestResultMatchesExactFourOwnerIdentitiesAndQueriesFailClosed(t *testing.T)
 	sourceID := fixture.sourceView.Identity().ContentID()
 	flowID := fixture.flow.ContentID()
 	staticID := fixture.staticView.ContentID()
-	moduleID := fixture.moduleFinalize.View().ContentID()
+	moduleID := fixture.flow.ModuleID()
 	if !Matches(result, sourceID, flowID, staticID, moduleID) {
 		t.Fatal("source-control Result did not match its exact four owners")
 	}

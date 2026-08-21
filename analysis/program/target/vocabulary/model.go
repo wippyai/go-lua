@@ -136,6 +136,11 @@ type BootShapeSpec struct {
 type InitialRootSpec struct {
 	Identity string
 	Shape    BootShapeSpec
+	// ModulePath is an explicit authored module-binding relation. When it is
+	// non-empty, Target binds this exact module path to this InitialRoot; it is
+	// not reconstructed from the root identity (or from a provider name).
+	// Non-module initial roots leave it empty.
+	ModulePath string
 }
 
 // InitialEntrySpec is one exact initial root/key/value/mutability row. Key is

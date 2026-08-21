@@ -52,20 +52,6 @@ func (builder Builder) Zero() (Offset, bool) {
 	return zeroOffset(builder.relation.owner)
 }
 
-func (builder Builder) Head(tail TailRef, offset Offset) (Scalar, bool) {
-	if !builder.valid() || !tail.valid() || tail.owner != builder.relation.owner || !offset.valid() || offset.owner != builder.relation.owner {
-		return Scalar{}, false
-	}
-	return headScalar(tail, offset)
-}
-
-func (builder Builder) AnyScalar(class static.Class) (Scalar, bool) {
-	if !builder.valid() || !builder.relation.owner.admits(class) {
-		return Scalar{}, false
-	}
-	return anyScalar(builder.relation.owner, class)
-}
-
 func (builder Builder) Tail(tail TailRef, offset Offset) (Rest, bool) {
 	if !builder.valid() || !tail.valid() || tail.owner != builder.relation.owner || !offset.valid() || offset.owner != builder.relation.owner {
 		return Rest{}, false
@@ -99,18 +85,6 @@ func (builder Builder) AnyPack() (Term, bool) {
 		return Term{}, false
 	}
 	return anyTerm(builder.relation.owner)
-}
-
-// Scalar writes one existing scalar target. Value rejects incomplete or
-// cross-root vectors, so a scalar marginal cannot be published independently.
-func (builder Builder) Scalar(target Endpoint, value Scalar) (Equation, bool) {
-	if !builder.valid() || !target.valid() || target.owner != builder.relation.owner || !value.valid() || value.owner != builder.relation.owner {
-		return Equation{}, false
-	}
-	if !builder.relation.hasTarget(EquationScalar, target.index) {
-		return Equation{}, false
-	}
-	return scalarEquation(target, value)
 }
 
 // Pack writes one existing whole-Pack target.

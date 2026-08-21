@@ -3,9 +3,9 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -13,18 +13,17 @@ import (
 )
 
 func TestAssembleNilDraftFailsClosed(t *testing.T) {
-	sourceFinalizer, staticComponent, staticView, moduleFinalizer, unusedDraft := emptyAssemblyOwners(t, "nil-draft.lua")
+	sourceFinalizer, staticComponent, staticView, unusedDraft := emptyAssemblyOwners(t, "nil-draft.lua")
 	preimage := sourceFinalizer.Preimage()
-	moduleView := moduleFinalizer.View()
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, nil, 0)
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, nil, 0)
 	if err == nil || assembly != nil {
 		t.Fatalf("Assemble(nil) = %#v, %v; want nil assembly and error", assembly, err)
 	}
-	if !preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || !moduleView.ContentID().Available() {
+	if !preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() {
 		t.Fatal("nil Flow Draft claim failure consumed a sibling owner")
 	}
-	abortClaimedSiblingOwners(t, sourceFinalizer, moduleFinalizer)
-	unusedFinalizer, err := unusedDraft.claim()
+	abortClaimedSiblingOwners(t, sourceFinalizer)
+	unusedFinalizer, err := unusedDraft.Finalizer()
 	if err != nil {
 		t.Fatalf("unused Flow Draft claim: %v", err)
 	}
@@ -34,24 +33,22 @@ func TestAssembleNilDraftFailsClosed(t *testing.T) {
 }
 
 func TestAssembleAlreadyClaimedFlowLeavesSiblingOwnersLive(t *testing.T) {
-	sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft := emptyAssemblyOwners(t, "claimed-draft.lua")
+	sourceFinalizer, staticComponent, staticView, draft := emptyAssemblyOwners(t, "claimed-draft.lua")
 	preimage := sourceFinalizer.Preimage()
-	moduleView := moduleFinalizer.View()
-	claimedFlow, err := draft.claim()
+	claimedFlow, err := draft.Finalizer()
 	if err != nil {
 		t.Fatalf("Flow claim: %v", err)
 	}
 	flowView := claimedFlow.View()
 
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft, keyspace.MakeTerm(keyspace.FamilyBody, 1))
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, draft, keyspace.MakeTerm(keyspace.FamilyBody, 1))
 	if err == nil || assembly != nil {
 		t.Fatalf("Assemble(already claimed) = %#v, %v; want nil assembly and error", assembly, err)
 	}
-	if !preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() ||
-		!moduleView.ContentID().Available() || !flowView.ContentID().Available() {
+	if !preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || !flowView.ContentID().Available() {
 		t.Fatal("failed Flow claim consumed an owner held by the winning invocation")
 	}
-	abortClaimedSiblingOwners(t, sourceFinalizer, moduleFinalizer)
+	abortClaimedSiblingOwners(t, sourceFinalizer)
 	if err := claimedFlow.Abort(); err != nil {
 		t.Fatalf("claimed Flow abort: %v", err)
 	}
@@ -59,12 +56,11 @@ func TestAssembleAlreadyClaimedFlowLeavesSiblingOwnersLive(t *testing.T) {
 
 func TestAssembleSuccessfulQuartetPublishesStaticReceipt(t *testing.T) {
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft := emptyAssemblyOwners(t, "successful-quartet.lua")
+	sourceFinalizer, staticComponent, staticView, draft := emptyAssemblyOwners(t, "successful-quartet.lua")
 	preimage := sourceFinalizer.Preimage()
-	moduleView := moduleFinalizer.View()
 	copiedDraft := *draft
 
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, &copiedDraft, entry)
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, &copiedDraft, entry)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -72,9 +68,9 @@ func TestAssembleSuccessfulQuartetPublishesStaticReceipt(t *testing.T) {
 		t.Fatal("Assemble returned no transfer token")
 	}
 	copiedAssembly := *assembly
-	sourceComponent, flowComponent, staticComponent, moduleComponent, takeErr := assembly.Take()
-	if takeErr != nil || sourceComponent == nil || flowComponent == nil || staticComponent == nil || moduleComponent == nil {
-		t.Fatalf("Assembly.Take = %p/%p/%p/%p, %v; want complete quartet", sourceComponent, flowComponent, staticComponent, moduleComponent, takeErr)
+	sourceComponent, flowComponent, staticComponent, moduleID, takeErr := assembly.Take()
+	if takeErr != nil || sourceComponent == nil || flowComponent == nil || staticComponent == nil || !moduleID.Available() {
+		t.Fatalf("Assembly.Take = %p/%p/%p/%x, %v; want complete owner set", sourceComponent, flowComponent, staticComponent, moduleID, takeErr)
 	}
 	provenance := flowComponent.View().Provenance()
 	if !flowComponent.View().AccessGeometry().Available() || !flowComponent.View().BinaryPrimitives().Available() {
@@ -83,17 +79,17 @@ func TestAssembleSuccessfulQuartetPublishesStaticReceipt(t *testing.T) {
 	if provenance.Source != sourceComponent.View().Identity().ContentID() ||
 		provenance.Flow != flowComponent.ContentID() ||
 		provenance.Static != staticComponent.ContentID() ||
-		provenance.Module != moduleComponent.View().ContentID() {
+		provenance.Module != moduleID {
 		t.Fatalf("Flow provenance = %#v; want exact committed quartet", provenance)
 	}
 	secondSource, secondFlow, secondStatic, secondModule, secondErr := copiedAssembly.Take()
-	if secondErr == nil || secondSource != nil || secondFlow != nil || secondStatic != nil || secondModule != nil {
-		t.Fatalf("copied Assembly.Take = %p/%p/%p/%p, %v; want all nil and error", secondSource, secondFlow, secondStatic, secondModule, secondErr)
+	if secondErr == nil || secondSource != nil || secondFlow != nil || secondStatic != nil || secondModule.Available() {
+		t.Fatalf("copied Assembly.Take = %p/%p/%p/%x, %v; want all empty and error", secondSource, secondFlow, secondStatic, secondModule, secondErr)
 	}
-	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || moduleView.ContentID().Available() {
+	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() {
 		t.Fatal("successful Assemble left a consumed construction owner View readable or lost Static view")
 	}
-	if repeated, repeatedErr := Assemble(source.Finalizer{}, staticComponent, staticView, imports.Finalizer{}, draft, entry); repeatedErr == nil || repeated != nil {
+	if repeated, repeatedErr := Assemble(source.Finalizer{}, staticComponent, staticView, draft, entry); repeatedErr == nil || repeated != nil {
 		t.Fatalf("copied Draft reopened Flow: assembly=%#v err=%v", repeated, repeatedErr)
 	}
 }
@@ -276,17 +272,7 @@ func openProjectionAssembly(t *testing.T, name string) *Assembly {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("projection static.Build: %v", err)
 	}
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("projection imports.Build: %v", err)
-	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("projection imports.Finalizer: %v", err)
-	}
-	flowDraft, err := Build(authored.Input{
+	flowDraft, err := authored.Build(authored.Input{
 		Counts: counts,
 		Values: authored.ValuesInput{
 			Rows:  []authored.Value{{Owner: entry, Fixed: authored.Range{End: 1}}, {Owner: entry, Fixed: authored.Range{Start: 1, End: 3}}},
@@ -301,11 +287,10 @@ func openProjectionAssembly(t *testing.T, name string) *Assembly {
 		Control:   authored.ControlInput{Returns: []authored.Return{{Owner: entry, Values: valuesForReturn}}},
 	})
 	if err != nil {
-		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("projection flow.Build: %v", err)
 	}
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft, entry)
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, flowDraft, entry)
 	if err != nil {
 		t.Fatalf("projection Assemble: %v", err)
 	}
@@ -313,22 +298,21 @@ func openProjectionAssembly(t *testing.T, name string) *Assembly {
 }
 
 func TestAssemblePreflightFailureAbortsEveryConstructionOwner(t *testing.T) {
-	sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft := emptyAssemblyOwners(t, "failed-preflight.lua")
+	sourceFinalizer, staticComponent, staticView, draft := emptyAssemblyOwners(t, "failed-preflight.lua")
 	preimage := sourceFinalizer.Preimage()
-	moduleView := moduleFinalizer.View()
 
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft, 0)
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, draft, 0)
 	if err == nil || assembly != nil {
 		t.Fatalf("Assemble(invalid entry) = %#v, %v; want terminal failure", assembly, err)
 	}
-	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() || moduleView.ContentID().Available() {
+	if preimage.Identity().ContentID().Available() || !staticView.ContentID().Available() {
 		t.Fatal("failed Assemble left a construction owner View readable or lost Static view")
 	}
-	if _, claimErr := draft.claim(); claimErr == nil {
+	if _, claimErr := draft.Finalizer(); claimErr == nil {
 		t.Fatal("failed Assemble left the authored Flow Draft reclaimable")
 	}
-	if sourceFinalizer.Abort() == nil || moduleFinalizer.Abort() {
-		t.Fatal("failed Assemble did not leave every owner finalizer terminal")
+	if sourceFinalizer.Abort() == nil {
+		t.Fatal("failed Assemble did not leave Source finalizer terminal")
 	}
 }
 
@@ -338,17 +322,17 @@ func TestAssemblyTakeMalformedAndZeroTokensFailClosed(t *testing.T) {
 		"zero":      {},
 		"malformed": {state: &assemblyState{source: &source.Component{}}},
 	} {
-		sourceComponent, flowComponent, staticComponent, moduleComponent, err := token.Take()
-		if err == nil || sourceComponent != nil || flowComponent != nil || staticComponent != nil || moduleComponent != nil {
-			t.Fatalf("%s Assembly.Take = %p/%p/%p/%p, %v; want all nil and error", name, sourceComponent, flowComponent, staticComponent, moduleComponent, err)
+		sourceComponent, flowComponent, staticComponent, moduleID, err := token.Take()
+		if err == nil || sourceComponent != nil || flowComponent != nil || staticComponent != nil || moduleID.Available() {
+			t.Fatalf("%s Assembly.Take = %p/%p/%p/%x, %v; want all empty and error", name, sourceComponent, flowComponent, staticComponent, moduleID, err)
 		}
 	}
 }
 
 func TestAssemblyTakeConcurrentCopiesTransferExactlyOnce(t *testing.T) {
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
-	sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft := emptyAssemblyOwners(t, "concurrent-take.lua")
-	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, moduleFinalizer, draft, entry)
+	sourceFinalizer, staticComponent, staticView, draft := emptyAssemblyOwners(t, "concurrent-take.lua")
+	assembly, err := Assemble(sourceFinalizer, staticComponent, staticView, draft, entry)
 	if err != nil {
 		t.Fatalf("Assemble: %v", err)
 	}
@@ -356,7 +340,7 @@ func TestAssemblyTakeConcurrentCopiesTransferExactlyOnce(t *testing.T) {
 		source *source.Component
 		flow   *Component
 		static *static.Component
-		module *imports.Component
+		module identity.ContentID
 		err    error
 	}
 	const workers = 16
@@ -373,13 +357,13 @@ func TestAssemblyTakeConcurrentCopiesTransferExactlyOnce(t *testing.T) {
 		result := <-results
 		if result.err == nil {
 			successes++
-			if result.source == nil || result.flow == nil || result.static == nil || result.module == nil {
-				t.Fatal("successful concurrent Take returned a partial quartet")
+			if result.source == nil || result.flow == nil || result.static == nil || !result.module.Available() {
+				t.Fatal("successful concurrent Take returned a partial owner set")
 			}
 			continue
 		}
-		if result.source != nil || result.flow != nil || result.static != nil || result.module != nil {
-			t.Fatal("failed concurrent Take returned a partial quartet")
+		if result.source != nil || result.flow != nil || result.static != nil || result.module.Available() {
+			t.Fatal("failed concurrent Take returned a partial owner set")
 		}
 	}
 	if successes != 1 {
@@ -387,16 +371,16 @@ func TestAssemblyTakeConcurrentCopiesTransferExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestFlowDraftRejectsDerivedOutcomeInput(t *testing.T) {
+func TestAuthoredDraftRejectsDerivedOutcomeInput(t *testing.T) {
 	counts := [keyspace.FamilyCount]uint32{}
 	counts[keyspace.FamilyBody] = 1
 	counts[keyspace.FamilyOutcome] = 1
-	if draft, err := Build(authored.Input{Counts: counts}); err == nil || draft != nil {
+	if draft, err := authored.Build(authored.Input{Counts: counts}); err == nil || draft != nil {
 		t.Fatalf("Build accepted authored Outcome denominator: draft=%#v err=%v", draft, err)
 	}
 }
 
-func emptyAssemblyOwners(t *testing.T, name string) (source.Finalizer, *static.Component, staticquery.View, imports.Finalizer, *Draft) {
+func emptyAssemblyOwners(t *testing.T, name string) (source.Finalizer, *static.Component, staticquery.View, *authored.Draft) {
 	t.Helper()
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	counts := [keyspace.FamilyCount]uint32{}
@@ -418,34 +402,19 @@ func emptyAssemblyOwners(t *testing.T, name string) (source.Finalizer, *static.C
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("static.Build: %v", err)
 	}
-	moduleDraft, err := imports.Build(imports.Input{})
+	flowDraft, err := authored.Build(authored.Input{Counts: counts})
 	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		_ = sourceFinalizer.Abort()
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	flowDraft, err := Build(authored.Input{Counts: counts})
-	if err != nil {
-		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("flow.Build: %v", err)
 	}
-	return sourceFinalizer, staticComponent, staticView, moduleFinalizer, flowDraft
+	return sourceFinalizer, staticComponent, staticView, flowDraft
 }
 
 func abortClaimedSiblingOwners(
 	t testing.TB,
 	sourceFinalizer source.Finalizer,
-	moduleFinalizer imports.Finalizer,
 ) {
 	t.Helper()
-	if !moduleFinalizer.Abort() {
-		t.Error("Module finalizer was not live")
-	}
 	if err := sourceFinalizer.Abort(); err != nil {
 		t.Errorf("Source finalizer was not live: %v", err)
 	}

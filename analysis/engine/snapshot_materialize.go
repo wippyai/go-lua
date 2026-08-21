@@ -64,17 +64,11 @@ const (
 	solvedAxisDenominator
 )
 
-// solvedValue is the published result value one solve row carries. This alias
-// is the single declaration that names the engine's value model: every type and
-// function below names solvedValue, so a later value model reaches
-// beginSolvedPublication through this line.
-type solvedValue = frozenValue
-
 // Answer is one published result row as a snapshot result column stores it. It
 // carries the borrowed, transitively immutable value the solve published, and a
 // consumer names Answer to open a result column and to read the typed value out
 // of the row it answers.
-type Answer struct{ value solvedValue }
+type Answer struct{ value frozenValue }
 
 // Available reports whether this Answer carries a published value.
 func (answer Answer) Available() bool { return answer.value != nil }
@@ -177,7 +171,7 @@ type solvedAxis struct {
 // is unavailable is declared and unanswered.
 type solvedRow struct {
 	key   identity.ContentID
-	value solvedValue
+	value frozenValue
 }
 
 // SolvedSnapshot is one materialized publication: the immutable Snapshot a
@@ -456,15 +450,15 @@ func declareSolvedFamily(plan *solvedPublicationPlan, builder *snapshot.Builder,
 	return queryPlan, err == nil && queryPlan.Available()
 }
 
-func (publication *solvedPublication) writeQuery(key identity.ContentID, value solvedValue) bool {
+func (publication *solvedPublication) writeQuery(key identity.ContentID, value frozenValue) bool {
 	return publication.write(publication.queryWrite, key, value)
 }
 
-func (publication *solvedPublication) writeObservation(key identity.ContentID, value solvedValue) bool {
+func (publication *solvedPublication) writeObservation(key identity.ContentID, value frozenValue) bool {
 	return publication.write(publication.obsWrite, key, value)
 }
 
-func (publication *solvedPublication) write(write ColumnWrite[identity.ContentID, Answer], key identity.ContentID, value solvedValue) bool {
+func (publication *solvedPublication) write(write ColumnWrite[identity.ContentID, Answer], key identity.ContentID, value frozenValue) bool {
 	if publication == nil || !write.Available() || !key.Available() {
 		return false
 	}

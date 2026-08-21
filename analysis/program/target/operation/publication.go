@@ -11,7 +11,7 @@ import (
 // state and can only be obtained from Core's effect rows.
 type PublicationEffectDescriptor struct {
 	kind        vocabulary.PublicationEffectKind
-	subject     vocabulary.ValueFormal
+	subject     vocabulary.InputSource
 	destination vocabulary.PublicationDestinationRole
 	context     vocabulary.ValueFormal
 	escape      vocabulary.PublicationEscapeDisposition
@@ -25,7 +25,7 @@ func (d PublicationEffectDescriptor) Valid() bool { return d.validConsequences()
 
 func (d PublicationEffectDescriptor) Kind() vocabulary.PublicationEffectKind { return d.kind }
 
-func (d PublicationEffectDescriptor) Subject() vocabulary.ValueFormal { return d.subject }
+func (d PublicationEffectDescriptor) Subject() vocabulary.InputSource { return d.subject }
 
 func (d PublicationEffectDescriptor) DestinationRole() vocabulary.PublicationDestinationRole {
 	return d.destination
@@ -46,6 +46,9 @@ func (d PublicationEffectDescriptor) Lifetime() vocabulary.PublicationLifetimeDi
 }
 
 func (d PublicationEffectDescriptor) validConsequences() bool {
+	if d.subject.Kind != vocabulary.InputSourceValueFormal && d.subject.Kind != vocabulary.InputSourceValuesVar {
+		return false
+	}
 	switch d.kind {
 	case vocabulary.PublicationEffectSendTransfer:
 		return d.destination == vocabulary.PublicationDestinationValueFormal &&
@@ -73,7 +76,7 @@ func (d PublicationEffectDescriptor) validConsequences() bool {
 	}
 }
 
-func freezePublicationEffect(input vocabulary.PublicationEffectSpec, present bool, formalCount int) (PublicationEffectDescriptor, bool, error) {
+func freezePublicationEffect(input vocabulary.PublicationEffectSpec, present bool, formalCount int, valuesVarCount uint32) (PublicationEffectDescriptor, bool, error) {
 	if !present {
 		return PublicationEffectDescriptor{}, false, nil
 	}
@@ -87,10 +90,19 @@ func freezePublicationEffect(input vocabulary.PublicationEffectSpec, present boo
 	if descriptor.destination == vocabulary.PublicationDestinationNone && descriptor.context != 0 {
 		return PublicationEffectDescriptor{}, false, errors.New("target/operation: destination-free publication carries context formal")
 	}
-	if descriptor.subject < 0 || int(descriptor.subject) >= formalCount {
-		return PublicationEffectDescriptor{}, false, errors.New("target/operation: publication subject is outside target ABI")
+	switch descriptor.subject.Kind {
+	case vocabulary.InputSourceValueFormal:
+		if uint64(descriptor.subject.Ordinal) >= uint64(formalCount) {
+			return PublicationEffectDescriptor{}, false, errors.New("target/operation: publication subject is outside target ABI")
+		}
+	case vocabulary.InputSourceValuesVar:
+		if uint64(descriptor.subject.Ordinal) >= uint64(valuesVarCount) {
+			return PublicationEffectDescriptor{}, false, errors.New("target/operation: publication subject is outside target ABI")
+		}
+	default:
+		return PublicationEffectDescriptor{}, false, errors.New("target/operation: publication subject has invalid input source")
 	}
-	if descriptor.destination == vocabulary.PublicationDestinationValueFormal && (descriptor.context < 0 || int(descriptor.context) >= formalCount) {
+	if descriptor.destination == vocabulary.PublicationDestinationValueFormal && int(descriptor.context) >= formalCount {
 		return PublicationEffectDescriptor{}, false, errors.New("target/operation: publication context is outside target ABI")
 	}
 	if !descriptor.validConsequences() {

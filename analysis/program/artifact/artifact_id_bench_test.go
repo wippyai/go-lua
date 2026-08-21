@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 func BenchmarkCompileDetailed(b *testing.B) {
@@ -14,14 +15,14 @@ func BenchmarkCompileDetailed(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	grammar, ok := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+	grammar, ok := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 	if !ok {
 		b.Fatal("valid grammar identity was rejected")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, artifactcompiler.IssuanceDirectory{})
+		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			b.Fatalf("artifact compile failed: %s", failure.Error())
 		}

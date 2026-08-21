@@ -22,8 +22,8 @@
 //     order, so a consumer reads a judgment for a may-set rather than assembling
 //     a union of its own.
 //   - The authored-side coordinates a judgment is keyed by: the type-argument
-//     formal identity, the typevalue occurrence, the evaluation environment, and
-//     the detached operand disposition the evaluator issues.
+//     formal identity, the evaluation environment, and the detached operand
+//     disposition the evaluator issues.
 //
 // Everything above is sealed once, before the mount phase opens, and is
 // immutable afterwards. The domain runs no fixpoint and holds no solver state.
@@ -91,8 +91,8 @@
 // partition moves this seal with it rather than leaving a member list behind
 // here to drift.
 //
-// Two restatements remain, and both are recorded here rather than declared away,
-// because each needs an owner's decision before a row could be honest about it:
+// One restatement remains, and it is recorded here rather than declared away,
+// because it needs an owner's decision before a row could be honest about it:
 //
 //   - The operand disposition is spelled twice. This package spells it as the
 //     evaluator's four-member disposition, and the compiled artifact spells it
@@ -103,18 +103,10 @@
 //     translation, so nothing downstream sees the disagreement, but the two
 //     member lists are a divergence in subject matter rather than a wiring gap,
 //     and a structural row would have to pick one of them to be the vocabulary.
-//   - The primitive spellings a typevalue root is grouped by are restated here
-//     as an eight-name list. The names are owned by the Program-side static
-//     component, whose conversion is the analyzer's one spelling-to-primitive
-//     boundary and names ten. The eight are that ten less the two static-only
-//     forms, and the subset relation is held by literal agreement alone. Reading
-//     the owner's answer instead of the list is the cut, and it is the owner's
-//     to publish as a partition of its own before this package can consume one.
 //
 // # Consumers
 //
 // The sealed authority enters the mount transaction as a neutral input. The
-// pack axis is its reader there, naming it in its own need interface to resolve
-// the mounted value substitutions its seal reads. Program-side callers hold the
-// authority directly, from the seal that produced it.
+// pack axis is its reader there. Program-side callers hold the authority
+// directly, from the seal that produced it.
 package static

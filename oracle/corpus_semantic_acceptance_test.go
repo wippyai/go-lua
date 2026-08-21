@@ -41,33 +41,87 @@ func corpusSemanticAcceptanceMode() corpusHarnessMode {
 		preflight: func(project *corpusHarnessProject) []string {
 			return corpusSemanticFixtureInputUnsupported(project.expectation)
 		},
-		policy: func(project *corpusHarnessProject) (anadiag.DiagnosticPolicy, []string) {
-			return corpusSemanticAcceptancePolicy(project.expectation)
+		policy: func(run *corpusHarnessRun) (anadiag.DiagnosticPolicy, []string) {
+			return corpusSemanticAcceptancePolicy(run.compilation, run.project.expectation)
 		},
 		judge: corpusSemanticAcceptanceJudgment,
 	}
 }
 
-func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
-	expectation := run.project.expectation
+// corpusSemanticAcceptanceVerdict is one fixture's acceptance answer with its
+// rows still separated by the contract each one breaks. The judgment below
+// renders it; a consumer that counts rows rather than failing on the first one
+// reads it. Keeping the rows apart is what lets a count distinguish a fixture
+// whose contract this analyzer cannot express yet from one whose expectations
+// it can express and does not meet.
+type corpusSemanticAcceptanceVerdict struct {
+	// unsupported is the fixture contract the current declaration table cannot
+	// express. It is decided before any expectation is compared.
+	unsupported []string
+	// unavailable is the report contract: a policy that selected codes and
+	// produced no readable report, or a collector that refused.
+	unavailable []string
+	diagnostics []string
+	native      []string
+	placement   []string
+}
+
+// judged reports whether the fixture's own expectations were compared at all.
+// An unsupported contract or an unavailable report ends the run before that
+// comparison, so its expectation rows are unmet rather than met.
+func (verdict corpusSemanticAcceptanceVerdict) judged() bool {
+	return len(verdict.unsupported) == 0 && len(verdict.unavailable) == 0
+}
+
+func (verdict corpusSemanticAcceptanceVerdict) clean() bool {
+	return verdict.judged() && len(verdict.diagnostics) == 0 && len(verdict.native) == 0 && len(verdict.placement) == 0
+}
+
+// corpusSemanticAcceptanceVerdictOf is the acceptance verdict of one completed
+// run. It states the same order the judgment publishes: contract, report,
+// diagnostics, native, placement.
+func corpusSemanticAcceptanceVerdictOf(run *corpusHarnessRun) corpusSemanticAcceptanceVerdict {
+	verdict := corpusSemanticAcceptanceVerdict{}
 	if len(run.policyUnsupported) != 0 {
-		return []string{"unsupported diagnostic contract:\n" + strings.Join(run.policyUnsupported, "\n")}
+		verdict.unsupported = run.policyUnsupported
+		return verdict
 	}
 	if len(run.policy.Enabled) != 0 {
 		if run.report == nil || !run.report.Available() {
-			return []string{"DiagnosticReport unavailable"}
+			verdict.unavailable = []string{"DiagnosticReport unavailable"}
+			return verdict
 		}
 		if failure := run.report.CollectionFailure(); failure != anadiag.DiagnosticCollectionOK {
-			return []string{fmt.Sprintf("DiagnosticReport collection failure=%d", failure)}
+			verdict.unavailable = []string{fmt.Sprintf("DiagnosticReport collection failure=%d", failure)}
+			return verdict
 		}
 	} else if run.report != nil {
-		return []string{"disabled diagnostic policy unexpectedly produced a DiagnosticReport"}
+		verdict.unavailable = []string{"disabled diagnostic policy unexpectedly produced a DiagnosticReport"}
+		return verdict
 	}
-	if mismatches := corpusSemanticAcceptanceMismatches(expectation, run.report); len(mismatches) != 0 {
-		return []string{"semantic diagnostic mismatch:\n" + strings.Join(mismatches, "\n")}
+	expectation := run.project.expectation
+	verdict.diagnostics = corpusSemanticAcceptanceMismatches(run.compilation, expectation, run.report)
+	verdict.native = corpusSemanticNativeMismatches(run.compilation, expectation, run.result)
+	verdict.placement = corpusSemanticPlacementMismatches(expectation, run.result, run.placementSchema)
+	return verdict
+}
+
+func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
+	verdict := corpusSemanticAcceptanceVerdictOf(run)
+	if len(verdict.unsupported) != 0 {
+		return []string{"unsupported diagnostic contract:\n" + strings.Join(verdict.unsupported, "\n")}
 	}
-	if mismatches := corpusSemanticNativeMismatches(expectation, run.result); len(mismatches) != 0 {
-		return []string{"semantic native mismatch:\n" + strings.Join(mismatches, "\n")}
+	if len(verdict.unavailable) != 0 {
+		return verdict.unavailable
+	}
+	if len(verdict.diagnostics) != 0 {
+		return []string{"semantic diagnostic mismatch:\n" + strings.Join(verdict.diagnostics, "\n")}
+	}
+	if len(verdict.native) != 0 {
+		return []string{"semantic native mismatch:\n" + strings.Join(verdict.native, "\n")}
+	}
+	if len(verdict.placement) != 0 {
+		return []string{"semantic placement mismatch:\n" + strings.Join(verdict.placement, "\n")}
 	}
 	return nil
 }
@@ -75,15 +129,21 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 // corpusSemanticFixtureInputUnsupported fences contracts the current
 // Program-owned fixture adapter cannot preserve. The strict frozen catalog is
 // the only source of this classification. In particular, this acceptance gate
-// must not run a fixture through the adapter when its manifest declared a host
-// surface the adapter drops, nor quietly drop native, placement, or rendering
-// obligations after a successful solve.
+// must not quietly drop native or rendering obligations after a successful
+// solve.
 //
 // A declared module inventory is not such a contract. Link canonicalizes mount
 // order by Program identity, requires an analysis root for every mount, and
 // resolves every require against a mount name, so a fixture's declared file
 // order and its selected entry carry no obligation the sealed Link could hold
 // differently: the whole declared inventory is mounted, rooted, and wired.
+// The canonical fixture Target likewise admits the process and channel host
+// module contracts; other package names remain fenced until their provider
+// declarations are represented at that same boundary.
+// Placement is likewise not an input contract: its check is judged after the
+// solve through domain/placement/publication, where a missing family is an
+// operational mismatch and an unreadable leak dimension is an explicit
+// incomplete classification.
 func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectExpectations) []string {
 	if expectation == nil {
 		return []string{"fixture expectation unavailable"}
@@ -95,19 +155,16 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 	if expectation.manifest.Stdlib != nil {
 		unsupported = append(unsupported, "manifest stdlib contract is not preserved by the current fixture input adapter")
 	}
-	if len(expectation.manifest.Packages) != 0 {
-		// Link resolves a require only against a project mount, and Host binds
-		// capabilities to initial roots rather than to require-able modules, so a
-		// declared system package has no canonical surface to be admitted through
-		// at all. The fence names that missing surface instead of running the
-		// fixture with its host types silently absent.
-		unsupported = append(unsupported, "manifest package host contract has no canonical require-able host module surface")
+	for _, packageName := range expectation.manifest.Packages {
+		switch packageName {
+		case "process", "channel":
+			// These host modules are mounted by the canonical fixture Target.
+		default:
+			unsupported = append(unsupported, fmt.Sprintf("manifest package host contract %q has no canonical require-able host module surface", packageName))
+		}
 	}
 	if expectation.manifest.Check == nil {
 		return unsupported
-	}
-	if expectation.manifest.Check.Placement != nil {
-		unsupported = append(unsupported, "check.placement requires an unavailable receipt-native allocation projection")
 	}
 	if expectation.manifest.Check.RenderOptions != nil {
 		unsupported = append(unsupported, "check.render_options requires an unavailable current rendering contract")
@@ -140,8 +197,8 @@ var corpusNativeColumnOrder = []string{
 // vocabulary-valued one to its declared spelling. Nothing here holds a spelling
 // of its own: the sealed structural vocabulary is the single declaration, and a
 // column the row does not publish is simply absent.
-func corpusNativeColumns(row result.NativePublication) (map[string]string, bool) {
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+func corpusNativeColumns(compilation composite.Compilation, row result.NativePublication) (map[string]string, bool) {
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	if !vocabularyOK {
 		return nil, false
 	}
@@ -225,7 +282,7 @@ func corpusNativeRendering(columns map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
-func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectations, result *result.Result) []string {
+func corpusSemanticNativeMismatches(compilation composite.Compilation, expectation *corpusDiagnosticProjectExpectations, result *result.Result) []string {
 	if expectation == nil || result == nil {
 		return []string{"native fixture expectation or Result unavailable"}
 	}
@@ -253,7 +310,7 @@ func corpusSemanticNativeMismatches(expectation *corpusDiagnosticProjectExpectat
 			mismatches = append(mismatches, fmt.Sprintf("native row %d publishes no evidence set", index))
 			continue
 		}
-		columns, columnsOK := corpusNativeColumns(row)
+		columns, columnsOK := corpusNativeColumns(compilation, row)
 		if !columnsOK {
 			mismatches = append(mismatches, fmt.Sprintf("native row %d publishes a column its declared vocabulary does not hold", index))
 			continue
@@ -393,8 +450,8 @@ func corpusSemanticNativeValidityMatches(event, established, revoked string, val
 // enabled by default so a clean fixture cannot hide a new false positive;
 // manifest diagnostic_rules can disable or refine that default. A requested
 // code without a current collector is an explicit unsupported contract.
-func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectations) (anadiag.DiagnosticPolicy, []string) {
-	table, tableOK := composite.Diagnostics()
+func corpusSemanticAcceptancePolicy(compilation composite.Compilation, expectation *corpusDiagnosticProjectExpectations) (anadiag.DiagnosticPolicy, []string) {
+	table, tableOK := composite.Diagnostics(compilation)
 	if !tableOK {
 		return anadiag.DiagnosticPolicy{}, []string{"sealed diagnostic declaration table unavailable"}
 	}
@@ -419,7 +476,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 				continue
 			}
 			declared[configured.Code] = configured
-			rule, available := corpusSemanticAcceptanceCode(configured.Code)
+			rule, available := corpusSemanticAcceptanceCode(compilation, configured.Code)
 			if !available {
 				unsupported = append(unsupported, fmt.Sprintf("diagnostic rule %q has no current collector", configured.Code))
 				continue
@@ -437,7 +494,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 			if configured.Severity == "" {
 				continue
 			}
-			level := corpusDiagnosticSeverity(configured.Severity)
+			level := corpusDiagnosticSeverity(compilation, configured.Severity)
 			if level == anadiag.FindingSeverityInvalid {
 				unsupported = append(unsupported, fmt.Sprintf("diagnostic rule %q has invalid severity %q", configured.Code, configured.Severity))
 				continue
@@ -447,7 +504,7 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 			}
 		}
 		for _, expected := range expectation.manifest.Check.Diagnostics {
-			rule, available := corpusSemanticAcceptanceCode(expected.Code)
+			rule, available := corpusSemanticAcceptanceCode(compilation, expected.Code)
 			if !available {
 				unsupported = append(unsupported, fmt.Sprintf("expected diagnostic %q has no current collector", expected.Code))
 				continue
@@ -476,8 +533,8 @@ func corpusSemanticAcceptancePolicy(expectation *corpusDiagnosticProjectExpectat
 // declaration row it names installs a producer. The sealed table is read
 // directly, so the kit's notion of an accepted family is the one the analyzer
 // composed rather than a list restated here.
-func corpusSemanticAcceptanceCode(code string) (anadiag.DiagnosticCode, bool) {
-	table, tableOK := composite.Diagnostics()
+func corpusSemanticAcceptanceCode(compilation composite.Compilation, code string) (anadiag.DiagnosticCode, bool) {
+	table, tableOK := composite.Diagnostics(compilation)
 	if !tableOK {
 		return anadiag.DiagnosticCodeInvalid, false
 	}
@@ -528,7 +585,7 @@ func corpusSemanticAcceptanceFindings(report *anadiag.DiagnosticReport) ([]corpu
 // individually one-to-one and every actual row must be covered by at least
 // one of them. Thus duplicate or extra findings cannot escape through a
 // source-marker overlap.
-func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport) []string {
+func corpusSemanticAcceptanceMismatches(compilation composite.Compilation, expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport) []string {
 	if expectation == nil {
 		return []string{"fixture expectation unavailable"}
 	}
@@ -549,7 +606,7 @@ func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpe
 	for ordinal, want := range structured {
 		matched := -1
 		for index, got := range actual {
-			if structuredUsed[index] || !corpusSemanticStructuredMatch(expectation, want, got) {
+			if structuredUsed[index] || !corpusSemanticStructuredMatch(compilation, expectation, want, got) {
 				continue
 			}
 			matched = index
@@ -574,7 +631,7 @@ func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpe
 		// public finding; consuming that finding first leaves any duplicate
 		// report row uncovered and therefore failing below.
 		for index, got := range actual {
-			if !structuredUsed[index] || inlineUsed[index] || !corpusSemanticInlineMatch(expectation, want, got) {
+			if !structuredUsed[index] || inlineUsed[index] || !corpusSemanticInlineMatch(compilation, expectation, want, got) {
 				continue
 			}
 			matched = index
@@ -582,7 +639,7 @@ func corpusSemanticAcceptanceMismatches(expectation *corpusDiagnosticProjectExpe
 		}
 		if matched < 0 {
 			for index, got := range actual {
-				if structuredUsed[index] || inlineUsed[index] || !corpusSemanticInlineMatch(expectation, want, got) {
+				if structuredUsed[index] || inlineUsed[index] || !corpusSemanticInlineMatch(compilation, expectation, want, got) {
 					continue
 				}
 				matched = index
@@ -676,12 +733,23 @@ func TestCorpusSemanticFixtureContractPreflight(t *testing.T) {
 			},
 		},
 	})
-	if len(unsupported) != 4 {
-		t.Fatalf("unsupported fixture contracts=%v, want all four unpreserved non-input surfaces", unsupported)
+	if len(unsupported) != 2 {
+		t.Fatalf("unsupported fixture contracts=%v, want the two unpreserved non-input surfaces", unsupported)
+	}
+	unknownPackage := corpusSemanticFixtureInputUnsupported(&corpusDiagnosticProjectExpectations{
+		name:     "unknown-package",
+		manifest: &corpusDiagnosticManifest{Packages: []string{"time"}},
+	})
+	if len(unknownPackage) != 1 || !strings.Contains(unknownPackage[0], `"time"`) {
+		t.Fatalf("unknown package preflight = %v, want one fenced package contract", unknownPackage)
 	}
 }
 
 func TestCorpusSemanticFixtureFileAliases(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
 	project := &corpusDiagnosticProjectExpectations{
 		files:       []string{"main.lua", "module.lua"},
 		entryFile:   "main.lua",
@@ -689,28 +757,28 @@ func TestCorpusSemanticFixtureFileAliases(t *testing.T) {
 	}
 	got := corpusSemanticAcceptanceFinding{code: "x", file: "module", line: 4, severity: anadiag.FindingSeverityError}
 	want := corpusStructuredDiagnosticExpectation{Code: "x", File: "module.lua", Line: 4, Severity: "error"}
-	if !corpusSemanticStructuredMatch(project, want, got) {
+	if !corpusSemanticStructuredMatch(compilation, project, want, got) {
 		t.Fatal("module-name finding did not match its .lua contract")
 	}
 	got.file = "test.lua"
 	want.File = "main.lua"
-	if !corpusSemanticStructuredMatch(project, want, got) {
+	if !corpusSemanticStructuredMatch(compilation, project, want, got) {
 		t.Fatal("test.lua finding did not match the selected entry contract")
 	}
-	if corpusSemanticInlineMatch(project, corpusInlineDiagnosticExpectationRow{File: "other.lua", Line: 4, Severity: "error"}, got) {
+	if corpusSemanticInlineMatch(compilation, project, corpusInlineDiagnosticExpectationRow{File: "other.lua", Line: 4, Severity: "error"}, got) {
 		t.Fatal("unrelated file alias matched the selected entry")
 	}
 }
 
-func corpusSemanticStructuredMatch(project *corpusDiagnosticProjectExpectations, want corpusStructuredDiagnosticExpectation, got corpusSemanticAcceptanceFinding) bool {
-	if got.code != want.Code || !corpusDiagnosticProjectMatchesFile(project, want.File, got.file) || got.line != uint32(want.Line) || got.severity != corpusDiagnosticSeverity(want.Severity) {
+func corpusSemanticStructuredMatch(compilation composite.Compilation, project *corpusDiagnosticProjectExpectations, want corpusStructuredDiagnosticExpectation, got corpusSemanticAcceptanceFinding) bool {
+	if got.code != want.Code || !corpusDiagnosticProjectMatchesFile(project, want.File, got.file) || got.line != uint32(want.Line) || got.severity != corpusDiagnosticSeverity(compilation, want.Severity) {
 		return false
 	}
 	return want.Column == 0 || got.column == uint32(want.Column)
 }
 
-func corpusSemanticInlineMatch(project *corpusDiagnosticProjectExpectations, want corpusInlineDiagnosticExpectationRow, got corpusSemanticAcceptanceFinding) bool {
-	spelling, spellingOK := corpusDiagnosticSeveritySpelling(got.severity)
+func corpusSemanticInlineMatch(compilation composite.Compilation, project *corpusDiagnosticProjectExpectations, want corpusInlineDiagnosticExpectationRow, got corpusSemanticAcceptanceFinding) bool {
+	spelling, spellingOK := corpusDiagnosticSeveritySpelling(compilation, got.severity)
 	if !corpusDiagnosticProjectMatchesFile(project, want.File, got.file) || got.line != uint32(want.Line) || !spellingOK || spelling != want.Severity {
 		return false
 	}

@@ -126,10 +126,11 @@ func TestSourceBoundaryAtomicImportWitnesses(t *testing.T) {
 
 func assertLiteralBoundaryImport(t *testing.T, p *program.Program) {
 	t.Helper()
-	if p.Module().Count() != 1 {
-		t.Fatalf("ImportCount = %d, want one exact literal boundary", p.Module().Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("ImportCount = %d, want one exact literal boundary", imports.Count())
 	}
-	imported, ok := p.Module().ImportAt(0)
+	imported, ok := imports.ImportAt(0)
 	if !ok {
 		t.Fatal("missing literal Import")
 	}
@@ -137,23 +138,24 @@ func assertLiteralBoundaryImport(t *testing.T, p *program.Program) {
 	if !ok || span.File != "boundaries.atomic.lua" || span.StartLine != 1 || span.EndLine != 1 {
 		t.Fatalf("literal Import span = %#v/%v, want line 1 in boundaries.atomic.lua", span, ok)
 	}
-	if imported.Call == 0 || imported.Request == 0 || imported.Key == 0 || imported.Alias == 0 {
-		t.Fatalf("Import = %#v, want direct Call/Request/Key/Alias", imported)
+	if imported.Call == 0 || imported.Request == 0 || imported.Alias == 0 {
+		t.Fatalf("Import = %#v, want direct Call/Request/Alias", imported)
 	}
 	request, _, text, stringOK := p.Source().Literals().Strings().At(int(keyspace.TermOrdinal(imported.Request) - 1))
 	if !stringOK || request != imported.Request || text != "pkg.core" {
 		t.Fatalf("literal Import request = %q/%v, want pkg.core", text, stringOK)
 	}
-	key, keyOK := p.Source().Keys().Exact(imported.Key)
-	if !keyOK || key.Kind != keyspace.LiteralString || key.String != "pkg.core" {
-		t.Fatalf("literal Import module key = %#v/%v", key, keyOK)
+	key, keyOK := p.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
+	keyValue, keyValueOK := p.Source().Keys().Exact(key)
+	if !keyOK || key == 0 || !keyValueOK || keyValue.Kind != keyspace.LiteralString || keyValue.String != "pkg.core" {
+		t.Fatalf("literal Import module key = %#v/%v", keyValue, keyValueOK)
 	}
 }
 
 func assertNonliteralBoundaryCall(t *testing.T, p *program.Program) {
 	t.Helper()
-	if p.Module().Count() != 0 {
-		t.Fatalf("nonliteral ImportCount = %d, want no static Import", p.Module().Count())
+	if imports := p.Flow().Authored().Imports(); imports.Count() != 0 {
+		t.Fatalf("nonliteral ImportCount = %d, want no static Import", imports.Count())
 	}
 	call, ok := p.Flow().Authored().Calls().At(0)
 	if !ok || call == 0 {
@@ -169,15 +171,16 @@ func assertNonliteralBoundaryCall(t *testing.T, p *program.Program) {
 // remains an ordinary Call and does not enter the static Import census.
 func TestSourceBoundaryLawDirectRequireAliasRequiresStaticLiteral(t *testing.T) {
 	p := lowerBoundarySource(t, "local Module = require(\"pkg.core\")\nlocal request = \"runtime\"\nlocal Dynamic = require(request)\n")
-	if p.Module().Count() != 1 {
-		t.Fatalf("ImportCount = %d, want literal direct require only", p.Module().Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("ImportCount = %d, want literal direct require only", imports.Count())
 	}
-	imported, ok := p.Module().ImportAt(0)
+	imported, ok := imports.ImportAt(0)
 	if !ok {
 		t.Fatal("missing literal Import")
 	}
-	if imported.Request == 0 || imported.Key == 0 || imported.Alias == 0 {
-		t.Fatalf("literal Import = %#v, want Request/Key/Alias", imported)
+	if imported.Request == 0 || imported.Alias == 0 {
+		t.Fatalf("literal Import = %#v, want Request/Alias", imported)
 	}
 	request, _, text, stringOK := p.Source().Literals().Strings().At(int(keyspace.TermOrdinal(imported.Request) - 1))
 	if !stringOK || request != imported.Request || text != "pkg.core" {
@@ -199,7 +202,7 @@ func TestSourceBoundaryShadowedRequireIsRejected(t *testing.T) {
 	if global, ok := binding.GlobalIdentity(call.Func.(*ast.IdentExpr)); ok || global.Matches("require") {
 		t.Fatal("lexically shadowed require fabricated the global identity")
 	}
-	if got := lowerBoundarySource(t, source).Module().Count(); got != 0 {
+	if got := lowerBoundarySource(t, source).Flow().Authored().Imports().Count(); got != 0 {
 		t.Fatalf("shadowed require ImportCount = %d, want rejection", got)
 	}
 }
@@ -220,8 +223,8 @@ func TestSourceBoundaryGlobalRequireMutationRetainsOrdinaryCall(t *testing.T) {
 	}
 
 	p := lowerBoundarySource(t, source)
-	if p.Module().Count() != 0 {
-		t.Fatalf("ImportCount = %d, want no static Import for nonliteral request", p.Module().Count())
+	if imports := p.Flow().Authored().Imports(); imports.Count() != 0 {
+		t.Fatalf("ImportCount = %d, want no static Import for nonliteral request", imports.Count())
 	}
 	if p.Flow().Authored().Calls().Count() == 0 {
 		t.Fatal("nonliteral require lost its ordinary Call")
@@ -303,23 +306,25 @@ local D = require(name)
 local require = function(value) return value end
 local shadow = require("shadowed")
 return M, D, shadow`)
-	if p.Module().Count() != 1 {
-		t.Fatalf("ImportCount = %d, want literal global require only", p.Module().Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("ImportCount = %d, want literal global require only", imports.Count())
 	}
-	imported, ok := p.Module().ImportAt(0)
+	imported, ok := imports.ImportAt(0)
 	if !ok {
 		t.Fatal("missing literal Import")
 	}
-	if imported.Call == 0 || imported.Request == 0 || imported.Key == 0 || imported.Alias == 0 {
-		t.Fatalf("literal Import = %#v, want direct Call/Request/Key/Alias", imported)
+	if imported.Call == 0 || imported.Request == 0 || imported.Alias == 0 {
+		t.Fatalf("literal Import = %#v, want direct Call/Request/Alias", imported)
 	}
 	request, _, text, stringOK := p.Source().Literals().Strings().At(int(keyspace.TermOrdinal(imported.Request) - 1))
 	if !stringOK || request != imported.Request || text != "pkg.core" {
 		t.Fatalf("literal Import request = %q/%v", text, stringOK)
 	}
-	value, keyOK := p.Source().Keys().Exact(imported.Key)
-	if !keyOK || value.String != "pkg.core" {
-		t.Fatalf("literal Import key = %#v/%v", value, keyOK)
+	key, keyOK := p.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
+	value, valueOK := p.Source().Keys().Exact(key)
+	if !keyOK || key == 0 || !valueOK || value.String != "pkg.core" {
+		t.Fatalf("literal Import key = %#v/%v", value, valueOK)
 	}
 	if p.Flow().Authored().Calls().Count() < 3 {
 		t.Fatalf("require occurrences = %d, want ordinary dynamic/shadowed Calls retained", p.Flow().Authored().Calls().Count())
@@ -331,11 +336,12 @@ func TestSourceModuleVerticalDoesNotAliasNonDirectBindings(t *testing.T) {
 local C
 C = require("assigned")
 return A, B, C`)
-	if p.Module().Count() != 2 {
-		t.Fatalf("ImportCount = %d, want both direct global calls", p.Module().Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 2 {
+		t.Fatalf("ImportCount = %d, want both direct global calls", imports.Count())
 	}
-	for index := 0; index < p.Module().Count(); index++ {
-		imported, ok := p.Module().ImportAt(index)
+	for index := 0; index < imports.Count(); index++ {
+		imported, ok := imports.ImportAt(index)
 		if !ok {
 			t.Fatalf("missing Import %d", index)
 		}
@@ -361,8 +367,8 @@ func TestSourceModuleVerticalRetainsRejectedRequireShapesAsOrdinaryCalls(t *test
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			p := parseBindLower(t, test.source)
-			if p.Module().Count() != 0 {
-				t.Fatalf("Import count = %d, want zero", p.Module().Count())
+			if imports := p.Flow().Authored().Imports(); imports.Count() != 0 {
+				t.Fatalf("Import count = %d, want zero", imports.Count())
 			}
 			if got := p.Flow().Authored().Calls().Count(); got != 1 {
 				t.Fatalf("ordinary Call count = %d, want one", got)
@@ -373,10 +379,11 @@ func TestSourceModuleVerticalRetainsRejectedRequireShapesAsOrdinaryCalls(t *test
 
 func TestSourceModuleVerticalRetainsStaticTypeofRequireImport(t *testing.T) {
 	p := parseBindLower(t, `type Snapshot = typeof(require("static"))`)
-	if p.Module().Count() != 1 {
-		t.Fatalf("Import count = %d, want one static Import", p.Module().Count())
+	imports := p.Flow().Authored().Imports()
+	if imports.Count() != 1 {
+		t.Fatalf("Import count = %d, want one static Import", imports.Count())
 	}
-	row, ok := p.Module().ImportAt(0)
+	row, ok := imports.ImportAt(0)
 	if !ok || row.Request == 0 || row.Call == 0 {
 		t.Fatalf("static Import = %#v/%v, want authored Request and Call", row, ok)
 	}
@@ -391,11 +398,11 @@ func TestSourceModuleImportsUseStableFinalSourceOrderSlots(t *testing.T) {
 	permuted := parseBindLower(t, `return require("second"), require("first")`)
 
 	termsAndRequests := func(p *program.Program) ([]keyspace.Term, []string) {
-		module := p.Module()
-		terms := make([]keyspace.Term, module.Count())
-		requests := make([]string, module.Count())
+		imports := p.Flow().Authored().Imports()
+		terms := make([]keyspace.Term, imports.Count())
+		requests := make([]string, imports.Count())
 		for index := range terms {
-			imported, ok := module.ImportAt(index)
+			imported, ok := imports.ImportAt(index)
 			if !ok {
 				t.Fatalf("missing Import %d", index)
 			}

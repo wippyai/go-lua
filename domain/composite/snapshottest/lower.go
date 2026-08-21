@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
-	"github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -15,9 +15,10 @@ import (
 // vocabulary. Domain tests share this helper instead of copying it.
 func MustLower(t testing.TB, artifact *programartifact.Artifact) *ingress.Snapshot {
 	t.Helper()
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	snapshot, lowered := ingress.Lower(artifact, vocabulary)
-	if !vocabularyOK || !lowered {
+	if !compilationOK || !vocabularyOK || !lowered {
 		t.Fatal("ingress lower")
 	}
 	return snapshot
@@ -33,7 +34,7 @@ func MustMount(t testing.TB, artifact *programartifact.Artifact, module identity
 		t.Fatal("artifact is unavailable")
 	}
 	compiled := artifact.Program()
-	catalog, published := programschema.CatalogID(compiled.SchemaID)
+	catalog, published := programcatalog.CatalogID(compiled.SchemaID)
 	if !compiled.Available() || !published || !catalog.Available() {
 		t.Fatal("artifact publishes no cold value")
 	}

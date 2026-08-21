@@ -363,9 +363,9 @@ func verifyOutcome(want flowkind.OutcomeKind, returned *ast.ReturnStmt, p *progr
 		if !ok || exit == 0 {
 			return fmt.Errorf("program law: return has no Return outcome")
 		}
-		outcome, ok := p.Flow().Outcomes().Get(exit)
-		if !ok || outcome.Body == 0 || outcome.Kind != flowkind.OutcomeReturn || outcome.Target != 0 {
-			return fmt.Errorf("program law: Return outcome = body %v kind %d target %v ok %v", outcome.Body, outcome.Kind, outcome.Target, ok)
+		body, outcomeKind, target, ok := p.Flow().Outcomes().Get(exit)
+		if !ok || body == 0 || outcomeKind != flowkind.OutcomeReturn || target != 0 {
+			return fmt.Errorf("program law: Return outcome = body %v kind %d target %v ok %v", body, outcomeKind, target, ok)
 		}
 		return nil
 	case flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel:
@@ -398,9 +398,9 @@ func verifyOutcome(want flowkind.OutcomeKind, returned *ast.ReturnStmt, p *progr
 		if !exitOK || exit == 0 {
 			return fmt.Errorf("program law: call has no non-normal outcome %d", want)
 		}
-		outcome, ok := p.Flow().Outcomes().Get(exit)
-		if !ok || outcome.Body == 0 || outcome.Kind != want {
-			return fmt.Errorf("program law: call outcome = body %v kind %d ok %v, want %d", outcome.Body, outcome.Kind, ok, want)
+		body, outcomeKind, _, ok := p.Flow().Outcomes().Get(exit)
+		if !ok || body == 0 || outcomeKind != want {
+			return fmt.Errorf("program law: call outcome = body %v kind %d ok %v, want %d", body, outcomeKind, ok, want)
 		}
 		return nil
 	default:

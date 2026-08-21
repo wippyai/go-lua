@@ -2,33 +2,6 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// Body, Outcome, and their ordered child planes extend the append-only cold
-// catalog. A parent owns each child by both an explicit parent identity and a
-// half-open span, so attachment and order are facts of the publication.
-const (
-	slotBody               = slotWTOEvent + 1
-	slotBodyEntry          = slotBody + 1
-	slotBodyRoot           = slotBodyEntry + 1
-	slotOutcome            = slotBodyRoot + 1
-	slotOutcomeReturnValue = slotOutcome + 1
-	slotOutcomePoint       = slotOutcomeReturnValue + 1
-)
-
-func BodyFamily() Family[Body] { return Family[Body]{slot: slotBody, name: "body"} }
-func BodyEntryFamily() Family[BodyEntry] {
-	return Family[BodyEntry]{slot: slotBodyEntry, name: "body-entry"}
-}
-func BodyRootFamily() Family[BodyRoot] {
-	return Family[BodyRoot]{slot: slotBodyRoot, name: "body-root"}
-}
-func OutcomeFamily() Family[Outcome] { return Family[Outcome]{slot: slotOutcome, name: "outcome"} }
-func OutcomeReturnValueFamily() Family[OutcomeReturnValue] {
-	return Family[OutcomeReturnValue]{slot: slotOutcomeReturnValue, name: "outcome-return-value"}
-}
-func OutcomePointFamily() Family[OutcomePoint] {
-	return Family[OutcomePoint]{slot: slotOutcomePoint, name: "outcome-point"}
-}
-
 // BodyEntry is one ordered point membership of a Body's entry site.
 type BodyEntry struct{ body, point identity.ContentID }
 

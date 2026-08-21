@@ -24,17 +24,17 @@ func TestArtifactsCloseReleasesEveryOwnedProductReference(t *testing.T) {
 	mounts := linked.Project().Mounts()
 	shard, shardOK := mounts.At(0)
 	input, inputOK := mounts.Program(shard)
-	compilation, compilationOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(compilation)
+	compilation, compilationOK := composite.Build()
+	grammar := compilation.ExecutionSchemaID()
 	key, keyOK := programartifact.NewCompileKey(input, grammar)
-	if !shardOK || !inputOK || input == nil || !compilationOK || !grammarOK || !keyOK {
+	if !shardOK || !inputOK || input == nil || !compilationOK || !grammar.Available() || !keyOK {
 		t.Fatal("workspace artifact fixture is unavailable")
 	}
 
 	artifacts := NewArtifacts()
 	product, compiled := artifacts.Compile(input, compilation)
 	if !compiled || product.Artifact == nil || product.Snapshot == nil || product.Template == nil || product.Roles == nil {
-		issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+		issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 		_, failure := artifactcompiler.CompileDetailed(input, grammar, issuance)
 		t.Fatalf("workspace artifact product did not compile: compiled=%v artifact=%t snapshot=%t template=%t roles=%t issuance=%v failure=%v", compiled, product.Artifact != nil, product.Snapshot != nil, product.Template != nil, product.Roles != nil, issuanceOK, failure)
 	}

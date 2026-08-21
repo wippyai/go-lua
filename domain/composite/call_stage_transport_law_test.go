@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -23,12 +24,12 @@ type callStageTransportDeclarations struct {
 	axisOf   map[schema.Key]schema.Key
 	mounted  map[schema.Key]struct{}
 	byStage  map[programschema.RuleStage]map[schema.Key]struct{}
-	transfer artifactcompiler.IssuanceDirectory
+	transfer issuance.Directory
 }
 
-func readCallStageTransportDeclarations(t *testing.T) callStageTransportDeclarations {
+func readCallStageTransportDeclarations(t *testing.T, compilation Compilation) callStageTransportDeclarations {
 	t.Helper()
-	directory, ok := ArtifactIssuanceDirectory()
+	directory, ok := ArtifactIssuanceDirectory(compilation)
 	if !ok {
 		t.Fatal("issuance directory did not project from the sealed table")
 	}
@@ -109,22 +110,26 @@ func assertSameAxes(t *testing.T, label string, got, want map[schema.Key]struct{
 // TestCallStageTransportNamesDeclaredFactorAxes is the G4 law. The call-stage
 // transport plan is stated in the sealed directory's own vocabulary: the axis
 // the effect stage writes reaches the summary stage straight from the base,
-// every other mounted axis enters at dispatch, and the axis the dispatch stage
-// writes is carried forward to both of its successors. Every transported key
+// every other mounted axis enters at dispatch, the dispatch axis is carried
+// to both successors, and every summary-written axis reaches its declared
+// effect successor. Every transported key
 // is the directory's declared transport key for the axis it names, so no
 // authored key list survives in the compiler.
 func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
-	if _, failure := Table(); failure.Available() {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	if _, failure := Table(compilation); failure.Available() {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d", failure.Contributor, failure.Law)
 	}
-	read := readCallStageTransportDeclarations(t)
+	read := readCallStageTransportDeclarations(t, compilation)
 	published, err := lualower.Lower(lualower.Source{Name: "call-stage-transport.lua", Text: []byte(callStageTransportSource)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	compilation, compilationOK := Global()
-	grammar, grammarOK := ArtifactGrammar(compilation)
-	if !compilationOK || !grammarOK {
+	grammar := compilation.ExecutionSchemaID()
+	if !grammar.Available() {
 		t.Fatal("the program schema receipt is unavailable")
 	}
 	artifact, failure := artifactcompiler.CompileDetailed(published, grammar, read.transfer)
@@ -183,15 +188,17 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	forwardSummary, forwardSummaryOK := edges[[2]identity.ContentID{dispatch, summary}]
 	full, fullOK := edges[[2]identity.ContentID{base, effect}]
 	forwardEffect, forwardEffectOK := edges[[2]identity.ContentID{dispatch, effect}]
-	if !entryOK || !bypassOK || !forwardSummaryOK || !fullOK || !forwardEffectOK {
-		t.Fatal("the call stage triple is not spliced by the five declared transports")
+	forwardEffectSummary, forwardEffectSummaryOK := edges[[2]identity.ContentID{summary, effect}]
+	if !entryOK || !bypassOK || !forwardSummaryOK || !fullOK || !forwardEffectOK || !forwardEffectSummaryOK {
+		t.Fatal("the call stage triple is not spliced by the six declared transports")
 	}
 	if !full.row.Full() {
 		t.Fatal("the base to call-effect transport is not a full environment transport")
 	}
 	effectAxes := read.byStage[programschema.RuleStageCallEffect]
 	dispatchAxes := read.byStage[programschema.RuleStageCallDispatch]
-	if len(effectAxes) == 0 || len(dispatchAxes) == 0 {
+	summaryAxes := read.byStage[programschema.RuleStageCallSummary]
+	if len(effectAxes) == 0 || len(dispatchAxes) == 0 || len(summaryAxes) == 0 {
 		t.Fatal("the sealed directory issues no rule at a call stage")
 	}
 	entryAxes := make(map[schema.Key]struct{}, len(read.mounted))
@@ -204,4 +211,5 @@ func TestCallStageTransportNamesDeclaredFactorAxes(t *testing.T) {
 	assertSameAxes(t, "base to call-summary", read.axesOf(t, "base to call-summary", program, bypass), effectAxes)
 	assertSameAxes(t, "call-dispatch to call-summary", read.axesOf(t, "call-dispatch to call-summary", program, forwardSummary), dispatchAxes)
 	assertSameAxes(t, "call-dispatch to call-effect", read.axesOf(t, "call-dispatch to call-effect", program, forwardEffect), dispatchAxes)
+	assertSameAxes(t, "call-summary to call-effect", read.axesOf(t, "call-summary to call-effect", program, forwardEffectSummary), summaryAxes)
 }

@@ -33,8 +33,9 @@ local value = -(api[key] + 1)
 local result = value and api(key, { [key] = value, value })
 return result
 `)
-	staticImport, staticOK := p.Module().ImportAt(0)
-	liveImport, liveOK := p.Module().ImportAt(1)
+	imports := p.Flow().Authored().Imports()
+	staticImport, staticOK := imports.ImportAt(0)
+	liveImport, liveOK := imports.ImportAt(1)
 	staticCall := staticImport.Call
 	liveCall := liveImport.Call
 	flow := p.Flow()

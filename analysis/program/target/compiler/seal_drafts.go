@@ -32,6 +32,8 @@ type operationDraft struct {
 	effects           []effectDraft
 	effectTail        vocabulary.RowTail
 	effectVar         vocabulary.RowVar
+	formalEffects     []vocabulary.FormalEffectSpec
+	formalEffectTail  vocabulary.RowTail
 	types             map[string][]byte
 	declarations      map[string]schematype.Type
 	formalConstraints []schematype.Type

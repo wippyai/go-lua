@@ -171,6 +171,7 @@ const (
 	mountedRuleOccurrenceDomain = "analysis/engine/rule-occurrence"
 	linkRuleOccurrenceDomain    = "analysis/engine/link-rule-occurrence"
 	linkRuleMemberDomain        = "analysis/engine/link-rule-member"
+	linkRuleInputDomain         = "analysis/engine/link-rule-input"
 
 	ruleSourceIdentityVersion uint64 = 3
 )
@@ -199,6 +200,24 @@ func mountedRuleInputKey(member, input identity.ContentID, slot uint64) (composi
 	}
 	id := framedContentID(mountedRuleInputDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
 		return writeContentIDs(writer, member, input) && writer.Uint(slot) == nil
+	})
+	if !id.Available() {
+		return composition.Key{}, false
+	}
+	return artifactSourceKey(artifactOccurrenceSource, id)
+}
+
+// linkRuleInputKey names the predecessor provenance of one Link-global rule
+// input. Link rules have no mounted artifact row from which an input key can
+// be derived: their sole predecessor is the owner-authenticated bootstrap
+// point. Keep that namespace separate from mountedRuleInputKey so a mounted
+// occurrence can never masquerade as a Link bootstrap input.
+func linkRuleInputKey(role RuleSlotCapability, owner, point, occurrence identity.ContentID, slot uint64) (composition.Key, bool) {
+	if !role.link() || !owner.Available() || !point.Available() || !occurrence.Available() {
+		return composition.Key{}, false
+	}
+	id := framedContentID(linkRuleInputDomain, ruleSourceIdentityVersion, func(writer *canonical.DigestWriter) bool {
+		return writeRuleSlotCapability(writer, role) && writeContentIDs(writer, owner, point, occurrence) && writer.Uint(slot) == nil
 	})
 	if !id.Available() {
 		return composition.Key{}, false

@@ -7,7 +7,6 @@
       "min_stack": 1,
       "min_shared_heap": 3,
       "min_shared_depth": 3,
-      "min_seal_before_share": 3,
       "min_shared_heap_kind": {
         "lua.table": 3
       },

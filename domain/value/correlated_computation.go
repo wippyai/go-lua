@@ -298,6 +298,111 @@ func (row ValueClaim) Kind() (flowkind.ValueClaimKind, bool) {
 	return row.kind, true
 }
 
+// returnBoundaryTopology is the seal-time copy of one Program Values
+// topology. The child occurrence rows are the canonical member/tail source;
+// ValuesFamily is deliberately not reopened here and no Program row escapes
+// into Value's published Schema.
+type returnBoundaryTopology struct {
+	members  []identity.ContentID
+	hasTail  bool
+	tailKind programschema.ValuesTailKind
+}
+
+type returnBoundaryTopologyDraft struct {
+	body        identity.ContentID
+	memberByPos map[uint64]identity.ContentID
+	hasTail     bool
+	tailKind    programschema.ValuesTailKind
+}
+
+// sealReturnBoundaryTopologies indexes every Values root and its canonical
+// OccurrenceValuesMember/Tail children once for one Program. ReturnBoundary
+// sealing then performs an O(1) root lookup instead of rescanning the entire
+// occurrence plane for every executable return.
+func sealReturnBoundaryTopologies(program programschema.Program) (map[identity.ContentID]returnBoundaryTopology, bool) {
+	if !program.Available() {
+		return nil, false
+	}
+	count, countOK := program.OccurrenceCount()
+	if !countOK {
+		return nil, false
+	}
+	drafts := make(map[identity.ContentID]*returnBoundaryTopologyDraft)
+	for index := 0; index < count; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if !rowOK {
+			return nil, false
+		}
+		if row.Kind() != programschema.OccurrenceValues {
+			continue
+		}
+		id := row.ID()
+		body, bodyOK := row.BodyID()
+		if !id.Available() || !bodyOK {
+			return nil, false
+		}
+		if _, duplicate := drafts[id]; duplicate {
+			return nil, false
+		}
+		drafts[id] = &returnBoundaryTopologyDraft{body: body, memberByPos: make(map[uint64]identity.ContentID)}
+	}
+	for index := 0; index < count; index++ {
+		row, rowOK := program.OccurrenceAt(index)
+		if !rowOK {
+			return nil, false
+		}
+		switch row.Kind() {
+		case programschema.OccurrenceValuesMember:
+			rootID, rootOK := program.OccurrenceInputID(index, 0)
+			memberSpanID, memberOK := program.OccurrenceInputID(index, 1)
+			draft, rootKnown := drafts[rootID]
+			body, bodyOK := row.BodyID()
+			if !rootOK || !memberOK || !rootKnown || !memberSpanID.Available() || !row.ID().Available() || !bodyOK || body != draft.body {
+				return nil, false
+			}
+			position := row.Code()
+			if _, duplicate := draft.memberByPos[position]; duplicate {
+				return nil, false
+			}
+			// The member occurrence's own ID is the canonical ValuesMember
+			// semantic row. Input 1 is only the producer span used to prove
+			// member topology; it is not the member identity consumed by Value.
+			draft.memberByPos[position] = row.ID()
+		case programschema.OccurrenceValuesTail:
+			rootID, rootOK := program.OccurrenceInputID(index, 0)
+			draft, rootKnown := drafts[rootID]
+			body, bodyOK := row.BodyID()
+			kind := programschema.ValuesTailKind(row.Code())
+			if !rootOK || !rootKnown || !bodyOK || body != draft.body || draft.hasTail || !kind.Valid() {
+				return nil, false
+			}
+			draft.hasTail = true
+			draft.tailKind = kind
+		}
+	}
+	result := make(map[identity.ContentID]returnBoundaryTopology, len(drafts))
+	for id, draft := range drafts {
+		members := make([]identity.ContentID, len(draft.memberByPos))
+		for position, member := range draft.memberByPos {
+			if position >= uint64(len(members)) || !member.Available() || members[position].Available() {
+				return nil, false
+			}
+			members[position] = member
+		}
+		for _, member := range members {
+			if !member.Available() {
+				return nil, false
+			}
+		}
+		kind := draft.tailKind
+		if !draft.hasTail {
+			kind = programschema.ValuesTailInvalid
+		}
+		result[id] = returnBoundaryTopology{members: members, hasTail: draft.hasTail, tailKind: kind}
+	}
+	return result, true
+}
+
 func (schema *valueBuilder) sealComputationRows() bool {
 	if schema == nil || schema.sealProject() == nil || schema.artifacts == nil {
 		return false
@@ -308,6 +413,10 @@ func (schema *valueBuilder) sealComputationRows() bool {
 			return false
 		}
 		program := artifact.Program()
+		topologies, topologiesOK := sealReturnBoundaryTopologies(program)
+		if !topologiesOK {
+			return false
+		}
 		occurrenceCount, occurrenceCountOK := program.OccurrenceCount()
 		if !occurrenceCountOK {
 			return false
@@ -419,9 +528,15 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || !argument.MemberID().Available() {
 					return false
 				}
-				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, call.SpanID())
+				resultSlot, resultOK := schema.Schema.MountedCallResultSlotFor(module, call.ID(), 0)
+				// A discarded or open result has no finite Value coordinate and
+				// therefore cannot be an operand for this result-writing rule. This
+				// is cold schema non-admission, not a hot engine skip.
+				if !resultOK {
+					continue
+				}
 				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, argument.MemberID())
-				rc, rcOK := schema.coordinateForCold(result)
+				rc, rcOK := resultSlot.Coordinate()
 				ic, icOK := schema.coordinateForCold(input)
 				if !resultOK || !inputOK || !rcOK || !icOK {
 					return false
@@ -458,7 +573,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				if !argumentOK || !argument.Available() || argument.CallID() != call.ID() || argument.Index() != 0 || argument.MemberID() != targetID {
 					return false
 				}
-				result, resultOK := schema.sealBoundary().Values().ForMountedSpan(module, call.SpanID())
+				resultSlot, resultOK := schema.Schema.MountedCallResultSlotFor(module, call.ID(), 0)
 				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
 				// Program issues the compared operand as a value-subject span
 				// identity, the same identity the BinaryEquality row carries,
@@ -466,7 +581,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				// The semantic directory keys parent-issued occurrence IDs and
 				// names an operand span only when another row published it.
 				comparison, comparisonOK := schema.sealBoundary().Values().ForMountedSpan(module, operandID)
-				rc, rcOK := schema.coordinateForCold(result)
+				rc, rcOK := resultSlot.Coordinate()
 				ic, icOK := schema.coordinateForCold(input)
 				pc, pcOK := schema.coordinateForCold(comparison)
 				if !resultOK || !inputOK || !comparisonOK || !rcOK || !icOK || !pcOK ||
@@ -581,10 +696,32 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				}
 				value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, valuesID)
 				coordinate, coordinateOK := schema.coordinateForCold(value)
-				if !valueOK || !coordinateOK {
+				topology, topologyOK := topologies[valuesID]
+				if !valueOK || !coordinateOK || !topologyOK || uint64(len(schema.returnBoundaryMembers))+uint64(len(topology.members)) > uint64(^uint32(0)) {
 					return false
 				}
-				schema.returnBoundaries[key] = ReturnBoundary{schema: schema.Schema, key: key, content: computationContent(schema.linkID, "val-ret!", module, row.ID()), values: coordinate}
+				memberOffset := uint32(len(schema.returnBoundaryMembers))
+				for _, memberID := range topology.members {
+					member, memberOK := schema.sealBoundary().Values().ForMountedSemantic(module, memberID)
+					memberCoordinate, memberCoordinateOK := schema.coordinateForCold(member)
+					if !memberOK || !memberCoordinateOK {
+						return false
+					}
+					schema.returnBoundaryMembers = append(schema.returnBoundaryMembers, returnBoundaryMember{coordinate: memberCoordinate})
+				}
+				boundary := ReturnBoundary{
+					schema: schema.Schema, key: key,
+					content: computationContent(schema.linkID, "val-ret!", module, row.ID()),
+					root:    coordinate, memberOffset: memberOffset, memberCount: uint32(len(topology.members)),
+					hasTail: topology.hasTail, tailKind: topology.tailKind,
+				}
+				if _, duplicate := schema.returnBoundaries[key]; duplicate {
+					return false
+				}
+				schema.returnBoundaries[key] = boundary
+				if !boundary.valid() {
+					return false
+				}
 			}
 		}
 	}

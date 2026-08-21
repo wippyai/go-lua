@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	fresh "github.com/wippyai/go-lua/domain/heap/internal/fresh"
@@ -64,28 +65,35 @@ func TestHeapFreshOwnerEnumerationIsStableAndKeyIDRoundTrips(t *testing.T) {
 		}
 	}
 	want := make(map[freshSemantic]runtimekind.Set)
+	programs := make(map[identity.ContentID]programschema.Program, len(mounts))
+	for _, mount := range mounts {
+		if !mount.Available() {
+			t.Fatal("fixture returned an unavailable artifact mount")
+		}
+		program := mount.Snapshot().Program()
+		if !program.Available() {
+			t.Fatal("fixture artifact mount returned an unavailable Program")
+		}
+		programs[mount.Module()] = program
+	}
 	applications := linked.Project().Applications().Calls()
-	callResults := linked.Boundary().Calls()
 	for applicationIndex := 0; applicationIndex < applications.Count(); applicationIndex++ {
 		application, applicationOK := applications.At(applicationIndex)
 		applicationID, moduleID, callID, mountedOK := applications.MountedIdentity(application)
 		if !applicationOK || !mountedOK || !applicationID.Available() || !moduleID.Available() || !callID.Available() {
 			t.Fatalf("call application %d failed exact Project mounting", applicationIndex)
 		}
+		program, programOK := programs[moduleID]
+		if !programOK {
+			t.Fatalf("application %d has no canonical Program for module %v", applicationIndex, moduleID)
+		}
+		callResult, callResultOK := program.CallResultForID(callID)
 		for _, template := range templates {
-			callResult, callResultOK := callResults.CallResult(moduleID, callID, template.result)
-			if !callResultOK {
+			if !callResultOK || !callResult.AdmitsResult(uint32(template.resultIndex)) {
 				continue
 			}
-			rowApplication, rowApplicationOK := callResult.ApplicationID()
-			rowModule, rowModuleOK := callResult.ModuleID()
-			rowCall, rowCallOK := callResult.CallID()
-			rowResult, rowResultOK := callResult.OutcomeResultID()
-			rowOperation, rowOutcome, rowResultIndex, coordinatesOK := callResult.OutcomeResult()
-			if !rowApplicationOK || !rowModuleOK || !rowCallOK || !rowResultOK || !coordinatesOK ||
-				rowApplication != applicationID || rowModule != moduleID || rowCall != callID || rowResult != template.result ||
-				rowOperation != template.operation || rowOutcome != template.outcome || rowResultIndex != template.resultIndex {
-				t.Fatalf("application %d admitted a mismatched fresh CallResult", applicationIndex)
+			if !callResult.Available() || callResult.CallID() != callID {
+				t.Fatalf("application %d admitted a mismatched canonical CallResult", applicationIndex)
 			}
 			semantic := freshSemantic{application: applicationID, result: template.result, ordinal: template.ordinal}
 			if _, duplicate := want[semantic]; duplicate {

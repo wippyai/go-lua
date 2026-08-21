@@ -10,8 +10,8 @@ import (
 )
 
 // TestOperandsPreserveExactSparseAndDenseRelations proves the sparse relation
-// keeps only its authored members, the dense sidecars resolve by canonical
-// term, and the annotation index groups by target.
+// keeps only its authored members and the dense sidecars resolve by canonical
+// term.
 func TestOperandsPreserveExactSparseAndDenseRelations(t *testing.T) {
 	operands := build(t, ledgerInput()).NewView(ledgerCounts())
 
@@ -38,23 +38,6 @@ func TestOperandsPreserveExactSparseAndDenseRelations(t *testing.T) {
 	}
 	if target, ok := typeValues.Target(typeValue); !ok || target != term(keyspace.FamilyTypeRef, 1) {
 		t.Fatalf("TypeValue target = %v/%v", target, ok)
-	}
-
-	annotations := operands.Annotations()
-	if count, ok := annotations.ForCount(primitive(1)); !ok || count != 2 {
-		t.Fatalf("annotation index count = %d/%v, want 2", count, ok)
-	}
-	for index, want := range []uint32{1, 3} {
-		got, ok := annotations.ForAt(primitive(1), index)
-		if !ok || got != term(keyspace.FamilyAnnotation, want) {
-			t.Fatalf("annotation index term[%d] = %v/%v", index, got, ok)
-		}
-	}
-	if count, ok := annotations.ForCount(primitive(3)); !ok || count != 0 {
-		t.Fatalf("valid unannotated target count = %d/%v, want 0/true", count, ok)
-	}
-	if _, ok := annotations.ForCount(term(keyspace.FamilyTypeAlias, 1)); ok {
-		t.Fatal("annotation query accepted a non-static anchor")
 	}
 }
 
@@ -142,17 +125,12 @@ func TestOperandsCopyFenceBoundsAndQueriesDoNotAllocate(t *testing.T) {
 	if _, ok := operands.TypeValues().Target(term(keyspace.FamilyValueClaim, 1)); ok {
 		t.Fatal("TypeValues.Target accepted foreign family")
 	}
-	if _, ok := operands.Annotations().ForAt(primitive(1), 2); ok {
-		t.Fatal("Annotations.ForAt accepted out-of-bounds index")
-	}
 	if allocations := testing.AllocsPerRun(100, func() {
 		operands.Claims().Count()
 		operands.Claims().At(0)
 		operands.Claims().Target(claim)
 		operands.TypeValues().Target(typeValue)
 		operands.Annotations().Get(annotation)
-		operands.Annotations().ForCount(primitive(1))
-		operands.Annotations().ForAt(primitive(1), 1)
 	}); allocations != 0 {
 		t.Fatalf("operand queries allocated %.2f times", allocations)
 	}
@@ -240,8 +218,5 @@ func TestZeroViewFailsClosed(t *testing.T) {
 	}
 	if _, ok := view.Annotations().Get(term(keyspace.FamilyAnnotation, 1)); ok {
 		t.Fatal("zero View returned an annotation")
-	}
-	if _, ok := view.Annotations().ForCount(primitive(1)); ok {
-		t.Fatal("zero View counted annotations for a target")
 	}
 }

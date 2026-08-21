@@ -19,7 +19,7 @@ func TestSealClosesFunctionFormalVarargAndCaptureOperands(t *testing.T) {
 		[]source.FunctionFormals{{Function: function, Formals: []keyspace.Term{term(keyspace.FamilyCell, 2)}}},
 		[]keyspace.Term{body2})
 	result, err := Seal(fixture.sourceView, fixture.flow, fixture.bodies, fixture.forest, fixture.control,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID(), fixture.paths)
+		fixture.staticView.ContentID(), fixture.flow.ModuleID(), fixture.paths)
 	if err != nil {
 		t.Fatalf("function closure executable.Seal: %v", err)
 	}

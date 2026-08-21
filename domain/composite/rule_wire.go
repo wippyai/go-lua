@@ -68,11 +68,14 @@ func (contributor RuleContributor[P, A]) LinkCatalog(holder rule.Cell) (rule.Lin
 	return contributor.linkCatalog(holder)
 }
 
-func (contributor RuleContributor[P, A]) complete(lane rule.Lane) bool {
+func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool {
 	if contributor.declare == nil || contributor.register == nil || contributor.bind == nil {
 		return false
 	}
-	if lane == rule.LaneLink {
+	if template == nil {
+		return false
+	}
+	if template.Lane() == rule.LaneLink {
 		return contributor.linkCatalog != nil
 	}
 	return contributor.linkCatalog == nil
@@ -170,5 +173,5 @@ func WireRule[P, A, F, H any](
 			return inventory, ok && inventory != nil
 		}
 	}
-	return template, contributor, contributor.complete(template.Lane())
+	return template, contributor, contributor.complete(template)
 }

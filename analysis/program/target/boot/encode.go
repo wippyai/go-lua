@@ -43,6 +43,12 @@ func (t *Table) Encode(writer *framing.Writer, keys exactkey.Table) error {
 		if err := writer.String(root.identity); err != nil {
 			return err
 		}
+		// ModulePath is the authored Target relation between this root and a
+		// module path. It is part of the canonical Contract identity; consumers
+		// must never recover it from root.identity.
+		if err := writer.String(root.modulePath); err != nil {
+			return err
+		}
 		if root.shape == 0 || uint64(root.shape) > uint64(t.shapes.Count()) {
 			return errors.New("target/boot: malformed boot shape")
 		}

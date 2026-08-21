@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wippyai/go-lua/analysis/program/imports"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -23,9 +23,9 @@ var (
 
 // Rows is the fixed census-indexed Module construction plane. Its mutable
 // slices are private to this owner; core can submit a declared row or alias
-// through the narrow methods below and can consume only a frozen Input.
+// through the narrow methods below and can consume only frozen authored rows.
 type Rows struct {
-	imports  []imports.Import
+	imports  []authored.Import
 	declared []bool
 	aliases  []bool
 	invalid  bool
@@ -46,7 +46,7 @@ func (r *Rows) init(count int) {
 		r.invalid = true
 		return
 	}
-	r.imports = make([]imports.Import, count)
+	r.imports = make([]authored.Import, count)
 	r.declared = make([]bool, count)
 	r.aliases = make([]bool, count)
 }
@@ -69,7 +69,7 @@ func (r *Rows) Complete() bool {
 		if !r.declared[index] || row.Term != keyspace.MakeTerm(keyspace.FamilyImport, uint32(index+1)) || row.Call == 0 {
 			return false
 		}
-		if row.Request == 0 || keyspace.TermFamily(row.Request) != keyspace.FamilyString || keyspace.TermOrdinal(row.Request) == 0 || row.Key != 0 {
+		if row.Request == 0 || keyspace.TermFamily(row.Request) != keyspace.FamilyString || keyspace.TermOrdinal(row.Request) == 0 {
 			return false
 		}
 	}
@@ -100,7 +100,7 @@ func (r *Rows) Set(slot int, term, call, request keyspace.Term) error {
 	if request == 0 || keyspace.TermFamily(request) != keyspace.FamilyString || keyspace.TermOrdinal(request) == 0 {
 		return fmt.Errorf("%w: request %v for slot %d", errRowsInvalid, request, slot)
 	}
-	r.imports[slot] = imports.Import{Term: term, Call: call, Request: request}
+	r.imports[slot] = authored.Import{Term: term, Call: call, Request: request}
 	r.declared[slot] = true
 	return nil
 }
@@ -125,32 +125,32 @@ func (r *Rows) SetAlias(slot int, alias keyspace.Term) error {
 	return nil
 }
 
-func (r *Rows) Freeze(counts [keyspace.FamilyCount]uint32) (imports.Input, error) {
+func (r *Rows) Freeze(counts [keyspace.FamilyCount]uint32) ([]authored.Import, error) {
 	if !r.valid() {
-		return imports.Input{}, errRowsInvalid
+		return nil, errRowsInvalid
 	}
 	if uint64(len(r.imports)) != uint64(counts[keyspace.FamilyImport]) {
-		return imports.Input{}, errCounts
+		return nil, errCounts
 	}
 	if counts[keyspace.FamilyInvalid] != 0 || counts[keyspace.FamilyOutcome] != 0 {
-		return imports.Input{}, errCounts
+		return nil, errCounts
 	}
 	for family, count := range counts {
 		if count > keyspace.MaxTermOrdinal || (keyspace.Family(family) == keyspace.FamilyInvalid && count != 0) {
-			return imports.Input{}, errCounts
+			return nil, errCounts
 		}
 	}
 	for slot, row := range r.imports {
 		if !r.declared[slot] {
-			return imports.Input{}, errSlotMissing
+			return nil, errSlotMissing
 		}
 		want := keyspace.MakeTerm(keyspace.FamilyImport, uint32(slot+1))
 		if row.Term != want || keyspace.TermFamily(row.Term) != keyspace.FamilyImport || keyspace.TermOrdinal(row.Term) > counts[keyspace.FamilyImport] ||
 			row.Call == 0 || keyspace.TermFamily(row.Call) != keyspace.FamilyCall || keyspace.TermOrdinal(row.Call) == 0 || keyspace.TermOrdinal(row.Call) > counts[keyspace.FamilyCall] ||
 			(row.Alias != 0 && (keyspace.TermFamily(row.Alias) != keyspace.FamilyCell || keyspace.TermOrdinal(row.Alias) == 0 || keyspace.TermOrdinal(row.Alias) > counts[keyspace.FamilyCell])) ||
-			row.Request == 0 || keyspace.TermFamily(row.Request) != keyspace.FamilyString || keyspace.TermOrdinal(row.Request) > counts[keyspace.FamilyString] || row.Key != 0 {
-			return imports.Input{}, fmt.Errorf("%w: row %d", errRowsInvalid, slot)
+			row.Request == 0 || keyspace.TermFamily(row.Request) != keyspace.FamilyString || keyspace.TermOrdinal(row.Request) > counts[keyspace.FamilyString] {
+			return nil, fmt.Errorf("%w: row %d", errRowsInvalid, slot)
 		}
 	}
-	return imports.Input{Imports: append([]imports.Import(nil), r.imports...)}, nil
+	return append([]authored.Import(nil), r.imports...), nil
 }

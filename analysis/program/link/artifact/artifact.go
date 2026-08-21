@@ -258,7 +258,7 @@ func (budget *artifactBudget) module(name string, sealed *program.Program) bool 
 	// meta/generic rows. Target endpoints remain Target-owned constituents;
 	// Link never materializes their product with source Applications.
 	projectRows := uint64(flow.Authored().Calls().Count())
-	if imports := uint64(sealed.Module().Count()); projectRows > ^uint64(0)-imports {
+	if imports := uint64(flow.Authored().Imports().Count()); projectRows > ^uint64(0)-imports {
 		return false
 	} else {
 		projectRows += imports

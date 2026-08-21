@@ -62,10 +62,10 @@ func newEffectFactorFixture(t testing.TB, spec declaration.Spec, source string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !ok || !grammarOK || !issuanceOK {
+	receipt, ok := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !ok || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 
@@ -295,7 +295,7 @@ func TestEffectFactorMountedFormalAndOpenRowLaws(t *testing.T) {
 
 func publicationEffectFactorSpec(publicationKind vocabulary.PublicationEffectKind, callback bool) declaration.Spec {
 	publication := &vocabulary.PublicationEffectSpec{
-		Kind: publicationKind, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
+		Kind: publicationKind, Subject: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}, Destination: vocabulary.PublicationDestinationNone,
 		Escape: vocabulary.PublicationEscapeNone, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
 	}
 	switch publicationKind {
@@ -380,47 +380,18 @@ func callbackPublicationEffectIndex(t testing.TB, contract *contract.Contract, c
 	return publication
 }
 
-func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
+func TestSelectedCallPublicationValidationLaw(t *testing.T) {
 	ordinary := newEffectFactorFixture(t, publicationEffectFactorSpec(vocabulary.PublicationEffectSendTransfer, false), "local function sink(left, right) return left end\nsink(1, 2)")
-	publicationEffect, genericEffect := publicationEffectIndexes(t, ordinary.contract, ordinary.owner)
-	formal, formalOK := ordinary.factor.FormalCallEffectAtom(ordinary.mountedCall, ordinary.owner, publicationEffect)
-	atomBinding, bindingOK := ordinary.factor.BindFormalCallEffectAtom(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, formal)
-	publication, publicationOK := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, atomBinding)
-	if !formalOK || !bindingOK || !publicationOK || !publication.Valid() || publication.Role() != effectfactor.PublicationAtomBindingOrdinary || publication.Kind() != vocabulary.PublicationEffectSendTransfer || publication.Escape() != vocabulary.PublicationEscapeSendTransfer || publication.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || publication.Lifetime() != vocabulary.PublicationLifetimePreserve {
-		t.Fatal("ordinary publication binding")
-	}
-	descriptorID, descriptorOK := ordinary.contract.Operations.PublicationEffectDescriptorID(ordinary.owner, publicationEffect)
-	occurrenceID, occurrenceOK := ordinary.contract.Operations.PublicationEffectOccurrenceID(ordinary.owner, publicationEffect)
-	boundDescriptor, boundDescriptorOK := publication.DescriptorID()
-	boundOccurrence, boundOccurrenceOK := publication.OccurrenceID()
-	subject, subjectOK := publication.SubjectSelector()
-	context, contextOK := publication.ContextSelector()
-	expectedSubject, expectedSubjectOK := ordinary.packs.InputSelector(ordinary.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
-	expectedContext, expectedContextOK := ordinary.packs.InputSelector(ordinary.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
-	if !descriptorOK || !occurrenceOK || !boundDescriptorOK || !boundOccurrenceOK || descriptorID != boundDescriptor || occurrenceID != boundOccurrence || !subjectOK || !contextOK || !ordinary.packs.OwnsInputSelector(subject) || !ordinary.packs.OwnsInputSelector(context) || !expectedSubjectOK || !expectedContextOK || subject != expectedSubject || context != expectedContext {
-		t.Fatal("ordinary publication descriptor or Pack selectors")
-	}
-	all, allOK := ordinary.factor.SelectedCallPublicationAtomBindings(ordinary.root, ordinary.mountedCall, ordinary.owner)
-	if !allOK || len(all) != 1 || !all[0].Valid() {
-		t.Fatal("ordinary publication inventory")
-	}
-	genericFormal, genericFormalOK := ordinary.factor.FormalCallEffectAtom(ordinary.mountedCall, ordinary.owner, genericEffect)
-	genericBinding, genericBindingOK := ordinary.factor.BindFormalCallEffectAtom(ordinary.root, ordinary.mountedCall, ordinary.owner, genericEffect, genericFormal)
-	if !genericFormalOK || !genericBindingOK {
-		t.Fatal("ordinary generic binding")
-	}
-	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, genericEffect, genericBinding); ok {
-		t.Fatal("generic effect gained publication semantics")
-	}
-	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, genericBinding); ok {
-		t.Fatal("publication binding admitted mismatched atom")
+	present, selectedOK := ordinary.factor.SelectedCallPublication(ordinary.root, ordinary.mountedCall, ordinary.owner)
+	if !selectedOK || !present {
+		t.Fatal("ordinary selected publication")
 	}
 	foreignOperation, foreignOperationOK := ordinary.contract.Operations.Lookup(vocabulary.BindingSpec{Namespace: vocabulary.BindingBuiltin, Member: []string{"effect-target"}})
 	if !foreignOperationOK || foreignOperation == ordinary.owner {
 		t.Fatal("foreign target operation")
 	}
-	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, foreignOperation, publicationEffect, atomBinding); ok {
-		t.Fatal("publication binding admitted unselected operation")
+	if foreignPresent, ok := ordinary.factor.SelectedCallPublication(ordinary.root, ordinary.mountedCall, foreignOperation); !ok || foreignPresent {
+		t.Fatal("non-publication operation produced a publication occurrence")
 	}
 	var wrongRoot effectfactor.Root
 	wrongRootOK := false
@@ -434,64 +405,22 @@ func TestPublicationAtomBindingOwnerLaw(t *testing.T) {
 	if !wrongRootOK {
 		t.Fatal("ordinary fixture lacks foreign root")
 	}
-	if _, ok := ordinary.factor.PublicationCallEffectBinding(wrongRoot, ordinary.mountedCall, ordinary.owner, publicationEffect, atomBinding); ok {
-		t.Fatal("publication binding admitted foreign root")
+	if _, ok := ordinary.factor.SelectedCallPublication(wrongRoot, ordinary.mountedCall, ordinary.owner); ok {
+		t.Fatal("publication validation admitted foreign root")
 	}
 	foreignPacks, foreignPacksOK := pack.SealMountedArtifacts(ordinary.linked, ordinary.statics, ordinary.packMounts)
 	foreignFactor, foreignFactorOK := effectfactor.NewWithMountedArtifacts(ordinary.linked, foreignPacks, ordinary.contract, ordinary.mounts)
 	foreignMounted, foreignMountedOK := foreignFactor.MountedCallAt(0)
-	foreignRoot, foreignRootOK := foreignFactor.RootForMountedCall(foreignMounted)
-	foreignFormal, foreignFormalOK := foreignFactor.FormalCallEffectAtom(foreignMounted, ordinary.owner, publicationEffect)
-	foreignBinding, foreignBindingOK := foreignFactor.BindFormalCallEffectAtom(foreignRoot, foreignMounted, ordinary.owner, publicationEffect, foreignFormal)
-	if !foreignPacksOK || !foreignFactorOK || !foreignMountedOK || !foreignRootOK || !foreignFormalOK || !foreignBindingOK {
+	if !foreignPacksOK || !foreignFactorOK || !foreignMountedOK {
 		t.Fatal("equal-content foreign Pack/Effect fixture")
 	}
-	if _, ok := ordinary.factor.PublicationCallEffectBinding(ordinary.root, ordinary.mountedCall, ordinary.owner, publicationEffect, foreignBinding); ok {
-		t.Fatal("publication binding admitted foreign Pack/Effect atom")
+	if _, ok := ordinary.factor.SelectedCallPublication(ordinary.root, foreignMounted, ordinary.owner); ok {
+		t.Fatal("publication validation admitted foreign Pack/Effect mount")
 	}
 
 	callbackFixture := newEffectFactorFixture(t, publicationEffectFactorSpec(vocabulary.PublicationEffectCallbackEscape, true), "local function sink(left, right) return left end\nsink(1, 2)")
-	callback, callbackOK := callbackFixture.contract.Operations.CallbackAt(callbackFixture.owner, 0)
-	callbackEffect := callbackPublicationEffectIndex(t, callbackFixture.contract, callback)
-	callbackFormal, callbackFormalOK := callbackFixture.factor.FormalCallbackEffectAtom(callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect)
-	callbackAtom, callbackAtomOK := callbackFixture.factor.BindFormalCallbackEffectAtom(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, callbackFormal)
-	callbackPublication, callbackPublicationOK := callbackFixture.factor.PublicationCallbackEffectBinding(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, callbackAtom)
-	if !callbackOK || !callbackFormalOK || !callbackAtomOK || !callbackPublicationOK || !callbackPublication.Valid() || callbackPublication.Role() != effectfactor.PublicationAtomBindingCallback || callbackPublication.Kind() != vocabulary.PublicationEffectCallbackEscape || callbackPublication.Escape() != vocabulary.PublicationEscapeCallback {
-		t.Fatal("callback publication binding")
-	}
-	if _, contextOK := callbackPublication.ContextSelector(); contextOK {
-		t.Fatal("destination-free callback publication carried context selector")
-	}
-	callbackDescriptor, callbackDescriptorOK := callbackFixture.contract.Operations.CallbackPublicationEffectDescriptorID(callback, callbackEffect)
-	callbackOccurrence, callbackOccurrenceOK := callbackFixture.contract.Operations.CallbackPublicationEffectOccurrenceID(callback, callbackEffect)
-	boundCallbackDescriptor, boundCallbackDescriptorOK := callbackPublication.DescriptorID()
-	boundCallbackOccurrence, boundCallbackOccurrenceOK := callbackPublication.OccurrenceID()
-	callbackSubject, callbackSubjectOK := callbackPublication.SubjectSelector()
-	expectedCallbackSubject, expectedCallbackSubjectOK := callbackFixture.packs.InputSelector(callbackFixture.owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 1})
-	if !callbackDescriptorOK || !callbackOccurrenceOK || !boundCallbackDescriptorOK || !boundCallbackOccurrenceOK || callbackDescriptor != boundCallbackDescriptor || callbackOccurrence != boundCallbackOccurrence || !callbackSubjectOK || !expectedCallbackSubjectOK || callbackSubject != expectedCallbackSubject {
-		t.Fatal("callback publication descriptor or mapped selector")
-	}
-	_, callbackGenericEffect := publicationEffectIndexes(t, callbackFixture.contract, callbackFixture.owner)
-	ordinaryFormal, ordinaryFormalOK := callbackFixture.factor.FormalCallEffectAtom(callbackFixture.mountedCall, callbackFixture.owner, callbackGenericEffect)
-	ordinaryAtom, ordinaryAtomOK := callbackFixture.factor.BindFormalCallEffectAtom(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callbackGenericEffect, ordinaryFormal)
-	if !ordinaryFormalOK || !ordinaryAtomOK {
-		t.Fatal("callback fixture ordinary binding")
-	}
-	if _, ok := callbackFixture.factor.PublicationCallbackEffectBinding(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner, callback, callbackEffect, ordinaryAtom); ok {
-		t.Fatal("callback publication admitted ordinary atom binding")
-	}
-	first, firstOK := callbackFixture.factor.SelectedCallPublicationAtomBindings(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner)
-	second, secondOK := callbackFixture.factor.SelectedCallPublicationAtomBindings(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner)
-	if !firstOK || !secondOK || len(first) != 2 || len(first) != len(second) {
-		t.Fatal("callback publication inventory")
-	}
-	for index := range first {
-		firstDescriptor, firstDescriptorOK := first[index].DescriptorID()
-		secondDescriptor, secondDescriptorOK := second[index].DescriptorID()
-		firstOccurrence, firstOccurrenceOK := first[index].OccurrenceID()
-		secondOccurrence, secondOccurrenceOK := second[index].OccurrenceID()
-		if !firstDescriptorOK || !secondDescriptorOK || !firstOccurrenceOK || !secondOccurrenceOK || firstDescriptor != secondDescriptor || firstOccurrence != secondOccurrence || first[index].Role() != second[index].Role() {
-			t.Fatal("publication inventory changed across repeated issuance")
-		}
+	callbackPresent, callbackSelectedOK := callbackFixture.factor.SelectedCallPublication(callbackFixture.root, callbackFixture.mountedCall, callbackFixture.owner)
+	if !callbackSelectedOK || !callbackPresent {
+		t.Fatal("callback selected publication")
 	}
 }

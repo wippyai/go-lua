@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
 
-// HotRuleSpec is the Link-local half of a Factor-output Rule. The RuleSlot,
+// HotRuleSpec is the owner-local half of a Factor-output Rule. The RuleSlot,
 // write slot, and output Factor cell supply all structural identity; callers
 // cannot restate semantic keys or output shape here.
 type HotRuleSpec[V, O any] struct {

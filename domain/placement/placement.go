@@ -24,12 +24,22 @@ func Lattice() lattice.Lattice[Placement] {
 // requires a more shared placement moves the result upward; Unknown is Top.
 // LessOrEq reports whether b conservatively covers a.
 func LessOrEq(a, b Placement) bool {
-	return placementRank(a) <= placementRank(b)
+	left, leftOK := placementRank(a)
+	right, rightOK := placementRank(b)
+	return leftOK && rightOK && left <= right
 }
 
 // Join is the least upper bound of the placement chain.
 func Join(a, b Placement) Placement {
-	if placementRank(a) > placementRank(b) {
+	left, leftOK := placementRank(a)
+	right, rightOK := placementRank(b)
+	if !leftOK || !rightOK {
+		// Values outside the analysis vocabulary are not another point in the
+		// chain. Refuse the operation at this boundary instead of allowing a
+		// JIT/invalid value to acquire Unknown's rank and leak into the factor.
+		return Unknown
+	}
+	if left > right {
 		return a
 	}
 	return b
@@ -37,7 +47,15 @@ func Join(a, b Placement) Placement {
 
 // Meet is the greatest lower bound of the placement chain.
 func Meet(a, b Placement) Placement {
-	if placementRank(a) < placementRank(b) {
+	left, leftOK := placementRank(a)
+	right, rightOK := placementRank(b)
+	if !leftOK || !rightOK {
+		// There is no lattice result for an out-of-domain value. Unknown is the
+		// fail-closed publication value; the invalid operand never participates
+		// in a rank comparison.
+		return Unknown
+	}
+	if left < right {
 		return a
 	}
 	return b
@@ -50,24 +68,27 @@ func Widen(prev, next Placement) Placement {
 
 // Equal is lattice equivalence.
 func Equal(a, b Placement) bool {
-	return a == b
+	_, leftOK := placementRank(a)
+	_, rightOK := placementRank(b)
+	return leftOK && rightOK && a == b
 }
 
-func placementRank(v Placement) int {
+// placementRank admits only the declarative Placement axis. JIT-only and
+// invalid values deliberately have no rank: treating either as Unknown would
+// make an out-of-domain value appear to be a valid analysis fact.
+func placementRank(v Placement) (int, bool) {
 	switch v {
 	case Bottom:
-		return 0
+		return 0, true
 	case Stack:
-		return 1
+		return 1, true
 	case OwnedHeap:
-		return 2
+		return 2, true
 	case SharedHeap:
-		return 3
+		return 3, true
 	case Unknown:
-		return 4
+		return 4, true
 	default:
-		// JIT-only and invalid placements are outside this lattice. Keep them
-		// conservative if one crosses the analysis boundary.
-		return 4
+		return 0, false
 	}
 }

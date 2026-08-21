@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Version 23 carries the complete neutral type-contract declaration for each
+// Version 25 carries the authored module-path-to-initial-root relation in
+// addition to the operation-owned formal ownership row and
+// the complete neutral type-contract declaration for each
 // frozen type row, including primitive identity and external formal scope.
 // It also carries the opaque operation behavior result/predicate rows.
 // Version 21 adds explicit publication-effect presence and typed descriptor
@@ -21,7 +23,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 23
+const contentIDCodecVersion = 25
 
 // ContentID derives the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup

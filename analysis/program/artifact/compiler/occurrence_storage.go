@@ -3,6 +3,7 @@ package compiler
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapindex"
 )
 
 func (compiler *compiler) copyStorage() CompileFailure {
@@ -123,19 +124,18 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 	geometry := compiler.input.Flow().AccessGeometry()
 	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
-	compiler.heapIndexes = make([]heapIndexDraft, 0, reads.Count()+writes.Count())
+	compiler.heapIndexes = make([]heapindex.Index, 0, reads.Count()+writes.Count())
 	for index := 0; index < reads.Count(); index++ {
 		occurrence, occurrenceOK := compiler.indexReadAt(index)
-		row := heapIndexDraft{id: occurrence.id, read: true, baseSpan: occurrence.baseSpan.ContextID(), resultSpan: occurrence.resultSpan.ContextID(), position: -1}
+		lensKind, exactKey := uint8(0), uint64(0)
+		keySpan := identity.ContentID{}
 		if occurrence.exact {
-			row.lensKind = 1
-			row.exactKey = occurrence.exactKey
-		} else {
-			if occurrence.dynamicKeySpan.Available() {
-				row.lensKind, row.keySpan = 2, occurrence.dynamicKeySpan.ContextID()
-			}
+			lensKind, exactKey = heapindex.LensExact, uint64(occurrence.exactKey)
+		} else if occurrence.dynamicKeySpan.Available() {
+			lensKind, keySpan = heapindex.LensDynamic, occurrence.dynamicKeySpan.ContextID()
 		}
-		if !occurrenceOK || !row.Available() {
+		row, rowOK := heapindex.NewIndex(occurrence.id, true, occurrence.baseSpan.ContextID(), occurrence.resultSpan.ContextID(), keySpan, lensKind, exactKey, identity.ContentID{}, identity.ContentID{}, -1)
+		if !occurrenceOK || !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		compiler.heapIndexes = append(compiler.heapIndexes, row)
@@ -144,16 +144,15 @@ func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
 		occurrence, occurrenceOK := compiler.indexWriteAt(index)
 		valueRow, valueRowOK := compiler.valueRowForTerm(occurrence.values)
 		valueSpan, valueSpanOK := valueRow.RootSpanID()
-		row := heapIndexDraft{id: occurrence.id, baseSpan: occurrence.baseSpan.ContextID(), valuesSpan: valueSpan, valuesID: valueRow.ID(), position: occurrence.position}
+		lensKind, exactKey := uint8(0), uint64(0)
+		keySpan := identity.ContentID{}
 		if occurrence.exact {
-			row.lensKind = 1
-			row.exactKey = occurrence.exactKey
-		} else {
-			if occurrence.dynamicKeySpan.Available() {
-				row.lensKind, row.keySpan = 2, occurrence.dynamicKeySpan.ContextID()
-			}
+			lensKind, exactKey = heapindex.LensExact, uint64(occurrence.exactKey)
+		} else if occurrence.dynamicKeySpan.Available() {
+			lensKind, keySpan = heapindex.LensDynamic, occurrence.dynamicKeySpan.ContextID()
 		}
-		if !occurrenceOK || !valueRowOK || !valueSpanOK || !row.Available() {
+		row, rowOK := heapindex.NewIndex(occurrence.id, false, occurrence.baseSpan.ContextID(), identity.ContentID{}, keySpan, lensKind, exactKey, valueSpan, valueRow.ID(), occurrence.position)
+		if !occurrenceOK || !valueRowOK || !valueSpanOK || !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		compiler.heapIndexes = append(compiler.heapIndexes, row)

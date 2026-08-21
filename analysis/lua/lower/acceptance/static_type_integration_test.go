@@ -157,6 +157,21 @@ return f
 		if !ok {
 			t.Fatalf("Function(%v) missing return type", function)
 		}
+		annotationsForTarget := func(target keyspace.Term) []keyspace.Term {
+			annotations := p.Static().Operands().Annotations()
+			var terms []keyspace.Term
+			for index := 0; index < annotations.Count(); index++ {
+				annotationTerm, ok := annotations.At(index)
+				if !ok {
+					continue
+				}
+				if row, rowOK := annotations.Get(annotationTerm); rowOK && row.Target == target {
+					terms = append(terms, annotationTerm)
+				}
+			}
+			return terms
+		}
+
 		returnTypeOf, annotationTarget := keyspace.Term(0), keyspace.Term(0)
 		for index := 0; index < 2; index++ {
 			member, ok := p.Static().Types().Unions().MemberAt(returnType, index)
@@ -166,7 +181,7 @@ return f
 			if _, _, ok := p.Static().Operators().TypeOfs().Get(member); ok {
 				returnTypeOf = member
 			}
-			if count, ok := p.Static().Operands().Annotations().ForCount(member); ok && count == 1 {
+			if terms := annotationsForTarget(member); len(terms) == 1 {
 				annotationTarget = member
 			}
 		}
@@ -190,10 +205,11 @@ return f
 			t.Fatalf("Function(%v) return TypeOf did not retain static containment", function)
 		}
 
-		annotation, ok := p.Static().Operands().Annotations().ForAt(annotationTarget, 0)
-		if !ok {
+		annotationTerms := annotationsForTarget(annotationTarget)
+		if len(annotationTerms) == 0 {
 			t.Fatalf("Function(%v) missing return Annotation", function)
 		}
+		annotation := annotationTerms[0]
 		annotationRow, ok := p.Static().Operands().Annotations().Get(annotation)
 		if !ok || annotationRow.Scope != function {
 			t.Fatalf(
@@ -310,9 +326,6 @@ func TestStaticAnnotationsAndDeclaredTypesStayInStaticOwner(t *testing.T) {
 	row, rowOK := annotations.Get(annotation)
 	if !annotationOK || !rowOK || row.Target == 0 || row.Values == 0 {
 		t.Fatalf("Annotation = %#v/%v/%v", row, annotationOK, rowOK)
-	}
-	if count, ok := annotations.ForCount(row.Target); !ok || count != 1 {
-		t.Fatalf("Annotation target count = %d/%v", count, ok)
 	}
 	binds := p.Flow().Authored().Storage().Binds()
 	secondBind, bindOK := binds.At(1)

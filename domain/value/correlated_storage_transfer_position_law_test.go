@@ -40,10 +40,10 @@ func TestStorageTransferSealsEveryMultipleAssignmentTargetPosition(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	receipt, receiptOK := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !receiptOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	artifact, failure := artifactcompiler.CompileDetailed(programValue, grammar, issuance)
@@ -80,7 +80,7 @@ func TestStorageTransferSealsEveryMultipleAssignmentTargetPosition(t *testing.T)
 		t.Fatal("artifact mount")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(receipt)
 	if heapFailure != heapdomain.SealFailureNone || !structuralOK {
 		t.Fatalf("heap seal %s structural=%t", heapFailure, structuralOK)
 	}

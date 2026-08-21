@@ -9,6 +9,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapindex"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/link"
@@ -307,9 +309,9 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 		if !mountedProgram.Available() {
 			return nil, false
 		}
-		catalog, catalogOK := programschema.CatalogID(mountedProgram.Program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(mountedProgram.Program.SchemaID)
 		valuesCount, valuesPublished := programschema.ValuesFamily().Count(&mountedProgram.Program.Frozen, catalog)
-		heapIndexCount, heapIndexesPublished := programschema.HeapIndexFamily().Count(&mountedProgram.Program.Frozen, catalog)
+		heapIndexCount, heapIndexesPublished := heapindex.Family().Count(&mountedProgram.Program.Frozen, catalog)
 		if !catalogOK || !valuesPublished || !heapIndexesPublished {
 			return nil, false
 		}
@@ -323,7 +325,7 @@ func SealMountedArtifacts(source *link.Link, authority *static.Authority, mounts
 			}
 		}
 		for i := 0; i < heapIndexCount; i++ {
-			row, ok := programschema.HeapIndexFamily().At(&mountedProgram.Program.Frozen, catalog, i)
+			row, ok := heapindex.Family().At(&mountedProgram.Program.Frozen, catalog, i)
 			if !ok {
 				return nil, false
 			}
@@ -473,7 +475,7 @@ func mountedArtifactMatchesLink(source *link.Link, index int, mount ArtifactMoun
 func sealMountedArtifactValues(schema *Schema, mount ArtifactMount) bool {
 	state := schema.state
 	program := mount.Program().Program
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&program.Frozen, catalog)
 	if !program.Available() || !catalogOK || !valuesPublished {
 		return false
@@ -870,7 +872,7 @@ func sealMountedSemanticEndpoints(state *schema, mount ArtifactMount) bool {
 		return false
 	}
 	canonical := program.Program
-	catalog, catalogOK := programschema.CatalogID(canonical.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(canonical.SchemaID)
 	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&canonical.Frozen, catalog)
 	if !catalogOK || !valuesPublished {
 		return false

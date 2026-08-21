@@ -3,8 +3,8 @@
 type Row = { id: string, name: string, score: number }
 
 local function summarize(rows: {Row}): string
-    local best: string = ""              -- FrameLocal
-    local top: number = 0                -- Scalar
+    local best: string = ""              -- Stack
+    local top: number = 0                -- no Heap root
     for _, r in ipairs(rows) do
         if r.score > top then
             top = r.score

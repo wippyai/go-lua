@@ -2,10 +2,9 @@
   "description": "CLEAN: reduces rows to a single derived string; the row tables are borrowed then dropped.",
   "check": {
     "placement": {
-      "min_stack": 1
+      "require_complete": true,
+      "min_stack": 1,
+      "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }

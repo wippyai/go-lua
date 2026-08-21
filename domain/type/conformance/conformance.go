@@ -114,3 +114,72 @@ func MayBeNilConformance(declaredMay, observed runtimekind.Set) Verdict {
 	}
 	return VerdictMayBeNil
 }
+
+// verdictPrefix is the key namespace this vocabulary's rows are declared
+// under. A row's spelling is the verdict's own name, and its key is that name
+// inside this namespace, so a verdict names one row of one category and cannot
+// collide with a member of another structural vocabulary that renders the same
+// way.
+const verdictPrefix = "conformance-verdict/"
+
+// verdictSpelling is the rendered name of each answer, in catalog order from
+// the first member. The table is positional against the const block above it:
+// a member added there and not here is a rejected build, because the catalog
+// below indexes this table by the member's own ordinal.
+var verdictSpelling = [verdictLimit - VerdictAbstain]string{
+	VerdictAbstain - VerdictAbstain:      "abstains",
+	VerdictConforms - VerdictAbstain:     "conforms",
+	VerdictViolates - VerdictAbstain:     "violates",
+	VerdictMayBeNil - VerdictAbstain:     "may be nil",
+	VerdictMemberAbsent - VerdictAbstain: "member absent",
+	VerdictUnproven - VerdictAbstain:     "unproven",
+}
+
+// Ordinal is this verdict's position in the declared verdict vocabulary. The
+// catalog is dense from the first answer, so the ordinal is the member's own
+// constant and no second numbering exists to drift from it.
+func (verdict Verdict) Ordinal() uint16 {
+	if !verdict.Available() {
+		return 0
+	}
+	return uint16(verdict)
+}
+
+// Spelling is this verdict's rendered name. It is the one spelling of the
+// answer in the analyzer: the structural declaration below publishes it, and a
+// consumer that renders a verdict reads it from the sealed table rather than
+// keeping a second list beside this one.
+func (verdict Verdict) Spelling() string {
+	if !verdict.Available() {
+		return ""
+	}
+	return verdictSpelling[verdict-VerdictAbstain]
+}
+
+// Catalog is the closed enumeration of this judgment's answers, in ordinal
+// order. It is the one enumeration of the vocabulary: the structural
+// declaration and any exhaustive consumer both range it.
+func Catalog() []Verdict {
+	catalog := make([]Verdict, 0, verdictLimit-VerdictAbstain)
+	for verdict := VerdictAbstain; verdict < verdictLimit; verdict++ {
+		catalog = append(catalog, verdict)
+	}
+	return catalog
+}
+
+// VerdictKey is the authored key one verdict is declared under. The domain's
+// registration turns it into a structural row; the key itself is owned here,
+// beside the answer it names, so no surface derives an identity from text of
+// its own.
+func VerdictKey(verdict Verdict) string {
+	if !verdict.Available() {
+		return ""
+	}
+	segment := []byte(verdict.Spelling())
+	for index, character := range segment {
+		if character == ' ' {
+			segment[index] = '-'
+		}
+	}
+	return verdictPrefix + string(segment)
+}

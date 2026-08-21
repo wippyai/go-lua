@@ -50,10 +50,10 @@ func TestMountedAdmissionsMatchSealedIngressPlacements(t *testing.T) {
 	}
 	observed := make(map[placement]int, len(mounted)+len(activations))
 	for _, row := range mounted {
-		observed[placement{capabilityKey(t, rules, row.Capability), row.Mount, row.Point, row.Occurrence}]++
+		observed[placement{capabilityKey(t, bound.Compilation(), rules, row.Capability), row.Mount, row.Point, row.Occurrence}]++
 	}
 	for _, row := range activations {
-		observed[placement{capabilityKey(t, rules, row.Capability), row.Mount, row.Point, row.Occurrence}]++
+		observed[placement{capabilityKey(t, bound.Compilation(), rules, row.Capability), row.Mount, row.Point, row.Occurrence}]++
 	}
 	if len(observed) != len(expected) {
 		t.Fatalf("admissions=%d sealed placements=%d", len(observed), len(expected))
@@ -97,7 +97,7 @@ func TestOwnerRejectedCallShapeIsNeverPlaced(t *testing.T) {
 		}
 	}
 	for _, row := range mounted {
-		if capabilityKey(t, rules, row.Capability) == runtimeKind {
+		if capabilityKey(t, bound.Compilation(), rules, row.Capability) == runtimeKind {
 			admitted++
 		}
 	}
@@ -106,7 +106,7 @@ func TestOwnerRejectedCallShapeIsNeverPlaced(t *testing.T) {
 	}
 }
 
-func TestLinkAdmissionsWalkPublishedCatalogs(t *testing.T) {
+func TestLinkAdmissionsWalkDeclaredCatalogs(t *testing.T) {
 	record := mountedRecord(t, "link-admission", "local function identity(value) return value end; return identity(1)")
 	bound := materializerBinding(t, record)
 	rules := bound.Rules()
@@ -119,22 +119,26 @@ func TestLinkAdmissionsWalkPublishedCatalogs(t *testing.T) {
 	}
 	expected := 0
 	seen := make(map[identity.ContentID]bool, len(admitted))
-	for _, key := range LinkKeys() {
+	for _, key := range LinkKeys(bound.Compilation()) {
 		catalog, catalogOK := rules.LinkCatalogByKey(key)
 		if !catalogOK {
 			t.Fatalf("link catalog %q", key)
 		}
-		expected += catalog.Count()
-		for index := 0; index < catalog.Count(); index++ {
+		ids := make([]identity.ContentID, catalog.Count())
+		for index := range ids {
 			id, idOK := catalog.IDAt(index)
 			if !idOK {
 				t.Fatalf("catalog %q row %d", key, index)
 			}
+			ids[index] = id
+		}
+		expected += len(ids)
+		for _, id := range ids {
 			seen[id] = false
 		}
 	}
 	if len(admitted) != expected {
-		t.Fatalf("link admissions=%d catalog rows=%d", len(admitted), expected)
+		t.Fatalf("link admissions=%d declared members=%d", len(admitted), expected)
 	}
 	for _, row := range admitted {
 		if !row.Capability.Link() || !row.Occurrence.Available() || !row.Declaration.Available() {
@@ -148,9 +152,13 @@ func TestLinkAdmissionsWalkPublishedCatalogs(t *testing.T) {
 	}
 }
 
-func capabilityKey(t *testing.T, rules *RuleBinding, capability engine.RuleSlotCapability) schema.Key {
+func capabilityKey(t *testing.T, compilation Compilation, rules *RuleBinding, capability engine.RuleSlotCapability) schema.Key {
 	t.Helper()
-	for _, entry := range registry.templates {
+	state := compilation.catalog
+	if state == nil {
+		t.Fatal("capability has no compilation environment")
+	}
+	for _, entry := range state.templates {
 		if entry == nil {
 			continue
 		}
@@ -210,5 +218,36 @@ func TestBodylessCallActivationIsFullyAdmitted(t *testing.T) {
 		if len(row.Candidates) != 0 {
 			t.Fatalf("activation %d reached %d candidates in a program that declares no body", index, len(row.Candidates))
 		}
+	}
+}
+
+// TestBodylessPlacementQueryRetainsAnAbsentSummary states the Placement query
+// half of the no-call law.  A zero-allocation Heap has no public Placement
+// rows, but the sealed query family remains an admitted construction lane and
+// retains its mount-qualified publication identity.
+func TestBodylessPlacementQueryRetainsAnAbsentSummary(t *testing.T) {
+	record := mountedRecord(t, "bodyless-placement-query", "local invoke: fun(): number = nil; local produced = invoke()")
+	if record.PlacementSchema.KeyCount() != 0 {
+		t.Fatalf("bodyless fixture has %d Placement coordinates, want zero", record.PlacementSchema.KeyCount())
+	}
+	bound := materializerBinding(t, record)
+	if bound.PlacementQuery() == nil {
+		t.Fatal("bodyless Placement query implementation is unavailable")
+	}
+	sites, sitesOK := SelectedQuerySites(bound.Compilation(), record.Artifacts)
+	if !sitesOK || len(sites) == 0 {
+		t.Fatal("bodyless fixture issued no selected query sites")
+	}
+	placementSites := 0
+	for _, site := range sites {
+		if site.Family == QueryFamilyPlacementSummary {
+			placementSites++
+		}
+	}
+	if placementSites == 0 {
+		t.Fatal("bodyless fixture issued no Placement query site")
+	}
+	if queries, queriesOK := bound.QueryAdmissions(sites); !queriesOK || len(queries) != len(sites) {
+		t.Fatalf("bodyless query admissions = %d/%v, sites = %d", len(queries), queriesOK, len(sites))
 	}
 }

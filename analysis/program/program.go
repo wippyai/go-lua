@@ -8,7 +8,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
@@ -16,32 +15,34 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-// Program is the immutable root of one published canonical owner quartet.
-// Owner-specific relations remain behind their typed Views; the root exposes
-// only generated schema queries over those immutable columns.
+// Program is the immutable root of one published canonical Source/Flow/Static
+// owner set plus scalar authored ModuleID. Owner-specific relations remain
+// behind their typed Views; the root exposes only generated schema queries
+// over those immutable columns.
 type Program struct {
-	source *source.Component
-	flow   *flow.Component
-	static *static.Component
-	module *imports.Component
-	id     identity.ContentID
-	counts denominator.CountRows
+	source   *source.Component
+	flow     *flow.Component
+	static   *static.Component
+	moduleID identity.ContentID
+	id       identity.ContentID
+	counts   denominator.CountRows
 }
 
-// Available reports whether all four immutable Program owners and their
-// provenance fence are sealed. Program itself is the construction input;
+// Available reports whether the three immutable Program owners, scalar
+// ModuleID, and their provenance fence are sealed. Program itself is the
+// construction input;
 // there is no second transport or proof object around it. Publish validates
-// the four-owner provenance fence before program.id is assigned, so a sealed
+// the scalar four-ID provenance fence before program.id is assigned, so a sealed
 // id is proof the fence already holds.
 func (program *Program) Available() bool {
-	return program != nil && program.source != nil && program.flow != nil && program.static != nil && program.module != nil &&
+	return program != nil && program.source != nil && program.flow != nil && program.static != nil && program.moduleID.Available() &&
 		program.id.Available()
 }
 
 var (
 	errInvalidAssembly = errors.New("program: invalid Assembly")
 	errUnavailable     = errors.New("program: unavailable owner identity")
-	errProvenance      = errors.New("program: Flow provenance does not match owner quartet")
+	errProvenance      = errors.New("program: Flow provenance does not match scalar owner fence")
 )
 
 // Publish consumes assembly and publishes the one immutable Program root.
@@ -49,24 +50,23 @@ var (
 // Assembly is a one-shot transfer capability. Take is performed before any
 // validation, so malformed or mismatched input is terminal and cannot be
 // retried through a copied token. The Flow provenance fence is checked against
-// the four exact child identities before the root identity is derived.
+// the three exact child identities plus scalar ModuleID before the root identity is derived.
 func Publish(assembly *flow.Assembly) (*Program, error) {
 	if assembly == nil {
 		return nil, errInvalidAssembly
 	}
 
-	sourceComponent, flowComponent, staticComponent, moduleComponent, err := assembly.Take()
+	sourceComponent, flowComponent, staticComponent, moduleID, err := assembly.Take()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errInvalidAssembly, err)
 	}
-	if sourceComponent == nil || flowComponent == nil || staticComponent == nil || moduleComponent == nil {
+	if sourceComponent == nil || flowComponent == nil || staticComponent == nil || !moduleID.Available() {
 		return nil, errInvalidAssembly
 	}
 
 	sourceID := sourceComponent.ContentID()
 	flowID := flowComponent.ContentID()
 	staticID := staticComponent.ContentID()
-	moduleID := moduleComponent.View().ContentID()
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() || !moduleID.Available() {
 		return nil, errUnavailable
 	}
@@ -93,21 +93,20 @@ func Publish(assembly *flow.Assembly) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	moduleCounts, err := imports.CountRows(moduleComponent.View())
-	if err != nil {
-		return nil, err
-	}
-	counts, err := combineProgramCountRows(sourceCounts, flowCounts, staticCounts, moduleCounts)
+	// Module authored rows now live behind Flow and are authenticated by the
+	// scalar moduleID. Their derived denominator family is sealed by the later
+	// artifact boundary; the root retains no Module component or lifecycle.
+	counts, err := combineProgramCountRows(sourceCounts, flowCounts, staticCounts)
 	if err != nil {
 		return nil, err
 	}
 	program := &Program{
-		source: sourceComponent,
-		flow:   flowComponent,
-		static: staticComponent,
-		module: moduleComponent,
-		id:     id,
-		counts: counts,
+		source:   sourceComponent,
+		flow:     flowComponent,
+		static:   staticComponent,
+		moduleID: moduleID,
+		id:       id,
+		counts:   counts,
 	}
 	return program, nil
 }
@@ -136,15 +135,7 @@ func (program *Program) Static() staticquery.View {
 	return program.static.View()
 }
 
-// Module returns the immutable Module owner view.
-func (program *Program) Module() imports.View {
-	if program == nil {
-		return imports.View{}
-	}
-	return program.module.View()
-}
-
-// ContentID returns the composite identity of the exact four-owner quartet.
+// ContentID returns the composite identity of the exact four-ID owner codec.
 func (program *Program) ContentID() identity.ContentID {
 	if program == nil {
 		return identity.ContentID{}

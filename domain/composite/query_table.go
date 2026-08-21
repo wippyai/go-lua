@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	"github.com/wippyai/go-lua/domain/placement"
+	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	"github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -17,11 +19,12 @@ import (
 // spelling is the owning domain's; these are the constants a consumer opens a
 // result slot with, and the table's own law holds the two to one name.
 const (
-	QueryFamilyValueSummary = value.SummaryResultFamily
-	QueryFamilyEffectExact  = factor.ExactResultFamily
+	QueryFamilyValueSummary     = value.SummaryResultFamily
+	QueryFamilyEffectExact      = factor.ExactResultFamily
+	QueryFamilyPlacementSummary = placement.SummaryResultFamily
 )
 
-// queryRegistrations is the authored analyzer query inventory: the two families
+// queryRegistrations is the authored analyzer query inventory: the three families
 // the sealed schema opens a query slot for. Each row instantiates one owning
 // domain's own query declaration, which carries that family's identities, its
 // subject axes, its fold contract, and the contributor that folds and freezes
@@ -47,6 +50,7 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 
 	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer))
 	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer))
+	add(wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer))
 
 	if rejected {
 		return nil, nil, false
@@ -76,11 +80,18 @@ type IssuedQuery struct {
 	Projection schema.Key
 }
 
-// QueryIssuance returns the sealed query inventory in catalog order.
-func QueryIssuance() []IssuedQuery {
-	sealRegistry()
-	issued := make([]IssuedQuery, 0, len(registry.queries))
-	for _, registration := range registry.queries {
+// QueryIssuance returns this compilation's sealed query inventory in catalog
+// order.
+func QueryIssuance(compilation Compilation) []IssuedQuery {
+	return queryIssuance(compilation.catalog)
+}
+
+func queryIssuance(state *catalog) []IssuedQuery {
+	if state == nil {
+		return nil
+	}
+	issued := make([]IssuedQuery, 0, len(state.queries))
+	for _, registration := range state.queries {
 		if registration == nil {
 			continue
 		}

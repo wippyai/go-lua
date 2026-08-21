@@ -129,8 +129,8 @@ func TestModelValuesPublicationDescriptorGettersRetainTypedAuthority(t *testing.
 	if !ok {
 		t.Fatal("publication descriptor unavailable")
 	}
-	if descriptor.Kind() != vocabulary.PublicationEffectSendTransfer || descriptor.Subject() != 0 || descriptor.Context() != 1 {
-		t.Fatalf("publication descriptor identity = kind:%d subject:%d context:%d", descriptor.Kind(), descriptor.Subject(), descriptor.Context())
+	if descriptor.Kind() != vocabulary.PublicationEffectSendTransfer || descriptor.Subject() != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) || descriptor.Context() != 1 {
+		t.Fatalf("publication descriptor identity = kind:%d subject:%#v context:%d", descriptor.Kind(), descriptor.Subject(), descriptor.Context())
 	}
 	if descriptor.Escape() != vocabulary.PublicationEscapeSendTransfer || descriptor.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite || descriptor.Lifetime() != vocabulary.PublicationLifetimePreserve {
 		t.Fatal("publication descriptor consequences changed")
@@ -140,7 +140,7 @@ func TestModelValuesPublicationDescriptorGettersRetainTypedAuthority(t *testing.
 func sendPublication(mutability vocabulary.PublicationMutabilityDisposition) *vocabulary.PublicationEffectSpec {
 	return &vocabulary.PublicationEffectSpec{
 		Kind:        vocabulary.PublicationEffectSendTransfer,
-		Subject:     0,
+		Subject:     vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0},
 		Destination: vocabulary.PublicationDestinationValueFormal,
 		Context:     1,
 		Escape:      vocabulary.PublicationEscapeSendTransfer,
@@ -179,7 +179,7 @@ func distinctPublicationEffectSpec(reverse bool) declaration.Spec {
 
 func publicationFor(kind vocabulary.PublicationEffectKind) *vocabulary.PublicationEffectSpec {
 	spec := &vocabulary.PublicationEffectSpec{
-		Kind: kind, Subject: 0, Destination: vocabulary.PublicationDestinationNone,
+		Kind: kind, Subject: vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}, Destination: vocabulary.PublicationDestinationNone,
 		Escape: vocabulary.PublicationEscapeNone, Mutability: vocabulary.PublicationMutabilityPreserve, Lifetime: vocabulary.PublicationLifetimePreserve,
 	}
 	switch kind {
@@ -240,7 +240,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	if !ok {
 		t.Fatal("explicit publication descriptor unavailable")
 	}
-	if descriptor.Kind() != vocabulary.PublicationEffectSendTransfer || descriptor.Subject() != 0 ||
+	if descriptor.Kind() != vocabulary.PublicationEffectSendTransfer || descriptor.Subject() != (vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0}) ||
 		descriptor.DestinationRole() != vocabulary.PublicationDestinationValueFormal || descriptor.Context() != 1 ||
 		descriptor.Escape() != vocabulary.PublicationEscapeSendTransfer || descriptor.Mutability() != vocabulary.PublicationMutabilityCopyOnWrite ||
 		descriptor.Lifetime() != vocabulary.PublicationLifetimePreserve {
@@ -293,7 +293,7 @@ func TestPublicationEffectDescriptorOwnerLaw(t *testing.T) {
 	}
 
 	badSubject := sendPublication(vocabulary.PublicationMutabilityPreserve)
-	badSubject.Subject = 2
+	badSubject.Subject = vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 2}
 	if err := publicationSealError(badSubject); err == nil {
 		t.Fatal("out-of-ABI publication subject sealed")
 	}

@@ -1,6 +1,8 @@
 package boot
 
 import (
+	"errors"
+
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	sealedrows "github.com/wippyai/go-lua/internal/rows"
 )
@@ -19,6 +21,16 @@ func Compile(input Input) (Table, error) {
 		entries: sealedrows.NewRows(ledger.entries), bindings: sealedrows.NewRows(ledger.bindings), metatables: sealedrows.NewRows(ledger.metatables),
 		globalRoot: ledger.globalRoot,
 		absent:     ledger.absent,
+	}
+	table.moduleRoots = make(map[string]vocabulary.InitialRoot)
+	for index := 0; index < table.roots.Count(); index++ {
+		root, ok := table.roots.At(index)
+		if !ok {
+			return Table{}, errors.New("target/boot: malformed module-root index")
+		}
+		if root.modulePath != "" {
+			table.moduleRoots[root.modulePath] = vocabulary.InitialRoot(index + 1)
+		}
 	}
 	table.valueIDs, err = table.sealValueIdentities(cloned.Keys, cloned.Operations)
 	if err != nil {

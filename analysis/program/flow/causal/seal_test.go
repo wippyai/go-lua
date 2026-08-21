@@ -21,7 +21,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/runtimeentry"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -1234,7 +1233,7 @@ func TestSemanticMatrixForeignProvenanceFailsClosed(t *testing.T) {
 	second := provenanceCallSpec("causal-provenance-b.lua", true)
 	left := openCausalFixture(t, first)
 	right := openCausalFixture(t, second)
-	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.ContentID(), left.staticView.ContentID(), left.moduleFinalize.View().ContentID()) {
+	if Matches(left.result, right.sourceView.Identity().ContentID(), left.flow.ContentID(), left.staticView.ContentID(), left.flow.ModuleID()) {
 		t.Fatal("equal-shape foreign Source identity matched causal Result")
 	}
 	// Route planning is path-only: Source cell roles are consumed before Causal
@@ -1288,7 +1287,7 @@ func TestSemanticMatrixEverySourceControlArcHasOneDisposition(t *testing.T) {
 
 func assertEveryArcDisposition(t *testing.T, f *causalFixture) {
 	t.Helper()
-	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
+	state, err := newSealState(f.sourceView, f.flow, f.bodies, f.forest, f.outcomes, f.control, f.recurrence, f.ports, f.executable, f.entries, f.staticView.ContentID(), f.flow.ModuleID())
 	if err != nil {
 		t.Fatalf("newSealState: %v", err)
 	}
@@ -1884,9 +1883,8 @@ type causalFixture struct {
 	capturedVertexPath    identity.ContentID
 	capturedArcs          []causalArcCapture
 
-	staticView     staticquery.View
-	flowFinalize   authored.Finalizer
-	moduleFinalize imports.Finalizer
+	staticView   staticquery.View
+	flowFinalize authored.Finalizer
 }
 
 type causalSpec struct {
@@ -1999,94 +1997,84 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 	flowInput.Counts = spec.counts
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
+	moduleView := flowView.Imports()
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
 	staticID := staticView.ContentID()
-	moduleID := moduleView.ContentID()
+	moduleID := flowView.ModuleID()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	ports, err := evaluation.SealPorts(preimage.Identity(), flowView, forest, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("evaluation.SealPorts: %v", err)
 	}
 
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinalize.Commit(indexInput)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 
 	graph, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	cellRoles := sourceView.CellRoles()
 	if !cellRoles.Matches(sourceView) {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatal("source.CellRoles: unavailable")
 	}
 	certificate, certificateErr := semanticpath.Seal(cellRoles, sourceView, flowView, bodies, bindingResult, forest, outcomes, flowView.ContentID(), staticID, moduleID)
 	if certificateErr != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("semanticpath.Seal: %v", certificateErr)
 	}
 	vertexPaths, pathsOK := certificate.VertexCatalog(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	vertexLease, vertexErr := graph.InstallVertexCatalogLease(bodies, vertexPaths)
 	if !pathsOK || vertexErr != nil || vertexLease == nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatal("sourcecontrol.InstallVertexCatalog: no exact path view")
 	}
 	capturedBodyEntryPath, capturedBodyTailPath, capturedVertexPath := identity.ContentID{}, identity.ContentID{}, identity.ContentID{}
@@ -2094,7 +2082,7 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 		var pathOK bool
 		capturedBodyEntryPath, pathOK = graph.BodyEntryPath(spec.captureBodyEntryPath)
 		if !pathOK {
-			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 			t.Fatal("sourcecontrol.BodyEntryPath: unavailable while catalog lease is live")
 		}
 	}
@@ -2102,7 +2090,7 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 		var pathOK bool
 		capturedBodyTailPath, pathOK = graph.BodyTailPath(spec.captureBodyTailPath)
 		if !pathOK {
-			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 			t.Fatal("sourcecontrol.BodyTailPath: unavailable while catalog lease is live")
 		}
 	}
@@ -2113,7 +2101,7 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 			capturedVertexPath, pathOK = graph.VertexPath(ref)
 		}
 		if !pathOK {
-			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+			flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 			t.Fatal("sourcecontrol.VertexPath: unavailable while catalog lease is live")
 		}
 	}
@@ -2122,11 +2110,11 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 		captureIndex := make(map[causalArcSelector]int, len(spec.captureArcs))
 		for index, selector := range spec.captureArcs {
 			if selector.Source == 0 || selector.Target == 0 {
-				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 				t.Fatal("causal fixture Arc capture selector is malformed")
 			}
 			if _, duplicate := captureIndex[selector]; duplicate {
-				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 				t.Fatal("causal fixture Arc capture selector is duplicated")
 			}
 			captureIndex[selector] = index
@@ -2135,7 +2123,7 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 		for ordinal := 0; ordinal < graph.ArcCount(); ordinal++ {
 			arc, arcOK := graph.ArcAt(ordinal)
 			if !arcOK {
-				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 				t.Fatal("causal fixture Arc denominator is unavailable while catalog lease is live")
 			}
 			selector := causalArcSelector{Source: arc.Source, Target: arc.Target, Decision: arc.Decision, Truth: arc.Truth}
@@ -2144,14 +2132,14 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 				continue
 			}
 			if capturedArcs[index].ordinal >= 0 {
-				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 				t.Fatal("causal fixture Arc capture selector is ambiguous")
 			}
 			capturedArcs[index] = causalArcCapture{arc: arc, ordinal: ordinal}
 		}
 		for index, capture := range capturedArcs {
 			if capture.ordinal < 0 {
-				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+				flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 				t.Fatalf("causal fixture Arc capture %d is absent", index)
 			}
 		}
@@ -2159,17 +2147,17 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 	outcomePaths, outcomePathsOK := certificate.OutcomePhases(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	outcomePhases, outcomeErr := graph.BuildOutcomePhases(sourceView, flowView, bodies, outcomes, outcomePaths)
 	if !outcomePathsOK || outcomeErr != nil || outcomePhases == nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatal("sourcecontrol.BuildOutcomePhases: unavailable")
 	}
 	execResult, err := executable.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID, certificate)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	entries, err := runtimeentry.Seal(sourceView, flowView, graph, ports, execResult, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("runtimeentry.Seal: %v", err)
 	}
 	if spec.runtimeEntryProbe != nil {
@@ -2178,29 +2166,29 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 	}
 	causalPaths, pathsOK := certificate.Causal(sourceView.Identity().ContentID(), flowView.ContentID(), staticID, moduleID)
 	if !pathsOK {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatal("semanticpath.Causal: view unavailable")
 	}
 	preparation, err := PrepareRoutePlanWithStructuralPaths(sourceView, flowView, bodies, forest, outcomes, graph, ports, execResult, entries, causalPaths, outcomePhases, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("causal.PrepareRoutePlan: %v", err)
 	}
 	preparationCopy := *preparation
 	result, err := preparation.Seal()
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("causal.Preparation.Seal: %v", err)
 	}
 	if _, err := preparationCopy.Seal(); err == nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatal("copied causal Preparation sealed a second transaction")
 	}
 	// The finished Causal authority retains no recurrence result. This fixture
 	// separately seals recurrence only for diagnostic laws that inspect it.
 	recur, err := recurrence.Seal(sourceView, flowView, bodies, forest, graph, staticID, moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("recurrence.Seal: %v", err)
 	}
 
@@ -2212,11 +2200,11 @@ func openCausalFixture(t testing.TB, spec causalSpec) *causalFixture {
 		graphLease:            vertexLease,
 		capturedBodyEntryPath: capturedBodyEntryPath, capturedBodyTailPath: capturedBodyTailPath,
 		capturedVertexPath: capturedVertexPath, capturedArcs: capturedArcs,
-		staticView: staticView, flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		staticView: staticView, flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
 		fixture.control.ReleaseVertexCatalog(fixture.graphLease)
-		flowtest.CloseFinalizers(source.Finalizer{}, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.flowFinalize)
 	})
 	return fixture
 }

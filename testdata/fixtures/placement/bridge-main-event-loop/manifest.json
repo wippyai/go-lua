@@ -1,15 +1,14 @@
 {
-  "description": "Actor main event loop: per-iteration scratch stays frame-local, the module cache is actor-local, and only the input-dependent forward is a deferred+promote escape.",
+  "description": "Actor main event loop: per-iteration scratch stays Stack, the module cache is OwnedHeap, and the conditional forward contributes SharedHeap demand at the source root.",
   "packages": [
     "channel"
   ],
   "check": {
     "placement": {
+      "require_complete": true,
       "min_stack": 3,
-      "min_owned_heap": 1
+      "min_owned_heap": 1,
+      "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }

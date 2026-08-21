@@ -5,7 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
-	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programstorage "github.com/wippyai/go-lua/analysis/program/storage"
+	"github.com/wippyai/go-lua/analysis/program/valuesource"
+	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
 
 // artifactStaticOperandAt admits one static-graph operand from the live
@@ -17,12 +19,12 @@ func artifactStaticOperandAt(input *program.Program, programID identity.ContentI
 	}
 	return input.Static().StaticOperandAt(term, staticquery.StaticOperandResolver{
 		Literal: func(term keyspace.Term) (identity.ContentID, keyspace.LiteralValue, bool) {
-			family, literal, literalOK := sourceLiteral(input, term)
+			family, literal, literalOK := valuesource.Literal(input, term)
 			ordinal := keyspace.TermOrdinal(term)
 			if !literalOK || ordinal == 0 {
 				return identity.ContentID{}, keyspace.LiteralValue{}, false
 			}
-			id, _, issued, sourceOK := valueSourceIdentityAt(input, programID, family, int(ordinal-1))
+			id, _, issued, sourceOK := valuesource.IdentityAt(input, family, int(ordinal-1))
 			return id, literal, sourceOK && issued == term
 		},
 		Claim: func(term keyspace.Term) (keyspace.Term, bool) {
@@ -58,7 +60,7 @@ func artifactStaticTypeValueOperand(input *program.Program, programID identity.C
 	if ordinal == 0 {
 		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
 	}
-	sourceID, _, source, sourceOK := valueSourceIdentityAt(input, programID, keyspace.FamilyTypeValue, int(ordinal-1))
+	sourceID, _, source, sourceOK := valuesource.IdentityAt(input, keyspace.FamilyTypeValue, int(ordinal-1))
 	return sourceID, referenceID, bodyPath, pathOK && sourceOK && source == term
 }
 
@@ -75,14 +77,14 @@ func artifactStaticRuntimeSubjectOperand(input *program.Program, programID ident
 	}
 	cellTerm, cellTermOK := input.Flow().Authored().Storage().Cells().At(int(keyspace.TermOrdinal(source) - 1))
 	_, _, _, cellRelationOK := input.Flow().Authored().Storage().Cells().Get(source)
-	cellID, cellOK := programschema.StorageCellIdentity(programID, source)
+	cellID, cellOK := lifecycle.StorageCellIdentity(programID, source)
 	cellOK = cellRelationOK && cellOK
 	bodyPath, bodyID, bodyOK := input.Flow().BodyContextIDs(owner)
 	readPath, readPathOK := input.Flow().SemanticTermPath(term)
 	_, entryTerm, finishTerm, spanOK := input.EvaluationSpan(term)
 	entry, entryOK := input.Flow().Causal().Sites().ForTerm(entryTerm)
 	finish, finishOK := input.Flow().Causal().Sites().ForTerm(finishTerm)
-	readID, readOK := programschema.StorageReadIdentity(programID, bodyPath, bodyID, readPath, entry.ContextID(), finish.ContextID())
+	readID, readOK := programstorage.StorageReadIdentity(programID, bodyPath, bodyID, readPath, entry.ContextID(), finish.ContextID())
 	return readID, cellID, bodyPath, readOK && cellOK && cellTermOK && cellTerm == source && bodyOK && bodyID.Available() && readPathOK && spanOK && entryOK && finishOK && entry.Available() && finish.Available()
 }
 

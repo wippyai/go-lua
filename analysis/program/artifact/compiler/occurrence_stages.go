@@ -2,182 +2,80 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/localtransfer"
+	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
-type computationStage struct {
-	base       identity.ContentID
-	point      identity.ContentID
-	occurrence identity.ContentID
-	key        schema.Key
-	left       identity.ContentID
-	right      identity.ContentID
-}
-
-func (stage computationStage) available() bool {
-	return stage.base.Available() && stage.point.Available() && stage.point != stage.base && stage.occurrence.Available() &&
-		stage.key.Available() && stage.left.Available() && stage.right.Available()
-}
-
 func (compiler *compiler) localComputationStage(base identity.ContentID, key schema.Key, occurrence, left, right identity.ContentID) (identity.ContentID, bool) {
-	if compiler == nil || compiler.computationStages == nil || !base.Available() || !occurrence.Available() ||
-		!key.Available() || !left.Available() || !right.Available() {
+	if compiler == nil || compiler.stages == nil {
 		return identity.ContentID{}, false
 	}
-	framing, framingOK := compiler.issuance.formFraming(IssuanceFormComputation)
+	framing, framingOK := compiler.issuance.FormFraming(issuance.FormComputation)
 	if !framingOK {
 		return identity.ContentID{}, false
 	}
-	point := digest(framing, artifactFormat(), bytesField(base), keyField(key), bytesField(occurrence))
-	stage := computationStage{base: base, point: point, occurrence: occurrence, key: key, left: left, right: right}
-	if !stage.available() {
-		return identity.ContentID{}, false
-	}
-	for _, prior := range compiler.computationStages[base] {
-		if prior.point == point || prior.occurrence == occurrence {
-			return identity.ContentID{}, false
-		}
-	}
-	compiler.computationStages[base] = append(compiler.computationStages[base], stage)
-	return point, true
+	return compiler.stages.Computation(base, framing, key, occurrence, left, right)
 }
 
-// orderedLocalComputations closes the Program-local primitive dependency
-// graph without consulting Link coordinates. Binary operands and binary
-// results share the same Program semantic span identity, so nested
-// computations induce exact edges. Unrelated ready rows use their stable
-// stage identity only as a canonical serialization order.
-func (compiler *compiler) orderedLocalComputations(base identity.ContentID) ([]computationStage, bool) {
-	if compiler == nil || !base.Available() {
-		return nil, false
-	}
-	rows := compiler.computationStages[base]
-	if len(rows) == 0 {
-		return nil, true
-	}
-	producer := make(map[identity.ContentID]int, len(rows))
-	pointIndex := make(map[identity.ContentID]int, len(rows))
-	for index, row := range rows {
-		if !row.available() || row.base != base {
-			return nil, false
-		}
-		if _, duplicate := producer[row.occurrence]; duplicate {
-			return nil, false
-		}
-		if _, duplicate := pointIndex[row.point]; duplicate {
-			return nil, false
-		}
-		producer[row.occurrence] = index
-		pointIndex[row.point] = index
-	}
-	ordered := make([]computationStage, 0, len(rows))
-	placed := make([]bool, len(rows))
-	for len(ordered) < len(rows) {
-		ready := make([]identity.ContentID, 0, len(rows)-len(ordered))
-		for index, row := range rows {
-			if placed[index] {
-				continue
-			}
-			blocked := false
-			for _, input := range [...]identity.ContentID{row.left, row.right} {
-				if dependency, found := producer[input]; found && !placed[dependency] {
-					blocked = true
-					break
-				}
-			}
-			if !blocked {
-				ready = append(ready, row.point)
-			}
-		}
-		if len(ready) == 0 {
-			return nil, false
-		}
-		identity.SortContentIDs(ready)
-		index := pointIndex[ready[0]]
-		placed[index] = true
-		ordered = append(ordered, rows[index])
-	}
-	return ordered, true
-}
-
-type callStageSet struct {
-	dispatch identity.ContentID
-	summary  identity.ContentID
-	effect   identity.ContentID
-}
-
-func (stages callStageSet) available(base identity.ContentID) bool {
-	return base.Available() && stages.dispatch.Available() && stages.summary.Available() && stages.effect.Available() &&
-		stages.dispatch != base && stages.summary != base && stages.effect != base &&
-		stages.dispatch != stages.summary && stages.dispatch != stages.effect && stages.summary != stages.effect
-}
-
-func (compiler *compiler) callStage(base identity.ContentID) (callStageSet, bool) {
-	if compiler == nil || compiler.callStages == nil || !base.Available() {
-		return callStageSet{}, false
-	}
-	if stages := compiler.callStages[base]; stages.available(base) {
-		return stages, true
+func (compiler *compiler) callStage(base identity.ContentID) (stageplan.Call, bool) {
+	if compiler == nil || compiler.stages == nil || !base.Available() {
+		return stageplan.Call{}, false
 	}
 	if _, known := compiler.pointGeometry[base]; !known {
-		return callStageSet{}, false
+		return stageplan.Call{}, false
 	}
-	dispatch, dispatchOK := compiler.issuance.stageFraming(programschema.RuleStageCallDispatch)
-	summary, summaryOK := compiler.issuance.stageFraming(programschema.RuleStageCallSummary)
-	effect, effectOK := compiler.issuance.stageFraming(programschema.RuleStageCallEffect)
+	dispatch, dispatchOK := compiler.issuance.StageFraming(programschema.RuleStageCallDispatch)
+	summary, summaryOK := compiler.issuance.StageFraming(programschema.RuleStageCallSummary)
+	effect, effectOK := compiler.issuance.StageFraming(programschema.RuleStageCallEffect)
 	if !dispatchOK || !summaryOK || !effectOK {
-		return callStageSet{}, false
+		return stageplan.Call{}, false
 	}
-	stages := callStageSet{
-		dispatch: digest(dispatch, artifactFormat(), bytesField(base)),
-		summary:  digest(summary, artifactFormat(), bytesField(base)),
-		effect:   digest(effect, artifactFormat(), bytesField(base)),
-	}
-	if !stages.available(base) {
-		return callStageSet{}, false
-	}
-	compiler.callStages[base] = stages
-	return stages, true
-}
-
-// reusableStage raises the memoized cut one placement form names over a base.
-// The local-family cuts differ only in the memo they occupy and the framing
-// their form declares, so they are one constructor.
-func (compiler *compiler) reusableStage(memo map[identity.ContentID]identity.ContentID, form IssuanceForm, base identity.ContentID) (identity.ContentID, bool) {
-	if compiler == nil || memo == nil || !base.Available() {
-		return identity.ContentID{}, false
-	}
-	if stage := memo[base]; stage.Available() {
-		return stage, true
-	}
-	framing, framingOK := compiler.issuance.formFraming(form)
-	if _, known := compiler.pointGeometry[base]; !known || !framingOK {
-		return identity.ContentID{}, false
-	}
-	stage := digest(framing, artifactFormat(), bytesField(base))
-	if !stage.Available() || stage == base {
-		return identity.ContentID{}, false
-	}
-	memo[base] = stage
-	return stage, true
+	return compiler.stages.Call(base, dispatch, summary, effect)
 }
 
 func (compiler *compiler) localStage(base identity.ContentID) (identity.ContentID, bool) {
 	if compiler == nil {
 		return identity.ContentID{}, false
 	}
-	return compiler.reusableStage(compiler.localStages, IssuanceFormLocal, base)
+	if compiler.stages == nil || !base.Available() {
+		return identity.ContentID{}, false
+	}
+	framing, framingOK := compiler.issuance.FormFraming(issuance.FormLocal)
+	if _, known := compiler.pointGeometry[base]; !known || !framingOK {
+		return identity.ContentID{}, false
+	}
+	return compiler.stages.Local(base, framing)
+}
+
+func (compiler *compiler) localSuccessorStage(base identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
+	if compiler == nil || compiler.stages == nil || !base.Available() {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	localFraming, localFramingOK := compiler.issuance.FormFraming(issuance.FormLocal)
+	successorFraming, successorFramingOK := compiler.issuance.FormFraming(issuance.FormLocalSuccessor)
+	if _, known := compiler.pointGeometry[base]; !known || !localFramingOK || !successorFramingOK {
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+	local, localOK := compiler.stages.Local(base, localFraming)
+	successor, successorOK := compiler.stages.Successor(base, successorFraming)
+	return local, successor, localOK && successorOK && local != successor
 }
 
 // predecessorStage is the Program-owned execution cut for a routed strong
 // write. It is distinct from the ordinary local cut because rules at one point
 // all read one immutable incoming state.
-func (compiler *compiler) predecessorStage(base identity.ContentID) (identity.ContentID, bool) {
-	if compiler == nil {
+func (compiler *compiler) predecessorStage(base identity.ContentID, writes schema.Key) (identity.ContentID, bool) {
+	if compiler == nil || compiler.stages == nil || !base.Available() || !writes.Available() {
 		return identity.ContentID{}, false
 	}
-	return compiler.reusableStage(compiler.predecessorStages, IssuanceFormLocalPredecessor, base)
+	framing, framingOK := compiler.issuance.FormFraming(issuance.FormLocalPredecessor)
+	if _, known := compiler.pointGeometry[base]; !known || !framingOK {
+		return identity.ContentID{}, false
+	}
+	return compiler.stages.Predecessor(base, framing, writes)
 }
 
 // installLocalStagesFailure splices every reusable synthetic execution cut
@@ -186,87 +84,75 @@ func (compiler *compiler) predecessorStage(base identity.ContentID) (identity.Co
 // successor continuations depart that stage. It never merges back into the
 // base, because base→stage→base would fabricate a recurrence.
 func (compiler *compiler) installLocalStagesFailure() CompileFailure {
-	if len(compiler.predecessorStages) == 0 && len(compiler.localStages) == 0 && len(compiler.computationStages) == 0 && len(compiler.callStages) == 0 {
+	if compiler == nil || compiler.stages == nil {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	plan, planFault := compiler.stages.Seal()
+	if planFault.Failed() {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
+	}
+	if plan.Count() == 0 {
 		return CompileFailure{}
 	}
-	baseSet := make(map[identity.ContentID]struct{}, len(compiler.predecessorStages)+len(compiler.localStages)+len(compiler.computationStages)+len(compiler.callStages))
-	for base := range compiler.predecessorStages {
-		baseSet[base] = struct{}{}
-	}
-	for base := range compiler.localStages {
-		baseSet[base] = struct{}{}
-	}
-	for base := range compiler.computationStages {
-		baseSet[base] = struct{}{}
-	}
-	for base := range compiler.callStages {
-		baseSet[base] = struct{}{}
-	}
-	bases := make([]identity.ContentID, 0, len(baseSet))
-	for base := range baseSet {
-		bases = append(bases, base)
-	}
-	identity.SortContentIDs(bases)
-	var callTransport callStageTransport
-	if len(compiler.callStages) != 0 {
-		plan, planOK := compiler.issuance.callStageTransport()
+	var dispatchEntry, effectEntry, effectBypass, dispatchForward, summaryForward []schema.Key
+	for index := 0; index < plan.Count(); index++ {
+		placement, placementOK := plan.At(index)
+		if !placementOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		if _, hasCall := placement.Call(); !hasCall {
+			continue
+		}
+		var planOK bool
+		dispatchEntry, effectEntry, effectBypass, dispatchForward, summaryForward, planOK = compiler.issuance.CallStageTransport()
 		if !planOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 		}
-		callTransport = plan
+		break
 	}
-	stageFor := make(map[identity.ContentID][]identity.ContentID, len(bases))
-	computationInput := make(map[identity.ContentID]identity.ContentID)
+	stageFor := make(map[identity.ContentID][]identity.ContentID, plan.Count())
+	stagedInput := make(map[identity.ContentID]identity.ContentID)
 	callInput := make(map[identity.ContentID]identity.ContentID)
 	localPredecessorInput := make(map[identity.ContentID]identity.ContentID)
-	appendTransfer := func(domain string, from, to identity.ContentID, full bool, writes ...schema.Key) bool {
-		ordered, orderedOK := orderedWrites(writes)
-		if !orderedOK {
-			return false
-		}
-		fields := []field{bytesField(from), bytesField(to), boolField(full), uintField(uint64(len(ordered)))}
-		for _, write := range ordered {
-			fields = append(fields, keyField(write))
-		}
-		edge := localTransferDraft{id: digest(domain, artifactFormat(), fields...), from: from, to: to, full: full, writes: ordered}
-		if !edge.Available() {
-			return false
-		}
-		compiler.localTransfers = append(compiler.localTransfers, edge)
-		return true
+	localStageFor := make(map[identity.ContentID]identity.ContentID)
+	if compiler.localTransfer == nil {
+		compiler.localTransfer = localtransfer.New(artifactFormat())
 	}
-	for index, base := range bases {
+	for index := 0; index < plan.Count(); index++ {
+		placement, placementOK := plan.At(index)
+		if !placementOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		base := placement.Base()
 		geometry, baseOK := compiler.pointGeometry[base]
 		if !baseOK || !geometry.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 		}
 		sequence := make([]identity.ContentID, 0, 6)
 		predecessor := base
-		if stage := compiler.predecessorStages[base]; stage.Available() {
+		if stage, staged := placement.Predecessor(); staged {
 			written := make(map[schema.Key]struct{})
-			for _, placement := range compiler.ruleOccurrences {
-				if placement.PointID() != stage || placement.InputKind() != programschema.RuleInputPredecessor {
-					continue
-				}
-				axis, axisOK := compiler.issuance.writesFor(placement.Key())
-				if !axisOK {
-					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			for writeIndex := 0; writeIndex < placement.PredecessorWriteCount(); writeIndex++ {
+				axis, axisOK := placement.PredecessorWriteAt(writeIndex)
+				if !axisOK || !axis.Available() {
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, writeIndex, CompileReasonOccurrenceUnavailable)
 				}
 				written[axis] = struct{}{}
 			}
-			transport, transportOK := compiler.issuance.transportKeysExcept(written)
+			transport, transportOK := compiler.issuance.TransportKeysExcept(written)
 			if len(written) == 0 || !transportOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			sequence = append(sequence, stage)
-			if len(transport) != 0 && !appendTransfer("analysis/program-artifact/local-predecessor-transfer", base, stage, false, transport...) {
+			if len(transport) != 0 && !compiler.localTransfer.Append("analysis/program-artifact/local-predecessor-transfer", base, stage, false, transport...) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			predecessor = stage
 		}
-		if local := compiler.localStages[base]; local.Available() {
+		if local, staged := placement.Local(); staged {
+			localStageFor[base] = local
 			sequence = append(sequence, local)
-			if !appendTransfer("analysis/program-artifact/local-transfer", predecessor, local, true) {
+			if !compiler.localTransfer.Append("analysis/program-artifact/local-transfer", predecessor, local, true) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
 			if predecessor != base {
@@ -274,29 +160,43 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			}
 			predecessor = local
 		}
-		computations, computationsOK := compiler.orderedLocalComputations(base)
-		if !computationsOK {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
-		}
-		for _, computation := range computations {
-			sequence = append(sequence, computation.point)
-			if !appendTransfer("analysis/program-artifact/local-computation-transfer", predecessor, computation.point, true) {
+		if successor, staged := placement.Successor(); staged {
+			if predecessor == base {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			sequence = append(sequence, successor)
+			if !compiler.localTransfer.Append("analysis/program-artifact/local-successor-transfer", predecessor, successor, true) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
-			computationInput[computation.point] = predecessor
-			predecessor = computation.point
+			stagedInput[successor] = predecessor
+			predecessor = successor
+		}
+		for computationIndex := 0; computationIndex < placement.ComputationCount(); computationIndex++ {
+			computation, computationOK := placement.ComputationAt(computationIndex)
+			point := computation.Point()
+			if !computationOK || !point.Available() {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, computationIndex, CompileReasonOccurrenceUnavailable)
+			}
+			sequence = append(sequence, point)
+			if !compiler.localTransfer.Append("analysis/program-artifact/local-computation-transfer", predecessor, point, true) {
+				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
+			}
+			stagedInput[point] = predecessor
+			predecessor = point
 		}
 		callBase := predecessor
-		if stages := compiler.callStages[base]; stages.available(base) {
-			sequence = append(sequence, stages.dispatch, stages.summary, stages.effect)
-			if !appendTransfer("analysis/program-artifact/call-base-dispatch-transfer", callBase, stages.dispatch, false, callTransport.dispatchEntry...) ||
-				!appendTransfer("analysis/program-artifact/call-base-summary-transfer", callBase, stages.summary, false, callTransport.effectBypass...) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-summary-transfer", stages.dispatch, stages.summary, false, callTransport.dispatchForward...) ||
-				!appendTransfer("analysis/program-artifact/call-base-effect-transfer", callBase, stages.effect, true) ||
-				!appendTransfer("analysis/program-artifact/call-dispatch-effect-transfer", stages.dispatch, stages.effect, false, callTransport.dispatchForward...) {
+		if calls, staged := placement.Call(); staged {
+			dispatch, summary, effect := calls.Dispatch(), calls.Summary(), calls.Effect()
+			sequence = append(sequence, dispatch, summary, effect)
+			if !compiler.localTransfer.Append("analysis/program-artifact/call-base-dispatch-transfer", callBase, dispatch, false, dispatchEntry...) ||
+				!compiler.localTransfer.Append("analysis/program-artifact/call-base-summary-transfer", callBase, summary, false, effectBypass...) ||
+				!compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-summary-transfer", dispatch, summary, false, dispatchForward...) ||
+				!compiler.localTransfer.Append("analysis/program-artifact/call-base-effect-transfer", callBase, effect, false, effectEntry...) ||
+				!compiler.localTransfer.Append("analysis/program-artifact/call-dispatch-effect-transfer", dispatch, effect, false, dispatchForward...) ||
+				!compiler.localTransfer.Append("analysis/program-artifact/call-summary-effect-transfer", summary, effect, false, summaryForward...) {
 				return compileFailure(CompileStageOccurrences, CompileRowEnvironment, index, -1, CompileReasonEnvironmentUnavailable)
 			}
-			callInput[stages.dispatch] = callBase
+			callInput[dispatch] = callBase
 		}
 		for _, stage := range sequence {
 			if !stage.Available() {
@@ -305,7 +205,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			if _, duplicate := compiler.pointGeometry[stage]; duplicate {
 				return compileFailure(CompileStageOccurrences, CompileRowPoint, index, -1, CompileReasonPointUnavailable)
 			}
-			compiler.pointGeometry[stage] = pointDraft{id: stage, decisions: append([]identity.ContentID(nil), geometry.decisions...)}
+			compiler.pointGeometry[stage] = pointDraft{id: stage, decisionScope: geometry.decisionScope}
 		}
 		stageFor[base] = sequence
 	}
@@ -334,20 +234,14 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 	}
 	if compiler.environmentByRoute == nil {
-		compiler.environmentByRoute = make(map[identity.ContentID]environmentEdgeDraft, len(compiler.environment))
+		compiler.environmentByRoute = make(map[identity.ContentID]environmentRouteIndex, len(compiler.environment))
 	} else {
 		clear(compiler.environmentByRoute)
 	}
-	if compiler.environmentRouteDuplicates == nil {
-		compiler.environmentRouteDuplicates = make(map[identity.ContentID]struct{}, len(compiler.environment))
-	} else {
-		clear(compiler.environmentRouteDuplicates)
-	}
-	for _, edge := range compiler.environment {
-		if _, duplicate := compiler.environmentByRoute[edge.route]; duplicate {
-			compiler.environmentRouteDuplicates[edge.route] = struct{}{}
-		} else {
-			compiler.environmentByRoute[edge.route] = edge
+	for edgeOrdinal := range compiler.environment {
+		edge := compiler.environment[edgeOrdinal]
+		if !recordEnvironmentRoute(compiler.environmentByRoute, edge.route, edgeOrdinal, len(compiler.environment)) {
+			return compileFailure(CompileStageOccurrences, CompileRowEnvironment, edgeOrdinal, -1, CompileReasonEnvironmentUnavailable)
 		}
 	}
 	for index := range compiler.ruleOccurrences {
@@ -359,8 +253,14 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 		if inputKind == programschema.RuleInputPredecessor {
 			route, routeOK := placement.PredecessorRouteID()
-			edge, found := compiler.environmentByRoute[route]
-			if !routeOK || !found || !edge.to.Available() || edge.to == point {
+			routeIndex, found := compiler.environmentByRoute[route]
+			edgeOrdinal, unique := routeIndex.uniqueAt(len(compiler.environment))
+			if !routeOK || !found || !unique {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+			}
+			edge := compiler.environment[edgeOrdinal]
+			expectedID := environmentRouteOccurrenceID(compiler.input.ContentID(), route, edge.arm)
+			if !edge.Available() || edge.route != route || edge.id != expectedID || !edge.to.Available() || edge.to == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			if !compiler.replaceRuleOccurrenceInput(index, edge.to) {
@@ -368,7 +268,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			}
 			continue
 		}
-		if input, computation := computationInput[point]; computation {
+		if input, staged := stagedInput[point]; staged {
 			if inputKind != programschema.RuleInputFinish || !input.Available() || input == point {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -410,7 +310,7 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 			continue
 		}
 		exit := stages[len(stages)-1]
-		local := compiler.localStages[base]
+		local := localStageFor[base]
 		if local.Available() && point == local {
 			continue
 		}
@@ -449,17 +349,12 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 	regionMembership := make(map[identity.ContentID]int, len(stageFor))
 	for regionIndex := range compiler.regions {
 		members := compiler.regions[regionIndex].members
-		rewritten := make([]identity.ContentID, 0, len(members)+len(stageFor))
-		for _, member := range members {
-			rewritten = append(rewritten, member)
-			injected := false
-			if stages, staged := stageFor[member]; staged {
-				rewritten = append(rewritten, stages...)
-				injected = true
-			}
-			if injected {
-				regionMembership[member]++
-			}
+		rewritten, injected, rewriteOK := rewriteRegionMembers(members, stageFor)
+		if !rewriteOK {
+			return compileFailure(CompileStageOccurrences, CompileRowRegion, regionIndex, -1, CompileReasonRegionReference)
+		}
+		for _, member := range injected {
+			regionMembership[member]++
 		}
 		compiler.regions[regionIndex].members = rewritten
 	}
@@ -469,4 +364,34 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 		}
 	}
 	return CompileFailure{}
+}
+
+// rewriteRegionMembers inserts only the synthetic stages that belong to one
+// region. Its capacity is derived from that region's actual injected stages,
+// never from the global stage directory.
+func rewriteRegionMembers(members []identity.ContentID, stageFor map[identity.ContentID][]identity.ContentID) ([]identity.ContentID, []identity.ContentID, bool) {
+	additional := 0
+	for _, member := range members {
+		stages, staged := stageFor[member]
+		if !staged {
+			continue
+		}
+		if len(stages) > int(^uint(0)>>1)-additional {
+			return nil, nil, false
+		}
+		additional += len(stages)
+	}
+	if additional > int(^uint(0)>>1)-len(members) {
+		return nil, nil, false
+	}
+	rewritten := make([]identity.ContentID, 0, len(members)+additional)
+	injected := make([]identity.ContentID, 0)
+	for _, member := range members {
+		rewritten = append(rewritten, member)
+		if stages, staged := stageFor[member]; staged {
+			rewritten = append(rewritten, stages...)
+			injected = append(injected, member)
+		}
+	}
+	return rewritten, injected, true
 }

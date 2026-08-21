@@ -68,28 +68,6 @@ func (schema *Schema) Scalar(root Root, value Value, endpoint Endpoint) (Scalar,
 	return Scalar{}, false
 }
 
-// Pack publishes one exact term at root. It is the mirror of Term and keeps
-// the complete target-vector admission in Builder rather than in a Rule.
-func (builder Builder) PackTerm(term Term) (Value, bool) {
-	if !builder.valid() || !term.valid() || term.owner != builder.relation.owner {
-		return Value{}, false
-	}
-	relationIndex, relationOK := builder.schema.state.relationIndex[builder.relation]
-	if !relationOK || uint64(relationIndex) >= uint64(len(builder.schema.state.roots)) {
-		return Value{}, false
-	}
-	port := builder.schema.state.roots[relationIndex].port
-	equation, ok := builder.Pack(port, term)
-	if !ok {
-		return Value{}, false
-	}
-	caseValue, ok := builder.Case(equation)
-	if !ok {
-		return Value{}, false
-	}
-	return builder.Value(caseValue)
-}
-
 // ScalarAt applies Lua's zero-based Pack selection law. Closed terms nil-fill
 // past their end; open terms preserve the exact shared tail subject and its
 // adjusted offset. A dynamic/Any term remains class-unknown.
@@ -98,91 +76,6 @@ func (builder Builder) ScalarAt(term Term, index TableIndex) (Scalar, bool) {
 		return Scalar{}, false
 	}
 	return projectTermTableIndex(term, index)
-}
-
-// ScalarAlternatives is the exact finite marginal for one table position.
-// Unlike ScalarAt it preserves open-tail suffix branches rather than joining
-// them into a class-only Scalar. Callers publish the returned alternatives as
-// a Value union when the surrounding transformation can retain that union.
-func (builder Builder) ScalarAlternatives(term Term, index TableIndex) ([]Scalar, bool) {
-	if !builder.valid() || !term.valid() || term.owner != builder.relation.owner || !index.valid() || index.offset.owner != term.owner {
-		return nil, false
-	}
-	return projectTermTableIndexAlternatives(term, index)
-}
-
-// Splice implements the two Lua Values list modes. With final=false every
-// expression is scalarized once (the ordinary non-final list rule). With
-// final=true all preceding expressions are scalarized and the final
-// expression contributes its complete Pack, including an open tail and
-// end-relative suffix.
-func (builder Builder) Splice(terms []Term, final bool) (Term, bool) {
-	if !builder.valid() {
-		return Term{}, false
-	}
-	if len(terms) == 0 {
-		return builder.Closed()
-	}
-	for _, term := range terms {
-		if !term.valid() || term.owner != builder.relation.owner {
-			return Term{}, false
-		}
-	}
-	if !final {
-		zero, ok := builder.Zero()
-		if !ok {
-			return Term{}, false
-		}
-		prefix := make([]Scalar, 0, len(terms))
-		for _, term := range terms {
-			scalar, scalarOK := builder.ScalarAt(term, mustTableIndex(builder, zero))
-			if !scalarOK {
-				return Term{}, false
-			}
-			prefix = append(prefix, scalar)
-		}
-		return builder.Closed(prefix...)
-	}
-
-	zero, ok := builder.Zero()
-	if !ok {
-		return Term{}, false
-	}
-	prefix := make([]Scalar, 0, len(terms))
-	for _, term := range terms[:len(terms)-1] {
-		scalar, scalarOK := builder.ScalarAt(term, mustTableIndex(builder, zero))
-		if !scalarOK {
-			return Term{}, false
-		}
-		prefix = append(prefix, scalar)
-	}
-	last := terms[len(terms)-1]
-	switch last.kind {
-	case TermClosed:
-		prefix = append(prefix, last.prefix...)
-		return builder.Closed(prefix...)
-	case TermOpen:
-		prefix = append(prefix, last.prefix...)
-		return builder.Open(prefix, last.rest, last.suffix)
-	case TermAny:
-		if len(prefix) == 0 {
-			return builder.AnyPack()
-		}
-		rest, restOK := builder.AnyTail(builder.schema.state.owner.classes.AnyValue())
-		if !restOK {
-			return Term{}, false
-		}
-		return builder.Open(prefix, rest, nil)
-	default:
-		return Term{}, false
-	}
-}
-
-// mustTableIndex turns a presealed zero Offset into the corresponding table
-// selector. It is called only after Builder.Zero succeeded.
-func mustTableIndex(builder Builder, offset Offset) TableIndex {
-	index, _ := tableIndexForOffset(offset)
-	return index
 }
 
 // Bind returns the fixed Cell-facing Pack and the residual Pack after a
@@ -362,33 +255,6 @@ func (builder Builder) openHeadScalar(term Term, offset int) (Scalar, bool) {
 	default:
 		return Scalar{}, false
 	}
-}
-
-// Take returns the first count adjusted slots, preserving nil-fill and
-// widening a dynamic term only when the source term itself is dynamic.
-func (builder Builder) Take(term Term, count int) (Term, bool) {
-	fixed, _, ok := builder.Bind(term, count)
-	return fixed, ok
-}
-
-// Drop returns the exact residual Pack after count slots. Closed terms become
-// an empty Closed term; open tails retain their original subject and offset.
-func (builder Builder) Drop(term Term, count int) (Term, bool) {
-	if !builder.valid() || !term.valid() || term.owner != builder.relation.owner || count < 0 {
-		return Term{}, false
-	}
-	alternatives, ok := builder.DropAlternatives(term, count)
-	if !ok || len(alternatives) == 0 {
-		return Term{}, false
-	}
-	if len(alternatives) == 1 {
-		return alternatives[0], true
-	}
-	// A single Term cannot encode the finite union of long-middle and
-	// short-suffix residuals without overapproximating it. Return the exact
-	// alternatives through DropAlternatives; callers that require one result
-	// must handle the rejected union explicitly rather than silently widening.
-	return Term{}, false
 }
 
 // DropAlternatives retains the finite suffix alternatives which a symbolic

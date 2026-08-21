@@ -34,9 +34,9 @@ type selectorFrame struct {
 }
 
 // stagedReadSelector is the minimal immutable read geometry consumed by the
-// selector frame. Receipt Rule
-// cells supply a Schema-fenced implementation. Keeping the frame on this
-// scalar seam prevents the Schema path from reconstructing a cold rule row.
+// selector frame. Rule cells supply a Schema-fenced implementation. Keeping
+// the frame on this scalar seam prevents the Schema path from reconstructing a
+// cold rule row.
 type stagedReadSelector interface {
 	selectorReadIndex() int
 	selectorDeclaresRead(int) bool

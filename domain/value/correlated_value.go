@@ -591,6 +591,49 @@ func (schema *Schema) Atoms(value Value) ([]Atom, bool) {
 	return result, true
 }
 
+// ValueAtomCount reports the exact number of enumerable atoms carried by one
+// owned, non-Top Value relation. It is the pull-based counterpart to
+// VisitAtoms: the count and each subsequent ValueAtomAt call inspect the
+// immutable canonical image directly and do not create a callback closure or
+// materialize a second slice. Top has no exact finite image and therefore
+// reports zero; callers must retain the separate IsTop branch.
+func (schema *Schema) ValueAtomCount(value Value) int {
+	if !schema.owns(value) || value.top {
+		return 0
+	}
+	stride := schema.stride()
+	if stride == 0 {
+		return 0
+	}
+	return len(value.image) / stride
+}
+
+// ValueAtomAt returns one exact atom from an owned, non-Top Value relation in
+// canonical image order. The owner fence is checked on every call so the
+// returned Atom can never be rehomed through a foreign Schema. The returned
+// Atom is a small value copy; no image or backing storage escapes.
+func (schema *Schema) ValueAtomAt(value Value, index int) (Atom, bool) {
+	if !schema.owns(value) || value.top || index < 0 {
+		return Atom{}, false
+	}
+	stride := schema.stride()
+	if stride == 0 {
+		return Atom{}, false
+	}
+	count := len(value.image) / stride
+	if index >= count {
+		return Atom{}, false
+	}
+	offset := index * stride
+	id := value.image[offset]
+	// Construction seals canonical rows, but keep the accessor total for a
+	// malformed in-package Value rather than issuing an invalid Atom.
+	if id == 0 || id > uint64(len(schema.atoms)) {
+		return Atom{}, false
+	}
+	return Atom{schema: schema, id: uint32(id)}, true
+}
+
 // VisitAtoms traverses the exact non-Top atom relation without materializing
 // a second slice.  Cross-factor reductions use this hot path when they need
 // rooted alternatives while preserving Value's correlated capability image.

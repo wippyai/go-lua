@@ -13,10 +13,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-// All occurrence identities below are projections of semanticpath.Certificate.
-// Flow has no Body/root/containment path builder or retained path plane.
-type allocationPath struct{ id identity.ContentID }
-
 const (
 	allocationRoleTable   uint8 = 1
 	allocationRoleClosure uint8 = 2
@@ -36,11 +32,28 @@ func (view View) AllocationID(term keyspace.Term) (identity.ContentID, bool) {
 		!view.Executable().Contains(term) {
 		return identity.ContentID{}, false
 	}
-	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if (family != keyspace.FamilyTable && family != keyspace.FamilyFunction) || ordinal == 0 || ordinal > uint32(len(view.component.allocationPaths[family])) {
+	family := keyspace.TermFamily(term)
+	var role uint8
+	switch family {
+	case keyspace.FamilyTable:
+		if _, ok := view.Authored().Tables().Get(term); !ok {
+			return identity.ContentID{}, false
+		}
+		role = allocationRoleTable
+	case keyspace.FamilyFunction:
+		if _, _, _, ok := view.Authored().Functions().Get(term); !ok {
+			return identity.ContentID{}, false
+		}
+		role = allocationRoleClosure
+	default:
 		return identity.ContentID{}, false
 	}
-	id := view.component.allocationPaths[family][ordinal-1].id
+	p := view.component.provenance
+	path, pathOK := certificateTerm(view.component.semanticPaths, p.Source, p.Flow, p.Static, p.Module, term)
+	if !pathOK {
+		return identity.ContentID{}, false
+	}
+	id := digestPath("allocation", path, uint32(role), 0, source.Span{})
 	return id, id.Available()
 }
 
@@ -93,18 +106,19 @@ func (view View) BodyPath(term keyspace.Term) (identity.ContentID, bool) {
 	return view.component.semanticPaths.BodyPathAt(p.Source, p.Flow, p.Static, p.Module, keyspace.TermOrdinal(term))
 }
 func (view View) CallPath(term keyspace.Term) (identity.ContentID, bool) {
-	if !view.available() || view.component.semanticPaths == nil || !view.component.semanticPaths.Matches(view.component.provenance.Source, view.component.provenance.Flow, view.component.provenance.Static, view.component.provenance.Module) || keyspace.TermFamily(term) != keyspace.FamilyCall || keyspace.TermOrdinal(term) == 0 || uint64(keyspace.TermOrdinal(term)) > uint64(len(view.component.callPaths)) {
+	if !view.available() || view.component.semanticPaths == nil ||
+		!view.component.semanticPaths.Matches(view.component.provenance.Source, view.component.provenance.Flow, view.component.provenance.Static, view.component.provenance.Module) ||
+		keyspace.TermFamily(term) != keyspace.FamilyCall {
 		return identity.ContentID{}, false
 	}
-	id := view.component.callPaths[keyspace.TermOrdinal(term)-1]
-	return id, id.Available()
-}
-func (view View) ValueSourcePath(term keyspace.Term) (identity.ContentID, bool) {
-	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if !view.available() || view.component.semanticPaths == nil || !view.component.semanticPaths.Matches(view.component.provenance.Source, view.component.provenance.Flow, view.component.provenance.Static, view.component.provenance.Module) || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) > uint64(len(view.component.valueSourcePaths[family])) {
+	owner, _, _, _, callOK := view.Authored().Calls().Get(term)
+	p := view.component.provenance
+	body, bodyOK := view.component.semanticPaths.BodyPathAt(p.Source, p.Flow, p.Static, p.Module, keyspace.TermOrdinal(owner))
+	path, pathOK := certificateTerm(view.component.semanticPaths, p.Source, p.Flow, p.Static, p.Module, term)
+	if !callOK || !bodyOK || !pathOK {
 		return identity.ContentID{}, false
 	}
-	id := view.component.valueSourcePaths[family][ordinal-1]
+	id := digestBytes("call-occurrence", body, path)
 	return id, id.Available()
 }
 
@@ -122,192 +136,161 @@ func (view View) SemanticTermPath(term keyspace.Term) (identity.ContentID, bool)
 	p := view.component.provenance
 	return view.component.semanticPaths.TermPathAt(p.Source, p.Flow, p.Static, p.Module, family, ordinal)
 }
-func (view View) StorageAssignmentPath(term keyspace.Term) (identity.ContentID, bool) {
-	if !view.available() || view.component.semanticPaths == nil || !view.component.semanticPaths.Matches(view.component.provenance.Source, view.component.provenance.Flow, view.component.provenance.Static, view.component.provenance.Module) || keyspace.TermFamily(term) != keyspace.FamilyAssign || keyspace.TermOrdinal(term) == 0 || uint64(keyspace.TermOrdinal(term)) > uint64(len(view.component.storagePaths[keyspace.FamilyAssign])) {
-		return identity.ContentID{}, false
-	}
-	id := view.component.storagePaths[keyspace.FamilyAssign][keyspace.TermOrdinal(term)-1]
-	return id, id.Available()
-}
-
 func certificateTerm(paths *semanticpath.Certificate, sourceID, flowID, staticID, moduleID identity.ContentID, term keyspace.Term) (identity.ContentID, bool) {
 	return paths.TermPathAt(sourceID, flowID, staticID, moduleID, keyspace.TermFamily(term), keyspace.TermOrdinal(term))
 }
 
-func sealCertificateValueSourcePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
+func validateCertificateValueSourcePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) error {
 	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
-		return [keyspace.FamilyCount][]identity.ContentID{}, errors.New("certificate provenance disagrees")
-	}
-	var out [keyspace.FamilyCount][]identity.ContentID
-	for f := keyspace.Family(1); f < keyspace.FamilyCount; f++ {
-		if n := sourceView.Identity().FamilyCount(f); n > 0 {
-			out[f] = make([]identity.ContentID, n)
-		}
+		return errors.New("certificate provenance disagrees")
 	}
 	store := func(term keyspace.Term) error {
-		f, o := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 		id, ok := certificateTerm(paths, sourceID, flowID, staticID, moduleID, term)
-		if !ok || o == 0 || uint64(o) > uint64(len(out[f])) || out[f][o-1].Available() {
+		if !ok || !id.Available() {
 			return errors.New("certificate value-source path is unavailable")
 		}
-		out[f][o-1] = id
 		return nil
 	}
 	l := sourceView.Literals()
 	for i := 0; i < l.Nils().Count(); i++ {
 		x, _, ok := l.Nils().At(i)
 		if !ok {
-			return out, errors.New("nil source row unavailable")
+			return errors.New("nil source row unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
 	for i := 0; i < l.Bools().Count(); i++ {
 		x, _, _, ok := l.Bools().At(i)
 		if !ok {
-			return out, errors.New("bool source row unavailable")
+			return errors.New("bool source row unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
 	for i := 0; i < l.Integers().Count(); i++ {
 		x, _, _, ok := l.Integers().At(i)
 		if !ok {
-			return out, errors.New("integer source row unavailable")
+			return errors.New("integer source row unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
 	for i := 0; i < l.Floats().Count(); i++ {
 		x, _, _, ok := l.Floats().At(i)
 		if !ok {
-			return out, errors.New("float source row unavailable")
+			return errors.New("float source row unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
 	for i := 0; i < l.Strings().Count(); i++ {
 		x, _, _, ok := l.Strings().At(i)
 		if !ok {
-			return out, errors.New("string source row unavailable")
+			return errors.New("string source row unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
 	t := view.TypeValues()
 	for i := 0; i < t.Count(); i++ {
 		x, ok := t.At(i)
 		if !ok {
-			return out, errors.New("TypeValue source row unavailable")
+			return errors.New("TypeValue source row unavailable")
 		}
 		if _, ok := t.Get(x); !ok {
-			return out, errors.New("TypeValue owner unavailable")
+			return errors.New("TypeValue owner unavailable")
 		}
 		if err := store(x); err != nil {
-			return out, err
+			return err
 		}
 	}
-	return out, nil
+	return nil
 }
-func sealCertificateStoragePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
+func validateCertificateStoragePaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) error {
 	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
-		return [keyspace.FamilyCount][]identity.ContentID{}, errors.New("certificate provenance disagrees")
+		return errors.New("certificate provenance disagrees")
 	}
-	var out [keyspace.FamilyCount][]identity.ContentID
-	out[keyspace.FamilyAssign] = make([]identity.ContentID, sourceView.Identity().FamilyCount(keyspace.FamilyAssign))
 	a := view.Storage().Assigns()
 	for i := 0; i < a.Count(); i++ {
 		term, ok := a.At(i)
 		if !ok {
-			return out, errors.New("assignment row unavailable")
+			return errors.New("assignment row unavailable")
 		}
 		if _, _, ok := a.Get(term); !ok {
-			return out, errors.New("assignment owner unavailable")
+			return errors.New("assignment owner unavailable")
 		}
-		o := keyspace.TermOrdinal(term)
 		id, ok := certificateTerm(paths, sourceID, flowID, staticID, moduleID, term)
-		if !ok || o == 0 || uint64(o) > uint64(len(out[keyspace.FamilyAssign])) {
-			return out, errors.New("assignment certificate path unavailable")
+		if !ok || !id.Available() {
+			return errors.New("assignment certificate path unavailable")
 		}
-		out[keyspace.FamilyAssign][o-1] = id
 	}
-	return out, nil
+	return nil
 }
-func sealCertificateAllocationPaths(sourceView source.View, exec *executable.Result, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([keyspace.FamilyCount][]allocationPath, error) {
+func validateCertificateAllocationPaths(sourceView source.View, exec *executable.Result, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) error {
 	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
-		return [keyspace.FamilyCount][]allocationPath{}, errors.New("certificate provenance disagrees")
-	}
-	var out [keyspace.FamilyCount][]allocationPath
-	for f := keyspace.Family(1); f < keyspace.FamilyCount; f++ {
-		if n := sourceView.Identity().FamilyCount(f); n > 0 {
-			out[f] = make([]allocationPath, n)
-		}
+		return errors.New("certificate provenance disagrees")
 	}
 	store := func(term keyspace.Term, role uint8) error {
 		if !exec.Contains(term) {
 			return nil
 		}
-		f, o := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 		id, ok := certificateTerm(paths, sourceID, flowID, staticID, moduleID, term)
-		if !ok || o == 0 || uint64(o) > uint64(len(out[f])) || out[f][o-1].id.Available() {
+		if !ok || !digestPath("allocation", id, uint32(role), 0, source.Span{}).Available() {
 			return errors.New("allocation certificate path unavailable")
 		}
-		out[f][o-1] = allocationPath{id: digestPath("allocation", id, uint32(role), 0, source.Span{})}
 		return nil
 	}
 	for i := 0; i < view.Tables().Count(); i++ {
 		term, ok := view.Tables().At(i)
 		if !ok {
-			return out, errors.New("table allocation row unavailable")
+			return errors.New("table allocation row unavailable")
 		}
 		if err := store(term, allocationRoleTable); err != nil {
-			return out, err
+			return err
 		}
 	}
 	for i := 0; i < view.Functions().Count(); i++ {
 		term, ok := view.Functions().At(i)
 		if !ok {
-			return out, errors.New("closure allocation row unavailable")
+			return errors.New("closure allocation row unavailable")
 		}
 		if err := store(term, allocationRoleClosure); err != nil {
-			return out, err
+			return err
 		}
 	}
-	return out, nil
+	return nil
 }
-func sealCertificateCallPaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) ([]identity.ContentID, error) {
+func validateCertificateCallPaths(sourceView source.View, view authored.View, paths *semanticpath.Certificate, staticID, moduleID identity.ContentID) error {
 	sourceID, flowID := sourceView.Identity().ContentID(), view.ContentID()
 	if !paths.Matches(sourceID, flowID, staticID, moduleID) {
-		return nil, errors.New("certificate provenance disagrees")
+		return errors.New("certificate provenance disagrees")
 	}
 	c := view.Calls()
-	out := make([]identity.ContentID, c.Count())
 	for i := 0; i < c.Count(); i++ {
 		term, ok := c.At(i)
 		if !ok {
-			return nil, errors.New("call row unavailable")
+			return errors.New("call row unavailable")
 		}
 		owner, _, _, _, ok := c.Get(term)
 		if !ok {
-			return nil, errors.New("call owner unavailable")
+			return errors.New("call owner unavailable")
 		}
 		body, bok := paths.BodyPathAt(sourceID, flowID, staticID, moduleID, keyspace.TermOrdinal(owner))
 		id, iok := certificateTerm(paths, sourceID, flowID, staticID, moduleID, term)
-		o := keyspace.TermOrdinal(term)
-		if !bok || !iok || o == 0 || uint64(o) > uint64(len(out)) {
-			return nil, errors.New("call certificate path unavailable")
+		if !bok || !iok || !digestBytes("call-occurrence", body, id).Available() {
+			return errors.New("call certificate path unavailable")
 		}
-		out[o-1] = digestBytes("call-occurrence", body, id)
 	}
-	return out, nil
+	return nil
 }
 func digestPath(label string, parent identity.ContentID, role, aux uint32, span source.Span) identity.ContentID {
 	var p [88]byte

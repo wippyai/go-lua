@@ -48,10 +48,10 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seal source: %v", err)
 	}
-	grammar, grammarOK := composite.Global()
-	artifactGrammar, artifactGrammarOK := composite.ArtifactGrammar(grammar)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !grammarOK || !artifactGrammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	grammar := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema")
 	}
 	mounts := linked.Project().Mounts()
@@ -62,7 +62,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
-	artifact, failure := artifactcompiler.CompileDetailed(program, artifactGrammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || artifact == nil || !artifact.Available() {
 		t.Fatalf("compile artifact: %s", failure.Error())
 	}
@@ -73,7 +73,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 		t.Fatal("artifact mounts")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

@@ -139,6 +139,11 @@ func canonicalContributions() [][]Spec {
 		{"semantic/factor/probe", "factor/probe", true},
 		{"semantic/rule/probe/source", "rule/probe/source", true},
 	}
+	verdicts := []member{
+		{"conformance-verdict/abstains", "abstains", true}, {"conformance-verdict/conforms", "conforms", true},
+		{"conformance-verdict/violates", "violates", true}, {"conformance-verdict/may-be-nil", "may be nil", true},
+		{"conformance-verdict/member-absent", "member absent", true}, {"conformance-verdict/unproven", "unproven", true},
+	}
 	outcomes := []member{
 		{"outcome/normal", "normal", true}, {"outcome/return", "return", true},
 		{"outcome/throw", "throw", true}, {"outcome/break", "break", false},
@@ -173,6 +178,7 @@ func canonicalContributions() [][]Spec {
 		authored(CategoryIssuanceRequirement, issuanceRequirements),
 		authored(CategoryIssuanceStage, issuanceStages),
 		authored(CategorySemanticRole, semanticRoles),
+		authored(CategoryConformanceVerdict, verdicts),
 		NativePublicationSpecs(),
 	}
 }

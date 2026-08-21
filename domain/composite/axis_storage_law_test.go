@@ -40,13 +40,18 @@ func enginePublishedProbe(t *testing.T, key, semantic schema.Key) *axisTemplate 
 // over by both, and the coverage law reads the declared storage rather than
 // demanding a cell from every row.
 func TestEnginePublishedAxisPassesThroughTheColdAndHotPasses(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	roles, rolesOK := SemanticRoles(compilation)
 	if !rolesOK {
 		t.Fatal("semantic role vocabulary")
 	}
 	entries := []*axisTemplate{enginePublishedProbe(t, "reachability", "semantic/factor/value/summary-identity")}
 	builder := engine.NewSchema()
-	fragments, failedAxis, declared := declareAxisInventory(entries, builder, roles)
+	fragments, failedAxis, declared := declareAxisInventory(state, entries, builder, roles)
 	if !declared {
 		t.Fatalf("cold pass rejected an engine-published inventory at axis %v", failedAxis)
 	}
@@ -59,15 +64,11 @@ func TestEnginePublishedAxisPassesThroughTheColdAndHotPasses(t *testing.T) {
 	// The hot pass is a transaction on one sealed binding. The composition's
 	// own sealed catalog supplies it: an engine-published axis instantiates
 	// nothing on it, which is exactly what the pass has to show.
-	compilation, compilationOK := Global()
-	if !compilationOK {
-		t.Fatal("the global catalog did not compile")
-	}
 	binding := engine.NewSchemaBinding(compilation.Schema())
 	if binding == nil {
 		t.Fatal("the sealed catalog published no binding")
 	}
-	bound, failedAxis, boundOK := bindAxisInventory(entries, binding, fragments, LinkInputs{})
+	bound, failedAxis, boundOK := bindAxisInventory(state, entries, binding, fragments, LinkInputs{})
 	if !boundOK {
 		t.Fatalf("hot pass rejected an engine-published inventory at axis %v", failedAxis)
 	}
@@ -81,12 +82,16 @@ func TestEnginePublishedAxisPassesThroughTheColdAndHotPasses(t *testing.T) {
 // still demanded of a bound one, so passing over a row is a property of the
 // declaration rather than of the pass.
 func TestBoundAxisWithoutItsCellLeavesThePassIncomplete(t *testing.T) {
-	sealRegistry()
-	if registry.sealed == nil {
-		t.Fatalf("declaration table did not seal: %v", registry.failure)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
 	}
-	empty := newAxisCells(registry.axes)
-	if empty.available(registry.axes) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
+		t.Fatal("declaration table did not seal")
+	}
+	empty := newAxisCells(state.axes)
+	if empty.available(state.axes) {
 		t.Fatal("an empty pass over the bound production inventory reported complete coverage")
 	}
 }

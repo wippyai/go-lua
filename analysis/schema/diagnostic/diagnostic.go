@@ -54,6 +54,7 @@ const (
 	contentRecordEvidence uint64 = iota + 1
 	contentRecordLabel
 	contentRecordSection
+	contentRecordVariant
 )
 
 // Surface law ordinals. They are numeric identities; rendering a verdict is
@@ -71,6 +72,7 @@ const (
 	LawObservationDeclared
 	LawCollectionDeclared
 	LawSiteUnique
+	LawVariantDeclared
 )
 
 // Code is the stable published identity of one diagnostic. It is the only part
@@ -240,6 +242,12 @@ const (
 	RequiresProofLocation
 	RequiresHandled
 	RequiresMissing
+	// RequiresActual is the spelling of the value that was observed: its exact
+	// literal when it has one, and the runtime family it may carry otherwise.
+	RequiresActual
+	// RequiresMember is the declared member a finding names: the field a
+	// constructor did not establish.
+	RequiresMember
 )
 
 func (requirement Requirement) has(other Requirement) bool { return requirement&other == other }
@@ -257,6 +265,8 @@ const (
 	PlaceholderClaimForm
 	PlaceholderHandled
 	PlaceholderMissing
+	PlaceholderActual
+	PlaceholderMember
 )
 
 func placeholderFor(name string) (Placeholder, bool) {
@@ -273,6 +283,10 @@ func placeholderFor(name string) (Placeholder, bool) {
 		return PlaceholderHandled, true
 	case "missing":
 		return PlaceholderMissing, true
+	case "actual":
+		return PlaceholderActual, true
+	case "member":
+		return PlaceholderMember, true
 	default:
 		return PlaceholderInvalid, false
 	}
@@ -291,6 +305,10 @@ func (placeholder Placeholder) Requires() Requirement {
 		return RequiresHandled
 	case PlaceholderMissing:
 		return RequiresMissing
+	case PlaceholderActual:
+		return RequiresActual
+	case PlaceholderMember:
+		return RequiresMember
 	default:
 		return RequiresInvalid
 	}
@@ -432,6 +450,65 @@ type LabelRow struct {
 	Text   Line
 }
 
+// Variant is one authored presentation of a row, selected by the verdict its
+// collector reached. A code is the row's authored key, so a judgment that
+// answers in a vocabulary rather than a boolean cannot publish one row per
+// answer: it publishes one row with one variant per answer, and the collector
+// emits the verdict rather than the prose.
+//
+// Verdict is the member's ordinal in the declared conformance-verdict
+// vocabulary. The judgment that produces it owns those ordinals, so a row
+// keyed by them cannot drift from the answers the judgment gives.
+type Variant struct {
+	Verdict uint16
+	// Requirements is the typed payload this variant's presentation reads. It
+	// is stated per variant because the payload one answer names is not the
+	// payload another names: an absent member names the member, a family
+	// mismatch names the value that was observed.
+	Requirements  Requirement
+	Message, Help Text
+	Evidence      []Evidence
+	Labels        []Label
+}
+
+// VariantRow is one admitted variant: the verdict it answers for and the
+// presentation that answer renders.
+type VariantRow struct {
+	verdict      uint16
+	requirements Requirement
+	message      Line
+	help         Line
+	evidence     []EvidenceRow
+	labels       []LabelRow
+}
+
+func (variant VariantRow) Verdict() uint16 { return variant.verdict }
+
+// Presentation is the rendering one finding is published from: the payload it
+// reads and the exact lines it renders. A row with no verdict vocabulary has
+// one; a row with variants has one per declared answer. Every consumer renders
+// through this, so the base row and a variant are the same shape to a reader.
+type Presentation struct {
+	Requirements  Requirement
+	Message, Help Line
+	Evidence      []EvidenceRow
+	Labels        []LabelRow
+}
+
+// reads is the payload every part of this presentation consumes.
+func (presentation Presentation) reads() Requirement {
+	reads := presentation.Message.Requires() | presentation.Help.Requires()
+	for _, evidence := range presentation.Evidence {
+		reads |= evidence.Detail.Requires() | evidence.Anchor.Requires()
+	}
+	for _, label := range presentation.Labels {
+		reads |= label.Text.Requires() | label.Anchor.Requires()
+	}
+	return reads
+}
+
+func (presentation Presentation) available() bool { return presentation.Message.Available() }
+
 // Spec is the authored declaration of one diagnostic. Every field is data.
 type Spec struct {
 	// Code is the row's published identity and its authored key.
@@ -455,9 +532,12 @@ type Spec struct {
 	// named family seals above this surface, so Seal checks the reference
 	// shape and a post-seal directory joins the issued inventory.
 	Collection Reference
-	// Site chooses this row among LaneBranch codes that share Observation.
-	// A polarity pair over one population declares none.
-	Site Site
+	// Sites are the geometries this row is the published code for, among
+	// LaneBranch codes that share Observation. A polarity pair over one
+	// population declares none. A row declares every geometry whose findings
+	// carry its code, so a population measured at several places inside one
+	// value publishes one code per code rather than one code per place.
+	Sites []Site
 	// Fact names the declaration whose facts decide this row. A solver-observed
 	// row names one; a static row reads no fact and names none.
 	Fact Reference
@@ -467,7 +547,12 @@ type Spec struct {
 	Message, Help Text
 	Evidence      []Evidence
 	Labels        []Label
-	Render        []Section
+	// Variants is the per-verdict presentation of a row whose collector answers
+	// in a declared vocabulary. A row declares either one presentation of its
+	// own or a set of variants, never both: two presentations of one code would
+	// leave a reader to decide which one a finding rendered from.
+	Variants []Variant
+	Render   []Section
 }
 
 // Entry is one admitted diagnostic declaration. It is immutable once built.
@@ -479,12 +564,13 @@ type Entry struct {
 	lane            Lane
 	observation     Reference
 	collection      Reference
-	site            Site
+	sites           []Site
 	fact            Reference
 	requirements    Requirement
 	message, help   Line
 	evidence        []EvidenceRow
 	labels          []LabelRow
+	variants        []VariantRow
 	render          []Section
 }
 
@@ -513,8 +599,18 @@ func New(spec Spec) (*Entry, bool) {
 	if spec.Lane == LaneBranch && spec.Collection.Surface != schema.SurfaceKindQuery && spec.Collection.Surface != schema.SurfaceKindObservation {
 		return nil, false
 	}
-	if spec.Site.Declared() != spec.Site.Available() || spec.Site.Declared() && spec.Lane != LaneBranch {
+	if !sitesAdmissible(spec.Sites, spec.Lane) {
 		return nil, false
+	}
+	// A row declares one presentation of its own or a set of verdict variants.
+	// Authoring both would publish two renderings of one code; authoring
+	// neither would publish a code that renders nothing.
+	if len(spec.Variants) != 0 {
+		if spec.Message != "" || spec.Help != "" || spec.Requirements != RequiresInvalid ||
+			len(spec.Evidence) != 0 || len(spec.Labels) != 0 {
+			return nil, false
+		}
+		return newVariantEntry(spec)
 	}
 	message, messageOK := newLine(spec.Message)
 	help, helpOK := newLine(spec.Help)
@@ -529,31 +625,118 @@ func New(spec Spec) (*Entry, bool) {
 		lane:            spec.Lane,
 		observation:     spec.Observation,
 		collection:      spec.Collection,
-		site:            spec.Site,
+		sites:           append([]Site(nil), spec.Sites...),
 		fact:            spec.Fact,
 		requirements:    spec.Requirements,
 		message:         message,
 		help:            help,
 	}
-	for _, evidence := range spec.Evidence {
-		detail, detailOK := newLine(evidence.Detail)
-		if !detailOK || !evidence.Anchor.Available() || evidence.Kind == "" || evidence.Trust == "" || evidence.Reason == "" {
-			return nil, false
-		}
-		entry.evidence = append(entry.evidence, EvidenceRow{Anchor: evidence.Anchor, Kind: evidence.Kind, Trust: evidence.Trust, Reason: evidence.Reason, Detail: detail})
+	evidence, evidenceOK := admitEvidence(spec.Evidence)
+	labels, labelsOK := admitLabels(spec.Labels)
+	if !evidenceOK || !labelsOK {
+		return nil, false
 	}
-	for _, label := range spec.Labels {
-		text, textOK := newLine(label.Text)
-		if !textOK || !label.Anchor.Available() {
+	entry.evidence, entry.labels = evidence, labels
+	if !renderPlanAdmissible(spec.Render) {
+		return nil, false
+	}
+	entry.render = append([]Section(nil), spec.Render...)
+	return entry, entry.EntryAvailable()
+}
+
+// newVariantEntry admits a row whose presentation is per verdict. The row's
+// own identity, gating, and collection are admitted exactly as any other row's;
+// what differs is that every rendered line belongs to one declared answer.
+//
+// A variant's verdict is a member of a vocabulary sealed above this surface, so
+// admission states the shape - a verdict is named, named once, and its
+// presentation reads exactly the payload it declares - and Seal states that the
+// named member is declared.
+func newVariantEntry(spec Spec) (*Entry, bool) {
+	entry := &Entry{
+		code:            spec.Code,
+		id:              schema.NewEntryID(schema.SurfaceKindDiagnostic, schema.Key(spec.Code)),
+		family:          spec.Family,
+		defaultSeverity: spec.DefaultSeverity,
+		lane:            spec.Lane,
+		observation:     spec.Observation,
+		collection:      spec.Collection,
+		sites:           append([]Site(nil), spec.Sites...),
+		fact:            spec.Fact,
+	}
+	declared := make(map[uint16]struct{}, len(spec.Variants))
+	for _, variant := range spec.Variants {
+		if variant.Verdict == 0 {
 			return nil, false
 		}
-		entry.labels = append(entry.labels, LabelRow{Anchor: label.Anchor, Text: text})
+		if _, duplicate := declared[variant.Verdict]; duplicate {
+			return nil, false
+		}
+		declared[variant.Verdict] = struct{}{}
+		message, messageOK := newLine(variant.Message)
+		help, helpOK := newLine(variant.Help)
+		evidence, evidenceOK := admitEvidence(variant.Evidence)
+		labels, labelsOK := admitLabels(variant.Labels)
+		if !messageOK || !helpOK || !evidenceOK || !labelsOK {
+			return nil, false
+		}
+		row := VariantRow{
+			verdict: variant.Verdict, requirements: variant.Requirements,
+			message: message, help: help, evidence: evidence, labels: labels,
+		}
+		// The payload a producer supplies for one answer is exactly the payload
+		// that answer's presentation reads. The row-level law states this once
+		// for a row with a single presentation; a variant states it for itself,
+		// because a payload another answer names is a field this one's producer
+		// would have to fabricate.
+		if !requirementsCover(row.requirements, row.presentation().reads()) {
+			return nil, false
+		}
+		entry.variants = append(entry.variants, row)
 	}
 	if !renderPlanAdmissible(spec.Render) {
 		return nil, false
 	}
 	entry.render = append([]Section(nil), spec.Render...)
 	return entry, entry.EntryAvailable()
+}
+
+// requirementsCover states the payload contract in both directions: a field a
+// presentation reads is required, and a field nothing reads is not.
+func requirementsCover(requirements, reads Requirement) bool {
+	return requirements.has(reads) && reads.has(requirements)
+}
+
+func admitEvidence(specs []Evidence) ([]EvidenceRow, bool) {
+	rows := make([]EvidenceRow, 0, len(specs))
+	for _, evidence := range specs {
+		detail, detailOK := newLine(evidence.Detail)
+		if !detailOK || !evidence.Anchor.Available() || evidence.Kind == "" || evidence.Trust == "" || evidence.Reason == "" {
+			return nil, false
+		}
+		rows = append(rows, EvidenceRow{Anchor: evidence.Anchor, Kind: evidence.Kind, Trust: evidence.Trust, Reason: evidence.Reason, Detail: detail})
+	}
+	return rows, true
+}
+
+func admitLabels(specs []Label) ([]LabelRow, bool) {
+	rows := make([]LabelRow, 0, len(specs))
+	for _, label := range specs {
+		text, textOK := newLine(label.Text)
+		if !textOK || !label.Anchor.Available() {
+			return nil, false
+		}
+		rows = append(rows, LabelRow{Anchor: label.Anchor, Text: text})
+	}
+	return rows, true
+}
+
+// presentation is this variant's rendering.
+func (variant VariantRow) presentation() Presentation {
+	return Presentation{
+		Requirements: variant.requirements, Message: variant.message, Help: variant.help,
+		Evidence: variant.evidence, Labels: variant.labels,
+	}
 }
 
 // renderPlanAdmissible states that a row publishes a declared, ordered set of
@@ -619,8 +802,26 @@ func (entry *Entry) Observation() Reference { return entry.observation }
 // subjects.
 func (entry *Entry) Collection() Reference { return entry.collection }
 
-// Site chooses this row among LaneBranch codes that share Observation.
-func (entry *Entry) Site() Site { return entry.site }
+// SiteCount is how many geometries this row is the published code for.
+func (entry *Entry) SiteCount() int { return len(entry.sites) }
+
+// SiteAt returns one declared geometry in declaration order.
+func (entry *Entry) SiteAt(index int) (Site, bool) {
+	if index < 0 || index >= len(entry.sites) {
+		return SiteNone, false
+	}
+	return entry.sites[index], true
+}
+
+// Sited reports whether this row is the published code for one geometry.
+func (entry *Entry) Sited(site Site) bool {
+	for _, declared := range entry.sites {
+		if declared == site {
+			return true
+		}
+	}
+	return false
+}
 
 // Fact is the declaration whose facts decide this row.
 func (entry *Entry) Fact() Reference { return entry.fact }
@@ -630,6 +831,45 @@ func (entry *Entry) Requirements() Requirement { return entry.requirements }
 func (entry *Entry) Message() Line { return entry.message }
 
 func (entry *Entry) Help() Line { return entry.help }
+
+// VariantCount is how many declared answers this row renders. A row with one
+// presentation of its own has none.
+func (entry *Entry) VariantCount() int { return len(entry.variants) }
+
+// VariantAt returns one declared answer in declaration order.
+func (entry *Entry) VariantAt(index int) (VariantRow, bool) {
+	if index < 0 || index >= len(entry.variants) {
+		return VariantRow{}, false
+	}
+	return entry.variants[index], true
+}
+
+// Presentation is the rendering one finding publishes from. A row with no
+// variants renders its own presentation and answers under any verdict, so a
+// producer that has no vocabulary to answer in supplies none. A row with
+// variants renders only the answer it is given, so a finding that names no
+// declared verdict has nothing to render and is refused here rather than
+// rendered under whichever answer happens to be first.
+func (entry *Entry) Presentation(verdict uint16) (Presentation, bool) {
+	if entry == nil {
+		return Presentation{}, false
+	}
+	if len(entry.variants) == 0 {
+		if verdict != 0 {
+			return Presentation{}, false
+		}
+		return Presentation{
+			Requirements: entry.requirements, Message: entry.message, Help: entry.help,
+			Evidence: entry.evidence, Labels: entry.labels,
+		}, entry.message.Available()
+	}
+	for _, variant := range entry.variants {
+		if variant.verdict == verdict {
+			return variant.presentation(), true
+		}
+	}
+	return Presentation{}, false
+}
 
 func (entry *Entry) EvidenceCount() int { return len(entry.evidence) }
 
@@ -695,8 +935,13 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 	if err := referenceContent(content, entry.collection); err != nil {
 		return err
 	}
-	if err := content.Uint(uint64(entry.site)); err != nil {
+	if err := content.Count(uint64(len(entry.sites))); err != nil {
 		return err
+	}
+	for _, site := range entry.sites {
+		if err := content.Uint(uint64(site)); err != nil {
+			return err
+		}
 	}
 	if err := referenceContent(content, entry.fact); err != nil {
 		return err
@@ -724,14 +969,61 @@ func referenceContent(content *framing.Writer, reference Reference) error {
 	return content.String(string(reference.Key))
 }
 
-// presentationContent writes the row's evidence lines, source labels, and
-// render plan, each in declaration order behind its own arity: the order a row
-// declares them in is the order they are published in.
+// presentationContent writes the row's evidence lines, source labels, declared
+// verdict variants, and render plan, each in declaration order behind its own
+// arity: the order a row declares them in is the order they are published in.
 func (entry *Entry) presentationContent(content *framing.Writer) error {
-	if err := content.Count(uint64(len(entry.evidence))); err != nil {
+	if err := evidenceContent(content, entry.evidence); err != nil {
 		return err
 	}
-	for _, evidence := range entry.evidence {
+	if err := labelContent(content, entry.labels); err != nil {
+		return err
+	}
+	if err := content.Count(uint64(len(entry.variants))); err != nil {
+		return err
+	}
+	for _, variant := range entry.variants {
+		if err := content.Record(contentRecordVariant); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(variant.verdict)); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(variant.requirements)); err != nil {
+			return err
+		}
+		if err := content.String(string(variant.message.text)); err != nil {
+			return err
+		}
+		if err := content.String(string(variant.help.text)); err != nil {
+			return err
+		}
+		if err := evidenceContent(content, variant.evidence); err != nil {
+			return err
+		}
+		if err := labelContent(content, variant.labels); err != nil {
+			return err
+		}
+	}
+	if err := content.Count(uint64(len(entry.render))); err != nil {
+		return err
+	}
+	for _, section := range entry.render {
+		if err := content.Record(contentRecordSection); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(section)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func evidenceContent(content *framing.Writer, rows []EvidenceRow) error {
+	if err := content.Count(uint64(len(rows))); err != nil {
+		return err
+	}
+	for _, evidence := range rows {
 		if err := content.Record(contentRecordEvidence); err != nil {
 			return err
 		}
@@ -751,10 +1043,14 @@ func (entry *Entry) presentationContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	if err := content.Count(uint64(len(entry.labels))); err != nil {
+	return nil
+}
+
+func labelContent(content *framing.Writer, rows []LabelRow) error {
+	if err := content.Count(uint64(len(rows))); err != nil {
 		return err
 	}
-	for _, label := range entry.labels {
+	for _, label := range rows {
 		if err := content.Record(contentRecordLabel); err != nil {
 			return err
 		}
@@ -765,30 +1061,18 @@ func (entry *Entry) presentationContent(content *framing.Writer) error {
 			return err
 		}
 	}
-	if err := content.Count(uint64(len(entry.render))); err != nil {
-		return err
-	}
-	for _, section := range entry.render {
-		if err := content.Record(contentRecordSection); err != nil {
-			return err
-		}
-		if err := content.Uint(uint64(section)); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
-// reads is the payload every part of this row's presentation consumes.
+// reads is the payload every part of this row's own presentation consumes. A
+// row that renders per verdict has no presentation of its own; each variant
+// states its own payload contract at admission.
 func (entry *Entry) reads() Requirement {
-	reads := entry.message.Requires() | entry.help.Requires()
-	for _, evidence := range entry.evidence {
-		reads |= evidence.Detail.Requires() | evidence.Anchor.Requires()
+	presentation, available := entry.Presentation(0)
+	if !available {
+		return RequiresInvalid
 	}
-	for _, label := range entry.labels {
-		reads |= label.Text.Requires() | label.Anchor.Requires()
-	}
-	return reads
+	return presentation.reads()
 }
 
 // surface is the diagnostic contribution to the analyzer declaration root.
@@ -843,12 +1127,17 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		// own presentation reads. A field nothing reads is dead weight on every
 		// producer; a read nothing requires is a hole a renderer would find at
 		// render time.
-		reads := entry.reads()
-		if !entry.requirements.has(reads) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionIncomplete)
+		if entry.VariantCount() == 0 {
+			reads := entry.reads()
+			if !entry.requirements.has(reads) {
+				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionIncomplete)
+			}
+			if !reads.has(entry.requirements) {
+				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
+			}
 		}
-		if !reads.has(entry.requirements) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRequirementCovered, schema.DispositionMalformed)
+		if failure := sealVariants(entry, sealed); failure.Available() {
+			return failure
 		}
 		if failure := sealObservation(entry, sealed); failure.Available() {
 			return failure
@@ -869,15 +1158,57 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 			return failure
 		}
 		// A section a row never renders publishes nothing, so declaring the
-		// content without the section is an incomplete row.
-		if len(entry.evidence) > 0 && !entry.Renders(SectionEvidence) {
+		// content without the section is an incomplete row. A variant's content
+		// is the row's content for the answer it names, so it is held to the
+		// same render plan.
+		if entry.declaresEvidence() && !entry.Renders(SectionEvidence) {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
 		}
-		if entry.help.Available() && !entry.Renders(SectionHelp) {
+		if entry.declaresHelp() && !entry.Renders(SectionHelp) {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
 		}
 		if !entry.Renders(SectionSummary) {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawRenderComplete, schema.DispositionIncomplete)
+		}
+	}
+	return schema.SealFailure{}
+}
+
+// declaresEvidence reports whether this row publishes any proof line, under
+// its own presentation or under one of its declared answers.
+func (entry *Entry) declaresEvidence() bool {
+	if len(entry.evidence) > 0 {
+		return true
+	}
+	for _, variant := range entry.variants {
+		if len(variant.evidence) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (entry *Entry) declaresHelp() bool {
+	if entry.help.Available() {
+		return true
+	}
+	for _, variant := range entry.variants {
+		if variant.help.Available() {
+			return true
+		}
+	}
+	return false
+}
+
+// sealVariants states that every declared answer names a member of the sealed
+// conformance-verdict vocabulary. The vocabulary's ordinals are owned by the
+// judgment that produces them, so a row keyed by an ordinal the vocabulary does
+// not declare is a presentation no collector can ever select, and a member the
+// judgment adds without a variant is a finding that renders nothing.
+func sealVariants(entry *Entry, sealed schema.Sealed) schema.SealFailure {
+	for _, variant := range entry.variants {
+		if _, disposition := structure.Member(sealed, structure.CategoryConformanceVerdict, variant.verdict); disposition != schema.DispositionAccepted {
+			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawVariantDeclared, disposition)
 		}
 	}
 	return schema.SealFailure{}
@@ -922,19 +1253,41 @@ func sealObservation(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
+// sitesAdmissible states one row's own site shape: a geometry is named only by
+// a solver-observed row, every named geometry is a member of the vocabulary,
+// and no geometry is named twice by one row.
+func sitesAdmissible(sites []Site, lane Lane) bool {
+	if len(sites) == 0 {
+		return true
+	}
+	if lane != LaneBranch {
+		return false
+	}
+	var seen [siteLimit]bool
+	for _, site := range sites {
+		if !site.Available() || seen[site] {
+			return false
+		}
+		seen[site] = true
+	}
+	return true
+}
+
 // sealBranchSite states that LaneBranch rows sharing an observation
 // population are either a polarity pair (no site) or a sited family
 // whose (population, site) pairs are unique. Mixing a sited row with an
-// unsited sibling on the same population is malformed.
+// unsited sibling on the same population is malformed. A row naming several
+// geometries claims each of them, so the pair uniqueness is stated per named
+// geometry rather than per row.
 func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, unsited map[schema.Key]schema.EntryID) schema.SealFailure {
 	if entry.lane != LaneBranch || !entry.observation.Declared() {
-		if entry.site.Declared() {
+		if len(entry.sites) != 0 {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawSiteUnique, schema.DispositionMalformed)
 		}
 		return schema.SealFailure{}
 	}
 	population := entry.observation.Key
-	if entry.site.Declared() {
+	if len(entry.sites) != 0 {
 		if prior, shared := unsited[population]; shared {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionMalformed)
 		}
@@ -943,10 +1296,12 @@ func sealBranchSite(entry *Entry, sited map[schema.Key]map[Site]schema.EntryID, 
 			bySite = make(map[Site]schema.EntryID)
 			sited[population] = bySite
 		}
-		if prior, duplicate := bySite[entry.site]; duplicate {
-			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionDuplicate)
+		for _, site := range entry.sites {
+			if prior, duplicate := bySite[site]; duplicate {
+				return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, prior, LawSiteUnique, schema.DispositionDuplicate)
+			}
+			bySite[site] = entry.id
 		}
-		bySite[entry.site] = entry.id
 		return schema.SealFailure{}
 	}
 	if _, shared := sited[population]; shared {
@@ -1028,8 +1383,10 @@ func NewTable(view schema.View) (Table, bool) {
 		if entry.lane == LaneStatic {
 			table.byObservation[entry.observation.Key] = entry
 		}
-		if entry.lane == LaneBranch && entry.site.Available() {
-			table.byBranch[branchObservationKey{population: entry.observation.Key, site: entry.site}] = entry
+		if entry.lane == LaneBranch {
+			for _, site := range entry.sites {
+				table.byBranch[branchObservationKey{population: entry.observation.Key, site: site}] = entry
+			}
 		}
 	}
 	return table, table.Available()

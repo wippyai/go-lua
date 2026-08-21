@@ -34,6 +34,26 @@ func (t *Table) InitialRootIdentity(root vocabulary.InitialRoot) (string, bool) 
 	return row.identity, true
 }
 
+// InitialRootModulePath returns the explicit authored module path bound to a
+// root. Empty is returned for ordinary non-module roots.
+func (t *Table) InitialRootModulePath(root vocabulary.InitialRoot) (string, bool) {
+	row, ok := t.root(root)
+	if !ok || row.modulePath == "" {
+		return "", false
+	}
+	return row.modulePath, true
+}
+
+// InitialRootByModulePath resolves the exact Target-authored module binding.
+// It never derives a path from an InitialRoot identity.
+func (t *Table) InitialRootByModulePath(path string) (vocabulary.InitialRoot, bool) {
+	if t == nil || path == "" {
+		return 0, false
+	}
+	root, ok := t.moduleRoots[path]
+	return root, ok
+}
+
 // InitialRootByIdentity resolves the canonical root identity without exposing
 // the owner's row storage to a consumer.
 func (t *Table) InitialRootByIdentity(identity string) (vocabulary.InitialRoot, bool) {

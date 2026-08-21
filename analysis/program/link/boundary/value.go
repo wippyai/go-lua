@@ -5,7 +5,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
@@ -109,29 +108,6 @@ func (v Values) Of(shard linkproject.Shard, term keyspace.Term) (Value, bool) {
 	value := Value{component: v.component, ordinal: ordinal}
 	row := v.component.authority.valueTable.rows[ordinal]
 	return value, row.shard == uint32(mountIndex+1) && row.term == term
-}
-
-// ForProgramSpan resolves one exact opaque Program occurrence proof through
-// Boundary's sole sealed span-to-Value inverse. The authored term remains in
-// Program/Boundary construction; consumers cannot reconstruct or supply it.
-func (v Values) ForProgramSpan(shard linkproject.Shard, span program.Span) (Value, bool) {
-	if !v.live() || !span.Available() {
-		return Value{}, false
-	}
-	mounts := v.component.authority.project.Mounts()
-	mountIndex, mountOK := mounts.Index(shard)
-	p, programOK := mounts.Program(shard)
-	context := span.ContextID()
-	if !mountOK || mountIndex < 0 || !programOK || p == nil || !p.OwnsSpan(span) || !context.Available() {
-		return Value{}, false
-	}
-	ordinal, ok := v.component.authority.valueTable.spans[valueSpanKey{mount: uint32(mountIndex + 1), context: context}]
-	if !ok || uint64(ordinal) >= uint64(len(v.component.authority.valueTable.rows)) {
-		return Value{}, false
-	}
-	row := v.component.authority.valueTable.rows[ordinal]
-	value := Value{component: v.component, ordinal: ordinal}
-	return value, row.shard == uint32(mountIndex+1) && v.valid(value)
 }
 
 // ForMountedSpan rebinds one reusable Program span identity through an exact

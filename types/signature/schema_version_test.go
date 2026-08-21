@@ -14,12 +14,14 @@ import (
 
 const expectedEscapeVocabVersion1Hash = "2074fbf780df680d4b2fdf63c34dafd97570684152743d64379ede084cca43ed"
 const expectedEscapeVocabVersion2Hash = "bd16be7718c6a78946c7f26a8c87253b0c5b031e84098dc81d262065735751f7"
+const expectedEscapeVocabVersion3Hash = "2074fbf780df680d4b2fdf63c34dafd97570684152743d64379ede084cca43ed"
 
 func TestEscapeVocabVersionPinsCurrentSurface(t *testing.T) {
 	got := hashSchemaSurface(escapeVocabularySurface(t))
 	want := map[int]string{
 		1: expectedEscapeVocabVersion1Hash,
 		2: expectedEscapeVocabVersion2Hash,
+		3: expectedEscapeVocabVersion3Hash,
 	}[EscapeVocabVersion]
 	if want == "" {
 		t.Fatalf("no expected escape vocabulary hash for version %d: bump version constant + journal a D-entry", EscapeVocabVersion)

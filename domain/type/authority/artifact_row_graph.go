@@ -2,7 +2,7 @@ package typeauthority
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programstaticnode "github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 )
 
 // rowComponent places one canonical static node in the strongly connected
@@ -14,12 +14,12 @@ type rowComponent struct {
 }
 
 type canonicalRowLocation struct {
-	program programschema.Program
-	index   int
+	view  programstaticnode.View
+	index int
 }
 
-func canonicalRowDependencies(row programschema.StaticTypeNode, location canonicalRowLocation, out []identity.ContentID) ([]identity.ContentID, bool) {
-	dependencies, ok := location.program.StaticTypeNodeChildren(location.index, row, false)
+func canonicalRowDependencies(row programstaticnode.StaticTypeNode, location canonicalRowLocation, out []identity.ContentID) ([]identity.ContentID, bool) {
+	dependencies, ok := location.view.StaticTypeNodeChildren(location.index, row, false)
 	if !ok {
 		return nil, false
 	}
@@ -32,7 +32,7 @@ func canonicalRowDependencies(row programschema.StaticTypeNode, location canonic
 func componentsOfRows(locations map[identity.ContentID]canonicalRowLocation) (map[identity.ContentID]rowComponent, bool) {
 	edges := make(map[identity.ContentID][]identity.ContentID, len(locations))
 	for id, location := range locations {
-		row, ok := location.program.StaticTypeNodeAt(location.index)
+		row, ok := location.view.StaticTypeNodeAt(location.index)
 		if !ok {
 			return nil, false
 		}

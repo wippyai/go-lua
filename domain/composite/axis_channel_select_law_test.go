@@ -3,6 +3,7 @@ package composite
 import (
 	"testing"
 
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	lualower "github.com/wippyai/go-lua/analysis/lua/lower"
@@ -13,14 +14,19 @@ import (
 )
 
 func TestChannelSelectCaseIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
-	entry, declared := axisForKey(axisKeyChannelSelectCase)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	entry, declared := axisForKey(state, axisKeyChannelSelectCase)
 	if !declared {
 		t.Fatalf("the composition declares no axis %q", axisKeyChannelSelectCase)
 	}
 	if entry.Key() != selectapply.AxisKey {
 		t.Fatalf("the registered axis is keyed %q, its owner declares %q", entry.Key(), selectapply.AxisKey)
 	}
-	storage, storageOK := AxisStorage(axisKeyChannelSelectCase)
+	storage, storageOK := AxisStorage(compilation, axisKeyChannelSelectCase)
 	if !storageOK || storage != axis.StorageEngine {
 		t.Fatalf("axis %q declares storage %d, not the engine-published one", axisKeyChannelSelectCase, storage)
 	}
@@ -30,19 +36,20 @@ func TestChannelSelectCaseIsDeclaredAsAnEnginePublishedAxis(t *testing.T) {
 	if entry.MountDeclared() {
 		t.Fatal("the engine-published axis seals a Link authority of its own")
 	}
-	roles, rolesOK := SemanticRoles()
+	roles, rolesOK := SemanticRoles(compilation)
 	if !rolesOK {
 		t.Fatal("semantic role vocabulary")
 	}
 	expected, expectedOK := roles.Key("semantic/axis/channel-select-case")
-	semantic, semanticOK := AxisSemantic(axisKeyChannelSelectCase)
+	semantic, semanticOK := AxisSemantic(compilation, axisKeyChannelSelectCase)
 	if !expectedOK || !semanticOK || semantic != expected {
 		t.Fatalf("axis %q publishes %x, the vocabulary declares the axis role", axisKeyChannelSelectCase, semantic.Digest())
 	}
 }
 
 func TestChannelSelectCasePublishesOneEngineWrittenColumn(t *testing.T) {
-	entry, declared := axisForKey(axisKeyChannelSelectCase)
+	compilation, publication := publicationForTest(t)
+	entry, declared := axisForKey(compilation.catalog, axisKeyChannelSelectCase)
 	if !declared {
 		t.Fatalf("the composition declares no axis %q", axisKeyChannelSelectCase)
 	}
@@ -53,7 +60,7 @@ func TestChannelSelectCasePublishesOneEngineWrittenColumn(t *testing.T) {
 	if !outputOK || output.Key != selectapply.OutputKey || output.Writer != selectapply.AxisKey {
 		t.Fatalf("axis %q publishes column %q written by %q", axisKeyChannelSelectCase, output.Key, output.Writer)
 	}
-	requests, requestsOK := WriteRequests()
+	requests, requestsOK := publication.WriteRequests()
 	if !requestsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
@@ -73,6 +80,7 @@ func TestChannelSelectCasePublishesOneEngineWrittenColumn(t *testing.T) {
 }
 
 func TestChannelSelectCaseColumnStoresAcceptedFactsAndMissesLookalike(t *testing.T) {
+	_, publication := publicationForTest(t)
 	program, err := lualower.Lower(lualower.Source{Name: "select.lua", Text: []byte(`
 type Event = {kind: string}
 type Stop = {reason: string}
@@ -93,21 +101,21 @@ end
 		t.Fatalf("Apply = %d applications, want 1", len(apps))
 	}
 
-	schemaID, schemaOK := PublicationSchema()
+	schemaID, schemaOK := publication.SchemaID()
 	if !schemaOK || !schemaID.Available() {
 		t.Fatal("the sealed table publishes no schema identity")
 	}
-	column, projected := ProjectAxis[identity.ContentID, channelselect.CaseFact](selectapply.OutputKey)
+	column, projected := analysiscatalog.ProjectAxis[identity.ContentID, channelselect.CaseFact](publication, selectapply.OutputKey)
 	if !projected || !column.Available() {
 		t.Fatalf("the declared column %q projects no address", selectapply.OutputKey)
 	}
 
-	requests, requestsOK := WriteRequests()
+	requests, requestsOK := publication.WriteRequests()
 	if !requestsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
 	binding := engine.NewColumnBinding()
-	if !admitPublicationColumns(binding) || !binding.Seal() {
+	if !publication.AdmitColumns(binding) || !binding.Seal() {
 		t.Fatal("publication admission")
 	}
 	write, minted := engine.MintColumnWrite[identity.ContentID, channelselect.CaseFact](binding, selectapply.OutputKey, selectapply.AxisKey)

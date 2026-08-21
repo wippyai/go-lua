@@ -12,6 +12,10 @@ import (
 type Artifact struct {
 	key CompileKey
 	id  identity.ContentID
+	// entryBodyID is the scalar root-activation relation issued by the
+	// compiler's Flow Body owner. It is immutable Artifact state, not a second
+	// Body index or a module-local reconstruction.
+	entryBodyID identity.ContentID
 	// frozen is this program's cold publication: the families that have moved
 	// onto the shared publication substrate, sealed once here and shared by
 	// reference with every Link that mounts this artifact. It is not a second
@@ -50,27 +54,8 @@ func (artifact *Artifact) ID() identity.ContentID {
 // artifact. Consumers use its dense families directly; Artifact retains no
 // occurrence or rule-placement slices of its own.
 func (artifact *Artifact) Program() programschema.Program {
-	if artifact == nil || !artifact.frozen.Published() || !artifact.id.Available() || !artifact.key.SchemaDigest().Available() {
+	if artifact == nil || !artifact.frozen.Published() || !artifact.id.Available() || !artifact.key.ExecutionSchemaID().Available() || !artifact.entryBodyID.Available() {
 		return programschema.Program{}
 	}
-	return programschema.Program{Frozen: artifact.frozen, ArtifactID: artifact.id, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.SchemaDigest()}
-}
-
-// coldCount and coldRow read one cold family out of this artifact's sealed
-// publication. They are the artifact-internal spelling of the family accessors
-// and deliberately do not gate on Available: the seal validation walks read
-// the publication while the artifact's own identity is still being derived.
-func coldCount[V programschema.Row](artifact *Artifact, family programschema.Family[V]) (int, bool) {
-	if artifact == nil {
-		return 0, false
-	}
-	return family.Count(&artifact.frozen, artifact.coldCatalog)
-}
-
-func coldRow[V programschema.Row](artifact *Artifact, family programschema.Family[V], index int) (V, bool) {
-	var absent V
-	if artifact == nil {
-		return absent, false
-	}
-	return family.At(&artifact.frozen, artifact.coldCatalog, index)
+	return programschema.Program{Frozen: artifact.frozen, ArtifactID: artifact.id, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.ExecutionSchemaID().ContentID(), EntryBodyID: artifact.entryBodyID}
 }

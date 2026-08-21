@@ -612,26 +612,6 @@ func (schema Schema) ReferenceSelector(reference Reference) (KeySelector, bool) 
 	return selector, selector.valid()
 }
 
-// FiniteSelector creates a normalized finite union of exact selectors. It is
-// an operation input only; a Partition never stores a grouped finite cell.
-func (schema Schema) FiniteSelector(selectors ...KeySelector) (KeySelector, bool) {
-	if !schema.valid() || len(selectors) == 0 {
-		return KeySelector{}, false
-	}
-	atoms := make([]keyAtom, 0)
-	for _, selector := range selectors {
-		if !selector.valid() || selector.owner != schema.owner || selector.kinds != 0 {
-			return KeySelector{}, false
-		}
-		atoms = append(atoms, selector.atoms...)
-	}
-	atoms = normalizeKeyAtoms(atoms)
-	if len(atoms) == 0 || !validExactKeyAtoms(schema.owner, atoms) {
-		return KeySelector{}, false
-	}
-	return KeySelector{owner: schema.owner, atoms: atoms}, true
-}
-
 func (schema Schema) KindSelector() (KeySelector, bool) {
 	return schema.KindsSelector(runtimekind.NonNil)
 }

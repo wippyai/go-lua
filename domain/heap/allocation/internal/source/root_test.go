@@ -78,7 +78,11 @@ func TestRootFenceIsConstructorReceiptOnly(t *testing.T) {
 	if forged.FencedTo(heap) {
 		t.Fatal("root without constructor receipt passed hot fence")
 	}
-	foreign, foreignFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked))
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("source compilation")
+	}
+	foreign, foreignFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked, compilation))
 	if foreignFailure != heapdomain.SealFailureNone || foreign == heap || root.FencedTo(foreign) {
 		t.Fatal("equal-content foreign Heap schema crossed Root receipt")
 	}
@@ -164,12 +168,16 @@ func TestClosedRevalidateForFencesExactSchemaInstances(t *testing.T) {
 	if !closedOK || !rootOK || !root.FencedTo(heap) || !closed.RevalidateFor(heap, values) {
 		t.Fatal("exact source schemas did not revalidate")
 	}
-	otherHeap, otherHeapFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked))
-	structural, structuralOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("source compilation")
+	}
+	otherHeap, otherHeapFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked, compilation))
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, sourceValueMounts(t, linked), structural)
+	otherValues, otherValuesFailure := valuedomain.SealWithFailure(linked, otherHeap, sourceValueMounts(t, linked, compilation), structural)
 	var otherAllocation heapdomain.Key
 	for index := 0; index < otherHeap.KeyCount(); index++ {
 		candidate, candidateOK := otherHeap.KeyAt(index)
@@ -410,12 +418,17 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	heap, heapFailure := heapdomain.SealWithArtifacts(linked, sourceHeapMounts(t, linked))
-	structural, structuralOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("source compilation")
+	}
+	heapMounts := sourceHeapMounts(t, linked, compilation)
+	heap, heapFailure := heapdomain.SealWithArtifacts(linked, heapMounts)
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
-	values, valueFailure := valuedomain.SealWithFailure(linked, heap, sourceValueMounts(t, linked), structural)
+	values, valueFailure := valuedomain.SealWithFailure(linked, heap, sourceValueMounts(t, linked, compilation), structural)
 	if heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("Heap schema")
 	}
@@ -425,24 +438,23 @@ func sourceFixture(t testing.TB, text string) (heapdomain.Schema, *valuedomain.S
 	return heap, values, linked
 }
 
-func sourceHeapMounts(t testing.TB, linked *link.Link) []heapdomain.ArtifactMount {
+func sourceHeapMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []heapdomain.ArtifactMount {
 	t.Helper()
-	heapMounts, _ := sourceArtifactMounts(t, linked)
+	heapMounts, _ := sourceArtifactMounts(t, linked, compilation)
 	return heapMounts
 }
 
-func sourceValueMounts(t testing.TB, linked *link.Link) []valuedomain.ArtifactMount {
+func sourceValueMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) []valuedomain.ArtifactMount {
 	t.Helper()
-	_, valueMounts := sourceArtifactMounts(t, linked)
+	_, valueMounts := sourceArtifactMounts(t, linked, compilation)
 	return valueMounts
 }
 
-func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
+func sourceArtifactMounts(t testing.TB, linked *link.Link, compilation composite.Compilation) ([]heapdomain.ArtifactMount, []valuedomain.ArtifactMount) {
 	t.Helper()
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilation.Available() || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("source artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -456,7 +468,7 @@ func sourceArtifactMounts(t testing.TB, linked *link.Link) ([]heapdomain.Artifac
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("source artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("source artifact: %v", failure)
 		}

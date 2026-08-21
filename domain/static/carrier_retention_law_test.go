@@ -20,9 +20,6 @@ func TestStaticCarrierBoundaryGate(t *testing.T) {
 		reflect.TypeOf(resultRow{}),
 		reflect.TypeOf(Symbolic{}),
 		reflect.TypeOf(RuntimeSubject{}),
-		reflect.TypeOf(typeValueRow{}),
-		reflect.TypeOf(TypeValueSeeds{}),
-		reflect.TypeOf(TypeValueSeed{}),
 	}
 	seen := make(map[reflect.Type]struct{})
 	for _, root := range roots {

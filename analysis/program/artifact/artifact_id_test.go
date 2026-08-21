@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 func TestArtifactIDCommitsCompileKeyIdentity(t *testing.T) {
@@ -19,11 +20,11 @@ func TestArtifactIDCommitsCompileKeyIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		grammar, ok := programartifact.NewGrammarIdentity(schema, programartifact.GrammarABIVersion)
+		grammar, ok := programartifact.NewExecutionSchemaID(schema, identity.ContentID{2}, programartifact.GrammarABIVersion)
 		if !ok {
 			t.Fatal("valid grammar identity was rejected")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, artifactcompiler.IssuanceDirectory{})
+		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("artifact compile failed: %s", failure.Error())
 		}
@@ -46,11 +47,11 @@ func TestCompiledArtifactIDIsStableAcrossIndependentCompiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		grammar, ok := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+		grammar, ok := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 		if !ok {
 			t.Fatal("valid grammar identity was rejected")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, artifactcompiler.IssuanceDirectory{})
+		artifact, failure := artifactcompiler.CompileDetailed(published, grammar, issuance.Directory{})
 		if failure.Available() || artifact == nil || !artifact.Available() {
 			t.Fatalf("artifact compile failed: %s", failure.Error())
 		}

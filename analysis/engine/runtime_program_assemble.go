@@ -331,7 +331,9 @@ func (refusal ProgramAssembleRefusal) LinkRole() (RuleSlotCapability, bool) {
 // Commit projects the geometry construction refusal onto the public failure
 // vocabulary. A construction that published no geometry carries the stage it
 // refused at; a construction that never ran carries nothing.
-func (refusal ProgramAssembleRefusal) Commit() SolveFailure { return refusal.construction.Failure() }
+func (refusal ProgramAssembleRefusal) Commit() SolveFailure {
+	return refusal.construction.Failure()
+}
 
 // ScheduleRow is the ordinal of the composition-schedule row a refused
 // construction stopped on. It is zero for every other refusal.

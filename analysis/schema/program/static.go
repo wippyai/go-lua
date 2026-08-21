@@ -5,27 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// The append-only slots these families occupy. They are derived from the last
-// slot declared before them so a family added later cannot reuse a slot a
-// consumer already addresses.
-const (
-	slotStaticTypeValue  = slotEnvironmentReset + 1
-	slotStaticExpression = slotStaticTypeValue + 1
-	slotStaticInput      = slotFunctionCapture + 1
-)
-
-var (
-	staticTypeValueFamily  = Family[StaticTypeValue]{slot: slotStaticTypeValue, name: "static-type-value"}
-	staticExpressionFamily = Family[StaticExpression]{slot: slotStaticExpression, name: "static-expression"}
-	staticInputFamily      = Family[StaticInput]{slot: slotStaticInput, name: "static-input"}
-)
-
-func StaticTypeValueFamily() Family[StaticTypeValue] { return staticTypeValueFamily }
-
-func StaticExpressionFamily() Family[StaticExpression] { return staticExpressionFamily }
-
-func StaticInputFamily() Family[StaticInput] { return staticInputFamily }
-
 // StaticTypeValue is one authored type-value binding. The row is flat: every
 // field is an identity the compiler issued while the Static proof was live,
 // plus the authored name the binding is known by.

@@ -236,6 +236,19 @@ func (capability Target) Operation() (vocabulary.Operation, bool) {
 	return row.seedOperation, row.seedOperation != 0
 }
 
+// IsScopedLoader distinguishes the mounted, shard-local require target from
+// an ordinary admitted operation target. Both retain the same exact Target
+// operation handle; this provenance bit is authored by Boundary's loader
+// seed and prevents a direct operation with equal identity from masquerading
+// as the scoped loader.
+func (capability Target) IsScopedLoader() bool {
+	if !capability.Valid() {
+		return false
+	}
+	row := capability.owner.targets[capability.selector-1]
+	return row.key.kind == targetSeed && row.scopedLoader
+}
+
 func (value Value) knownTargetCount() int {
 	if !value.valid() || value.top {
 		return 0

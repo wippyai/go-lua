@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/rowidentity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -17,7 +18,9 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 	calls := compiler.input.Flow().Authored().Calls().Count()
 	compiler.calls = make([]programschema.Call, 0, calls)
 	compiler.callResults = compiler.callResults[:0]
+	compiler.callResultSlots = compiler.callResultSlots[:0]
 	callIDs := make([]identity.ContentID, calls+1)
+	callSpans := make([]identity.ContentID, calls+1)
 	compiler.callOperands = compiler.callOperands[:0]
 	compiler.callArguments = compiler.callArguments[:0]
 	compiler.callTypeArguments = compiler.callTypeArguments[:0]
@@ -100,14 +103,24 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		callIDs[ordinal] = call.id
+		callSpans[ordinal] = call.span
 		compiler.calls = append(compiler.calls, row)
 	}
 	// Flow already owns the complete ordered Call-result geometry walk. Join it
 	// once to the dense Call IDs compiled above instead of rebuilding a second
 	// term-to-geometry index in the Artifact compiler.
 	type resultAt struct {
-		ordinal uint32
-		row     programschema.CallResult
+		ordinal                uint32
+		geometry               flow.CallResultGeometry
+		directConsumer         keyspace.Term
+		directConsumerPosition uint32
+	}
+	slotsByCall := make(map[keyspace.Term][]flow.CallResultSlotGeometry)
+	if !compiler.input.Flow().VisitCallResultSlotGeometry(func(geometry flow.CallResultSlotGeometry) bool {
+		slotsByCall[geometry.Call] = append(slotsByCall[geometry.Call], geometry)
+		return true
+	}) {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
 	results := make([]resultAt, 0)
 	geometryOK := compiler.input.Flow().VisitCallResultGeometry(func(geometry flow.CallResultGeometry) bool {
@@ -116,25 +129,107 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 			!callIDs[ordinal].Available() {
 			return false
 		}
-		result, ok := programschema.NewCallResultWithMultiplicity(
-			callIDs[ordinal], geometry.Values, geometry.Value, geometry.Tail, geometry.Position,
-			geometry.Form, geometry.Multiplicity, geometry.Count,
-		)
-		if !ok {
-			return false
-		}
-		results = append(results, resultAt{ordinal: ordinal, row: result})
+		results = append(results, resultAt{ordinal: ordinal, geometry: geometry})
 		return true
 	})
 	if !geometryOK {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
 	}
+	directOK := compiler.input.Flow().VisitDirectScalarCallResultGeometry(func(geometry flow.DirectScalarCallResultGeometry) bool {
+		ordinal := keyspace.TermOrdinal(geometry.Call)
+		if !geometry.Available() || ordinal == 0 || uint64(ordinal) >= uint64(len(callIDs)) ||
+			!callIDs[ordinal].Available() || !callSpans[ordinal].Available() {
+			return false
+		}
+		results = append(results, resultAt{
+			ordinal: ordinal,
+			geometry: flow.CallResultGeometry{
+				Call: geometry.Call, Value: callSpans[ordinal], Form: programschema.CallResultDirectValue,
+				Multiplicity: programschema.CallResultMultiplicityExact, Count: 1,
+			},
+			directConsumer:         geometry.Consumer,
+			directConsumerPosition: geometry.ConsumerPosition,
+		})
+		return true
+	})
+	if !directOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
 	sort.Slice(results, func(left, right int) bool { return results[left].ordinal < results[right].ordinal })
+	programID := compiler.key.ProgramID()
 	for index, result := range results {
 		if index != 0 && results[index-1].ordinal == result.ordinal {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, -1, CompileReasonOccurrenceCall)
 		}
-		compiler.callResults = append(compiler.callResults, result.row)
+		geometry := result.geometry
+		slots := slotsByCall[geometry.Call]
+		wantSlots := uint32(0)
+		if geometry.Multiplicity == programschema.CallResultMultiplicityExact {
+			wantSlots = geometry.Count
+		}
+		if (geometry.Form != programschema.CallResultDirectValue && uint64(len(slots)) != uint64(wantSlots)) || !fitsUint32(len(compiler.callResultSlots)) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, -1, CompileReasonOccurrenceCall)
+		}
+		slotOffset := uint32(len(compiler.callResultSlots))
+		if geometry.Multiplicity == programschema.CallResultMultiplicityOpen {
+			// Open tails have no finite child span. Their canonical zero-width
+			// span is independent of the dense slots emitted for other Calls.
+			slotOffset = 0
+		}
+		parent, parentOK := programschema.NewCallResultWithMultiplicityAndSlots(
+			callIDs[result.ordinal], geometry.Values, geometry.Value, geometry.Tail, geometry.Position,
+			geometry.Form, geometry.Multiplicity, geometry.Count, slotOffset, wantSlots,
+		)
+		if !parentOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, -1, CompileReasonOccurrenceCall)
+		}
+		if geometry.Form == programschema.CallResultDirectValue {
+			consumerID, consumerOK := compiler.input.Flow().SemanticTermPath(result.directConsumer)
+			slot, slotOK := programschema.NewDerivedCallResultSlot(
+				callIDs[result.ordinal], 0, programschema.CallResultSlotSourceCallValue,
+				programschema.CallResultSlotConsumerStructural, consumerID, result.directConsumerPosition, geometry.Value,
+			)
+			if !consumerOK || !consumerID.Available() || !slotOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, 0, CompileReasonOccurrenceCall)
+			}
+			compiler.callResultSlots = append(compiler.callResultSlots, slot)
+			compiler.callResults = append(compiler.callResults, parent)
+			continue
+		}
+		for slotIndex, slotGeometry := range slots {
+			if slotGeometry.Ordinal != uint32(slotIndex) || slotGeometry.Values != geometry.Values {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, slotIndex, CompileReasonOccurrenceCall)
+			}
+			consumerID, valueID := identity.ContentID{}, identity.ContentID{}
+			switch slotGeometry.SourceKind {
+			case programschema.CallResultSlotSourceValue:
+				consumerID, valueID = slotGeometry.Source, slotGeometry.Source
+			case programschema.CallResultSlotSourceValuesTail:
+				switch slotGeometry.ConsumerKind {
+				case programschema.CallResultSlotConsumerCell:
+					consumerID, _ = rowidentity.StorageCellID(programID, compiler.input.Flow(), slotGeometry.Consumer)
+					valueID, _ = programschema.CallResultSlotSyntheticValueIdentity(
+						callIDs[result.ordinal], slotGeometry.Ordinal, slotGeometry.ConsumerKind,
+						consumerID, slotGeometry.Position,
+					)
+				case programschema.CallResultSlotConsumerLens, programschema.CallResultSlotConsumerStructural:
+					consumerID, _ = compiler.input.Flow().SemanticTermPath(slotGeometry.Consumer)
+				default:
+					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, slotIndex, CompileReasonOccurrenceCall)
+				}
+			default:
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, slotIndex, CompileReasonOccurrenceCall)
+			}
+			slot, slotOK := programschema.NewDerivedCallResultSlot(
+				callIDs[result.ordinal], slotGeometry.Ordinal, slotGeometry.SourceKind,
+				slotGeometry.ConsumerKind, consumerID, slotGeometry.Position, valueID,
+			)
+			if !slotOK {
+				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, slotIndex, CompileReasonOccurrenceCall)
+			}
+			compiler.callResultSlots = append(compiler.callResultSlots, slot)
+		}
+		compiler.callResults = append(compiler.callResults, parent)
 	}
 	return CompileFailure{}
 }

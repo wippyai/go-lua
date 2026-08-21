@@ -863,6 +863,13 @@ func (schema *Schema) InputSelector(operation vocabulary.Operation, source vocab
 	return selector, ok && selector.valid() && selector.schema == schema.state
 }
 
+// Start returns the call-row fixed-member offset carried by this exact
+// Pack-owned selector. Consumers use it to project a mounted call's authored
+// fixed suffix without retaining Pack's private selector representation.
+func (selector InputSelector) Start() (int, bool) {
+	return selector.start, selector.valid()
+}
+
 // OwnsInputSelector proves that this exact Pack schema issued the detached
 // input-selection capability. Effect uses this fence before applying a
 // selector to a mounted call, so a same-shaped selector from another seal

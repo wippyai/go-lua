@@ -28,27 +28,15 @@ func buildCountRows(c *Component) (denominator.CountRows, bool) {
 		return denominator.CountRows{}, false
 	}
 
-	outcomes := 0
-	for index := 0; index < c.Generations().Count(); index++ {
-		generation, ok := c.Generations().At(index)
-		if !ok || !addCount(&outcomes, c.Outcomes().Count(generation)) {
-			return denominator.CountRows{}, false
-		}
-	}
-
 	ids := denominator.GeneratedLinkModuleIDs()
 	values := []struct {
 		id    schema.EntryID
 		value int
 	}{
-		{ids.LinkModule, c.Cache().EntryCount()},
+		{ids.LinkModule, len(c.authority.spec.ModuleCacheEntries)},
 		{ids.LinkModuleCache, c.Cache().InstanceCount()},
 		{ids.LinkModuleRepresentative, c.Cache().InstanceCount()},
-		{ids.LinkModuleTransport, c.Coordinates().Count()},
 		{ids.LinkModuleAnalysisRoot, c.Roots().Count()},
-		{ids.LinkModuleInitGeneration, c.Generations().Count()},
-		{ids.LinkModuleInitOutcome, outcomes},
-		{ids.LinkModuleInitTerminal, c.Terminals().Count()},
 	}
 	rows := make([]denominator.CountRow, 0, len(values))
 	for _, value := range values {
@@ -62,16 +50,4 @@ func buildCountRows(c *Component) (denominator.CountRows, bool) {
 		rows = append(rows, row)
 	}
 	return denominator.NewCountRows(rows)
-}
-
-func addCount(total *int, value int) bool {
-	if total == nil || value < 0 {
-		return false
-	}
-	sum, ok := denominator.SumInts(*total, value)
-	if !ok {
-		return false
-	}
-	*total = sum
-	return true
 }

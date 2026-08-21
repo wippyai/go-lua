@@ -27,17 +27,17 @@ func TestComputationOccurrenceRowsAreClosedAndPayloadScoped(t *testing.T) {
 			t.Fatalf("computation row kind %d was not a closed occurrence", kind)
 		}
 	}
-	binaryCode, codeOK := binaryEqualityCode(flowkind.BinaryNotEqual, false, true)
+	binaryCode, codeOK := programschema.OccurrenceBinaryEqualityCode(flowkind.BinaryNotEqual, false, true)
 	binary, binaryRowOK := programschema.NewOccurrence(programschema.OccurrenceBinaryEquality, id, identity.ContentID{}, binaryCode, 0, 0, 0, 2, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
 	binaryOffset, binaryCount, binarySpanOK := binary.InputSpan()
-	left, right := inputs[int(binaryOffset)].InputID(), inputs[int(binaryOffset+1)].InputID()
-	if !codeOK || !binaryRowOK || !occurrenceSemanticAvailable(binary) || !binarySpanOK || binaryCount != 2 || left != operand || right != third || flowkind.BinaryOp(binary.Code()&binaryEqualityCodeOpMask) != flowkind.BinaryNotEqual {
+	left, right, binaryOp, operandsOK := programschema.OccurrenceBinaryEqualityOperands(binary, inputs)
+	if !codeOK || !binaryRowOK || !programschema.OccurrenceSemanticAvailable(binary) || !binarySpanOK || binaryOffset != 0 || binaryCount != 2 || !operandsOK || left != operand || right != third || binaryOp != flowkind.BinaryNotEqual {
 		t.Fatal("binary equality row did not preserve ordered operands and polarity")
 	}
 	order, orderRowOK := programschema.NewOccurrence(programschema.OccurrenceBinaryOrder, id, identity.ContentID{}, uint64(flowkind.BinaryGreater), 0, 0, 2, 2, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
 	orderOffset, orderCount, orderSpanOK := order.InputSpan()
-	left, right = inputs[int(orderOffset)].InputID(), inputs[int(orderOffset+1)].InputID()
-	if !orderRowOK || !occurrenceSemanticAvailable(order) || !orderSpanOK || orderCount != 2 || left != operand || right != fourth || flowkind.BinaryOp(order.Code()) != flowkind.BinaryGreater {
+	left, right, orderOp, orderOperandsOK := programschema.OccurrenceBinaryOrderOperands(order, inputs)
+	if !orderRowOK || !programschema.OccurrenceSemanticAvailable(order) || !orderSpanOK || orderOffset != 2 || orderCount != 2 || !orderOperandsOK || left != operand || right != fourth || orderOp != flowkind.BinaryGreater {
 		t.Fatal("binary order row did not preserve ordered operands and operator")
 	}
 	for _, hostile := range []struct {
@@ -55,7 +55,7 @@ func TestComputationOccurrenceRowsAreClosedAndPayloadScoped(t *testing.T) {
 			}
 			continue
 		}
-		if occurrenceSemanticAvailable(row) {
+		if programschema.OccurrenceSemanticAvailable(row) {
 			t.Fatal("binary order row accepted malformed operator/arity")
 		}
 	}

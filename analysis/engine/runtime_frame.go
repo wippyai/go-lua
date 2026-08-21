@@ -21,8 +21,6 @@ type readRuntime interface {
 	summaryAddress() (schemaFactorBinding, uint64, []uint64, [32]byte, bool)
 }
 
-type productRow = provenanceRow
-
 type productSession struct {
 	execution *ruleExecution
 	work      *carrier.Work
@@ -30,7 +28,7 @@ type productSession struct {
 	reads     []readRuntime
 	sessions  []readSession
 	rows      product.Rows
-	values    []productRow
+	values    []provenanceRow
 	columns   [][]uint64
 	live      bool
 	started   atomic.Bool
@@ -118,7 +116,7 @@ func newProductSession(execution *ruleExecution, reads []readRuntime, work *carr
 		session.close()
 		return nil, false
 	}
-	session.rows, session.values = rows, []productRow{{}}
+	session.rows, session.values = rows, []provenanceRow{{}}
 	for index, read := range reads {
 		if !session.requireCheckpoint() || read == nil || read.inputPort() < 0 || read.inputPort() >= len(inputs) || !read.refine(session, index) || session.rows.Count() != len(session.values) {
 			session.close()

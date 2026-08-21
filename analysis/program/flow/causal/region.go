@@ -225,14 +225,6 @@ func (v Local) regionAt(index int) (Region, bool) {
 	return Region{result: v.result, index: uint32(index), id: row.id}, true
 }
 
-func (v Local) region(head keyspace.Term) (Region, bool) {
-	index, ok := v.result.localIndex(head)
-	if !ok {
-		return Region{}, false
-	}
-	return v.regionAt(int(index))
-}
-
 // Count reports all recurrence-issued cyclic components, including an empty
 // component that has no final route in this Program projection.
 func (v Local) Count() int {
@@ -256,10 +248,6 @@ func (v Local) Resolve(id identity.ContentID) (Region, bool) {
 	}
 	return v.regionAt(int(index))
 }
-
-// ForHead resolves only a recurrence-issued component head. It never accepts
-// a shaped-but-unissued Label/Loop term.
-func (v Local) ForHead(head keyspace.Term) (Region, bool) { return v.region(head) }
 
 // ForSuccessor is the singular owner-issued inverse for an existing final
 // route. A foreign or manufactured Successor fails closed.

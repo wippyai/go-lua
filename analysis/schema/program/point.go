@@ -2,27 +2,9 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// The generic cold family declaration reserves append-only slots after the
-// nine declared above it. Deriving the point slots from the last summary slot
-// keeps that discipline visible here and makes it impossible to reuse a slot
-// owned by another family.
-const (
-	slotPoint         = slotUnarySummary + 1
-	slotPointDecision = slotPoint + 1
-)
-
-var (
-	pointFamily         = Family[Point]{slot: slotPoint, name: "point"}
-	pointDecisionFamily = Family[PointDecision]{slot: slotPointDecision, name: "point-decision"}
-)
-
-func PointFamily() Family[Point] { return pointFamily }
-
-func PointDecisionFamily() Family[PointDecision] { return pointDecisionFamily }
-
 // PointDecision is one decision identity a program point commits to. Its
 // position is its ordinal in PointDecisionFamily and the parent point names
-// the half-open span it owns, so no point retains a slice header.
+// the half-open span it references, so no point retains a slice header.
 type PointDecision struct{ id identity.ContentID }
 
 // NewPointDecision copies one canonical point decision identity.

@@ -3,6 +3,7 @@ package candidates
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
@@ -15,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -29,9 +29,9 @@ type candidateFixture struct {
 	flowView   authored.View
 	proof      *executable.Result
 
-	staticView     staticquery.View
-	flowFinalize   authored.Finalizer
-	moduleFinalize imports.Finalizer
+	staticView   staticquery.View
+	flowFinalize authored.Finalizer
+	moduleID     identity.ContentID
 }
 
 type candidateSpec struct {
@@ -91,12 +91,12 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 	flowInput.Counts = spec.counts
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -104,85 +104,76 @@ func openCandidateFixture(t *testing.T, spec candidateSpec) *candidateFixture {
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
+	moduleID := flowView.ModuleID()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	indexInput, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinalize.Commit(indexInput)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 
 	controlProof, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleView.ContentID())
+		flowView.ContentID(), staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	proof, err := executable.Seal(sourceView, flowView, bodies, forest, controlProof,
-		staticView.ContentID(), moduleView.ContentID(), paths)
+		staticView.ContentID(), moduleID, paths)
 	if err != nil {
-		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	fixture := &candidateFixture{
-		sourceView:     sourceView,
-		flowView:       flowView,
-		proof:          proof,
-		staticView:     staticView,
-		flowFinalize:   flowFinalize,
-		moduleFinalize: moduleFinalize,
+		sourceView:   sourceView,
+		flowView:     flowView,
+		proof:        proof,
+		staticView:   staticView,
+		flowFinalize: flowFinalize,
+		moduleID:     moduleID,
 	}
 	t.Cleanup(func() {
-		flowtest.CloseFinalizers(source.Finalizer{}, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(source.Finalizer{}, fixture.flowFinalize)
 	})
 	return fixture
 }
@@ -383,7 +374,7 @@ func candidateBinaryRows(owner keyspace.Term, operands [][2]keyspace.Term) []aut
 func TestCandidateSealHonestFixture(t *testing.T) {
 	fixture := openCandidateFixture(t, candidateIntegrationSpec())
 	result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("candidates.Seal: %v", err)
 	}
@@ -445,7 +436,7 @@ func TestCandidateSealKeepsFieldNameCallCalleeAsIndexGet(t *testing.T) {
 
 	fixture := openCandidateFixture(t, spec)
 	result, err := Seal(fixture.sourceView.Identity(), fixture.flowView, fixture.proof,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.moduleID)
 	if err != nil {
 		t.Fatalf("candidates.Seal: %v", err)
 	}
@@ -458,12 +449,12 @@ func TestCandidateSealPermutationResealAndCapacity(t *testing.T) {
 	first := openCandidateFixture(t, candidateIntegrationSpec())
 	second := openCandidateFixture(t, candidateIntegrationSpec())
 	left, err := Seal(first.sourceView.Identity(), first.flowView, first.proof,
-		first.staticView.ContentID(), first.moduleFinalize.View().ContentID())
+		first.staticView.ContentID(), first.moduleID)
 	if err != nil {
 		t.Fatalf("first Seal: %v", err)
 	}
 	right, err := Seal(second.sourceView.Identity(), second.flowView, second.proof,
-		second.staticView.ContentID(), second.moduleFinalize.View().ContentID())
+		second.staticView.ContentID(), second.moduleID)
 	if err != nil {
 		t.Fatalf("second Seal: %v", err)
 	}
@@ -471,14 +462,14 @@ func TestCandidateSealPermutationResealAndCapacity(t *testing.T) {
 	foreignSpec.flow.Operators.Binaries[0].Op = kind.BinarySub
 	foreign := openCandidateFixture(t, foreignSpec)
 	if _, err := Seal(first.sourceView.Identity(), foreign.flowView, first.proof,
-		first.staticView.ContentID(), first.moduleFinalize.View().ContentID()); err == nil {
+		first.staticView.ContentID(), first.moduleID); err == nil {
 		t.Fatal("Seal accepted a proof from the first Flow with a foreign Flow identity")
 	}
 	permutedSpec := candidateIntegrationSpec()
 	permutedSpec.keys[0], permutedSpec.keys[1] = permutedSpec.keys[1], permutedSpec.keys[0]
 	permuted := openCandidateFixture(t, permutedSpec)
 	permutedResult, err := Seal(permuted.sourceView.Identity(), permuted.flowView, permuted.proof,
-		permuted.staticView.ContentID(), permuted.moduleFinalize.View().ContentID())
+		permuted.staticView.ContentID(), permuted.moduleID)
 	if err != nil {
 		t.Fatalf("permuted reseal: %v", err)
 	}

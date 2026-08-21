@@ -12,6 +12,7 @@ import (
 // later whole-Flow finalizer and cannot affect source identity here.
 func Build(input Input) (*Draft, error) {
 	if !validCounts(input.Counts) ||
+		!countEquals(input.Counts[keyspace.FamilyImport], len(input.Imports)) ||
 		!countEquals(input.Counts[keyspace.FamilyValues], len(input.Values.Rows)) ||
 		!countEquals(input.Counts[keyspace.FamilyLensExact], len(input.Access.Exact)) ||
 		!countEquals(input.Counts[keyspace.FamilyLensKey], len(input.Access.Dynamic)) ||
@@ -41,6 +42,7 @@ func Build(input Input) (*Draft, error) {
 		return nil, errors.New("program/flow: inconsistent authored cardinality")
 	}
 	component := &component{
+		imports: importStore{rows: append([]Import(nil), input.Imports...)},
 		values: valueStore{
 			rows:  append([]Value(nil), input.Values.Rows...),
 			terms: append([]keyspace.Term(nil), input.Values.Terms...),
@@ -89,9 +91,16 @@ func Build(input Input) (*Draft, error) {
 	if err := validateAuthored(component, input.Counts); err != nil {
 		return nil, err
 	}
+	if err := validateImports(component, input.Counts); err != nil {
+		return nil, err
+	}
 	component.contentID = contentID(component)
 	if !component.contentID.Available() {
 		return nil, errors.New("program/flow: unavailable content identity")
+	}
+	component.imports.moduleID = moduleID(component.imports.rows)
+	if !component.imports.moduleID.Available() {
+		return nil, errors.New("program/flow: unavailable module identity")
 	}
 	return &Draft{state: &draftState{component: component, phase: draftOpen}}, nil
 }
@@ -203,6 +212,21 @@ func lengthFits(length int) bool {
 
 func countEquals(count uint32, length int) bool {
 	return lengthFits(length) && uint64(count) == uint64(length)
+}
+
+func validateImports(component *component, counts [keyspace.FamilyCount]uint32) error {
+	if component == nil || uint64(len(component.imports.rows)) != uint64(counts[keyspace.FamilyImport]) {
+		return errors.New("program/flow: Import cardinality mismatch")
+	}
+	for index, row := range component.imports.rows {
+		if !validImport(row, index) ||
+			keyspace.TermOrdinal(row.Call) > counts[keyspace.FamilyCall] ||
+			(row.Alias != 0 && keyspace.TermOrdinal(row.Alias) > counts[keyspace.FamilyCell]) ||
+			keyspace.TermOrdinal(row.Request) > counts[keyspace.FamilyString] {
+			return errors.New("program/flow: invalid Import row")
+		}
+	}
+	return nil
 }
 
 func hasFamily(counts [keyspace.FamilyCount]uint32, term keyspace.Term, family keyspace.Family) bool {

@@ -7,7 +7,6 @@ import (
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
-	"github.com/wippyai/go-lua/domain/composite"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -223,15 +222,19 @@ func CollectBranch(
 	if report == nil {
 		return false
 	}
-	directory, directoryOK := composite.DiagnosticCollectionDirectory()
-	if !directoryOK {
+	directory := report.collections
+	if !directory.Available() {
 		return false
 	}
 	var trueSeverity, falseSeverity, selectSeverity FindingSeverity
 	collectGuards, collectSelect := false, false
-	conformanceSeverities := make(map[schemadiag.Site]FindingSeverity, 2)
-	for _, row := range directory {
-		severity, enabled := policy.EnabledFor(row.Code)
+	conformanceSeverities := make(map[schemadiag.Site]FindingSeverity, 4)
+	for position := 0; position < directory.Count(); position++ {
+		row, rowOK := directory.At(position)
+		if !rowOK {
+			return false
+		}
+		severity, enabled := policy.EnabledFor(report.declarations, row.Code)
 		if !enabled {
 			continue
 		}
@@ -240,10 +243,16 @@ func CollectBranch(
 		}
 		switch {
 		case row.Population == structure.DiagnosticObservationTypeConformance.Key():
-			if !row.Site.Available() {
+			if row.SiteCount() == 0 {
 				return false
 			}
-			conformanceSeverities[row.Site] = severity
+			for sitePosition := 0; sitePosition < row.SiteCount(); sitePosition++ {
+				site, siteOK := row.SiteAt(sitePosition)
+				if !siteOK || !site.Available() {
+					return false
+				}
+				conformanceSeverities[site] = severity
+			}
 		case row.Code == DiagnosticCodeAlwaysTrueGuard:
 			trueSeverity, collectGuards = severity, true
 		case row.Code == DiagnosticCodeAlwaysFalseGuard:
@@ -346,7 +355,7 @@ func conformanceSubjects(rows []Observation) ([]ConformanceSubject, bool) {
 		subjects = append(subjects, ConformanceSubject{
 			ID: row.ID, FindingID: id, Mount: row.Mount,
 			Location: location, Site: row.Site, Actual: row.Actual,
-			DeclaredMay: row.DeclaredMay, Target: row.Target,
+			DeclaredMay: row.DeclaredMay, Target: row.Target, Member: row.Conformance.Member,
 			Points: conformanceProducerPoints(row.Conformance.Producers),
 		})
 	}
@@ -363,13 +372,19 @@ func conformanceProducerPoints(producers []Producer) []identity.ContentID {
 	return points
 }
 
-// conformanceFindingRole keeps one finding identity per site, so an assignment
-// and a call argument reported at one observation never collide.
+// conformanceFindingRole keeps one finding identity per site, so two sites
+// reported at one observation never collide.
 func conformanceFindingRole(site schemadiag.Site) string {
-	if site == schemadiag.SiteAssignment {
+	switch site {
+	case schemadiag.SiteAssignment:
 		return "diagnostic-finding/type-assignment"
+	case schemadiag.SiteMember:
+		return "diagnostic-finding/type-member"
+	case schemadiag.SiteMemberAbsent:
+		return "diagnostic-finding/type-member-absent"
+	default:
+		return "diagnostic-finding/type-call-argument"
 	}
-	return "diagnostic-finding/type-call-argument"
 }
 
 func staticSubjects(rows []Observation) ([]StaticSubject, bool) {

@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programfamily "github.com/wippyai/go-lua/analysis/schema/program/family"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
 )
@@ -18,12 +20,13 @@ type Snapshot struct {
 	artifactID  identity.ContentID
 	programID   identity.ContentID
 	schemaID    identity.ContentID
+	entryBodyID identity.ContentID
 	frozen      snapshotstore.Frozen
 	coldCatalog identity.ContentID
 }
 
 func (snapshot *Snapshot) Available() bool {
-	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && snapshot.frozen.Published() && snapshot.coldCatalog.Available()
+	return snapshot != nil && snapshot.artifactID.Available() && snapshot.programID.Available() && snapshot.schemaID.Available() && snapshot.entryBodyID.Available() && snapshot.frozen.Published() && snapshot.coldCatalog.Available()
 }
 
 func vocabularyAuthority(vocabulary structure.Table) bool {
@@ -47,14 +50,14 @@ func (snapshot *Snapshot) coldView() coldView {
 	return coldView{frozen: &snapshot.frozen, catalog: snapshot.coldCatalog}
 }
 
-func coldCount[V programschema.Row](view coldView, family programschema.Family[V]) (int, bool) {
+func coldCount[V programfamily.Row](view coldView, family programfamily.Family[V]) (int, bool) {
 	if view.frozen == nil {
 		return 0, false
 	}
 	return family.Count(view.frozen, view.catalog)
 }
 
-func coldRow[V programschema.Row](view coldView, family programschema.Family[V], index int) (V, bool) {
+func coldRow[V programfamily.Row](view coldView, family programfamily.Family[V], index int) (V, bool) {
 	var absent V
 	if view.frozen == nil {
 		return absent, false
@@ -85,6 +88,16 @@ func (snapshot *Snapshot) SchemaID() identity.ContentID {
 	return snapshot.schemaID
 }
 
+// EntryBodyID returns the owner-issued executable-root Body identity carried
+// through this immutable ingress receipt. It is never reconstructed from the
+// ordered Body plane.
+func (snapshot *Snapshot) EntryBodyID() identity.ContentID {
+	if !snapshot.Available() {
+		return identity.ContentID{}
+	}
+	return snapshot.entryBodyID
+}
+
 // Frozen returns this snapshot's neutral compiled publication. The publication
 // carries no mount identity; a mount row adds its module key at the boundary
 // that owns placement.
@@ -104,7 +117,7 @@ func (snapshot *Snapshot) Program() programschema.Program {
 	}
 	return programschema.Program{
 		Frozen: snapshot.frozen, ArtifactID: snapshot.artifactID,
-		ProgramID: snapshot.programID, SchemaID: snapshot.schemaID,
+		ProgramID: snapshot.programID, SchemaID: snapshot.schemaID, EntryBodyID: snapshot.entryBodyID,
 	}
 }
 
@@ -115,7 +128,7 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		return nil, false
 	}
 	program := artifact.Program()
-	coldCatalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	coldCatalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	if !program.Available() || !catalogOK {
 		return nil, false
 	}
@@ -123,6 +136,7 @@ func Lower(artifact *programartifact.Artifact, vocabulary structure.Table) (*Sna
 		artifactID:  program.ArtifactID,
 		programID:   program.ProgramID,
 		schemaID:    program.SchemaID,
+		entryBodyID: program.EntryBodyID,
 		frozen:      program.Frozen,
 		coldCatalog: coldCatalog,
 	}

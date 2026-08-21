@@ -219,8 +219,8 @@ func corpusDiagnosticProjectExpectedCount(project *corpusDiagnosticProjectExpect
 	return count
 }
 
-func corpusDiagnosticSeverity(value string) anadiag.FindingSeverity {
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+func corpusDiagnosticSeverity(compilation composite.Compilation, value string) anadiag.FindingSeverity {
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	if !vocabularyOK {
 		return anadiag.FindingSeverityInvalid
 	}
@@ -235,8 +235,8 @@ func corpusDiagnosticSeverity(value string) anadiag.FindingSeverity {
 // structure vocabulary spells it. The spelling is read from that vocabulary
 // rather than restated here, so a fixture's inline marker and a report row are
 // compared through the analyzer's own naming.
-func corpusDiagnosticSeveritySpelling(severity anadiag.FindingSeverity) (string, bool) {
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+func corpusDiagnosticSeveritySpelling(compilation composite.Compilation, severity anadiag.FindingSeverity) (string, bool) {
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	if !vocabularyOK || !severity.Available() {
 		return "", false
 	}
@@ -447,7 +447,7 @@ func matchCorpusDiagnosticDetailsForProject(result *corpusDiagnosticFamilyResult
 // manifest remains an expectation source, never an input to Plan/Link or the
 // inference pipeline. Evidence/render/label fields are intentionally not
 // guessed here because they are not part of DiagnosticReport's public API.
-func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport, code string, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
+func matchCorpusDiagnosticFamily(compilation composite.Compilation, project string, expectation *corpusDiagnosticProjectExpectations, report *anadiag.DiagnosticReport, code string, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
 	result := corpusDiagnosticFamilyResult{Project: project, Code: code}
 	if expectation == nil || expectation.manifest == nil || expectation.manifest.Check == nil {
 		result.Status = corpusDiagnosticFamilyUnsupported
@@ -485,7 +485,7 @@ func matchCorpusDiagnosticFamily(project string, expectation *corpusDiagnosticPr
 	}
 
 	actual := corpusDiagnosticActualRows(&result, report, code)
-	return judgeCorpusDiagnosticRows(result, expectation, expected, actual, sourceText)
+	return judgeCorpusDiagnosticRows(compilation, result, expectation, expected, actual, sourceText)
 }
 
 // corpusDiagnosticActualRow is one published report row of the family under
@@ -524,13 +524,13 @@ func corpusDiagnosticActualRows(result *corpusDiagnosticFamilyResult, report *an
 // claims exactly one published row, and every published row a manifest did not
 // claim is reported. Matching is stated over reduced rows rather than over a
 // report so the judgment itself is provable without a published analysis.
-func judgeCorpusDiagnosticRows(result corpusDiagnosticFamilyResult, expectation *corpusDiagnosticProjectExpectations, expected []corpusStructuredDiagnosticExpectation, actual []corpusDiagnosticActualRow, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
+func judgeCorpusDiagnosticRows(compilation composite.Compilation, result corpusDiagnosticFamilyResult, expectation *corpusDiagnosticProjectExpectations, expected []corpusStructuredDiagnosticExpectation, actual []corpusDiagnosticActualRow, sourceText func(string) (string, bool)) corpusDiagnosticFamilyResult {
 	result.Actual = len(actual)
 	used := make([]bool, len(actual))
 	for expectedIndex, want := range expected {
 		matched := -1
 		for index, got := range actual {
-			if used[index] || !corpusDiagnosticProjectMatchesFile(expectation, want.File, got.file) || got.line != uint32(want.Line) || got.severity != corpusDiagnosticSeverity(want.Severity) {
+			if used[index] || !corpusDiagnosticProjectMatchesFile(expectation, want.File, got.file) || got.line != uint32(want.Line) || got.severity != corpusDiagnosticSeverity(compilation, want.Severity) {
 				continue
 			}
 			if want.Column != 0 && got.column != uint32(want.Column) {
@@ -608,7 +608,7 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 	if status != analysis.AnalyzeComplete {
 		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)
 	}
-	return matchCorpusDiagnosticFamily(projectName, project, report, code, func(file string) (string, bool) {
+	return matchCorpusDiagnosticFamily(run.compilation, projectName, project, report, code, func(file string) (string, bool) {
 		file = corpusDiagnosticProjectSourceFile(project, file)
 		contents, err := os.ReadFile(filepath.Join(project.directory, filepath.FromSlash(file)))
 		if err != nil {
@@ -715,6 +715,10 @@ func TestCorpusDiagnosticManifestRunnerInstalledCodePendingProjectLaw(t *testing
 // by nothing, so it is reported as an unexpected row rather than absorbed by
 // the expectation the first row already satisfied.
 func TestCorpusDiagnosticManifestRunnerUnexpectedFindingLaw(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
 	code := anadiag.DiagnosticCodeAlwaysTrueGuard.String()
 	row := corpusDiagnosticActualRow{file: "main.lua", line: 2, column: 1, severity: anadiag.FindingSeverityHint}
 	project := &corpusDiagnosticProjectExpectations{manifest: &corpusDiagnosticManifest{Check: &corpusDiagnosticManifestCheck{
@@ -722,7 +726,7 @@ func TestCorpusDiagnosticManifestRunnerUnexpectedFindingLaw(t *testing.T) {
 	}}}
 	expected := project.manifest.Check.Diagnostics
 	seed := corpusDiagnosticFamilyResult{Project: "synthetic", Code: code, Status: corpusDiagnosticFamilySupported, Expected: len(expected)}
-	got := judgeCorpusDiagnosticRows(seed, project, expected, []corpusDiagnosticActualRow{row, {index: 1, file: row.file, line: row.line, column: row.column, severity: row.severity}},
+	got := judgeCorpusDiagnosticRows(compilation, seed, project, expected, []corpusDiagnosticActualRow{row, {index: 1, file: row.file, line: row.line, column: row.column, severity: row.severity}},
 		func(string) (string, bool) { return "\nif true then end\n", true })
 	if got.Status != corpusDiagnosticFamilyFailed || got.CoreMatched || got.Expected != 1 || got.Actual != 2 || len(got.Mismatches) != 1 || !strings.Contains(got.Mismatches[0], "unexpected row") {
 		t.Fatalf("extra native finding escaped one-to-one matching: %+v", got)

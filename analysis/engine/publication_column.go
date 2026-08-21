@@ -113,6 +113,29 @@ func AdmitColumns(binding *SchemaBinding, admissions []ColumnAdmission) bool {
 	return true
 }
 
+// AdmittedAxis projects one output from the binding's admitted publication
+// table into its typed immutable address. The address carries no binding or
+// snapshot pointer; after this projection the caller retains only the schema
+// fence and dense slot, and snapshot.Read performs the final typed recovery.
+// It is available while the table is open so Link rule binding can receive the
+// already-admitted axis before the binding seals.
+func AdmittedAxis[K comparable, V any](binding *SchemaBinding, output schema.Key) (snapshot.Axis[K, V], bool) {
+	state := bindingState(binding)
+	if state == nil || !output.Available() {
+		return snapshot.Axis[K, V]{}, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingOpen && state.phase != schemaBindingSealed || state.columns == nil {
+		return snapshot.Axis[K, V]{}, false
+	}
+	admitted, found := state.columns[output]
+	if !found || admitted == nil || !admitted.admission.Available() {
+		return snapshot.Axis[K, V]{}, false
+	}
+	return snapshot.Axis[K, V]{SchemaID: admitted.admission.Schema, Slot: admitted.admission.Slot}, true
+}
+
 // completeAdmittedColumnsLocked restates the admitted set's own law at the
 // seal. A binding that admits no column publishes none and is complete; one
 // that admits columns publishes them under one table, one writer per column

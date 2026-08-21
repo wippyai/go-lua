@@ -7,10 +7,14 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/program"
+	"github.com/wippyai/go-lua/analysis"
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link"
-	linkmodule "github.com/wippyai/go-lua/analysis/program/link/module"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
+	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
 // corpusLawRepositoryRoot locates the module root from this source file, so the
@@ -59,13 +63,11 @@ func TestFrozenCorpusCatalogReturnsDefensiveViews(t *testing.T) {
 	}
 }
 
-// TestSealCorpusProjectResolvesImportsThroughModuleKeys pins the Import
-// admission of the sole fixture Program-to-Link constructor. Every executable
-// Import resolves through the Key the Module finalizer derived, which is total
-// over sealed Programs: a Key that names no exact string is a broken Program,
-// not a fixture shape to skip, so the constructor reports it instead of
-// silently dropping the module-cache row Link needs. A request that names no
-// sibling module of the project is the one admitted skip.
+// TestSealCorpusProjectResolvesImportsThroughModuleKeys pins the canonical
+// Link-lifetime composition publication. Every executable authored request is
+// represented by a sealed ResolvedImport, while only the mounted sibling is a
+// CacheIngress; the absent sibling remains a source request but is not a
+// fabricated mount or cache row.
 func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 	directory := t.TempDir()
 	sources := map[string]string{
@@ -91,38 +93,42 @@ func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 		t.Fatalf("seal synthetic project: %v", err)
 	}
 
-	cache := linked.Module().Cache()
-	if cache.EntryCount() != 1 {
-		t.Fatalf("module cache entries = %d, want exactly the resolved sibling row", cache.EntryCount())
+	published, axes := sealedCompositionSnapshot(t, linked)
+	cacheCount, cacheCountOK := snapshot.MemberCountAtAxis(&published, axes.cache)
+	if !cacheCountOK || cacheCount != 1 {
+		t.Fatalf("module cache rows = %d/%v, want exactly the resolved sibling row", cacheCount, cacheCountOK)
 	}
-	entry, entryOK := cache.EntryAt(0)
-	if !entryOK {
-		t.Fatal("module cache entry is unavailable")
+	cacheKey, cacheKeyOK := snapshot.MemberAtAxis(&published, axes.cache, 0)
+	if !cacheKeyOK {
+		t.Fatal("module cache row key is unavailable")
 	}
-	_, from, to, mappingOK := cache.EntryMapping(entry)
-	if !mappingOK {
-		t.Fatal("module cache entry mapping is unavailable")
+	cacheEntry, cacheEntryOK := modulecomposition.CacheAt(&published, axes.cache, cacheKey)
+	if !cacheEntryOK {
+		t.Fatal("module cache row is unavailable")
 	}
-	importing := sealedProjectProgram(t, linked, from)
-	imported := sealedProjectProgram(t, linked, to)
-	if importing.Module().Count() != 2 || imported.Module().Count() != 0 {
+	importing, importingOK := programmount.Mounted(&published, axes.mount, cacheEntry.SourceModuleKey())
+	imported, importedOK := programmount.Mounted(&published, axes.mount, cacheEntry.TargetModuleKey())
+	if !importingOK || !importedOK {
+		t.Fatal("module cache row names no published source/target mounts")
+	}
+	importingImports, importingPublished := importing.ModuleImportCount()
+	importedImports, importedPublished := imported.ModuleImportCount()
+	if !importingPublished || !importedPublished || importingImports != 2 || importedImports != 0 {
 		t.Fatalf("module cache row runs %d imports -> %d imports, want the requiring module -> the required module",
-			importing.Module().Count(), imported.Module().Count())
+			importingImports, importedImports)
 	}
 
-	requested := make([]string, 0, importing.Module().Count())
-	for index := 0; index < importing.Module().Count(); index++ {
-		item, itemOK := importing.Module().ImportAt(index)
+	requested := make([]string, 0, importingImports)
+	for index := 0; index < importingImports; index++ {
+		_, itemOK := importing.ModuleImportAt(index)
 		if !itemOK {
 			t.Fatalf("Program Import table has no row %d", index)
 		}
-		row, rowOK := importing.Module().Import(item.Term)
-		if !rowOK || !importing.Flow().Executable().Contains(row.Call) {
-			t.Fatalf("Program Import %d is not an executable Call", index)
-		}
-		literal, literalOK := importing.Source().Keys().Exact(row.Key)
-		if !literalOK || literal.Kind != keyspace.LiteralString {
-			t.Fatalf("Program Import %d Key %v names no exact string", index, row.Key)
+		request, requestOK := importing.ModuleRequestFor(index)
+		projectKey, projectKeyOK := linked.Project().Keys().ForMounted(cacheEntry.SourceModuleKey(), request.Key())
+		literal, literalOK := linked.Project().Keys().Exact(projectKey)
+		if !requestOK || !projectKeyOK || !literalOK || literal.Kind != keyspace.LiteralString {
+			t.Fatalf("Program Import %d request names no exact string", index)
 		}
 		requested = append(requested, literal.String)
 	}
@@ -132,17 +138,36 @@ func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 	}
 }
 
-func sealedProjectProgram(t *testing.T, linked *link.Link, root linkmodule.AnalysisRoot) *program.Program {
+type moduleSnapshotAxes struct {
+	mount   snapshot.Axis[identity.ContentID, programmount.Program]
+	imports snapshot.Axis[identity.ContentID, modulecomposition.ResolvedImport]
+	cache   snapshot.Axis[identity.ContentID, modulecomposition.CacheIngress]
+}
+
+func sealedCompositionSnapshot(t *testing.T, linked *link.Link) (snapshot.Snapshot, moduleSnapshotAxes) {
 	t.Helper()
-	shard, _, _, ok := linked.Module().Roots().Mapping(root)
-	if !ok {
-		t.Fatal("analysis root has no shard mapping")
+	plan, status, diagnostics := analysis.CompileWithDiagnostics(linked)
+	if status != analysis.CompileComplete || plan == nil {
+		t.Fatalf("compile canonical composition: status=%v diagnostics=%+v", status, diagnostics)
 	}
-	mounted, mountedOK := linked.Project().Mounts().Program(shard)
-	if !mountedOK || mounted == nil {
-		t.Fatal("mounted Program is unavailable")
+	publication, publicationOK := plan.Publication()
+	if !publicationOK {
+		_ = plan.Close()
+		t.Fatal("canonical composition Publication is unavailable")
 	}
-	return mounted
+	mount, mountOK := analysiscatalog.ProjectAxis[identity.ContentID, programmount.Program](publication, programmount.OutputKey)
+	imports, importsOK := analysiscatalog.ProjectAxis[identity.ContentID, modulecomposition.ResolvedImport](publication, modulecomposition.ImportOutputKey)
+	cache, cacheOK := analysiscatalog.ProjectAxis[identity.ContentID, modulecomposition.CacheIngress](publication, modulecomposition.CacheOutputKey)
+	published, publishedOK := plan.Snapshot()
+	if !publishedOK {
+		_ = plan.Close()
+		t.Fatal("canonical composition Snapshot is unavailable")
+	}
+	_ = plan.Close()
+	if !mountOK || !importsOK || !cacheOK || mount.SchemaID != published.Schema() || imports.SchemaID != published.Schema() || cache.SchemaID != published.Schema() {
+		t.Fatal("canonical mount/module-composition axes are unavailable")
+	}
+	return published, moduleSnapshotAxes{mount: mount, imports: imports, cache: cache}
 }
 
 // TestFrozenLuaFileCountIsTheCorpusDenominator holds the declared release

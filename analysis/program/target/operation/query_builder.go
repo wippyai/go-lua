@@ -152,7 +152,7 @@ func (core *Core) appendEffect(input EffectInput) (int, error) {
 			return 0, invalidQuery("effect row argument is outside target ABI")
 		}
 	}
-	publication, publicationOK, publicationErr := freezePublicationEffect(input.Publication, input.HasPublication, core.ValueFormalCount(input.Target))
+	publication, publicationOK, publicationErr := freezePublicationEffect(input.Publication, input.HasPublication, core.ValueFormalCount(input.Target), uint32(core.ValuesVarCount(input.Target)))
 	if publicationErr != nil {
 		return 0, publicationErr
 	}
@@ -361,15 +361,21 @@ func (core *Core) appendQueryOperation(op vocabulary.Operation, input QueryOpera
 	if !validQueryRange(input.EffectIndices, len(core.query.effects)) {
 		return invalidQuery("operation effect index is outside effect table")
 	}
+	formalEffects, formalEffectTail, formalErr := canonicalFormalEffects(input.FormalEffects, input.FormalEffectTail)
+	if formalErr != nil {
+		return invalidQuery(formalErr.Error())
+	}
 
 	row := queryOperationRow{
-		input:       input.Input,
-		valuesTypes: append([]vocabulary.Type(nil), input.ValuesTypes...),
-		effects:     append([]int(nil), input.EffectIndices...),
-		typeFormals: append([]vocabulary.Type(nil), input.TypeFormals...),
-		rowFormals:  input.RowFormals,
-		effectTail:  input.EffectTail,
-		effectVar:   input.EffectVar,
+		input:            input.Input,
+		valuesTypes:      append([]vocabulary.Type(nil), input.ValuesTypes...),
+		effects:          append([]int(nil), input.EffectIndices...),
+		typeFormals:      append([]vocabulary.Type(nil), input.TypeFormals...),
+		rowFormals:       input.RowFormals,
+		effectTail:       input.EffectTail,
+		effectVar:        input.EffectVar,
+		formalEffects:    formalEffects,
+		formalEffectTail: formalEffectTail,
 	}
 	row.outcomes = queryRange{start: len(core.query.outcomeRows)}
 	row.outcomeSources = make([]uint32, len(input.Outcomes))

@@ -68,8 +68,8 @@ func TestBranchValueObservationAttachmentScalarSealLaw(t *testing.T) {
 
 // An attachment is only ever issued together with the Engine observation its
 // identity authorized. A handle-free attachment therefore publishes no identity,
-// reads no observation, and admits no member, which is what keeps a forged
-// attachment out of every reader of this evidence point.
+// and admits no member, which is what keeps a forged attachment out of every
+// reader of this evidence point.
 func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 	attachment := sealedBranchValueObservationAttachment()
 	if attachment.Valid() {
@@ -83,9 +83,6 @@ func TestBranchValueObservationAttachmentObservationLaw(t *testing.T) {
 	}
 	if _, published := attachment.Observation(); published {
 		t.Fatal("attachment published a declared observation row without an authenticated handle")
-	}
-	if _, readable := attachment.Observe(nil, nil); readable {
-		t.Fatal("attachment read an observation without an authenticated handle")
 	}
 	if MemberPublished(nil, engine.RuleSlotCapability{}, attachment.mount, attachment.point, publicationLawID("branch-observation/occurrence")) {
 		t.Fatal("attachment admitted a member without a committed program")

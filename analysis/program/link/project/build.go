@@ -150,18 +150,18 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 		if err := appendFunctionStyleApplications(p, shard, appendItem); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
-		module := p.Module()
-		for at := 0; at < module.Count(); at++ {
-			item, ok := module.ImportAt(at)
+		imports := authored.Imports()
+		for at := 0; at < imports.Count(); at++ {
+			term, ok := imports.At(at)
 			if !ok {
 				return nil, nil, nil, nil, nil, errors.New("link/project: malformed Program Import table")
 			}
-			row, valid := module.Import(item.Term)
+			row, valid := imports.Get(term)
 			if !valid || row.Call == 0 {
 				return nil, nil, nil, nil, nil, errors.New("link/project: malformed Program Import")
 			}
 			if executable.Contains(row.Call) {
-				appendItem(applicationKey{kind: applicationImport, shard: uint32(shard), term: item.Term})
+				appendItem(applicationKey{kind: applicationImport, shard: uint32(shard), term: term})
 			}
 		}
 	}
@@ -211,7 +211,7 @@ func buildApplications(mounts []mountRow) ([]applicationRow, []uint32, []uint32,
 			continue
 		}
 		p := mounts[item.shard-1].program
-		row, ok := p.Module().Import(item.term)
+		row, ok := p.Flow().Authored().Imports().Get(item.term)
 		if !ok {
 			return nil, nil, nil, nil, nil, errors.New("link/project: Import Application names malformed Program Import")
 		}

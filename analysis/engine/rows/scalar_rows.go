@@ -58,13 +58,6 @@ func (stage ArtifactRuleStage) Valid() bool {
 	return stage >= ArtifactRuleStageBase && stage <= ArtifactRuleStageIssued5
 }
 
-// NativeCall is superseded by the declared ArtifactStageLaw.Native column
-// (consumed at scalar_admission.go:184) and dies with its remaining callers
-// in runtime_program_lower.go and construct_topology.go at the step-4 cut.
-func (stage ArtifactRuleStage) NativeCall() bool {
-	return stage >= ArtifactRuleStageIssued3 && stage <= ArtifactRuleStageIssued5
-}
-
 // ArtifactStageLaw is one declared execution-cut relation: whether the stage
 // is a native-call cut and which stage must already own its input point.
 type ArtifactStageLaw struct {

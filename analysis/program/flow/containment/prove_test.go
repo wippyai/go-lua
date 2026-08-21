@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -35,8 +34,7 @@ type proofFixture struct {
 
 	staticView staticquery.View
 
-	moduleView     imports.View
-	moduleFinalize imports.Finalizer
+	moduleView authored.Imports
 
 	bodies   *body.Result
 	binding  binding.Result
@@ -48,7 +46,7 @@ type proofSpec struct {
 	rows      [][]keyspace.Term
 	flow      authored.Input
 	static    static.Input
-	module    imports.Input
+	module    []authored.Import
 	exacts    []keyspace.LiteralValue
 	keys      []source.KeyInput
 	binds     []source.BindCells
@@ -70,6 +68,7 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 
 	flowInput := spec.flow
 	flowInput.Counts = counts
+	flowInput.Imports = append(flowInput.Imports, spec.module...)
 	staticInput := spec.static
 	staticInput.Counts = counts
 
@@ -122,19 +121,7 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(spec.module)
-	if err != nil {
-		_ = flowFinalize.Abort()
-		_ = sourceFinalize.Abort()
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		_ = flowFinalize.Abort()
-		_ = sourceFinalize.Abort()
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
 
 	fixture := &proofFixture{
 		entry:          entry,
@@ -144,12 +131,10 @@ func newProofFixture(t *testing.T, spec proofSpec) *proofFixture {
 		flowFinalize:   flowFinalize,
 		staticView:     staticView,
 		moduleView:     moduleView,
-		moduleFinalize: moduleFinalize,
 		bodies:         bodies,
 		binding:        bindings,
 	}
 	fixture.finalize = func() {
-		_ = fixture.moduleFinalize.Abort()
 		_ = fixture.flowFinalize.Abort()
 		_ = fixture.sourceFinalize.Abort()
 	}
@@ -259,9 +244,9 @@ func c(family keyspace.Family, count uint32) struct {
 	}{family: family, count: count}
 }
 
-func emptyModule(t *testing.T) imports.Input {
+func emptyModule(t *testing.T) []authored.Import {
 	t.Helper()
-	return imports.Input{}
+	return nil
 }
 
 func TestProveMinimalEntryRoot(t *testing.T) {
@@ -486,7 +471,10 @@ func TestProveRejectsUnavailableOwners(t *testing.T) {
 	}{
 		{name: "Source", expire: func(fixture *proofFixture) { _ = fixture.sourceFinalize.Abort() }},
 		{name: "Authored", expire: func(fixture *proofFixture) { _, _ = fixture.flowFinalize.Commit() }},
-		{name: "Module", expire: func(fixture *proofFixture) { _ = fixture.moduleFinalize.Abort() }},
+		{name: "Module", expire: func(fixture *proofFixture) {
+			fixture.flowView = authored.View{}
+			fixture.moduleView = authored.Imports{}
+		}},
 		{name: "zero Static view", expire: func(fixture *proofFixture) {
 			fixture.staticView = staticquery.View{}
 		}},

@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -32,7 +31,6 @@ type shapeFixture struct {
 	sourceFinalize source.Finalizer
 	staticView     staticquery.View
 	flowFinalize   authored.Finalizer
-	moduleFinalize imports.Finalizer
 }
 
 type shapeSpec struct {
@@ -70,18 +68,18 @@ func openShapeFixture(t *testing.T, spec shapeSpec) *shapeFixture {
 	}
 	_, staticView, err := static.Build(staticInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("static.Build: %v", err)
 	}
 
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -89,39 +87,29 @@ func openShapeFixture(t *testing.T, spec shapeSpec) *shapeFixture {
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	fixture := &shapeFixture{
 		preimage: preimage, flow: flowView, bodies: bodies, binding: bindingResult, forest: forest,
 		sourceFinalize: sourceFinalize, staticView: staticView,
-		flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
-		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize)
 	})
 	return fixture
 }
@@ -129,7 +117,7 @@ func openShapeFixture(t *testing.T, spec shapeSpec) *shapeFixture {
 func (f *shapeFixture) seal(t *testing.T) *Shape {
 	t.Helper()
 	shape, err := Seal(f.preimage, f.flow, f.bodies, f.binding, f.forest,
-		f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
+		f.staticView.ContentID(), f.flow.ModuleID())
 	if err != nil {
 		t.Fatalf("control.Shape Seal: %v", err)
 	}
@@ -138,7 +126,7 @@ func (f *shapeFixture) seal(t *testing.T) *Shape {
 
 func (f *shapeFixture) sealError() error {
 	_, err := Seal(f.preimage, f.flow, f.bodies, f.binding, f.forest,
-		f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
+		f.staticView.ContentID(), f.flow.ModuleID())
 	return err
 }
 
@@ -544,7 +532,7 @@ func TestSealRejectsForeignBodyAtFunctionBoundary(t *testing.T) {
 		nilOwners: []keyspace.Term{body, body},
 	})
 	if _, err := Seal(current.preimage, current.flow, foreign.bodies, current.binding, current.forest,
-		current.staticView.ContentID(), current.moduleFinalize.View().ContentID()); err == nil {
+		current.staticView.ContentID(), current.flow.ModuleID()); err == nil {
 		t.Fatal("foreign Body Function boundary was accepted")
 	}
 }
@@ -636,7 +624,7 @@ func TestSealRejectsBodyResultThatOmitsOrReordersBindRoot(t *testing.T) {
 				nilOwners: tc.nilOwners,
 			})
 			if _, err := Seal(current.preimage, current.flow, foreign.bodies, current.binding, current.forest,
-				current.staticView.ContentID(), current.moduleFinalize.View().ContentID()); err == nil {
+				current.staticView.ContentID(), current.flow.ModuleID()); err == nil {
 				t.Fatal("foreign Body proof was accepted despite Source root mismatch")
 			} else if !strings.Contains(err.Error(), "Body root") && !strings.Contains(err.Error(), "source position") && !strings.Contains(err.Error(), "Body provenance") {
 				t.Fatalf("foreign Body proof rejection = %v, want semantic root/source mismatch", err)
@@ -691,7 +679,7 @@ func TestSealRejectsForeignBindingAgainstBindCell(t *testing.T) {
 	}, exacts)
 
 	if _, err := Seal(current.preimage, current.flow, current.bodies, foreign.binding, current.forest,
-		current.staticView.ContentID(), current.moduleFinalize.View().ContentID()); err == nil {
+		current.staticView.ContentID(), current.flow.ModuleID()); err == nil {
 		t.Fatal("foreign Binding Result with global Bind Cell was accepted")
 	} else if !strings.Contains(err.Error(), "Bind Cell scope") && !strings.Contains(err.Error(), "Binding provenance") {
 		t.Fatalf("foreign Bind Cell rejection = %v, want semantic Bind Cell scope rejection", err)
@@ -745,7 +733,7 @@ func TestSealRejectsForeignBindingAgainstLoopCell(t *testing.T) {
 	}, exacts)
 
 	if _, err := Seal(current.preimage, current.flow, current.bodies, foreign.binding, current.forest,
-		current.staticView.ContentID(), current.moduleFinalize.View().ContentID()); err == nil {
+		current.staticView.ContentID(), current.flow.ModuleID()); err == nil {
 		t.Fatal("foreign Binding Result with global Loop Cell was accepted")
 	} else if !strings.Contains(err.Error(), "Loop Cell binding") && !strings.Contains(err.Error(), "Binding provenance") {
 		t.Fatalf("foreign Loop Cell rejection = %v, want semantic Loop Cell binding rejection", err)
@@ -782,18 +770,18 @@ func openShapeFixtureWithExactAtoms(t *testing.T, spec shapeSpec, exactAtoms []k
 	}
 	_, staticView, err := static.Build(staticInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("static.Build: %v", err)
 	}
 
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -801,39 +789,29 @@ func openShapeFixtureWithExactAtoms(t *testing.T, spec shapeSpec, exactAtoms []k
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	fixture := &shapeFixture{
 		preimage: preimage, flow: flowView, bodies: bodies, binding: bindingResult, forest: forest,
 		sourceFinalize: sourceFinalize, staticView: staticView,
-		flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
-		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize)
 	})
 	return fixture
 }

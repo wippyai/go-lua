@@ -17,19 +17,14 @@ type SchemaFragment struct {
 	slot            *engine.RuleSlot[placement.Placement, operand]
 	input           engine.SchemaInput
 	parentPlacement engine.SchemaReadSlot[placement.Placement]
-	parentHeap      engine.SchemaReadSlot[heapdomainValue]
+	parentHeap      engine.SchemaReadSlot[heapdomain.Value]
 	routes          engine.SchemaReadSlot[placement.Placement]
 	carry           engine.SchemaCarrySlot[placement.Placement]
 	write           engine.SchemaWriteSlot[placement.Placement]
 	placementRef    engine.FactorRef[placement.Placement]
-	heapRef         engine.FactorRef[heapdomainValue]
+	heapRef         engine.FactorRef[heapdomain.Value]
 	semantic        identity.SemanticKey
 }
-
-// heapdomainValue is a local alias used only to keep the field declarations
-// readable while retaining Heap's actual Value type at every engine boundary.
-// It is an alias (not a wrapper or second factor vocabulary).
-type heapdomainValue = heapdomain.Value
 
 func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[placement.Placement, operand] {
 	if fragment == nil {
@@ -60,7 +55,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if !ok {
 		return nil, false
 	}
-	parentHeap, ok := engine.SchemaRead[heapdomainValue](slot, heapPrincipal.ExactRead(), input)
+	parentHeap, ok := engine.SchemaRead[heapdomain.Value](slot, heapPrincipal.ExactRead(), input)
 	if !ok {
 		return nil, false
 	}

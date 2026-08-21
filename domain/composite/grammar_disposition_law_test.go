@@ -15,8 +15,12 @@ import (
 // disposition here, every disposition names a row the census derives, and every
 // mounted rule role is reached by at least one of them.
 func TestGrammarDispositionJoinSeals(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
-	if failure := JoinGrammarCensus(value); failure.Available() {
+	if failure := JoinGrammarCensus(compilation, value); failure.Available() {
 		t.Fatalf("grammar disposition join rejected: row=%q reason=%s key=%q", failure.Row, failure.Reason, failure.Key)
 	}
 	if len(value.Rows) != len(grammarDispositions) {
@@ -29,6 +33,10 @@ func TestGrammarDispositionJoinSeals(t *testing.T) {
 // disposition for a row the language no longer has is exactly the stale
 // accounting the census exists to expose.
 func TestGrammarJoinRejectsRemovedCensusRow(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	removed := GrammarRow(census.ProductionRow("stat#2"))
 	kept := make([]GrammarRow, 0, len(value.Rows))
@@ -44,7 +52,7 @@ func TestGrammarJoinRejectsRemovedCensusRow(t *testing.T) {
 	value.Rows = kept
 	delete(value.Builds, removed)
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinForeignDisposition || failure.Row != removed {
 		t.Fatalf("removed census row was accepted: row=%q reason=%s", failure.Row, failure.Reason)
 	}
@@ -55,6 +63,10 @@ func TestGrammarJoinRejectsRemovedCensusRow(t *testing.T) {
 // as a census row nobody has accounted for, and the join must refuse to seal
 // rather than quietly widen the language.
 func TestGrammarJoinRejectsNewCensusRow(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	added := GrammarRow(census.ProductionRow("stat#20"))
 	for _, row := range value.Rows {
@@ -64,7 +76,7 @@ func TestGrammarJoinRejectsNewCensusRow(t *testing.T) {
 	}
 	value.Rows = append(append([]GrammarRow(nil), value.Rows...), added)
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinMissingDisposition || failure.Row != added {
 		t.Fatalf("new census row was accepted: row=%q reason=%s", failure.Row, failure.Reason)
 	}
@@ -75,13 +87,17 @@ func TestGrammarJoinRejectsNewCensusRow(t *testing.T) {
 // happened to read would decide the row, so the table would state something no
 // author had settled.
 func TestGrammarJoinRejectsDuplicateDisposition(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	duplicated := grammarDispositions[0]
 	restore := grammarDispositions
 	grammarDispositions = append(append([]grammarEntry(nil), grammarDispositions...), duplicated)
 	t.Cleanup(func() { grammarDispositions = restore })
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinDuplicateDisposition || failure.Row != duplicated.Row {
 		t.Fatalf("duplicate disposition was accepted: row=%q reason=%s", failure.Row, failure.Reason)
 	}
@@ -93,13 +109,17 @@ func TestGrammarJoinRejectsDuplicateDisposition(t *testing.T) {
 // reach an author. Regenerating the census without re-reading the rows it
 // describes must therefore be refused.
 func TestGrammarJoinRejectsRegeneratedCensus(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	if value.Digest != grammarCensusAuthority {
 		t.Fatalf("census digest %q is not the pinned authority %q", value.Digest, grammarCensusAuthority)
 	}
 	value.Digest = "0000000000000000000000000000000000000000000000000000000000000000"
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinCensusAuthorityChanged {
 		t.Fatalf("a re-derived census was accepted: reason=%s", failure.Reason)
 	}
@@ -110,6 +130,10 @@ func TestGrammarJoinRejectsRegeneratedCensus(t *testing.T) {
 // exactly the roles of the forms its reduction builds, so a hand edit that
 // widens or narrows one row without the form it is derived from is refused.
 func TestGrammarJoinRejectsIncoherentProduction(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	target := GrammarRow(census.ProductionRow("stat#2"))
 	restore := grammarDispositions
@@ -128,7 +152,7 @@ func TestGrammarJoinRejectsIncoherentProduction(t *testing.T) {
 	grammarDispositions = edited
 	t.Cleanup(func() { grammarDispositions = restore })
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinIncoherentProduction || failure.Row != target {
 		t.Fatalf("incoherent production was accepted: row=%q reason=%s", failure.Row, failure.Reason)
 	}
@@ -139,6 +163,10 @@ func TestGrammarJoinRejectsIncoherentProduction(t *testing.T) {
 // actually declares, so the account cannot claim a rule the analyzer does not
 // have.
 func TestGrammarJoinRejectsUndeclaredRole(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	value := grammarCensus(t)
 	restore := grammarDispositions
 	edited := append([]grammarEntry(nil), grammarDispositions...)
@@ -163,7 +191,7 @@ func TestGrammarJoinRejectsUndeclaredRole(t *testing.T) {
 	grammarDispositions = edited
 	t.Cleanup(func() { grammarDispositions = restore })
 
-	failure := JoinGrammarCensus(value)
+	failure := JoinGrammarCensus(compilation, value)
 	if !failure.Available() || failure.Reason != GrammarJoinUndeclaredRole {
 		t.Fatalf("undeclared key was accepted: row=%q reason=%s key=%q", failure.Row, failure.Reason, failure.Key)
 	}
@@ -174,6 +202,10 @@ func TestGrammarJoinRejectsUndeclaredRole(t *testing.T) {
 // than against the walk that produced it. A mounted rule no grammar row feeds
 // would be a rule with no source in the language.
 func TestGrammarDispositionsReachEveryMountedRole(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
 	reached := roleNone
 	owned := 0
 	for _, entry := range grammarDispositions {
@@ -185,17 +217,17 @@ func TestGrammarDispositionsReachEveryMountedRole(t *testing.T) {
 	if owned == 0 {
 		t.Fatal("no census row is owned by a rule")
 	}
-	for position := 0; position < RuleCount(); position++ {
-		key, ok := RuleKeyAt(position)
+	for position := 0; position < RuleCount(compilation); position++ {
+		key, ok := RuleKeyAt(compilation, position)
 		if !ok {
 			t.Fatalf("table position %d publishes no key", position)
 		}
-		if MountedRuleKey(key) && !reached.has(key) {
+		if MountedRuleKey(compilation, key) && !reached.has(compilation.catalog, key) {
 			t.Fatalf("mounted key %q is reached by no grammar row", key)
 		}
 	}
-	for _, key := range LinkKeys() {
-		if reached.has(key) {
+	for _, key := range LinkKeys(compilation) {
+		if reached.has(compilation.catalog, key) {
 			t.Fatalf("link-owned key %q is claimed by a grammar row", key)
 		}
 	}

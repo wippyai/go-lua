@@ -36,7 +36,11 @@ func publishedCodes() []diagnostic.Code {
 // admitted and sealed by the one declaration root, and that the sealed surface
 // is exactly the published code space.
 func TestDiagnosticTableSeals(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("diagnostic table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
@@ -59,7 +63,11 @@ func TestDiagnosticTableSeals(t *testing.T) {
 // composition: every authored row is reachable through each derived lookup, so
 // no consumer holds a second per-code table.
 func TestDiagnosticTableDrivesEveryDerivedView(t *testing.T) {
-	table, tableOK := Diagnostics()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	table, tableOK := Diagnostics(compilation)
 	if !tableOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
@@ -90,8 +98,12 @@ func TestDiagnosticTableDrivesEveryDerivedView(t *testing.T) {
 // static observation population an analyzer collector can meet is claimed by
 // exactly one declared row, so a mounted row can never be silently dropped.
 func TestEveryStaticObservationPopulationIsClaimed(t *testing.T) {
-	table, tableOK := Diagnostics()
-	vocabulary, vocabularyOK := StructureVocabulary()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	table, tableOK := Diagnostics(compilation)
+	vocabulary, vocabularyOK := StructureVocabulary(compilation)
 	if !tableOK || !vocabularyOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
@@ -128,8 +140,12 @@ func TestEveryStaticObservationPopulationIsClaimed(t *testing.T) {
 // decided by solver facts names the declaration that produces them, and that
 // the name resolves in the same sealed table.
 func TestSolverObservedRowsResolveTheirFactDeclaration(t *testing.T) {
-	sealed, failure := Table()
-	table, tableOK := Diagnostics()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
+	table, tableOK := Diagnostics(compilation)
 	if failure.Available() || !tableOK {
 		t.Fatal("sealed diagnostic table unavailable")
 	}
@@ -159,9 +175,10 @@ func TestSolverObservedRowsResolveTheirFactDeclaration(t *testing.T) {
 // solver-observed diagnostic names a collection family and that the post-seal
 // directory joins that family to the issued query or observation inventory.
 func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
-	table, tableOK := Diagnostics()
-	directory, directoryOK := DiagnosticCollectionDirectory()
-	if !tableOK || !directoryOK {
+	compilation, compilationOK := Build()
+	table, tableOK := Diagnostics(compilation)
+	directory, directoryOK := compilation.DiagnosticCollections()
+	if !tableOK || !compilationOK || !directoryOK {
 		t.Fatal("diagnostic collection directory unavailable")
 	}
 	want := 0
@@ -171,11 +188,15 @@ func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
 			want++
 		}
 	}
-	if len(directory) != want || want == 0 {
-		t.Fatalf("directory holds %d rows for %d branch diagnostics", len(directory), want)
+	if directory.Count() != want || want == 0 {
+		t.Fatalf("directory holds %d rows for %d branch diagnostics", directory.Count(), want)
 	}
-	seen := make(map[diagnostic.Code]bool, len(directory))
-	for _, row := range directory {
+	seen := make(map[diagnostic.Code]bool, directory.Count())
+	for position := 0; position < directory.Count(); position++ {
+		row, rowOK := directory.At(position)
+		if !rowOK {
+			t.Fatalf("directory row %d unavailable", position)
+		}
 		if seen[row.Code] {
 			t.Fatalf("collection row %q issued twice", row.Code)
 		}
@@ -201,14 +222,28 @@ func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
 	if !assignOK || !callOK || assign.Code() != typedomain.Code || call.Code() != typedomain.CallArgumentCode {
 		t.Fatal("branch observation index lost the type-conformance sites")
 	}
-	for _, row := range directory {
-		if row.Code == typedomain.Code && (row.Site != diagnostic.SiteAssignment || !row.Population.Available()) {
+	for position := 0; position < directory.Count(); position++ {
+		row, rowOK := directory.At(position)
+		if !rowOK {
+			t.Fatalf("directory row %d unavailable", position)
+		}
+		if row.Code == typedomain.Code && (!collectionHasSite(row, diagnostic.SiteAssignment) || !row.Population.Available()) {
 			t.Fatal("assignment collection lost its site or population")
 		}
-		if row.Code == typedomain.CallArgumentCode && row.Site != diagnostic.SiteCallArgument {
+		if row.Code == typedomain.CallArgumentCode && !collectionHasSite(row, diagnostic.SiteCallArgument) {
 			t.Fatal("call-argument collection lost its site")
 		}
 	}
+}
+
+func collectionHasSite(row DiagnosticCollection, want diagnostic.Site) bool {
+	for position := 0; position < row.SiteCount(); position++ {
+		site, ok := row.SiteAt(position)
+		if ok && site == want {
+			return true
+		}
+	}
+	return false
 }
 
 // TestBranchDiagnosticsCollectFromTheirOwnPopulationObservation states where a
@@ -219,15 +254,20 @@ func TestDiagnosticCollectionDirectoryIsTotalOverBranchRows(t *testing.T) {
 // only, so a row that named one would read an absent coordinate at every site
 // and abstain silently instead of judging.
 func TestBranchDiagnosticsCollectFromTheirOwnPopulationObservation(t *testing.T) {
-	directory, directoryOK := DiagnosticCollectionDirectory()
-	if !directoryOK || len(directory) == 0 {
+	compilation, compilationOK := Build()
+	directory, directoryOK := compilation.DiagnosticCollections()
+	if !compilationOK || !directoryOK || !directory.Available() {
 		t.Fatal("diagnostic collection directory unavailable")
 	}
-	issued := make(map[schema.Key]IssuedObservation, len(ObservationIssuance()))
-	for _, observation := range ObservationIssuance() {
+	issued := make(map[schema.Key]IssuedObservation, len(ObservationIssuance(compilation)))
+	for _, observation := range ObservationIssuance(compilation) {
 		issued[observation.Key] = observation
 	}
-	for _, row := range directory {
+	for position := 0; position < directory.Count(); position++ {
+		row, rowOK := directory.At(position)
+		if !rowOK {
+			t.Fatalf("directory row %d unavailable", position)
+		}
 		if row.Collection.Surface != schema.SurfaceKindObservation {
 			t.Fatalf("branch diagnostic %q collects from surface %d; a produced value is only published on its observation family",
 				row.Code, row.Collection.Surface)

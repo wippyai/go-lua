@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	flowbody "github.com/wippyai/go-lua/analysis/program/flow/body"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -29,15 +28,17 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	readAlias := keyspace.MakeTerm(keyspace.FamilyRead, 2)
 	call := keyspace.MakeTerm(keyspace.FamilyCall, 1)
 	importTerm := keyspace.MakeTerm(keyspace.FamilyImport, 1)
+	request := keyspace.MakeTerm(keyspace.FamilyString, 1)
 
 	var counts [keyspace.FamilyCount]uint32
-	for _, term := range []keyspace.Term{body, requireCell, aliasCell, keyRequire, bind, valuesBind, valuesArgs, readRequire, readAlias, call, importTerm} {
+	for _, term := range []keyspace.Term{body, requireCell, aliasCell, keyRequire, bind, valuesBind, valuesArgs, readRequire, readAlias, call, importTerm, request} {
 		counts[keyspace.TermFamily(term)]++
 	}
 
 	input := source.Input{
 		Name:       "accessgeometry-import.lua",
-		ExactAtoms: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "require"}},
+		ExactAtoms: []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "require"}, {Kind: keyspace.LiteralString, String: "dep"}},
+		String:     []source.StringLiteral{{Owner: body, Value: "dep"}},
 		Keys:       []source.KeyInput{source.NameKey(body, "require")},
 		Binds:      []source.BindCells{{Bind: bind, Cells: []keyspace.Term{aliasCell}}},
 		Bodies:     []source.BodySource{{Body: body, Terms: []keyspace.Term{bind, call}}},
@@ -80,7 +81,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 		},
 		Storage: authored.StorageInput{
 			Cells: []authored.Cell{
-				{Kind: authored.CellGlobal, Key: 1},
+				{Kind: authored.CellGlobal, Key: 2},
 				{Kind: authored.CellLocal, Body: body},
 			},
 			Reads: []authored.Read{
@@ -89,7 +90,8 @@ func proveImportAlias(t *testing.T, openTail bool) {
 			},
 			Binds: []authored.Bind{{Owner: body, Values: valuesBind}},
 		},
-		Calls: []authored.Call{{Owner: body, Callee: readRequire, Actuals: valuesArgs}},
+		Calls:   []authored.Call{{Owner: body, Callee: readRequire, Actuals: valuesArgs}},
+		Imports: []authored.Import{{Term: importTerm, Call: call, Alias: aliasCell, Request: request}},
 	})
 	if err != nil {
 		t.Fatalf("authored.Build: %v", err)
@@ -99,16 +101,6 @@ func proveImportAlias(t *testing.T, openTail bool) {
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	defer func() { _ = flowFinalizer.Abort() }()
-
-	moduleDraft, err := imports.Build(imports.Input{Imports: []imports.Import{{Term: importTerm, Call: call, Alias: aliasCell, Request: keyspace.MakeTerm(keyspace.FamilyString, 1)}}})
-	if err != nil {
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	defer func() { _ = moduleFinalizer.Abort() }()
 
 	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
@@ -121,7 +113,7 @@ func proveImportAlias(t *testing.T, openTail bool) {
 	if err != nil {
 		t.Fatalf("body.Seal: %v", err)
 	}
-	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, moduleFinalizer.View())
+	result, err := sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, flowView.Imports())
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -177,16 +169,6 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	}
 	defer func() { _ = flowFinalizer.Abort() }()
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalizer, err := moduleDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	defer func() { _ = moduleFinalizer.Abort() }()
-
 	_, staticView, err := static.Build(static.Input{})
 	if err != nil {
 		t.Fatalf("static.Build: %v", err)
@@ -198,7 +180,7 @@ func TestSealRejectsUnaryDenominatorMismatch(t *testing.T) {
 	if bodyErr != nil {
 		t.Fatalf("body.Seal: %v", bodyErr)
 	}
-	_, err = sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, moduleFinalizer.View())
+	_, err = sealSelectors(sourceFinalizer.Preimage(), flowView, bodyResult, bindings, staticView, flowView.Imports())
 	if err == nil || !strings.Contains(err.Error(), "authored family denominator mismatch") {
 		t.Fatalf("Seal error = %v, want Unary denominator mismatch rejection", err)
 	}

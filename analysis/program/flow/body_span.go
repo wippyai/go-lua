@@ -32,7 +32,7 @@ func (view View) FinishSite(term keyspace.Term) (causal.Site, bool) {
 		return causal.Site{}, false
 	}
 	ports, sites := view.Ports(), view.Causal().Sites()
-	limit := uint64(ports.termCount())
+	limit := uint64(ports.TermCount())
 	for step := uint64(0); step <= limit; step++ {
 		finish, finishOK := ports.Finish(term)
 		if !finishOK || finish == 0 {

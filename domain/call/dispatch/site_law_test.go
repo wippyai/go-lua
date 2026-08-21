@@ -57,10 +57,10 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	receipt, receiptOK := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !receiptOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -94,7 +94,7 @@ func newSiteLawFixture(t testing.TB) siteLawFixture {
 		}
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, heapMounts)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(receipt)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

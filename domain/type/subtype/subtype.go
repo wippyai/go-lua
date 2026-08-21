@@ -23,7 +23,7 @@ func IsFreshAssignable(sub, super typ.Type) bool {
 	}
 	// Widening is a distinct recursive relation. Its coinductive assumptions
 	// must not observe false memo entries from the preceding subtype proof.
-	return (&checker{}).canWidenTo(sub, super)
+	return (&checker{}).prove(widenOf(sub, super))
 }
 
 func isOptionalTop(t typ.Type) bool {

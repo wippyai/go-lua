@@ -1,0 +1,73 @@
+package composite
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/rule"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+)
+
+// TestPlacementLinkTailIsAppendOnly pins the Placement Link tail. Containment
+// and suspension keep their established positions; the independent
+// suspension-evidence and fresh-root producers extend that tail without
+// renumbering either predecessor.
+func TestPlacementLinkTailIsAppendOnly(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	const (
+		containmentKey         schema.Key = "placement-containment"
+		containmentSlot                   = 26
+		suspensionKey          schema.Key = "placement-suspension"
+		suspensionSlot                    = 29
+		suspensionEvidenceKey  schema.Key = "placement-suspension-evidence"
+		suspensionEvidenceSlot            = 30
+		freshKey               schema.Key = "placement-fresh"
+		freshSlot                         = 31
+	)
+	key, keyOK := RuleKeyAt(compilation, containmentSlot-1)
+	if !keyOK || key != containmentKey {
+		t.Fatalf("slot %d = %q, want %q", containmentSlot, key, containmentKey)
+	}
+	entry, entryOK := templateForKey(state, containmentKey)
+	if !entryOK || entry == nil {
+		t.Fatalf("containment key has no sealed template")
+	}
+	if entry.Lane() != rule.LaneLink || MountedRuleKey(compilation, containmentKey) {
+		t.Fatalf("containment lane = %v, mounted = %v; want Link and not mounted", entry.Lane(), MountedRuleKey(compilation, containmentKey))
+	}
+	links := LinkKeys(compilation)
+	if len(links) < 4 {
+		t.Fatalf("Link inventory has %d entries, want the four-rule Placement tail", len(links))
+	}
+	wantTail := []schema.Key{containmentKey, suspensionKey, suspensionEvidenceKey, freshKey}
+	for index, want := range wantTail {
+		if got := links[len(links)-len(wantTail)+index]; got != want {
+			t.Fatalf("Link tail slot %d = %q, want %q", index, got, want)
+		}
+	}
+	suspensionEntry, suspensionOK := templateForKey(state, suspensionKey)
+	if !suspensionOK || suspensionEntry == nil || suspensionEntry.Lane() != rule.LaneLink || MountedRuleKey(compilation, suspensionKey) {
+		t.Fatalf("suspension entry missing or not Link-owned: present=%t entry=%v mounted=%t", suspensionOK, suspensionEntry, MountedRuleKey(compilation, suspensionKey))
+	}
+	key, keyOK = RuleKeyAt(compilation, suspensionSlot-1)
+	if !keyOK || key != suspensionKey {
+		t.Fatalf("slot %d = %q, want %q", suspensionSlot, key, suspensionKey)
+	}
+	key, keyOK = RuleKeyAt(compilation, suspensionEvidenceSlot-1)
+	if !keyOK || key != suspensionEvidenceKey {
+		t.Fatalf("slot %d = %q, want %q", suspensionEvidenceSlot, key, suspensionEvidenceKey)
+	}
+	key, keyOK = RuleKeyAt(compilation, freshSlot-1)
+	if !keyOK || key != freshKey {
+		t.Fatalf("slot %d = %q, want %q", freshSlot, key, freshKey)
+	}
+	semantic, semanticOK := RuleSemantic(compilation, containmentKey)
+	want, wantOK := vocabulary.Key("rule/placement/containment")
+	if !semanticOK || !wantOK || semantic != want {
+		t.Fatalf("containment semantic = %v, want %v", semantic, want)
+	}
+}

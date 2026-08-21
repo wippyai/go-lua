@@ -395,6 +395,9 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 	if !pointOK || !declaration.bootstrap.OwnerID().Available() {
 		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, 0)
 	}
+	if !validateSealedLinkBootstrapCatalog(source.state, declaration.bootstrap) {
+		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, 0)
+	}
 	for index := 0; index < declaration.bootstrap.OccurrenceCount(); index++ {
 		occurrence, occurrenceOK := declaration.bootstrap.OccurrenceAt(index)
 		capability, capabilityOK := declaration.bootstrap.capabilityFor(occurrence)
@@ -403,22 +406,29 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 		}
 	}
 	authorized, authorizedOK := sealedLinkBootstrapTransportPair(source.state)
-	transports := declaration.bootstrap.transportCapabilityCount()
-	if transports != 0 && transports != 2 || (transports == 0) == authorizedOK {
-		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, transports)
-	}
-	seenTransport := make(map[composition.Key]struct{}, transports)
-	for index := 0; index < transports; index++ {
-		capability, capabilityOK := declaration.bootstrap.transportCapabilityAt(index)
-		factor, factorOK := linkTransportFactorSemantic(source.state, capability)
-		if _, duplicate := seenTransport[factor]; !capabilityOK || !factorOK || duplicate || capability != authorized[index] {
-			return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+	if authorizedOK {
+		seenTransport := make(map[composition.Key]struct{}, len(authorized))
+		for index, capability := range authorized {
+			factor, factorOK := linkTransportFactorSemantic(source.state, capability)
+			if !factorOK {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+			}
+			if _, duplicate := seenTransport[factor]; duplicate {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+			}
+			seenTransport[factor] = struct{}{}
 		}
-		seenTransport[factor] = struct{}{}
 	}
 	plane.bootstrap, plane.point, plane.owner = declaration.bootstrap, point, declaration.bootstrap.OwnerID()
 
-	schemaID := identity.ContentID(source.schema.ID().Digest())
+	// Artifact templates are fenced by the binding's explicit cold execution
+	// schema, not by the narrower equation-Schema digest. Composition may keep
+	// identical engine topology while changing publication layout or ABI; such
+	// an Artifact must not cross this mount boundary.
+	schemaID := source.state.artifactSchema
+	if !schemaID.Available() {
+		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBinding, 0)
+	}
 	plane.initial = make([]int, len(declaration.mounts))
 	plane.rules = make(map[artifactMountedRule]constructedRuleHandle)
 	plane.routes = make(map[constructedRouteKey]int)
@@ -491,7 +501,8 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			capability, capabilityOK := constructedRoleCapability(source, mount, rule.Role)
-			if !capabilityOK || !rule.Stage.Valid() {
+			native, nativeOK := template.RuleNativeAt(ruleIndex)
+			if !capabilityOK || !rule.Stage.Valid() || !nativeOK {
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			key := artifactMountedRule{role: capability, mount: mount.module, point: rule.Point, occurrence: rule.ID}
@@ -499,7 +510,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			plane.rules[key] = constructedRuleHandle{mount: index, rule: ruleIndex}
-			if !rule.Stage.NativeCall() {
+			if !native {
 				continue
 			}
 			// The native stage inverse is the one row-shaped value a committed
@@ -510,7 +521,7 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepMountRow, index)
 			}
 			stage := artifactNativeCallStage{
-				stage: rule.Stage, point: rule.Point, input: rule.Input,
+				stage: rule.Stage, native: native, point: rule.Point, input: rule.Input,
 				mountedPoint: mountedArtifactID("analysis/engine/artifact-point/v1", mount.module, template.ArtifactID(), rule.Point),
 				mountedInput: mountedArtifactID("analysis/engine/artifact-point/v1", mount.module, template.ArtifactID(), rule.Input),
 			}
@@ -798,7 +809,9 @@ func constructedDecisionOf(points constructedPointPlane, point, semantic identit
 
 // constructTransferEdge lowers one sealed template local transfer. A partial
 // transfer lowers to one factor edge per transported role; a full transfer
-// lowers to a single transport-only environment edge.
+// lowers to an ordinary cross-point environment dependency. TransportOnly is
+// reserved for genuine intra-point annotations: suppressing this edge from
+// the scheduler would let a target observe stale pre-transfer factor state.
 func constructTransferEdge(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, mountIndex int, transfer rows.ArtifactScalarTransfer, ordinal int) (equation.EnvironmentEdge, []equation.FactorEdge, topologyConstructionRefusal) {
 	mount := mounts.mounts[mountIndex]
 	if !transfer.ID.Available() || !transfer.From.Available() || !transfer.To.Available() || transfer.From == transfer.To || transfer.Full == (len(transfer.Factors) != 0) {
@@ -814,7 +827,7 @@ func constructTransferEdge(declaration topologyDeclaration, source constructedSo
 		return equation.EnvironmentEdge{}, nil, refuseAdmission(topologyConstructionStepEdgeRow, ordinal)
 	}
 	if transfer.Full {
-		return equation.EnvironmentEdge{Target: boundary.target, Input: boundary.input, TransportOnly: true}, nil, topologyConstructionRefusal{}
+		return equation.EnvironmentEdge{Target: boundary.target, Input: boundary.input}, nil, topologyConstructionRefusal{}
 	}
 	edges := make([]equation.FactorEdge, 0, len(transfer.Factors))
 	seen := make(map[composition.Key]struct{}, len(transfer.Factors))
@@ -833,12 +846,16 @@ func constructTransferEdge(declaration topologyDeclaration, source constructedSo
 // constructBootstrapTransports lowers the Link bootstrap factor transports:
 // one edge per transported capability into every mount's initial Point.
 func constructBootstrapTransports(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane) ([]equation.FactorEdge, topologyConstructionRefusal) {
-	count := mounts.bootstrap.transportCapabilityCount()
+	authorized, authorizedOK := sealedLinkBootstrapTransportPair(source.state)
+	if !authorizedOK {
+		return nil, topologyConstructionRefusal{}
+	}
+	count := len(authorized)
 	edges := make([]equation.FactorEdge, 0, count*len(mounts.mounts))
 	for ordinal := 0; ordinal < count; ordinal++ {
-		capability, capabilityOK := mounts.bootstrap.transportCapabilityAt(ordinal)
+		capability := authorized[ordinal]
 		semantic, factorOK := constructedTransportFactor(source, capability, false)
-		if !capabilityOK || !factorOK || !bindingOwnsFactorSchema(source.schema, semantic) {
+		if !factorOK || !bindingOwnsFactorSchema(source.schema, semantic) {
 			return nil, refuseAdmission(topologyConstructionStepBootstrapTransport, ordinal)
 		}
 		for mountIndex, mount := range mounts.mounts {
@@ -917,7 +934,7 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		if _, duplicate := plane.refByID[coordinates.member]; duplicate {
 			return constructedMemberPlane{}, refuseAdmission(topologyConstructionStepDuplicateIdentity, ordinal)
 		}
-		group, refusal := constructMemberGroup(source, points, member, coordinates, row, ref, ordinal)
+		group, refusal := constructMemberGroup(declaration, source, points, member, coordinates, row, ref, ordinal)
 		if refusal.Available() {
 			return constructedMemberPlane{}, refusal
 		}
@@ -1031,7 +1048,7 @@ func resolveMemberCoordinates(declaration topologyDeclaration, mounts constructe
 // constructMemberGroup builds the one Group a member row folds into. Input
 // count is the schema's, not the declaration's: a shape with inputs resolves
 // them from the member's coordinates or refuses.
-func constructMemberGroup(source constructedSourcePlane, points constructedPointPlane, member declaredMemberRow, coordinates memberCoordinates, row equation.RuleInstance, ref equation.RuleRef, ordinal int) (equation.Group, topologyConstructionRefusal) {
+func constructMemberGroup(declaration topologyDeclaration, source constructedSourcePlane, points constructedPointPlane, member declaredMemberRow, coordinates memberCoordinates, row equation.RuleInstance, ref equation.RuleRef, ordinal int) (equation.Group, topologyConstructionRefusal) {
 	pointID, located := points.idBySite[row.Occurrence.Site()]
 	output, outputOK := points.refByID[pointID]
 	ruleOrdinal, ruleOK := source.schema.ruleOrdinalOf(row.Schema)
@@ -1042,10 +1059,25 @@ func constructMemberGroup(source constructedSourcePlane, points constructedPoint
 	inputs := make([]equation.Input, 0, shape.Inputs)
 	if shape.Inputs != 0 {
 		target := row.Occurrence.Site()
-		if !coordinates.inputPoint.Available() || !coordinates.inputSite.Available() {
+		inputSite := coordinates.inputSite
+		inputPoint := coordinates.inputPoint
+		if member.Plane == declaredMemberLink {
+			// A Link rule has no mounted predecessor row. Its predecessor is the
+			// exact owner-issued bootstrap witness, and its input is therefore a
+			// bootstrap-to-bootstrap boundary. Re-read the witness here rather
+			// than trusting a coordinate supplied by the declaration pass.
+			bootstrap, bootstrapOK := declaration.bootstrap.Point()
+			assigned, assignedOK := declaration.bootstrap.capabilityFor(member.Occurrence)
+			inputSite = declaration.sites.bootstrap
+			inputPoint = bootstrap.PointID
+			if !bootstrapOK || !assignedOK || assigned != member.Role || !member.Role.link() ||
+				!inputSite.Available() || !target.Available() || !target.Same(inputSite) {
+				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
+			}
+		} else if !inputPoint.Available() || !inputSite.Available() {
 			return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 		}
-		if coordinates.routed {
+		if member.Plane == declaredMemberMount && coordinates.routed {
 			// A routed member's predecessor proof is the parent's route row:
 			// the member's input must be the exact Point that route lands on,
 			// under a proof the artifact declaration already sealed.
@@ -1056,9 +1088,15 @@ func constructMemberGroup(source constructedSourcePlane, points constructedPoint
 			}
 		}
 		for slot := uint64(0); slot < shape.Inputs; slot++ {
-			provenance, provenanceOK := mountedRuleInputKey(coordinates.member, coordinates.inputPoint, slot)
-			reindex, reindexOK := ruleInputReindex(coordinates.inputSite.Scope(), target.Scope())
-			boundary := equation.BoundaryInput(coordinates.inputSite, target, provenance, equation.TrueExpr(), reindex, equation.TrueExpr())
+			var provenance composition.Key
+			var provenanceOK bool
+			if member.Plane == declaredMemberLink {
+				provenance, provenanceOK = linkRuleInputKey(member.Role, declaration.bootstrap.OwnerID(), inputPoint, member.Occurrence, slot)
+			} else {
+				provenance, provenanceOK = mountedRuleInputKey(coordinates.member, inputPoint, slot)
+			}
+			reindex, reindexOK := ruleInputReindex(inputSite.Scope(), target.Scope())
+			boundary := equation.BoundaryInput(inputSite, target, provenance, equation.TrueExpr(), reindex, equation.TrueExpr())
 			if !provenanceOK || !reindexOK || !boundary.Available() {
 				return equation.Group{}, refuseAdmission(topologyConstructionStepMemberGroup, ordinal)
 			}
@@ -1457,7 +1495,7 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 	for _, stage := range mounts.stages {
 		baseRank, baseOK := rank[stage.mountedInput]
 		stageRank, stageOK := rank[stage.mountedPoint]
-		if !stage.stage.NativeCall() || !baseOK || !stageOK || baseRank >= stageRank {
+		if !stage.native || !baseOK || !stageOK || baseRank >= stageRank {
 			observe(stageRank)
 		}
 	}
@@ -1479,8 +1517,9 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 	localStages := make(map[identity.ContentID]map[composition.Key]struct{})
 	for key, handle := range mounts.rules {
 		rule, ruleOK := mounts.mounts[handle.mount].template.RuleAt(handle.rule)
+		native, nativeOK := mounts.mounts[handle.mount].template.RuleNativeAt(handle.rule)
 		staged, located := points.idByMounted[artifactMountedPoint{mount: key.mount, reusable: key.point}]
-		if !ruleOK || !located {
+		if !ruleOK || !nativeOK || !located {
 			return 0, false
 		}
 		switch {
@@ -1497,7 +1536,7 @@ func constructedScheduleValid(source constructedSourcePlane, mounts constructedM
 				localStages[staged] = written
 			}
 			written[factor] = struct{}{}
-		case rule.Stage.NativeCall():
+		case native:
 			if owner, native := stageKind[staged]; !native || owner != rule.Stage {
 				observe(rank[staged])
 			}

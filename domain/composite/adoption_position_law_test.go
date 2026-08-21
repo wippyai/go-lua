@@ -7,19 +7,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 )
 
-// The declaration surfaces name no artifact catalog: an axis is its own writer
-// principal and a rule's role is its declaration position. The compiled
-// artifact still numbers both catalogs itself, and the composition resolves an
-// artifact-addressed row through that numbering, so the agreement between the
-// two is the one thing that must hold while the artifact's own catalogs are
-// still standing.
-//
-// These laws pin that agreement member by member: the sealed declaration
-// position of a row and the artifact ordinal of the member it is addressed as
-// are the same number, and each pair is named by the declared key rather than
-// counted. A table whose members move relative to the artifact's is rejected
-// here, naming the first member that disagrees, which is what lets the
-// artifact-side catalogs be deleted later against a proven map.
+// The artifact still numbers factor lanes. This law pins only that live
+// external addressing contract. Rules no longer have a second Artifact role
+// catalog, so their declaration table is not repeated here.
 
 // positionPin is one authored agreement: the artifact ordinal a row is
 // addressed by and the key the declaration at that position is declared under.
@@ -37,33 +27,8 @@ func axisPositionPins() []positionPin {
 		{3, axisKeyHeap},
 		{4, axisKeyCall},
 		{5, axisKeyEffect},
-	}
-}
-
-// rulePositionPins is the sealed rule inventory in declaration order.
-func rulePositionPins() []positionPin {
-	return []positionPin{
-		{1, "value-source"},
-		{2, "pack-source"},
-		{3, "heap-ingress"},
-		{4, "value-allocation"},
-		{5, "heap-empty"},
-		{6, "heap-closed"},
-		{7, "raw-get"},
-		{8, "raw-set"},
-		{9, "call-dispatch"},
-		{10, "effect-selected"},
-		{11, "effect-opaque"},
-		{12, "effect-body"},
-		{13, "call-activation"},
-		{14, "value-runtime-kind-call"},
-		{15, "value-bootstrap"},
-		{16, "heap-bootstrap"},
-		{17, "value-transfer"},
-		{18, "value-binary-arithmetic"},
-		{19, "value-binary-equality"},
-		{20, "value-binary-order"},
-		{21, "value-presence-refinement"},
+		{6, axisKeyPlacement},
+		{7, axisKeyPlacementEvidence},
 	}
 }
 
@@ -86,11 +51,11 @@ func positionAgreement(keys []schema.Key, pins []positionPin) (schema.Key, bool)
 	return "", true
 }
 
-func sealedAxisKeys(t *testing.T) []schema.Key {
+func sealedAxisKeys(t *testing.T, compilation Compilation) []schema.Key {
 	t.Helper()
-	keys := make([]schema.Key, AxisCount())
+	keys := make([]schema.Key, AxisCount(compilation))
 	for position := range keys {
-		key, ok := AxisKeyAt(position)
+		key, ok := AxisKeyAt(compilation, position)
 		if !ok {
 			t.Fatalf("axis position %d publishes no key", position)
 		}
@@ -99,11 +64,11 @@ func sealedAxisKeys(t *testing.T) []schema.Key {
 	return keys
 }
 
-func sealedRuleKeys(t *testing.T) []schema.Key {
+func sealedRuleKeys(t *testing.T, compilation Compilation) []schema.Key {
 	t.Helper()
-	keys := make([]schema.Key, RuleCount())
+	keys := make([]schema.Key, RuleCount(compilation))
 	for position := range keys {
-		key, ok := RuleKeyAt(position)
+		key, ok := RuleKeyAt(compilation, position)
 		if !ok {
 			t.Fatalf("rule position %d publishes no key", position)
 		}
@@ -119,15 +84,15 @@ func sealedRuleKeys(t *testing.T) []schema.Key {
 // An engine-published axis is such a row - the artifact numbers factor lanes,
 // and that axis is not one - so it is declared after them and the pins below
 // stay a member-for-member agreement rather than a count.
-func sealedFactorAxisKeys(t *testing.T) []schema.Key {
+func sealedFactorAxisKeys(t *testing.T, compilation Compilation) []schema.Key {
 	t.Helper()
-	keys := sealedAxisKeys(t)
+	keys := sealedAxisKeys(t, compilation)
 	addressed := len(axisPositionPins())
 	if len(keys) < addressed {
 		t.Fatalf("the table declares %d axes, the artifact addresses %d factor lanes", len(keys), addressed)
 	}
 	for position, key := range keys {
-		storage, storageOK := AxisStorage(key)
+		storage, storageOK := AxisStorage(compilation, key)
 		if !storageOK {
 			t.Fatalf("axis %q declares no storage", key)
 		}
@@ -142,7 +107,11 @@ func sealedFactorAxisKeys(t *testing.T) []schema.Key {
 // half of the agreement, and states it as a law rather than as an observation:
 // a table whose members have moved is rejected, naming the member.
 func TestAxisDeclarationPositionAgreesWithTheArtifactLaneOrdinal(t *testing.T) {
-	keys := sealedFactorAxisKeys(t)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	keys := sealedFactorAxisKeys(t, compilation)
 	if blamed, agreed := positionAgreement(keys, axisPositionPins()); !agreed {
 		t.Fatalf("axis %q is not declared at the position its artifact lane ordinal addresses", blamed)
 	}
@@ -154,44 +123,5 @@ func TestAxisDeclarationPositionAgreesWithTheArtifactLaneOrdinal(t *testing.T) {
 	}
 	if blamed != keys[0] {
 		t.Fatalf("a moved axis was blamed on %q, not on the first member that disagrees", blamed)
-	}
-}
-
-// TestRuleDeclarationPositionAgreesWithTheArtifactRoleOrdinal states the rule
-// half of the same agreement.
-func TestRuleDeclarationPositionAgreesWithTheArtifactRoleOrdinal(t *testing.T) {
-	keys := sealedRuleKeys(t)
-	if blamed, agreed := positionAgreement(keys, rulePositionPins()); !agreed {
-		t.Fatalf("rule %q is not declared at the position its artifact role ordinal addresses", blamed)
-	}
-	swapped := append([]schema.Key(nil), keys...)
-	swapped[0], swapped[1] = swapped[1], swapped[0]
-	blamed, agreed := positionAgreement(swapped, rulePositionPins())
-	if agreed {
-		t.Fatal("a moved rule agreed with the artifact role ordinals")
-	}
-	if blamed != keys[0] {
-		t.Fatalf("a moved rule was blamed on %q, not on the first member that disagrees", blamed)
-	}
-}
-
-// TestArtifactAddressedRowsResolveThroughTheSealedTable states that the
-// agreement is what the composition actually resolves through: every artifact
-// role addresses the declaration at its own position, and every rule's artifact
-// lane addresses a declared axis, so no artifact-addressed row reaches a
-// projection the table does not hold.
-func TestArtifactAddressedRowsResolveThroughTheSealedTable(t *testing.T) {
-	for _, pin := range rulePositionPins() {
-		entry, declared := templateForKey(pin.key)
-		if !declared || entry.Key() != pin.key {
-			t.Fatalf("key %q resolves to no declaration", pin.key)
-		}
-		axisEntry, axisDeclared := axisForKey(entry.Writes())
-		if !axisDeclared {
-			t.Fatalf("rule %q writes %q, which addresses no declared axis", pin.key, entry.Writes())
-		}
-		if DiagnosticAxisForKey(axisEntry.Key()) != DiagnosticAxisForKey(entry.Writes()) {
-			t.Fatalf("axis %q classifies away from Writes %q", axisEntry.Key(), entry.Writes())
-		}
 	}
 }

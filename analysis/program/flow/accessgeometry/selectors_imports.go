@@ -6,14 +6,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	binding "github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-func collectImportAliases(sourceView sourceColumns, flow authored.View, bindings binding.Result, view imports.View, aliases []bool, cellCount, bodyCount, callCount int) error {
+func collectImportAliases(sourceView sourceColumns, flow authored.View, bindings binding.Result, view authored.Imports, aliases []bool, cellCount, bodyCount, callCount int) error {
 	for index := 0; index < view.Count(); index++ {
 		term := keyspace.MakeTerm(keyspace.FamilyImport, uint32(index+1))
-		row, ok := view.Import(term)
+		row, ok := view.Get(term)
 		if !ok || row.Term != term || keyspace.TermFamily(row.Call) != keyspace.FamilyCall || keyspace.TermOrdinal(row.Call) == 0 || int(keyspace.TermOrdinal(row.Call)) > callCount {
 			return errors.New("program/flow/accessgeometry: malformed Module Import")
 		}

@@ -18,7 +18,6 @@
 //	operand_entity.go     the opaque equation-owned content identity
 //	framed_identity.go    canonical framed preimages for engine identities
 //	semantic_key.go       the one-way conversion to the cold canonical key
-//	generation_cell.go    the lock-free live-stamp cell
 //
 // # Binding plane
 //

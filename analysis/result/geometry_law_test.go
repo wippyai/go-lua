@@ -85,20 +85,20 @@ func resultGeometryMount(t *testing.T) (programmount.MountedArtifact, identity.C
 	if !shardOK || !programOK || !moduleOK || program == nil {
 		t.Fatal("geometry fixture mount")
 	}
-	compilation, compilationOK := composite.Global()
+	compilation, compilationOK := composite.Build()
 	if !compilationOK {
 		t.Fatal("program schema")
 	}
-	grammar, grammarOK := composite.ArtifactGrammar(compilation)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !grammarOK || !issuanceOK {
+	grammar := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !grammar.Available() || !issuanceOK {
 		t.Fatal("artifact compiler inputs")
 	}
 	compiled, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
 	if failure.Available() || compiled == nil || !compiled.Available() {
 		t.Fatalf("compile geometry artifact: %s", failure.Error())
 	}
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	snapshot, lowered := ingress.Lower(compiled, vocabulary)
 	if !vocabularyOK || !lowered || snapshot == nil || !snapshot.Available() {
 		t.Fatal("lower geometry snapshot")

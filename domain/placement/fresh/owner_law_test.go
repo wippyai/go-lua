@@ -242,7 +242,7 @@ func freshOwnerFixture(t testing.TB, name, source string) (heapdomain.Schema, pl
 	if err != nil {
 		t.Fatal(err)
 	}
-	grammar, grammarOK := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+	grammar, grammarOK := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance.Directory{})
 	if failure.Available() || artifact == nil {
 		t.Fatalf("artifact compile: %v", failure)

@@ -18,7 +18,7 @@ func TestPortsLeafQueriesAreAllocationFree(t *testing.T) {
 	}, 1)
 	defer fixture.close()
 	ports, err := SealPorts(fixture.identity, fixture.view, fixture.forest,
-		fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID())
+		fixture.staticView.ContentID(), fixture.view.ModuleID())
 	if err != nil {
 		t.Fatal(err)
 	}

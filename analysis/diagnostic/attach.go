@@ -24,12 +24,12 @@ type producedValue struct {
 // observation family is the one the sealed declaration table issues for the
 // population, so a population without a declared producer is refused here
 // rather than borrowing another population's column.
-func producedValues(rows []Observation) ([]producedValue, bool) {
+func producedValues(compilation composite.Compilation, rows []Observation) ([]producedValue, bool) {
 	if len(rows) == 0 {
 		return nil, true
 	}
 	kind := rows[0].Kind
-	family, familyOK := composite.ObservationProducerForPopulationKind(kind.Key())
+	family, familyOK := composite.ObservationProducerForPopulationKind(compilation, kind.Key())
 	if !familyOK {
 		return nil, false
 	}
@@ -61,8 +61,8 @@ func rowProducers(row Observation) ([]Producer, bool) {
 // identity ValueObservations declares and the same one Publications indexes,
 // so a collector that holds a row's own producers reads exactly the column the
 // seal admitted for them.
-func ValueObservationAddress(kind structure.DiagnosticObservationKind, mount, point identity.ContentID) (identity.ContentID, bool) {
-	family, familyOK := composite.ObservationProducerForPopulationKind(kind.Key())
+func ValueObservationAddress(compilation composite.Compilation, kind structure.DiagnosticObservationKind, mount, point identity.ContentID) (identity.ContentID, bool) {
+	family, familyOK := composite.ObservationProducerForPopulationKind(compilation, kind.Key())
 	if !familyOK {
 		return identity.ContentID{}, false
 	}
@@ -73,8 +73,8 @@ func ValueObservationAddress(kind structure.DiagnosticObservationKind, mount, po
 // geometry. The identity is the same one Attach writes; detach does not retain
 // a second publication table. ObservationKey.Point is the Program evidence
 // anchor; Key is the execution-point publication address.
-func Publications(rows []Observation) ([]ObservationKey, bool) {
-	values, valuesOK := producedValues(rows)
+func Publications(compilation composite.Compilation, rows []Observation) ([]ObservationKey, bool) {
+	values, valuesOK := producedValues(compilation, rows)
 	if !valuesOK {
 		return nil, false
 	}
@@ -121,7 +121,7 @@ func ValueObservations(committed *engine.CommittedProgram, binding *composite.Pr
 	declared := make([]engine.ProgramObservationAdmission, 0)
 	seen := make(map[pointKey]struct{})
 	for _, population := range populations {
-		values, valuesOK := producedValues(population)
+		values, valuesOK := producedValues(binding.Compilation(), population)
 		if !valuesOK {
 			return nil, engine.ObservationSealArguments(), false
 		}

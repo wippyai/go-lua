@@ -17,7 +17,11 @@ import (
 // law is stated against the sealed table, so the day the first composite row is
 // authored it is this test that has to be rewritten deliberately.
 func TestCompositeSurfaceSealsItsEmptyInventory(t *testing.T) {
-	sealed, failure := Table()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}

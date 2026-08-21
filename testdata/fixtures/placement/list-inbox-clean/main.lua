@@ -3,7 +3,7 @@
 type Row = { id: string, subject: string, unread: boolean }
 
 local function count_unread(rows: {Row}): number
-    local n = 0                          -- Scalar
+    local n = 0                          -- no Heap root
     for _, r in ipairs(rows) do
         if r.unread then
             n = n + 1

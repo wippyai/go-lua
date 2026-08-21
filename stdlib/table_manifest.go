@@ -42,6 +42,7 @@ func tableFreezeSignature() declaredFunction {
 	subject := typ.NewTypeParam("T", nil)
 	return openAuthored("stdlib.table.freeze.ownership", typ.Func().
 		TypeParamRef(subject).Param("table", subject).Returns(subject).Build(),
+		ownership.Freeze{Param: effect.ParamRef{Index: 0}},
 		mutation.Mutate{Target: effect.ParamRef{Index: 0}, Transform: mutation.Unchanged{}},
 		returns.Return{ReturnIndex: 0, Transform: returns.SameAs{Source: effect.ParamRef{Index: 0}}}).operational(amendment(aliasAmendment(0, 0, 0)))
 }

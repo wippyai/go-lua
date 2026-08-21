@@ -732,18 +732,6 @@ func (occurrence Occurrence) Same(other Occurrence) bool {
 	return occurrence.Available() && other.Available() && occurrence.batch == other.batch && occurrence.row == other.row && occurrence.Key() == other.Key()
 }
 
-// SameOpen compares two base Occurrence capabilities while their owning
-// Batch is still admitting rows. It is an owner-fence predicate only; it
-// exposes no row, key, or mutable Batch state.
-func (occurrence Occurrence) SameOpen(other Occurrence) bool {
-	if occurrence.dynamic != nil || other.dynamic != nil || occurrence.batch == nil || occurrence.batch != other.batch || occurrence.row != other.row {
-		return false
-	}
-	_, leftOK := occurrence.batch.openOccurrence(occurrence.row)
-	_, rightOK := occurrence.batch.openOccurrence(other.row)
-	return leftOK && rightOK
-}
-
 func (operand Operand) Available() bool {
 	if operand.dynamic != nil {
 		base, ok := operand.batch.sealedOperand(operand.row)
@@ -812,19 +800,6 @@ func (operand Operand) Entity() composition.Key {
 }
 func (operand Operand) Same(other Operand) bool {
 	return operand.Available() && other.Available() && operand.batch == other.batch && operand.row == other.row && operand.Key() == other.Key()
-}
-
-// SameOpen compares two base Operand capabilities while their owning Batch
-// is still admitting rows. It is an owner-fence predicate only; it exposes no
-// row, key, or mutable Batch state.
-func (operand Operand) SameOpen(other Operand) bool {
-	if operand.dynamic != nil || other.dynamic != nil || operand.batch == nil || operand.batch != other.batch || operand.row != other.row {
-		return false
-	}
-	if operand.batch.phase != batchOpen || operand.row == 0 || uint64(operand.row) > uint64(len(operand.batch.operands)) {
-		return false
-	}
-	return other.row != 0 && uint64(other.row) <= uint64(len(other.batch.operands))
 }
 
 func sameBaseSite(left, right Site) bool {

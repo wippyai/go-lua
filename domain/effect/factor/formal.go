@@ -3,10 +3,9 @@ package factor
 import (
 	"crypto/sha256"
 	"encoding/binary"
-	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	"github.com/wippyai/go-lua/analysis/identity"
-	operationvalue "github.com/wippyai/go-lua/analysis/program/target/operation"
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/pack"
 )
 
@@ -76,198 +75,6 @@ type AtomBinding struct {
 	root   Root
 	atom   Atom
 	sealed bool
-}
-
-// PublicationAtomBinding is the Effect-owned cold receipt for one explicitly
-// authored Target publication effect. It joins the exact beta-bound effect
-// atom to Target's descriptor occurrence and Pack's typed subject/context
-// selectors. It is not a solver result, runtime placement decision, or
-// allocation proof.
-type PublicationAtomBinding struct {
-	owner                      *Algebra
-	mounted                    MountedCall
-	binding                    AtomBinding
-	role                       publicationAtomBindingRole
-	operation                  vocabulary.Operation
-	callback                   vocabulary.CallbackID
-	effect                     uint32
-	descriptor                 operationvalue.PublicationEffectDescriptor
-	descriptorID, occurrenceID identity.ContentID
-	subject                    pack.InputSelector
-	context                    pack.InputSelector
-	hasContext                 bool
-	sealed                     bool
-}
-
-type publicationAtomBindingRole uint8
-
-const (
-	publicationAtomBindingInvalid publicationAtomBindingRole = iota
-	publicationAtomBindingOrdinary
-	publicationAtomBindingCallback
-)
-
-// PublicationAtomBindingRole preserves whether the descriptor originated in
-// an ordinary selected effect row or an exact callback effect row.
-type PublicationAtomBindingRole uint8
-
-const (
-	PublicationAtomBindingInvalid PublicationAtomBindingRole = iota
-	PublicationAtomBindingOrdinary
-	PublicationAtomBindingCallback
-)
-
-func (binding PublicationAtomBinding) valid() bool {
-	if !binding.sealed || binding.owner == nil || !binding.owner.Valid() || !binding.mounted.Valid() || binding.mounted.owner != binding.owner || !binding.binding.valid() || binding.binding.owner != binding.owner || !binding.descriptorID.Available() || !binding.occurrenceID.Available() || !binding.owner.packs.OwnsInputSelector(binding.subject) {
-		return false
-	}
-	root, rootOK := binding.owner.RootForMountedCall(binding.mounted)
-	application, _, _, mountedOK := binding.owner.MountedCallIdentity(binding.mounted)
-	if !rootOK || !mountedOK || root != binding.binding.root || !binding.owner.callInRootID(root, application) {
-		return false
-	}
-	var expected operationvalue.PublicationEffectDescriptor
-	var descriptorID, occurrenceID identity.ContentID
-	var selectorFormal vocabulary.ValueFormal
-	switch binding.role {
-	case publicationAtomBindingOrdinary:
-		if binding.callback != 0 || binding.binding.formal.role != formalAtomOrdinary || uint64(binding.effect) >= uint64(binding.owner.contract.Operations.EffectCount(binding.operation)) {
-			return false
-		}
-		effect := int(binding.effect)
-		var ok bool
-		expected, ok = binding.owner.contract.Operations.EffectPublication(binding.operation, effect)
-		if !ok {
-			return false
-		}
-		descriptorID, ok = binding.owner.contract.Operations.PublicationEffectDescriptorID(binding.operation, effect)
-		if !ok {
-			return false
-		}
-		occurrenceID, ok = binding.owner.contract.Operations.PublicationEffectOccurrenceID(binding.operation, effect)
-		if !ok || binding.binding.formal.descriptor != descriptorID {
-			return false
-		}
-		selectorFormal, ok = binding.owner.contract.Operations.EffectValueArgumentAt(binding.operation, effect, int(expected.Subject()))
-		if !ok {
-			return false
-		}
-	case publicationAtomBindingCallback:
-		if binding.callback == 0 || binding.binding.formal.role != formalAtomCallback || uint64(binding.effect) >= uint64(binding.owner.contract.Operations.CallbackEffectCount(binding.callback)) {
-			return false
-		}
-		effect := int(binding.effect)
-		callbackOwner, ownerOK := binding.owner.contract.Operations.CallbackOwner(binding.callback)
-		if !ownerOK || callbackOwner != binding.operation {
-			return false
-		}
-		var ok bool
-		expected, ok = binding.owner.contract.Operations.CallbackEffectPublication(binding.callback, effect)
-		if !ok {
-			return false
-		}
-		descriptorID, ok = binding.owner.contract.Operations.CallbackPublicationEffectDescriptorID(binding.callback, effect)
-		if !ok {
-			return false
-		}
-		occurrenceID, ok = binding.owner.contract.Operations.CallbackPublicationEffectOccurrenceID(binding.callback, effect)
-		if !ok || binding.binding.formal.descriptor != descriptorID {
-			return false
-		}
-		selectorFormal, ok = binding.owner.contract.Operations.CallbackEffectValueArgumentAt(binding.callback, effect, int(expected.Subject()))
-		if !ok {
-			return false
-		}
-	default:
-		return false
-	}
-	if _, selected := binding.owner.applicationOperation(application, binding.operation); !selected {
-		return false
-	}
-	if binding.descriptor != expected || binding.descriptorID != descriptorID || binding.occurrenceID != occurrenceID {
-		return false
-	}
-	expectedSubject, subjectOK := binding.owner.packs.InputSelector(binding.operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(selectorFormal)})
-	if !subjectOK || binding.subject != expectedSubject {
-		return false
-	}
-	switch expected.DestinationRole() {
-	case vocabulary.PublicationDestinationNone:
-		return !binding.hasContext && binding.context == (pack.InputSelector{})
-	case vocabulary.PublicationDestinationValueFormal:
-		var contextFormal vocabulary.ValueFormal
-		var contextOK bool
-		if binding.role == publicationAtomBindingOrdinary {
-			contextFormal, contextOK = binding.owner.contract.Operations.EffectValueArgumentAt(binding.operation, int(binding.effect), int(expected.Context()))
-		} else {
-			contextFormal, contextOK = binding.owner.contract.Operations.CallbackEffectValueArgumentAt(binding.callback, int(binding.effect), int(expected.Context()))
-		}
-		expectedContext, selectorOK := binding.owner.packs.InputSelector(binding.operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
-		return binding.hasContext && contextOK && selectorOK && binding.owner.packs.OwnsInputSelector(binding.context) && binding.context == expectedContext
-	default:
-		return false
-	}
-}
-
-// Valid reports whether the receipt is still authenticated by its issuing
-// Effect algebra, mounted call, Target descriptor occurrence, and Pack ABI.
-func (binding PublicationAtomBinding) Valid() bool { return binding.valid() }
-
-func (binding PublicationAtomBinding) Role() PublicationAtomBindingRole {
-	if !binding.valid() {
-		return PublicationAtomBindingInvalid
-	}
-	switch binding.role {
-	case publicationAtomBindingOrdinary:
-		return PublicationAtomBindingOrdinary
-	case publicationAtomBindingCallback:
-		return PublicationAtomBindingCallback
-	default:
-		return PublicationAtomBindingInvalid
-	}
-}
-
-func (binding PublicationAtomBinding) MountedCall() (MountedCall, bool) {
-	return binding.mounted, binding.valid()
-}
-func (binding PublicationAtomBinding) AtomBinding() (AtomBinding, bool) {
-	return binding.binding, binding.valid()
-}
-func (binding PublicationAtomBinding) DescriptorID() (identity.ContentID, bool) {
-	return binding.descriptorID, binding.valid()
-}
-func (binding PublicationAtomBinding) OccurrenceID() (identity.ContentID, bool) {
-	return binding.occurrenceID, binding.valid()
-}
-func (binding PublicationAtomBinding) Kind() vocabulary.PublicationEffectKind {
-	if !binding.valid() {
-		return vocabulary.PublicationEffectInvalid
-	}
-	return binding.descriptor.Kind()
-}
-func (binding PublicationAtomBinding) Escape() vocabulary.PublicationEscapeDisposition {
-	if !binding.valid() {
-		return vocabulary.PublicationEscapeInvalid
-	}
-	return binding.descriptor.Escape()
-}
-func (binding PublicationAtomBinding) Mutability() vocabulary.PublicationMutabilityDisposition {
-	if !binding.valid() {
-		return vocabulary.PublicationMutabilityInvalid
-	}
-	return binding.descriptor.Mutability()
-}
-func (binding PublicationAtomBinding) Lifetime() vocabulary.PublicationLifetimeDisposition {
-	if !binding.valid() {
-		return vocabulary.PublicationLifetimeInvalid
-	}
-	return binding.descriptor.Lifetime()
-}
-func (binding PublicationAtomBinding) SubjectSelector() (pack.InputSelector, bool) {
-	return binding.subject, binding.valid()
-}
-func (binding PublicationAtomBinding) ContextSelector() (pack.InputSelector, bool) {
-	return binding.context, binding.valid() && binding.hasContext
 }
 
 func (binding AtomBinding) valid() bool {
@@ -374,107 +181,105 @@ func (a *Algebra) BindFormalCallbackEffectAtom(root Root, mounted MountedCall, o
 	return a.bindFormalAtom(root, mounted, formal, expected)
 }
 
-// PublicationCallEffectBinding joins one already-issued ordinary AtomBinding
-// to an explicitly authored Target publication descriptor. Effects without a
-// publication descriptor remain ordinary AtomBindings and return absent.
-func (a *Algebra) PublicationCallEffectBinding(root Root, mounted MountedCall, owner vocabulary.Operation, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
+func (a *Algebra) publicationCallEffectOccurrence(root Root, mounted MountedCall, owner vocabulary.Operation, effect int, atomBinding AtomBinding) (identity.ContentID, bool) {
 	formal, formalOK := a.FormalCallEffectAtom(mounted, owner, effect)
 	expectedBinding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 	descriptor, descriptorOK := a.contract.Operations.EffectPublication(owner, effect)
 	descriptorID, descriptorIDOK := a.contract.Operations.PublicationEffectDescriptorID(owner, effect)
 	occurrenceID, occurrenceOK := a.contract.Operations.PublicationEffectOccurrenceID(owner, effect)
-	if !formalOK || !bindingOK || atomBinding != expectedBinding || !descriptorOK || !descriptorIDOK || !occurrenceOK {
-		return PublicationAtomBinding{}, false
+	application, module, occurrence, mountedOK := a.MountedCallIdentity(mounted)
+	if !formalOK || !bindingOK || atomBinding != expectedBinding || !descriptorOK || !descriptorIDOK || !descriptorID.Available() || !occurrenceOK || !occurrenceID.Available() || !mountedOK || formal.descriptor != descriptorID {
+		return identity.ContentID{}, false
 	}
-	subjectFormal, subjectOK := a.contract.Operations.EffectValueArgumentAt(owner, effect, int(descriptor.Subject()))
-	subject, selectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
-	if !subjectOK || !selectorOK {
-		return PublicationAtomBinding{}, false
+	if _, selected := a.applicationOperation(application, owner); !selected {
+		return identity.ContentID{}, false
 	}
-	binding := PublicationAtomBinding{owner: a, mounted: mounted, binding: atomBinding, role: publicationAtomBindingOrdinary, operation: owner, effect: uint32(effect), descriptor: descriptor, descriptorID: descriptorID, occurrenceID: occurrenceID, subject: subject, sealed: true}
-	if descriptor.DestinationRole() == vocabulary.PublicationDestinationValueFormal {
-		contextFormal, contextOK := a.contract.Operations.EffectValueArgumentAt(owner, effect, int(descriptor.Context()))
-		context, contextSelectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
-		if !contextOK || !contextSelectorOK {
-			return PublicationAtomBinding{}, false
-		}
-		binding.context, binding.hasContext = context, true
+	_, _, _, inputOK := a.resolvePublicationInputs(owner, 0, effect, descriptor, module, occurrence)
+	if !inputOK {
+		return identity.ContentID{}, false
 	}
-	return binding, binding.valid()
+	return occurrenceID, true
 }
 
-// PublicationCallbackEffectBinding is the callback-typed counterpart of
-// PublicationCallEffectBinding. Callback provenance remains explicit even
-// when its ordinary atom quotient is content-equal to another effect row.
-func (a *Algebra) PublicationCallbackEffectBinding(root Root, mounted MountedCall, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int, atomBinding AtomBinding) (PublicationAtomBinding, bool) {
+func (a *Algebra) publicationCallbackEffectOccurrence(root Root, mounted MountedCall, owner vocabulary.Operation, callback vocabulary.CallbackID, effect int, atomBinding AtomBinding) (identity.ContentID, bool) {
 	formal, formalOK := a.FormalCallbackEffectAtom(mounted, owner, callback, effect)
 	expectedBinding, bindingOK := a.bindFormalAtom(root, mounted, formal, formal)
 	descriptor, descriptorOK := a.contract.Operations.CallbackEffectPublication(callback, effect)
 	descriptorID, descriptorIDOK := a.contract.Operations.CallbackPublicationEffectDescriptorID(callback, effect)
 	occurrenceID, occurrenceOK := a.contract.Operations.CallbackPublicationEffectOccurrenceID(callback, effect)
-	if !formalOK || !bindingOK || atomBinding != expectedBinding || !descriptorOK || !descriptorIDOK || !occurrenceOK {
-		return PublicationAtomBinding{}, false
+	application, module, occurrence, mountedOK := a.MountedCallIdentity(mounted)
+	callbackOwner, ownerOK := a.contract.Operations.CallbackOwner(callback)
+	if !formalOK || !bindingOK || atomBinding != expectedBinding || !descriptorOK || !descriptorIDOK || !descriptorID.Available() || !occurrenceOK || !occurrenceID.Available() || !mountedOK || !ownerOK || callbackOwner != owner || formal.descriptor != descriptorID {
+		return identity.ContentID{}, false
 	}
-	subjectFormal, subjectOK := a.contract.Operations.CallbackEffectValueArgumentAt(callback, effect, int(descriptor.Subject()))
-	subject, selectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(subjectFormal)})
-	if !subjectOK || !selectorOK {
-		return PublicationAtomBinding{}, false
+	if _, selected := a.applicationOperation(application, owner); !selected {
+		return identity.ContentID{}, false
 	}
-	binding := PublicationAtomBinding{owner: a, mounted: mounted, binding: atomBinding, role: publicationAtomBindingCallback, operation: owner, callback: callback, effect: uint32(effect), descriptor: descriptor, descriptorID: descriptorID, occurrenceID: occurrenceID, subject: subject, sealed: true}
-	if descriptor.DestinationRole() == vocabulary.PublicationDestinationValueFormal {
-		contextFormal, contextOK := a.contract.Operations.CallbackEffectValueArgumentAt(callback, effect, int(descriptor.Context()))
-		context, contextSelectorOK := a.packs.InputSelector(owner, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: uint32(contextFormal)})
-		if !contextOK || !contextSelectorOK {
-			return PublicationAtomBinding{}, false
-		}
-		binding.context, binding.hasContext = context, true
+	_, _, _, inputOK := a.resolvePublicationInputs(owner, callback, effect, descriptor, module, occurrence)
+	if !inputOK {
+		return identity.ContentID{}, false
 	}
-	return binding, binding.valid()
+	return occurrenceID, true
 }
 
-// SelectedCallPublicationAtomBindings mints publication receipts alongside
-// the existing selected ordinary/callback AtomBindings. It omits generic
-// non-publication effects rather than assigning them inferred memory meaning.
-func (a *Algebra) SelectedCallPublicationAtomBindings(root Root, mounted MountedCall, owner vocabulary.Operation) ([]PublicationAtomBinding, bool) {
+// SelectedCallPublication reports whether one selected call has explicitly
+// authored publication effects. All descriptor, occurrence, provenance,
+// selector, and uniqueness checks remain private to Effect; callers receive
+// no publication receipt or payload.
+func (a *Algebra) SelectedCallPublication(root Root, mounted MountedCall, owner vocabulary.Operation) (present bool, ok bool) {
+	resolved, resolvedOK := a.RootForMountedCall(mounted)
+	application, _, _, identityOK := a.MountedCallIdentity(mounted)
+	_, selected := a.applicationOperation(application, owner)
+	if !a.ownsRoot(root) || !mounted.Valid() || mounted.owner != a || !resolvedOK || resolved != root || !identityOK || !selected {
+		return false, false
+	}
 	bindings, ok := a.SelectedCallEffectBindings(root, mounted, owner)
 	if !ok {
-		return nil, false
+		return false, false
 	}
-	publications := make([]PublicationAtomBinding, 0, len(bindings))
+	occurrences := make(map[identity.ContentID]struct{}, len(bindings))
 	index := 0
 	for effect := 0; effect < a.contract.Operations.EffectCount(owner); effect++ {
 		if index >= len(bindings) {
-			return nil, false
+			return false, false
 		}
 		if _, published := a.contract.Operations.EffectPublication(owner, effect); published {
-			binding, bindingOK := a.PublicationCallEffectBinding(root, mounted, owner, effect, bindings[index])
-			if !bindingOK {
-				return nil, false
+			occurrenceID, valid := a.publicationCallEffectOccurrence(root, mounted, owner, effect, bindings[index])
+			if !valid {
+				return false, false
 			}
-			publications = append(publications, binding)
+			if _, duplicate := occurrences[occurrenceID]; duplicate {
+				return false, false
+			}
+			occurrences[occurrenceID] = struct{}{}
+			present = true
 		}
 		index++
 	}
 	for callbackIndex := 0; callbackIndex < a.contract.Operations.CallbackCount(owner); callbackIndex++ {
 		callback, callbackOK := a.contract.Operations.CallbackAt(owner, callbackIndex)
 		if !callbackOK {
-			return nil, false
+			return false, false
 		}
 		for effect := 0; effect < a.contract.Operations.CallbackEffectCount(callback); effect++ {
 			if index >= len(bindings) {
-				return nil, false
+				return false, false
 			}
 			if _, published := a.contract.Operations.CallbackEffectPublication(callback, effect); published {
-				binding, bindingOK := a.PublicationCallbackEffectBinding(root, mounted, owner, callback, effect, bindings[index])
-				if !bindingOK {
-					return nil, false
+				occurrenceID, valid := a.publicationCallbackEffectOccurrence(root, mounted, owner, callback, effect, bindings[index])
+				if !valid {
+					return false, false
 				}
-				publications = append(publications, binding)
+				if _, duplicate := occurrences[occurrenceID]; duplicate {
+					return false, false
+				}
+				occurrences[occurrenceID] = struct{}{}
+				present = true
 			}
 			index++
 		}
 	}
-	return publications, index == len(bindings)
+	return present, index == len(bindings)
 }
 
 // SelectedCallEffectBindings issues the complete explicit-effect beta receipt

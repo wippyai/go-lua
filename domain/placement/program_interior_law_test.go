@@ -16,6 +16,7 @@ const (
 	programPkg     = modulePath + "/analysis/program"
 	programFlowPkg = modulePath + "/analysis/program/flow"
 	programSrcPkg  = modulePath + "/analysis/program/source"
+	placementPkg   = modulePath + "/domain/placement"
 )
 
 // programCompileBoundary is the one domain production file allowed to name
@@ -36,6 +37,38 @@ func TestDomainProductionProgramTypeOnlyAtCompileBoundary(t *testing.T) {
 			if imported == programFlowPkg {
 				t.Errorf("%s imports Flow interiors %s", rel, imported)
 			}
+		}
+	}
+}
+
+// TestGenericEngineAndResultDoNotOwnPlacement keeps the architecture one-way:
+// the generic engine/result surfaces may host domain declarations and opaque
+// cells, but they cannot import Placement policy, codecs, or publications.
+// Placement depends on those generic surfaces, never the reverse.
+func TestGenericEngineAndResultDoNotOwnPlacement(t *testing.T) {
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("placement source location unavailable")
+	}
+	repository := filepath.Clean(filepath.Join(filepath.Dir(current), "..", ".."))
+	for _, relative := range []string{"analysis/engine", "analysis/result"} {
+		root := filepath.Join(repository, filepath.FromSlash(relative))
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			for _, imported := range domainImports(t, path) {
+				if imported == placementPkg || strings.HasPrefix(imported, placementPkg+"/") {
+					t.Errorf("%s imports Placement policy %s", domainRel(path), imported)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", relative, err)
 		}
 	}
 }

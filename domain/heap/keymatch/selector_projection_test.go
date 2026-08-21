@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	keymatch "github.com/wippyai/go-lua/domain/heap/keymatch"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -70,7 +71,11 @@ func TestSelectorProjectionRejectsSameLinkResealedHeap(t *testing.T) {
 		t.Fatal("exact Value/Heap schema pair was rejected")
 	}
 
-	resealed, resealedFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked))
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("keymatch compilation")
+	}
+	resealed, resealedFailure := heapdomain.SealWithArtifacts(linked, keymatchHeapMounts(t, linked, compilation))
 	if resealedFailure != heapdomain.SealFailureNone || values.OwnsHeapSchema(resealed) {
 		t.Fatal("independently resealed same-Link Heap was not distinguished")
 	}

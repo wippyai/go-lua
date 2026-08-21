@@ -16,6 +16,10 @@ func (kind ValuesTailKind) valid() bool {
 	return kind == ValuesTailCall || kind == ValuesTailVararg
 }
 
+// Valid reports whether kind names one of the two canonical open-tail
+// producers. ValuesTailInvalid is reserved for a closed Values row.
+func (kind ValuesTailKind) Valid() bool { return kind.valid() }
+
 // ValuesTail is the scalar tail relation formerly nested in a Program-owned
 // Values row. Span is retained because it is part of the canonical row's
 // proof, even though the ingress projection historically omitted it.

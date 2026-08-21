@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
 
@@ -17,19 +18,29 @@ import (
 // under no published key, or a published key no family declares, is a
 // disagreement between the inventory and the identities the analyzer exports.
 func publishedQueryFamilies() []schema.Key {
-	return []schema.Key{QueryFamilyValueSummary, QueryFamilyEffectExact}
+	return []schema.Key{QueryFamilyValueSummary, QueryFamilyEffectExact, QueryFamilyPlacementSummary}
+}
+
+// queryPositionPins preserves the existing result-column ordinals while
+// appending Placement's family at the end of the sealed query inventory.
+func queryPositionPins() []schema.Key {
+	return []schema.Key{QueryFamilyValueSummary, QueryFamilyEffectExact, QueryFamilyPlacementSummary}
 }
 
 // TestQueryTableSeals states that the authored query inventory is admitted and
 // sealed by the one declaration root, and that every family reads a coordinate
 // space the same table declares.
 func TestQueryTableSeals(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	sealed, failure := Table()
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("declaration table rejected: contributor=%d law=%d disposition=%s", failure.Contributor, failure.Law, failure.Disposition)
 	}
@@ -75,14 +86,27 @@ func TestQueryTableSeals(t *testing.T) {
 // same families the table sealed, under the population and projection those
 // families declared.
 func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	issued := QueryIssuance()
+	issued := QueryIssuance(compilation)
 	if len(issued) != len(registrations) {
 		t.Fatalf("issuance holds %d families for %d sealed rows", len(issued), len(registrations))
+	}
+	pins := queryPositionPins()
+	if len(issued) != len(pins) {
+		t.Fatalf("query issuance holds %d families, but %d result ordinals are pinned", len(issued), len(pins))
+	}
+	for position, key := range pins {
+		if issued[position].Family != key {
+			t.Fatalf("query family at position %d is %q, want %q", position, issued[position].Family, key)
+		}
 	}
 	for index, registration := range registrations {
 		family := issued[index]
@@ -92,8 +116,8 @@ func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 			family.Projection != registration.Projection() {
 			t.Fatalf("issuance row %d is not sealed family %q", index, registration.Key())
 		}
-		position, resolved := queryPositionForFamily(family.Authority)
-		if !resolved || registry.queries[position].Key() != family.Family {
+		position, resolved := queryPositionForFamily(compilation.catalog, family.Authority)
+		if !resolved || compilation.catalog.queries[position].Key() != family.Family {
 			t.Fatalf("authority %q does not resolve to sealed family %q", family.Authority, family.Family)
 		}
 	}
@@ -104,7 +128,11 @@ func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 // declaration, its contributor, and the slot its answers are published in are
 // reached through one row and there is no second list to disagree with it.
 func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
@@ -128,7 +156,11 @@ func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
 // schema opens its query slot with, so the declaration and the slot cannot
 // name two contracts.
 func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	registrations, _, registrationsOK := queryRegistrations(roles)
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
@@ -139,12 +171,14 @@ func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
 	}
 	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
 	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
-	if !valueCodecOK || !effectCodecOK {
+	placementCodec, placementCodecOK := roles.Key("semantic/query-result/placement-summary")
+	if !valueCodecOK || !effectCodecOK || !placementCodecOK {
 		t.Fatal("declared query codec roles did not resolve")
 	}
 	for family, codec := range map[schema.Key]identity.ContentID{
-		QueryFamilyValueSummary: identity.ContentID(valueCodec.Digest()),
-		QueryFamilyEffectExact:  identity.ContentID(effectCodec.Digest()),
+		QueryFamilyValueSummary:     identity.ContentID(valueCodec.Digest()),
+		QueryFamilyEffectExact:      identity.ContentID(effectCodec.Digest()),
+		QueryFamilyPlacementSummary: identity.ContentID(placementCodec.Digest()),
 	} {
 		if declared[family] != codec {
 			t.Fatalf("family %q is declared under a codec the schema does not freeze its results with", family)
@@ -160,7 +194,11 @@ func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
 // The withdrawal is performed on a copy of the authored declaration inside this
 // test. Production holds no hook that can remove a contributor.
 func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -169,6 +207,9 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	}
 	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
+	}
+	if _, _, admitted := wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, nil, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer); admitted {
+		t.Fatal("placement-summary was admitted without the contributor that binds it")
 	}
 	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer); admitted {
 		t.Fatal("value-summary was admitted without its owner admission callback")
@@ -183,14 +224,18 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 // geometry, and anchor. Observation does not invent a family construction
 // does not issue.
 func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	queries, _, queriesOK := queryRegistrations(roles)
 	specs, specsOK := observationSpecs(queries)
 	if !rolesOK || !queriesOK || !specsOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")
 	}
-	issued := make(map[schema.Key]bool, len(QueryIssuance()))
-	for _, family := range QueryIssuance() {
+	issued := make(map[schema.Key]bool, len(QueryIssuance(compilation)))
+	for _, family := range QueryIssuance(compilation) {
 		issued[family.Family] = true
 	}
 	if len(specs) == 0 {
@@ -210,13 +255,17 @@ func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
 // the same observation rows the table sealed, under the producer those rows
 // declared.
 func TestObservationIssuanceIsTheSealedInventory(t *testing.T) {
-	roles, rolesOK := SemanticRoles()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
 	queries, _, queriesOK := queryRegistrations(roles)
 	entries, entriesOK := observationEntries(queries)
 	if !rolesOK || !queriesOK || !entriesOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")
 	}
-	issued := ObservationIssuance()
+	issued := ObservationIssuance(compilation)
 	if len(issued) != len(entries) {
 		t.Fatalf("issuance holds %d observations for %d sealed rows", len(issued), len(entries))
 	}

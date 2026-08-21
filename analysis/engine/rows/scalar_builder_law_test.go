@@ -83,6 +83,36 @@ func TestArtifactScalarTemplateAdmitsLocalPredecessorStage(t *testing.T) {
 	if !ok || template == nil || !template.Available() {
 		t.Fatal("local predecessor stage must seal")
 	}
+	if native, rowOK := template.RuleNativeAt(0); !rowOK || native {
+		t.Fatalf("local rule native projection=(%v,%v), want (false,true)", native, rowOK)
+	}
+}
+
+func TestArtifactScalarTemplateSealsDeclaredNativeProjection(t *testing.T) {
+	spec := artifactScalarTwoPointRegion(t)
+	if !spec.InstallStageLaws(artifactCallStageLaws()) {
+		t.Fatal("call stage laws")
+	}
+	role, roleOK := spec.DeclareRole(artifactScalarLawID(20))
+	if !roleOK || !spec.AddRule(ArtifactScalarRule{
+		Role:  role,
+		Stage: ArtifactRuleStageIssued3,
+		Point: artifactScalarLawID(7),
+		Input: artifactScalarLawID(4),
+		ID:    artifactScalarLawID(21),
+	}) {
+		t.Fatal("native rule")
+	}
+	template, templateOK := NewArtifactScalarTemplate(spec)
+	if !templateOK || template == nil {
+		t.Fatal("native template")
+	}
+	if native, rowOK := template.RuleNativeAt(0); !rowOK || !native {
+		t.Fatalf("native rule projection=(%v,%v), want (true,true)", native, rowOK)
+	}
+	if _, rowOK := template.RuleNativeAt(1); rowOK {
+		t.Fatal("out-of-range native projection")
+	}
 }
 
 func TestArtifactScalarTemplateRejectsCallStageBackEdge(t *testing.T) {

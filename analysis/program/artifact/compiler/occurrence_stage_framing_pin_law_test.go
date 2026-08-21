@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
+	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -28,6 +31,7 @@ const (
 	pinnedCallBaseEffectTransferFraming    = "analysis/program-artifact/call-base-effect-transfer"
 	pinnedCallDispatchSummaryTransferFrame = "analysis/program-artifact/call-dispatch-summary-transfer"
 	pinnedCallDispatchEffectTransferFrame  = "analysis/program-artifact/call-dispatch-effect-transfer"
+	pinnedCallSummaryEffectTransferFrame   = "analysis/program-artifact/call-summary-effect-transfer"
 )
 
 // TestStagedPointIdentityIsThePinnedFramingPreimage pins the staged point
@@ -37,15 +41,12 @@ func TestStagedPointIdentityIsThePinnedFramingPreimage(t *testing.T) {
 	base, occurrence := valuesLawID(41), valuesLawID(42)
 	left, right, key := valuesLawID(43), valuesLawID(44), schema.Key("value-binary-arithmetic")
 	transaction := compiler{
-		pointGeometry:     map[identity.ContentID]pointDraft{base: {id: base}},
-		localStages:       make(map[identity.ContentID]identity.ContentID),
-		predecessorStages: make(map[identity.ContentID]identity.ContentID),
-		computationStages: make(map[identity.ContentID][]computationStage),
-		callStages:        make(map[identity.ContentID]callStageSet),
-		issuance:          transportDirectory(t),
+		pointGeometry: map[identity.ContentID]pointDraft{base: {id: base, decisionScope: base}},
+		stages:        stageplan.New(artifactFormat()),
+		issuance:      transportDirectory(t),
 	}
 	local, localOK := transaction.localStage(base)
-	predecessor, predecessorOK := transaction.predecessorStage(base)
+	predecessor, predecessorOK := transaction.predecessorStage(base, key)
 	computation, computationOK := transaction.localComputationStage(base, key, occurrence, left, right)
 	stages, stagesOK := transaction.callStage(base)
 	if !localOK || !predecessorOK || !computationOK || !stagesOK {
@@ -56,12 +57,12 @@ func TestStagedPointIdentityIsThePinnedFramingPreimage(t *testing.T) {
 		got   identity.ContentID
 		want  identity.ContentID
 	}{
-		{"local stage", local, digest(pinnedLocalStageFraming, artifactFormat(), bytesField(base))},
-		{"local predecessor stage", predecessor, digest(pinnedLocalPredecessorStageFraming, artifactFormat(), bytesField(base))},
-		{"local computation stage", computation, digest(pinnedLocalComputationStageFraming, artifactFormat(), bytesField(base), keyField(key), bytesField(occurrence))},
-		{"call dispatch stage", stages.dispatch, digest(pinnedCallDispatchStageFraming, artifactFormat(), bytesField(base))},
-		{"call summary stage", stages.summary, digest(pinnedCallSummaryStageFraming, artifactFormat(), bytesField(base))},
-		{"call effect stage", stages.effect, digest(pinnedCallEffectStageFraming, artifactFormat(), bytesField(base))},
+		{"local stage", local, artifactdigest.Digest(pinnedLocalStageFraming, artifactFormat(), artifactdigest.ContentID(base))},
+		{"local predecessor stage", predecessor, artifactdigest.Digest(pinnedLocalPredecessorStageFraming, artifactFormat(), artifactdigest.ContentID(base))},
+		{"local computation stage", computation, artifactdigest.Digest(pinnedLocalComputationStageFraming, artifactFormat(), artifactdigest.ContentID(base), artifactdigest.Key(key), artifactdigest.ContentID(occurrence))},
+		{"call dispatch stage", stages.Dispatch(), artifactdigest.Digest(pinnedCallDispatchStageFraming, artifactFormat(), artifactdigest.ContentID(base))},
+		{"call summary stage", stages.Summary(), artifactdigest.Digest(pinnedCallSummaryStageFraming, artifactFormat(), artifactdigest.ContentID(base))},
+		{"call effect stage", stages.Effect(), artifactdigest.Digest(pinnedCallEffectStageFraming, artifactFormat(), artifactdigest.ContentID(base))},
 	}
 	seen := make(map[identity.ContentID]string, len(pinned))
 	for _, row := range pinned {
@@ -82,22 +83,22 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 	entry, finish, callID := valuesLawID(51), valuesLawID(52), valuesLawID(53)
 	transaction := compiler{
 		pointGeometry: map[identity.ContentID]pointDraft{
-			entry:  {id: entry},
-			finish: {id: finish},
+			entry:  {id: entry, decisionScope: entry},
+			finish: {id: finish, decisionScope: finish},
 		},
 		occurrenceSpans: map[occurrenceLookup]occurrenceSpanGeometry{
 			{kind: programschema.OccurrenceCall, id: callID}: {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
 		},
-		localStages: make(map[identity.ContentID]identity.ContentID),
-		callStages:  make(map[identity.ContentID]callStageSet),
+		stages: stageplan.New(artifactFormat()),
 		events: []wtoEventDraft{
 			{kind: wtoEventPoint, point: entry},
 			{kind: wtoEventPoint, point: finish},
 		},
-		issuance: transportDirectory(t, []IssuancePlacement{
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
+		issuance: transportDirectory(t, []issuance.Placement{
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallSummary, Key: "call-summary", Writes: "call", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
 		}...),
 	}
 	if !transaction.appendOccurrence(programschema.OccurrenceCall, callID, identity.ContentID{}, []identity.ContentID{entry, finish}, nil, 0) {
@@ -109,12 +110,16 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		t.Fatalf("install call stages: %+v", failure)
 	}
-	dispatch := digest(pinnedCallDispatchStageFraming, artifactFormat(), bytesField(finish))
-	summary := digest(pinnedCallSummaryStageFraming, artifactFormat(), bytesField(finish))
-	effect := digest(pinnedCallEffectStageFraming, artifactFormat(), bytesField(finish))
+	dispatch := artifactdigest.Digest(pinnedCallDispatchStageFraming, artifactFormat(), artifactdigest.ContentID(finish))
+	summary := artifactdigest.Digest(pinnedCallSummaryStageFraming, artifactFormat(), artifactdigest.ContentID(finish))
+	effect := artifactdigest.Digest(pinnedCallEffectStageFraming, artifactFormat(), artifactdigest.ContentID(finish))
 	for _, staged := range []identity.ContentID{dispatch, summary, effect} {
-		if _, installed := transaction.pointGeometry[staged]; !installed {
+		row, installed := transaction.pointGeometry[staged]
+		if !installed {
 			t.Fatalf("the installation pass carries no point at the pinned staged identity %v", staged)
+		}
+		if row.decisionScope != finish || len(row.decisions) != 0 {
+			t.Fatalf("staged point %v did not reference finish scope without copying decisions: scope=%v decisions=%v", staged, row.decisionScope, row.decisions)
 		}
 	}
 	framings := map[[2]identity.ContentID]string{
@@ -123,21 +128,42 @@ func TestInstalledCallStageIdentitiesArePinnedOverAFixture(t *testing.T) {
 		{finish, effect}:    pinnedCallBaseEffectTransferFraming,
 		{dispatch, summary}: pinnedCallDispatchSummaryTransferFrame,
 		{dispatch, effect}:  pinnedCallDispatchEffectTransferFrame,
+		{summary, effect}:   pinnedCallSummaryEffectTransferFrame,
 	}
-	if len(transaction.localTransfers) != len(framings) {
-		t.Fatalf("the call splice installed %d transports, want %d", len(transaction.localTransfers), len(framings))
+	if fault := transaction.localTransfer.Seal(); fault.Failed() {
+		t.Fatalf("seal local transfers: %#v", fault)
 	}
-	for _, edge := range transaction.localTransfers {
-		framing, pinned := framings[[2]identity.ContentID{edge.from, edge.to}]
+	transfers, transferWrites, transfersOK := transaction.localTransfer.TakeCanonicalPlanes()
+	if !transfersOK || len(transfers) != len(framings) {
+		t.Fatalf("the call splice installed %d transports, want %d", len(transfers), len(framings))
+	}
+	for _, edge := range transfers {
+		from, to, id := edge.From(), edge.To(), edge.ID()
+		framing, pinned := framings[[2]identity.ContentID{from, to}]
 		if !pinned {
-			t.Fatalf("the call splice installed an unpinned transport %v -> %v", edge.from, edge.to)
+			t.Fatalf("the call splice installed an unpinned transport %v -> %v", from, to)
 		}
-		fields := []field{bytesField(edge.from), bytesField(edge.to), boolField(edge.full), uintField(uint64(len(edge.writes)))}
-		for _, write := range edge.writes {
-			fields = append(fields, keyField(write))
+		offset, count, spanOK := edge.WriteSpan()
+		writes := make([]schema.Key, 0, count)
+		if spanOK && uint64(offset)+uint64(count) <= uint64(len(transferWrites)) {
+			for index := uint32(0); index < count; index++ {
+				write, writeOK := transferWrites[offset+index].Key()
+				if !writeOK {
+					spanOK = false
+					break
+				}
+				writes = append(writes, write)
+			}
 		}
-		if want := digest(framing, artifactFormat(), fields...); edge.id != want {
-			t.Fatalf("transport %v -> %v identity = %v, the pinned framing preimage is %v", edge.from, edge.to, edge.id, want)
+		fields := []artifactdigest.Field{artifactdigest.ContentID(from), artifactdigest.ContentID(to), artifactdigest.Bool(edge.Full()), artifactdigest.Uint(uint64(len(writes)))}
+		for _, write := range writes {
+			fields = append(fields, artifactdigest.Key(write))
+		}
+		if !from.Available() || !to.Available() || !id.Available() || !spanOK {
+			t.Fatalf("transport row unavailable: from=%t to=%t id=%t span=%t", from.Available(), to.Available(), id.Available(), spanOK)
+		}
+		if want := artifactdigest.Digest(framing, artifactFormat(), fields...); id != want {
+			t.Fatalf("transport %v -> %v identity = %v, the pinned framing preimage is %v", from, to, id, want)
 		}
 	}
 }

@@ -256,3 +256,49 @@ func TestMayBeNilConformanceAllocatesNothing(t *testing.T) {
 		t.Fatalf("MayBeNilConformance allocated %.0f times per run", allocations)
 	}
 }
+
+// TestVerdictCatalogIsTotalAndDenseFromItsOwnConstants states the vocabulary
+// half of this judgment. A declaration table keyed by these ordinals renders one
+// message per answer, so the ordinals must be the answers' own constants, dense
+// from the first, and each must carry exactly one spelling.
+func TestVerdictCatalogIsTotalAndDenseFromItsOwnConstants(t *testing.T) {
+	catalog := Catalog()
+	if len(catalog) == 0 {
+		t.Fatal("the verdict catalog is empty")
+	}
+	spellings := make(map[string]Verdict, len(catalog))
+	keys := make(map[string]Verdict, len(catalog))
+	for index, verdict := range catalog {
+		if !verdict.Available() {
+			t.Fatalf("catalog position %d holds an unavailable verdict %d", index, verdict)
+		}
+		if verdict.Ordinal() != uint16(index)+1 {
+			t.Fatalf("verdict %d has ordinal %d at catalog position %d; the catalog is dense from one", verdict, verdict.Ordinal(), index)
+		}
+		if verdict.Spelling() == "" {
+			t.Fatalf("verdict %d renders no spelling", verdict)
+		}
+		if prior, duplicate := spellings[verdict.Spelling()]; duplicate {
+			t.Fatalf("verdicts %d and %d share the spelling %q", prior, verdict, verdict.Spelling())
+		}
+		spellings[verdict.Spelling()] = verdict
+		if VerdictKey(verdict) == "" {
+			t.Fatalf("verdict %d is declared under no key", verdict)
+		}
+		if prior, duplicate := keys[VerdictKey(verdict)]; duplicate {
+			t.Fatalf("verdicts %d and %d share the key %q", prior, verdict, VerdictKey(verdict))
+		}
+		keys[VerdictKey(verdict)] = verdict
+	}
+	// Every answer this judgment can give is in the catalog. An answer outside
+	// it would be a finding a declaration table keyed by the catalog renders
+	// nothing for.
+	for _, verdict := range []Verdict{VerdictAbstain, VerdictConforms, VerdictViolates, VerdictMayBeNil, VerdictMemberAbsent, VerdictUnproven} {
+		if _, member := spellings[verdict.Spelling()]; !member {
+			t.Fatalf("verdict %d is not in the catalog", verdict)
+		}
+	}
+	if VerdictInvalid.Ordinal() != 0 || VerdictInvalid.Spelling() != "" || VerdictKey(VerdictInvalid) != "" {
+		t.Fatal("the absent answer is declared as a vocabulary member")
+	}
+}

@@ -268,38 +268,7 @@ const (
 	// frozen summary columns. It is deliberately the sole summary authority;
 	// it is not a second copy of the Artifact package format version.
 	summaryFormat = uint64(33)
-
-	// The generic cold family declaration reserves append-only slots after the
-	// currently declared heap families. A summary column must never reuse a
-	// slot owned by another family.
-	slotExactScalarSummary = slotHeapIndex + 1
-	slotArithmeticSummary  = slotExactScalarSummary + 1
-	slotUnarySummary       = slotArithmeticSummary + 1
 )
-
-var (
-	exactScalarSummaryFamily = Family[ExactScalarSummary]{slot: slotExactScalarSummary, name: "exact-scalar-summary"}
-	arithmeticSummaryFamily  = Family[ArithmeticSummary]{slot: slotArithmeticSummary, name: "arithmetic-summary"}
-	unarySummaryFamily       = Family[UnarySummary]{slot: slotUnarySummary, name: "unary-summary"}
-)
-
-// ExactScalarSummaryFamily returns the immutable exact-scalar column
-// declaration. Callers use its canonical Family methods directly.
-func ExactScalarSummaryFamily() Family[ExactScalarSummary] {
-	return exactScalarSummaryFamily
-}
-
-// ArithmeticSummaryFamily returns the immutable arithmetic column
-// declaration. Callers use its canonical Family methods directly.
-func ArithmeticSummaryFamily() Family[ArithmeticSummary] {
-	return arithmeticSummaryFamily
-}
-
-// UnarySummaryFamily returns the immutable unary column declaration. Callers
-// use its canonical Family methods directly.
-func UnarySummaryFamily() Family[UnarySummary] {
-	return unarySummaryFamily
-}
 
 func exactScalarSummaryID(occurrence, subject, body identity.ContentID, role ExactScalarSummaryRole, literal SummaryLiteral) identity.ContentID {
 	if !occurrence.Available() || !subject.Available() || !body.Available() || !role.Valid() || !literal.Valid() {

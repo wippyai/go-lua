@@ -49,11 +49,11 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 	if err := Validate(
 		first.sourceView, first.flowView, second.staticView, first.bodies,
 		first.bindings, first.forest, first.proof, first.access,
-		first.moduleView.ContentID(), first.entry,
+		first.flowView.ModuleID(), first.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a same-cardinality foreign Static proof splice")
 	}
-	foreignModule := first.moduleView.ContentID()
+	foreignModule := first.flowView.ModuleID()
 	foreignModule[0] ^= 0xff
 	if err := Validate(
 		first.sourceView, first.flowView, first.staticView, first.bodies,
@@ -65,7 +65,7 @@ func TestStaticCheckRejectsForeignStaticAndModuleProofSplice(t *testing.T) {
 	if err := Validate(
 		first.sourceView, first.flowView, first.staticView, first.bodies,
 		first.bindings, first.forest, first.proof, second.access,
-		first.moduleView.ContentID(), first.entry,
+		first.flowView.ModuleID(), first.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign selector proof splice")
 	}
@@ -77,7 +77,7 @@ func TestStaticCheckNilOrMalformedInputsReturnErrors(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, nil, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err == nil {
 		t.Fatal("nil containment result was accepted")
@@ -85,7 +85,7 @@ func TestStaticCheckNilOrMalformedInputsReturnErrors(t *testing.T) {
 	err = Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, nil, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err == nil {
 		t.Fatal("nil scope proof was accepted")
@@ -140,20 +140,20 @@ func TestStaticCheckRejectsEveryForeignIdentitySubstitution(t *testing.T) {
 	foreignSource := newCheckFixture(t, makeSpec("staticcheck-four-id-foreign.lua", false))
 	if err := Validate(
 		foreignSource.sourceView, base.flowView, base.staticView, base.bodies,
-		base.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
+		base.bindings, base.forest, base.proof, base.access, base.flowView.ModuleID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Source identity")
 	}
 	foreignFlow := newCheckFixture(t, makeSpec("staticcheck-four-id.lua", true))
 	if err := Validate(
 		base.sourceView, base.flowView, base.staticView, base.bodies,
-		foreignFlow.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
+		foreignFlow.bindings, base.forest, base.proof, base.access, base.flowView.ModuleID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Binding result")
 	}
 	if err := Validate(
 		base.sourceView, foreignFlow.flowView, base.staticView, base.bodies,
-		base.bindings, base.forest, base.proof, base.access, base.moduleView.ContentID(), base.entry,
+		base.bindings, base.forest, base.proof, base.access, base.flowView.ModuleID(), base.entry,
 	); err == nil {
 		t.Fatal("Validate accepted a foreign Flow identity")
 	}

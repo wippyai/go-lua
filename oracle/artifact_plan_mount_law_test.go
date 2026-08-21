@@ -68,10 +68,14 @@ func artifactPlanImports(t *testing.T) map[string]struct{} {
 // TestArtifactPlanNamesNoSelfMountingDomain fails when the Link construction
 // root still imports a domain whose axis seals its own Link authority.
 func TestArtifactPlanNamesNoSelfMountingDomain(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
 	imports := artifactPlanImports(t)
 	mounting := 0
 	for key, path := range mountingDomainPackages {
-		declared, known := composite.AxisMountDeclared(key)
+		declared, known := composite.AxisMountDeclared(compilation, key)
 		if !known {
 			t.Fatalf("%q is not a declared axis", key)
 		}

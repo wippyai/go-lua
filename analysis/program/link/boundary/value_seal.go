@@ -236,11 +236,11 @@ func valuePairs(p *program.Program, shard uint32, rows *[]valueRow) ([]radix.Pai
 			if !ok {
 				return nil, errors.New("link/boundary: malformed Program outcome sequence")
 			}
-			outcome, ok := outcomes.Get(term)
+			_, outcomeKind, _, ok := outcomes.Get(term)
 			if !ok {
 				return nil, errors.New("link/boundary: malformed Program outcome")
 			}
-			if outcome.Kind == wanted {
+			if outcomeKind == wanted {
 				if err := add(term, true); err != nil {
 					return nil, err
 				}
@@ -272,11 +272,11 @@ func valueFamilyCount(p *program.Program) int {
 		if !ok {
 			return 0
 		}
-		outcome, ok := outcomes.Get(term)
+		_, outcomeKind, _, ok := outcomes.Get(term)
 		if !ok {
 			return 0
 		}
-		switch outcome.Kind {
+		switch outcomeKind {
 		case flowkind.OutcomeNormal, flowkind.OutcomeReturn, flowkind.OutcomeThrow, flowkind.OutcomeYield, flowkind.OutcomeCancel:
 			count++
 		}

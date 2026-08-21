@@ -16,9 +16,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	schematype "github.com/wippyai/go-lua/analysis/schema/typecontract"
 	"github.com/wippyai/go-lua/domain/composite"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
+	packtransfer "github.com/wippyai/go-lua/domain/pack/transfer"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -73,10 +75,10 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	receipt, receiptOK := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !receiptOK || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	mounts := linked.Project().Mounts()
@@ -111,7 +113,7 @@ func selectorLawSchema(t testing.TB, contract *contract.Contract, label string) 
 		t.Fatal("seal selector Pack")
 	}
 	coldProgram := artifact.Program()
-	catalog, catalogOK := programschema.CatalogID(coldProgram.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(coldProgram.SchemaID)
 	if !coldProgram.Available() || !catalogOK || !catalog.Available() {
 		t.Fatal("selector cold program")
 	}
@@ -200,5 +202,35 @@ func TestInputSelectorsSealTargetABIWithoutRetainingTarget(t *testing.T) {
 	}
 	if _, ok := first.schema.MountedInputSemanticSource(first.module, second.callID, receiver); ok {
 		t.Fatal("foreign mounted call crossed Pack call fence")
+	}
+}
+
+// TestMountedInputProjectsCallSpecificTailMembers proves that a ValuesVar is
+// the exact fixed suffix of this mounted call, not an intrinsically open or
+// fabricated tail source. The fixture has three fixed actuals and no actual
+// tail, so its target tail projects only the final authored member and remains
+// closed.
+func TestMountedInputProjectsCallSpecificTailMembers(t *testing.T) {
+	contract, operation := selectorLawContract(t)
+	fixture := selectorLawSchema(t, contract, "mounted_input_projection")
+	actual, actualOK := fixture.schema.MountedActualProjection(fixture.module, fixture.callID)
+	if !actualOK || actual.ActualCount() != 3 {
+		t.Fatal("mounted actual projection")
+	}
+	tail, tailOK := packtransfer.NewMountedInput(fixture.schema, fixture.module, fixture.callID, operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValuesVar, Ordinal: 0})
+	if !tailOK || !tail.Valid() || tail.IsOpen() || tail.MemberCount() != 1 {
+		t.Fatalf("call-specific ValuesVar projection = valid=%t open=%t members=%d", tail.Valid(), tail.IsOpen(), tail.MemberCount())
+	}
+	expected, expectedOK := actual.ActualAt(2)
+	member, memberOK := tail.MemberAt(0)
+	if !expectedOK || !memberOK || member != expected.ID() {
+		t.Fatal("ValuesVar did not retain the exact ordered fixed suffix member")
+	}
+	fixed, fixedOK := packtransfer.NewMountedInput(fixture.schema, fixture.module, fixture.callID, operation, vocabulary.InputSource{Kind: vocabulary.InputSourceValueFormal, Ordinal: 0})
+	if !fixedOK || fixed.MemberCount() != 1 || fixed.IsOpen() {
+		t.Fatal("ValueFormal did not project one closed member")
+	}
+	if fixedMember, ok := fixed.MemberAt(0); !ok || fixedMember != fixture.receiver {
+		t.Fatal("ValueFormal did not preserve receiver-first call order")
 	}
 }

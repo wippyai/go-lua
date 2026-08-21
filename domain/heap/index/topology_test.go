@@ -256,7 +256,7 @@ func freshTopologyFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema,
 		if !ok {
 			continue
 		}
-		_, _, _, _, fresh := root.FreshResultID()
+		_, _, _, fresh := root.FreshResultID()
 		if fresh {
 			return heap, values, calls, linked, root, mounts
 		}

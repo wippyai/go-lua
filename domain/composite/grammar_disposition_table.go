@@ -141,7 +141,7 @@ func (reason GrammarReason) String() string {
 // sealed rule table is free to insert a declaration (as it did for the
 // runtime-kind call rule) without silently retargeting every later grammar
 // disposition. The key/group tables below translate tags through canonical
-// rule keys or issuance vocabulary; the sealed registry remains the authority
+// rule keys or issuance vocabulary; the sealed catalog remains the authority
 // for whether those identities are actually declared.
 type grammarRoles uint32
 
@@ -166,6 +166,10 @@ const (
 	roleEquality
 	roleOrder
 	rolePresence
+	roleAllocationOccurrence
+	roleReturnBoundaryOccurrence
+	roleStorageBindTransferOccurrence
+	roleStorageWriteOccurrence
 )
 
 // Call-result projections consume the same parser/call issuance surface as
@@ -202,14 +206,20 @@ var grammarRoleKeys = [...]struct {
 
 // grammarRoleGroups are not rule declarations. They are the vocabulary of a
 // grammar row's source surface, expanded against the sealed rule issuance
-// table. This call family is deliberately expressed by its canonical
-// occurrence identity so a new mounted consumer of occurrence/call is reached
-// without another Program-side rule-name restatement.
+// table. Each group is deliberately expressed by its canonical occurrence
+// identity, so a mounted consumer added to an existing occurrence family is
+// reached without another Program-side rule-name restatement. Link consumers
+// have no occurrence group because their denominators are assembled after the
+// grammar boundary.
 var grammarRoleGroups = [...]struct {
 	mask       grammarRoles
 	occurrence schema.Key
 }{
 	{roleCallOccurrence, "occurrence/call"},
+	{roleAllocationOccurrence, "occurrence/allocation"},
+	{roleReturnBoundaryOccurrence, "occurrence/return-boundary"},
+	{roleStorageBindTransferOccurrence, "occurrence/storage-bind-transfer"},
+	{roleStorageWriteOccurrence, "occurrence/storage-write"},
 }
 
 func grammarRoleMask(key schema.Key) (grammarRoles, bool) {
@@ -221,8 +231,8 @@ func grammarRoleMask(key schema.Key) (grammarRoles, bool) {
 	return roleNone, false
 }
 
-func grammarRoleGroupMatches(mask grammarRoles, key schema.Key) bool {
-	entry, ok := templateForKey(key)
+func grammarRoleGroupMatches(state *catalog, mask grammarRoles, key schema.Key) bool {
+	entry, ok := templateForKey(state, key)
 	if !ok {
 		return false
 	}
@@ -251,12 +261,12 @@ func (roles grammarRoles) known() grammarRoles {
 	return known
 }
 
-func (roles grammarRoles) has(key schema.Key) bool {
+func (roles grammarRoles) has(state *catalog, key schema.Key) bool {
 	mask, ok := grammarRoleMask(key)
 	if ok && roles&mask != 0 {
 		return true
 	}
-	return grammarRoleGroupMatches(roles, key)
+	return grammarRoleGroupMatches(state, roles, key)
 }
 
 // grammarEntry is one authored disposition. Roles is populated only for a
@@ -351,10 +361,10 @@ var grammarDispositions = []grammarEntry{
 	{"production:fieldname#8", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:fieldsep#1", grammarStructural, grammarReasonPassThrough, roleNone},
 	{"production:fieldsep#2", grammarStructural, grammarReasonPassThrough, roleNone},
-	{"production:funcbody#1", grammarStructural, grammarReasonUnownedComputation, roleNone},
-	{"production:funcbody#2", grammarStructural, grammarReasonUnownedComputation, roleNone},
-	{"production:funcbody#3", grammarStructural, grammarReasonUnownedComputation, roleNone},
-	{"production:funcbody#4", grammarStructural, grammarReasonUnownedComputation, roleNone},
+	{"production:funcbody#1", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"production:funcbody#2", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"production:funcbody#3", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"production:funcbody#4", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
 	{"production:funcname#1", grammarStructural, grammarReasonPassThrough, roleNone},
 	{"production:funcname#2", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"production:funcname1#1", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
@@ -365,7 +375,7 @@ var grammarDispositions = []grammarEntry{
 	{"production:funcparamlist#2", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"production:funcparamlist#3", grammarStructural, grammarReasonParserPlumbing, roleNone},
 	{"production:funcparamlist#4", grammarStructural, grammarReasonListAccumulation, roleNone},
-	{"production:function#1", grammarStructural, grammarReasonUnownedComputation, roleNone},
+	{"production:function#1", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
 	{"production:functioncall#1", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
 	{"production:functioncall#2", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
 	{"production:functioncall#3", grammarRuleOwned, grammarReasonInvalid, roleCallActivation | roleCallSurface | roleEffectBody | roleEffectOpaque | roleEffectSelected | rolePackSource},
@@ -380,8 +390,8 @@ var grammarDispositions = []grammarEntry{
 	{"production:interfacemethod#2", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"production:interfaceref#1", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"production:interfaceref#2", grammarStructural, grammarReasonPassThrough, roleNone},
-	{"production:laststat#1", grammarStructural, grammarReasonControlFlow, roleNone},
-	{"production:laststat#2", grammarStructural, grammarReasonControlFlow, roleNone},
+	{"production:laststat#1", grammarRuleOwned, grammarReasonInvalid, roleReturnBoundaryOccurrence},
+	{"production:laststat#2", grammarRuleOwned, grammarReasonInvalid, roleReturnBoundaryOccurrence},
 	{"production:laststat#3", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:methodname#1", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:methodname#2", grammarStructural, grammarReasonTokenForward, roleNone},
@@ -451,12 +461,12 @@ var grammarDispositions = []grammarEntry{
 	{"production:simpletypeexpr#1", grammarStructural, grammarReasonPassThrough, roleNone},
 	{"production:simpletypeexpr#2", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"production:simpletypeexpr#3", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"production:stat#1", grammarRuleOwned, grammarReasonInvalid, roleRawSet | roleStorageTransfer},
-	{"production:stat#10", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"production:stat#11", grammarRuleOwned, grammarReasonInvalid, roleRawSet | roleStorageTransfer},
-	{"production:stat#12", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"production:stat#13", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"production:stat#14", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"production:stat#1", grammarRuleOwned, grammarReasonInvalid, roleRawSet | roleStorageTransfer | roleStorageWriteOccurrence},
+	{"production:stat#10", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"production:stat#11", grammarRuleOwned, grammarReasonInvalid, roleRawSet | roleStorageTransfer | roleStorageWriteOccurrence},
+	{"production:stat#12", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"production:stat#13", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"production:stat#14", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"production:stat#15", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#16", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#17", grammarStructural, grammarReasonControlFlow, roleNone},
@@ -468,8 +478,8 @@ var grammarDispositions = []grammarEntry{
 	{"production:stat#5", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#6", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"production:stat#7", grammarStructural, grammarReasonControlFlow, roleNone},
-	{"production:stat#8", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"production:stat#9", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"production:stat#8", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"production:stat#9", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"production:staticfieldname#1", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:staticfieldname#2", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:staticfieldname#3", grammarStructural, grammarReasonTokenForward, roleNone},
@@ -480,8 +490,8 @@ var grammarDispositions = []grammarEntry{
 	{"production:staticfieldname#8", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:staticfieldname#9", grammarStructural, grammarReasonTokenForward, roleNone},
 	{"production:string#1", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
-	{"production:tableconstructor#1", grammarRuleOwned, grammarReasonInvalid, roleHeapClosed | roleHeapEmpty | roleHeapIngress | roleValueAllocation},
-	{"production:tableconstructor#2", grammarRuleOwned, grammarReasonInvalid, roleHeapClosed | roleHeapEmpty | roleHeapIngress | roleValueAllocation},
+	{"production:tableconstructor#1", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence | roleHeapClosed | roleHeapEmpty | roleHeapIngress | roleValueAllocation},
+	{"production:tableconstructor#2", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence | roleHeapClosed | roleHeapEmpty | roleHeapIngress | roleValueAllocation},
 	{"production:typedname#1", grammarStructural, grammarReasonPassThrough, roleNone},
 	{"production:typedname#2", grammarStructural, grammarReasonParserPlumbing, roleNone},
 	{"production:typednamelist#1", grammarStructural, grammarReasonPassThrough, roleNone},
@@ -523,7 +533,7 @@ var grammarDispositions = []grammarEntry{
 	{"form:ArithmeticOpExpr", grammarRuleOwned, grammarReasonInvalid, roleArithmetic},
 	{"form:ArrayTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:AssertsTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"form:AssignStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
+	{"form:AssignStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
 	{"form:AttrGetExpr", grammarRuleOwned, grammarReasonInvalid, roleRawGet},
 	{"form:BreakStmt", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"form:CastExpr", grammarStructural, grammarReasonUnownedComputation, roleNone},
@@ -534,12 +544,12 @@ var grammarDispositions = []grammarEntry{
 	{"form:Field", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"form:FuncCallExpr", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"form:FuncCallStmt", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"form:FuncDefStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
+	{"form:FuncDefStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
 	{"form:FuncName", grammarStructural, grammarReasonParserComponent, roleNone},
-	{"form:FunctionExpr", grammarStructural, grammarReasonFunctionBody, roleNone},
+	{"form:FunctionExpr", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
 	{"form:FunctionParamExpr", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"form:FunctionTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"form:GenericForStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"form:GenericForStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"form:GenericTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:GotoStmt", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"form:IdentExpr", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
@@ -551,13 +561,13 @@ var grammarDispositions = []grammarEntry{
 	{"form:KeyOfExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:LabelStmt", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"form:LiteralTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"form:LocalAssignStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"form:LocalAssignStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"form:LogicalOpExpr", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"form:MapTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:NilExpr", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
 	{"form:NonNilAssertExpr", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"form:NumberExpr", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
-	{"form:NumberForStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"form:NumberForStmt", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"form:OptionalTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:ParList", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"form:PrimitiveTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
@@ -565,10 +575,10 @@ var grammarDispositions = []grammarEntry{
 	{"form:RecordTypeExpr", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"form:RelationalOpExpr", grammarRuleOwned, grammarReasonInvalid, roleEquality | roleOrder | rolePresence},
 	{"form:RepeatStmt", grammarStructural, grammarReasonControlFlow, roleNone},
-	{"form:ReturnStmt", grammarStructural, grammarReasonControlFlow, roleNone},
+	{"form:ReturnStmt", grammarRuleOwned, grammarReasonInvalid, roleReturnBoundaryOccurrence},
 	{"form:StringConcatOpExpr", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"form:StringExpr", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
-	{"form:TableExpr", grammarRuleOwned, grammarReasonInvalid, roleHeapIngress | roleValueAllocation | roleHeapEmpty | roleHeapClosed},
+	{"form:TableExpr", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence | roleHeapIngress | roleValueAllocation | roleHeapEmpty | roleHeapClosed},
 	{"form:Token", grammarStructural, grammarReasonLexicalToken, roleNone},
 	{"form:TrueExpr", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
 	{"form:TypeDefStmt", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
@@ -595,8 +605,8 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:AssertsTypeExpr.ParamName", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:AssertsTypeExpr.ParamPosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
 	{"carrier:AssertsTypeExpr.NarrowTo", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"carrier:AssignStmt.Lhs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
-	{"carrier:AssignStmt.Rhs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
+	{"carrier:AssignStmt.Lhs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
+	{"carrier:AssignStmt.Rhs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
 	{"carrier:AttrGetExpr.Object", grammarRuleOwned, grammarReasonInvalid, roleRawGet},
 	{"carrier:AttrGetExpr.Key", grammarRuleOwned, grammarReasonInvalid, roleRawGet},
 	{"carrier:AttrGetExpr.KeySyntax", grammarRuleOwned, grammarReasonInvalid, roleRawGet},
@@ -620,17 +630,17 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:FuncCallExpr.TypeArgs", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"carrier:FuncCallExpr.AdjustRet", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
 	{"carrier:FuncCallStmt.Expr", grammarRuleOwned, grammarReasonInvalid, roleCallSurface | rolePackSource | roleEffectSelected | roleEffectOpaque | roleEffectBody | roleCallActivation},
-	{"carrier:FuncDefStmt.Name", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
-	{"carrier:FuncDefStmt.Func", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet},
+	{"carrier:FuncDefStmt.Name", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
+	{"carrier:FuncDefStmt.Func", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer | roleRawSet | roleStorageWriteOccurrence},
 	{"carrier:FuncName.Func", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:FuncName.Receiver", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:FuncName.Method", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:FuncName.MethodPosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
-	{"carrier:FunctionExpr.TypeParams", grammarStructural, grammarReasonFunctionBody, roleNone},
-	{"carrier:FunctionExpr.ParList", grammarStructural, grammarReasonFunctionBody, roleNone},
-	{"carrier:FunctionExpr.ReturnTypes", grammarStructural, grammarReasonFunctionBody, roleNone},
-	{"carrier:FunctionExpr.ReturnsKnown", grammarStructural, grammarReasonFunctionBody, roleNone},
-	{"carrier:FunctionExpr.Stmts", grammarStructural, grammarReasonFunctionBody, roleNone},
+	{"carrier:FunctionExpr.TypeParams", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"carrier:FunctionExpr.ParList", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"carrier:FunctionExpr.ReturnTypes", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"carrier:FunctionExpr.ReturnsKnown", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
+	{"carrier:FunctionExpr.Stmts", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence},
 	{"carrier:FunctionParamExpr.Name", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:FunctionParamExpr.NamePosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
 	{"carrier:FunctionParamExpr.Type", grammarStructural, grammarReasonParserComponent, roleNone},
@@ -639,10 +649,10 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:FunctionTypeExpr.Variadic", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:FunctionTypeExpr.VariadicPosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
 	{"carrier:FunctionTypeExpr.Returns", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"carrier:GenericForStmt.Names", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:GenericForStmt.Names", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:GenericForStmt.NamePositions", grammarStructural, grammarReasonSourceCoordinate, roleNone},
-	{"carrier:GenericForStmt.Exprs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:GenericForStmt.Stmts", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:GenericForStmt.Exprs", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:GenericForStmt.Stmts", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:GenericTypeExpr.Base", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:GenericTypeExpr.Args", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:GotoStmt.Label", grammarStructural, grammarReasonControlFlow, roleNone},
@@ -667,11 +677,11 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:KeyOfExpr.Inner", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:LabelStmt.Name", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"carrier:LiteralTypeExpr.Value", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
-	{"carrier:LocalAssignStmt.Names", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:LocalAssignStmt.Names", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:LocalAssignStmt.NamePositions", grammarStructural, grammarReasonSourceCoordinate, roleNone},
-	{"carrier:LocalAssignStmt.Types", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:LocalAssignStmt.Exprs", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:LocalAssignStmt.LocalFunction", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:LocalAssignStmt.Types", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:LocalAssignStmt.Exprs", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:LocalAssignStmt.LocalFunction", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:LogicalOpExpr.Operator", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"carrier:LogicalOpExpr.Lhs", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"carrier:LogicalOpExpr.Rhs", grammarStructural, grammarReasonUnownedComputation, roleNone},
@@ -680,12 +690,12 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:MapTypeExpr.Readonly", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:NonNilAssertExpr.Expr", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"carrier:NumberExpr.Value", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
-	{"carrier:NumberForStmt.Name", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:NumberForStmt.Name", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:NumberForStmt.NamePosition", grammarStructural, grammarReasonSourceCoordinate, roleNone},
-	{"carrier:NumberForStmt.Init", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:NumberForStmt.Limit", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:NumberForStmt.Step", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
-	{"carrier:NumberForStmt.Stmts", grammarRuleOwned, grammarReasonInvalid, roleStorageTransfer},
+	{"carrier:NumberForStmt.Init", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:NumberForStmt.Limit", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:NumberForStmt.Step", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
+	{"carrier:NumberForStmt.Stmts", grammarRuleOwned, grammarReasonInvalid, roleStorageBindTransferOccurrence | roleStorageTransfer},
 	{"carrier:OptionalTypeExpr.Inner", grammarStructural, grammarReasonStaticTypeSurface, roleNone},
 	{"carrier:ParList.HasVargs", grammarStructural, grammarReasonParserComponent, roleNone},
 	{"carrier:ParList.VarargType", grammarStructural, grammarReasonParserComponent, roleNone},
@@ -705,11 +715,11 @@ var grammarDispositions = []grammarEntry{
 	{"carrier:RelationalOpExpr.Rhs", grammarRuleOwned, grammarReasonInvalid, roleEquality | roleOrder | rolePresence},
 	{"carrier:RepeatStmt.Condition", grammarStructural, grammarReasonControlFlow, roleNone},
 	{"carrier:RepeatStmt.Stmts", grammarStructural, grammarReasonControlFlow, roleNone},
-	{"carrier:ReturnStmt.Exprs", grammarStructural, grammarReasonControlFlow, roleNone},
+	{"carrier:ReturnStmt.Exprs", grammarRuleOwned, grammarReasonInvalid, roleReturnBoundaryOccurrence},
 	{"carrier:StringConcatOpExpr.Lhs", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"carrier:StringConcatOpExpr.Rhs", grammarStructural, grammarReasonUnownedComputation, roleNone},
 	{"carrier:StringExpr.Value", grammarRuleOwned, grammarReasonInvalid, roleValueSource},
-	{"carrier:TableExpr.Fields", grammarRuleOwned, grammarReasonInvalid, roleHeapIngress | roleValueAllocation | roleHeapEmpty | roleHeapClosed},
+	{"carrier:TableExpr.Fields", grammarRuleOwned, grammarReasonInvalid, roleAllocationOccurrence | roleHeapIngress | roleValueAllocation | roleHeapEmpty | roleHeapClosed},
 	{"carrier:Token.Type", grammarStructural, grammarReasonLexicalToken, roleNone},
 	{"carrier:Token.Name", grammarStructural, grammarReasonLexicalToken, roleNone},
 	{"carrier:Token.Str", grammarStructural, grammarReasonLexicalToken, roleNone},
@@ -814,7 +824,7 @@ func (failure GrammarJoinFailure) Available() bool { return failure.Reason != Gr
 // JoinGrammarCensus closes the authored dispositions against a parser census.
 // It is total in both directions and returns the first fault it finds, so a
 // caller reads one exact reason instead of a list it has to rank.
-func JoinGrammarCensus(value GrammarCensus) GrammarJoinFailure {
+func JoinGrammarCensus(compilation Compilation, value GrammarCensus) GrammarJoinFailure {
 	if value.Digest != grammarCensusAuthority {
 		return GrammarJoinFailure{Reason: GrammarJoinCensusAuthorityChanged}
 	}
@@ -823,7 +833,7 @@ func JoinGrammarCensus(value GrammarCensus) GrammarJoinFailure {
 		if _, duplicate := declared[entry.Row]; duplicate {
 			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinDuplicateDisposition}
 		}
-		if failure := checkGrammarEntry(entry); failure.Available() {
+		if failure := checkGrammarEntry(compilation.catalog, entry); failure.Available() {
 			return failure
 		}
 		declared[entry.Row] = entry
@@ -846,12 +856,12 @@ func JoinGrammarCensus(value GrammarCensus) GrammarJoinFailure {
 	if failure := checkGrammarCoherence(value, declared); failure.Available() {
 		return failure
 	}
-	return checkGrammarRoleReach(declared)
+	return checkGrammarRoleReach(compilation.catalog, declared)
 }
 
 // checkGrammarEntry states the shape law of one authored row: exactly one
 // account, and every named role declared by the sealed rule table.
-func checkGrammarEntry(entry grammarEntry) GrammarJoinFailure {
+func checkGrammarEntry(state *catalog, entry grammarEntry) GrammarJoinFailure {
 	switch entry.Disposition {
 	case grammarRuleOwned:
 		if entry.Roles == roleNone || entry.Reason != grammarReasonInvalid {
@@ -871,7 +881,7 @@ func checkGrammarEntry(entry grammarEntry) GrammarJoinFailure {
 		if entry.Roles&role.mask == 0 {
 			continue
 		}
-		template, declared := templateForKey(role.key)
+		template, declared := templateForKey(state, role.key)
 		if !declared {
 			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
 		}
@@ -884,12 +894,13 @@ func checkGrammarEntry(entry grammarEntry) GrammarJoinFailure {
 			continue
 		}
 		declared := false
-		for position := 0; position < RuleCount() && !declared; position++ {
-			key, keyOK := RuleKeyAt(position)
+		for position := 0; state != nil && position < len(state.templates) && !declared; position++ {
+			key := state.templates[position].Key()
+			keyOK := key.Available()
 			if !keyOK {
 				continue
 			}
-			declared = grammarRoleGroupMatches(entry.Roles, key)
+			declared = grammarRoleGroupMatches(state, entry.Roles, key)
 		}
 		if !declared {
 			return GrammarJoinFailure{Row: entry.Row, Reason: GrammarJoinUndeclaredRole}
@@ -955,21 +966,23 @@ func checkGrammarCoherence(value GrammarCensus, declared map[GrammarRow]grammarE
 // checkGrammarRoleReach states the reverse totality: every mounted rule role is
 // reached by at least one grammar row. A rule the language cannot feed is a
 // rule with no source, and the account is only an equivalence if it closes in
-// that direction too. The two Link-owned bootstrap roles are excluded by the
-// artifact's own mounted vocabulary: they are admitted at the Link boundary and
-// have no grammar provenance at all.
-func checkGrammarRoleReach(declared map[GrammarRow]grammarEntry) GrammarJoinFailure {
+// that direction too. Link-owned roles are excluded by the artifact's own
+// mounted vocabulary: they are admitted at the Link boundary and have no
+// grammar provenance at all.
+func checkGrammarRoleReach(state *catalog, declared map[GrammarRow]grammarEntry) GrammarJoinFailure {
 	reached := roleNone
 	for _, entry := range declared {
 		reached |= entry.Roles
 	}
-	sealRegistry()
-	for _, template := range registry.templates {
+	if state == nil {
+		return GrammarJoinFailure{Reason: GrammarJoinSealed}
+	}
+	for _, template := range state.templates {
 		if template == nil || !template.Lane().Mounted() {
 			continue
 		}
 		key := template.Key()
-		if !reached.has(key) {
+		if !reached.has(state, key) {
 			return GrammarJoinFailure{Reason: GrammarJoinRoleUnreached, Key: key}
 		}
 	}

@@ -289,6 +289,9 @@ func (c *Contract) encodePortableOperation(w *framing.Writer, op vocabulary.Oper
 			return err
 		}
 	}
+	if err := c.encodeFormalEffectRow(w, op); err != nil {
+		return err
+	}
 	operand, selector, subedge, resultOutcome, result, relationOK := c.Operations.OperationSubedgeRelation(op)
 	if !relationOK {
 		return w.Bool(false)

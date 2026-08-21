@@ -176,17 +176,3 @@ func ResultCaseTypeFromValue(resultType, caseType typ.Type) (typ.Type, bool) {
 	}
 	return nil, false
 }
-
-// ResultCasePayloadType returns the public payload field type from a select
-// result union member.
-func ResultCasePayloadType(caseType typ.Type) (typ.Type, bool) {
-	record, ok := unwrap.Alias(unwrap.Annotations(caseType)).(*typ.Record)
-	if !ok {
-		return nil, false
-	}
-	field := record.GetField(ResultValueField)
-	if field == nil {
-		return nil, false
-	}
-	return field.Type, true
-}

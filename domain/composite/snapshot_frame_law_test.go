@@ -3,6 +3,7 @@ package composite
 import (
 	"testing"
 
+	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -22,35 +23,49 @@ var (
 	pilotDenominator = identity.ContentID{0x11, 0x22}
 )
 
+func publicationForTest(t testing.TB) (Compilation, analysiscatalog.Publication) {
+	t.Helper()
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("sealed composition")
+	}
+	publication, publicationOK := compilation.Publication()
+	if !publicationOK {
+		t.Fatal("compiled publication")
+	}
+	return compilation, publication
+}
+
 // TestPublishedColumnIsAddressedByItsDeclaration is the stitch: a column
 // declared on the axis surface, projected into the published value's
 // addressing, filled by a publication, and read back through every outcome the
 // read contract distinguishes. It is the one law that holds the declaration,
 // the projection and the published value to the same column.
 func TestPublishedColumnIsAddressedByItsDeclaration(t *testing.T) {
-	schemaID, schemaOK := PublicationSchema()
+	compilation, publication := publicationForTest(t)
+	schemaID, schemaOK := publication.SchemaID()
 	if !schemaOK || !schemaID.Available() {
 		t.Fatal("the sealed table publishes no schema identity")
 	}
-	if schemaID != sealedTableDigest(t) {
+	if schemaID != sealedTableDigest(t, compilation) {
 		t.Fatal("a projected address names a schema other than the sealed table")
 	}
-	column, projected := ProjectAxis[uint64, uint64](pilotOutput)
+	column, projected := analysiscatalog.ProjectAxis[uint64, uint64](publication, pilotOutput)
 	if !projected || !column.Available() {
 		t.Fatalf("the declared output %q projects no address", pilotOutput)
 	}
-	if int(column.Slot) >= PublicationColumns() {
-		t.Fatalf("output %q projects slot %d outside the %d published columns", pilotOutput, column.Slot, PublicationColumns())
+	if int(column.Slot) >= publication.Columns() {
+		t.Fatalf("output %q projects slot %d outside the %d published columns", pilotOutput, column.Slot, publication.Columns())
 	}
 	// A dense axis is total over its key space, so its column is published with
 	// the key universe it is total over and an in-universe miss is a fact.
-	coverage, coverageOK := PublicationCoverage(pilotOutput)
+	coverage, coverageOK := publication.Coverage(pilotOutput)
 	if !coverageOK || coverage != axis.CoverageTotal {
 		t.Fatalf("output %q publishes coverage %d, not the total coverage its dense axis declares", pilotOutput, coverage)
 	}
 
 	builder := snapshot.NewBuilder(schemaID, pilotStore, pilotGeneration)
-	requests, requestsOK := WriteRequests()
+	requests, requestsOK := publication.WriteRequests()
 	if !requestsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
@@ -107,11 +122,15 @@ func TestPublishedColumnIsAddressedByItsDeclaration(t *testing.T) {
 // coordinate space, and the inventory holds none: every mount in it is a factor
 // whose facts are read out.
 func TestEveryMountedAuthorityPublishesAColumn(t *testing.T) {
-	sealRegistry()
-	if registry.sealed == nil {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
 		t.Fatal("the declaration table is unavailable")
 	}
-	for _, entry := range registry.axes {
+	for _, entry := range state.axes {
 		if !entry.MountDeclared() {
 			continue
 		}
@@ -128,15 +147,16 @@ func TestEveryMountedAuthorityPublishesAColumn(t *testing.T) {
 // by, and identified by the identity the table sealed the family under rather
 // than by one a publisher minted.
 func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
-	requests, ok := QueryRequests()
+	compilation, publication := publicationForTest(t)
+	requests, ok := publication.QueryRequests()
 	if !ok {
 		t.Fatal("the sealed table requests no query result columns")
 	}
-	if len(requests) != sealedQueryFamilies(t) {
-		t.Fatalf("%d result columns requested for %d sealed query families", len(requests), sealedQueryFamilies(t))
+	if len(requests) != sealedQueryFamilies(t, compilation) {
+		t.Fatalf("%d result columns requested for %d sealed query families", len(requests), sealedQueryFamilies(t, compilation))
 	}
-	schemaID, _ := PublicationSchema()
-	columns, columnsOK := WriteRequests()
+	schemaID, _ := publication.SchemaID()
+	columns, columnsOK := publication.WriteRequests()
 	if !columnsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
@@ -148,7 +168,7 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 		if !request.Family.Available() || !request.ID.Available() {
 			t.Fatalf("request %d names family %q under identity %v", index, request.Family, request.ID)
 		}
-		projected, projects := ProjectQuery(request.Family)
+		projected, projects := publication.ProjectQuery(request.Family)
 		if !projects || projected != request.ID {
 			t.Fatalf("family %q is answered under an identity its own projection does not name", request.Family)
 		}
@@ -158,15 +178,15 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 		families[request.ID] = request.Family
 		// The result columns continue the one dense slot range the axis columns
 		// opened, so a family's answers are addressed by the sealed table alone.
-		if int(request.Slot) >= PublicationColumns() {
-			t.Fatalf("family %q answers at slot %d outside the %d published columns", request.Family, request.Slot, PublicationColumns())
+		if int(request.Slot) >= publication.Columns() {
+			t.Fatalf("family %q answers at slot %d outside the %d published columns", request.Family, request.Slot, publication.Columns())
 		}
 		expected := uint32(len(columns) + index)
 		if request.Slot != expected {
 			t.Fatalf("family %q answers at slot %d, not at slot %d where the axis columns leave off", request.Family, request.Slot, expected)
 		}
 	}
-	if _, projects := ProjectQuery("no-such-family"); projects {
+	if _, projects := publication.ProjectQuery("no-such-family"); projects {
 		t.Fatal("a family the table never sealed projects an identity")
 	}
 }
@@ -183,20 +203,21 @@ func TestEverySealedQueryFamilyRequestsAResultColumn(t *testing.T) {
 // it fills is filled by the domain that owns the facts in it, so what this law
 // reads is the composition a consumer receives rather than a stand-in for one.
 func TestSealedQueryFamiliesAreAnswerableOnAPublishedSnapshot(t *testing.T) {
-	queries, queriesOK := QueryRequests()
+	_, publication := publicationForTest(t)
+	queries, queriesOK := publication.QueryRequests()
 	if !queriesOK || len(queries) == 0 {
 		t.Fatal("the sealed table publishes no column plan")
 	}
-	columns, columnsOK := WriteRequests()
+	columns, columnsOK := publication.WriteRequests()
 	if !columnsOK {
 		t.Fatal("the sealed table issues no write requests")
 	}
 	for _, query := range queries {
-		id, projects := ProjectQuery(query.Family)
+		id, projects := publication.ProjectQuery(query.Family)
 		if !projects || id != query.ID || !query.ID.Available() {
 			t.Fatalf("family %q projects identity %x, request %x", query.Family, id, query.ID)
 		}
-		if int(query.Slot) < len(columns) || int(query.Slot) >= PublicationColumns() {
+		if int(query.Slot) < len(columns) || int(query.Slot) >= publication.Columns() {
 			t.Fatalf("family %q answers at slot %d outside the result-column range", query.Family, query.Slot)
 		}
 	}
@@ -212,9 +233,9 @@ func columnDenominator(slot uint32) identity.ContentID {
 // sealedQueryFamilies is the number of families the declaration table sealed.
 // Reading it from the table rather than through the projection is what makes
 // the request set a claim this law can check.
-func sealedQueryFamilies(t *testing.T) int {
+func sealedQueryFamilies(t *testing.T, compilation Compilation) int {
 	t.Helper()
-	sealed, failure := Table()
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("the declaration table is unavailable: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
@@ -236,18 +257,19 @@ func sealedQueryFamilies(t *testing.T) int {
 // for every slot the publication addresses and neither leaves a column no
 // request names.
 func TestEveryPublishedColumnRequestsOneWriter(t *testing.T) {
-	requests, ok := WriteRequests()
+	_, publication := publicationForTest(t)
+	requests, ok := publication.WriteRequests()
 	if !ok {
 		t.Fatal("the sealed table issues no write requests")
 	}
-	answers, answersOK := QueryRequests()
+	answers, answersOK := publication.QueryRequests()
 	if !answersOK {
 		t.Fatal("the sealed table requests no query result columns")
 	}
-	if len(requests)+len(answers) != PublicationColumns() {
-		t.Fatalf("%d write requests and %d result columns for %d published columns", len(requests), len(answers), PublicationColumns())
+	if len(requests)+len(answers) != publication.Columns() {
+		t.Fatalf("%d write requests and %d result columns for %d published columns", len(requests), len(answers), publication.Columns())
 	}
-	schemaID, _ := PublicationSchema()
+	schemaID, _ := publication.SchemaID()
 	claimed := make(map[schema.Key]schema.Key, len(requests))
 	for index, request := range requests {
 		if request.Slot != uint32(index) {
@@ -272,9 +294,9 @@ func TestEveryPublishedColumnRequestsOneWriter(t *testing.T) {
 // sealedTableDigest is the identity of the declaration table the projection
 // must name. Reading it here rather than through the projection is what makes
 // the address a claim this law can check.
-func sealedTableDigest(t *testing.T) identity.ContentID {
+func sealedTableDigest(t *testing.T, compilation Compilation) identity.ContentID {
 	t.Helper()
-	sealed, failure := Table()
+	sealed, failure := Table(compilation)
 	if failure.Available() || sealed == nil {
 		t.Fatalf("the declaration table is unavailable: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}

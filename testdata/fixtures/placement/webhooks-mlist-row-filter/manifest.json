@@ -1,7 +1,10 @@
 {
-  "description": "Runtime row-filter: the returned subset's membership depends on input, so its placement is the deferred+promote residual (information-theoretically optimal); source rows are borrowed.",
-  "check": {},
-  "run": {
-    "skip": "checker-only placement fixture"
+  "description": "Runtime row-filter: the returned container has an OwnedHeap return demand while selected source-row containment routes depend on input; source rows are borrowed and do not mint Program allocation roots.",
+  "check": {
+    "placement": {
+      "require_complete": true,
+      "min_owned_heap": 1,
+      "max_unknown": 0
+    }
   }
 }

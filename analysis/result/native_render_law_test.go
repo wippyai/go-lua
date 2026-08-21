@@ -22,7 +22,11 @@ import (
 // declared name and a consumer comparing a column against authored text
 // compares against the same declaration.
 func TestNativePublicationColumnSpellingsAreDeclaredLaw(t *testing.T) {
-	vocabulary, vocabularyOK := composite.StructureVocabulary()
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
+	vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 	if !vocabularyOK {
 		t.Fatal("sealed structural vocabulary unavailable")
 	}

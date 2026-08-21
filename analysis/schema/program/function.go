@@ -2,33 +2,6 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// FunctionBoundary and its three ordered child planes are the canonical
-// callable-interface publication.  A boundary owns each child through a
-// half-open ordinal span; no child slice or nested row is retained in the
-// sealed program.
-const (
-	slotFunctionBoundary = slotOutcomePoint + 1
-	slotFunctionFormal   = slotFunctionBoundary + 1
-	slotFunctionVararg   = slotFunctionFormal + 1
-	slotFunctionCapture  = slotFunctionVararg + 1
-)
-
-func FunctionBoundaryFamily() Family[FunctionBoundary] {
-	return Family[FunctionBoundary]{slot: slotFunctionBoundary, name: "function-boundary"}
-}
-
-func FunctionFormalFamily() Family[FunctionFormal] {
-	return Family[FunctionFormal]{slot: slotFunctionFormal, name: "function-formal"}
-}
-
-func FunctionVarargFamily() Family[FunctionVararg] {
-	return Family[FunctionVararg]{slot: slotFunctionVararg, name: "function-vararg"}
-}
-
-func FunctionCaptureFamily() Family[FunctionCapture] {
-	return Family[FunctionCapture]{slot: slotFunctionCapture, name: "function-capture"}
-}
-
 // FunctionFormal is one ordered fixed input of a callable Function.  The
 // declared static type is optional, exactly as it was in the compiler's
 // source row; position is retained so the child plane authenticates order.
@@ -100,21 +73,32 @@ func (row FunctionVararg) CellID() identity.ContentID {
 	return row.cell
 }
 
-// FunctionCapture is one ordered lexical interface edge.  Inner/Outer are
-// role-specific Cell identities and the Body identities retain the direction
-// of the edge without importing authored Terms or live Flow handles.
+// FunctionCapture is one ordered lexical interface edge. Inner/Outer are
+// role-specific callable Cell identities. InnerStorage/OuterStorage are the
+// corresponding root-fenced storage-cell identities for the same authored
+// Cells. Keeping both identities is intentional: callable Cells are the
+// execution interface, while storage Cells are the neutral value/placement
+// bridge consumed by mounted domains. The Body identities retain the
+// direction of the edge without importing authored Terms or live Flow
+// handles.
 type FunctionCapture struct {
-	id, inner, outer, innerBody, outerBody identity.ContentID
-	position                               uint32
+	id, inner, outer, innerStorage, outerStorage identity.ContentID
+	innerBody, outerBody                         identity.ContentID
+	position                                     uint32
 }
 
-func NewFunctionCapture(id, inner, outer, innerBody, outerBody identity.ContentID, position uint32) (FunctionCapture, bool) {
-	row := FunctionCapture{id: id, inner: inner, outer: outer, innerBody: innerBody, outerBody: outerBody, position: position}
+func NewFunctionCapture(id, inner, outer, innerStorage, outerStorage, innerBody, outerBody identity.ContentID, position uint32) (FunctionCapture, bool) {
+	row := FunctionCapture{
+		id: id, inner: inner, outer: outer,
+		innerStorage: innerStorage, outerStorage: outerStorage,
+		innerBody: innerBody, outerBody: outerBody, position: position,
+	}
 	return row, row.Available()
 }
 
 func (row FunctionCapture) Available() bool {
 	return row.id.Available() && row.inner.Available() && row.outer.Available() &&
+		row.innerStorage.Available() && row.outerStorage.Available() && row.innerStorage != row.outerStorage &&
 		row.innerBody.Available() && row.outerBody.Available() &&
 		row.inner != row.outer && row.innerBody != row.outerBody
 }
@@ -138,6 +122,27 @@ func (row FunctionCapture) OuterCellID() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return row.outer
+}
+
+// InnerStorageCellID returns the canonical storage identity of the captured
+// Cell introduced in the child function body. It is distinct from
+// InnerCellID, which is the callable-interface identity used by execution.
+func (row FunctionCapture) InnerStorageCellID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.innerStorage
+}
+
+// OuterStorageCellID returns the canonical storage identity of the captured
+// outer Cell. A mounted Value domain can use it to recover the already-issued
+// source/storage Value coordinate without reopening Flow or reconstructing a
+// raw Cell term.
+func (row FunctionCapture) OuterStorageCellID() identity.ContentID {
+	if !row.Available() {
+		return identity.ContentID{}
+	}
+	return row.outerStorage
 }
 
 func (row FunctionCapture) InnerBodyID() identity.ContentID {

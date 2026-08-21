@@ -69,7 +69,7 @@ func TestStaticCheckReadMembershipAndBindVisibilityPhases(t *testing.T) {
 	if err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}

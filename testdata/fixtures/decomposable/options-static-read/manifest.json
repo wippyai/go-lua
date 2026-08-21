@@ -5,8 +5,6 @@
       "require_complete": true,
       "min_allocation_sites": 1,
       "min_stack": 1,
-      "min_decomposable": 1,
-      "max_decomposable": 1,
       "max_unknown": 0
     }
   },

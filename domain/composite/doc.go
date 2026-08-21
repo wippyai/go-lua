@@ -3,12 +3,12 @@
 // where cross-domain relations live.
 //
 // The package itself is the analyzer composition root: it composes the
-// artifact columns with the domain registrations and seals the one
-// process-global analyzer catalog. It is the single role permitted to know
-// both worlds, and it sits above the schema surfaces and the domains rather
-// than inside either. Its Compilation is the only authority accepted by the
-// Program transformer; callers cannot manufacture an equivalent authority from
-// a digest.
+// artifact columns with the domain registrations and seals one immutable
+// analyzer environment per caller-owned Compilation. It is the single role
+// permitted to know both worlds, and it sits above the schema surfaces and the
+// domains rather than inside either. Its Compilation is the only authority
+// accepted by the Program transformer; callers cannot manufacture an
+// equivalent authority from a digest.
 //
 // Neither the axis nor the rule inventory is written here: they are the two
 // surfaces of the analyzer declaration table, and this package composes that

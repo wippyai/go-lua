@@ -62,16 +62,15 @@ const (
 )
 
 // The semantic roles this domain owns: the identity its axis binds its factor
-// under, and the three forms its rule is identified by.
+// under, and the rule/operand forms its rule is identified by.
 const (
-	FactorRole   = "factor/probe"
-	RuleRole     = "rule/probe/source"
-	OperandRole  = "operand/probe/source"
-	EvidenceRole = "evidence/probe/source"
+	FactorRole  = "factor/probe"
+	RuleRole    = "rule/probe/source"
+	OperandRole = "operand/probe/source"
 )
 
 // StructureSpecs is this domain's contribution to the structural vocabulary:
-// the four semantic roles it is identified by, the publication family its code
+// the three semantic roles it is identified by, the publication family its code
 // is gated by, and the observation population its finding is measured over.
 //
 // The family and the observation carry no authored ordinal. No foreign spelling
@@ -154,7 +153,7 @@ func RuleEntry[P, A any]() rule.Spec {
 			{Occurrence: "occurrence/point-attachment", Requirement: "requirement/unrestricted", Form: "issuance/base", Input: "input/none", Stage: "stage/base"},
 		},
 		Semantic: vocabulary.RoleKey(RuleRole),
-		Roles:    []schema.Key{vocabulary.RoleKey(OperandRole), vocabulary.RoleKey(EvidenceRole)},
+		Roles:    []schema.Key{vocabulary.RoleKey(OperandRole)},
 	}
 }
 

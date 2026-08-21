@@ -38,8 +38,8 @@ after()
 			{"yield", boundary.Yield, kind.OutcomeYield},
 			{"cancel", boundary.Cancel, kind.OutcomeCancel},
 		} {
-			outcome, outcomeOK := p.Flow().Outcomes().Get(exit.term)
-			if !outcomeOK || outcome.Kind != exit.kind {
+			_, outcomeKind, _, outcomeOK := p.Flow().Outcomes().Get(exit.term)
+			if !outcomeOK || outcomeKind != exit.kind {
 				t.Fatalf("CallBoundary(%v) %s = %v/%v, want %v Outcome", call, exit.name, exit.term, outcomeOK, exit.kind)
 			}
 		}
@@ -66,8 +66,8 @@ end
 	if !tailOK || tailBoundary.TailReturn == 0 || tailBoundary.Normal != 0 {
 		t.Fatalf("tail CallBoundary = %#v/%v", tailBoundary, tailOK)
 	}
-	if outcome, ok := p.Flow().Outcomes().Get(tailBoundary.TailReturn); !ok || outcome.Kind != kind.OutcomeReturn || outcome.Target != 0 {
-		t.Fatalf("tail destination = %#v/%v, want terminal Return", outcome, ok)
+	if _, outcomeKind, target, ok := p.Flow().Outcomes().Get(tailBoundary.TailReturn); !ok || outcomeKind != kind.OutcomeReturn || target != 0 {
+		t.Fatalf("tail destination = kind %v target %v/%v, want terminal Return", outcomeKind, target, ok)
 	}
 	if !prefixOK || prefixBoundary.TailReturn != 0 || prefixBoundary.Normal == 0 {
 		t.Fatalf("prefix CallBoundary = %#v/%v, want ordinary resume", prefixBoundary, prefixOK)

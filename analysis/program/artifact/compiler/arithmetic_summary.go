@@ -7,6 +7,7 @@ import (
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	"github.com/wippyai/go-lua/analysis/schema/program"
+	staticnode "github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 )
 
 const (
@@ -85,7 +86,7 @@ func intersectArithmeticGuardFacts(left, right map[identity.ContentID]arithmetic
 // unguarded path withholds the summary rather than turning a may-guard into a
 // proof.
 func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]programschema.ArithmeticDivisorProperty, CompileFailure) {
-	if compiler == nil || compiler.exactScalarStates == nil {
+	if compiler == nil || compiler.exactScalar == nil {
 		return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	storageOrigins := make(map[identity.ContentID]identity.ContentID)
@@ -93,12 +94,12 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 	selects := make(map[identity.ContentID]uint32)
 	claims := make(map[identity.ContentID]identity.ContentID)
 	for index, row := range compiler.occurrences {
-		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
 		case programschema.OccurrenceStorageRead:
-			cell, span, readOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
+			cell, span, readOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
 			if !readOK {
 				return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 			}
@@ -117,7 +118,7 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 			}
 			selects[row.ID()] = uint32(index)
 		case programschema.OccurrenceValueClaim:
-			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+			operand, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -148,14 +149,14 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 				return nil
 			}
 			selectRow := compiler.occurrences[selectOrdinal]
-			if !occurrenceDenseAvailable(selectRow, compiler.occurrencePoints, compiler.occurrenceInputs) {
+			if !programschema.OccurrenceDenseAvailable(selectRow, compiler.occurrencePoints, compiler.occurrenceInputs) {
 				return nil
 			}
 			if flowkind.SelectOp(selectRow.Code()) != flowkind.SelectAnd || !truth {
 				return nil
 			}
-			left, leftOK := occurrenceInputID(selectRow, compiler.occurrenceInputs, 0)
-			right, rightOK := occurrenceInputID(selectRow, compiler.occurrenceInputs, 1)
+			left, leftOK := programschema.OccurrenceInputID(selectRow, compiler.occurrenceInputs, 0)
+			right, rightOK := programschema.OccurrenceInputID(selectRow, compiler.occurrenceInputs, 1)
 			if !leftOK || !rightOK {
 				return nil
 			}
@@ -166,10 +167,10 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 			return nil
 		}
 		equality := compiler.occurrences[equalityOrdinal]
-		if !occurrenceDenseAvailable(equality, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(equality, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return nil
 		}
-		left, right, op, equalityOK := occurrenceBinaryEquality(equality, compiler.occurrenceInputs)
+		left, right, op, equalityOK := programschema.OccurrenceBinaryEqualityOperands(equality, compiler.occurrenceInputs)
 		if !equalityOK || truth != (op == flowkind.BinaryNotEqual) {
 			return nil
 		}
@@ -181,7 +182,7 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		} else if leftStored == rightStored {
 			return nil
 		}
-		literal, exactOK := compiler.exactScalarStates[operand].exact()
+		literal, exactOK := compiler.exactScalar.Exact(operand)
 		if !exactOK || literal.Kind != keyspace.LiteralInteger {
 			return nil
 		}
@@ -197,18 +198,18 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 		return map[identity.ContentID]arithmeticGuardMask{cell: mask}
 	}
 
-	bodyByEntry := make(map[identity.ContentID]identity.ContentID, len(compiler.bodies))
+	bodyByEntry := make(map[identity.ContentID]identity.ContentID, len(compiler.bodyBoundary.Bodies()))
 	ambiguousEntry := make(map[identity.ContentID]struct{})
-	for bodyIndex, body := range compiler.bodies {
+	for bodyIndex, body := range compiler.bodyBoundary.Bodies() {
 		if !body.Available() {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceUnavailable)
 		}
 		offset, count, spanOK := body.EntrySpan()
-		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyEntries)) {
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.bodyBoundary.BodyEntries())) {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, -1, CompileReasonOccurrenceAttachment)
 		}
 		for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
-			entry := compiler.bodyEntries[offset+pointIndex]
+			entry := compiler.bodyBoundary.BodyEntries()[offset+pointIndex]
 			point := entry.PointID()
 			if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
 				return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, bodyIndex, int(pointIndex), CompileReasonOccurrenceAttachment)
@@ -253,13 +254,13 @@ func (compiler *compiler) arithmeticDivisorProperties() (map[identity.ContentID]
 
 	properties := make(map[identity.ContentID]programschema.ArithmeticDivisorProperty)
 	for index, row := range compiler.occurrences {
-		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		if row.Kind() != programschema.OccurrenceBinaryArithmetic {
 			continue
 		}
-		_, right, op, arithmeticOK := occurrenceBinaryArithmetic(row, compiler.occurrenceInputs)
+		_, right, op, arithmeticOK := programschema.OccurrenceBinaryArithmeticOperands(row, compiler.occurrenceInputs)
 		if !arithmeticOK {
 			return nil, compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -302,14 +303,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	unknown := numericSummaryState{unknown: true}
 	numeric := func(mask uint8) numericSummaryState { return numericSummaryState{mask: mask} }
 
-	types := make(map[identity.ContentID]programschema.StaticTypeNode, len(compiler.staticTypeNodes))
+	types := make(map[identity.ContentID]staticnode.StaticTypeNode, len(compiler.staticTypeNodes))
 	for _, row := range compiler.staticTypeNodes {
 		if !row.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 		}
 		types[row.ID()] = row
 	}
-	unionMembers := make(map[identity.ContentID][]programschema.StaticTypeNodeUnionMember)
+	unionMembers := make(map[identity.ContentID][]staticnode.StaticTypeNodeUnionMember)
 	for _, child := range compiler.staticTypeNodeUnionMembers {
 		unionMembers[child.ParentID()] = append(unionMembers[child.ParentID()], child)
 	}
@@ -322,7 +323,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		visiting[id] = true
 		defer delete(visiting, id)
 		switch row.Kind() {
-		case programschema.StaticNodePrimitive:
+		case staticnode.StaticNodePrimitive:
 			switch statictypes.PrimitiveKind(row.LiteralKind()) {
 			case statictypes.PrimitiveInteger:
 				return numericIntegerMask, true
@@ -331,7 +332,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			default:
 				return 0, false
 			}
-		case programschema.StaticNodeLiteral:
+		case staticnode.StaticNodeLiteral:
 			switch row.Exact().Kind {
 			case keyspace.LiteralInteger:
 				return numericIntegerMask, true
@@ -340,19 +341,19 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			default:
 				return 0, false
 			}
-		case programschema.StaticNodeAlias:
+		case staticnode.StaticNodeAlias:
 			child, childOK := row.AliasTarget()
 			if !childOK {
 				return 0, false
 			}
 			return typeMask(child, visiting)
-		case programschema.StaticNodeReference:
+		case staticnode.StaticNodeReference:
 			child, childOK := row.ReferenceTarget()
 			if !childOK {
 				return 0, false
 			}
 			return typeMask(child, visiting)
-		case programschema.StaticNodeUnion:
+		case staticnode.StaticNodeUnion:
 			_, count, spanOK := row.UnionMemberSpan()
 			if !spanOK || count == 0 {
 				return 0, false
@@ -392,9 +393,9 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	// Formal Cell and StorageCell are the same interface value in two Program
 	// namespaces. Propagate an authored annotation across that exact port; an
 	// unannotated port remains unknown caller input.
-	for _, boundary := range compiler.functionBoundaries {
+	for _, boundary := range compiler.bodyBoundary.FunctionBoundaries() {
 		for index := 0; index < boundary.FormalCount(); index++ {
-			formal, formalOK := compiler.functionFormalAt(boundary, index)
+			formal, formalOK := compiler.bodyBoundary.FunctionFormalAt(boundary, index)
 			if !formalOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
 			}
@@ -424,14 +425,14 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 			}
 		}
 		if boundary.HasVararg() {
-			vararg, varargOK := compiler.functionVararg(boundary)
+			vararg, varargOK := compiler.bodyBoundary.FunctionVararg(boundary)
 			if !varargOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 			}
 			join(vararg.CellID(), unknown)
 		}
 		for index := 0; index < boundary.CaptureCount(); index++ {
-			capture, captureOK := compiler.functionCaptureAt(boundary, index)
+			capture, captureOK := compiler.bodyBoundary.FunctionCaptureAt(boundary, index)
 			if !captureOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, index, CompileReasonOccurrenceUnavailable)
 			}
@@ -442,12 +443,12 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 
 	equations := make([]numericSummaryEquation, 0, len(compiler.occurrences)*2)
 	for index, row := range compiler.occurrences {
-		if !occurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
+		if !programschema.OccurrenceDenseAvailable(row, compiler.occurrencePoints, compiler.occurrenceInputs) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
 		switch row.Kind() {
 		case programschema.OccurrenceValueSource:
-			span, spanOK := occurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
+			span, spanOK := programschema.OccurrenceValueSourceSpanID(row, compiler.occurrenceInputs)
 			family, literal, literalOK := row.Literal()
 			if !spanOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
@@ -466,13 +467,13 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 				join(span, numeric(mask))
 			}
 		case programschema.OccurrenceValuesMember:
-			span, spanOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
+			span, spanOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 1)
 			if !spanOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValues)
 			}
 			equations = append(equations, numericSummaryEquation{kind: numericSummaryCopy, output: row.ID(), left: span})
 		case programschema.OccurrenceStorageRead:
-			cell, span, readOK := occurrenceStorageRead(row, compiler.occurrenceInputs)
+			cell, span, readOK := programschema.OccurrenceStorageReadOperands(row, compiler.occurrenceInputs)
 			if !readOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 			}
@@ -480,15 +481,15 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 				numericSummaryEquation{kind: numericSummaryCopy, output: span, left: cell},
 				numericSummaryEquation{kind: numericSummaryCopy, output: row.ID(), left: cell})
 		case programschema.OccurrenceStorageBindTransfer, programschema.OccurrenceStorageWrite:
-			from, fromOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
-			to, toOK := occurrenceInputID(row, compiler.occurrenceInputs, 2)
+			from, fromOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 1)
+			to, toOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 2)
 			if !fromOK || !toOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 			}
 			equations = append(equations, numericSummaryEquation{kind: numericSummaryCopy, output: to, left: from})
 		case programschema.OccurrenceSelect:
-			left, leftOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
-			right, rightOK := occurrenceInputID(row, compiler.occurrenceInputs, 1)
+			left, leftOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
+			right, rightOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 1)
 			if !leftOK || !rightOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -496,13 +497,13 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 				numericSummaryEquation{kind: numericSummaryCopy, output: row.ID(), left: left},
 				numericSummaryEquation{kind: numericSummaryCopy, output: row.ID(), left: right})
 		case programschema.OccurrenceValueClaim:
-			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+			operand, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
 			equations = append(equations, numericSummaryEquation{kind: numericSummaryCopy, output: row.ID(), left: operand})
 		case programschema.OccurrenceUnary:
-			operand, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+			operand, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 			if !operandOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -512,7 +513,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 				join(row.ID(), unknown)
 			}
 		case programschema.OccurrenceBinaryArithmetic:
-			left, right, op, arithmeticOK := occurrenceBinaryArithmetic(row, compiler.occurrenceInputs)
+			left, right, op, arithmeticOK := programschema.OccurrenceBinaryArithmeticOperands(row, compiler.occurrenceInputs)
 			if !arithmeticOK {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 			}
@@ -564,7 +565,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 	}
 
 	divisors, divisorFailure := compiler.arithmeticDivisorProperties()
-	compiler.exactScalarStates = nil
+	compiler.exactScalar.ReleaseFacts()
 	if divisorFailure.Available() {
 		return divisorFailure
 	}
@@ -573,7 +574,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		if row.Kind() != programschema.OccurrenceBinaryArithmetic {
 			continue
 		}
-		leftID, rightID, op, arithmeticOK := occurrenceBinaryArithmetic(row, compiler.occurrenceInputs)
+		leftID, rightID, op, arithmeticOK := programschema.OccurrenceBinaryArithmeticOperands(row, compiler.occurrenceInputs)
 		if !arithmeticOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
@@ -599,7 +600,7 @@ func (compiler *compiler) deriveArithmeticSummariesFailure() CompileFailure {
 		if row.Kind() != programschema.OccurrenceUnary || flowkind.UnaryOp(row.Code()) != flowkind.UnaryNeg {
 			continue
 		}
-		operandID, operandOK := occurrenceInputID(row, compiler.occurrenceInputs, 0)
+		operandID, operandOK := programschema.OccurrenceInputID(row, compiler.occurrenceInputs, 0)
 		operand, operandRepresentationOK := states[operandID].representation()
 		result, resultRepresentationOK := states[row.ID()].representation()
 		geometry, geometryOK := compiler.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceUnary, id: row.ID()}]

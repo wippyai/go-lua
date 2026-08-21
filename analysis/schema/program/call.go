@@ -2,34 +2,6 @@ package programschema
 
 import "github.com/wippyai/go-lua/analysis/identity"
 
-// The append-only slots these families occupy. Each is written out against
-// the slot before it: an implicit repetition would give two families one slot
-// and the publication would refuse to seal.
-const (
-	slotCall             = slotPointDecision + 1
-	slotCallOperand      = slotCall + 1
-	slotCallArgument     = slotCallOperand + 1
-	slotCallTypeArgument = slotCallArgument + 1
-)
-
-// The four call families are the single cold declaration of authored-call
-// rows. Child positions are dense ordinals named by Call's spans.
-func CallFamily() Family[Call] {
-	return Family[Call]{slot: slotCall, name: "call"}
-}
-
-func CallOperandFamily() Family[CallOperand] {
-	return Family[CallOperand]{slot: slotCallOperand, name: "call-operand"}
-}
-
-func CallArgumentFamily() Family[CallArgument] {
-	return Family[CallArgument]{slot: slotCallArgument, name: "call-argument"}
-}
-
-func CallTypeArgumentFamily() Family[CallTypeArgument] {
-	return Family[CallTypeArgument]{slot: slotCallTypeArgument, name: "call-type-argument"}
-}
-
 // CallForm is the primitive authored-call shape retained by the cold
 // publication. Its ordinals are part of the artifact identity contract.
 type CallForm uint8

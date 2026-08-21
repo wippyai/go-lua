@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	analysisworkspace "github.com/wippyai/go-lua/analysis/internal/workspace"
+	"github.com/wippyai/go-lua/domain/composite"
 )
 
 // Workspace is the explicit caller-owned lifetime for reusable immutable
@@ -14,6 +15,7 @@ type Workspace struct {
 	lifecycleMu   sync.Mutex
 	lifecycleCond *sync.Cond
 	artifacts     *analysisworkspace.Artifacts
+	compilation   composite.Compilation
 	compiles      uint64
 	plans         uint64
 	closing       bool
@@ -27,9 +29,15 @@ func NewWorkspace() *Workspace {
 }
 
 func newWorkspace(ephemeral bool) *Workspace {
+	compilation, compilationOK := composite.Build()
 	workspace := &Workspace{
-		artifacts: analysisworkspace.NewArtifacts(),
-		ephemeral: ephemeral,
+		artifacts:   analysisworkspace.NewArtifacts(),
+		compilation: compilation,
+		ephemeral:   ephemeral,
+	}
+	if !compilationOK {
+		workspace.artifacts.Close()
+		workspace.artifacts = nil
 	}
 	workspace.lifecycleCond = sync.NewCond(&workspace.lifecycleMu)
 	return workspace
@@ -41,7 +49,7 @@ func (workspace *Workspace) beginCompile() (*analysisworkspace.Artifacts, bool) 
 	}
 	workspace.lifecycleMu.Lock()
 	defer workspace.lifecycleMu.Unlock()
-	if workspace.lifecycleCond == nil || workspace.artifacts == nil || workspace.closing || workspace.closed {
+	if workspace.lifecycleCond == nil || workspace.artifacts == nil || !workspace.compilation.Available() || workspace.closing || workspace.closed {
 		return nil, false
 	}
 	workspace.compiles++
@@ -67,6 +75,7 @@ func (workspace *Workspace) finishCompile(plan bool) {
 		if workspace.compiles == 0 && workspace.plans == 0 && !workspace.closed {
 			artifacts = workspace.artifacts
 			workspace.artifacts = nil
+			workspace.compilation = composite.Compilation{}
 			workspace.closed = true
 		}
 	}
@@ -94,6 +103,7 @@ func (workspace *Workspace) releasePlan() bool {
 	if workspace.ephemeral && workspace.closing && workspace.compiles == 0 && workspace.plans == 0 && !workspace.closed {
 		artifacts = workspace.artifacts
 		workspace.artifacts = nil
+		workspace.compilation = composite.Compilation{}
 		workspace.closed = true
 	}
 	workspace.lifecycleMu.Unlock()
@@ -121,6 +131,7 @@ func (workspace *Workspace) Close() bool {
 	}
 	artifacts := workspace.artifacts
 	workspace.artifacts = nil
+	workspace.compilation = composite.Compilation{}
 	workspace.closed = true
 	workspace.lifecycleMu.Unlock()
 	if artifacts != nil {

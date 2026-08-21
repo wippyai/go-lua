@@ -27,7 +27,7 @@ import (
 // and names the first placement that disagrees. The inventory is given as the
 // declared keys in table order, so the law reads the same over the production
 // table and over a copy one of whose members has been displaced.
-func placementKeyAgreement(artifact *ingress.Snapshot, keys []schema.Key) (int, schema.Key, bool) {
+func placementKeyAgreement(compilation Compilation, artifact *ingress.Snapshot, keys []schema.Key) (int, schema.Key, bool) {
 	program := artifact.Program()
 	count, published := program.RuleOccurrenceCount()
 	if !published {
@@ -38,7 +38,7 @@ func placementKeyAgreement(artifact *ingress.Snapshot, keys []schema.Key) (int, 
 		if !ok {
 			return index, "", false
 		}
-		if !inventoryDeclares(keys, row.Key()) || !MountedRuleKey(row.Key()) {
+		if !inventoryDeclares(keys, row.Key()) || !MountedRuleKey(compilation, row.Key()) {
 			return index, row.Key(), false
 		}
 	}
@@ -113,7 +113,11 @@ func placementKeyArtifacts(t *testing.T) []*ingress.Snapshot {
 // of whose members has been displaced is rejected, naming the first placement
 // that disagrees.
 func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
-	keys := sealedRuleKeys(t)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	keys := sealedRuleKeys(t, compilation)
 	artifacts := placementKeyArtifacts(t)
 	placements := 0
 	for _, artifact := range artifacts {
@@ -123,7 +127,7 @@ func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
 			t.Fatal("cold rule-occurrence family")
 		}
 		placements += count
-		if index, blamed, agreed := placementKeyAgreement(artifact, keys); !agreed {
+		if index, blamed, agreed := placementKeyAgreement(compilation, artifact, keys); !agreed {
 			t.Fatalf("placement %d carries %q, which the sealed table does not declare on the mounted lane", index, blamed)
 		}
 	}
@@ -140,7 +144,7 @@ func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
 		displaced := append([]schema.Key(nil), keys...)
 		displaced[position] = displaced[position] + "/displaced"
 		for _, artifact := range artifacts {
-			index, blamed, agreed := placementKeyAgreement(artifact, displaced)
+			index, blamed, agreed := placementKeyAgreement(compilation, artifact, displaced)
 			if agreed {
 				continue
 			}
@@ -161,10 +165,14 @@ func TestEveryRulePlacementCarriesItsSealedTableKey(t *testing.T) {
 // subsequence of the mounted declarations, and a later key never precedes an
 // earlier table member.
 func TestRulePlacementAtWalksDeclarationKeyOrder(t *testing.T) {
-	keys := sealedRuleKeys(t)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	keys := sealedRuleKeys(t, compilation)
 	var mounted []schema.Key
 	for _, key := range keys {
-		if MountedRuleKey(key) {
+		if MountedRuleKey(compilation, key) {
 			mounted = append(mounted, key)
 		}
 	}

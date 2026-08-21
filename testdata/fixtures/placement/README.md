@@ -1,101 +1,127 @@
-# placement — kickside placement benchmark fixtures (pending)
+# placement — allocation-placement fixtures
 
-Executable specifications for per-site allocation placement, distilled from the five
-kickside benchmark functions plus four clean positives (journal task `150f00f9`,
-events #1413/#1414). Each fixture is a minimal self-contained Lua module reproducing
-one benchmark's placement-relevant shape.
+Executable specifications for per-site allocation placement, distilled from
+benchmark functions, transfer cases, recursive/library cases, and clean
+positives. Each fixture is a minimal self-contained Lua module reproducing one
+placement-relevant shape; the canonical semantics live in `domain/placement`.
 
-## Status: PENDING
+## Status: CANONICAL STATIC PATH GREEN
 
-Every fixture sets `check.skip` and `run.skip` so the fixture sweep stays green.
-The gap these encode is the checker precision the placement task still owes:
-derivation sensitivity, field granularity, closure-capture lists, and the
-input-dependent deferred+promote residual. When that machinery lands, delete the two
-skip lines and tighten the manifest `placement` thresholds to the per-site table below.
+The declarative Placement axis, Heap-root denominator, seed rule, query family,
+domain-owned result codec, and schema-driven `manifest.allocation` projection
+are live. The bounded `./domain/placement/...` gate passes. Every manifest is
+judged through the canonical Placement result surface; legacy run metadata is
+intentionally absent because the harness does not honor it.
+
+The remaining intentional uncertainty is capability-driven: live actor/thread
+and destination-context identity must come from an owner-authenticated runtime
+publication. Until that producer is mounted, affected transfers classify as
+`Unknown`; Placement does not fabricate a same-context or cross-context fact.
+This is an explicit external input boundary, not an unfinished static
+Placement consumer. The repository-wide acceptance runner is tracked
+separately because its current memory profile is not this fixture gate.
+
+Fixtures with a complete static producer path pin `require_complete: true` and
+`max_unknown: 0`. `webhooks-mlist-row-filter` now does so as well: the returned
+container has an exact OwnedHeap return demand, and borrowed input rows do not
+mint Program allocation roots. Input-dependent member selection therefore does
+not leave an unclassified allocation row in the public denominator.
 
 ## Placement class model
 
-Lifetime-ordered lattice (journal #1414/#1415):
+The canonical allocation-root lattice is:
 
-    Scalar < FrameLocal < ActorLocal < Shared < PinnedExternal
+    Bottom < Stack < OwnedHeap < SharedHeap < Unknown
 
-Three-outcome total model:
-- **proven-local** — `Scalar` / `FrameLocal` / `ActorLocal`. Lives in the actor arena,
-  freed wholesale; zero cross-actor risk. `FrameLocal` is a proof-only future tier
-  (bump-pointer in the coroutine/thread frame, freed at frame completion); unproven
-  frame-locals fall back to `ActorLocal` (no-maybe theorem preserved).
-- **proven-shared-or-sealed** — `Shared`. A retained handle published zero-copy at the
-  send boundary (Content model), or sealed-on-transfer.
-- **deferred+promote** — no static class dominates; the runtime deep-clones at the
-  escape boundary. Information-theoretically optimal for input-dependent escape;
-  promotion counters drive profile-guided class flips (the ratchet).
+`Bottom` is the absent/unreachable value; `Stack` is a frame-local allocation;
+`OwnedHeap` is retained within the owning actor/runtime; `SharedHeap` crosses a
+shared, actor, or thread boundary; and `Unknown` is conservative top for an
+open, opaque, or otherwise unresolved path. `Interpreter` and `Register` are
+JIT-only spellings and are not Placement result classes.
 
-Mapping to the harness `placement` buckets used in the manifests:
-`Scalar`+`FrameLocal` -> `stack`; `ActorLocal` -> `owned_heap`; `Shared` -> `shared_heap`;
-`deferred+promote` -> counted as `unknown` (runtime-decided).
+The result denominator is one exact Heap allocation root. Scalar values do not
+mint roots, and fields are not roots: containment propagates an escape through
+the referenced graph so a holder and its payload may receive different
+classes. Alternate paths join monotonically at the same root.
+
+The benchmark prose below retains the older descriptive labels (`Scalar`,
+`FrameLocal`, `ActorLocal`, `Shared`, and `deferred+promote`) to explain the
+fixture shape. Their manifest assertions use the canonical buckets: Scalar has
+no allocation row, FrameLocal maps to `stack`, ActorLocal maps to `owned_heap`,
+Shared maps to `shared_heap`, and an unresolved deferred case remains
+`unknown` until its static escape evidence is complete.
 
 ## Benchmark fixtures (expected per-site class)
 
 ### bridge-main-event-loop (bridge.lua:282-716 main)
 | site | class | rationale |
 |---|---|---|
-| `processed` counter | Scalar | numeric accumulator |
-| `key` (derived string) | FrameLocal | derived per iteration, dropped |
-| `scratch` (Response literal) | FrameLocal | built, read locally, never escapes |
-| `cache` (module map) | ActorLocal | closure-captured actor state |
-| `msg` at `sink:send(msg)` | deferred+promote | input-dependent forward (`kind == "forward"`) |
+| `processed` counter | no Heap root | numeric accumulator |
+| `key` (derived string) | Stack | derived per iteration, dropped |
+| `scratch` (Response literal) | Stack | built, read locally, never escapes |
+| `cache` (module map) | OwnedHeap | closure-captured actor state |
+| `msg` at `sink:send(msg)` | SharedHeap demand | conditional forwarding (`kind == "forward"`) joins at its source root |
 
 ### hub-inbound-parking (channel/hub.lua:44-226 main)
 | site | class | rationale |
 |---|---|---|
-| `parked` map | ActorLocal | retained inbound registry |
-| `order` index | ActorLocal | insertion order index |
-| `m` at `parked[m.topic] = m` | Shared | inbound handle parked by shared-handle retain (zero-copy) |
-| `m.topic` appended | FrameLocal | derived string into actor-local index |
+| `parked` map | OwnedHeap | retained inbound registry |
+| `order` index | OwnedHeap | insertion order index |
+| `m` at `parked[m.topic] = m` | OwnedHeap demand | inbound handle is retained by the owned registry |
+| `m.topic` appended | Stack | derived string into actor-local index |
 
 ### notify-cache-ttl-registry (notify_cache.lua:15-56)
 | site | class | rationale |
 |---|---|---|
-| `registry` map | ActorLocal | module cache |
-| `entry` (Entry literal) | ActorLocal | stored into the cache |
-| `hit` (lookup result) | FrameLocal | borrowed handle, dies at return; entry stays actor-local |
+| `registry` map | OwnedHeap | module cache |
+| `entry` (Entry literal) | OwnedHeap | stored into the cache |
+| `hit` (lookup result) | Stack borrow | borrowed handle, dies at return; entry stays owned |
 
 ### enrichment-debounce (enrichment_service.lua:240-346 main)
 | site | class | rationale |
 |---|---|---|
-| `pending` map | ActorLocal | debounced events awaiting flush |
-| `last` map | ActorLocal | last-seen timestamps |
-| `prev` | FrameLocal | borrowed timestamp |
-| `fresh` | Scalar | boolean derivation |
-| `e` at `pending[e.key] = e` | Shared | event retained by shared-handle retain |
+| `pending` map | OwnedHeap | debounced events awaiting flush |
+| `last` map | OwnedHeap | last-seen timestamps |
+| `prev` | Stack borrow | borrowed timestamp |
+| `fresh` | no Heap root | boolean derivation |
+| `e` at `pending[e.key] = e` | OwnedHeap demand | event retained by the owned registry |
 
 ### webhooks-mlist-row-filter (webhooks/repo.lua:236-265 M.list)
 | site | class | rationale |
 |---|---|---|
-| `out` (returned subset) | deferred+promote | membership is input-dependent (`only_active`); no oracle-free static choice dominates |
-| `r` source rows | FrameLocal (borrow) | iterated, selectively aliased into `out` |
+| `out` (returned subset) | OwnedHeap demand | the return boundary owns the new container; member routes are input-dependent |
+| `r` source rows | Stack borrow | iterated, selectively aliased into `out` |
 
-This is the canonical residual case: `deferred+promote` is optimal, and promotion
-counters feed profile-guided flips.
+This remains a conditional containment case: the result container has a known
+return demand, while each selected source route must be joined by the
+containment consumer. The borrowed input rows do not mint Program allocation
+roots, so the public denominator is complete with the returned container at
+`OwnedHeap` and no `Unknown` allocation row.
 
 ## Clean positives (all proven-local; zero shared, zero deferred)
 
 ### list-inbox-clean (list_inbox.lua:103-117)
-`n` Scalar; `rows`/`r` borrowed and dropped. Only a scalar leaves the frame. No promotion.
+`n` has no Heap root; `rows`/`r` are borrowed and dropped. No allocation leaves the frame.
 
 ### enrichment-derive-clean (enrichment_service.lua:90-105)
-`top` Scalar, `best` FrameLocal string; DB rows die local; a derived string escapes. Derive-then-drop.
+`top` has no Heap root, `best` is a Stack value; DB rows die local; a derived string escapes. Derive-then-drop.
 
 ### upload-materialized-row-clean (upload_read_model.lua materialized_row)
-`kb` Scalar; `view` ActorLocal — a materialized read-model row returned *within* the actor
-(no send), so proven actor-local, no promotion.
+`kb` has no Heap root; `view` is OwnedHeap — a materialized read-model row returned *within* the actor
+(no send), so it has no shared demand.
 
 ### connection-negotiator-clean (connection_negotiator.lua:64)
-`proto` Scalar; option records borrowed. A single scalar string leaves the frame. No allocation escapes.
+`proto` has no Heap root; option records are borrowed. A single scalar string leaves the frame. No allocation escapes.
 
-## Un-pending
+### sealpoint-frozen-send
+`table.freeze` is shallow, so the fixture seals `packet.meta` before `packet`.
+The contract requires both allocation roots to carry `DeepFrozen=Proven` at
+the send point; freezing only the outer table is not sufficient.
 
-For each fixture: remove `check.skip` and `run.skip`; then encode the table above as
-tighter `placement` thresholds (`min_stack`/`min_owned_heap`/`min_shared_heap`,
-`min_seal_before_share`, `min_*_kind`, and `max_unknown` — left non-zero only where a
-`deferred+promote` residual is expected, i.e. bridge and webhooks).
+## Enabling the fixtures
+
+Keep the per-root `placement` thresholds as the fixture contract. Tighten
+`min_stack`/`min_owned_heap`/`min_shared_heap`, depth and kind evidence, and
+`max_unknown` only from exact canonical result rows. An input-dependent path
+must be justified by its static displacement evidence; it is not a separate
+runtime placement class.

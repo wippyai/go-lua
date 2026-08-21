@@ -101,7 +101,7 @@ func assertAlphaCounts(t *testing.T, left, right *program.Program) {
 		{"Function", leftAuthored.Functions().Count(), rightAuthored.Functions().Count()},
 		{"Call", leftAuthored.Calls().Count(), rightAuthored.Calls().Count()},
 		{"Loop", leftAuthored.Control().Loops().Count(), rightAuthored.Control().Loops().Count()},
-		{"Import", left.Module().Count(), right.Module().Count()},
+		{"Import", leftFlow.Authored().Imports().Count(), rightFlow.Authored().Imports().Count()},
 		{"TypeAlias", leftStatic.Declarations().Aliases().Count(), rightStatic.Declarations().Aliases().Count()},
 		{"TypeParam", leftStatic.Declarations().TypeParams().Count(), rightStatic.Declarations().TypeParams().Count()},
 		{"TypeRef", leftStatic.References().Count(), rightStatic.References().Count()},
@@ -264,6 +264,7 @@ func alphaFunctionIndex(t *testing.T, p *program.Program, function keyspace.Term
 
 func assertAlphaQualifiedType(t *testing.T, left, right *program.Program) {
 	t.Helper()
+	leftFlow, rightFlow := left.Flow(), right.Flow()
 	leftStatic, rightStatic := left.Static(), right.Static()
 	leftAliases, rightAliases := leftStatic.Declarations().Aliases(), rightStatic.Declarations().Aliases()
 	leftAlias, _ := leftAliases.At(0)
@@ -298,11 +299,12 @@ func assertAlphaQualifiedType(t *testing.T, left, right *program.Program) {
 	if !leftStateOK || !rightStateOK || leftState != rightState || leftState != staticrefs.Unresolved || leftTargetTerm != 0 || rightTargetTerm != 0 || leftRoot == 0 || rightRoot == 0 {
 		t.Fatalf("qualified TypeRef states = %v/%v/%v/%v vs %v/%v/%v/%v", leftState, leftTargetTerm, leftRoot, leftStateOK, rightState, rightTargetTerm, rightRoot, rightStateOK)
 	}
-	if left.Module().Count() != 1 || right.Module().Count() != 1 {
-		t.Fatalf("imports = %d/%d, want one corresponding literal import", left.Module().Count(), right.Module().Count())
+	leftImports, rightImports := leftFlow.Authored().Imports(), rightFlow.Authored().Imports()
+	if leftImports.Count() != 1 || rightImports.Count() != 1 {
+		t.Fatalf("imports = %d/%d, want one corresponding literal import", leftImports.Count(), rightImports.Count())
 	}
-	leftImport, leftOK := left.Module().ImportAt(0)
-	rightImport, rightOK := right.Module().ImportAt(0)
+	leftImport, leftOK := leftImports.ImportAt(0)
+	rightImport, rightOK := rightImports.ImportAt(0)
 	if !leftOK || !rightOK || leftRoot != leftImport.Alias || rightRoot != rightImport.Alias {
 		t.Fatalf("qualified roots do not select their renamed import alias")
 	}
@@ -311,10 +313,15 @@ func assertAlphaQualifiedType(t *testing.T, left, right *program.Program) {
 	if !leftStringOK || !rightStringOK || leftString != leftImport.Request || rightString != rightImport.Request || leftText != "pkg.core" || rightText != "pkg.core" {
 		t.Fatalf("literal import requests = %q/%v vs %q/%v", leftText, leftStringOK, rightText, rightStringOK)
 	}
-	leftKey, leftKeyOK := left.Source().Keys().Exact(leftImport.Key)
-	rightKey, rightKeyOK := right.Source().Keys().Exact(rightImport.Key)
-	if !leftKeyOK || !rightKeyOK || leftKey != rightKey || leftKey.Kind != keyspace.LiteralString || leftKey.String != "pkg.core" {
+	leftKey, leftKeyOK := left.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
+	rightKey, rightKeyOK := right.Source().Keys().Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "pkg.core"})
+	if !leftKeyOK || !rightKeyOK || leftKey == 0 || rightKey == 0 {
 		t.Fatalf("module exact keys = %#v/%v vs %#v/%v", leftKey, leftKeyOK, rightKey, rightKeyOK)
+	}
+	leftKeyValue, leftKeyValueOK := left.Source().Keys().Exact(leftKey)
+	rightKeyValue, rightKeyValueOK := right.Source().Keys().Exact(rightKey)
+	if !leftKeyValueOK || !rightKeyValueOK || leftKeyValue.Kind != keyspace.LiteralString || leftKeyValue.String != "pkg.core" || rightKeyValue.Kind != keyspace.LiteralString || rightKeyValue.String != "pkg.core" {
+		t.Fatalf("module exact key values = %#v/%v vs %#v/%v", leftKeyValue, leftKeyValueOK, rightKeyValue, rightKeyValueOK)
 	}
 	alphaTypeRefPath(t, left, leftRef, []string{"module", "Schema", "Box"})
 	alphaTypeRefPath(t, right, rightRef, []string{"service", "Schema", "Box"})

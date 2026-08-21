@@ -186,7 +186,7 @@ end
 		if !normal || next == 0 {
 			t.Fatalf("ValueClaim %d has no normal successor", index)
 		}
-		if _, isOutcome := flow.Outcomes().Get(next); isOutcome {
+		if _, _, _, isOutcome := flow.Outcomes().Get(next); isOutcome {
 			t.Fatalf("ValueClaim %d normal successor %v is an Outcome", index, next)
 		}
 	}

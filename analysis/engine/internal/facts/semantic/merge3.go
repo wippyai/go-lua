@@ -112,25 +112,33 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 			dbgSemantic.MaxOperand = uint64(len(ids))
 		}
 		var accumulator V
+		var accumulatorID terminal.ID[V]
 		have := false
 		for index := range ids {
 			if !present[index] {
 				continue
 			}
 			value := domain.ops.Default
+			valueID := domain.defaultID
 			if ids[index] != zero {
 				var valid bool
 				value, valid = values.Value(ids[index])
 				if !valid {
 					return zero, false
 				}
+				valueID = ids[index]
 			}
 			if !have {
 				accumulator, have = value, true
+				accumulatorID = valueID
 				continue
 			}
 			var joined bool
 			dbgSemantic.CellPairs++
+			if zzProbeCellPairHook != nil {
+				zzProbeCellPair(zzProbeDomainLabel(accumulator), accumulatorID != zero, accumulatorID, domain.ops.Fingerprint(accumulator), valueID)
+			}
+			accumulatorID = terminal.ID[V]{}
 			accumulator, joined = domain.joinPair(accumulator, value)
 			if !joined {
 				return zero, false

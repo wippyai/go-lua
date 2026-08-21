@@ -9,6 +9,7 @@ import (
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programstaticnode "github.com/wippyai/go-lua/analysis/schema/program/staticnode"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/typeexpr"
 )
@@ -22,7 +23,7 @@ import (
 // strongly connected components once, so every later materialization knows
 // which rows lie on a cycle before it builds anything.
 type ArtifactAuthority struct {
-	programs  []programschema.Program
+	views     []programstaticnode.View
 	component map[identity.ContentID]rowComponent
 }
 
@@ -43,21 +44,21 @@ type artifactResolver struct {
 	scope     *componentScope
 }
 
-func (a *artifactResolver) programIndex(row programschema.StaticTypeNode) (programschema.Program, int, bool) {
+func (a *artifactResolver) programIndex(row programstaticnode.StaticTypeNode) (programstaticnode.View, int, bool) {
 	if a == nil || a.authority == nil {
-		return programschema.Program{}, 0, false
+		return programstaticnode.View{}, 0, false
 	}
 	return a.authority.programFor(row.ID())
 }
 
 // children is a transient reconstruction of the historical semantic child
 // order from the canonical Program families.
-func (a *artifactResolver) children(row programschema.StaticTypeNode) ([]identity.ContentID, bool) {
-	program, index, ok := a.programIndex(row)
+func (a *artifactResolver) children(row programstaticnode.StaticTypeNode) ([]identity.ContentID, bool) {
+	view, index, ok := a.programIndex(row)
 	if !ok {
 		return nil, false
 	}
-	return program.StaticTypeNodeChildren(index, row, false)
+	return view.StaticTypeNodeChildren(index, row, false)
 }
 
 // componentScope is one descent into a cyclic component. local holds the
@@ -76,67 +77,77 @@ func SealPrograms(programs []programschema.Program) (*ArtifactAuthority, error) 
 		return nil, errors.New("typeauthority: no programs")
 	}
 	locations := make(map[identity.ContentID]canonicalRowLocation)
+	views := make([]programstaticnode.View, 0, len(programs))
 	for _, program := range programs {
 		if !program.Available() {
 			return nil, errors.New("typeauthority: unavailable program")
 		}
+		state, stateOK := program.ColdState()
+		if !stateOK {
+			return nil, errors.New("typeauthority: unavailable program cold state")
+		}
+		view, viewOK := programstaticnode.NewView(state)
+		if !viewOK {
+			return nil, errors.New("typeauthority: unavailable program static view")
+		}
 		owner := program.ProgramID
-		count, countOK := program.StaticTypeNodeCount()
+		count, countOK := view.StaticTypeNodeCount()
 		if !countOK {
 			return nil, errors.New("typeauthority: unavailable program static graph")
 		}
 		for index := 0; index < count; index++ {
-			row, ok := program.StaticTypeNodeAt(index)
+			row, ok := view.StaticTypeNodeAt(index)
 			if !ok || !row.Available() || row.Owner() != owner {
 				return nil, errors.New("typeauthority: malformed program type row")
 			}
 			if _, duplicate := locations[row.ID()]; duplicate {
 				return nil, errors.New("typeauthority: duplicate program type row")
 			}
-			locations[row.ID()] = canonicalRowLocation{program: program, index: index}
+			locations[row.ID()] = canonicalRowLocation{view: view, index: index}
 		}
+		views = append(views, view)
 	}
 	components, componentsOK := componentsOfRows(locations)
 	if !componentsOK {
 		return nil, errors.New("typeauthority: malformed canonical static graph")
 	}
-	a := &ArtifactAuthority{programs: append([]programschema.Program(nil), programs...), component: components}
+	a := &ArtifactAuthority{views: views, component: components}
 	return a, nil
 }
 
-func (a *ArtifactAuthority) Row(id identity.ContentID) (programschema.StaticTypeNode, bool) {
+func (a *ArtifactAuthority) Row(id identity.ContentID) (programstaticnode.StaticTypeNode, bool) {
 	if a == nil {
-		return programschema.StaticTypeNode{}, false
+		return programstaticnode.StaticTypeNode{}, false
 	}
-	for _, program := range a.programs {
-		count, countOK := program.StaticTypeNodeCount()
+	for _, view := range a.views {
+		count, countOK := view.StaticTypeNodeCount()
 		if !countOK {
 			continue
 		}
 		for index := 0; index < count; index++ {
-			row, ok := program.StaticTypeNodeAt(index)
+			row, ok := view.StaticTypeNodeAt(index)
 			if ok && row.ID() == id {
 				return row, true
 			}
 		}
 	}
-	return programschema.StaticTypeNode{}, false
+	return programstaticnode.StaticTypeNode{}, false
 }
 
-func (a *ArtifactAuthority) programFor(id identity.ContentID) (programschema.Program, int, bool) {
-	for _, program := range a.programs {
-		count, countOK := program.StaticTypeNodeCount()
+func (a *ArtifactAuthority) programFor(id identity.ContentID) (programstaticnode.View, int, bool) {
+	for _, view := range a.views {
+		count, countOK := view.StaticTypeNodeCount()
 		if !countOK {
 			continue
 		}
 		for index := 0; index < count; index++ {
-			row, ok := program.StaticTypeNodeAt(index)
+			row, ok := view.StaticTypeNodeAt(index)
 			if ok && row.ID() == id {
-				return program, index, true
+				return view, index, true
 			}
 		}
 	}
-	return programschema.Program{}, 0, false
+	return programstaticnode.View{}, 0, false
 }
 func (a *ArtifactAuthority) Resolve(id identity.ContentID) (typ.Type, bool) {
 	if a == nil || !id.Available() {
@@ -155,7 +166,7 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	if row.Kind() == programschema.StaticNodeReference {
+	if row.Kind() == programstaticnode.StaticNodeReference {
 		return a.resolveReference(row)
 	}
 	// A member of the component under descent is materialized by that descent
@@ -201,7 +212,7 @@ func (a *artifactResolver) resolve(id identity.ContentID) (typ.Type, bool) {
 // a complete, targetless leaf: Unknown is the Static carrier for missing
 // information and stays distinct from Any. A reference chain that closes on
 // itself names no declaration and issues no value.
-func (a *artifactResolver) resolveReference(row programschema.StaticTypeNode) (typ.Type, bool) {
+func (a *artifactResolver) resolveReference(row programstaticnode.StaticTypeNode) (typ.Type, bool) {
 	var seen map[identity.ContentID]bool
 	for {
 		children, childrenOK := a.children(row)
@@ -224,7 +235,7 @@ func (a *artifactResolver) resolveReference(row programschema.StaticTypeNode) (t
 		if !ok {
 			return nil, false
 		}
-		if next.Kind() != programschema.StaticNodeReference {
+		if next.Kind() != programstaticnode.StaticNodeReference {
 			return a.resolve(target)
 		}
 		if seen == nil {
@@ -242,7 +253,7 @@ func (a *artifactResolver) resolveReference(row programschema.StaticTypeNode) (t
 // A member re-entered while it is still under construction installs the binder
 // for the cycle it closes; every other member is an ordinary node of the
 // entry's graph.
-func (a *artifactResolver) member(scope *componentScope, id identity.ContentID, row programschema.StaticTypeNode) (typ.Type, bool) {
+func (a *artifactResolver) member(scope *componentScope, id identity.ContentID, row programstaticnode.StaticTypeNode) (typ.Type, bool) {
 	if value, ok := scope.local[id]; ok {
 		return value, true
 	}
@@ -267,7 +278,7 @@ func (a *artifactResolver) member(scope *componentScope, id identity.ContentID, 
 		// Flattening the whole chain here loses that presentation and changes
 		// the productive mutual graph.
 		_, aliasParamCount, aliasSpanOK := row.AliasParameterSpan()
-		if row.Kind() == programschema.StaticNodeAlias && aliasSpanOK && aliasParamCount == 0 {
+		if row.Kind() == programstaticnode.StaticNodeAlias && aliasSpanOK && aliasParamCount == 0 {
 			value = withoutArtifactAliasWrapper(value)
 		}
 		hole.SetBody(value)
@@ -282,7 +293,7 @@ func (a *artifactResolver) member(scope *componentScope, id identity.ContentID, 
 // cycle; a generic declaration publishes its binder into that scope before
 // walking its body, which is the one owner binder a member of the same
 // component may observe.
-func (a *artifactResolver) construct(id identity.ContentID, row programschema.StaticTypeNode, scope *componentScope) (typ.Type, bool) {
+func (a *artifactResolver) construct(id identity.ContentID, row programstaticnode.StaticTypeNode, scope *componentScope) (typ.Type, bool) {
 	ok := true
 	children, childrenOK := a.children(row)
 	child := func(index int) (typ.Type, bool) {
@@ -293,9 +304,9 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 	}
 	var value typ.Type
 	switch row.Kind() {
-	case programschema.StaticNodePrimitive:
+	case programstaticnode.StaticNodePrimitive:
 		value, ok = primitiveKind(row.LiteralKind())
-	case programschema.StaticNodeLiteral:
+	case programstaticnode.StaticNodeLiteral:
 		exact := row.Exact()
 		switch exact.Kind {
 		case keyspace.LiteralBool:
@@ -309,13 +320,13 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 		default:
 			ok = false
 		}
-	case programschema.StaticNodeOptional:
+	case programstaticnode.StaticNodeOptional:
 		var inner typ.Type
 		inner, ok = child(0)
 		if ok {
 			value = typeexpr.Optional(inner)
 		}
-	case programschema.StaticNodeUnion, programschema.StaticNodeIntersection:
+	case programstaticnode.StaticNodeUnion, programstaticnode.StaticNodeIntersection:
 		members := make([]typ.Type, len(children))
 		for i := range members {
 			members[i], ok = child(i)
@@ -324,13 +335,13 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 			}
 		}
 		if ok {
-			if row.Kind() == programschema.StaticNodeUnion {
+			if row.Kind() == programstaticnode.StaticNodeUnion {
 				value = typeexpr.Union(members...)
 			} else {
 				value = typeexpr.Intersection(members...)
 			}
 		}
-	case programschema.StaticNodeArray:
+	case programstaticnode.StaticNodeArray:
 		var inner typ.Type
 		inner, ok = child(0)
 		if ok {
@@ -340,7 +351,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 				value = typ.NewArray(inner)
 			}
 		}
-	case programschema.StaticNodeMap:
+	case programstaticnode.StaticNodeMap:
 		var keyType, valueType typ.Type
 		keyType, ok = child(0)
 		if ok {
@@ -353,7 +364,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 				value = typ.NewMap(keyType, valueType)
 			}
 		}
-	case programschema.StaticNodeRecord:
+	case programstaticnode.StaticNodeRecord:
 		fields := make([]typ.Field, len(children))
 		for index := range fields {
 			var fieldType typ.Type
@@ -379,7 +390,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 		if ok {
 			value = typ.RebuildRecord(typ.RecordParts{Fields: fields})
 		}
-	case programschema.StaticNodeAlias:
+	case programstaticnode.StaticNodeAlias:
 		var target typ.Type
 		_, aliasParamCount, aliasSpanOK := row.AliasParameterSpan()
 		if !aliasSpanOK {
@@ -421,7 +432,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 			}
 			value = typ.NewAlias(row.Name(), target)
 		}
-	case programschema.StaticNodeGeneric:
+	case programstaticnode.StaticNodeGeneric:
 		var base typ.Type
 		base, ok = child(0)
 		if !ok {
@@ -452,7 +463,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 			break
 		}
 		value = typ.Instantiate(generic, args...)
-	case programschema.StaticNodeInterface:
+	case programstaticnode.StaticNodeInterface:
 		if row.SegmentCount() < 2 {
 			ok = false
 			break
@@ -520,7 +531,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 			membersValue = append(membersValue, typ.NewInterface(row.Name(), methods))
 			value = typeexpr.Intersection(membersValue...)
 		}
-	case programschema.StaticNodeTypeFunction:
+	case programstaticnode.StaticNodeTypeFunction:
 		// The return-clause header is omitted from the row when ReturnsKnown is
 		// false: the valid shape is [variadic, type params, params]. An
 		// authored empty return clause retains its fourth, zero-valued segment.
@@ -599,7 +610,7 @@ func (a *artifactResolver) construct(id identity.ContentID, row programschema.St
 		if ok {
 			value = builder.Build()
 		}
-	case programschema.StaticNodeTypeParam:
+	case programstaticnode.StaticNodeTypeParam:
 		var constraint typ.Type
 		if len(children) > 0 {
 			constraint, ok = child(0)
@@ -641,74 +652,74 @@ func withoutArtifactAliasWrapper(value typ.Type) typ.Type {
 	return value
 }
 
-func childAliasParam(a *artifactResolver, row programschema.StaticTypeNode, index int) (typ.Type, bool) {
-	program, parent, ok := a.programIndex(row)
+func childAliasParam(a *artifactResolver, row programstaticnode.StaticTypeNode, index int) (typ.Type, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
 		return nil, false
 	}
-	child, ok := program.StaticTypeNodeAliasParameterFor(parent, index)
-	if !ok {
-		return nil, false
-	}
-	return a.resolve(child.ChildID())
-}
-func childInterfaceExtend(a *artifactResolver, row programschema.StaticTypeNode, index int) (typ.Type, bool) {
-	program, parent, ok := a.programIndex(row)
-	if !ok {
-		return nil, false
-	}
-	child, ok := program.StaticTypeNodeInterfaceExtendFor(parent, index)
+	child, ok := view.StaticTypeNodeAliasParameterFor(parent, index)
 	if !ok {
 		return nil, false
 	}
 	return a.resolve(child.ChildID())
 }
-func childInterfaceMember(a *artifactResolver, row programschema.StaticTypeNode, index int) (typ.Type, bool) {
-	program, parent, ok := a.programIndex(row)
+func childInterfaceExtend(a *artifactResolver, row programstaticnode.StaticTypeNode, index int) (typ.Type, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
 		return nil, false
 	}
-	child, ok := program.StaticTypeNodeInterfaceMemberFor(parent, index)
+	child, ok := view.StaticTypeNodeInterfaceExtendFor(parent, index)
+	if !ok {
+		return nil, false
+	}
+	return a.resolve(child.ChildID())
+}
+func childInterfaceMember(a *artifactResolver, row programstaticnode.StaticTypeNode, index int) (typ.Type, bool) {
+	view, parent, ok := a.programIndex(row)
+	if !ok {
+		return nil, false
+	}
+	child, ok := view.StaticTypeNodeInterfaceMemberFor(parent, index)
 	if !ok {
 		return nil, false
 	}
 	return a.resolve(child.ChildID())
 }
 
-func (a *artifactResolver) recordField(row programschema.StaticTypeNode, index int) (programschema.StaticTypeNodeRecordField, bool) {
-	program, parent, ok := a.programIndex(row)
+func (a *artifactResolver) recordField(row programstaticnode.StaticTypeNode, index int) (programstaticnode.StaticTypeNodeRecordField, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
-		return programschema.StaticTypeNodeRecordField{}, false
+		return programstaticnode.StaticTypeNodeRecordField{}, false
 	}
-	return program.StaticTypeNodeRecordFieldFor(parent, index)
+	return view.StaticTypeNodeRecordFieldFor(parent, index)
 }
-func (a *artifactResolver) interfaceMember(row programschema.StaticTypeNode, index int) (programschema.StaticTypeNodeInterfaceMember, bool) {
-	program, parent, ok := a.programIndex(row)
+func (a *artifactResolver) interfaceMember(row programstaticnode.StaticTypeNode, index int) (programstaticnode.StaticTypeNodeInterfaceMember, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
-		return programschema.StaticTypeNodeInterfaceMember{}, false
+		return programstaticnode.StaticTypeNodeInterfaceMember{}, false
 	}
-	return program.StaticTypeNodeInterfaceMemberFor(parent, index)
+	return view.StaticTypeNodeInterfaceMemberFor(parent, index)
 }
-func (a *artifactResolver) functionTypeParameter(row programschema.StaticTypeNode, index int) (programschema.StaticTypeNodeTypeFunctionTypeParameter, bool) {
-	program, parent, ok := a.programIndex(row)
+func (a *artifactResolver) functionTypeParameter(row programstaticnode.StaticTypeNode, index int) (programstaticnode.StaticTypeNodeTypeFunctionTypeParameter, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
-		return programschema.StaticTypeNodeTypeFunctionTypeParameter{}, false
+		return programstaticnode.StaticTypeNodeTypeFunctionTypeParameter{}, false
 	}
-	return program.StaticTypeNodeTypeFunctionTypeParameterFor(parent, index)
+	return view.StaticTypeNodeTypeFunctionTypeParameterFor(parent, index)
 }
-func (a *artifactResolver) functionParameter(row programschema.StaticTypeNode, index int) (programschema.StaticTypeNodeTypeFunctionParameter, bool) {
-	program, parent, ok := a.programIndex(row)
+func (a *artifactResolver) functionParameter(row programstaticnode.StaticTypeNode, index int) (programstaticnode.StaticTypeNodeTypeFunctionParameter, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
-		return programschema.StaticTypeNodeTypeFunctionParameter{}, false
+		return programstaticnode.StaticTypeNodeTypeFunctionParameter{}, false
 	}
-	return program.StaticTypeNodeTypeFunctionParameterFor(parent, index)
+	return view.StaticTypeNodeTypeFunctionParameterFor(parent, index)
 }
-func (a *artifactResolver) functionReturn(row programschema.StaticTypeNode, index int) (programschema.StaticTypeNodeTypeFunctionReturn, bool) {
-	program, parent, ok := a.programIndex(row)
+func (a *artifactResolver) functionReturn(row programstaticnode.StaticTypeNode, index int) (programstaticnode.StaticTypeNodeTypeFunctionReturn, bool) {
+	view, parent, ok := a.programIndex(row)
 	if !ok {
-		return programschema.StaticTypeNodeTypeFunctionReturn{}, false
+		return programstaticnode.StaticTypeNodeTypeFunctionReturn{}, false
 	}
-	return program.StaticTypeNodeTypeFunctionReturnFor(parent, index)
+	return view.StaticTypeNodeTypeFunctionReturnFor(parent, index)
 }
 
 func primitiveKind(raw uint8) (typ.Type, bool) {

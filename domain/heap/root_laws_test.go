@@ -86,10 +86,10 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	projectMounts := linked.Project().Mounts()
@@ -102,7 +102,7 @@ func compactHeapFixture(t testing.TB, name, source string, spec *declaration.Spe
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("artifact mount source")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("artifact compile: %v", failure)
 		}
@@ -744,9 +744,6 @@ func TestHeapKeyIDInverseLaws(t *testing.T) {
 		t.Fatal("unknown KeyID redeemed")
 	}
 
-	// Re-sealing the same Link preserves Heap content identity and therefore
-	// preserves the KeyID relation, while the returned Keys remain fenced to
-	// their respective Schema owners.
 	resealed, failure := SealWithArtifacts(linked, mounts)
 	if failure != heapdomain.SealFailureNone || !resealed.Valid() || resealed.ContentID() != schema.ContentID() {
 		t.Fatalf("re-seal identity: failure=%v valid=%v id=%v/%v", failure, resealed.Valid(), resealed.ContentID(), schema.ContentID())

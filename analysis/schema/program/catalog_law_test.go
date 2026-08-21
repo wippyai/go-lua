@@ -4,6 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programfamily "github.com/wippyai/go-lua/analysis/schema/program/family"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapindex"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -21,7 +26,7 @@ func catalogLawSchema(t *testing.T) identity.ContentID {
 // address into a runtime publication's slot of the same number.
 func TestCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
 	runtime := catalogLawSchema(t)
-	catalog, derived := CatalogID(runtime)
+	catalog, derived := programcatalog.CatalogID(runtime)
 	if !derived || !catalog.Available() {
 		t.Fatal("cold catalog derived nothing")
 	}
@@ -33,34 +38,36 @@ func TestCatalogIsDistinctFromItsRuntimeSchema(t *testing.T) {
 	if !otherDerived {
 		t.Fatal("second runtime schema")
 	}
-	second, secondDerived := CatalogID(other)
+	second, secondDerived := programcatalog.CatalogID(other)
 	if !secondDerived || second == catalog {
 		t.Fatal("two declaration catalogs derived one cold catalog")
 	}
-	if _, derived := CatalogID(identity.ContentID{}); derived {
+	if _, derived := programcatalog.CatalogID(identity.ContentID{}); derived {
 		t.Fatal("an unavailable runtime schema derived a cold catalog")
 	}
 }
 
-func catalogLawFamily() []CallTarget {
-	return []CallTarget{
-		{Allocation: identity.ContentID{1}, Body: identity.ContentID{2}, Context: identity.ContentID{3}, Function: identity.ContentID{4}, Formal: identity.ContentID{5}},
-		{Allocation: identity.ContentID{6}, Body: identity.ContentID{7}, Context: identity.ContentID{8}, Function: identity.ContentID{9}, Formal: identity.ContentID{10}},
+func catalogLawFamily() []calltarget.Target {
+	first, firstOK := calltarget.NewTarget(identity.ContentID{1}, identity.ContentID{2}, identity.ContentID{3}, identity.ContentID{4}, identity.ContentID{5})
+	second, secondOK := calltarget.NewTarget(identity.ContentID{6}, identity.ContentID{7}, identity.ContentID{8}, identity.ContentID{9}, identity.ContentID{10})
+	if !firstOK || !secondOK {
+		panic("catalog law target")
 	}
+	return []calltarget.Target{first, second}
 }
 
-func sealCatalogLaw(t *testing.T, rows []CallTarget) (snapshot.Frozen, identity.ContentID) {
+func sealCatalogLaw(t *testing.T, rows []calltarget.Target) (snapshot.Frozen, identity.ContentID) {
 	t.Helper()
-	catalog, derived := CatalogID(catalogLawSchema(t))
+	catalog, derived := programcatalog.CatalogID(catalogLawSchema(t))
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	content, sealed := CallTargetFamily().Content(rows, catalog)
+	content, sealed := calltarget.Family().Content(rows, catalog)
 	if !sealed {
 		t.Fatal("call target content")
 	}
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(7))
-	if err := snapshot.PutFrozenColumn(&builder, CallTargetFamily().Axis(catalog), content); err != nil {
+	if err := snapshot.PutFrozenColumn(&builder, calltarget.Family().Axis(catalog), content); err != nil {
 		t.Fatalf("put cold column: %v", err)
 	}
 	frozen, err := builder.Seal()
@@ -76,20 +83,20 @@ func TestCallTargetFamilyReadsBackInEmittedOrder(t *testing.T) {
 	rows := catalogLawFamily()
 	frozen, catalog := sealCatalogLaw(t, rows)
 
-	count, published := CallTargetFamily().Count(&frozen, catalog)
+	count, published := calltarget.Family().Count(&frozen, catalog)
 	if !published || count != len(rows) {
 		t.Fatalf("family width = %d (published %t), want %d", count, published, len(rows))
 	}
 	for index, want := range rows {
-		got, held := CallTargetFamily().At(&frozen, catalog, index)
+		got, held := calltarget.Family().At(&frozen, catalog, index)
 		if !held || got != want {
 			t.Fatalf("ordinal %d read %+v, emitted %+v", index, got, want)
 		}
 	}
-	if _, held := CallTargetFamily().At(&frozen, catalog, len(rows)); held {
+	if _, held := calltarget.Family().At(&frozen, catalog, len(rows)); held {
 		t.Fatal("an ordinal past the family read a row")
 	}
-	if _, held := CallTargetFamily().At(&frozen, catalog, -1); held {
+	if _, held := calltarget.Family().At(&frozen, catalog, -1); held {
 		t.Fatal("a negative ordinal read a row")
 	}
 }
@@ -100,10 +107,10 @@ func TestCallTargetFamilyProvesItsOwnBound(t *testing.T) {
 	rows := catalogLawFamily()
 	frozen, catalog := sealCatalogLaw(t, rows)
 
-	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(catalog), Ordinal(len(rows)-1)); status != snapshot.ReadHit {
+	if _, status := snapshot.ReadFrozen(&frozen, calltarget.Family().Axis(catalog), programfamily.Ordinal(len(rows)-1)); status != snapshot.ReadHit {
 		t.Fatalf("last ordinal reported %v", status)
 	}
-	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(catalog), Ordinal(len(rows))); status == snapshot.ReadHit {
+	if _, status := snapshot.ReadFrozen(&frozen, calltarget.Family().Axis(catalog), programfamily.Ordinal(len(rows))); status == snapshot.ReadHit {
 		t.Fatal("an ordinal past the family reported a hit")
 	}
 }
@@ -111,15 +118,14 @@ func TestCallTargetFamilyProvesItsOwnBound(t *testing.T) {
 // A family the compiler could not prove seals nothing: a program either
 // proved every target it emitted or it did not compile.
 func TestCallTargetContentRejectsAnUnprovenRow(t *testing.T) {
-	catalog, derived := CatalogID(catalogLawSchema(t))
+	_, derived := programcatalog.CatalogID(catalogLawSchema(t))
 	if !derived {
 		t.Fatal("cold catalog")
 	}
-	rows := append(catalogLawFamily(), CallTarget{Allocation: identity.ContentID{11}})
-	if _, sealed := CallTargetFamily().Content(rows, catalog); sealed {
-		t.Fatal("an incomplete target sealed into the family")
+	if _, complete := calltarget.NewTarget(identity.ContentID{11}, identity.ContentID{}, identity.ContentID{12}, identity.ContentID{13}, identity.ContentID{14}); complete {
+		t.Fatal("an incomplete target was constructed")
 	}
-	if _, sealed := CallTargetFamily().Content(catalogLawFamily(), identity.ContentID{}); sealed {
+	if _, sealed := calltarget.Family().Content(catalogLawFamily(), identity.ContentID{}); sealed {
 		t.Fatal("a family sealed under no catalog")
 	}
 }
@@ -128,11 +134,11 @@ func TestCallTargetContentRejectsAnUnprovenRow(t *testing.T) {
 // which is different from the family not being published at all.
 func TestEmptyCallTargetFamilyIsPublished(t *testing.T) {
 	frozen, catalog := sealCatalogLaw(t, nil)
-	count, published := CallTargetFamily().Count(&frozen, catalog)
+	count, published := calltarget.Family().Count(&frozen, catalog)
 	if !published || count != 0 {
 		t.Fatalf("empty family width = %d (published %t)", count, published)
 	}
-	if _, held := CallTargetFamily().At(&frozen, catalog, 0); held {
+	if _, held := calltarget.Family().At(&frozen, catalog, 0); held {
 		t.Fatal("an empty family served a row")
 	}
 }
@@ -146,34 +152,34 @@ func TestCallTargetFamilySpanBorrowsTheSealedPlane(t *testing.T) {
 	rows := catalogLawFamily()
 	frozen, catalog := sealCatalogLaw(t, rows)
 
-	span, held := CallTargetFamily().Span(&frozen, catalog, 1, 1)
+	span, held := calltarget.Family().Span(&frozen, catalog, 1, 1)
 	if !held || len(span) != 1 || span[0] != rows[1] {
 		t.Fatalf("span = %+v (held %t), want the second emitted row", span, held)
 	}
 	if cap(span) != len(span) {
 		t.Fatalf("span capacity = %d, want %d", cap(span), len(span))
 	}
-	whole, wholeHeld := CallTargetFamily().Span(&frozen, catalog, 0, uint32(len(rows)))
+	whole, wholeHeld := calltarget.Family().Span(&frozen, catalog, 0, uint32(len(rows)))
 	if !wholeHeld || len(whole) != len(rows) || &whole[1] != &span[0] {
 		t.Fatal("two spans of one plane borrow one storage")
 	}
-	if empty, emptyHeld := CallTargetFamily().Span(&frozen, catalog, uint32(len(rows)), 0); !emptyHeld || len(empty) != 0 {
+	if empty, emptyHeld := calltarget.Family().Span(&frozen, catalog, uint32(len(rows)), 0); !emptyHeld || len(empty) != 0 {
 		t.Fatal("the empty span at the end of the plane is a span of no rows")
 	}
-	if _, past := CallTargetFamily().Span(&frozen, catalog, 1, uint32(len(rows))); past {
+	if _, past := calltarget.Family().Span(&frozen, catalog, 1, uint32(len(rows))); past {
 		t.Fatal("a span past the sealed family borrowed rows")
 	}
 	foreign, derived := identity.DeriveContentID("cold-law/foreign-span-catalog", nil)
 	if !derived {
 		t.Fatal("foreign catalog")
 	}
-	if _, held := CallTargetFamily().Span(&frozen, foreign, 0, 1); held {
+	if _, held := calltarget.Family().Span(&frozen, foreign, 0, 1); held {
 		t.Fatal("a foreign catalog's axis borrowed rows")
 	}
 
-	var borrowed []CallTarget
+	var borrowed []calltarget.Target
 	allocations := testing.AllocsPerRun(1000, func() {
-		borrowed, _ = CallTargetFamily().Span(&frozen, catalog, 0, uint32(len(rows)))
+		borrowed, _ = calltarget.Family().Span(&frozen, catalog, 0, uint32(len(rows)))
 	})
 	if allocations != 0 {
 		t.Fatalf("span allocations = %v, want 0", allocations)
@@ -191,107 +197,115 @@ func TestCatalogAxisOfAnotherCatalogReadsNothing(t *testing.T) {
 	if !derived {
 		t.Fatal("foreign catalog")
 	}
-	if _, status := snapshot.ReadFrozen(&frozen, CallTargetFamily().Axis(foreign), Ordinal(0)); status != snapshot.ReadInvalid {
+	if _, status := snapshot.ReadFrozen(&frozen, calltarget.Family().Axis(foreign), programfamily.Ordinal(0)); status != snapshot.ReadInvalid {
 		t.Fatalf("a foreign catalog's axis reported %v", status)
 	}
-	if _, published := CallTargetFamily().Count(&frozen, foreign); published {
+	if _, published := calltarget.Family().Count(&frozen, foreign); published {
 		t.Fatal("a foreign catalog reported a family width")
 	}
 }
 
-// Every declared family owns a slot and a name no other family owns. A slot
-// is half of the address every consumer holds, so two families sharing one
-// slot would make the second column unpublishable and the first
-// unaddressable. The catalog states the law over the whole declaration set
-// rather than trusting each family's own arithmetic.
-func TestProgramFamilySlotsAndNamesAreDistinct(t *testing.T) {
-	declared := []struct {
-		slot uint32
-		name string
-	}{
-		{CallTargetFamily().slot, CallTargetFamily().name},
-		{HeapAllocationFamily().slot, HeapAllocationFamily().name},
-		{HeapFieldFamily().slot, HeapFieldFamily().name},
-		{ValuesFamily().slot, ValuesFamily().name},
-		{ValuesMemberFamily().slot, ValuesMemberFamily().name},
-		{HeapIndexFamily().slot, HeapIndexFamily().name},
-		{ExactScalarSummaryFamily().slot, ExactScalarSummaryFamily().name},
-		{ArithmeticSummaryFamily().slot, ArithmeticSummaryFamily().name},
-		{UnarySummaryFamily().slot, UnarySummaryFamily().name},
-		{PointFamily().slot, PointFamily().name},
-		{PointDecisionFamily().slot, PointDecisionFamily().name},
-		{CallFamily().slot, CallFamily().name},
-		{CallOperandFamily().slot, CallOperandFamily().name},
-		{CallArgumentFamily().slot, CallArgumentFamily().name},
-		{CallTypeArgumentFamily().slot, CallTypeArgumentFamily().name},
-		{EnvironmentEdgeFamily().slot, EnvironmentEdgeFamily().name},
-		{EnvironmentResetFamily().slot, EnvironmentResetFamily().name},
-		{StaticTypeValueFamily().slot, StaticTypeValueFamily().name},
-		{StaticExpressionFamily().slot, StaticExpressionFamily().name},
-		{RegionFamily().slot, RegionFamily().name},
-		{RegionMemberFamily().slot, RegionMemberFamily().name},
-		{WTOEventFamily().slot, WTOEventFamily().name},
-		{BodyFamily().slot, BodyFamily().name},
-		{BodyEntryFamily().slot, BodyEntryFamily().name},
-		{BodyRootFamily().slot, BodyRootFamily().name},
-		{OutcomeFamily().slot, OutcomeFamily().name},
-		{OutcomeReturnValueFamily().slot, OutcomeReturnValueFamily().name},
-		{OutcomePointFamily().slot, OutcomePointFamily().name},
-		{FunctionBoundaryFamily().slot, FunctionBoundaryFamily().name},
-		{FunctionFormalFamily().slot, FunctionFormalFamily().name},
-		{FunctionVarargFamily().slot, FunctionVarargFamily().name},
-		{FunctionCaptureFamily().slot, FunctionCaptureFamily().name},
-		{StaticInputFamily().slot, StaticInputFamily().name},
-		{LocalTransferFamily().slot, LocalTransferFamily().name},
-		{LocalTransferWriteFamily().slot, LocalTransferWriteFamily().name},
-		{OccurrenceFamily().slot, OccurrenceFamily().name},
-		{OccurrencePointFamily().slot, OccurrencePointFamily().name},
-		{OccurrenceInputFamily().slot, OccurrenceInputFamily().name},
-		{RuleOccurrenceFamily().slot, RuleOccurrenceFamily().name},
-		{StorageCellLifetimeFamily().slot, StorageCellLifetimeFamily().name},
-		{SubjectLivenessFamily().slot, SubjectLivenessFamily().name},
-		{CallResultFamily().slot, CallResultFamily().name},
+// The child package is the complete source of declarations. This law
+// enumerates that one manifest directly, so a family added later cannot be
+// omitted from a handwritten census or silently reuse a slot/name.
+func TestProgramCatalogManifestIsCompleteAndDense(t *testing.T) {
+	manifest := programcatalog.Manifest()
+	if len(manifest) != programcatalog.DefinitionCount() {
+		t.Fatalf("manifest length = %d, definition count = %d", len(manifest), programcatalog.DefinitionCount())
 	}
-	slots := make(map[uint32]string, len(declared))
-	names := make(map[string]uint32, len(declared))
-	for _, family := range declared {
-		if family.name == "" {
-			t.Fatalf("slot %d is declared without a name", family.slot)
+	slots := make(map[uint32]string, len(manifest))
+	names := make(map[string]uint32, len(manifest))
+	for index, definition := range manifest {
+		if !definition.Valid() || definition.Name() == "" {
+			t.Fatalf("manifest definition %d is invalid", index)
 		}
-		if held, taken := slots[family.slot]; taken {
-			t.Fatalf("%s and %s both claim slot %d", held, family.name, family.slot)
+		if definition.Slot() != uint32(index) {
+			t.Fatalf("manifest definition %d has slot %d", index, definition.Slot())
 		}
-		if held, taken := names[family.name]; taken {
-			t.Fatalf("%s is declared at slots %d and %d", family.name, held, family.slot)
+		if held, taken := slots[definition.Slot()]; taken {
+			t.Fatalf("%s and %s both claim slot %d", held, definition.Name(), definition.Slot())
 		}
-		slots[family.slot] = family.name
-		names[family.name] = family.slot
+		if held, taken := names[definition.Name()]; taken {
+			t.Fatalf("%s is declared at slots %d and %d", definition.Name(), held, definition.Slot())
+		}
+		slots[definition.Slot()] = definition.Name()
+		names[definition.Name()] = definition.Slot()
+		if got, ok := programcatalog.DefinitionAt(index); !ok || got != definition {
+			t.Fatalf("DefinitionAt(%d) did not return manifest definition", index)
+		}
+	}
+	if _, ok := programcatalog.DefinitionAt(-1); ok {
+		t.Fatal("negative manifest index was accepted")
+	}
+	if _, ok := programcatalog.DefinitionAt(len(manifest)); ok {
+		t.Fatal("manifest length index was accepted")
 	}
 }
 
-// The publication is total over the catalog: sealing every declared family,
-// including the empty ones, publishes one column per declaration. A family
-// whose slot collided with another's would fail here rather than at the first
-// program that emitted rows into both.
-func TestProgramPublicationSealsEveryDeclaredFamily(t *testing.T) {
-	catalog, derived := CatalogID(catalogLawSchema(t))
-	if !derived {
-		t.Fatal("catalog identity")
+// Every canonical Family binding names its child-catalog definition. Keeping
+// this table beside the manifest law makes the typed binding explicit without
+// repeating slot arithmetic or family names.
+func TestProgramFamilyAccessorsBindCatalogDefinitions(t *testing.T) {
+	bindings := []struct {
+		accessor string
+		got      programcatalog.Definition
+		want     programcatalog.Definition
+	}{
+		{"CallTargetFamily", calltarget.Family().Definition(), programcatalog.CallTarget()},
+		{"HeapAllocationFamily", heapallocation.AllocationFamily().Definition(), programcatalog.HeapAllocation()},
+		{"HeapFieldFamily", heapallocation.FieldFamily().Definition(), programcatalog.HeapField()},
+		{"ValuesFamily", ValuesFamily().Definition(), programcatalog.Values()},
+		{"ValuesMemberFamily", ValuesMemberFamily().Definition(), programcatalog.ValuesMember()},
+		{"HeapIndexFamily", heapindex.Family().Definition(), programcatalog.HeapIndex()},
+		{"ExactScalarSummaryFamily", ExactScalarSummaryFamily().Definition(), programcatalog.ExactScalarSummary()},
+		{"ArithmeticSummaryFamily", ArithmeticSummaryFamily().Definition(), programcatalog.ArithmeticSummary()},
+		{"UnarySummaryFamily", UnarySummaryFamily().Definition(), programcatalog.UnarySummary()},
+		{"PointFamily", PointFamily().Definition(), programcatalog.Point()},
+		{"PointDecisionFamily", PointDecisionFamily().Definition(), programcatalog.PointDecision()},
+		{"CallFamily", CallFamily().Definition(), programcatalog.Call()},
+		{"CallOperandFamily", CallOperandFamily().Definition(), programcatalog.CallOperand()},
+		{"CallArgumentFamily", CallArgumentFamily().Definition(), programcatalog.CallArgument()},
+		{"CallTypeArgumentFamily", CallTypeArgumentFamily().Definition(), programcatalog.CallTypeArgument()},
+		{"EnvironmentEdgeFamily", EnvironmentEdgeFamily().Definition(), programcatalog.EnvironmentEdge()},
+		{"EnvironmentResetFamily", EnvironmentResetFamily().Definition(), programcatalog.EnvironmentReset()},
+		{"StaticTypeValueFamily", StaticTypeValueFamily().Definition(), programcatalog.StaticTypeValue()},
+		{"StaticExpressionFamily", StaticExpressionFamily().Definition(), programcatalog.StaticExpression()},
+		{"RegionFamily", RegionFamily().Definition(), programcatalog.Region()},
+		{"RegionMemberFamily", RegionMemberFamily().Definition(), programcatalog.RegionMember()},
+		{"WTOEventFamily", WTOEventFamily().Definition(), programcatalog.WTOEvent()},
+		{"BodyFamily", BodyFamily().Definition(), programcatalog.Body()},
+		{"BodyEntryFamily", BodyEntryFamily().Definition(), programcatalog.BodyEntry()},
+		{"BodyRootFamily", BodyRootFamily().Definition(), programcatalog.BodyRoot()},
+		{"OutcomeFamily", OutcomeFamily().Definition(), programcatalog.Outcome()},
+		{"OutcomeReturnValueFamily", OutcomeReturnValueFamily().Definition(), programcatalog.OutcomeReturnValue()},
+		{"OutcomePointFamily", OutcomePointFamily().Definition(), programcatalog.OutcomePoint()},
+		{"FunctionBoundaryFamily", FunctionBoundaryFamily().Definition(), programcatalog.FunctionBoundary()},
+		{"FunctionFormalFamily", FunctionFormalFamily().Definition(), programcatalog.FunctionFormal()},
+		{"FunctionVarargFamily", FunctionVarargFamily().Definition(), programcatalog.FunctionVararg()},
+		{"FunctionCaptureFamily", FunctionCaptureFamily().Definition(), programcatalog.FunctionCapture()},
+		{"StaticInputFamily", StaticInputFamily().Definition(), programcatalog.StaticInput()},
+		{"LocalTransferFamily", LocalTransferFamily().Definition(), programcatalog.LocalTransfer()},
+		{"LocalTransferWriteFamily", LocalTransferWriteFamily().Definition(), programcatalog.LocalTransferWrite()},
+		{"OccurrenceFamily", OccurrenceFamily().Definition(), programcatalog.Occurrence()},
+		{"OccurrencePointFamily", OccurrencePointFamily().Definition(), programcatalog.OccurrencePoint()},
+		{"OccurrenceInputFamily", OccurrenceInputFamily().Definition(), programcatalog.OccurrenceInput()},
+		{"RuleOccurrenceFamily", RuleOccurrenceFamily().Definition(), programcatalog.RuleOccurrence()},
+		{"CallResultFamily", CallResultFamily().Definition(), programcatalog.CallResult()},
+		{"ModuleImportFamily", ModuleImportFamily().Definition(), programcatalog.ModuleImport()},
+		{"ModuleRequestFamily", ModuleRequestFamily().Definition(), programcatalog.ModuleRequest()},
+		{"ModuleEntryFamily", ModuleEntryFamily().Definition(), programcatalog.ModuleEntry()},
+		{"ModuleEntryRootCellFamily", ModuleEntryRootCellFamily().Definition(), programcatalog.ModuleEntryRootCell()},
+		{"ModuleEntryRootFunctionFamily", ModuleEntryRootFunctionFamily().Definition(), programcatalog.ModuleEntryRootFunction()},
+		{"ModuleEntryMemberFamily", ModuleEntryMemberFamily().Definition(), programcatalog.ModuleEntryMember()},
+		{"CallResultSlotFamily", CallResultSlotFamily().Definition(), programcatalog.CallResultSlot()},
 	}
-	frozen, sealed := Publication{}.Seal(catalog, identity.StoreID(1))
-	if !sealed {
-		t.Fatal("the empty publication did not seal every declared family")
+	if len(bindings)+22 != programcatalog.DefinitionCount() {
+		t.Fatalf("composed accessor bindings = %d, manifest definitions = %d", len(bindings)+22, programcatalog.DefinitionCount())
 	}
-	if _, published := PointFamily().Count(&frozen, catalog); !published {
-		t.Fatal("point family is not published")
-	}
-	if _, published := WTOEventFamily().Count(&frozen, catalog); !published {
-		t.Fatal("event family is not published")
-	}
-	if _, published := OutcomePointFamily().Count(&frozen, catalog); !published {
-		t.Fatal("outcome point family is not published")
-	}
-	if _, published := LocalTransferWriteFamily().Count(&frozen, catalog); !published {
-		t.Fatal("local-transfer write family is not published")
+	for _, binding := range bindings {
+		if binding.got != binding.want {
+			t.Fatalf("%s bound slot/name %d/%s, want %d/%s", binding.accessor,
+				binding.got.Slot(), binding.got.Name(), binding.want.Slot(), binding.want.Name())
+		}
 	}
 }

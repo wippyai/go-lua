@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/flow/control"
 	"github.com/wippyai/go-lua/analysis/program/flow/internal/flowtest"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -31,7 +30,6 @@ type outcomeFixture struct {
 	sourceFinalize source.Finalizer
 	staticView     staticquery.View
 	flowFinalize   authored.Finalizer
-	moduleFinalize imports.Finalizer
 }
 
 type outcomeSpec struct {
@@ -74,18 +72,18 @@ func openOutcomeFixture(t *testing.T, spec outcomeSpec) *outcomeFixture {
 	}
 	_, staticView, err := static.Build(staticInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("static.Build: %v", err)
 	}
 
 	flowDraft, err := authored.Build(flowInput)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Build: %v", err)
 	}
 	flowFinalize, err := flowDraft.Finalizer()
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{}, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, authored.Finalizer{})
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
@@ -93,36 +91,27 @@ func openOutcomeFixture(t *testing.T, spec outcomeSpec) *outcomeFixture {
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
+	moduleView := flowView.Imports()
+	moduleID := flowView.ModuleID()
 
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		flowtest.CloseFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		flowtest.CloseFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 
@@ -130,10 +119,10 @@ func openOutcomeFixture(t *testing.T, spec outcomeSpec) *outcomeFixture {
 		preimage: preimage, flow: flowView, bodies: bodies, binding: bindingResult,
 		forest: forest, shape: shape,
 		sourceFinalize: sourceFinalize, staticView: staticView,
-		flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
-		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize, fixture.moduleFinalize)
+		flowtest.CloseFinalizers(fixture.sourceFinalize, fixture.flowFinalize)
 	})
 	return fixture
 }
@@ -141,7 +130,7 @@ func openOutcomeFixture(t *testing.T, spec outcomeSpec) *outcomeFixture {
 func (f *outcomeFixture) seal(t *testing.T) *Result {
 	t.Helper()
 	result, err := Seal(f.preimage.Identity(), f.flow, f.bodies, f.shape,
-		f.staticView.ContentID(), f.moduleFinalize.View().ContentID())
+		f.staticView.ContentID(), f.flow.ModuleID())
 
 	if err != nil {
 		t.Fatalf("outcome.Seal: %v", err)

@@ -1,6 +1,7 @@
 package authored
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
@@ -12,6 +13,51 @@ type Position struct {
 	Tail       keyspace.Term
 	TailOffset int
 	NilFill    bool
+}
+
+// ContentID returns the authored Module identity carried by this import
+// projection. It is separate from the parent Flow ContentID.
+func (view Imports) ContentID() identity.ContentID {
+	if !view.active() {
+		return identity.ContentID{}
+	}
+	return view.component.imports.moduleID
+}
+
+// Count reports the dense authored Import cardinality.
+func (view Imports) Count() int {
+	if !view.active() {
+		return 0
+	}
+	return len(view.component.imports.rows)
+}
+
+// At returns one dense authored Import term in canonical source order.
+func (view Imports) At(index int) (keyspace.Term, bool) {
+	if !view.active() {
+		return 0, false
+	}
+	return termAt(keyspace.FamilyImport, index, len(view.component.imports.rows))
+}
+
+// ImportAt returns one dense authored Import row in canonical source order.
+func (view Imports) ImportAt(index int) (Import, bool) {
+	if !view.active() || index < 0 || index >= len(view.component.imports.rows) {
+		return Import{}, false
+	}
+	return view.component.imports.rows[index], true
+}
+
+// Get returns one authored Import row by its canonical dense Import term.
+func (view Imports) Get(term keyspace.Term) (Import, bool) {
+	if !view.active() || !keyspace.ValidTerm(term, keyspace.FamilyImport, len(view.component.imports.rows)) {
+		return Import{}, false
+	}
+	row := view.component.imports.rows[keyspace.TermOrdinal(term)-1]
+	if row.Term != term {
+		return Import{}, false
+	}
+	return row, true
 }
 
 func (view Values) Count() int {

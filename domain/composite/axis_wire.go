@@ -7,7 +7,6 @@ import (
 )
 
 // axisContributor is the composition-owned wiring for one bound axis.
-// Engine-published axes have none.
 type axisContributor struct {
 	declare func(*engine.SchemaBuilder, vocabulary.Roles) (axis.Cell, bool)
 	bind    func(*engine.SchemaBinding, LinkInputs, axis.Cell) (axis.Cell, bool)

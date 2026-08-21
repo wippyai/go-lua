@@ -8,7 +8,6 @@
       "max_stack": 0,
       "max_owned_heap": 0,
       "max_shared_heap": 3,
-      "min_seal_before_share": 3,
       "min_shared_heap_kind": {
         "lua.table": 3
       },
@@ -17,8 +16,5 @@
       },
       "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }

@@ -32,8 +32,6 @@ type ProviderCapabilitySeedRef struct {
 	ordinal uint32
 }
 
-func (r ProviderCapabilitySeedRef) HostID() identity.ContentID { return r.hostID }
-
 type BootRoot struct {
 	component *Component
 	ordinal   uint32

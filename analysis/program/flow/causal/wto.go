@@ -665,16 +665,6 @@ func (r *Result) wtoPointAt(index int) (WTOPoint, bool) {
 	return point, point.Available()
 }
 
-func (s Successor) WTORegionID() identity.ContentID {
-	if s.result == nil || !s.refValid || !s.ref.wtoRegion.Available() {
-		return identity.ContentID{}
-	}
-	if _, ok := s.result.LocalWTO().Resolve(s.ref.wtoRegion); !ok {
-		return identity.ContentID{}
-	}
-	return s.ref.wtoRegion
-}
-
 // installBoundRoutePaths attaches recurrence endpoint rows after the
 // combined index is sealed. It performs no Plan/graph lookup.
 func (r *Result) installBoundRoutePaths() error {

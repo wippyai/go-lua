@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	linkboundary "github.com/wippyai/go-lua/analysis/program/link/boundary"
 	linkproject "github.com/wippyai/go-lua/analysis/program/link/project"
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
@@ -46,7 +47,7 @@ func moduleFixture(t *testing.T) (*linkproject.Component, *linkboundary.Componen
 	if err != nil {
 		t.Fatal(err)
 	}
-	importTerm, ok := main.Module().ImportAt(0)
+	importTerm, ok := main.Flow().Authored().Imports().At(0)
 	if !ok {
 		t.Fatal("missing import")
 	}
@@ -54,7 +55,7 @@ func moduleFixture(t *testing.T) (*linkproject.Component, *linkboundary.Componen
 		Actors:             []ActorSpec{{Name: "actor"}},
 		ModuleCacheAliases: []ModuleCacheAliasClassSpec{{Actor: "actor", Instances: []string{"cache-main"}, Representative: "cache-main"}, {Actor: "actor", Instances: []string{"cache-dependency"}, Representative: "cache-dependency"}},
 		AnalysisRoots:      []AnalysisRootSpec{{Name: "main", Module: "main", Actor: "actor", Instance: "cache-main"}, {Name: "dependency", Module: "dependency", Actor: "actor", Instance: "cache-dependency"}},
-		ModuleCacheEntries: []ModuleCacheEntrySpec{{Module: "main", Import: importTerm.Term, FromRoot: "main", ToRoot: "dependency"}},
+		ModuleCacheEntries: []ModuleCacheEntrySpec{{Module: "main", Import: importTerm, FromRoot: "main", ToRoot: "dependency"}},
 	}
 }
 
@@ -100,10 +101,11 @@ func TestModuleColdLifecycleAndDetachedSpec(t *testing.T) {
 	if saved.Actors[0].Name == "mutated-input" || saved.ModuleCacheAliases[0].Instances[0] == "mutated-input" {
 		t.Fatal("component retained caller-owned module Spec storage")
 	}
+	saved.ModuleCacheEntries[0].Module = "mutated-input"
 	saved.Actors[0].Name = "mutated"
 	saved.ModuleCacheAliases[0].Instances[0] = "mutated"
 	again, ok := component.Cold().Spec()
-	if !ok || again.Actors[0].Name == "mutated" || again.ModuleCacheAliases[0].Instances[0] == "mutated" {
+	if !ok || again.Actors[0].Name == "mutated" || again.ModuleCacheAliases[0].Instances[0] == "mutated" || again.ModuleCacheEntries[0].Module == "mutated-input" {
 		t.Fatal("Cold Spec leaked mutable storage")
 	}
 }
@@ -121,14 +123,6 @@ func TestModuleEquivalentHandlesFence(t *testing.T) {
 	root, _ := left.Roots().At(0)
 	if _, _, _, ok := right.Roots().Mapping(root); ok {
 		t.Fatal("foreign Root accepted")
-	}
-	generation, _ := left.Generations().At(0)
-	if _, _, _, _, ok := right.Generations().Entry(generation); ok {
-		t.Fatal("foreign Generation accepted")
-	}
-	outcome, _ := left.Outcomes().At(generation, 0)
-	if _, ok := right.Outcomes().ID(outcome); ok {
-		t.Fatal("foreign Outcome accepted")
 	}
 }
 
@@ -157,6 +151,11 @@ func TestModuleContentTracksOnlyModuleRelationAndSpec(t *testing.T) {
 	}
 	if seal(changed).ContentID() == base.ContentID() {
 		t.Fatal("Module spec delta did not change content")
+	}
+	entryChanged := cloneSpec(spec)
+	entryChanged.ModuleCacheEntries[0].Import = keyspace.MakeTerm(keyspace.FamilyImport, 2)
+	if seal(entryChanged).ContentID() == base.ContentID() {
+		t.Fatal("authored cache entry delta did not change content")
 	}
 	contract, ok := boundary.Target()
 	if !ok {
@@ -216,42 +215,14 @@ func TestModulePrerequisiteFencesAndCanonicalPermutation(t *testing.T) {
 	}
 }
 
-func TestModuleGenerationHashDistinguishesEntryID(t *testing.T) {
-	component := sealModuleFixture(t)
-	if component.Terminals().Count() == 0 {
-		t.Fatal("missing terminal")
-	}
-	first := ModuleInitGenerationRef{component: component.ContentID(), entry: [32]byte{1}}
-	second := first
-	second.entry[31] = 1
-	if hashGeneration(first) == hashGeneration(second) {
-		t.Fatal("generation hash truncated EntryID")
-	}
-}
-
-func TestModuleOutcomeValidationIsDirectAtBounds(t *testing.T) {
-	component := sealModuleFixture(t)
-	generation, ok := component.Generations().At(0)
-	if !ok {
-		t.Fatal("missing generation")
-	}
-	count := component.Outcomes().Count(generation)
-	if count == 0 {
-		t.Fatal("missing outcomes")
-	}
-	first, ok := component.Outcomes().At(generation, 0)
-	if !ok || !component.validOutcome(first) {
-		t.Fatal("first outcome rejected")
-	}
-	last, ok := component.Outcomes().At(generation, count-1)
-	if !ok || !component.validOutcome(last) {
-		t.Fatal("last outcome rejected")
-	}
-	if component.validOutcome(ModuleInitOutcome{component: component, generation: generation.ordinal, kind: flowkind.OutcomeReturn, ordinal: ^uint32(0)}) {
-		t.Fatal("out-of-range return accepted")
-	}
-	if component.validOutcome(ModuleInitOutcome{component: component, generation: generation.ordinal, kind: flowkind.OutcomeKind(255)}) {
-		t.Fatal("invalid outcome kind accepted")
+func TestModuleAuthoredEntryConflictingTargetRejected(t *testing.T) {
+	project, boundary, spec := moduleFixture(t)
+	conflicting := cloneSpec(spec)
+	conflicting.ModuleCacheEntries = append(conflicting.ModuleCacheEntries, ModuleCacheEntrySpec{
+		Module: "main", Import: conflicting.ModuleCacheEntries[0].Import, FromRoot: "main", ToRoot: "main",
+	})
+	if draft, err := Build(Input{Project: project, Boundary: boundary, Spec: conflicting}); err == nil || draft != nil {
+		t.Fatal("conflicting authored cache targets were admitted")
 	}
 }
 

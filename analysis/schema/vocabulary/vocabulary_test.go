@@ -36,8 +36,8 @@ func TestRolesResolveDeclaredRowsOnly(t *testing.T) {
 		t.Fatal("semantic role rows were not admitted")
 	}
 	roles, rolesOK := NewRoles(entries)
-	if !rolesOK || roles.Count() != 3 {
-		t.Fatalf("resolved %d roles, want 3", roles.Count())
+	if !rolesOK || roles.Count() != 2 {
+		t.Fatalf("resolved %d roles, want 2", roles.Count())
 	}
 	semantics, semanticsOK := roles.Rule("value/source")
 	if !semanticsOK {
@@ -46,6 +46,9 @@ func TestRolesResolveDeclaredRowsOnly(t *testing.T) {
 	expected, expectedOK := Key("rule/value/source")
 	if !expectedOK || semantics.Rule != expected {
 		t.Fatal("resolved identity is not the one the declared spelling derives")
+	}
+	if _, ok := roles.Key(RoleKey("evidence/value/source")); ok {
+		t.Fatal("rule-admission evidence role resolved")
 	}
 	if _, ok := roles.Key(RoleKey("factor/value")); ok {
 		t.Fatal("an undeclared role resolved")

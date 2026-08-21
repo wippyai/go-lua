@@ -495,33 +495,3 @@ func (c *Catalogue) Type(modulePath, name string) (typ.Type, bool) {
 	}
 	return declaration.ScopeType(value), true
 }
-
-// ResolveType resolves either an unqualified unique type name or a qualified
-// module path. Aliases map source import names to exact manifest paths.
-func (c *Catalogue) ResolveType(path []string, aliases map[string]string) (typ.Type, bool) {
-	if c == nil || len(path) == 0 {
-		return nil, false
-	}
-	if len(path) == 1 {
-		var found typ.Type
-		for _, item := range c.providers {
-			value := item.manifest.Types[path[0]]
-			if value == nil {
-				continue
-			}
-			if found != nil {
-				return nil, false
-			}
-			found = item.manifest.ScopeType(value)
-		}
-		return found, found != nil
-	}
-	modulePath := strings.Join(path[:len(path)-1], ".")
-	if alias := aliases[path[0]]; alias != "" {
-		modulePath = alias
-		if len(path) > 2 {
-			modulePath += "." + strings.Join(path[1:len(path)-1], ".")
-		}
-	}
-	return c.Type(modulePath, path[len(path)-1])
-}

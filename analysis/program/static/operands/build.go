@@ -2,7 +2,6 @@ package operands
 
 import (
 	"errors"
-	"sort"
 
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
@@ -58,16 +57,10 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, types statictypes.T
 			return Table{}, errors.New("program/static/operands: oversized annotation table")
 		}
 	}
-	annotations := annotation.Seal()
-	index, ok := buildAnnotationIndex(annotations)
-	if !ok {
-		return Table{}, errors.New("program/static/operands: oversized annotation index")
-	}
 	return Table{
 		claim:      claim.Seal(),
 		typeValue:  typeValue.Seal(),
-		annotation: annotations,
-		index:      index,
+		annotation: annotation.Seal(),
 	}, nil
 }
 
@@ -98,45 +91,3 @@ func validAnnotation(counts [keyspace.FamilyCount]uint32, row Annotation) bool {
 		row.Name != 0 && keyspace.ValidTerm(row.Values, keyspace.FamilyValues, int(counts[keyspace.FamilyValues]))
 }
 
-// indexRow is construction-only pairing used to order the query index.
-type indexRow struct{ target, term keyspace.Term }
-
-// buildAnnotationIndex constructs only a direct-query acceleration structure.
-// Its order is stable by target Term, then authored Annotation ordinal.
-func buildAnnotationIndex(annotations rows.Table[Annotation]) (AnnotationIndex, bool) {
-	pairs := make([]indexRow, 0, annotations.Count())
-	for term, row := range annotations.Terms() {
-		pairs = append(pairs, indexRow{target: row.Target, term: term})
-	}
-	sort.Slice(pairs, func(left, right int) bool {
-		if pairs[left].target != pairs[right].target {
-			return pairs[left].target < pairs[right].target
-		}
-		return pairs[left].term < pairs[right].term
-	})
-	var targets []keyspace.Term
-	var windows []rows.Span
-	var terms rows.PoolBuilder[keyspace.Term]
-	for start := 0; start < len(pairs); {
-		end := start + 1
-		for end < len(pairs) && pairs[end].target == pairs[start].target {
-			end++
-		}
-		group := make([]keyspace.Term, 0, end-start)
-		for _, pair := range pairs[start:end] {
-			group = append(group, pair.term)
-		}
-		window, ok := terms.Append(group)
-		if !ok {
-			return AnnotationIndex{}, false
-		}
-		targets = append(targets, pairs[start].target)
-		windows = append(windows, window)
-		start = end
-	}
-	return AnnotationIndex{
-		targets: rows.NewRows(targets),
-		windows: rows.NewRows(windows),
-		terms:   terms.Seal(),
-	}, true
-}

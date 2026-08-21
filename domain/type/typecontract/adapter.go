@@ -171,33 +171,6 @@ func ValidateAuthoring(ctx context.Context, value typ.Type, formals []*typ.TypeP
 	return nil
 }
 
-// ValidateEncoded checks a neutral graph without materializing it.
-func ValidateEncoded(value schematype.Type, formals []*typ.TypeParam) error {
-	formalCount, err := portableFormalCount(formals)
-	if err != nil {
-		return err
-	}
-	if !value.Available() {
-		return errors.New("typecontract: unavailable type")
-	}
-	if _, ok := value.Primitive(); ok {
-		if value.ExternalFormals() != 0 {
-			return errors.New("typecontract: primitive has external formals")
-		}
-		return nil
-	}
-	validationFormals := formals
-	if value.ExternalFormals() == 0 {
-		validationFormals = nil
-	} else if value.ExternalFormals() != formalCount {
-		return fmt.Errorf("typecontract: external formal count %d, want %d", value.ExternalFormals(), len(formals))
-	}
-	if err := typ.ValidateCanonicalFormals(value.Bytes(), len(validationFormals)); err != nil {
-		return fmt.Errorf("typecontract: invalid encoded type: %w", err)
-	}
-	return nil
-}
-
 func portableFormalCount(formals []*typ.TypeParam) (uint32, error) {
 	if uint64(len(formals)) > math.MaxUint32 {
 		return 0, errors.New("typecontract: formal scope exceeds portable count")
@@ -225,20 +198,6 @@ func Assignable(source, destination typ.Type) bool {
 		return false
 	}
 	return subtype.IsSubtype(source, destination)
-}
-
-// AssignableEncoded applies Assignable after decoding both neutral values
-// under the receiver-owned formal scope.
-func AssignableEncoded(ctx context.Context, source, destination schematype.Type, formals []*typ.TypeParam) (bool, error) {
-	left, err := Decode(ctx, source, formals)
-	if err != nil {
-		return false, err
-	}
-	right, err := Decode(ctx, destination, formals)
-	if err != nil {
-		return false, err
-	}
-	return Assignable(left, right), nil
 }
 
 // Admits checks callable admission against a decoded domain type.

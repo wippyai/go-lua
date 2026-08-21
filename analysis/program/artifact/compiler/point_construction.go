@@ -3,6 +3,7 @@ package compiler
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
 func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
@@ -149,7 +150,14 @@ func (compiler *compiler) installPoint(point causal.WTOPoint) bool {
 	if existing, exists := compiler.pointGeometry[point.PathID()]; exists {
 		return existing.Available()
 	}
-	entryBody, bodyOK := compiler.input.BodyAt(0)
+	rootBoundary, rootOK := compiler.input.Flow().FunctionBoundaries().Root()
+	rootBody, rootBodyOK := rootBoundary.Body()
+	rootBodyOrdinal := keyspace.TermOrdinal(rootBody)
+	if !rootOK || !rootBoundary.Available() || !rootBodyOK || keyspace.TermFamily(rootBody) != keyspace.FamilyBody || rootBodyOrdinal == 0 ||
+		uint64(rootBodyOrdinal) > uint64(compiler.input.BodyCount()) {
+		return false
+	}
+	entryBody, bodyOK := compiler.input.BodyAt(int(rootBodyOrdinal) - 1)
 	entrySite, entryOK := entryBody.EntrySite()
 	if !bodyOK || !entryOK || !entrySite.Available() {
 		return false
@@ -183,7 +191,7 @@ func (compiler *compiler) installPoint(point causal.WTOPoint) bool {
 		ordered = append(ordered, decision)
 	}
 	identity.SortContentIDs(ordered)
-	compiler.pointGeometry[point.PathID()] = pointDraft{id: point.PathID(), decisions: ordered, initial: initial}
+	compiler.pointGeometry[point.PathID()] = pointDraft{id: point.PathID(), decisionScope: point.PathID(), decisions: ordered, initial: initial}
 	return true
 }
 

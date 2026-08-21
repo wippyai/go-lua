@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/snapshot"
-	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
 )
 
@@ -17,13 +16,9 @@ type SelectSite struct {
 
 // LoadCaseSet reconstructs accepted CaseFacts from the composition snapshot.
 // Facts live only in the published column; sites name the keys to read.
-func LoadCaseSet(published *snapshot.Snapshot, sites []SelectSite) (channelselect.CaseSet, bool) {
+func LoadCaseSet(published *snapshot.Snapshot, column snapshot.Axis[identity.ContentID, channelselect.CaseFact], sites []SelectSite) (channelselect.CaseSet, bool) {
 	var set channelselect.CaseSet
-	if published == nil || !published.Published() {
-		return channelselect.CaseSet{}, false
-	}
-	column, projected := composite.ProjectAxis[identity.ContentID, channelselect.CaseFact](selectapply.OutputKey)
-	if !projected || !column.Available() {
+	if published == nil || !published.Published() || !column.Available() {
 		return channelselect.CaseSet{}, false
 	}
 	for _, site := range sites {
@@ -55,6 +50,7 @@ func LoadCaseSet(published *snapshot.Snapshot, sites []SelectSite) (channelselec
 // directory CollectChannelSelect reads. Facts stay in the snapshot.
 type ChannelSelectInput struct {
 	Published *snapshot.Snapshot
+	Column    snapshot.Axis[identity.ContentID, channelselect.CaseFact]
 	Sites     []SelectSite
 	Handlers  []selectapply.Handler
 }
@@ -70,7 +66,7 @@ func CollectChannelSelect(report *DiagnosticReport, input ChannelSelectInput, se
 	if input.Published == nil || !input.Published.Published() {
 		return false
 	}
-	set, loaded := LoadCaseSet(input.Published, input.Sites)
+	set, loaded := LoadCaseSet(input.Published, input.Column, input.Sites)
 	if !loaded {
 		return false
 	}
@@ -129,8 +125,8 @@ func appendChannelSelectFinding(report *DiagnosticReport, handler selectapply.Ha
 		return false
 	}
 	data := NewCaseTemplateData(subject, handled, missingList)
-	entry, declared := Declaration(DiagnosticCodeChannelSelectExhaustiveness)
-	if !declared || !data.ValidFor(entry) {
+	entry, declared := Declaration(report.declarations, DiagnosticCodeChannelSelectExhaustiveness)
+	if !declared || !data.ValidFor(entry, 0) {
 		return false
 	}
 	report.AppendFinding(NewFindingRow(findingID, handler.Site, DiagnosticCodeChannelSelectExhaustiveness, severity, location, data))

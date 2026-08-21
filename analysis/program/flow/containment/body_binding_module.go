@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/binding"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/flow/kind"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
@@ -25,7 +24,7 @@ func emitBodyBindingModule(
 	view authored.View,
 	bodies *body.Result,
 	bindingResult binding.Result,
-	moduleView imports.View,
+	moduleView authored.Imports,
 	entry keyspace.Term,
 	counts [keyspace.FamilyCount]uint32,
 	result *emission,
@@ -119,13 +118,13 @@ func emitCellHosts(
 	return nil
 }
 
-func emitImports(result *emission, view imports.View, counts [keyspace.FamilyCount]uint32) error {
+func emitImports(result *emission, view authored.Imports, counts [keyspace.FamilyCount]uint32) error {
 	if result == nil {
 		return errors.New("program/flow/containment: nil Import emission")
 	}
 	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyImport]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyImport, ordinal)
-		row, ok := view.Import(term)
+		row, ok := view.Get(term)
 		if !ok || row.Term != term || !validTerm(row.Call, counts) || keyspace.TermFamily(row.Call) != keyspace.FamilyCall {
 			return errors.New("program/flow/containment: malformed Module Import relation")
 		}

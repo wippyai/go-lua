@@ -7,17 +7,18 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 const coldCompileFixture = "local n = 1\nlocal function add(x) return x + n end\nreturn add(2)"
 
-func coldCompileFixtureProgram(tb testing.TB) (*program.Program, programartifact.GrammarIdentity) {
+func coldCompileFixtureProgram(tb testing.TB) (*program.Program, programartifact.ExecutionSchemaID) {
 	tb.Helper()
 	published, err := lower.Lower(lower.Source{Name: "artifact-compile-bench.lua", Text: []byte(coldCompileFixture)})
 	if err != nil {
 		tb.Fatal(err)
 	}
-	grammar, ok := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+	grammar, ok := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 	if !ok {
 		tb.Fatal("valid grammar identity was rejected")
 	}
@@ -27,7 +28,7 @@ func coldCompileFixtureProgram(tb testing.TB) (*program.Program, programartifact
 func BenchmarkColdCompilePhases(b *testing.B) {
 	source := lower.Source{Name: "artifact-compile-bench.lua", Text: []byte(coldCompileFixture)}
 	published, grammar := coldCompileFixtureProgram(b)
-	sealed, failure := CompileDetailed(published, grammar, IssuanceDirectory{})
+	sealed, failure := CompileDetailed(published, grammar, issuance.Directory{})
 	if failure.Available() || sealed == nil || !sealed.Available() {
 		b.Fatalf("artifact compile failed: %s", failure.Error())
 	}
@@ -43,7 +44,7 @@ func BenchmarkColdCompilePhases(b *testing.B) {
 	b.Run("compile", func(b *testing.B) {
 		b.ReportAllocs()
 		for index := 0; index < b.N; index++ {
-			artifact, compileFailure := CompileDetailed(published, grammar, IssuanceDirectory{})
+			artifact, compileFailure := CompileDetailed(published, grammar, issuance.Directory{})
 			if compileFailure.Available() || artifact == nil || !artifact.Available() {
 				b.Fatalf("artifact compile failed: %s", compileFailure.Error())
 			}

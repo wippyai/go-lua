@@ -248,36 +248,6 @@ func TestSparseClaimPresenceIsNotFlowMembership(t *testing.T) {
 	}
 }
 
-// TestAnnotationIndexGroupsByTargetInAuthoredOrder proves the query index
-// returns exactly the annotations naming a target, in authored ordinal order,
-// and distinguishes a valid target with none from a target it cannot admit.
-func TestAnnotationIndexGroupsByTargetInAuthoredOrder(t *testing.T) {
-	annotations := build(t, ledgerInput()).NewView(ledgerCounts()).Annotations()
-
-	count, ok := annotations.ForCount(primitive(1))
-	if !ok || count != 2 {
-		t.Fatalf("ForCount(primitive 1) = %d/%v, want 2", count, ok)
-	}
-	for index, want := range []uint32{1, 3} {
-		got, ok := annotations.ForAt(primitive(1), index)
-		if !ok || got != term(keyspace.FamilyAnnotation, want) {
-			t.Fatalf("ForAt(primitive 1, %d) = %d/%v, want annotation %d", index, got, ok, want)
-		}
-	}
-	if got, ok := annotations.ForAt(primitive(1), 2); ok || got != 0 {
-		t.Fatalf("ForAt past the group = %d/%v, want fail closed", got, ok)
-	}
-
-	// A valid target with no annotations is (0, true); an inadmissible target
-	// is (0, false). Collapsing the two would hide a missing relation.
-	if count, ok := annotations.ForCount(primitive(3)); !ok || count != 0 {
-		t.Fatalf("ForCount(unannotated target) = %d/%v, want 0/true", count, ok)
-	}
-	if count, ok := annotations.ForCount(term(keyspace.FamilyValues, 1)); ok || count != 0 {
-		t.Fatalf("ForCount(inadmissible target) = %d/%v, want 0/false", count, ok)
-	}
-}
-
 // TestRuntimeTypeTargetsComeFromThePublishedColumns proves this vertical
 // admits a runtime type target only on the strength of what the Types and
 // References owners publish, and never re-derives it.

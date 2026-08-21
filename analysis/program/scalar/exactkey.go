@@ -160,29 +160,3 @@ func CompareCanonical(left, right Ref) int {
 	return 0
 }
 
-// EqualCanonical reports whether two canonical exact-key references are equal.
-func EqualCanonical(left, right Ref) bool {
-	if left.Kind != right.Kind {
-		return false
-	}
-	switch left.Kind {
-	case keyspace.LiteralBool:
-		return left.Bool == right.Bool
-	case keyspace.LiteralInteger:
-		return left.Integer == right.Integer
-	case keyspace.LiteralFloat:
-		return left.FloatBits == right.FloatBits
-	case keyspace.LiteralString:
-		if left.stringLen() != right.stringLen() {
-			return false
-		}
-		for index := 0; index < left.stringLen(); index++ {
-			if left.stringByte(index) != right.stringByte(index) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}

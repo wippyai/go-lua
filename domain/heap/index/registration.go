@@ -42,7 +42,13 @@ func RawGetEntry[P rawGetPrincipals, A rawGetAuthorities]() rule.Spec {
 		Writes: "value",
 		Owner:  "heap",
 		Issues: []rule.Issuance{
-			{Occurrence: "occurrence/index-read", Requirement: "requirement/unrestricted", Form: "issuance/local", Input: "input/entry", Stage: "stage/local"},
+			// An indexed read may consume a storage-read result issued at the
+			// ordinary Local cut of the same point.  Local is immutable for one
+			// execution cut, so place raw-get in its occurrence-specific
+			// computation successor and read the predecessor finish; this gives
+			// the receiver a complete local Value before raw-get writes the
+			// indexed result that Call dispatch consumes.
+			{Occurrence: "occurrence/index-read", Requirement: "requirement/unrestricted", Form: "issuance/computation", Input: "input/finish", Stage: "stage/local"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/heap/index-get-raw",

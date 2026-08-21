@@ -110,10 +110,10 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, ok := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !ok || !grammarOK || !issuanceOK {
+	receipt, ok := composite.Build()
+	grammar := receipt.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(receipt)
+	if !ok || !grammar.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	artifact, failure := artifactcompiler.CompileDetailed(programValue, grammar, issuance)
@@ -129,7 +129,7 @@ func bootstrapFixture(t testing.TB, name string) *bootstrapFixtureState {
 		t.Fatal("artifact mount")
 	}
 	heaps, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(receipt)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

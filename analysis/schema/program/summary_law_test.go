@@ -4,6 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/program/calltarget"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programfamily "github.com/wippyai/go-lua/analysis/schema/program/family"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
+	"github.com/wippyai/go-lua/analysis/schema/program/heapindex"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -33,7 +38,7 @@ func summaryLawRows(t *testing.T) ([]ExactScalarSummary, []ArithmeticSummary, []
 func sealSummaryLaw(t *testing.T) (snapshot.Frozen, identity.ContentID, []ExactScalarSummary, []ArithmeticSummary, []UnarySummary) {
 	t.Helper()
 	runtimeSchema := summaryLawID(t, "runtime-schema")
-	catalog, derived := CatalogID(runtimeSchema)
+	catalog, derived := programcatalog.CatalogID(runtimeSchema)
 	if !derived {
 		t.Fatal("cold catalog")
 	}
@@ -46,12 +51,12 @@ func sealSummaryLaw(t *testing.T) (snapshot.Frozen, identity.ContentID, []ExactS
 	}
 	builder := snapshot.NewFrozen(catalog, identity.StoreID(11))
 	for _, sealed := range []bool{
-		CallTargetFamily().Put(&builder, nil, catalog),
-		HeapAllocationFamily().Put(&builder, nil, catalog),
-		HeapFieldFamily().Put(&builder, nil, catalog),
+		calltarget.Family().Put(&builder, nil, catalog),
+		heapallocation.AllocationFamily().Put(&builder, nil, catalog),
+		heapallocation.FieldFamily().Put(&builder, nil, catalog),
 		ValuesFamily().Put(&builder, nil, catalog),
 		ValuesMemberFamily().Put(&builder, nil, catalog),
-		HeapIndexFamily().Put(&builder, nil, catalog),
+		heapindex.Family().Put(&builder, nil, catalog),
 	} {
 		if !sealed {
 			t.Fatal("empty preceding cold family")
@@ -111,7 +116,7 @@ func TestSummaryColumnsReadBackThroughProgram(t *testing.T) {
 	if _, published := ExactScalarSummaryFamily().Count(&frozen, foreign); published {
 		t.Fatal("foreign catalog reported the summary family")
 	}
-	if _, status := snapshot.ReadFrozen(&frozen, ExactScalarSummaryFamily().Axis(foreign), Ordinal(0)); status != snapshot.ReadInvalid {
+	if _, status := snapshot.ReadFrozen(&frozen, ExactScalarSummaryFamily().Axis(foreign), programfamily.Ordinal(0)); status != snapshot.ReadInvalid {
 		t.Fatalf("foreign exact axis reported %v", status)
 	}
 }

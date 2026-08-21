@@ -9,51 +9,121 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// environmentRouteState records whether a route has one usable representative
+// or more than one admitted row. The zero value is deliberately invalid: a
+// missing map entry and a malformed entry cannot be mistaken for a route.
+type environmentRouteState uint8
+
+const (
+	environmentRouteInvalid environmentRouteState = iota
+	environmentRouteUnique
+	environmentRouteAmbiguous
+)
+
+// environmentRouteIndex is the one transient route directory used while
+// issuing and staging environment rows. An ambiguous route retains its first
+// representative only for structural validation; lookup never returns it as
+// executable.
+type environmentRouteIndex struct {
+	state          environmentRouteState
+	representative int
+}
+
+func uniqueEnvironmentRoute(ordinal int) environmentRouteIndex {
+	return environmentRouteIndex{state: environmentRouteUnique, representative: ordinal}
+}
+
+func (index environmentRouteIndex) ambiguous() environmentRouteIndex {
+	index.state = environmentRouteAmbiguous
+	return index
+}
+
+func (index environmentRouteIndex) representativeAt(rowCount int) (int, bool) {
+	if (index.state != environmentRouteUnique && index.state != environmentRouteAmbiguous) ||
+		index.representative < 0 || index.representative >= rowCount {
+		return 0, false
+	}
+	return index.representative, true
+}
+
+func (index environmentRouteIndex) uniqueAt(rowCount int) (int, bool) {
+	if index.state != environmentRouteUnique {
+		return 0, false
+	}
+	return index.representativeAt(rowCount)
+}
+
+// recordEnvironmentRoute adds one row to the transient route directory. It
+// validates an existing representative before marking a repeated route
+// ambiguous, so malformed compiler state fails closed instead of becoming an
+// accidental executable predecessor.
+func recordEnvironmentRoute(index map[identity.ContentID]environmentRouteIndex, route identity.ContentID, ordinal, rowCount int) bool {
+	if index == nil || !route.Available() || ordinal < 0 || ordinal >= rowCount {
+		return false
+	}
+	prior, exists := index[route]
+	if !exists {
+		index[route] = uniqueEnvironmentRoute(ordinal)
+		return true
+	}
+	_, valid := prior.representativeAt(rowCount)
+	if !valid {
+		index[route] = environmentRouteIndex{}
+		return false
+	}
+	index[route] = prior.ambiguous()
+	return true
+}
+
 // admitPointDecision joins an exact guarded final-route decision into the
 // already parent-issued source point scope. pointDraft Site attachments describe
 // ambient continuation guards, while the route proof is the sole authority
 // for its edge-local guard. Keeping both sources in one canonical set avoids
 // reconstructing scope from Terms at Link time.
 func (compiler *compiler) admitPointDecision(point, decision identity.ContentID) bool {
-	geometry, exists := compiler.pointGeometry[point]
-	if !exists || !geometry.Available() || !decision.Available() {
+	if compiler == nil || !decision.Available() {
 		return false
 	}
-	if compiler.pointDecisionAdds == nil {
-		compiler.pointDecisionAdds = make(map[identity.ContentID][]identity.ContentID)
+	geometry, exists := compiler.pointGeometry[point]
+	if !exists || !geometry.Available() {
+		return false
 	}
-	compiler.pointDecisionAdds[point] = append(compiler.pointDecisionAdds[point], decision)
+	ownerID := geometry.decisionScope
+	owner, ownerExists := compiler.pointGeometry[ownerID]
+	if !ownerExists || !owner.Available() || owner.id != ownerID || owner.decisionScope != ownerID {
+		return false
+	}
+	owner.decisions = append(owner.decisions, decision)
+	compiler.pointGeometry[ownerID] = owner
 	return true
 }
 
-// canonicalizePointDecisionsFailure batches route-local decision admission by
-// owner point. The old path inserted each decision into a sorted slice, moving
-// O(D) tail elements for every route. One radix pass and in-place duplicate
-// removal gives the same canonical owner-local order in O(D) work.
+// canonicalizePointDecisionsFailure validates and canonicalizes every point's
+// owner-local decision vector after route admission. Admission appends directly
+// to the owning point draft; this pass is the only point where ordering and
+// duplicate removal become canonical.
 func (compiler *compiler) canonicalizePointDecisionsFailure() CompileFailure {
-	for point, additions := range compiler.pointDecisionAdds {
-		geometry, known := compiler.pointGeometry[point]
-		if !known || !geometry.Available() {
+	if compiler == nil {
+		return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
+	}
+	for point, geometry := range compiler.pointGeometry {
+		if !geometry.Available() || geometry.id != point {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
 		}
-		if len(additions) == 0 {
-			continue
-		}
-		decisions := make([]identity.ContentID, 0, len(geometry.decisions)+len(additions))
-		decisions = append(decisions, geometry.decisions...)
-		decisions = append(decisions, additions...)
-		identity.SortContentIDs(decisions)
-		unique := 0
-		for _, decision := range decisions {
+		for _, decision := range geometry.decisions {
 			if !decision.Available() {
 				return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
 			}
-			if unique == 0 || decisions[unique-1] != decision {
-				decisions[unique] = decision
+		}
+		identity.SortContentIDs(geometry.decisions)
+		unique := 0
+		for _, decision := range geometry.decisions {
+			if unique == 0 || geometry.decisions[unique-1] != decision {
+				geometry.decisions[unique] = decision
 				unique++
 			}
 		}
-		geometry.decisions = decisions[:unique]
+		geometry.decisions = geometry.decisions[:unique]
 		compiler.pointGeometry[point] = geometry
 	}
 	return CompileFailure{}
@@ -185,14 +255,20 @@ func (compiler *compiler) admitEnvironmentFailure(route causal.FinalRoute, rowIn
 	if !row.Available() {
 		return compileFailure(CompileStageRoutes, CompileRowEnvironment, rowIndex, -1, CompileReasonEnvironmentUnavailable)
 	}
+	rowOrdinal := len(compiler.environment)
 	compiler.environment = append(compiler.environment, row)
-	if prior, exists := compiler.environmentByRoute[row.route]; exists {
-		if prior.id != occurrenceID {
+	if routeIndex, exists := compiler.environmentByRoute[row.route]; exists {
+		priorOrdinal, priorOK := routeIndex.representativeAt(len(compiler.environment))
+		if !priorOK || priorOrdinal >= rowOrdinal {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
 		}
-		compiler.environmentRouteDuplicates[row.route] = struct{}{}
+		priorRow := compiler.environment[priorOrdinal]
+		if !priorRow.Available() || priorRow.route != row.route || priorRow.id != occurrenceID {
+			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteIdentity)
+		}
+		compiler.environmentByRoute[row.route] = routeIndex.ambiguous()
 	} else {
-		compiler.environmentByRoute[row.route] = row
+		compiler.environmentByRoute[row.route] = uniqueEnvironmentRoute(rowOrdinal)
 	}
 	return CompileFailure{}
 }

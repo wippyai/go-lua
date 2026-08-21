@@ -7,9 +7,30 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
+	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
+
+func TestCallConstructionRejectsMissingCompileKey(t *testing.T) {
+	compiled, err := lower.Lower(lower.Source{Name: "artifact-missing-compile-key.lua", Text: []byte(`
+local function identity(value)
+  return value
+end
+return identity(true)
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := compiler{input: compiled, pointIDsBySite: make(map[identity.ContentID][]identity.ContentID)}
+	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
+		t.Fatalf("index point attachments: %+v", failure)
+	}
+	if _, ok := transaction.callConstruction(0); ok {
+		t.Fatal("call construction compensated for a missing canonical CompileKey")
+	}
+}
 
 func TestProgramArtifactCopyCallsRecordsExactSpan(t *testing.T) {
 	compiled, err := lower.Lower(lower.Source{Name: "artifact-call-span.lua", Text: []byte(`
@@ -22,7 +43,7 @@ return identity(true)
 		t.Fatal(err)
 	}
 	transaction := compiler{
-		input: compiled, occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
+		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
 		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
@@ -96,6 +117,59 @@ return identity(true)
 	}
 }
 
+func TestBoundedTailCallResultUsesDistinctValueBeforeStorageCell(t *testing.T) {
+	compiled, err := lower.Lower(lower.Source{Name: "artifact-call-result-storage.lua", Text: []byte(`
+local result = require("module")
+return result
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := compiler{
+		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
+		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
+	}
+	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
+		t.Fatalf("index point attachments: %+v", failure)
+	}
+	if failure := transaction.copyCalls(); failure.Available() {
+		t.Fatalf("copy calls: %+v", failure)
+	}
+	if failure := transaction.copyValuesFailure(); failure.Available() {
+		t.Fatalf("copy values: %+v", failure)
+	}
+	if failure := transaction.copyCallRowsFailure(); failure.Available() {
+		t.Fatalf("copy call rows: %+v", failure)
+	}
+	var tail programschema.CallResultSlot
+	for _, slot := range transaction.callResultSlots {
+		if slot.SourceKind() == programschema.CallResultSlotSourceValuesTail && slot.ConsumerKind() == programschema.CallResultSlotConsumerCell {
+			tail = slot
+			break
+		}
+	}
+	valueID, valueOK := tail.ValueID()
+	cellID := tail.ConsumerID()
+	if !tail.Available() || !valueOK || valueID == cellID {
+		t.Fatalf("tail slot did not separate producer Value %x from consumer Cell %x", valueID[:4], cellID[:4])
+	}
+	foundTransfer := false
+	for index := 0; index < compiled.Flow().Authored().Storage().Binds().Count(); index++ {
+		bind, bindOK := transaction.storageBindAt(index)
+		if !bindOK {
+			continue
+		}
+		for _, transfer := range bind.transfers {
+			if transfer.value == valueID && transfer.cell == cellID {
+				foundTransfer = true
+			}
+		}
+	}
+	if !foundTransfer {
+		t.Fatal("bounded tail slot published no explicit Value-to-Cell storage transfer")
+	}
+}
+
 func testCallIdentityAt(input *program.Program, index int) (identity.ContentID, bool) {
 	if input == nil || index < 0 {
 		return identity.ContentID{}, false
@@ -130,28 +204,27 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	entry, finish, callID := valuesLawID(31), valuesLawID(32), valuesLawID(33)
 	transaction := compiler{
 		pointGeometry: map[identity.ContentID]pointDraft{
-			entry:  {id: entry},
-			finish: {id: finish},
+			entry:  {id: entry, decisionScope: entry},
+			finish: {id: finish, decisionScope: finish},
 		},
 		occurrenceSpans: map[occurrenceLookup]occurrenceSpanGeometry{
 			{kind: programschema.OccurrenceCall, id: callID}:           {entry: []identity.ContentID{entry}, finish: []identity.ContentID{finish}},
 			{kind: programschema.OccurrenceCallActivation, id: callID}: {finish: []identity.ContentID{finish}},
 		},
-		localStages: make(map[identity.ContentID]identity.ContentID),
-		callStages:  make(map[identity.ContentID]callStageSet),
+		stages: stageplan.New(artifactFormat()),
 		events: []wtoEventDraft{
 			{kind: wtoEventPoint, point: entry},
 			{kind: wtoEventPoint, point: finish},
 		},
-		issuance: transportDirectory(t, []IssuancePlacement{
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
-			{Occurrence: programschema.OccurrenceValueSource, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "value-source", Writes: "value", Transport: true},
-			{Occurrence: programschema.OccurrenceAllocation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "heap-ingress", Writes: "heap", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
-			{Occurrence: programschema.OccurrenceCall, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
-			{Occurrence: programschema.OccurrenceCallActivation, Requirement: IssuanceRequirementUnrestricted, Form: IssuanceFormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallSummary, Key: "call-activation", Writes: "call"},
+		issuance: transportDirectory(t, []issuance.Placement{
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallDispatch, Key: "call-dispatch", Writes: "call", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "pack-source", Writes: "pack", Transport: true},
+			{Occurrence: programschema.OccurrenceValueSource, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "value-source", Writes: "value", Transport: true},
+			{Occurrence: programschema.OccurrenceAllocation, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormBase, Input: programschema.RuleInputNone, Stage: programschema.RuleStageBase, Key: "heap-ingress", Writes: "heap", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-selected", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-opaque", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCall, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallEffect, Key: "effect-body", Writes: "effect", Transport: true},
+			{Occurrence: programschema.OccurrenceCallActivation, Requirement: issuance.RequirementUnrestricted, Form: issuance.FormCallStage, Input: programschema.RuleInputFinish, Stage: programschema.RuleStageCallSummary, Key: "call-activation", Writes: "call"},
 		}...),
 	}
 	if !transaction.appendOccurrence(programschema.OccurrenceCall, callID, identity.ContentID{}, []identity.ContentID{entry, finish}, nil, 0) ||
@@ -192,15 +265,35 @@ func TestProgramArtifactCallStagesUseFinishAndExactDispatchTransport(t *testing.
 	if failure := transaction.installLocalStagesFailure(); failure.Available() {
 		t.Fatalf("install call stages: %+v", failure)
 	}
-	wantDispatchWrites := []schema.Key{"call-dispatch", "heap-ingress", "pack-source", "value-source"}
+	if fault := transaction.localTransfer.Seal(); fault.Failed() {
+		t.Fatalf("seal local transfers: %#v", fault)
+	}
+	transfers, transferWrites, transfersOK := transaction.localTransfer.TakeCanonicalPlanes()
+	if !transfersOK {
+		t.Fatal("take local transfer planes")
+	}
+	wantDispatchWrites := []schema.Key{"effect-body", "heap-ingress", "pack-source", "value-source"}
 	found := false
-	for _, transfer := range transaction.localTransfers {
-		if transfer.from != finish || transfer.to != dispatch.PointID() {
+	for _, transfer := range transfers {
+		from, to := transfer.From(), transfer.To()
+		if !from.Available() || !to.Available() || from != finish || to != dispatch.PointID() {
 			continue
 		}
 		found = true
-		if transfer.full || !slices.Equal(transfer.writes, wantDispatchWrites) || slices.Contains(transfer.writes, "effect-selected") {
-			t.Fatalf("Base -> Dispatch leaked full environment/Effect or wrong factors: full=%v writes=%v", transfer.full, transfer.writes)
+		offset, count, spanOK := transfer.WriteSpan()
+		writes := make([]schema.Key, 0, count)
+		if spanOK && uint64(offset)+uint64(count) <= uint64(len(transferWrites)) {
+			for index := uint32(0); index < count; index++ {
+				write, writeOK := transferWrites[offset+index].Key()
+				if !writeOK {
+					spanOK = false
+					break
+				}
+				writes = append(writes, write)
+			}
+		}
+		if !spanOK || transfer.Full() || !slices.Equal(writes, wantDispatchWrites) || slices.Contains(writes, "effect-selected") {
+			t.Fatalf("Base -> Dispatch leaked full environment/Effect or wrong factors: full=%v writes=%v", transfer.Full(), writes)
 		}
 	}
 	if !found {

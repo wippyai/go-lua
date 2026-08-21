@@ -41,9 +41,9 @@ type corpusDiagnosticManifest struct {
 }
 
 // corpusDiagnosticManifestCheck deliberately models every present check
-// contract, even though only diagnostics are executable today. Keeping the
-// other contracts in this immutable test-support catalog prevents an
-// unavailable native/placement surface from being mistaken for a clean
+// contract. Diagnostics, native publication, and Placement summary checks are
+// consumed through their domain-owned public facades. Keeping every modeled
+// contract visible prevents an absent consumer from being mistaken for a clean
 // fixture.
 type corpusDiagnosticManifestCheck struct {
 	Errors          *int                                    `json:"errors,omitempty"`
@@ -159,18 +159,15 @@ type corpusPlacementContract struct {
 	MinOwnedHeapDepth       int            `json:"min_owned_heap_depth,omitempty"`
 	MinSharedDepth          int            `json:"min_shared_depth,omitempty"`
 	MinOwnerIdentity        int            `json:"min_owner_identity,omitempty"`
-	MinSealBeforeShare      int            `json:"min_seal_before_share,omitempty"`
 	MinAllocationSites      int            `json:"min_allocation_sites,omitempty"`
-	MinDecomposable         int            `json:"min_decomposable,omitempty"`
 	MinFrameLocal           int            `json:"min_frame_local,omitempty"`
 	MaxNoFact               *int           `json:"max_no_fact,omitempty"`
 	MaxUnknown              *int           `json:"max_unknown,omitempty"`
-	MaxDecomposable         *int           `json:"max_decomposable,omitempty"`
 	MaxFrameLocal           *int           `json:"max_frame_local,omitempty"`
 	MinDiesBeforeSuspension int            `json:"min_dies_before_suspension,omitempty"`
 	MaxDiesBeforeSuspension *int           `json:"max_dies_before_suspension,omitempty"`
-	MinHoistableLoads       int            `json:"min_hoistable_loads,omitempty"`
-	MaxHoistableLoads       *int           `json:"max_hoistable_loads,omitempty"`
+	MinDeepFrozen           int            `json:"min_deep_frozen,omitempty"`
+	MaxDeepFrozen           *int           `json:"max_deep_frozen,omitempty"`
 	MinStackKind            map[string]int `json:"min_stack_kind,omitempty"`
 	MinOwnedHeapKind        map[string]int `json:"min_owned_heap_kind,omitempty"`
 	MinSharedHeapKind       map[string]int `json:"min_shared_heap_kind,omitempty"`
@@ -451,7 +448,7 @@ func TestFrozenCorpusFullManifestContractInventory(t *testing.T) {
 		stdlibManifests, renderOptionManifests            int
 		nativeManifests, nativeFacts, nativeInvalidations int
 		placementManifests                                int
-	}{335, 600, 95, 107, 1, 8, 177, 764, 30, 51}
+	}{335, 600, 95, 107, 1, 8, 177, 764, 30, 52}
 	if got.declaredFileManifests != want.declaredFileManifests || got.declaredFiles != want.declaredFiles ||
 		got.packageManifests != want.packageManifests || got.packageDeclarations != want.packageDeclarations ||
 		got.stdlibManifests != want.stdlibManifests || got.renderOptionManifests != want.renderOptionManifests ||
@@ -506,6 +503,10 @@ func TestFrozenCorpusManifestCatalogCanonicality(t *testing.T) {
 }
 
 func TestCorpusDiagnosticManifestSchemaRejectsUnknownOrDuplicateContracts(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
 	tests := []struct {
 		name string
 		json string
@@ -515,6 +516,7 @@ func TestCorpusDiagnosticManifestSchemaRejectsUnknownOrDuplicateContracts(t *tes
 		{"unknown nested check", `{"check":{"mystery":true}}`},
 		{"unknown native fact", `{"check":{"native":{"facts":[{"name":"x","min":1,"mystery":true}]}}}`},
 		{"unknown placement", `{"check":{"placement":{"mystery":1}}}`},
+		{"negative placement deep-frozen minimum", `{"check":{"placement":{"min_deep_frozen":-1}}}`},
 		{"duplicate JSON key", `{"stdlib":true,"stdlib":false}`},
 		{"duplicate file", `{"files":["main.lua","main.lua"]}`},
 		{"duplicate package", `{"packages":["channel","channel"]}`},
@@ -545,7 +547,7 @@ func TestCorpusDiagnosticManifestSchemaRejectsUnknownOrDuplicateContracts(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			manifest, err := decodeCorpusDiagnosticManifest([]byte(test.json))
 			if err == nil {
-				err = validateCorpusDiagnosticManifest(manifest)
+				err = validateCorpusDiagnosticManifest(compilation, manifest)
 			}
 			if err == nil {
 				t.Fatalf("malformed manifest was admitted: %s", test.json)
@@ -555,6 +557,10 @@ func TestCorpusDiagnosticManifestSchemaRejectsUnknownOrDuplicateContracts(t *tes
 }
 
 func TestCorpusDiagnosticManifestSchemaPreservesHistoricNativeGrammar(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("sealed composition unavailable")
+	}
 	manifest, err := decodeCorpusDiagnosticManifest([]byte(`{
 		"files":["module.lua","main.lua"],
 		"packages":["channel"],
@@ -572,7 +578,7 @@ func TestCorpusDiagnosticManifestSchemaPreservesHistoricNativeGrammar(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateCorpusDiagnosticManifest(manifest); err != nil {
+	if err := validateCorpusDiagnosticManifest(compilation, manifest); err != nil {
 		t.Fatal(err)
 	}
 	native := manifest.Check.Native
@@ -604,7 +610,12 @@ func frozenCorpusDiagnosticExpectationInventory(t *testing.T) (corpusDiagnosticE
 func frozenCorpusDiagnosticExpectationCatalog(t *testing.T) (*corpusDiagnosticExpectationCatalog, error) {
 	t.Helper()
 	corpusDiagnosticCatalogOnce.Do(func() {
-		corpusDiagnosticCatalogValue, corpusDiagnosticCatalogErr = readCorpusDiagnosticExpectationCatalog(corpusDiagnosticFixtureRoot(t))
+		compilation, compilationOK := composite.Build()
+		if !compilationOK {
+			corpusDiagnosticCatalogErr = fmt.Errorf("sealed composition unavailable")
+			return
+		}
+		corpusDiagnosticCatalogValue, corpusDiagnosticCatalogErr = readCorpusDiagnosticExpectationCatalog(corpusDiagnosticFixtureRoot(t), compilation)
 	})
 	return corpusDiagnosticCatalogValue, corpusDiagnosticCatalogErr
 }
@@ -618,7 +629,7 @@ func corpusDiagnosticFixtureRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "testdata", "fixtures"))
 }
 
-func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpectationCatalog, error) {
+func readCorpusDiagnosticExpectationCatalog(root string, compilation composite.Compilation) (*corpusDiagnosticExpectationCatalog, error) {
 	catalog := &corpusDiagnosticExpectationCatalog{
 		byProject:            make(map[string]*corpusDiagnosticProjectExpectations),
 		inlineByLocation:     make(map[corpusDiagnosticLocationKey][]corpusInlineDiagnosticExpectationRow),
@@ -673,7 +684,7 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 			}
 			project.manifest = manifest
 			project.declaredFiles = append([]string(nil), manifest.Files...)
-			if err := validateCorpusDiagnosticManifest(manifest); err != nil {
+			if err := validateCorpusDiagnosticManifest(compilation, manifest); err != nil {
 				return fmt.Errorf("validate %s: %w", path, err)
 			}
 			if manifest.Files != nil {
@@ -726,7 +737,7 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 				catalog.structuredByCode[row.Code] = append(catalog.structuredByCode[row.Code], ref)
 				key := corpusStructuredDiagnosticLocationKey{project: project.name, code: row.Code, file: row.File, line: row.Line, severity: row.Severity}
 				catalog.structuredByLocation[key] = append(catalog.structuredByLocation[key], ref)
-				vocabulary, vocabularyOK := composite.StructureVocabulary()
+				vocabulary, vocabularyOK := composite.StructureVocabulary(compilation)
 				ordinal, ordinalOK := uint16(0), false
 				if vocabularyOK {
 					ordinal, ordinalOK = vocabulary.Spelling(structure.CategoryDiagnosticSeverity, row.Severity)
@@ -783,7 +794,7 @@ func readCorpusDiagnosticExpectationCatalog(root string) (*corpusDiagnosticExpec
 			project.inline = append(project.inline, row)
 			key := corpusDiagnosticLocationKey{project: project.name, file: row.File, line: row.Line, severity: row.Severity}
 			catalog.inlineByLocation[key] = append(catalog.inlineByLocation[key], row)
-			inlineVocabulary, inlineVocabularyOK := composite.StructureVocabulary()
+			inlineVocabulary, inlineVocabularyOK := composite.StructureVocabulary(compilation)
 			inlineOrdinal, inlineOrdinalOK := uint16(0), false
 			if inlineVocabularyOK {
 				inlineOrdinal, inlineOrdinalOK = inlineVocabulary.Spelling(structure.CategoryDiagnosticSeverity, match[1])
@@ -930,7 +941,7 @@ func validateCorpusManifestJSONValue(decoder *json.Decoder, token json.Token) er
 	}
 }
 
-func validateCorpusDiagnosticManifest(manifest *corpusDiagnosticManifest) error {
+func validateCorpusDiagnosticManifest(compilation composite.Compilation, manifest *corpusDiagnosticManifest) error {
 	if manifest == nil {
 		return fmt.Errorf("nil manifest")
 	}
@@ -955,7 +966,7 @@ func validateCorpusDiagnosticManifest(manifest *corpusDiagnosticManifest) error 
 			return fmt.Errorf("diagnostic_rules duplicates code %q", rule.Code)
 		}
 		seenRules[rule.Code] = struct{}{}
-		if rule.Severity != "" && corpusDiagnosticSeverity(rule.Severity) == anadiag.FindingSeverityInvalid {
+		if rule.Severity != "" && corpusDiagnosticSeverity(compilation, rule.Severity) == anadiag.FindingSeverityInvalid {
 			return fmt.Errorf("diagnostic_rules[%d] has invalid severity %q", index, rule.Severity)
 		}
 	}
@@ -963,7 +974,7 @@ func validateCorpusDiagnosticManifest(manifest *corpusDiagnosticManifest) error 
 		if strings.TrimSpace(row.File) == "" || row.Line <= 0 {
 			return fmt.Errorf("diagnostics[%d] must declare file and positive line", index)
 		}
-		if strings.TrimSpace(row.Code) == "" || corpusDiagnosticSeverity(row.Severity) == anadiag.FindingSeverityInvalid {
+		if strings.TrimSpace(row.Code) == "" || corpusDiagnosticSeverity(compilation, row.Severity) == anadiag.FindingSeverityInvalid {
 			return fmt.Errorf("diagnostics[%d] must declare code and valid severity", index)
 		}
 		if row.Column < 0 || row.MinEvidence < 0 || row.MinLabels < 0 {
@@ -1303,13 +1314,13 @@ func validateCorpusPlacementContract(contract *corpusPlacementContract) error {
 	if contract == nil {
 		return nil
 	}
-	minimums := []int{contract.MinStack, contract.MinOwnedHeap, contract.MinSharedHeap, contract.MinStackDepth, contract.MinOwnedHeapDepth, contract.MinSharedDepth, contract.MinOwnerIdentity, contract.MinSealBeforeShare, contract.MinAllocationSites, contract.MinDecomposable, contract.MinFrameLocal, contract.MinDiesBeforeSuspension, contract.MinHoistableLoads}
+	minimums := []int{contract.MinStack, contract.MinOwnedHeap, contract.MinSharedHeap, contract.MinStackDepth, contract.MinOwnedHeapDepth, contract.MinSharedDepth, contract.MinOwnerIdentity, contract.MinAllocationSites, contract.MinFrameLocal, contract.MinDiesBeforeSuspension, contract.MinDeepFrozen}
 	for _, value := range minimums {
 		if value < 0 {
 			return fmt.Errorf("placement minimum is negative")
 		}
 	}
-	maximums := []*int{contract.MaxStack, contract.MaxOwnedHeap, contract.MaxSharedHeap, contract.MaxNoFact, contract.MaxUnknown, contract.MaxDecomposable, contract.MaxFrameLocal, contract.MaxDiesBeforeSuspension, contract.MaxHoistableLoads}
+	maximums := []*int{contract.MaxStack, contract.MaxOwnedHeap, contract.MaxSharedHeap, contract.MaxNoFact, contract.MaxUnknown, contract.MaxFrameLocal, contract.MaxDiesBeforeSuspension, contract.MaxDeepFrozen}
 	for _, value := range maximums {
 		if value != nil && *value < 0 {
 			return fmt.Errorf("placement maximum is negative")

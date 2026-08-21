@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/compiler"
 	"github.com/wippyai/go-lua/analysis/program/target/declaration"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/domain/composite"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
@@ -99,16 +100,16 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("program schema receipt")
 	}
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 	heapMount, heapMountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	valueMount, valueMountOK := valuedomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	packMount, packMountOK := packdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
@@ -116,7 +117,7 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 		t.Fatalf("mounted semantic-source artifact shard=%t module=%t program=%t failure=%v artifact=%t heap=%t value=%t pack=%t", shardOK, moduleOK, programIDOK, failure, artifact != nil, heapMountOK, valueMountOK, packMountOK)
 	}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{heapMount})
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
@@ -130,7 +131,7 @@ func rawSemanticSourceFrontierFixture(t testing.TB, count int) rawSemanticSource
 
 	frontier := rawSemanticSourceFrontier{sources: make([]packdomain.SemanticSource, 0, count), coordinates: make([]valuedomain.Coordinate, 0, count), facts: make([]valuedomain.Value, 0, count)}
 	coldProgram := snapshottest.MustMount(t, artifact, module)
-	valuesCatalog, catalogOK := programschema.CatalogID(coldProgram.SchemaID)
+	valuesCatalog, catalogOK := programcatalog.CatalogID(coldProgram.SchemaID)
 	valuesCount, valuesPublished := programschema.ValuesFamily().Count(&coldProgram.Frozen, valuesCatalog)
 	if !catalogOK || !valuesPublished {
 		t.Fatal("artifact Values family unavailable")

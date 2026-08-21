@@ -61,7 +61,7 @@ func TestStaticCheckTypeOfScopeAndStaticOperandIntegration(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate seeded static Read: %v", err)
@@ -102,7 +102,7 @@ func TestStaticCheckAnnotationScopeOwnerAndStaticValuesIntegration(t *testing.T)
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -138,7 +138,7 @@ func TestStaticCheckTypeFunctionSourceOccurrenceIntegration(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("SourceOccurrence Validate: %v", err)
@@ -194,7 +194,7 @@ func TestStaticCheckSeededFunctionLensBaseReadIntegration(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Function lens Validate: %v", err)
@@ -238,7 +238,7 @@ func TestStaticCheckRejectsInvisibleStaticLensBaseRead(t *testing.T) {
 	if !fixture.forest.Static(baseRead) || !fixture.forest.Static(outerRead) {
 		t.Fatal("lens reads were not static test occurrences")
 	}
-	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.flowView.ModuleID(), fixture.entry)
 	if err == nil {
 		t.Fatal("Validate accepted an invisible lens base read")
 	}
@@ -296,7 +296,7 @@ func TestStaticCheckSeededFunctionCaptureIntegration(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Function capture Validate: %v", err)
@@ -347,7 +347,7 @@ func TestStaticCheckSeededAnnotationReadClosureIntegration(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err != nil {
 		t.Fatalf("seeded Annotation Read Validate: %v", err)
@@ -395,7 +395,7 @@ func TestStaticCheckRejectsConflictingSharedAnnotationSeed(t *testing.T) {
 	err := Validate(
 		fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies,
 		fixture.bindings, fixture.forest, fixture.proof, fixture.access,
-		fixture.moduleView.ContentID(), fixture.entry,
+		fixture.flowView.ModuleID(), fixture.entry,
 	)
 	if err == nil {
 		t.Fatal("Validate accepted conflicting shared annotation seeds")
@@ -433,7 +433,7 @@ func TestStaticCheckObservationSeedChainIsRowOrderIndependent(t *testing.T) {
 				Operators: staticoperators.Input{TypeOf: rows},
 			},
 		})
-		err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+		err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.flowView.ModuleID(), fixture.entry)
 		return fixture, err
 	}
 	first, err := build(t, []staticoperators.TypeOf{{Scope: cell, Operand: call1}, {Scope: call1, Operand: call2}})
@@ -472,7 +472,7 @@ func TestStaticCheckRejectsCyclicObservationSeedDescriptors(t *testing.T) {
 			Operators: staticoperators.Input{TypeOf: []staticoperators.TypeOf{{Scope: call2, Operand: call1}, {Scope: call1, Operand: call2}}},
 		},
 	})
-	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.flowView.ModuleID(), fixture.entry)
 	if err == nil {
 		t.Fatal("Validate accepted cyclic seed descriptors")
 	}
@@ -504,7 +504,7 @@ func TestStaticCheckRejectsSamePointConflictingDescriptors(t *testing.T) {
 			Operands:     staticoperands.Input{Annotation: []staticoperands.Annotation{{Scope: cell1, Target: primitive, Name: 1, Values: values2}, {Scope: cell2, Target: primitive, Name: 2, Values: values2}}},
 		},
 	})
-	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.moduleView.ContentID(), fixture.entry)
+	err := Validate(fixture.sourceView, fixture.flowView, fixture.staticView, fixture.bodies, fixture.bindings, fixture.forest, fixture.proof, fixture.access, fixture.flowView.ModuleID(), fixture.entry)
 	if err == nil {
 		t.Fatal("Validate accepted same-point conflicting descriptors")
 	}

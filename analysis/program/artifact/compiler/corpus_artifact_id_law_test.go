@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
+	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
 )
 
 // corpusFixturePath names one testdata/fixtures Lua source by its absolute
@@ -82,14 +83,14 @@ type corpusCompileOutcome struct {
 // Program. A migration commit passes two variants -- the pre-cut and
 // post-cut compile paths -- to corpusArtifactIDReport and diffs the two
 // reports as its A/B gate.
-type corpusCompileVariant func(published *program.Program, grammar programartifact.GrammarIdentity) corpusCompileOutcome
+type corpusCompileVariant func(published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome
 
 // corpusArtifactIDReport compiles every parser-valid fixture in
 // testdata/fixtures through one build variant and reports each fixture's
 // outcome by its repository-relative path. A fixture that fails to lower is
 // skipped here: parser validity is the lowering corpus law's subject, not
 // this one's.
-func corpusArtifactIDReport(t *testing.T, grammar programartifact.GrammarIdentity, build corpusCompileVariant) map[string]corpusCompileOutcome {
+func corpusArtifactIDReport(t *testing.T, grammar programartifact.ExecutionSchemaID, build corpusCompileVariant) map[string]corpusCompileOutcome {
 	t.Helper()
 	report := make(map[string]corpusCompileOutcome)
 	for _, fixture := range corpusFixturePaths(t) {
@@ -106,8 +107,8 @@ func corpusArtifactIDReport(t *testing.T, grammar programartifact.GrammarIdentit
 	return report
 }
 
-func corpusCompileDetailedVariant(published *program.Program, grammar programartifact.GrammarIdentity) corpusCompileOutcome {
-	artifact, failure := CompileDetailed(published, grammar, IssuanceDirectory{})
+func corpusCompileDetailedVariant(published *program.Program, grammar programartifact.ExecutionSchemaID) corpusCompileOutcome {
+	artifact, failure := CompileDetailed(published, grammar, issuance.Directory{})
 	if failure.Available() {
 		return corpusCompileOutcome{failure: failure.Error()}
 	}
@@ -124,7 +125,7 @@ func corpusCompileDetailedVariant(published *program.Program, grammar programart
 // migration commit extends into an A/B by swapping in a second
 // corpusCompileVariant and diffing the two reports.
 func TestCorpusArtifactIDIsCompileDeterministic(t *testing.T) {
-	grammar, ok := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
+	grammar, ok := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
 	if !ok {
 		t.Fatal("valid grammar identity was rejected")
 	}

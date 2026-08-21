@@ -262,6 +262,7 @@ func (row RuleOccurrence) Key() schema.Key {
 	}
 	return row.key
 }
+
 // Writes is the declared axis this placement's rule writes. Several rules are
 // placed on one occurrence, and only the ones writing an axis establish that
 // axis' result there, so a consumer that reads one axis' result at the points
@@ -298,10 +299,3 @@ func (row RuleOccurrence) Stage() RuleStage {
 func (row RuleOccurrence) PredecessorRouteID() (identity.ContentID, bool) {
 	return row.route, row.Available() && row.inputKind == RuleInputPredecessor
 }
-
-const (
-	slotOccurrence      = slotLocalTransferWrite + 1
-	slotOccurrencePoint = slotOccurrence + 1
-	slotOccurrenceInput = slotOccurrencePoint + 1
-	slotRuleOccurrence  = slotOccurrenceInput + 1
-)

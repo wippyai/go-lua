@@ -87,6 +87,7 @@ func (failure BindFailure) String() string {
 // implementation. Each cell is opaque here and is recovered at its type by the
 // family that declared it.
 type catalogBinding struct {
+	catalog     *catalog
 	binding     *engine.SchemaBinding
 	rules       *RuleBinding
 	allocations *allocationcatalog.Catalog
@@ -96,10 +97,10 @@ type catalogBinding struct {
 
 func (bound catalogBinding) available() bool {
 	return bound.binding != nil && bound.binding.Sealed() && bound.rules != nil && bound.allocations != nil &&
-		bound.value != nil && bound.queries.available(registry.queries)
+		bound.value != nil && bound.catalog != nil && bound.queries.available(bound.catalog.queries)
 }
 
-// bind is the one hot binding transaction for the global reusable catalog. It
+// bind is the one hot binding transaction for one compilation-owned catalog. It
 // binds the factor principals, opens the Link allocation catalog, drives the
 // whole rule table, binds every declared query family against the principals
 // that pass produced, seals, and recovers each family's implementation.
@@ -108,28 +109,28 @@ func (bound catalogBinding) available() bool {
 // the mount phase's own record and receives back only the neutral execution
 // surface.
 func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailure) {
-	sealRegistry()
-	if registry.sealed == nil {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
 		return catalogBinding{}, BindFailure{Stage: BindStageTable}
 	}
 	if !inputs.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageInput}
 	}
-	if !compilation.Available() || !compilation.catalog.axisFragments.available(registry.axes) {
+	if !compilation.Available() || !compilation.catalog.axisFragments.available(state.axes) {
 		return catalogBinding{}, BindFailure{Stage: BindStageCompilation}
 	}
-	binding := engine.NewSchemaBinding(compilation.Schema())
+	binding := engine.NewSchemaBindingForExecution(compilation.Schema(), compilation.ExecutionSchemaID())
 	if binding == nil {
 		return catalogBinding{}, BindFailure{Stage: BindStageBinding}
 	}
 	// The axis pass is first: every factor principal is bound by its own
 	// declared axis, in the sealed table's order, before any rule or catalog
 	// consumes one.
-	axes, failedAxis, axesOK := bindAxes(binding, compilation.catalog.axisFragments, inputs)
+	axes, failedAxis, axesOK := bindAxes(state, binding, compilation.catalog.axisFragments, inputs)
 	if !axesOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal, Axis: failedAxis}
 	}
-	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](axes, axisKeyValue)
+	value, valueOK := axisPayloadForKey[*valueowner.HotOwner](state, axes, axisKeyValue)
 	if !valueOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal}
 	}
@@ -140,29 +141,28 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	if allocationFailure != allocationcatalog.SealFailureNone {
 		return catalogBinding{}, BindFailure{Stage: BindStageAllocationCatalog, Allocation: allocationFailure}
 	}
-	set, setOK := axes.hotPrincipals(inputs, allocations)
+	set, setOK := axes.hotPrincipals(state, inputs, allocations)
 	if !setOK {
 		return catalogBinding{}, BindFailure{Stage: BindStagePrincipal}
 	}
 	fragments := compilation.catalog.queryFragments
-	if !fragments.available(registry.queries) {
+	if !fragments.available(state.queries) {
 		return catalogBinding{}, BindFailure{Stage: BindStageQueries}
 	}
-	// The query pass runs at the one lawful position: after every rule slot is
-	// registered and paired, and before the shared binding becomes terminal.
-	// Each family binds against the axis payload its own subject declared, so
-	// no principal is published as an accessor to reach it.
-	// The publication pass runs beside the query pass, at the same lawful
-	// position: the columns this binding's publication may write are stated
-	// while the binding is open, so the write capability a publisher mints
-	// afterwards is minted against the sealed table's own statement.
-	queriesBound, columnsAdmitted := false, false
-	seal := func() bool {
-		queriesBound = bindQueries(binding, fragments, axes)
-		columnsAdmitted = admitPublicationColumns(binding)
-		return queriesBound && columnsAdmitted && binding.Seal()
+	// Query and publication columns are admitted before any hot Rule binds.
+	// This gives Link rules their already-sealed typed input axis while the
+	// binding is still open; the engine retains only the schema/slot address.
+	queriesBound := bindQueries(state, binding, fragments, axes)
+	publication, publicationOK := compilation.Publication()
+	columnsAdmitted := publicationOK && publication.AdmitColumns(binding)
+	if !queriesBound {
+		return catalogBinding{}, BindFailure{Stage: BindStageQueries}
 	}
-	rules, failedRule, failedStage := bindRules(binding, compilation.catalog.ruleFragments, set, seal)
+	if !columnsAdmitted {
+		return catalogBinding{}, BindFailure{Stage: BindStagePublication}
+	}
+	seal := func() bool { return binding.Seal() }
+	rules, failedRule, failedStage := bindRules(state, binding, compilation.catalog.ruleFragments, set, seal)
 	if failedStage != RuleBindStageNone {
 		if failedStage == RuleBindStageSeal {
 			if !queriesBound {
@@ -181,7 +181,7 @@ func bind(compilation Compilation, inputs LinkInputs) (catalogBinding, BindFailu
 	// The sealed query fragments are the canonical query rows. Their typed
 	// implementations remain owned by the same sealed binding; no second
 	// post-seal receipt table is recovered or retained.
-	bound := catalogBinding{binding: binding, rules: rules, allocations: allocations, value: value, queries: fragments}
+	bound := catalogBinding{catalog: state, binding: binding, rules: rules, allocations: allocations, value: value, queries: fragments}
 	if !bound.available() {
 		return catalogBinding{}, BindFailure{Stage: BindStageSeal}
 	}

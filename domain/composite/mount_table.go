@@ -9,6 +9,7 @@ import (
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
 	packdomain "github.com/wippyai/go-lua/domain/pack"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -21,12 +22,13 @@ const (
 	MountStageInput
 	MountStageAxis
 	MountStageAdopt
-	// MountStageTopology and MountStageActivation are the phase's own post-mount
+	// MountStageTopology, MountStageActivation, and MountStageFormal are the phase's own post-mount
 	// derivations. Each names the derivation that refused, which is the whole of
 	// what a derivation over several sealed factors can blame: no axis owns one,
 	// so no axis is named beside it.
 	MountStageTopology
 	MountStageActivation
+	MountStageFormal
 )
 
 func (stage MountStage) String() string {
@@ -43,6 +45,8 @@ func (stage MountStage) String() string {
 		return "topology"
 	case MountStageActivation:
 		return "activation"
+	case MountStageFormal:
+		return "formal"
 	default:
 		return "none"
 	}
@@ -68,7 +72,7 @@ func (failure MountFailure) String() string {
 	if !failure.Available() {
 		return "none"
 	}
-	if failure.Stage == MountStageAxis && failure.Axis != DiagnosticAxisUnknown {
+	if (failure.Stage == MountStageAxis || failure.Stage == MountStageAdopt) && failure.Axis != DiagnosticAxisUnknown {
 		return failure.Stage.String() + "/" + failure.Axis.String()
 	}
 	return failure.Stage.String()
@@ -98,24 +102,20 @@ func MountRejection[R any](failure MountFailure) (R, bool) {
 //
 // The phase is the composition's, the seal is the domain's: this function names
 // no domain's mount procedure and constructs no domain's mount row.
-func MountLink(inputs LinkInputs) (LinkInputs, MountFailure) {
-	sealRegistry()
-	if registry.sealed == nil {
+func MountLink(compilation Compilation, inputs LinkInputs) (LinkInputs, MountFailure) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil || !state.structureOK {
 		return LinkInputs{}, MountFailure{Stage: MountStageTable}
 	}
-	vocabulary, vocabularyOK := StructureVocabulary()
-	if !vocabularyOK {
-		return LinkInputs{}, MountFailure{Stage: MountStageTable}
-	}
-	inputs.vocabulary = vocabulary
+	inputs.vocabulary = state.structure
 	if !inputs.mountable() {
 		return LinkInputs{}, MountFailure{Stage: MountStageInput}
 	}
-	cells, failure := mountAxes(inputs)
+	cells, failure := mountAxes(state, inputs)
 	if failure.Available() {
 		return LinkInputs{}, failure
 	}
-	mounted, failedAxis, ok := inputs.adopt(cells)
+	mounted, failedAxis, ok := inputs.adopt(state, cells)
 	if !ok {
 		return LinkInputs{}, MountFailure{Stage: MountStageAdopt, Axis: failedAxis}
 	}
@@ -140,9 +140,57 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 	if !activationOK {
 		return LinkInputs{}, MountFailure{Stage: MountStageActivation}
 	}
+	// Target is read exactly once from Link's finalized Boundary. Mounted actual
+	// completeness is checked directly from Call's sealed MountedCall rows and
+	// Pack's detached projections; no cross-domain catalogue is retained.
+	boundary := inputs.Source.Boundary()
+	target, targetOK := boundary.Target()
+	if !targetOK || target == nil {
+		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
+	}
+	if !mountedActualsComplete(inputs.CallAlgebra, inputs.PackSchema) {
+		return LinkInputs{}, MountFailure{Stage: MountStageFormal}
+	}
 	inputs.topology = topology
 	inputs.activation = activation
+	inputs.targetContract = target
 	return inputs, MountFailure{}
+}
+
+// mountedActualProjectionFor resolves Pack's detached actual geometry for an
+// exact Call-owned mounted receipt. It authenticates both authorities and the
+// receipt before Pack is asked to project the module-scoped call occurrence.
+func mountedActualProjectionFor(calls *calldomain.Algebra, packSchema *packdomain.Schema, mounted calldomain.MountedCall) (packdomain.MountedActualProjection, bool) {
+	if calls == nil || !calls.Valid() || packSchema == nil || !calls.LinkOwner().Available() || !packSchema.LinkOwner().Available() ||
+		!calls.LinkOwner().Matches(packSchema.LinkOwner()) || !mounted.Valid() {
+		return packdomain.MountedActualProjection{}, false
+	}
+	_, callID, moduleID, _, _, identityOK := calls.MountedCallIdentity(mounted)
+	if !identityOK || !callID.Available() || !moduleID.Available() || !calls.OwnsMountedModule(moduleID) {
+		return packdomain.MountedActualProjection{}, false
+	}
+	projection, projectionOK := packSchema.MountedActualProjection(moduleID, callID)
+	return projection, projectionOK && projection.OwnedBy(packSchema)
+}
+
+// mountedActualsComplete proves that every exact Call mounted row has Pack's
+// matching owner-fenced actual projection. The zero-row case remains complete
+// only when the two sealed authorities share their Link owner.
+func mountedActualsComplete(calls *calldomain.Algebra, packSchema *packdomain.Schema) bool {
+	if calls == nil || !calls.Valid() || packSchema == nil || !calls.LinkOwner().Available() || !packSchema.LinkOwner().Available() ||
+		!calls.LinkOwner().Matches(packSchema.LinkOwner()) {
+		return false
+	}
+	for index := 0; index < calls.MountedCallCount(); index++ {
+		mounted, mountedOK := calls.MountedCallAtHandle(index)
+		if !mountedOK {
+			return false
+		}
+		if _, projectionOK := mountedActualProjectionFor(calls, packSchema, mounted); !projectionOK {
+			return false
+		}
+	}
+	return true
 }
 
 // mountAxes invokes every declared mount exactly once, in the order the
@@ -154,19 +202,22 @@ func (inputs LinkInputs) derive() (LinkInputs, MountFailure) {
 // a convenience: an axis whose dependency has not yet sealed could not read it,
 // and an axis that reads a peer it declared no edge to reads nothing at all and
 // rejects with its own evidence.
-func mountAxes(inputs LinkInputs) (axisCells, MountFailure) {
-	order, orderOK := axis.DependencyOrder(registry.axes)
+func mountAxes(state *catalog, inputs LinkInputs) (axisCells, MountFailure) {
+	if state == nil {
+		return nil, MountFailure{Stage: MountStageTable}
+	}
+	order, orderOK := axis.DependencyOrder(state.axes)
 	if !orderOK {
 		return nil, MountFailure{Stage: MountStageTable}
 	}
-	cells := newAxisCells(registry.axes)
+	cells := newAxisCells(state.axes)
 	neutral := inputs.neutral()
 	for _, entry := range order {
-		slot, slotOK := axisSlotForKey(entry.Key())
+		slot, slotOK := axisSlotForKey(state, entry.Key())
 		if !slotOK {
 			return nil, MountFailure{Stage: MountStageTable}
 		}
-		scoped, failedAxis, scopedOK := neutral.install(dependencyCells(entry, cells))
+		scoped, failedAxis, scopedOK := neutral.install(state, dependencyCells(state, entry, cells))
 		if !scopedOK {
 			return nil, MountFailure{Stage: MountStageAdopt, Axis: failedAxis}
 		}
@@ -186,18 +237,37 @@ func mountAxes(inputs LinkInputs) (axisCells, MountFailure) {
 // dependency that sealed nothing contributes nothing: the dependent's own seal
 // is the authority on what an absent peer means, and it states that in its own
 // rejection evidence.
-func dependencyCells(entry *axisTemplate, sealed axisCells) axisCells {
-	scoped := newAxisCells(registry.axes)
-	for index := 0; index < entry.DependencyCount(); index++ {
-		key, keyOK := entry.DependencyAt(index)
-		if !keyOK {
-			continue
+func dependencyCells(state *catalog, entry *axisTemplate, sealed axisCells) axisCells {
+	if state == nil {
+		return nil
+	}
+	scoped := newAxisCells(state.axes)
+	var include func(schema.Key)
+	include = func(key schema.Key) {
+		dependency, dependencyOK := axisForKey(state, key)
+		if !dependencyOK {
+			return
 		}
-		slot, slotOK := axisSlotForKey(key)
+		for index := 0; index < dependency.DependencyCount(); index++ {
+			prerequisite, prerequisiteOK := dependency.DependencyAt(index)
+			if prerequisiteOK {
+				include(prerequisite)
+			}
+		}
+		slot, slotOK := axisSlotForKey(state, key)
 		if !slotOK || slot >= len(sealed) {
-			continue
+			return
 		}
 		scoped[slot] = sealed[slot]
+	}
+	if entry == nil {
+		return scoped
+	}
+	for index := 0; index < entry.DependencyCount(); index++ {
+		key, keyOK := entry.DependencyAt(index)
+		if keyOK {
+			include(key)
+		}
 	}
 	return scoped
 }
@@ -235,6 +305,23 @@ func axisAdopterFor(key schema.Key) (axisAdopter, bool) {
 				return LinkInputs{}, false
 			}
 			inputs.HeapSchema = schema
+			return inputs, true
+		}, true
+	case axisKeyPlacement:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			schema, ok := axis.Payload[placementdomain.Schema](cell)
+			if !ok || !schema.Valid() || !inputs.HeapSchema.Valid() || schema.Heap().ContentID() != inputs.HeapSchema.ContentID() {
+				return LinkInputs{}, false
+			}
+			inputs.PlacementSchema = schema
+			return inputs, true
+		}, true
+	case axisKeyPlacementEvidence:
+		return func(inputs LinkInputs, cell axis.Cell) (LinkInputs, bool) {
+			schema, ok := axis.Payload[placementdomain.Schema](cell)
+			if !ok || !schema.Valid() || !inputs.PlacementSchema.Valid() || schema != inputs.PlacementSchema {
+				return LinkInputs{}, false
+			}
 			return inputs, true
 		}, true
 	case axisKeyPack:
@@ -287,16 +374,16 @@ func axisAdopterTable(entries []*axisTemplate) []axisAdopter {
 // install writes each supplied authority into the record through its own axis's
 // adopter, in the sealed table's catalog order. It names no domain, and it
 // installs nothing for an axis that supplied no cell.
-func (inputs LinkInputs) install(cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
+func (inputs LinkInputs) install(state *catalog, cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
 	for slot := 1; slot < len(cells); slot++ {
 		cell := cells[slot]
 		if !cell.Available() {
 			continue
 		}
-		if slot >= len(registry.axisAdopters) || registry.axisAdopters[slot] == nil {
+		if state == nil || slot >= len(state.axisAdopters) || state.axisAdopters[slot] == nil {
 			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
-		adopted, ok := registry.axisAdopters[slot](inputs, cell)
+		adopted, ok := state.axisAdopters[slot](inputs, cell)
 		if !ok {
 			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
@@ -309,15 +396,18 @@ func (inputs LinkInputs) install(cells axisCells) (LinkInputs, DiagnosticAxis, b
 // binding transaction consumes and states the phase's coverage: an axis that
 // owns its authority and sealed none leaves the record incomplete, and the
 // phase says so at that axis.
-func (inputs LinkInputs) adopt(cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
-	for position, entry := range registry.axes {
+func (inputs LinkInputs) adopt(state *catalog, cells axisCells) (LinkInputs, DiagnosticAxis, bool) {
+	if state == nil {
+		return LinkInputs{}, DiagnosticAxisUnknown, false
+	}
+	for position, entry := range state.axes {
 		slot := position + 1
-		if slot >= len(registry.axisAdopters) || registry.axisAdopters[slot] == nil {
+		if slot >= len(state.axisAdopters) || state.axisAdopters[slot] == nil {
 			continue
 		}
 		if entry.MountDeclared() && (slot >= len(cells) || !cells[slot].Available()) {
 			return LinkInputs{}, DiagnosticAxis(slot), false
 		}
 	}
-	return inputs.install(cells)
+	return inputs.install(state, cells)
 }

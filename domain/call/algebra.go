@@ -636,7 +636,7 @@ func equivalentTargetRow(left *Algebra, leftRow targetRow, right *Algebra, right
 		}
 		return leftRow.key.moduleKey.Available() && rightRow.key.moduleKey.Available() && leftRow.key.moduleKey == rightRow.key.moduleKey
 	case targetSeed:
-		return leftRow.key.seedID == rightRow.key.seedID && leftRow.seedFormalID == rightRow.seedFormalID
+		return leftRow.key.seedID == rightRow.key.seedID && leftRow.seedFormalID == rightRow.seedFormalID && leftRow.scopedLoader == rightRow.scopedLoader
 	default:
 		return false
 	}

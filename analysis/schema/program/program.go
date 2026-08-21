@@ -2,6 +2,8 @@ package programschema
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programstate "github.com/wippyai/go-lua/analysis/schema/program/state"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 )
 
@@ -21,13 +23,36 @@ type Program struct {
 	ArtifactID identity.ContentID
 	ProgramID  identity.ContentID
 	SchemaID   identity.ContentID
+	// EntryBodyID is the owner-issued identity of the executable root Body.
+	// It is carried as a sealed scalar alongside the frozen families because
+	// the Flow Body authority owns the root relation; consumers must not infer
+	// it from Body order or from the count of non-callable bodies.
+	EntryBodyID identity.ContentID
 }
 
 // Available reports whether row names compiled program content. A row is
 // available only when the frozen publication is sealed and every identity
 // that authenticates it is present.
 func (row Program) Available() bool {
-	return row.Frozen.Published() && row.ArtifactID.Available() && row.ProgramID.Available() && row.SchemaID.Available()
+	if !row.Frozen.Published() || !row.ArtifactID.Available() || !row.ProgramID.Available() || !row.SchemaID.Available() {
+		return false
+	}
+	catalogID, derived := programcatalog.CatalogID(row.SchemaID)
+	return derived && row.Frozen.Schema() == catalogID
+}
+
+// ColdState authenticates the one sealed Program publication for semantic
+// child readers. The returned capability shares Frozen's immutable storage;
+// it carries no Program metadata, copied rows, or secondary indexes.
+func (row Program) ColdState() (programstate.State, bool) {
+	if !row.Available() {
+		return programstate.State{}, false
+	}
+	catalogID, derived := programcatalog.CatalogID(row.SchemaID)
+	if !derived {
+		return programstate.State{}, false
+	}
+	return programstate.New(row.Frozen, catalogID)
 }
 
 // catalog is the identity this program's compiled publication is addressed under.
@@ -37,26 +62,7 @@ func (row Program) catalog() (identity.ContentID, bool) {
 	if !row.Available() {
 		return identity.ContentID{}, false
 	}
-	return CatalogID(row.SchemaID)
-}
-
-// CallTargetCount is the sealed width of this program's call-target family.
-func (row Program) CallTargetCount() (int, bool) {
-	catalog, derived := row.catalog()
-	if !derived {
-		return 0, false
-	}
-	return CallTargetFamily().Count(&row.Frozen, catalog)
-}
-
-// CallTargetAt returns one closure-allocation-to-callable-body proof by its
-// position in the emitted sequence.
-func (row Program) CallTargetAt(index int) (CallTarget, bool) {
-	catalog, derived := row.catalog()
-	if !derived {
-		return CallTarget{}, false
-	}
-	return CallTargetFamily().At(&row.Frozen, catalog, index)
+	return programcatalog.CatalogID(row.SchemaID)
 }
 
 // CallCount is the sealed width of the authored-call family.
@@ -140,6 +146,105 @@ func (row Program) CallResultForID(id identity.ContentID) (CallResult, bool) {
 		}
 		if found.Available() {
 			return CallResult{}, false
+		}
+		found = candidate
+	}
+	return found, found.Available()
+}
+
+// CallResultSlotCount is the sealed width of the exact finite result-slot
+// family. Open Values tails intentionally contribute no slots.
+func (row Program) CallResultSlotCount() (int, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return 0, false
+	}
+	return CallResultSlotFamily().Count(&row.Frozen, catalog)
+}
+
+// CallResultSlotAt returns one exact result slot by its dense publication
+// ordinal.
+func (row Program) CallResultSlotAt(index int) (CallResultSlot, bool) {
+	catalog, derived := row.catalog()
+	if !derived {
+		return CallResultSlot{}, false
+	}
+	return CallResultSlotFamily().At(&row.Frozen, catalog, index)
+}
+
+// CallResultSlotFor resolves one slot from a parent CallResult's contiguous
+// child span in O(1) time once the parent family ordinal is known.
+func (row Program) CallResultSlotFor(callResultIndex, slotIndex int) (CallResultSlot, bool) {
+	parent, ok := row.CallResultAt(callResultIndex)
+	if !ok || slotIndex < 0 || slotIndex >= parent.SlotCount() {
+		return CallResultSlot{}, false
+	}
+	offset, _, spanOK := parent.SlotSpan()
+	if !spanOK {
+		return CallResultSlot{}, false
+	}
+	slot, held := row.CallResultSlotAt(int(offset) + slotIndex)
+	return slot, held && slot.CallID() == parent.CallID()
+}
+
+// CallResultSlotForCallOrdinal resolves the unique slot identified by its
+// parent Call identity and result ordinal. The parent CallResult family is
+// scanned only to locate that one parent; the child read itself is the
+// parent's O(1) contiguous span address.
+func (row Program) CallResultSlotForCallOrdinal(callID identity.ContentID, ordinal uint32) (CallResultSlot, bool) {
+	if !row.Available() || !callID.Available() {
+		return CallResultSlot{}, false
+	}
+	count, published := row.CallResultCount()
+	if !published {
+		return CallResultSlot{}, false
+	}
+	for index := 0; index < count; index++ {
+		parent, held := row.CallResultAt(index)
+		if !held || parent.CallID() != callID {
+			continue
+		}
+		if !parent.AdmitsResult(ordinal) || parent.SlotCount() == 0 {
+			return CallResultSlot{}, false
+		}
+		offset, _, spanOK := parent.SlotSpan()
+		if !spanOK {
+			return CallResultSlot{}, false
+		}
+		slot, slotOK := row.CallResultSlotAt(int(offset) + int(ordinal))
+		return slot, slotOK && slot.CallID() == callID && slot.Index() == ordinal
+	}
+	return CallResultSlot{}, false
+}
+
+// CallResultSlotForCall and CallResultSlotForOrdinal are descriptive aliases
+// for the canonical CallResultSlotForCallOrdinal lookup.
+func (row Program) CallResultSlotForCall(callID identity.ContentID, ordinal uint32) (CallResultSlot, bool) {
+	return row.CallResultSlotForCallOrdinal(callID, ordinal)
+}
+
+func (row Program) CallResultSlotForOrdinal(callID identity.ContentID, ordinal uint32) (CallResultSlot, bool) {
+	return row.CallResultSlotForCallOrdinal(callID, ordinal)
+}
+
+// CallResultSlotForID resolves the unique stable slot identity by a bounded
+// cold scan; no inverse directory is retained beside the publication.
+func (row Program) CallResultSlotForID(id identity.ContentID) (CallResultSlot, bool) {
+	if !row.Available() || !id.Available() {
+		return CallResultSlot{}, false
+	}
+	count, published := row.CallResultSlotCount()
+	if !published {
+		return CallResultSlot{}, false
+	}
+	var found CallResultSlot
+	for index := 0; index < count; index++ {
+		candidate, held := row.CallResultSlotAt(index)
+		if !held || candidate.ID() != id {
+			continue
+		}
+		if found.Available() {
+			return CallResultSlot{}, false
 		}
 		found = candidate
 	}
@@ -292,6 +397,34 @@ func (row Program) BodyAt(index int) (Body, bool) {
 		return Body{}, false
 	}
 	return BodyFamily().At(&row.Frozen, catalog, index)
+}
+
+// EntryBody resolves the exact executable root Body named by the owner-issued
+// scalar relation. The Body family remains the sole row authority; this lookup
+// only authenticates that the named row is present and non-callable. It never
+// infers the root from an ordinal or from the number of non-callable bodies.
+func (row Program) EntryBody() (Body, bool) {
+	if !row.EntryBodyID.Available() {
+		return Body{}, false
+	}
+	count, published := row.BodyCount()
+	if !published {
+		return Body{}, false
+	}
+	for index := 0; index < count; index++ {
+		candidate, held := row.BodyAt(index)
+		if !held || !candidate.Available() {
+			return Body{}, false
+		}
+		if candidate.ID() != row.EntryBodyID {
+			continue
+		}
+		if candidate.Callable() {
+			return Body{}, false
+		}
+		return candidate, true
+	}
+	return Body{}, false
 }
 
 func (row Program) BodyEntryFor(bodyIndex, childIndex int) (BodyEntry, bool) {

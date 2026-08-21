@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -102,6 +101,8 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = flowFinalize.Abort() })
 	flowView := flowFinalize.View()
+	moduleView := flowView.Imports()
+	moduleID := flowView.ModuleID()
 
 	bodies, err := body.Seal(preimage, flowView, staticView, bodyTerm)
 	if err != nil {
@@ -111,28 +112,19 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("binding.Seal: %v", err)
 	}
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	t.Cleanup(func() { _ = moduleFinalize.Abort() })
-	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleFinalize.View(), bodyTerm)
+	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, bodyTerm)
 	if err != nil {
 		t.Fatalf("containment.Prove: %v", err)
 	}
-	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticView.ContentID(), moduleFinalize.View().ContentID())
+	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("control.Seal: %v", err)
 	}
-	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticView.ContentID(), moduleFinalize.View().ContentID())
+	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("outcome.Seal: %v", err)
 	}
-	index, err := position.Seal(preimage, flowView, bodies, forest, outcomes, bodyTerm, staticView.ContentID(), moduleFinalize.View().ContentID())
+	index, err := position.Seal(preimage, flowView, bodies, forest, outcomes, bodyTerm, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("position.Seal: %v", err)
 	}
@@ -141,28 +133,28 @@ func TestSealPendingCommittedSourceRootsAndProvenance(t *testing.T) {
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
-	controlResult, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, bodyTerm, staticView.ContentID(), moduleFinalize.View().ContentID())
+	controlResult, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, bodyTerm, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID())
+		flowView.ContentID(), staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
-	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult, staticView.ContentID(), moduleFinalize.View().ContentID(), paths)
+	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult, staticView.ContentID(), moduleID, paths)
 	if err != nil {
 		t.Fatalf("executable.Seal: %v", err)
 	}
-	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, executableResult, staticView.ContentID(), moduleFinalize.View().ContentID())
+	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, executableResult, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("candidates.Seal: %v", err)
 	}
-	pending, err := SealPending(sourceView, flowView, executableResult, candidateResult, staticView.ContentID(), moduleFinalize.View().ContentID())
+	pending, err := SealPending(sourceView, flowView, executableResult, candidateResult, staticView.ContentID(), moduleID)
 	if err != nil {
 		t.Fatalf("SealPending: %v", err)
 	}
-	if !MatchesPending(pending, sourceView.Identity().ContentID(), flowView.ContentID(), staticView.ContentID(), moduleFinalize.View().ContentID()) {
+	if !MatchesPending(pending, sourceView.Identity().ContentID(), flowView.ContentID(), staticView.ContentID(), moduleID) {
 		t.Fatal("sealed Pending provenance did not match its owners")
 	}
 	if count, ok := pending.Count(callA); !ok || count != 0 {

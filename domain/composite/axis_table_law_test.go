@@ -13,13 +13,17 @@ import (
 // inventory: the declaration root admits it alongside the rule surface, and
 // the sealed view is the composed table.
 func TestAxisTableSeals(t *testing.T) {
-	table, failure := Table()
+	compilation, ok := Build()
+	if !ok {
+		t.Fatal("compilation unavailable")
+	}
+	table, failure := Table(compilation)
 	if failure.Available() {
 		t.Fatalf("declaration table rejected: contributor=%d entry=%x law=%d disposition=%s", failure.Contributor, failure.Entry, failure.Law, failure.Disposition)
 	}
 	view, viewOK := table.Surface(schema.SurfaceKindAxis)
-	if !viewOK || view.Count() != AxisCount() {
-		t.Fatalf("axis surface view = %d entries, table = %d", view.Count(), AxisCount())
+	if !viewOK || view.Count() != AxisCount(compilation) {
+		t.Fatalf("axis surface view = %d entries, table = %d", view.Count(), AxisCount(compilation))
 	}
 }
 
@@ -28,9 +32,14 @@ func TestAxisTableSeals(t *testing.T) {
 // the inventory's keys are distinct, and every slot the table hands out
 // resolves back to the axis declared at it.
 func TestAxisTableDeclaresEveryWriterPrincipalOnce(t *testing.T) {
-	seen := make(map[schema.Key]int, AxisCount())
-	for position := 0; position < AxisCount(); position++ {
-		key, ok := AxisKeyAt(position)
+	compilation, ok := Build()
+	if !ok {
+		t.Fatal("compilation unavailable")
+	}
+	state := compilation.catalog
+	seen := make(map[schema.Key]int, AxisCount(compilation))
+	for position := 0; position < AxisCount(compilation); position++ {
+		key, ok := AxisKeyAt(compilation, position)
 		if !ok || key == "" {
 			t.Fatalf("axis position %d declares no key", position)
 		}
@@ -38,7 +47,7 @@ func TestAxisTableDeclaresEveryWriterPrincipalOnce(t *testing.T) {
 		if seen[key] != 1 {
 			t.Fatalf("writer principal %q declared %d times", key, seen[key])
 		}
-		slot, slotOK := axisSlotForKey(key)
+		slot, slotOK := axisSlotForKey(state, key)
 		if !slotOK || slot != position+1 {
 			t.Fatalf("axis %q resolves to slot %d at position %d", key, slot, position)
 		}
@@ -54,7 +63,11 @@ func TestAxisTableDeclaresEveryWriterPrincipalOnce(t *testing.T) {
 // axis that reaches the table is wired everywhere and a principal that is not
 // in the table is classified nowhere.
 func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
-	table, failure := Table()
+	compilation, ok := Build()
+	if !ok {
+		t.Fatal("compilation unavailable")
+	}
+	table, failure := Table(compilation)
 	if failure.Available() {
 		t.Fatalf("declaration table rejected: law=%d", failure.Law)
 	}
@@ -62,28 +75,28 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 	if !viewOK {
 		t.Fatal("sealed table published no axis surface")
 	}
-	roles, rolesOK := SemanticRoles()
+	roles, rolesOK := SemanticRoles(compilation)
 	if !rolesOK {
 		t.Fatal("semantic role vocabulary")
 	}
 	semantics := make(map[identity.SemanticKey]bool, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		entry, entryOK := view.At(position)
-		key, keyOK := AxisKeyAt(position)
+		key, keyOK := AxisKeyAt(compilation, position)
 		if !entryOK || !keyOK || key != entry.Key() {
 			t.Fatalf("axis position %d is not derivable from the sealed table", position)
 		}
-		id, idOK := AxisEntryID(key)
+		id, idOK := AxisEntryID(compilation, key)
 		if !idOK || id != schema.NewEntryID(schema.SurfaceKindAxis, entry.Key()) {
 			t.Fatalf("axis %q publishes an identity the sealed entry does not derive", entry.Key())
 		}
 		if _, known := view.ByID(id); !known {
 			t.Fatalf("axis %q is not resolvable by its own identity", entry.Key())
 		}
-		if DiagnosticAxisForKey(key).String() != string(entry.Key()) {
-			t.Fatalf("axis %q classifies as %q", entry.Key(), DiagnosticAxisForKey(key))
+		if DiagnosticAxisForKey(compilation, key) != DiagnosticAxis(position+1) {
+			t.Fatalf("axis %q classifies as %d, want slot %d", entry.Key(), DiagnosticAxisForKey(compilation, key), position+1)
 		}
-		semantic, semanticOK := AxisSemantic(key)
+		semantic, semanticOK := AxisSemantic(compilation, key)
 		if !semanticOK || !semantic.Available() {
 			t.Fatalf("axis %q publishes no canonical identity", entry.Key())
 		}
@@ -97,9 +110,9 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 		// storage settles is the rest: a factor axis is bound with one Link
 		// binding and dies with it, and an engine-published axis is not bound at
 		// all.
-		storage, storageOK := AxisStorage(key)
-		cardinality, cardinalityOK := AxisCardinality(key)
-		lifetime, lifetimeOK := AxisLifetime(key)
+		storage, storageOK := AxisStorage(compilation, key)
+		cardinality, cardinalityOK := AxisCardinality(compilation, key)
+		lifetime, lifetimeOK := AxisLifetime(compilation, key)
 		if !storageOK || !storage.Available() {
 			t.Fatalf("axis %q declares storage %d", entry.Key(), storage)
 		}
@@ -119,21 +132,23 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 		axisKeyValue:                 "semantic/factor/value",
 		axisKeyPack:                  "semantic/factor/pack",
 		axisKeyHeap:                  "semantic/factor/heap",
+		axisKeyPlacement:             "semantic/factor/placement",
+		axisKeyPlacementEvidence:     "semantic/factor/placement/suspension-evidence",
 		axisKeyCall:                  "semantic/factor/call",
 		axisKeyEffect:                "semantic/factor/effect",
 		axisKeyExecutionReachability: "semantic/axis/execution-reachability",
 		axisKeyChannelSelectCase:     "semantic/axis/channel-select-case",
 	} {
 		expected, expectedOK := roles.Key(role)
-		semantic, ok := AxisSemantic(key)
+		semantic, ok := AxisSemantic(compilation, key)
 		if !expectedOK || !ok || semantic != expected {
 			t.Fatalf("axis %q publishes %x, the vocabulary declares role %q", key, semantic.Digest(), role)
 		}
 	}
-	if _, ok := AxisSemantic("no-such-axis"); ok {
+	if _, ok := AxisSemantic(compilation, "no-such-axis"); ok {
 		t.Fatal("an undeclared key resolved to an axis")
 	}
-	if DiagnosticAxisForKey("no-such-axis") != DiagnosticAxisUnknown {
+	if DiagnosticAxisForKey(compilation, "no-such-axis") != DiagnosticAxisUnknown {
 		t.Fatal("an undeclared key classified as a known axis")
 	}
 }
@@ -144,7 +159,11 @@ func TestAxisTableDrivesEveryDerivedView(t *testing.T) {
 // declare or bind an axis outside the order that produces the principals a rule
 // declaration receives.
 func TestAxisSurfaceIsSealedBeforeTheRuleSurface(t *testing.T) {
-	table, failure := Table()
+	compilation, ok := Build()
+	if !ok {
+		t.Fatal("compilation unavailable")
+	}
+	table, failure := Table(compilation)
 	if failure.Available() {
 		t.Fatalf("declaration table rejected: law=%d", failure.Law)
 	}
@@ -156,11 +175,11 @@ func TestAxisSurfaceIsSealedBeforeTheRuleSurface(t *testing.T) {
 	// The cold pass is the same ordering: a rule's declaration receives the
 	// principals the axis pass produced, so an unbuilt axis table cannot yield
 	// a rule fragment.
-	fragments, _, declared := declareAxes(nil, vocabulary.Roles{})
-	if declared || fragments.available(registry.axes) {
+	fragments, _, declared := declareAxes(nil, nil, vocabulary.Roles{})
+	if declared || fragments.available(nil) {
 		t.Fatal("axis pass declared without a schema builder")
 	}
-	if bound, _, ok := bindAxes(nil, fragments, LinkInputs{}); ok || bound.available(registry.axes) {
+	if bound, _, ok := bindAxes(nil, nil, fragments, LinkInputs{}); ok || bound.available(nil) {
 		t.Fatal("axis pass bound without a declared table")
 	}
 }

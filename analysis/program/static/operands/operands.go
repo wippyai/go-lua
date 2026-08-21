@@ -8,8 +8,6 @@
 package operands
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/internal/rows"
@@ -45,60 +43,6 @@ type Input struct {
 	Annotation []Annotation
 }
 
-// AnnotationIndex is a query-only acceleration structure over complete
-// Annotation rows: for each distinct target, in target order, the window of
-// annotation terms that name it. It is never a second semantic authority and
-// never a future artifact denominator, so it is sealed apart from the rows
-// and excluded from the section stream.
-type AnnotationIndex struct {
-	targets rows.Rows[keyspace.Term]
-	windows rows.Rows[rows.Span]
-	terms   rows.Pool[keyspace.Term]
-}
-
-// Count is the number of annotations naming target, and whether the index
-// holds a window for it at all.
-func (index AnnotationIndex) Count(target keyspace.Term) (int, bool) {
-	position := index.find(target)
-	if position < 0 {
-		return 0, false
-	}
-	window, ok := index.windows.At(position)
-	if !ok {
-		return 0, false
-	}
-	return index.terms.Count(window), true
-}
-
-// At returns one annotation term naming target.
-func (index AnnotationIndex) At(target keyspace.Term, offset int) (keyspace.Term, bool) {
-	position := index.find(target)
-	if position < 0 {
-		return 0, false
-	}
-	window, ok := index.windows.At(position)
-	if !ok {
-		return 0, false
-	}
-	return index.terms.At(window, offset)
-}
-
-// find is a binary search over the index's stable target order.
-func (index AnnotationIndex) find(target keyspace.Term) int {
-	count := index.targets.Count()
-	position := sort.Search(count, func(candidate int) bool {
-		value, ok := index.targets.At(candidate)
-		return ok && value >= target
-	})
-	if position == count {
-		return -1
-	}
-	if value, ok := index.targets.At(position); !ok || value != target {
-		return -1
-	}
-	return position
-}
-
 // Table is the sealed immutable operand relation set.
 //
 // claim is the sparse semantic relation in canonical Flow ValueClaim order.
@@ -107,7 +51,6 @@ type Table struct {
 	claim      rows.Rows[ClaimTarget]
 	typeValue  rows.Table[keyspace.Term]
 	annotation rows.Table[Annotation]
-	index      AnnotationIndex
 }
 
 // ClaimCount is the sparse semantic ClaimTarget denominator: only claims with

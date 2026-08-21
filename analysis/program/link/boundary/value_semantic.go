@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/link/internal/radix"
-	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programstorage "github.com/wippyai/go-lua/analysis/program/storage"
+	"github.com/wippyai/go-lua/analysis/program/valuesource"
+	lifecycle "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
 
 // sealValueSemanticIDs builds the one mounted substitution directory used by
@@ -94,7 +96,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	storage := p.Flow().Authored().Storage().Cells()
 	for index := 0; index < storage.Count(); index++ {
 		term, termOK := storage.At(index)
-		cellID, cellOK := programschema.StorageCellIdentity(p.ContentID(), term)
+		cellID, cellOK := lifecycle.StorageCellIdentity(p.ContentID(), term)
 		ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
 		if !cellOK || !termOK {
 			return errors.New("link/boundary: malformed semantic Cell row")
@@ -277,8 +279,8 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
 		keyspace.FamilyFloat, keyspace.FamilyString, keyspace.FamilyTypeValue,
 	} {
-		for index := 0; index < boundaryValueSourceCount(p, family); index++ {
-			sourceID, _, sourceTerm, ok := boundaryValueSourceIdentityAt(p, family, index)
+		for index := 0; index < valuesource.Count(p, family); index++ {
+			sourceID, _, sourceTerm, ok := valuesource.IdentityAt(p, family, index)
 			if !ok {
 				continue
 			}
@@ -316,7 +318,7 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 	}
 	reads := p.Flow().Authored().Storage().Reads()
 	for index := 0; index < reads.Count(); index++ {
-		readID, readTerm, ok := boundaryStorageReadIdentityAt(p, index)
+		readID, readTerm, ok := programstorage.ReadIdentityAt(p, index)
 		if !ok {
 			continue
 		}

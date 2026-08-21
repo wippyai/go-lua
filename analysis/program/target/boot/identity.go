@@ -188,6 +188,18 @@ func (t *Table) sealBootIdentity() (identity.ContentID, error) {
 				return err
 			}
 		}
+		if err := writer.Count(uint64(t.roots.Count())); err != nil {
+			return err
+		}
+		for index := 0; index < t.roots.Count(); index++ {
+			root, ok := t.roots.At(index)
+			if !ok {
+				return errors.New("target/boot: malformed module-root relation")
+			}
+			if err := writer.String(root.modulePath); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 }

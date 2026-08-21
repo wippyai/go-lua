@@ -3,6 +3,7 @@ package heap_test
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
@@ -238,7 +239,7 @@ func compactFreshRoot(t testing.TB, schema Schema) Key {
 	count := 0
 	for index := 0; index < schema.KeyCount(); index++ {
 		candidate, ok := schema.KeyAt(index)
-		_, _, _, _, freshCandidate := candidate.FreshResultID()
+		_, _, _, freshCandidate := candidate.FreshResultID()
 		if ok && freshCandidate {
 			fresh, count = candidate, count+1
 		}
@@ -251,8 +252,10 @@ func compactFreshRoot(t testing.TB, schema Schema) Key {
 
 // TestHeapArtifactFreshKindRuntimeMaskMatrix keeps fresh-root admission on
 // the real Target -> Link -> ProgramArtifact -> Heap seal path. The final
-// case uses two operations with one shared (outcome,result,ordinal) template;
-// the application must retain the Table|Function may-set on that one root.
+// case uses two operations with one shared local (outcome,result,ordinal)
+// coordinate. Their owner-issued OutcomeResultID values must keep the roots
+// distinct; only repeated declarations of one exact identity may merge kind
+// masks.
 func TestHeapArtifactFreshKindRuntimeMaskMatrix(t *testing.T) {
 	cases := []struct {
 		name string
@@ -280,12 +283,98 @@ func TestHeapArtifactFreshKindRuntimeMaskMatrix(t *testing.T) {
 
 	union := compactFreshSpec(compactFreshOperation("left", schematype.FreshClassTable), compactFreshOperation("right", schematype.FreshClassFunction))
 	_, unionSchema, _ := compactHeapFixture(t, "compact_fresh_union", `return selected(1)`, union)
-	root := compactFreshRoot(t, unionSchema)
-	reference, referenceOK := unionSchema.Reference(root, materialization.Recent)
-	selector, selectorOK := unionSchema.ReferenceSelector(reference)
-	want := runtimekind.Bit(runtimekind.Table) | runtimekind.Bit(runtimekind.Function)
-	if !referenceOK || !selectorOK || selector.RuntimeKinds() != want {
-		t.Fatalf("shared fresh template runtime mask=%b/%v, want %b", selector.RuntimeKinds(), selectorOK, want)
+	var roots []Key
+	for index := 0; index < unionSchema.KeyCount(); index++ {
+		candidate, candidateOK := unionSchema.KeyAt(index)
+		_, _, _, fresh := candidate.FreshResultID()
+		if candidateOK && fresh {
+			roots = append(roots, candidate)
+		}
+	}
+	if len(roots) != 2 {
+		t.Fatalf("operation-local fresh collision merged roots=%d, want two", len(roots))
+	}
+	masks := make(map[identity.ContentID]runtimekind.Set, len(roots))
+	for _, root := range roots {
+		_, outcomeResult, ordinal, fresh := root.FreshResultID()
+		reference, referenceOK := unionSchema.Reference(root, materialization.Recent)
+		selector, selectorOK := unionSchema.ReferenceSelector(reference)
+		if !fresh || !outcomeResult.Available() || ordinal != 0 || !referenceOK || !selectorOK {
+			t.Fatalf("fresh collision root identity=%v/%d/%v selector=%v/%v", outcomeResult, ordinal, fresh, selector.RuntimeKinds(), selectorOK)
+		}
+		if _, duplicate := masks[outcomeResult]; duplicate {
+			t.Fatalf("fresh collision reused OutcomeResultID %v", outcomeResult)
+		}
+		masks[outcomeResult] = selector.RuntimeKinds()
+	}
+	if len(masks) != 2 {
+		t.Fatalf("fresh collision OutcomeResultIDs=%d, want two", len(masks))
+	}
+	seenTable, seenFunction := false, false
+	for _, mask := range masks {
+		switch mask {
+		case runtimekind.Bit(runtimekind.Table):
+			seenTable = true
+		case runtimekind.Bit(runtimekind.Function):
+			seenFunction = true
+		default:
+			t.Fatalf("fresh collision merged or changed kind mask=%b", mask)
+		}
+	}
+	if !seenTable || !seenFunction {
+		t.Fatalf("fresh collision masks=%#v, want table and function", masks)
+	}
+}
+
+// TestHeapArtifactFreshAdmissionRequiresExactCallResultGeometry keeps the
+// Target declaration and mounted Program result geometry joined at the Heap
+// seam. A statement Call has no value-bearing CallResult, a fixed Value Call
+// admits only result zero, and an open Values use admits the selected result
+// ordinal. The Heap root denominator must follow the canonical Program
+// CallResult admission law joined to the Project application and Target.
+func TestHeapArtifactFreshAdmissionRequiresExactCallResultGeometry(t *testing.T) {
+	operation := func() vocabulary.OperationSpec {
+		return vocabulary.OperationSpec{
+			Bindings: []vocabulary.BindingSpec{{Namespace: vocabulary.BindingBuiltin, Member: []string{"selected"}}},
+			Input:    vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType()}, Tail: vocabulary.ValuesClosed},
+			Outcomes: []vocabulary.OutcomeSpec{{
+				Kind:   flowkind.OutcomeNormal,
+				Values: vocabulary.ValuesSpec{Fixed: []schematype.Type{portableAnyType(), portableAnyType(), portableAnyType()}, Tail: vocabulary.ValuesClosed},
+				// Results one and two deliberately collide with no local result zero;
+				// only CallResult geometry decides whether it is reachable.
+				FreshResults: []vocabulary.FreshResultSpec{
+					{Result: 1, Kind: schematype.FreshClassTable},
+					{Result: 2, Kind: schematype.FreshClassTable},
+				},
+			}},
+			Effects: vocabulary.RowSpec{Tail: vocabulary.RowClosed},
+		}
+	}
+	cases := []struct {
+		name   string
+		source string
+		want   int
+	}{
+		{name: "statement-call", source: `selected(1); return 0`, want: 0},
+		{name: "fixed-value-call", source: `local first = selected(1); return first`, want: 0},
+		{name: "fixed-two-values-call", source: `local first, second = selected(1); return first, second`, want: 1},
+		{name: "open-values-call", source: `return selected(1)`, want: 2},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			_, schema, _ := compactHeapFixture(t, "compact_fresh_call_result_"+test.name, test.source, compactFreshSpec(operation()))
+			count := 0
+			for index := 0; index < schema.KeyCount(); index++ {
+				key, keyOK := schema.KeyAt(index)
+				_, _, _, fresh := key.FreshResultID()
+				if keyOK && fresh {
+					count++
+				}
+			}
+			if count != test.want {
+				t.Fatalf("fresh roots=%d, want %d for %s", count, test.want, test.name)
+			}
+		})
 	}
 }
 

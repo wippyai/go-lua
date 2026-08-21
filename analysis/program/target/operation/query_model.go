@@ -31,6 +31,8 @@ type QueryOperationInput struct {
 	RowFormals         uint32
 	EffectTail         vocabulary.RowTail
 	EffectVar          vocabulary.RowVar
+	FormalEffects      []vocabulary.FormalEffectSpec
+	FormalEffectTail   vocabulary.RowTail
 	// Semantics is the domain adapter for the Values transport laws. It is
 	// construction input only; Core retains no adapter after FinishQuery.
 	Semantics schematype.Semantics

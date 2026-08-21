@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 )
 
 func callResultLawID(seed byte) identity.ContentID {
@@ -16,8 +17,8 @@ func callResultLawID(seed byte) identity.ContentID {
 
 func TestCallResultKeepsValueAndValuesFormsDisjoint(t *testing.T) {
 	call, values, value, tail := callResultLawID(1), callResultLawID(33), callResultLawID(65), callResultLawID(97)
-	fixed, fixedOK := NewCallResult(call, values, value, identity.ContentID{}, 3, CallResultValue)
-	open, openOK := NewCallResult(callResultLawID(2), values, identity.ContentID{}, tail, 0, CallResultValues)
+	fixed, fixedOK := NewCallResultWithMultiplicity(call, values, value, identity.ContentID{}, 3, CallResultValue, CallResultMultiplicityExact, 1)
+	open, openOK := NewCallResultWithMultiplicity(callResultLawID(2), values, identity.ContentID{}, tail, 0, CallResultValues, CallResultMultiplicityOpen, 0)
 	if !fixedOK || !fixed.Available() || !openOK || !open.Available() {
 		t.Fatal("valid call-result forms were not admitted")
 	}
@@ -47,6 +48,29 @@ func TestCallResultKeepsValueAndValuesFormsDisjoint(t *testing.T) {
 	}
 }
 
+func TestCallResultDirectScalarUsesCallEvaluationValueWithoutValues(t *testing.T) {
+	call, value := callResultLawID(7), callResultLawID(39)
+	direct, directOK := NewCallResultWithMultiplicity(
+		call, identity.ContentID{}, value, identity.ContentID{}, 0,
+		CallResultDirectValue, CallResultMultiplicityExact, 1,
+	)
+	if !directOK || !direct.Available() || direct.CallID() != call || direct.ValuesID().Available() || direct.Form() != CallResultDirectValue {
+		t.Fatal("direct scalar Call result was not admitted without a Values parent")
+	}
+	if got, ok := direct.ValueID(); !ok || got != value {
+		t.Fatal("direct scalar Call result lost its evaluation-span value")
+	}
+	if _, ok := direct.Position(); ok {
+		t.Fatal("direct scalar Call result fabricated a Values position")
+	}
+	if malformed, ok := NewCallResultWithMultiplicity(
+		callResultLawID(8), callResultLawID(40), value, identity.ContentID{}, 0,
+		CallResultDirectValue, CallResultMultiplicityExact, 1,
+	); ok || malformed.Available() {
+		t.Fatal("direct scalar Call result accepted a Values parent")
+	}
+}
+
 func TestCallResultRejectsTupleOrMissingCoordinates(t *testing.T) {
 	call, values, value, tail := callResultLawID(3), callResultLawID(35), callResultLawID(67), callResultLawID(99)
 	for name, row := range map[string]CallResult{
@@ -59,7 +83,7 @@ func TestCallResultRejectsTupleOrMissingCoordinates(t *testing.T) {
 			t.Fatalf("malformed %s call-result row was available", name)
 		}
 	}
-	if row, ok := NewCallResult(call, values, value, identity.ContentID{}, 0, CallResultInvalid); ok || row.Available() {
+	if row, ok := NewCallResultWithMultiplicity(call, values, value, identity.ContentID{}, 0, CallResultInvalid, CallResultMultiplicityOpen, 0); ok || row.Available() {
 		t.Fatal("invalid call-result form was admitted")
 	}
 }
@@ -89,11 +113,11 @@ func TestCallResultExactAndOpenMultiplicityAdmitOnlyConsumerOrdinals(t *testing.
 }
 
 func TestCallResultFamilyRejectsUnavailableRows(t *testing.T) {
-	catalog, catalogOK := CatalogID(callResultLawID(131))
+	catalog, catalogOK := programcatalog.CatalogID(callResultLawID(131))
 	if !catalogOK {
 		t.Fatal("call-result law catalog")
 	}
-	row, rowOK := NewCallResult(callResultLawID(5), callResultLawID(37), callResultLawID(69), identity.ContentID{}, 0, CallResultValue)
+	row, rowOK := NewCallResultWithMultiplicity(callResultLawID(5), callResultLawID(37), callResultLawID(69), identity.ContentID{}, 0, CallResultValue, CallResultMultiplicityExact, 1)
 	if !rowOK {
 		t.Fatal("call-result law row")
 	}

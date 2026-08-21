@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
 
@@ -17,7 +18,7 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	}
 	mount := record.Artifacts[0]
 	program := mount.Snapshot.Program()
-	catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+	catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 	pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
 	if !program.Available() || !catalogOK || !pointsPublished || pointCount == 0 {
 		t.Fatal("fixture issued no sealed points")
@@ -29,19 +30,27 @@ func TestQueryAdmissionDispatchesBySealedFamily(t *testing.T) {
 	}
 	summaryID, summaryIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyValueSummary))
 	exactID, exactIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyEffectExact))
-	if !summaryIDOK || !exactIDOK {
+	placementID, placementIDOK := identity.DeriveContentID("analysis/artifact-query/v1", mount.ModuleKey[:], pointID[:], []byte(QueryFamilyPlacementSummary))
+	if !summaryIDOK || !exactIDOK || !placementIDOK {
 		t.Fatal("query identities")
 	}
 	summary, summaryOK := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, QueryFamilyValueSummary)
 	exact, exactOK := bound.QueryAdmission(exactID, mount.ModuleKey, pointID, QueryFamilyEffectExact)
-	if !summaryOK || !exactOK {
-		t.Fatalf("query admission refused: summary=%v exact=%v", summaryOK, exactOK)
+	placement, placementOK := bound.QueryAdmission(placementID, mount.ModuleKey, pointID, QueryFamilyPlacementSummary)
+	if !summaryOK || !exactOK || !placementOK {
+		t.Fatalf("query admission refused: summary=%v exact=%v placement=%v", summaryOK, exactOK, placementOK)
 	}
 	if summary.ID != summaryID || summary.Mount != mount.ModuleKey || summary.Point != pointID {
 		t.Fatal("summary admission lost the sealed site")
 	}
 	if exact.ID != exactID || exact.Mount != mount.ModuleKey || exact.Point != pointID {
 		t.Fatal("exact admission lost the sealed site")
+	}
+	if placement.ID != placementID || placement.Mount != mount.ModuleKey || placement.Point != pointID {
+		t.Fatal("placement admission lost the sealed site")
+	}
+	if bound.PlacementQuery() == nil {
+		t.Fatal("sealed Placement query implementation is unavailable")
 	}
 	if _, ok := bound.QueryAdmission(summaryID, mount.ModuleKey, pointID, ""); ok {
 		t.Fatal("empty family admitted")
@@ -54,7 +63,11 @@ func TestSelectedQuerySitesExcludeUncalledCallables(t *testing.T) {
   return retained
 end
 return 42`)
-	sites, ok := SelectedQuerySites(record.Artifacts)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -120,7 +133,7 @@ return 42`)
 		perPoint[site.Point]++
 	}
 	for point, count := range perPoint {
-		if count != 2 {
+		if count != len(QueryIssuance(compilation)) {
 			t.Fatalf("root point %v query lanes = %d", point, count)
 		}
 	}
@@ -139,7 +152,11 @@ local function use(x)
   return x
 end
 return use(1)`)
-	sites, ok := SelectedQuerySites(record.Artifacts)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
@@ -164,7 +181,7 @@ return use(1)`)
 		t.Fatal("direct callee interior is not a query subject")
 	}
 	for point, count := range selected {
-		if count != 2 {
+		if count != len(QueryIssuance(compilation)) {
 			t.Fatalf("selected callee point %v query lanes = %d", point, count)
 		}
 	}
@@ -183,7 +200,11 @@ func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			record := mountedRecord(t, "query-control-fault-"+fixture.name, fixture.source)
-			sites, ok := SelectedQuerySites(record.Artifacts)
+			compilation, compilationOK := Build()
+			if !compilationOK {
+				t.Fatal("compilation unavailable")
+			}
+			sites, ok := SelectedQuerySites(compilation, record.Artifacts)
 			if !ok || len(sites) == 0 {
 				t.Fatalf("control-fault root has no selected query sites: ok=%t rows=%d", ok, len(sites))
 			}
@@ -193,12 +214,16 @@ func TestSelectedQuerySitesAdmitControlFaultRoots(t *testing.T) {
 
 func TestSelectedQuerySitesUseTheirOwnerAddressFormula(t *testing.T) {
 	record := mountedRecord(t, "query-address", "return 42")
-	sites, ok := SelectedQuerySites(record.Artifacts)
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	sites, ok := SelectedQuerySites(compilation, record.Artifacts)
 	if !ok || len(sites) == 0 {
 		t.Fatal("selected query sites")
 	}
 	issued := make(map[schema.Key]struct{})
-	for _, family := range QueryIssuance() {
+	for _, family := range QueryIssuance(compilation) {
 		issued[family.Family] = struct{}{}
 	}
 	for index, site := range sites {

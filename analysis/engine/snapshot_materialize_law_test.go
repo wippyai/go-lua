@@ -757,7 +757,7 @@ func syntheticRowKey(ordinal uint64) identity.ContentID {
 // syntheticAnswerValue publishes one scalar result value under a freezer whose
 // fingerprint is a function of the value, so a changed answer is a changed
 // content identity.
-func syntheticAnswerValue(value uint64) solvedValue {
+func syntheticAnswerValue(value uint64) frozenValue {
 	same := func(held uint64) uint64 { return held }
 	return &typedFrozenValue[uint64]{value: value, freeze: FrozenResult[uint64]{
 		Semantic:    coldKey(970_101),
@@ -910,7 +910,7 @@ func sealSyntheticAnswers(results solvedResults) (SolvedSnapshot, SolveFailure) 
 	return materialized, SolveFailure{}
 }
 
-func editSealedAnswer(materialized SolvedSnapshot, lane resultLane, key identity.ContentID, value solvedValue, generation identity.Generation) (snapshot.Snapshot, SolveFailure) {
+func editSealedAnswer(materialized SolvedSnapshot, lane resultLane, key identity.ContentID, value frozenValue, generation identity.Generation) (snapshot.Snapshot, SolveFailure) {
 	if !materialized.Available() || !key.Available() || !generation.Available() || !materialized.published.Generation().Precedes(generation) {
 		return snapshot.Snapshot{}, refused(SolveFailureFamilyCompile, solvedSiteDelta).failure()
 	}

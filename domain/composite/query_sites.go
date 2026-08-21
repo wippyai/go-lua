@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 )
@@ -75,8 +76,9 @@ func (publication QueryPublication) FamilyOrdinal() uint32 { return publication.
 // occurrences in selected sealed bodies. Non-callable roots are always
 // selected. A callable body is selected only when a sealed DirectFunctions
 // join from an already-selected body names it.
-func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, bool) {
-	families, familiesOK := selectedPointQueryIssuance()
+func SelectedQuerySites(compilation Compilation, mounts []programmount.MountedArtifact) ([]QuerySite, bool) {
+	state := compilation.catalog
+	families, familiesOK := selectedPointQueryIssuance(state)
 	if !familiesOK || len(mounts) == 0 {
 		return nil, false
 	}
@@ -151,7 +153,7 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 				changed = true
 			}
 		}
-		catalog, catalogOK := programschema.CatalogID(program.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(program.SchemaID)
 		pointCount, pointsPublished := programschema.PointFamily().Count(&program.Frozen, catalog)
 		if !program.Available() || !catalogOK || !pointsPublished {
 			return nil, false
@@ -199,6 +201,59 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 				observedBodies[body] = struct{}{}
 			}
 		}
+		// Synthetic execution cuts (call stages, local successors, and other
+		// declaration-framed points) do not belong to an occurrence's authored
+		// PointSpan. They do belong to the same canonical WTO region. Close the
+		// selected occurrence points over Region membership so query families
+		// observe every executable cut in a selected body without naming any
+		// particular staging form here.
+		regionCount, regionsPublished := programschema.RegionFamily().Count(&program.Frozen, catalog)
+		if !regionsPublished {
+			return nil, false
+		}
+		regions := make([][]identity.ContentID, regionCount)
+		regionsByPoint := make(map[identity.ContentID][]int, pointCount)
+		for regionIndex := 0; regionIndex < regionCount; regionIndex++ {
+			region, regionOK := programschema.RegionFamily().At(&program.Frozen, catalog, regionIndex)
+			offset, count, spanOK := region.MemberSpan()
+			if !regionOK || !spanOK || count == 0 {
+				return nil, false
+			}
+			members := make([]identity.ContentID, count)
+			for memberIndex := uint32(0); memberIndex < count; memberIndex++ {
+				member, memberOK := programschema.RegionMemberFamily().At(&program.Frozen, catalog, int(offset+memberIndex))
+				point := member.ID()
+				if !memberOK || !point.Available() {
+					return nil, false
+				}
+				if _, known := pointIDs[point]; !known {
+					return nil, false
+				}
+				members[memberIndex] = point
+				regionsByPoint[point] = append(regionsByPoint[point], regionIndex)
+			}
+			regions[regionIndex] = members
+		}
+		queue := make([]identity.ContentID, 0, len(observed))
+		for point := range observed {
+			queue = append(queue, point)
+		}
+		activatedRegions := make([]bool, len(regions))
+		for cursor := 0; cursor < len(queue); cursor++ {
+			for _, regionIndex := range regionsByPoint[queue[cursor]] {
+				if activatedRegions[regionIndex] {
+					continue
+				}
+				activatedRegions[regionIndex] = true
+				for _, point := range regions[regionIndex] {
+					if _, present := observed[point]; present {
+						continue
+					}
+					observed[point] = struct{}{}
+					queue = append(queue, point)
+				}
+			}
+		}
 		for body, entries := range selectedBodies {
 			if _, present := observedBodies[body]; present {
 				continue
@@ -232,8 +287,8 @@ func SelectedQuerySites(mounts []programmount.MountedArtifact) ([]QuerySite, boo
 	return sites, expected > 0 && len(sites) == len(families)*expected
 }
 
-func selectedPointQueryIssuance() ([]IssuedQuery, bool) {
-	issued := QueryIssuance()
+func selectedPointQueryIssuance(state *catalog) ([]IssuedQuery, bool) {
+	issued := queryIssuance(state)
 	if len(issued) == 0 {
 		return nil, false
 	}
@@ -278,12 +333,12 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 	}
 	publications := make([]QueryPublication, 0, len(sites))
 	for _, site := range sites {
-		position, positioned := queryPositionForFamily(site.Family)
-		if !positioned || position < 0 || position >= len(registry.queries) || position >= len(registry.queryContributors) {
+		position, positioned := queryPositionForFamily(bound.catalog, site.Family)
+		if !positioned || position < 0 || bound.catalog == nil || position >= len(bound.catalog.queries) || position >= len(bound.catalog.queryContributors) {
 			return nil, false
 		}
-		registration := registry.queries[position]
-		contributor := registry.queryContributors[position]
+		registration := bound.catalog.queries[position]
+		contributor := bound.catalog.queryContributors[position]
 		if registration == nil || !contributor.complete() || registration.Key() != site.Family ||
 			registration.Population() != query.PopulationSelectedPoint || registration.Projection() != site.Projection {
 			return nil, false
@@ -299,7 +354,7 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 		if !keyed {
 			return nil, false
 		}
-		publications = append(publications, QueryPublication{Site: site, Key: key, contract: &registry.queryContributors[position].contract, encode: contributor.encode, ordinal: uint32(position + 1)})
+		publications = append(publications, QueryPublication{Site: site, Key: key, contract: &bound.catalog.queryContributors[position].contract, encode: contributor.encode, ordinal: uint32(position + 1)})
 	}
 	return publications, true
 }

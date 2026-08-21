@@ -8,7 +8,37 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 )
+
+func TestSchemaBindingRetainsExplicitExecutionSchemaIdentity(t *testing.T) {
+	sealed, factor := factorOnlySlotSchema(t, coldKey(939_901))
+	first, firstOK := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{2}, programartifact.GrammarABIVersion)
+	second, secondOK := programartifact.NewExecutionSchemaID(identity.ContentID{1}, identity.ContentID{3}, programartifact.GrammarABIVersion)
+	if sealed == nil || !firstOK || !secondOK || first == second {
+		t.Fatal("execution-schema binding fixture")
+	}
+	binding := NewSchemaBindingForExecution(sealed, first)
+	if binding == nil {
+		t.Fatal("explicit execution-schema binding rejected")
+	}
+	if !BindFactor(binding, factor, hotUintFactorSpec()) {
+		t.Fatal("explicit execution-schema factor binding rejected")
+	}
+	if _, available := bindingArtifactSchemaID(binding); available {
+		t.Fatal("open binding exposed its artifact admission identity")
+	}
+	if !binding.Seal() {
+		t.Fatal("explicit execution-schema binding did not seal")
+	}
+	got, available := bindingArtifactSchemaID(binding)
+	if !available || got != first.ContentID() || got == second.ContentID() {
+		t.Fatalf("artifact admission identity = %x/%v, want exact first ExecutionSchemaID", got, available)
+	}
+	if invalid := NewSchemaBindingForExecution(sealed, programartifact.ExecutionSchemaID{}); invalid != nil {
+		t.Fatal("unavailable execution-schema identity admitted")
+	}
+}
 
 func schemaSlotFixture(t testing.TB, routed bool, reverse bool) (*SchemaBuilder, *FactorSlot[uint64], SchemaReadForm[uint64], SchemaWriteForm[uint64], *RuleSlot[uint64, struct{}], *QuerySlot[uint64]) {
 	t.Helper()

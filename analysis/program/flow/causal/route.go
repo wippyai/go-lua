@@ -541,13 +541,6 @@ func (proof RouteGuardProof) RouteID() (identity.ContentID, bool) {
 	return proof.successor.SemanticID()
 }
 
-func (proof RouteGuardProof) RouteIdentity() (RouteIdentity, bool) {
-	if !proof.Available() {
-		return RouteIdentity{}, false
-	}
-	return proof.successor.route, true
-}
-
 func (proof RouteGuardProof) Decision() (keyspace.Term, bool) {
 	if !proof.Available() {
 		return 0, false
@@ -633,13 +626,6 @@ func (proof RouteRecurrence) Available() bool {
 		return false
 	}
 	return issued.route.Available()
-}
-
-func (proof RouteRecurrence) RouteIdentity() (RouteIdentity, bool) {
-	if !proof.Available() {
-		return RouteIdentity{}, false
-	}
-	return proof.successor.route, true
 }
 
 func (r *Result) OwnsRouteRecurrence(proof RouteRecurrence) bool {

@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
-const contentVersion = 6
+const contentVersion = 7
 
 // Build validates the exact Project/Target authorities and derives the one
 // scoped require operation. It does not enumerate or retain Application x
@@ -37,9 +37,6 @@ func Build(input Input) (*Draft, error) {
 	if err := sealValues(authority); err != nil {
 		return nil, err
 	}
-	if err := sealCallResults(authority); err != nil {
-		return nil, err
-	}
 	authority.moduleRelation = moduleRelationID(authority.valueTable.content, input.Target, require)
 	if !authority.moduleRelation.Available() {
 		return nil, errors.New("link/boundary: unavailable module relation identity")
@@ -47,7 +44,7 @@ func Build(input Input) (*Draft, error) {
 	if err := sealSeeds(authority, input.EndpointRequests); err != nil {
 		return nil, err
 	}
-	content := contentID(input.Target.ContentID(), relation, authority.valueTable.content, authority.callResults.content, authority.seedTable.relation, authority.seedTable.endpointRelation)
+	content := contentID(input.Target.ContentID(), relation, authority.valueTable.content, authority.seedTable.relation, authority.seedTable.endpointRelation)
 	if !content.Available() {
 		return nil, errors.New("link/boundary: unavailable content identity")
 	}
@@ -174,15 +171,15 @@ func classifyRequireBinding(namespace vocabulary.BindingNamespace, ownerCount, m
 	return true, nil
 }
 
-func contentID(targetID, applicationRelation, valueRelation, callResultRelation, seedRelation, endpointRelation identity.ContentID) (id identity.ContentID) {
-	if !targetID.Available() || !applicationRelation.Available() || !valueRelation.Available() || !callResultRelation.Available() || !seedRelation.Available() || !endpointRelation.Available() {
+func contentID(targetID, applicationRelation, valueRelation, seedRelation, endpointRelation identity.ContentID) (id identity.ContentID) {
+	if !targetID.Available() || !applicationRelation.Available() || !valueRelation.Available() || !seedRelation.Available() || !endpointRelation.Available() {
 		return identity.ContentID{}
 	}
 	h := sha256.New()
 	var writer framing.Writer
 	if writer.Reset(h, "program/link/boundary", contentVersion) != nil ||
 		writer.Record(1) != nil || writer.Bytes(targetID[:]) != nil ||
-		writer.Bytes(applicationRelation[:]) != nil || writer.Bytes(valueRelation[:]) != nil || writer.Bytes(callResultRelation[:]) != nil || writer.Bytes(seedRelation[:]) != nil || writer.Bytes(endpointRelation[:]) != nil || writer.Finish() != nil {
+		writer.Bytes(applicationRelation[:]) != nil || writer.Bytes(valueRelation[:]) != nil || writer.Bytes(seedRelation[:]) != nil || writer.Bytes(endpointRelation[:]) != nil || writer.Finish() != nil {
 		return identity.ContentID{}
 	}
 	sum := h.Sum(id[:0])

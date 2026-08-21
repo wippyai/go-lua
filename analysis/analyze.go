@@ -11,9 +11,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/selectapply"
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/result"
+	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
+	placementdomain "github.com/wippyai/go-lua/domain/placement"
+	"github.com/wippyai/go-lua/domain/type/channelselect"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -49,7 +53,8 @@ type Plan struct {
 }
 
 type compiledState struct {
-	artifacts *compiledArtifactSet
+	compilation composite.Compilation
+	artifacts   *compiledArtifactSet
 	// mounts and geometry are the detached result projection admitted during
 	// Workspace compilation. Solve only reads these immutable owner values; it
 	// must not reopen the Link or replay the mounted observation census.
@@ -61,8 +66,12 @@ type compiledState struct {
 	queryPublications []composite.QueryPublication
 	sourceID          identity.ContentID
 	composition       snapshot.Snapshot
+	selectColumn      snapshot.Axis[identity.ContentID, channelselect.CaseFact]
 	selectSites       []anadiag.SelectSite
 	selectHandlers    []selectapply.Handler
+	vocabulary        structure.Table
+	declarations      schemadiag.Table
+	collections       composite.DiagnosticCollections
 	admitted          bool
 	runtimeOnce       sync.Once
 	runtimeOK         bool
@@ -78,6 +87,16 @@ type compiledState struct {
 	closing           bool
 	closed            bool
 	releaseOnce       sync.Once
+}
+
+// PlacementSchema returns the exact Link-bound authority that encoded this
+// plan's Placement query results. Callers may retain it while consuming the
+// detached result, but cannot recover or substitute it from payload bytes.
+func (plan *Plan) PlacementSchema() (placementdomain.Schema, bool) {
+	if plan == nil || plan.state == nil || plan.state.binding == nil {
+		return placementdomain.Schema{}, false
+	}
+	return plan.state.binding.PlacementSchema()
 }
 
 func Compile(source *link.Link) (*Plan, CompileStatus) {
@@ -120,8 +139,16 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileInvalid, diagnostics
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseItemIssuance)
-	compilation, compilationOK := composite.Global()
-	if !compilationOK || !compilation.Available() {
+	compilation := workspace.compilation
+	if !compilation.Available() {
+		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureProgramSchema
+		diagnostics.FailCurrentPhase()
+		return nil, CompileUnsupported, diagnostics
+	}
+	vocabulary, vocabularyOK := compilation.Structure()
+	declarations, declarationsOK := compilation.Diagnostics()
+	collections, collectionsOK := compilation.DiagnosticCollections()
+	if !vocabularyOK || !declarationsOK || !collectionsOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureProgramSchema
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
@@ -151,8 +178,8 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	state := &compiledState{
-		artifacts: artifacts, mounts: mounts, geometry: geometry,
-		sourceID: source.ContentID(),
+		compilation: compilation, artifacts: artifacts, mounts: mounts, geometry: geometry,
+		sourceID: source.ContentID(), vocabulary: vocabulary, declarations: declarations, collections: collections,
 	}
 	state.lifecycleCond = sync.NewCond(&state.lifecycleMu)
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseTopology)
@@ -162,7 +189,7 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	diagnostics.Enter(anadiag.AnalyzeDiagnosticPhaseAssemble)
-	_, binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source, compilation)
+	binding, bindingFailure, mountFailure, bindFailure := state.newProgramBinding(source, compilation)
 	diagnostics.Binding = bindingFailure
 	diagnostics.AllocationCatalog = bindFailure.Allocation
 	// The mount phase's verdict carries the rejecting domain's own evidence
@@ -180,7 +207,7 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		return nil, CompileUnsupported, diagnostics
 	}
 	state.binding = binding
-	if !state.publishComposition() {
+	if !state.publishComposition(source.Module()) {
 		state.release()
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
@@ -210,7 +237,7 @@ func (plan *Plan) Solve(ctx context.Context) (*result.Result, AnalyzeStatus) {
 // reusable artifact subjects and observations already produced by the shared
 // solve; policy selection never adds an Engine query or changes Result identity.
 func (plan *Plan) SolveWithReport(ctx context.Context, options engine.SolveDiagnosticOptions, policy anadiag.DiagnosticPolicy) (*result.Result, *anadiag.DiagnosticReport, AnalyzeStatus, anadiag.AnalyzeDiagnostics) {
-	if !policy.Valid() {
+	if plan == nil || plan.state == nil || !policy.Valid(plan.state.declarations) {
 		return nil, nil, AnalyzeInvalid, anadiag.AnalyzeDiagnostics{Phase: anadiag.AnalyzeDiagnosticPhaseSetup, Reason: anadiag.AnalyzeDiagnosticReasonInvalidOptions}
 	}
 	return plan.solveWithPolicy(ctx, options, &policy, false)
@@ -328,11 +355,12 @@ func (plan *Plan) solveWithPolicy(ctx context.Context, options engine.SolveDiagn
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
 	}
-	projection, detached := result.Detach(geometry, state.mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
+	projection, detached := result.Detach(state.compilation, geometry, state.mounts, binding.ValueSchema(), policy, queryPublications, &published, queryRead, observationRead, anadiag.ChannelSelectInput{
 		Published: &state.composition,
+		Column:    state.selectColumn,
 		Sites:     state.selectSites,
 		Handlers:  state.selectHandlers,
-	})
+	}, state.vocabulary, state.declarations, state.collections)
 	if !detached || projection == nil || projection.Result == nil {
 		diagnostics.Fail(anadiag.AnalyzeDiagnosticReasonDetach)
 		return nil, nil, AnalyzeIncomplete, diagnostics
@@ -395,6 +423,11 @@ func (state *compiledState) buildRuntimeSolver(policy *anadiag.DiagnosticPolicy)
 	if !observed {
 		return nil, nil, observationFailure, false
 	}
+	effectObservations, effectObserved := binding.EffectPublicationObservations(state.committed, state.mounts)
+	if !effectObserved {
+		return nil, nil, engine.ObservationSealArguments(), false
+	}
+	observations = append(observations, effectObservations...)
 	solver, sealFailure, sealed := state.committed.Seal(observations)
 	if !sealed || solver == nil {
 		// The seal reports which stage refused. Only fall back to the
@@ -489,6 +522,7 @@ func (state *compiledState) release() {
 		// Workspace owns reusable immutable products. A closed Plan must not keep
 		// a second strong mount set or any Link-local authority alive.
 		state.artifacts = nil
+		state.compilation = composite.Compilation{}
 		state.committed = nil
 		state.querySites = nil
 		state.queryPublications = nil
@@ -498,8 +532,12 @@ func (state *compiledState) release() {
 		state.geometry = result.Geometry{}
 		state.binding = nil
 		state.composition = snapshot.Snapshot{}
+		state.selectColumn = snapshot.Axis[identity.ContentID, channelselect.CaseFact]{}
 		state.selectSites = nil
 		state.selectHandlers = nil
+		state.vocabulary = structure.Table{}
+		state.declarations = schemadiag.Table{}
+		state.collections = composite.DiagnosticCollections{}
 		state.runtimeDetail = engine.ProgramAssembleRefusal{}
 		state.runtimeStage = anadiag.AnalyzeDiagnosticAssembleStageNone
 		state.runtimeRule = anadiag.AnalyzeDiagnosticRuleUnknown
@@ -593,7 +631,7 @@ func (state *compiledState) assembleCommittedProgram() (*engine.CommittedProgram
 	if !sealedOK || rules == nil {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageBinding, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}
-	sites, queryOK := composite.SelectedQuerySites(sealed)
+	sites, queryOK := composite.SelectedQuerySites(state.compilation, sealed)
 	if !queryOK {
 		return nil, nil, anadiag.AnalyzeDiagnosticAssembleStageQueryPlan, anadiag.AnalyzeDiagnosticRuleUnknown, engine.ProgramAssembleRefusal{}, false
 	}

@@ -3,7 +3,6 @@
 package engine
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/internal/carrier"
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 )
@@ -13,61 +12,6 @@ import (
 // geometry instead of reopening the Schema.
 func readRowReady(row *schemaRuleReadRow, readIndex int, state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64, kind composition.ReadKind) bool {
 	return row != nil && readIndex >= 0 && row.selectorReadIndex() == readIndex && row.live(state, cell, ordinal) && row.kind == kind
-}
-
-type schemaSelectedRuleReadBinding[K ~uint32 | ~uint64, V any, Tag selectionTag] struct {
-	row    *schemaRuleReadRow
-	factor *schemaFactorBindingCell[K, V]
-	read   Read[Selection[Tag, OrderedCells[V]]]
-	locate func(SelectorContext) bool
-}
-
-func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) readRow() *schemaRuleReadRow {
-	if binding == nil {
-		return nil
-	}
-	return binding.row
-}
-
-func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
-	return binding != nil && binding.factor != nil && binding.locate != nil &&
-		readRowReady(binding.row, binding.read.index, state, cell, ordinal, composition.ReadSelect) &&
-		binding.read.row == binding.row && binding.read.resolve != nil && binding.factor.impl != nil &&
-		binding.factor.impl.algebra != nil && binding.factor.state == state &&
-		binding.factor.ordinal == binding.row.factorOrdinal && binding.row.factor == binding.row.semantic &&
-		!binding.row.normalizer.Available() && len(binding.row.dependencies) != 0
-}
-
-func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) bind(bound readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor) bool {
-	if binding == nil || bound == nil || member.ReadCount() <= binding.read.index || factors == nil {
-		return false
-	}
-	state := binding.row.ownerState()
-	if !binding.complete(state, binding.row.owner, binding.row.ownerOrdinal) || !binding.row.sealed() {
-		return false
-	}
-	factorKey := binding.row.factor
-	runtime, present := factors[factorKey]
-	factor, typed := runtime.(*boundFactor[K, V])
-	target, staged := runtime.(stagedFactor[V])
-	if !present || !typed || !staged || factor == nil || factor.implementation == nil || !factorRowAvailable(factor.implementation.row) ||
-		factor.implementation.row != binding.factor || factor.implementation.ordinal != binding.row.factorOrdinal || factor.implementation.algebra != binding.factor.impl.algebra {
-		return false
-	}
-	surface, surfaceOK := member.ReadAt(binding.read.index)
-	if !surfaceOK || surface.Factor != factorKey || surface.Form != equation.SurfaceReadSelect || surface.Semantic != factorKey ||
-		surface.Normalizer.Available() || surface.Mode != equation.TargetModeNone || !surface.LocalAvailable() {
-		return false
-	}
-	return bound.appendReadRuntime(&stagedReadRuntime[V, OrderedCells[V], Tag]{input: int(binding.row.input), selector: binding.row, target: target, locate: binding.locate, normalize: func(value OrderedCells[V]) OrderedCells[V] { return value }})
-}
-
-func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) projectLocal(operand any) (uint64, bool) {
-	return 0, false
-}
-
-func (binding *schemaSelectedRuleReadBinding[K, V, Tag]) exactAdmitFactor() schemaFactorBinding {
-	return nil
 }
 
 type schemaExactRuleReadBinding[K ~uint32 | ~uint64, V any] struct {
@@ -278,66 +222,6 @@ func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) projectLo
 }
 
 func (binding *schemaOpaqueOperandSelectedRuleReadBinding[RV, O, Tag]) exactAdmitFactor() schemaFactorBinding {
-	return nil
-}
-
-type schemaSummaryRuleReadBinding[K ~uint32 | ~uint64, V, S any] struct {
-	row    *schemaRuleReadRow
-	factor *schemaFactorBindingCell[K, V]
-	form   *schemaSummaryReadCell[K, V, S]
-	read   Read[S]
-}
-
-func (binding *schemaSummaryRuleReadBinding[K, V, S]) readRow() *schemaRuleReadRow {
-	if binding == nil {
-		return nil
-	}
-	return binding.row
-}
-
-func (binding *schemaSummaryRuleReadBinding[K, V, S]) complete(state *schemaBindingState, cell schemaRuleBindingCell, ordinal uint64) bool {
-	return binding != nil && binding.factor != nil && binding.form != nil &&
-		readRowReady(binding.row, binding.read.index, state, cell, ordinal, composition.ReadSummary) &&
-		binding.read.row == binding.row && binding.read.resolve != nil && binding.factor.impl != nil && binding.factor.impl.algebra != nil &&
-		binding.factor.state == state && binding.factor.ordinal == binding.row.factorOrdinal && binding.row.summaryForm == binding.form &&
-		binding.form.schema == state.schema && binding.row.factor.Available() && binding.row.semantic.Available() &&
-		binding.row.factor == binding.row.normalizer && len(binding.row.dependencies) == 0
-}
-
-func (binding *schemaSummaryRuleReadBinding[K, V, S]) bind(bound readBinding, member equation.RuleMember, factors map[composition.Key]runtimeFactor) bool {
-	if binding == nil || bound == nil || member.ReadCount() <= binding.read.index || factors == nil {
-		return false
-	}
-	state := binding.row.ownerState()
-	if !binding.complete(state, binding.row.owner, binding.row.ownerOrdinal) || !binding.row.sealed() {
-		return false
-	}
-	factorKey := binding.row.factor
-	runtime, present := factors[factorKey]
-	factor, typed := runtime.(*boundFactor[K, V])
-	if !present || !typed || factor == nil || factor.implementation == nil || !factorRowAvailable(factor.implementation.row) ||
-		factor.implementation.row != binding.factor || factor.implementation.ordinal != binding.row.factorOrdinal || factor.implementation.algebra != binding.factor.impl.algebra {
-		return false
-	}
-	surface, surfaceOK := member.ReadAt(binding.read.index)
-	if !surfaceOK || surface.Factor != factorKey || surface.Form != equation.SurfaceReadSummary || surface.Semantic != binding.row.semantic ||
-		surface.Normalizer != binding.row.normalizer || surface.Mode != equation.TargetModeNone {
-		return false
-	}
-	unit, unitOK := factor.readUnit(surface)
-	unitRow, rowPresent := factor.reads[surface]
-	summaryFactor, summaryForm, summaryKeys, summaryDigest, summaryOK := factor.summaryReadAddress(surface, binding.row)
-	if !unitOK || !rowPresent || unitRow.kind != carrier.SummaryUnit || !summaryOK {
-		return false
-	}
-	return bound.appendReadRuntime(&typedReadRuntime[K, V, S]{input: int(binding.row.input), binding: factor.binding, unit: unit, summaryFactor: summaryFactor, summaryForm: summaryForm, summaryKeys: summaryKeys, summaryDigest: summaryDigest, summary: true, normalize: binding.form.normalize, equal: binding.form.equal, fingerprint: binding.form.fingerprint})
-}
-
-func (binding *schemaSummaryRuleReadBinding[K, V, S]) projectLocal(operand any) (uint64, bool) {
-	return 0, false
-}
-
-func (binding *schemaSummaryRuleReadBinding[K, V, S]) exactAdmitFactor() schemaFactorBinding {
 	return nil
 }
 

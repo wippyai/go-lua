@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/program/link"
+	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	heapindex "github.com/wippyai/go-lua/domain/heap/index"
@@ -12,7 +13,7 @@ import (
 )
 
 // The receiver-to-root topology and the mounted activation catalog are
-// derivations over several sealed factors at once, so neither is any one axis's
+// derivations over several sealed factors at once, so none is any one axis's
 // authority to mount. They are derived by the mount phase itself, after every
 // declared mount has sealed, and the laws below state that placement: the
 // derivation reads only what the mount phase produced, it names the derivation
@@ -39,11 +40,12 @@ func TestPostMountDerivationRunsOnlyOverAMountedRecord(t *testing.T) {
 
 // TestPostMountDerivationNamesTheDerivationThatRejected states the evidence a
 // derivation failure carries: the phase names which derivation refused, so the
-// two are not collapsed into one anonymous post-mount verdict.
+// four are not collapsed into one anonymous post-mount verdict.
 func TestPostMountDerivationNamesTheDerivationThatRejected(t *testing.T) {
 	stages := map[MountStage]string{
 		MountStageTopology:   "topology",
 		MountStageActivation: "activation",
+		MountStageFormal:     "formal",
 	}
 	for stage, name := range stages {
 		failure := MountFailure{Stage: stage}
@@ -56,15 +58,16 @@ func TestPostMountDerivationNamesTheDerivationThatRejected(t *testing.T) {
 	}
 }
 
-// TestDerivedAuthoritiesAreNotCallerSupplied states the ownership cut. The two
+// TestDerivedAuthoritiesAreNotCallerSupplied states the ownership cut. The
 // derived authorities live in the Link input record the binding transaction
-// consumes, and the mount phase is the only writer: neither is an exported
-// field, so no caller can hand the composition a topology or an activation
-// catalog it did not derive from the mounts it sealed.
+// consumes, and the mount phase is the only writer: none is an exported field,
+// so no caller can hand the composition a topology, activation catalog, or
+// Target contract it did not derive from the sealed inputs.
 func TestDerivedAuthoritiesAreNotCallerSupplied(t *testing.T) {
 	derivations := map[reflect.Type]string{
 		reflect.TypeOf((*heapindex.Topology)(nil)):                "the receiver-to-root topology",
 		reflect.TypeOf((*callactivation.TargetBatchCatalog)(nil)): "the mounted activation catalog",
+		reflect.TypeOf((*contract.Contract)(nil)):                 "the exact Boundary Target contract",
 	}
 	record := reflect.TypeOf(LinkInputs{})
 	held := make(map[reflect.Type]struct{}, len(derivations))

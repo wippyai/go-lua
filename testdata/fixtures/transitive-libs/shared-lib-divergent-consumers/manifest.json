@@ -7,7 +7,6 @@
       "require_complete": true,
       "min_shared_heap": 1,
       "min_owned_heap": 1,
-      "min_seal_before_share": 1,
       "min_shared_heap_kind": {
         "lua.table": 1
       },

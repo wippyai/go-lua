@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/effect/control"
 	"github.com/wippyai/go-lua/domain/effect/mutation"
 	"github.com/wippyai/go-lua/domain/effect/ownership"
@@ -268,6 +269,43 @@ func TestEveryDirectCallableIsExportedWithAnAuditedEffectRow(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestTableFreezeCarriesItsFormalOwnershipContractAcrossWire proves the
+// activation boundary for Freeze: table.freeze declares the ownership row,
+// and the provider manifest retains it after the real signature codec rather
+// than relying on an in-process declaration.
+func TestTableFreezeCarriesItsFormalOwnershipContractAcrossWire(t *testing.T) {
+	m := manifestForTest(t, Table)
+	signature, ok := m.FunctionSignatures["freeze"]
+	if !ok {
+		t.Fatal("table.freeze signature is missing")
+	}
+	if !hasFreezeLabel(signature.Effect.Labels) {
+		t.Fatalf("table.freeze effect = %v, want ownership.Freeze", signature.Effect)
+	}
+
+	encoded, err := modulemanifest.Encode(m)
+	if err != nil {
+		t.Fatalf("encode table manifest: %v", err)
+	}
+	decoded, err := modulemanifest.Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode table manifest: %v", err)
+	}
+	decodedSignature, ok := decoded.FunctionSignatures["freeze"]
+	if !ok || !hasFreezeLabel(decodedSignature.Effect.Labels) {
+		t.Fatalf("decoded table.freeze effect = %v, want ownership.Freeze", decodedSignature.Effect)
+	}
+}
+
+func hasFreezeLabel(labels []effect.Label) bool {
+	for _, label := range labels {
+		if _, ok := effect.NormalizeLabel(label).(ownership.Freeze); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNestedErrorMethodsAreTypedButNotDirectModuleExports(t *testing.T) {

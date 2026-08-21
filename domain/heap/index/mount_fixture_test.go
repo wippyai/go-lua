@@ -19,27 +19,29 @@ import (
 )
 
 type indexFixtureMounts struct {
-	heap  []heapdomain.ArtifactMount
-	value []valuedomain.ArtifactMount
-	call  []calldomain.MountedArtifact
-	pack  []packdomain.ArtifactMount
-	packs *packdomain.Schema
+	compilation composite.Compilation
+	heap        []heapdomain.ArtifactMount
+	value       []valuedomain.ArtifactMount
+	call        []calldomain.MountedArtifact
+	pack        []packdomain.ArtifactMount
+	packs       *packdomain.Schema
 }
 
 func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 	t.Helper()
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK || linked == nil || linked.Project() == nil {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || linked == nil || linked.Project() == nil {
 		t.Fatal("index fixture artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
 	result := indexFixtureMounts{
-		heap:  make([]heapdomain.ArtifactMount, projectMounts.Count()),
-		value: make([]valuedomain.ArtifactMount, projectMounts.Count()),
-		call:  make([]calldomain.MountedArtifact, projectMounts.Count()),
-		pack:  make([]packdomain.ArtifactMount, projectMounts.Count()),
+		compilation: compilation,
+		heap:        make([]heapdomain.ArtifactMount, projectMounts.Count()),
+		value:       make([]valuedomain.ArtifactMount, projectMounts.Count()),
+		call:        make([]calldomain.MountedArtifact, projectMounts.Count()),
+		pack:        make([]packdomain.ArtifactMount, projectMounts.Count()),
 	}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
@@ -49,7 +51,7 @@ func indexMounts(t testing.TB, linked *link.Link) indexFixtureMounts {
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("index fixture mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index fixture artifact: %v", failure)
 		}
@@ -69,16 +71,15 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 	t.Helper()
 	mounts := indexMounts(t, linked)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(mounts.compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}
 	values, valueFailure := valuedomain.SealWithFailure(linked, heap, mounts.value, structural)
 	calls, callsOK := calldomain.NewWithMountedArtifacts(linked, mounts.call)
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	executionSchemaID := mounts.compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(mounts.compilation)
+	if !mounts.compilation.Available() || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("index schemas program receipt")
 	}
 	artifacts := make([]*programartifact.Artifact, 0, linked.Project().Mounts().Count())
@@ -88,7 +89,7 @@ func indexSchemas(t testing.TB, linked *link.Link) (heapdomain.Schema, *valuedom
 		if !shardOK || !programOK || program == nil {
 			t.Fatal("index schemas artifact program")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("index schemas artifact: %v", failure)
 		}

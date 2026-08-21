@@ -32,6 +32,7 @@ const (
 // numbers them, and a row resolves one by key.
 func diagnosticVocabulary() []structure.Spec {
 	specs := structure.DiagnosticObservationSpecs()
+	specs = append(specs, typedomain.ConformanceVerdictStructureSpecs()...)
 	specs = append(specs,
 		structure.Spec{Key: diagnosticFamilyAdvice, Category: structure.CategoryDiagnosticFamily, Spelling: "advice", Accepted: true},
 		structure.Spec{Key: diagnosticFamilyType, Category: structure.CategoryDiagnosticFamily, Spelling: "type", Accepted: true},
@@ -215,12 +216,12 @@ func diagnosticEntries() ([]*diagnostic.Entry, bool) {
 
 // Diagnostics is the derived read model of the sealed diagnostic surface. It
 // is the single lookup authority for every published diagnostic declaration.
-func Diagnostics() (diagnostic.Table, bool) {
-	sealRegistry()
-	if registry.sealed == nil {
+func Diagnostics(compilation Compilation) (diagnostic.Table, bool) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
 		return diagnostic.Table{}, false
 	}
-	return registry.diagnostics, registry.diagnostics.Available()
+	return state.diagnostics, state.diagnostics.Available()
 }
 
 // DiagnosticCollection is one LaneBranch row's post-seal collection handle:
@@ -230,27 +231,64 @@ type DiagnosticCollection struct {
 	Code       diagnostic.Code
 	Collection diagnostic.Reference
 	Population schema.Key
-	Site       diagnostic.Site
 	Producer   schema.Key
 	Projection schema.Key
 	Codec      schema.Key
 	Geometry   schema.Key
 	Anchor     schema.Key
+	sites      []diagnostic.Site
 }
 
-// DiagnosticCollectionDirectory joins every sealed LaneBranch row to the
-// issued query or observation inventory it named as Collection.
-func DiagnosticCollectionDirectory() ([]DiagnosticCollection, bool) {
-	table, tableOK := Diagnostics()
-	if !tableOK {
-		return nil, false
+func (row DiagnosticCollection) SiteCount() int { return len(row.sites) }
+
+func (row DiagnosticCollection) SiteAt(position int) (diagnostic.Site, bool) {
+	if position < 0 || position >= len(row.sites) {
+		return diagnostic.SiteNone, false
+	}
+	return row.sites[position], true
+}
+
+// DiagnosticCollections is the immutable collection directory sealed into a
+// Compilation. Its rows and site slices are private, so carrying this value
+// through a Workspace or report requires no defensive copy.
+type DiagnosticCollections struct{ rows []DiagnosticCollection }
+
+func (directory DiagnosticCollections) Available() bool { return len(directory.rows) > 0 }
+func (directory DiagnosticCollections) Count() int      { return len(directory.rows) }
+func (directory DiagnosticCollections) At(position int) (DiagnosticCollection, bool) {
+	if position < 0 || position >= len(directory.rows) {
+		return DiagnosticCollection{}, false
+	}
+	return directory.rows[position], true
+}
+
+// entrySites copies one row's declared geometries so a directory row holds its
+// own list rather than aliasing the sealed entry.
+func entrySites(entry *diagnostic.Entry) []diagnostic.Site {
+	sites := make([]diagnostic.Site, 0, entry.SiteCount())
+	for index := 0; index < entry.SiteCount(); index++ {
+		site, siteOK := entry.SiteAt(index)
+		if !siteOK {
+			return nil
+		}
+		sites = append(sites, site)
+	}
+	return sites
+}
+
+// diagnosticCollectionDirectory joins every sealed LaneBranch row to the
+// issued query or observation inventory it named as Collection. Construction
+// calls it once and retains the result in Compilation.
+func diagnosticCollectionDirectory(table diagnostic.Table, issuedObservations []IssuedObservation, issuedQueries []IssuedQuery) (DiagnosticCollections, bool) {
+	if !table.Available() {
+		return DiagnosticCollections{}, false
 	}
 	observations := make(map[schema.Key]IssuedObservation)
-	for _, issued := range ObservationIssuance() {
+	for _, issued := range issuedObservations {
 		observations[issued.Key] = issued
 	}
 	queries := make(map[schema.Key]IssuedQuery)
-	for _, issued := range QueryIssuance() {
+	for _, issued := range issuedQueries {
 		queries[issued.Family] = issued
 	}
 	rows := make([]DiagnosticCollection, 0, table.Count())
@@ -264,13 +302,13 @@ func DiagnosticCollectionDirectory() ([]DiagnosticCollection, bool) {
 			Code:       entry.Code(),
 			Collection: collection,
 			Population: entry.Observation().Key,
-			Site:       entry.Site(),
+			sites:      entrySites(entry),
 		}
 		switch collection.Surface {
 		case schema.SurfaceKindObservation:
 			issued, found := observations[collection.Key]
 			if !found || !issued.Producer.Available() || !issued.Codec.Available() {
-				return nil, false
+				return DiagnosticCollections{}, false
 			}
 			row.Producer = issued.Producer
 			row.Codec = issued.Codec
@@ -279,14 +317,15 @@ func DiagnosticCollectionDirectory() ([]DiagnosticCollection, bool) {
 		case schema.SurfaceKindQuery:
 			issued, found := queries[collection.Key]
 			if !found || !issued.Family.Available() || !issued.Projection.Available() {
-				return nil, false
+				return DiagnosticCollections{}, false
 			}
 			row.Producer = issued.Family
 			row.Projection = issued.Projection
 		default:
-			return nil, false
+			return DiagnosticCollections{}, false
 		}
 		rows = append(rows, row)
 	}
-	return rows, len(rows) > 0
+	directory := DiagnosticCollections{rows: rows}
+	return directory, directory.Available()
 }

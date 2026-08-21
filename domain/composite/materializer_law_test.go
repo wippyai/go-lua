@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	staticdomain "github.com/wippyai/go-lua/domain/static"
 	typeauthority "github.com/wippyai/go-lua/domain/type/authority"
@@ -23,7 +24,7 @@ import (
 )
 
 // Catalog-admission laws: a real Link mounted through the phase every axis
-// seals its own authority in, then the sealed table's PublicationAdmissions,
+// seals its own authority in, then the compilation's publication admissions,
 // slot totality, and one MintColumnWrite per column. Analyze publishes
 // through Snapshot Commit; these laws hold the catalog plan, not a walk.
 
@@ -59,9 +60,10 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := Global()
-	grammar, grammarOK := ArtifactGrammar(receipt)
-	issuance, issuanceOK := ArtifactIssuanceDirectory()
+	receipt, receiptOK := Build()
+	grammar := receipt.ExecutionSchemaID()
+	grammarOK := grammar.Available()
+	issuance, issuanceOK := ArtifactIssuanceDirectory(receipt)
 	if !receiptOK || !grammarOK || !issuanceOK {
 		t.Fatal("the program schema receipt is unavailable")
 	}
@@ -82,13 +84,13 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 			t.Fatalf("compile artifact %d: %v", index, failure)
 		}
 		artifacts[index] = artifact.Program()
-		vocabulary, vocabularyOK := StructureVocabulary()
+		vocabulary, vocabularyOK := StructureVocabulary(receipt)
 		snapshot, lowered := ingress.Lower(artifact, vocabulary)
 		if !vocabularyOK || !lowered {
 			t.Fatalf("lower artifact %d", index)
 		}
 		compiledProgram := artifact.Program()
-		catalog, catalogOK := programschema.CatalogID(compiledProgram.SchemaID)
+		catalog, catalogOK := programcatalog.CatalogID(compiledProgram.SchemaID)
 		if !compiledProgram.Available() || compiledProgram.ProgramID != programID || !catalogOK || !catalog.Available() {
 			t.Fatalf("artifact %d publishes no cold value", index)
 		}
@@ -110,7 +112,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 	if err != nil || inventory == nil {
 		t.Fatalf("seal the static authority: %v", err)
 	}
-	record, failure := MountLink(LinkInputs{Source: linked, Artifacts: rows, StaticAuthority: inventory})
+	record, failure := MountLink(receipt, LinkInputs{Source: linked, Artifacts: rows, StaticAuthority: inventory})
 	if failure.Available() {
 		t.Fatalf("mount the Link: %v", failure)
 	}
@@ -126,7 +128,7 @@ func mountedRecord(t testing.TB, name, source string) LinkInputs {
 // what makes two publications two acts rather than one column's two writers.
 func materializerBinding(t testing.TB, record LinkInputs) *ProgramBinding {
 	t.Helper()
-	compilation, ok := Global()
+	compilation, ok := Build()
 	if !ok {
 		t.Fatal("the program schema receipt is unavailable")
 	}
@@ -141,14 +143,15 @@ func materializerBinding(t testing.TB, record LinkInputs) *ProgramBinding {
 // totality law: every declared axis output and every sealed query family is
 // admitted exactly once, and every admitted column states coverage.
 func TestMaterializedPublicationAnswersTheWholeSealedCatalog(t *testing.T) {
-	admissions, admissionsOK := PublicationAdmissions()
-	columns, columnsOK := WriteRequests()
-	queries, queriesOK := QueryRequests()
+	_, publication := publicationForTest(t)
+	admissions, admissionsOK := publication.Admissions()
+	columns, columnsOK := publication.WriteRequests()
+	queries, queriesOK := publication.QueryRequests()
 	if !admissionsOK || !columnsOK || !queriesOK {
 		t.Fatal("the sealed table publishes no column plan")
 	}
-	if len(admissions) != len(columns)+len(queries) || len(admissions) != PublicationColumns() {
-		t.Fatalf("admissions = %d, columns = %d, queries = %d, slots = %d", len(admissions), len(columns), len(queries), PublicationColumns())
+	if len(admissions) != len(columns)+len(queries) || len(admissions) != publication.Columns() {
+		t.Fatalf("admissions = %d, columns = %d, queries = %d, slots = %d", len(admissions), len(columns), len(queries), publication.Columns())
 	}
 	claimed := make(map[schema.Key]bool, len(admissions))
 	for _, admission := range admissions {
@@ -161,7 +164,7 @@ func TestMaterializedPublicationAnswersTheWholeSealedCatalog(t *testing.T) {
 		if !claimed[column.Output] {
 			t.Fatalf("column %q is not admitted", column.Output)
 		}
-		if _, addressed := PublicationCoverage(column.Output); !addressed {
+		if _, addressed := publication.Coverage(column.Output); !addressed {
 			t.Fatalf("column %q states no coverage", column.Output)
 		}
 	}
@@ -178,24 +181,25 @@ func TestMaterializedPublicationAnswersTheWholeSealedCatalog(t *testing.T) {
 // beside them is addressed, so a column silently skipped is a publication that
 // does not seal rather than a snapshot with a hole in it.
 func TestMaterializedPublicationFillsExactlyTheRequestedSlots(t *testing.T) {
-	columns, columnsOK := WriteRequests()
-	queries, queriesOK := QueryRequests()
+	_, publication := publicationForTest(t)
+	columns, columnsOK := publication.WriteRequests()
+	queries, queriesOK := publication.QueryRequests()
 	if !columnsOK || !queriesOK {
 		t.Fatal("the sealed table publishes no column plan")
 	}
-	if PublicationColumns() != len(columns)+len(queries) {
-		t.Fatalf("%d slots for %d issued columns and %d result columns", PublicationColumns(), len(columns), len(queries))
+	if publication.Columns() != len(columns)+len(queries) {
+		t.Fatalf("%d slots for %d issued columns and %d result columns", publication.Columns(), len(columns), len(queries))
 	}
 	for _, request := range columns {
-		if _, addressed := PublicationCoverage(request.Output); !addressed {
+		if _, addressed := publication.Coverage(request.Output); !addressed {
 			t.Fatalf("the published column %q states no coverage", request.Output)
 		}
-		if int(request.Slot) >= PublicationColumns() {
-			t.Fatalf("column %q was issued at slot %d outside the %d published slots", request.Output, request.Slot, PublicationColumns())
+		if int(request.Slot) >= publication.Columns() {
+			t.Fatalf("column %q was issued at slot %d outside the %d published slots", request.Output, request.Slot, publication.Columns())
 		}
 	}
 	for _, request := range queries {
-		id, projects := ProjectQuery(request.Family)
+		id, projects := publication.ProjectQuery(request.Family)
 		if !projects || id != request.ID {
 			t.Fatalf("family %q is not answerable under its sealed identity", request.Family)
 		}
@@ -207,8 +211,9 @@ func TestMaterializedPublicationFillsExactlyTheRequestedSlots(t *testing.T) {
 // every column and every subject of every family identically, so a publication
 // is reproducible and a consumer that re-runs the analyzer reads the same facts.
 func TestMaterializedPublicationIsAFunctionOfItsLanes(t *testing.T) {
-	first, firstOK := PublicationAdmissions()
-	second, secondOK := PublicationAdmissions()
+	_, publication := publicationForTest(t)
+	first, firstOK := publication.Admissions()
+	second, secondOK := publication.Admissions()
 	if !firstOK || !secondOK || len(first) == 0 || len(first) != len(second) {
 		t.Fatalf("publication admissions first=%d/%t second=%d/%t", len(first), firstOK, len(second), secondOK)
 	}
@@ -225,7 +230,7 @@ func TestMaterializedPublicationIsAFunctionOfItsLanes(t *testing.T) {
 // publication is the whole catalog or none of it, and the verdict names the
 // stage and the column or family that refused.
 func TestMaterializationIsWholeOrNothing(t *testing.T) {
-	compilation, ok := Global()
+	compilation, ok := Build()
 	if !ok {
 		t.Fatal("the program schema receipt is unavailable")
 	}
@@ -253,7 +258,8 @@ func TestMaterializationIsWholeOrNothing(t *testing.T) {
 func TestTheWalkWritesOnlyThroughItsMintedCapabilities(t *testing.T) {
 	record := mountedRecord(t, "materializer_law", materializerSource)
 	binding := materializerBinding(t, record)
-	columns, columnsOK := WriteRequests()
+	_, publication := publicationForTest(t)
+	columns, columnsOK := publication.WriteRequests()
 	if !columnsOK || len(columns) == 0 {
 		t.Fatal("the sealed table issues no column plan")
 	}

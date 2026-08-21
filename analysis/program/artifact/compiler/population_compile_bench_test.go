@@ -6,9 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
-	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/domain/composite"
 )
@@ -61,16 +59,17 @@ func populationRepositoryRoot(tb testing.TB, start string) string {
 }
 
 // BenchmarkPopulationCompile compiles the fixtures above through the real
-// artifact compiler with the real, registry-sealed IssuanceDirectory (the
+// artifact compiler with the real, registry-sealed issuance.Directory (the
 // same directory analysis/compile.go builds via
-// composite.ArtifactIssuanceDirectory, not the empty IssuanceDirectory{}
+// composite.ArtifactIssuanceDirectory, not the empty issuance.Directory{}
 // cold_compile_bench_test.go uses). Gate on allocs/op and B/op; treat ns/op
 // as advisory below a 30% delta at this benchtime, per finding 10's amendment.
 func BenchmarkPopulationCompile(b *testing.B) {
 	sources := populationCompileFixtureSources(b)
-	grammar, grammarOK := programartifact.NewGrammarIdentity(identity.ContentID{1}, programartifact.GrammarABIVersion)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	grammar := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !grammar.Available() || !issuanceOK {
 		b.Fatal("population benchmark inputs")
 	}
 	for _, source := range sources {

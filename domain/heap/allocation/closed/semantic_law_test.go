@@ -177,16 +177,16 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 	shard, shardOK := linked.Project().Mounts().At(0)
 	module, moduleOK := linked.Project().ModuleKey(shard)
 	programID, programIDOK := linked.Project().Mounts().ProgramID(shard)
-	artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+	artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 	mount, mountOK := heapdomain.NewArtifactMount(snapshottest.MustLower(t, artifact), module, programID)
 	heap, heapFailure := heapdomain.SealWithArtifacts(linked, []heapdomain.ArtifactMount{mount})
-	if !receiptOK || !grammarOK || !issuanceOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK || !shardOK || !moduleOK || !programIDOK || failure.Available() || !mountOK || heapFailure != heapdomain.SealFailureNone {
 		t.Fatal("closed semantic artifact admission")
 	}
 	// Value's canonical mount is issued from the same artifact receipt; keep
@@ -195,7 +195,7 @@ func closedSemanticFixture(t testing.TB, text string) (heapdomain.Schema, *value
 	if !valueMountOK {
 		t.Fatal("closed semantic Value mount")
 	}
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

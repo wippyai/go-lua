@@ -113,9 +113,10 @@ func ingressHotSchema(t testing.TB) (*engine.Schema, *heapowner.SchemaFragment, 
 }
 
 type ingressFixtureMounts struct {
-	linked *link.Link
-	heap   []heapdomain.ArtifactMount
-	value  []valuedomain.ArtifactMount
+	linked      *link.Link
+	compilation composite.Compilation
+	heap        []heapdomain.ArtifactMount
+	value       []valuedomain.ArtifactMount
 }
 
 func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingressFixtureMounts) {
@@ -132,14 +133,14 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, receiptOK := composite.Global()
-	grammar, grammarOK := composite.ArtifactGrammar(receipt)
-	issuance, issuanceOK := composite.ArtifactIssuanceDirectory()
-	if !receiptOK || !grammarOK || !issuanceOK {
+	compilation, compilationOK := composite.Build()
+	executionSchemaID := compilation.ExecutionSchemaID()
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !compilationOK || !executionSchemaID.Available() || !issuanceOK {
 		t.Fatal("ingress artifact receipt")
 	}
 	projectMounts := linked.Project().Mounts()
-	mounts := ingressFixtureMounts{linked: linked, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
+	mounts := ingressFixtureMounts{linked: linked, compilation: compilation, heap: make([]heapdomain.ArtifactMount, projectMounts.Count()), value: make([]valuedomain.ArtifactMount, projectMounts.Count())}
 	for index := 0; index < projectMounts.Count(); index++ {
 		shard, shardOK := projectMounts.At(index)
 		program, programOK := projectMounts.Program(shard)
@@ -148,7 +149,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 		if !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 			t.Fatal("ingress artifact mount")
 		}
-		artifact, failure := artifactcompiler.CompileDetailed(program, grammar, issuance)
+		artifact, failure := artifactcompiler.CompileDetailed(program, executionSchemaID, issuance)
 		if failure.Available() || artifact == nil {
 			t.Fatalf("ingress artifact compile: %v", failure)
 		}
@@ -160,7 +161,7 @@ func ingressFixture(t testing.TB) (heapdomain.Schema, *valuedomain.Schema, ingre
 		}
 	}
 	heapSchema, heapFailure := heapdomain.SealWithArtifacts(linked, mounts.heap)
-	structural, structuralOK := composite.StructureVocabulary()
+	structural, structuralOK := composite.StructureVocabulary(compilation)
 	if !structuralOK {
 		t.Fatal("structure vocabulary")
 	}

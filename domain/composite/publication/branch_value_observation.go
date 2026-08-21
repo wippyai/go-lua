@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
-	"github.com/wippyai/go-lua/analysis/snapshot"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -101,28 +100,4 @@ func MemberPublished(committed *engine.CommittedProgram, role engine.RuleSlotCap
 	}
 	_, published := committed.MountedRuleMember(role, mount, point, occurrence)
 	return published
-}
-
-// Observe reads this evidence point from the completed Snapshot. It reports
-// readability separately from the result's own validity, so a caller
-// distinguishes a solver/state pair that cannot read the row from a read that
-// returned an invalid summary.
-func (attachment BranchValueObservationAttachment) Observe(solver *engine.Solver, state *engine.State) (valuedomain.ValueSummaryObservation, bool) {
-	if !attachment.valid() {
-		return valuedomain.ValueSummaryObservation{}, false
-	}
-	sealed, publishedOK := solver.PublishedSnapshot(state)
-	if !publishedOK {
-		return valuedomain.ValueSummaryObservation{}, false
-	}
-	published := sealed.Snapshot()
-	plan, opened := snapshot.OpenQuery[identity.ContentID, engine.Answer](&published, sealed.ObservationFamily())
-	if !opened {
-		return valuedomain.ValueSummaryObservation{}, false
-	}
-	answer, status := snapshot.Query(&published, plan, attachment.id)
-	if status != snapshot.ReadHit || !answer.Available() {
-		return valuedomain.ValueSummaryObservation{}, false
-	}
-	return engine.AnswerValue[valuedomain.ValueSummaryObservation](answer)
 }

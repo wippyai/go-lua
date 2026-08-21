@@ -239,7 +239,7 @@ func (runtime *stagedReadRuntime[V, S, Tag]) refine(session *productSession, ind
 		selected.close()
 		return false
 	}
-	next := make([]productRow, sources.Count())
+	next := make([]provenanceRow, sources.Count())
 	for source := range session.values {
 		start, end, mapped := sources.Range(source)
 		if !session.requireCheckpoint() || !mapped || start < 0 || end <= start || end > len(next) {
@@ -519,7 +519,7 @@ func materializeTypedRead[V, S any](session *productSession, index, input int, u
 		session.rows, session.sessions[index] = nextRows, values
 		return true
 	}
-	next := make([]productRow, sources.Count())
+	next := make([]provenanceRow, sources.Count())
 	for source := 0; source < len(session.values); source++ {
 		if !session.requireCheckpoint() {
 			values.close()
@@ -567,11 +567,11 @@ func materializeTypedRead[V, S any](session *productSession, index, input int, u
 // read identity is rewritten to the compact typed-session-local ordinal.
 // Nothing reaches productSession until all validation and cancellation checks
 // complete, so a failed quotient cannot publish a partial tuple.
-func compactTypedRead[V, S any](session *productSession, index int, rows []productRow, values *typedReadSession[V, S], representatives []int) ([]productRow, bool) {
+func compactTypedRead[V, S any](session *productSession, index int, rows []provenanceRow, values *typedReadSession[V, S], representatives []int) ([]provenanceRow, bool) {
 	if session == nil || index < 0 || values == nil || len(rows) == 0 || len(representatives) == 0 || len(values.values) != len(rows) || len(values.records) != len(rows) {
 		return nil, false
 	}
-	compactedRows := make([]productRow, len(representatives))
+	compactedRows := make([]provenanceRow, len(representatives))
 	compactedValues := make([]S, len(representatives))
 	compactedRecords := make([]*orderedCellsRecord[V], len(representatives))
 	retained := make([]bool, len(rows))

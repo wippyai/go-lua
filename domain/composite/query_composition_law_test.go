@@ -29,8 +29,9 @@ const compositePackage = modulePath + "domain/composite"
 // family's contributor, by their import paths and by their location under the
 // domain tree.
 var queryContributorPackages = map[string]string{
-	"github.com/wippyai/go-lua/domain/value/owner":  "value/owner",
-	"github.com/wippyai/go-lua/domain/effect/owner": "effect/owner",
+	"github.com/wippyai/go-lua/domain/value/owner":     "value/owner",
+	"github.com/wippyai/go-lua/domain/effect/owner":    "effect/owner",
+	"github.com/wippyai/go-lua/domain/placement/owner": "placement/owner",
 }
 
 // TestQueryContributorsDoNotImportTheComposition states the upward half of the

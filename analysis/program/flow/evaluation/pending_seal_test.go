@@ -17,7 +17,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/position"
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/flow/sourcecontrol"
-	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -193,9 +192,8 @@ type pendingFixture struct {
 	staticID   identity.ContentID
 	moduleID   identity.ContentID
 
-	staticView     staticquery.View
-	flowFinalize   authored.Finalizer
-	moduleFinalize imports.Finalizer
+	staticView   staticquery.View
+	flowFinalize authored.Finalizer
 }
 
 type pendingSourceExtras struct {
@@ -281,104 +279,93 @@ func openPendingFixture(
 		t.Fatalf("authored.Finalizer: %v", err)
 	}
 	flowView := flowFinalize.View()
+	moduleView := flowView.Imports()
+	moduleID := flowView.ModuleID()
 	entry := keyspace.MakeTerm(keyspace.FamilyBody, 1)
 
 	bodies, err := body.Seal(preimage, flowView, staticView, entry)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("body.Seal: %v", err)
 	}
 	bindingResult, err := binding.Seal(preimage, flowView, bodies, entry)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("binding.Seal: %v", err)
 	}
 
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, imports.Finalizer{})
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	moduleView := moduleFinalize.View()
-
 	forest, _, err := containment.Prove(preimage, staticView, flowView, bodies, bindingResult, moduleView, entry)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("containment.Prove: %v", err)
 	}
 	shape, err := control.Seal(preimage, flowView, bodies, bindingResult, forest,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("control.Seal: %v", err)
 	}
 	outcomes, err := outcome.Seal(preimage.Identity(), flowView, bodies, shape,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("outcome.Seal: %v", err)
 	}
 	index, err := position.Seal(preimage, flowView, bodies, forest, outcomes, entry,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(sourceFinalize, flowFinalize, moduleFinalize)
+		closePendingFinalizers(sourceFinalize, flowFinalize)
 		t.Fatalf("position.Seal: %v", err)
 	}
 	sourceComponent, err := sourceFinalize.Commit(index)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("source.Commit: %v", err)
 	}
 	sourceView := sourceComponent.View()
 	controlResult, err := sourcecontrol.Seal(sourceView, flowView, bodies, forest, shape, entry,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("sourcecontrol.Seal: %v", err)
 	}
 	paths, err := semanticpath.Seal(sourceView.CellRoles(), sourceView, flowView, bodies, bindingResult, forest, outcomes,
-		flowView.ContentID(), staticView.ContentID(), moduleView.ContentID())
+		flowView.ContentID(), staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("semanticpath.Seal: %v", err)
 	}
 	executableResult, err := executable.Seal(sourceView, flowView, bodies, forest, controlResult,
-		staticView.ContentID(), moduleView.ContentID(), paths)
+		staticView.ContentID(), moduleID, paths)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("executable.Seal: %v", err)
 	}
 	candidateResult, err := candidates.Seal(sourceView.Identity(), flowView, executableResult,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("candidates.Seal: %v", err)
 	}
 	pending, err := SealPending(sourceView, flowView, executableResult, candidateResult,
-		staticView.ContentID(), moduleView.ContentID())
+		staticView.ContentID(), moduleID)
 	if err != nil {
-		closePendingFinalizers(source.Finalizer{}, flowFinalize, moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, flowFinalize)
 		t.Fatalf("SealPending: %v", err)
 	}
 	fixture := &pendingFixture{
 		sourceView: sourceView, flowView: flowView, pending: pending,
 		executable: executableResult, candidates: candidateResult,
-		staticID: staticView.ContentID(), moduleID: moduleView.ContentID(),
-		staticView: staticView, flowFinalize: flowFinalize, moduleFinalize: moduleFinalize,
+		staticID: staticView.ContentID(), moduleID: moduleID,
+		staticView: staticView, flowFinalize: flowFinalize,
 	}
 	t.Cleanup(func() {
-		closePendingFinalizers(source.Finalizer{}, fixture.flowFinalize, fixture.moduleFinalize)
+		closePendingFinalizers(source.Finalizer{}, fixture.flowFinalize)
 	})
 	return fixture
 }
 
-func closePendingFinalizers(sourceFinalize source.Finalizer, flowFinalize authored.Finalizer, moduleFinalize imports.Finalizer) {
-	_ = moduleFinalize.Abort()
+func closePendingFinalizers(sourceFinalize source.Finalizer, flowFinalize authored.Finalizer) {
 	_ = flowFinalize.Abort()
 	_ = sourceFinalize.Abort()
 }
@@ -635,7 +622,7 @@ func TestSealPendingProductionRuntimeMatrixBuilds(t *testing.T) {
 				{Kind: keyspace.LiteralString, String: "method"},
 			},
 		})
-	if fixture.pending == nil || !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.ContentID(), fixture.staticView.ContentID(), fixture.moduleFinalize.View().ContentID()) {
+	if fixture.pending == nil || !MatchesPending(fixture.pending, fixture.sourceView.Identity().ContentID(), fixture.flowView.ContentID(), fixture.staticView.ContentID(), fixture.moduleID) {
 		t.Fatal("production runtime matrix did not produce matching Pending")
 	}
 }
@@ -872,16 +859,7 @@ func assertProductionContainmentRejectsPendingDuplicate(t *testing.T, name strin
 	if err != nil {
 		t.Fatalf("binding.Seal: %v", err)
 	}
-	moduleDraft, err := imports.Build(imports.Input{})
-	if err != nil {
-		t.Fatalf("imports.Build: %v", err)
-	}
-	moduleFinalize, err := moduleDraft.Finalizer()
-	if err != nil {
-		t.Fatalf("imports.Finalizer: %v", err)
-	}
-	t.Cleanup(func() { _ = moduleFinalize.Abort() })
-	if _, _, err := containment.Prove(sourceFinalize.Preimage(), staticView, flowFinalize.View(), bodies, bindings, moduleFinalize.View(), bodyTerm); err == nil {
+	if _, _, err := containment.Prove(sourceFinalize.Preimage(), staticView, flowFinalize.View(), bodies, bindings, flowFinalize.View().Imports(), bodyTerm); err == nil {
 		t.Fatal("canonical containment owner accepted a duplicate Pending occurrence")
 	}
 }

@@ -2,11 +2,10 @@
   "description": "CLEAN: a materialized read-model row returned within the actor is proven actor-local; no cross-actor escape, no promotion.",
   "check": {
     "placement": {
+      "require_complete": true,
       "min_owned_heap": 1,
-      "min_stack": 1
+      "min_stack": 1,
+      "max_unknown": 0
     }
-  },
-  "run": {
-    "skip": "checker-only placement fixture"
   }
 }
