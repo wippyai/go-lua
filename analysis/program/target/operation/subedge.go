@@ -78,7 +78,7 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		var err error
 		pending[index].admissionRoute, err = core.appendQuerySubedgeRoute(
 			item.AdmissionRoute, sourceIDs, pending, start, op, operation,
-			true, input.Semantics,
+			true,
 		)
 		if err != nil {
 			return fmt.Errorf("target/operation: subedge %d admission failure: %w", index, err)
@@ -86,7 +86,7 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		for terminal, route := range item.Routes {
 			pending[index].routes[terminal], err = core.appendQuerySubedgeRoute(
 				route, sourceIDs, pending, start, op, operation,
-				false, input.Semantics,
+				false,
 			)
 			if err != nil {
 				return fmt.Errorf("target/operation: subedge %d route %d: %w", index, terminal, err)
@@ -262,12 +262,6 @@ func (core Core) compareValues(left, right vocabulary.Values) int {
 			return -1
 		}
 		return 1
-	}
-	if l.tail != vocabulary.ValuesVariable {
-		return compareTypes(l.suffix, r.suffix)
-	}
-	if l.varID != r.varID {
-		return compareTypes(l.suffix, r.suffix)
 	}
 	return compareTypes(l.suffix, r.suffix)
 }
@@ -567,7 +561,7 @@ func argumentSegmentType(core Core, values vocabulary.Values, segment vocabulary
 	return 0, false
 }
 
-func (core Core) validateSubedgeRouteInput(op vocabulary.Operation, route SubedgeRouteInput, operation *queryOperationRow, allowFailure bool, semantics schematype.Semantics) (uint32, error) {
+func (core Core) validateSubedgeRouteInput(op vocabulary.Operation, route SubedgeRouteInput, operation *queryOperationRow, allowFailure bool) (uint32, error) {
 	if !core.validOwnedSubedgeValues(op, route.Result) {
 		return 0, errors.New("subedge route result is outside owner")
 	}
@@ -611,12 +605,11 @@ func (core Core) validateSubedgeRouteInput(op vocabulary.Operation, route Subedg
 	default:
 		return 0, errors.New("subedge route has invalid disposition")
 	}
-	_ = semantics
 	return outcome, nil
 }
 
-func (core Core) appendQuerySubedgeRoute(input SubedgeRouteInput, sourceIDs []vocabulary.SubedgeID, pending []querySubedgeRow, start int, op vocabulary.Operation, operation *queryOperationRow, allowFailure bool, semantics schematype.Semantics) (querySubedgeRouteRow, error) {
-	outcome, err := core.validateSubedgeRouteInput(op, input, operation, allowFailure, semantics)
+func (core Core) appendQuerySubedgeRoute(input SubedgeRouteInput, sourceIDs []vocabulary.SubedgeID, pending []querySubedgeRow, start int, op vocabulary.Operation, operation *queryOperationRow, allowFailure bool) (querySubedgeRouteRow, error) {
+	outcome, err := core.validateSubedgeRouteInput(op, input, operation, allowFailure)
 	if err != nil {
 		return querySubedgeRouteRow{}, err
 	}
@@ -1037,7 +1030,6 @@ func (core Core) validateResultPlacement(op vocabulary.Operation, result, destin
 	default:
 		return errors.New("invalid placement")
 	}
-	_ = semantics
 	return nil
 }
 
