@@ -174,19 +174,3 @@ func ParseEvent(wire string) (Event, bool) {
 		return "", false
 	}
 }
-
-// Boundary is the typed in-memory form of a placement/contract fact label.
-type Boundary string
-
-const (
-	BoundaryBorrow       Boundary = "borrow"
-	BoundaryRetain       Boundary = "retain"
-	BoundarySend         Boundary = "send"
-	BoundaryMutate       Boundary = "mutate"
-	BoundaryMetatable    Boundary = "metatable"
-	BoundaryIdentity     Boundary = "identity"
-	BoundaryDynamicIndex Boundary = "dynamic-index"
-	BoundaryIterator     Boundary = "iterator"
-	BoundaryLocal        Boundary = "local"
-	BoundaryContains     Boundary = "contains"
-)

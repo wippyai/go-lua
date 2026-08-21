@@ -23,22 +23,10 @@ type Reason uint8
 
 const (
 	ReasonOpenFormal Reason = iota + 1
-	ReasonGenerativeRecurrence
 	ReasonRuntimeSubject
-	ReasonUnresolvedProjection
-	ReasonStaticUnknown
 )
 
 type Fault uint8
-
-const (
-	FaultUnknown Fault = iota + 1
-	FaultReference
-	FaultArity
-	FaultBound
-	FaultProjection
-	FaultContainment
-)
 
 // RuntimeSubject is the exact detached Cell occurrence observed at the
 // authored Program SourceFrontier. Static never gives a non-executable Read a

@@ -42,15 +42,15 @@ const (
 // Public module names. These remain constants so existing runtime constants
 // can alias them without introducing a second spelling authority.
 const (
-	PackageName   = "package"
+	PackageName   = string(Package)
 	BaseName      = ""
-	TableName     = "table"
-	StringName    = "string"
-	MathName      = "math"
-	DebugName     = "debug"
-	CoroutineName = "coroutine"
-	UTF8Name      = "utf8"
-	ErrorsName    = "errors"
+	TableName     = string(Table)
+	StringName    = string(String)
+	MathName      = string(Math)
+	DebugName     = string(Debug)
+	CoroutineName = string(Coroutine)
+	UTF8Name      = string(UTF8)
+	ErrorsName    = string(Errors)
 )
 
 // Mount describes how a library enters the initial Lua environment.
