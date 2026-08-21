@@ -109,9 +109,6 @@ func (schema *valueBuilder) sealModuleLoadRows() bool {
 	if len(schema.moduleLoadCalls) != 0 {
 		return false
 	}
-	if !schema.sealModuleShards() {
-		return false
-	}
 	require, hasRequire := schema.sealBoundary().RequireOperation()
 	if !hasRequire {
 		return true
@@ -283,7 +280,7 @@ func (schema *valueBuilder) moduleLoadFact(moduleID identity.ContentID, path str
 	if !targetRootOK {
 		return Value{}, false
 	}
-	shard, shardOK := schema.moduleShard(moduleID)
+	shard, shardOK := schema.sealProject().Mounts().ForModuleKey(moduleID)
 	if !shardOK {
 		return Value{}, false
 	}
@@ -331,31 +328,4 @@ func (schema *valueBuilder) moduleLoadFact(moduleID identity.ContentID, path str
 	}
 	schema.moduleFacts[cacheKey] = projected
 	return projected, true
-}
-
-func (schema *valueBuilder) moduleShard(moduleID identity.ContentID) (linkproject.Shard, bool) {
-	if schema == nil || !moduleID.Available() {
-		return linkproject.Shard{}, false
-	}
-	shard, ok := schema.moduleShards[moduleID]
-	return shard, ok
-}
-
-func (schema *valueBuilder) sealModuleShards() bool {
-	if schema == nil || schema.sealProject() == nil || schema.moduleShards == nil || len(schema.moduleShards) != 0 {
-		return false
-	}
-	mounts := schema.sealProject().Mounts()
-	for index := 0; index < mounts.Count(); index++ {
-		shard, shardOK := mounts.At(index)
-		key, keyOK := schema.sealProject().ModuleKey(shard)
-		if !shardOK || !keyOK || !key.Available() {
-			return false
-		}
-		if _, duplicate := schema.moduleShards[key]; duplicate {
-			return false
-		}
-		schema.moduleShards[key] = shard
-	}
-	return len(schema.moduleShards) == mounts.Count()
 }

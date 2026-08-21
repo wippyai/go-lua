@@ -493,12 +493,11 @@ type Schema struct {
 // from a published Schema: Seal returns only builder.Schema.
 type valueBuilder struct {
 	*Schema
-	project      *linkproject.Component
-	boundary     *linkboundary.Component
-	host         *linkhost.Component
-	module       *linkmodule.Component
-	moduleShards map[identity.ContentID]linkproject.Shard
-	moduleFacts  map[moduleLoadFactKey]Value
+	project     *linkproject.Component
+	boundary    *linkboundary.Component
+	host        *linkhost.Component
+	module      *linkmodule.Component
+	moduleFacts map[moduleLoadFactKey]Value
 	// mountedCallResultSlots is the one cold canonical CallResultSlot
 	// directory for every finite output coordinate carried by an admitted
 	// mounted Artifact/Snapshot. It is keyed by concrete module placement,
@@ -569,7 +568,18 @@ func (builder *valueBuilder) sealMountedCallResultGeometry() bool {
 			result, resultOK := program.CallResultAt(index)
 			callID := result.CallID()
 			offset, width, spanOK := result.SlotSpan()
-			if !resultOK || !result.Available() || !callID.Available() || !spanOK || offset != slotCursor || uint64(offset)+uint64(width) > uint64(slotCount) {
+			open, openOK := result.ResultsOpen()
+			if !resultOK || !result.Available() || !callID.Available() || !spanOK || !openOK {
+				return false
+			}
+			// Only an exact result owns a dense child span. An open result
+			// publishes the canonical empty span and takes no position in the
+			// slot plane, so it neither advances nor is measured by the cursor.
+			if open {
+				if offset != 0 || width != 0 {
+					return false
+				}
+			} else if offset != slotCursor || uint64(offset)+uint64(width) > uint64(slotCount) {
 				return false
 			}
 			if _, duplicate := seenCalls[callID]; duplicate {
@@ -872,7 +882,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, mounts []ArtifactMoun
 		typeRefs:                   make(map[identity.ContentID]uint32),
 		capabilityID:               make(map[identity.ContentID]uint32),
 	}
-	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleShards: make(map[identity.ContentID]linkproject.Shard), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural}
+	builder := &valueBuilder{Schema: schema, project: source.Project(), boundary: source.Boundary(), host: source.Host(), module: source.Module(), moduleFacts: make(map[moduleLoadFactKey]Value), artifacts: artifacts, structural: structural}
 	if !builder.sealMountedCallResultGeometry() {
 		return nil, SealFailureComputation
 	}
