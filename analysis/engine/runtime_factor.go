@@ -132,7 +132,7 @@ func (bound *boundFactor[K, V]) summaryReadAddress(surface equation.Surface, row
 	}
 	factorRow := bound.implementation.row
 	unit, found := bound.reads[surface]
-	if !found || unit.kind != carrier.SummaryUnit || len(unit.summaryKeys) == 0 || surface.Factor != row.factor || surface.Semantic != row.semantic || surface.Normalizer != row.normalizer {
+	if !found || unit.kind != carrier.SummaryUnit || surface.Factor != row.factor || surface.Semantic != row.semantic || surface.Normalizer != row.normalizer {
 		return nil, 0, nil, [32]byte{}, false
 	}
 	if row.summaryForm == nil || row.summaryForm.schemaBindingSchema() != factorRow.schemaFactorSchema() {

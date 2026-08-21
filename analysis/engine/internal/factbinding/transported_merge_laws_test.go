@@ -214,7 +214,7 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 			t.Fatal("complement plan seal")
 		}
 		contributionPlan := compositionPlan(t, composition)
-		supportPlan, ok := composition.SealContribution(0, nil, nil, true)
+		supportPlan, ok := composition.SealContribution(0, nil, nil)
 		if !ok {
 			t.Fatal("support expansion plan")
 		}
@@ -232,7 +232,7 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("begin support expansion")
 		}
-		supportOnly, ok := work.FinishContributionWithSupport(supportBase, nil, whole)
+		supportOnly, ok := work.FinishContribution(supportBase, nil)
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
@@ -295,7 +295,7 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 			t.Fatal("complement plan seal")
 		}
 		contributionPlan := compositionPlan(t, composition)
-		supportPlan, ok := composition.SealContribution(0, nil, nil, true)
+		supportPlan, ok := composition.SealContribution(0, nil, nil)
 		if !ok {
 			t.Fatal("support expansion plan")
 		}
@@ -313,7 +313,7 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("begin support expansion")
 		}
-		supportOnly, ok := work.FinishContributionWithSupport(supportBase, nil, whole)
+		supportOnly, ok := work.FinishContribution(supportBase, nil)
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
@@ -382,11 +382,11 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("complement plan seal")
 		}
-		contributionPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
+		contributionPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
 		if !ok {
 			t.Fatal("contribution plan")
 		}
-		supportPlan, ok := composition.SealContribution(0, nil, nil, true)
+		supportPlan, ok := composition.SealContribution(0, nil, nil)
 		if !ok {
 			t.Fatal("support expansion plan")
 		}
@@ -427,7 +427,7 @@ func TestMergeTransportedPointContributionMatchesBaseline(t *testing.T) {
 		if !ok {
 			t.Fatal("begin support expansion")
 		}
-		supportOnly, ok := work.FinishContributionWithSupport(supportBase, nil, whole)
+		supportOnly, ok := work.FinishContribution(supportBase, nil)
 		if !ok {
 			t.Fatal("finish support expansion")
 		}
@@ -476,7 +476,7 @@ func TestTransportedPointRHSAdoptsClosedOperandOverSupportBase(t *testing.T) {
 	if !ok {
 		t.Fatal("identity plan")
 	}
-	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
+	writePlan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
 	if !ok {
 		t.Fatal("write contribution plan")
 	}
@@ -583,7 +583,7 @@ func transportWhole(t testing.TB, manager *guard.Manager) support.Mask {
 
 func compositionPlan(t testing.TB, composition *carrier.Composition) carrier.ContributionPlan {
 	t.Helper()
-	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
 	if !ok {
 		t.Fatal("contribution plan")
 	}

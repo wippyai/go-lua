@@ -43,7 +43,7 @@
 // solver runtime.
 //
 //	runtime_binding.go         read form kinds, the runtimeBinding container, catalog freeze
-//	runtime_binding_catalog.go graph use rows, the schema Rule ref, carry closures
+//	runtime_binding_catalog.go graph use rows, carry closures, and binding catalog
 //	runtime_factor_bind.go     the per-Factor binding pass and its shape matchers
 //	runtime_factor.go          the bound Factor vocabulary and its runtime methods
 //	runtime_assembly.go        the solver runtime vocabulary and the assembly pass
@@ -69,24 +69,23 @@
 //
 // The row-local surface a Rule body sees while it runs, and nothing else.
 //
-//	runtime_frame.go  the public row API: Row, product session, staging verbs
+//	runtime_frame.go  the opaque Fold frame/result API and private product session
 //	runtime_read.go   typed and staged read runtimes, selection sessions, materialization
-//	runtime_output.go output access, typed staging, carry transform, patch accept
-//	runtime_rule.go   the bound Rule, its execution and its derivation
+//	runtime_output.go output access, typed staging, carry transform, patch publication
+//	runtime_rule.go   the bound Rule and engine-owned Fold execution
 //	selector.go       the row-local SelectorContext capability
 //
-// # Admission plane
+// # Sealed Rule geometry
 //
-// The checker-visible derivation a Rule admission inspects before it accepts.
-//
-//	rule_admission.go     admission vocabulary, derivation readers, admit path, ticket, evidence
-//	rule_derivation_row.go row-level derivation values and the read, target and runtime proofs
+// SchemaBinding finalizes each ordinary Rule cell once. Runtime consumes that
+// cell's direct geometry and immutable read rows; it carries no callback
+// admission, derivation replay, ticket, proof, or evidence plane.
 //
 // # Activation plane
 //
 // Activation results and the candidates that produce them.
 //
-//	activation.go                    the activation Product result and its admission
+//	activation.go                    pure activation Fold/result and topology settlement
 //	activation_candidate_binding.go  the mounted candidate issuer binding
 //
 // # Query and observation plane

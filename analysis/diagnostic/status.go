@@ -182,10 +182,6 @@ const (
 	// verdict in AnalyzeDiagnostics.Axis rather than as one verdict member per
 	// coordinate space.
 	ProgramBindingFailureAxisAuthority
-	// ProgramBindingFailureRuntimeContexts is the runtime allocation context
-	// owner's own rejection: it joins the already-sealed factor pair and is a
-	// stage of the binding transaction rather than an axis authority.
-	ProgramBindingFailureRuntimeContexts
 	ProgramBindingFailureHeapIndex
 	ProgramBindingFailureTarget
 	ProgramBindingFailureTargetCatalog
@@ -204,7 +200,7 @@ const (
 
 var programBindingFailureNames = [...]string{
 	"none", "input", "types", "static",
-	"axis-authority", "runtime-contexts", "heap-index",
+	"axis-authority", "heap-index",
 	"target", "target-catalog", "table", "compilation", "binding", "principal",
 	"allocation-catalog", "query-catalog", "seal", "allocations",
 }
@@ -247,8 +243,6 @@ func ProgramBindingFailureFromBind(failure composite.BindFailure) ProgramBinding
 		return ProgramBindingFailureSeal
 	case composite.BindStageAllocations:
 		return ProgramBindingFailureAllocations
-	case composite.BindStageRuntimeContexts:
-		return ProgramBindingFailureRuntimeContexts
 	default:
 		return ProgramBindingFailureNone
 	}

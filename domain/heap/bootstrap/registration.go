@@ -64,13 +64,13 @@ func BindRule[A ruleAuthorities](_ *engine.SchemaBinding, context rule.Binding[A
 }
 
 func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	catalog := context.Rule.Catalog()
-	return catalog != nil && catalog.FencedTo(context.Authorities.HeapSchema())
+	return context.Rule != nil && context.Rule.owner != nil &&
+		context.Rule.owner.Schema() == context.Authorities.HeapSchema() &&
+		context.Rule.Count() == context.Authorities.HeapSchema().BootCount()
 }
 
 func LinkCatalog(hot *HotRule) (rule.LinkCatalog, bool) {
-	catalog := hot.Catalog()
-	return catalog, catalog != nil
+	return hot, hot != nil
 }
 
 // StructureSpecs is this package's contribution to the analyzer's semantic

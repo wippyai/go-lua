@@ -2,17 +2,17 @@ package bootstrap
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/identity"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	heapowner "github.com/wippyai/go-lua/domain/heap/owner"
 )
 
-// HotRule is Heap bootstrap's receipt-native zero-input rule. Root already
-// contains the complete immutable Heap value issued at cold construction, so
-// callbacks perform only exact owner/receipt checks.
+// HotRule is Heap bootstrap's zero-input rule. Its operand is the owner-issued
+// Heap Key; the complete immutable bootstrap Value is a sealed Heap Schema row
+// and is read directly by the fold.
 type HotRule struct {
-	implementation *heapowner.RuleImplementation[Root]
+	implementation *heapowner.RuleImplementation[heapdomain.Key]
 	owner          *heapowner.HotOwner
-	catalog        *Catalog
 }
 
 // BindHot attaches the exact write implementation without reopening Host,
@@ -23,54 +23,61 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 		return nil, false
 	}
 	schema := owner.Schema()
-	implementation, ok := heapowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[heapdomain.Value, Root]{
-		OperandContent: func(root Root) (Root, [32]byte, bool) {
-			return contentForSchema(schema, root)
+	implementation, ok := heapowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[heapdomain.Value, heapdomain.Key]{
+		OperandContent: func(key heapdomain.Key) (heapdomain.Key, [32]byte, bool) {
+			contentID, contentOK := schema.BootRootID(key)
+			if !contentOK {
+				return heapdomain.Key{}, [32]byte{}, false
+			}
+			return key, [32]byte(contentID), true
 		},
-		Fold: func(frame engine.Frame[heapdomain.Value, Root]) engine.RuleResult[heapdomain.Value] {
-			root, operandOK := engine.Operand(frame)
-			_, value, resultOK := resultForSchema(schema, root)
-			if !operandOK || !resultOK {
+		Fold: func(frame engine.Frame[heapdomain.Value, heapdomain.Key]) engine.RuleResult[heapdomain.Value] {
+			key, operandOK := engine.Operand(frame)
+			value, valueOK := schema.BootValue(key)
+			if !operandOK || !valueOK {
 				return engine.RuleResult[heapdomain.Value]{}
 			}
 			return engine.Staged(frame, value)
 		},
-	}, func(root Root) (uint64, bool) {
-		key, _, ok := resultForSchema(schema, root)
+	}, func(key heapdomain.Key) (uint64, bool) {
 		index, indexOK := schema.KeyIndex(key)
-		return uint64(index), ok && indexOK && index >= 0
+		return uint64(index), indexOK && index >= 0 && key.Kind() == heapdomain.RootBoot
 	})
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	catalog, catalogOK := SealCatalog(schema)
-	if !catalogOK {
-		return nil, false
-	}
-	rule := &HotRule{implementation: implementation, owner: owner, catalog: catalog}
+	rule := &HotRule{implementation: implementation, owner: owner}
 	if !implementation.InstallOperandResolver(rule.resolveOperand) {
 		return nil, false
 	}
 	return rule, true
 }
 
-func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (Root, bool) {
-	if rule == nil || rule.catalog == nil {
-		return Root{}, false
+func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (heapdomain.Key, bool) {
+	if rule == nil || rule.owner == nil || !rule.owner.Schema().Valid() {
+		return heapdomain.Key{}, false
 	}
-	root, _, ok := rule.catalog.ReceiptForID(coords.Occurrence)
-	return root, ok
+	return rule.owner.Schema().KeyForBootID(coords.Occurrence)
 }
 
-// Catalog returns Heap/bootstrap's immutable Link-global BootRoot directory.
-func (rule *HotRule) Catalog() *Catalog {
-	if rule == nil {
-		return nil
+// Count implements the Link occurrence denominator directly from Heap's
+// sealed BootRoot rows.
+func (rule *HotRule) Count() int {
+	if rule == nil || rule.owner == nil || !rule.owner.Schema().Valid() {
+		return 0
 	}
-	return rule.catalog
+	return rule.owner.Schema().BootCount()
 }
 
-func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[Root], bool) {
+// IDAt projects Heap's canonical BootRoot identity order for Link admission.
+func (rule *HotRule) IDAt(index int) (identity.ContentID, bool) {
+	if rule == nil || rule.owner == nil || !rule.owner.Schema().Valid() {
+		return identity.ContentID{}, false
+	}
+	return rule.owner.Schema().BootIDAt(index)
+}
+
+func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[heapdomain.Key], bool) {
 	if rule == nil || rule.owner == nil || rule.implementation == nil {
 		return nil, false
 	}

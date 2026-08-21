@@ -405,107 +405,8 @@ func linkBootstrapPointSemanticID(owner, point identity.ContentID) identity.Cont
 	return mountedArtifactID("analysis/engine/link-bootstrap-point/v1", owner, owner, point)
 }
 
-// sealedLinkCapabilityInventory is the schema-owned Link input inventory. The
-// capability directory is keyed by opaque capabilities, so its map order is
-// not semantic; schema rule ordinal is the canonical order of the inventory.
-func sealedLinkCapabilityInventory(state *schemaBindingState) ([]RuleSlotCapability, bool) {
-	if state == nil {
-		return nil, false
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.phase != schemaBindingSealed || state.authority == nil || state.schema == nil || !state.schema.Available() {
-		return nil, false
-	}
-	count := state.schema.ruleCount()
-	result := make([]RuleSlotCapability, 0)
-	for ordinal := uint64(0); ordinal < count; ordinal++ {
-		capability := RuleSlotCapability{state: state, authority: state.authority, ordinal: ordinal, kind: ruleCapabilityLink}
-		semantic, registered := state.roleSlots[capability]
-		if !registered {
-			continue
-		}
-		if !capability.link() || semantic != state.schema.ruleSemanticAt(ordinal) {
-			return nil, false
-		}
-		result = append(result, capability)
-	}
-	for capability, semantic := range state.roleSlots {
-		if capability.kind != ruleCapabilityLink {
-			continue
-		}
-		if !capability.link() || capability.state != state || capability.authority != state.authority || capability.ordinal >= count || semantic != state.schema.ruleSemanticAt(capability.ordinal) {
-			return nil, false
-		}
-	}
-	return result, true
-}
-
-// validateSealedLinkBootstrapCatalog authenticates one complete Link catalog
-// against the sealed schema inventory. A catalog is accepted only when every
-// declared Link input appears exactly once in canonical order; a duplicate,
-// missing, or foreign capability therefore fails at the Snapshot boundary.
-func validateSealedLinkBootstrapCatalog(state *schemaBindingState, witness LinkBootstrapWitness) bool {
-	expected, expectedOK := sealedLinkCapabilityInventory(state)
-	if !expectedOK || !witness.Available() || witness.transportCapabilityCount() != len(expected) {
-		return false
-	}
-	for index, want := range expected {
-		got, gotOK := witness.transportCapabilityAt(index)
-		if !gotOK || got != want {
-			return false
-		}
-	}
-	if len(witness.byCapability) != len(expected) {
-		return false
-	}
-	for _, capability := range expected {
-		if _, present := witness.byCapability[capability]; !present {
-			return false
-		}
-	}
-	for capability := range witness.byCapability {
-		found := false
-		for _, expectedCapability := range expected {
-			if capability == expectedCapability {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	seen := make(map[identity.ContentID]RuleSlotCapability, witness.OccurrenceCount())
-	for index := 0; index < witness.OccurrenceCount(); index++ {
-		occurrence, occurrenceOK := witness.OccurrenceAt(index)
-		if !occurrenceOK {
-			return false
-		}
-		if _, duplicate := seen[occurrence]; duplicate {
-			return false
-		}
-		capability, capabilityOK := witness.capabilityFor(occurrence)
-		if !capabilityOK {
-			return false
-		}
-		seen[occurrence] = capability
-	}
-	for capability, occurrences := range witness.byCapability {
-		for occurrence := range occurrences {
-			if claimed, present := seen[occurrence]; !present || claimed != capability {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.ContentID, bootstrap LinkBootstrapWitness, bindingState *schemaBindingState) (*mountedArtifactRows, programAssemblyFailure) {
 	if len(mounts) == 0 || !schemaID.Available() || !bootstrap.Available() || bindingState == nil {
-		return nil, programAssemblyFailureSnapshotBootstrap
-	}
-	if !validateSealedLinkBootstrapCatalog(bindingState, bootstrap) {
 		return nil, programAssemblyFailureSnapshotBootstrap
 	}
 	bootstrapPoint, pointOK := bootstrap.Point()
@@ -518,9 +419,6 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 		if !idOK {
 			return nil, programAssemblyFailureSnapshotBootstrap
 		}
-		if _, duplicate := occurrences[id]; duplicate {
-			return nil, programAssemblyFailureSnapshotBootstrap
-		}
 		occurrences[id] = struct{}{}
 	}
 	roles := make(map[identity.ContentID]RuleSlotCapability, len(occurrences))
@@ -531,24 +429,30 @@ func buildMountedArtifactRows(mounts []sealedProgramMount, schemaID identity.Con
 		}
 		roles[id] = capability
 	}
+	transports := bootstrap.transportCapabilityCount()
+	seenTransportCapabilities := make(map[RuleSlotCapability]struct{}, transports)
+	seenTransportFactors := make(map[composition.Key]struct{}, transports)
+	if transports != 0 && transports != 2 {
+		return nil, programAssemblyFailureSnapshotBootstrap
+	}
 	authorizedTransports, transportsAuthorized := sealedLinkBootstrapTransportPair(bindingState)
-	seenTransportCapabilities := make(map[RuleSlotCapability]struct{}, len(authorizedTransports))
-	seenTransportFactors := make(map[composition.Key]struct{}, len(authorizedTransports))
-	if transportsAuthorized {
-		for _, capability := range authorizedTransports {
-			factor, factorOK := linkTransportFactorSemantic(bindingState, capability)
-			if !factorOK {
-				return nil, programAssemblyFailureSnapshotBootstrap
-			}
-			if _, duplicate := seenTransportCapabilities[capability]; duplicate {
-				return nil, programAssemblyFailureSnapshotBootstrap
-			}
-			if _, duplicate := seenTransportFactors[factor]; duplicate {
-				return nil, programAssemblyFailureSnapshotBootstrap
-			}
-			seenTransportCapabilities[capability] = struct{}{}
-			seenTransportFactors[factor] = struct{}{}
+	if (transports == 0 && transportsAuthorized) || (transports != 0 && !transportsAuthorized) {
+		return nil, programAssemblyFailureSnapshotBootstrap
+	}
+	for index := 0; index < transports; index++ {
+		capability, capabilityOK := bootstrap.transportCapabilityAt(index)
+		factor, factorOK := linkTransportFactorSemantic(bindingState, capability)
+		if !capabilityOK || !factorOK || capability != authorizedTransports[index] {
+			return nil, programAssemblyFailureSnapshotBootstrap
 		}
+		if _, duplicate := seenTransportCapabilities[capability]; duplicate {
+			return nil, programAssemblyFailureSnapshotBootstrap
+		}
+		if _, duplicate := seenTransportFactors[factor]; duplicate {
+			return nil, programAssemblyFailureSnapshotBootstrap
+		}
+		seenTransportCapabilities[capability] = struct{}{}
+		seenTransportFactors[factor] = struct{}{}
 	}
 	result := &mountedArtifactRows{pointMeta: make(map[identity.ContentID]artifactPointMetadata), sites: make(map[identity.ContentID]equation.Site), mounted: make(map[artifactMountedPoint]equation.Site), ruleSet: make(map[artifactMountedRule]struct{}), bootstrap: &linkBootstrapRows{owner: bootstrap.OwnerID(), point: bootstrapPoint, roles: roles}}
 	seenMounts := make(map[identity.ContentID]struct{}, len(mounts))

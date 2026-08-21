@@ -89,7 +89,7 @@ func buildTopologyCatalog(topology TopologySpec) (topologyCatalog, bool) {
 func validSummaryMapping(row SummaryMapping) bool {
 	return row.Surface.Available() && row.Surface.Form == SurfaceReadSummary && row.Surface.Mode == TargetModeNone &&
 		row.Surface.Semantic.Available() && row.Surface.Normalizer.Available() && row.Surface.Semantic == row.Surface.Normalizer &&
-		len(row.Keys) != 0 && validRawKeySet(row.Keys)
+		validRawKeySet(row.Keys)
 }
 
 func validWeakTargetMapping(row WeakTargetMapping) bool {

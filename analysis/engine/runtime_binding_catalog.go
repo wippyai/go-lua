@@ -1,4 +1,5 @@
-// runtime_binding_catalog.go collects the graph use rows, the schema Rule ref, the carry closures and the binding catalog.
+// runtime_binding_catalog.go collects graph use rows, carry closures, and the
+// one-shot binding catalog.
 
 package engine
 
@@ -21,55 +22,15 @@ type graphFactorUses struct {
 }
 
 type graphReadUse struct {
-	rule    *schemaRuleRef
+	row     *schemaRuleReadRow
 	index   int
 	surface equation.Surface
 }
 
 type graphWriteUse struct {
-	rule    *schemaRuleRef
-	index   int
-	surface equation.Surface
-}
-
-// schemaRuleRef is a no-copy cold Rule proof. It names one canonical Schema
-// row and exposes only scalar shape accessors; no Link callback or declaration schema
-// pointer crosses into Factor carrier binding.
-type schemaRuleRef struct {
-	schema  *Schema
-	ordinal uint64
-}
-
-func (ref *schemaRuleRef) valid() bool {
-	return ref != nil && ref.schema != nil && ref.schema.Available() && ref.schema.ruleSemanticAt(ref.ordinal).Available()
-}
-
-func (ref *schemaRuleRef) shape() (composition.RuleShape, bool) {
-	if !ref.valid() {
-		return composition.RuleShape{}, false
-	}
-	return ref.schema.ruleShapeAt(ref.ordinal)
-}
-
-func (ref *schemaRuleRef) read(index uint64) (composition.RuleReadShape, bool) {
-	if !ref.valid() {
-		return composition.RuleReadShape{}, false
-	}
-	return ref.schema.ruleReadShapeAt(ref.ordinal, index)
-}
-
-func (ref *schemaRuleRef) carry(index uint64) (composition.RuleCarryShape, bool) {
-	if !ref.valid() {
-		return composition.RuleCarryShape{}, false
-	}
-	return ref.schema.ruleCarryShapeAt(ref.ordinal, index)
-}
-
-func (ref *schemaRuleRef) write(index uint64) (composition.RuleWriteShape, bool) {
-	if !ref.valid() {
-		return composition.RuleWriteShape{}, false
-	}
-	return ref.schema.ruleWriteShapeAt(ref.ordinal, index)
+	index     int
+	routeRead uint64
+	surface   equation.Surface
 }
 
 type graphBindingCatalog struct {
@@ -173,6 +134,84 @@ func appendGraphCarryTargets(catalog *graphBindingCatalog, factor, member compos
 	return true
 }
 
+func activationGraphCellReady(state *schemaBindingState, cell *schemaActivationRuleBindingCell) bool {
+	if state == nil || cell == nil || state.schema == nil || state.phase != schemaBindingSealed || state.authority == nil || cell.state != state || cell.schema != state.schema || cell.ordinal >= uint64(len(state.rules)) || state.rules[cell.ordinal] != cell || cell.impl == nil || cell.impl.state != state || cell.impl.rule == nil || cell.impl.fold == nil {
+		return false
+	}
+	for index, read := range cell.impl.reads {
+		if read == nil {
+			return false
+		}
+		row := read.readRow()
+		if row == nil || row != cell.schemaRuleReadAt(uint64(index)) || !row.sealed() || row.owner != cell || row.ownerOrdinal != cell.ordinal || row.readOrdinal != uint64(index) {
+			return false
+		}
+	}
+	return true
+}
+
+func buildSealedGraphRuleMaps(state *schemaBindingState) (map[composition.Key]sealedOrdinaryRuleGeometry, map[composition.Key]*schemaActivationRuleBindingCell, bool) {
+	if state == nil || state.schema == nil || !state.schema.Available() || state.phase != schemaBindingSealed || state.authority == nil {
+		return nil, nil, false
+	}
+	ordinary := make(map[composition.Key]sealedOrdinaryRuleGeometry)
+	activations := make(map[composition.Key]*schemaActivationRuleBindingCell)
+	for ordinal, raw := range state.rules {
+		cell, cellOK := raw.(schemaRuleBindingCell)
+		if !cellOK || cell == nil || cell.schemaBindingSchema() != state.schema || cell.schemaRuleOrdinal() != uint64(ordinal) || cell.schemaRuleBindingState() != state {
+			return nil, nil, false
+		}
+		key := state.schema.ruleSemanticAt(uint64(ordinal))
+		if !key.Available() {
+			return nil, nil, false
+		}
+		if direct, directOK := raw.(sealedOrdinaryRuleGeometry); directOK {
+			if !direct.sealedRuleComplete() || direct.directRuleSemantic() != key || !direct.directRuleOperandFamily().Available() || !direct.directRuleOutputFactor().Available() {
+				return nil, nil, false
+			}
+			if _, duplicate := ordinary[key]; duplicate {
+				return nil, nil, false
+			}
+			ordinary[key] = direct
+			continue
+		}
+		activation, activationOK := raw.(*schemaActivationRuleBindingCell)
+		if !activationOK || !activationGraphCellReady(state, activation) {
+			return nil, nil, false
+		}
+		if _, duplicate := activations[key]; duplicate {
+			return nil, nil, false
+		}
+		activations[key] = activation
+	}
+	return ordinary, activations, true
+}
+
+func validOrdinaryGraphMember(rule sealedOrdinaryRuleGeometry, member equation.RuleMember) bool {
+	if rule == nil || !member.Rule().Available() {
+		return false
+	}
+	if _, activation := member.ActivationMember(); activation {
+		return false
+	}
+	if member.Rule() != rule.directRuleSemantic() || member.OperandFamily() != rule.directRuleOperandFamily() || uint64(member.ReadCount()) != rule.directRuleReadCount() || member.WriteCount() != 1 {
+		return false
+	}
+	surface, surfaceOK := member.WriteAt(0)
+	routeRead, routeOK := member.WriteRouteRead(0)
+	if !surfaceOK || !surface.Available() || !routeOK || surface.Factor != rule.directRuleOutputFactor() {
+		return false
+	}
+	switch rule.directRuleWriteMode() {
+	case directRuleWriteExact:
+		return routeRead == 0 && surface.Form == equation.SurfaceWriteExact && (surface.Mode == equation.TargetModeStrong || surface.Mode == equation.TargetModeWeak) && !surface.Semantic.Available() && !surface.Normalizer.Available()
+	case directRuleWriteRoute:
+		return routeRead == rule.directRuleRouteRead() && routeRead != 0 && surface.Form == equation.SurfaceWriteRoute && surface.Mode == equation.TargetModeNone && !surface.Semantic.Available() && !surface.Normalizer.Available()
+	default:
+		return false
+	}
+}
+
 // buildGraphCarryClosures solves every Carry predecessor equation once during
 // compilation. A closure is keyed by (Factor, Point), not Point alone, because
 // one equation Point can transport independent factor roots. The per-factor
@@ -180,8 +219,8 @@ func appendGraphCarryTargets(catalog *graphBindingCatalog, factor, member compos
 // DAG is evaluated from predecessor-free components. This is the exact least
 // closure of declared direct writes and Carry predecessors: no depth limit,
 // cardinality cap, or runtime topology traversal is involved.
-func buildGraphCarryClosures(schema *Schema, graph *equation.Graph, rules map[composition.Key]*schemaRuleRef) (map[graphCarryClosureKey]graphCarryClosure, bool) {
-	if schema == nil || !schema.Available() || graph == nil || len(rules) == 0 {
+func buildGraphCarryClosures(state *schemaBindingState, graph *equation.Graph, rules map[composition.Key]sealedOrdinaryRuleGeometry, activations map[composition.Key]*schemaActivationRuleBindingCell) (map[graphCarryClosureKey]graphCarryClosure, bool) {
+	if state == nil || state.schema == nil || !state.schema.Available() || graph == nil || len(rules)+len(activations) == 0 {
 		return nil, false
 	}
 	carriedFactors := make(map[composition.Key]struct{})
@@ -195,17 +234,22 @@ func buildGraphCarryClosures(schema *Schema, graph *equation.Graph, rules map[co
 			if !memberOK || !member.Rule().Available() {
 				return nil, false
 			}
-			rule := rules[member.Rule()]
-			shape, shapeOK := rule.shape()
-			if !shapeOK || shape.CarryCount == 0 {
+			if activation, activationOK := activations[member.Rule()]; activationOK {
+				witness, witnessOK := member.ActivationMember()
+				if activation == nil || !activationGraphCellReady(state, activation) || witnessOK && !witness.Available() || member.WriteCount() != 0 {
+					return nil, false
+				}
 				continue
 			}
-			if shape.OutputKind != composition.FactorOutput || shape.CarryCount != 1 {
+			rule, ruleOK := rules[member.Rule()]
+			if !ruleOK || !validOrdinaryGraphMember(rule, member) {
 				return nil, false
 			}
-			factor := shape.Output
-			carry, carryOK := rule.carry(0)
-			if !factor.Available() || !carryOK || carry.Factor != factor {
+			if !rule.directRuleCarryPresent() {
+				continue
+			}
+			factor := rule.directRuleOutputFactor()
+			if !factor.Available() {
 				return nil, false
 			}
 			carriedFactors[factor] = struct{}{}
@@ -244,67 +288,51 @@ func buildGraphCarryClosures(schema *Schema, graph *equation.Graph, rules map[co
 		}
 		for memberIndex := 0; memberIndex < group.MemberCount(); memberIndex++ {
 			member, memberOK := group.MemberAt(memberIndex)
-			if !memberOK {
+			if !memberOK || !member.Rule().Available() {
 				return nil, false
 			}
-			rule := rules[member.Rule()]
-			shape, shapeOK := rule.shape()
-			if !shapeOK {
-				return nil, false
-			}
-			// Carry closure is defined only over direct writes and carry
-			// predecessors of carried Factor-output Rules. A structural member
-			// has neither; it remains a valid graph member when an unrelated
-			// Factor carries through the same graph.
-			if shape.OutputKind != composition.FactorOutput {
-				if shape.CarryCount != 0 {
+			if activation, activationOK := activations[member.Rule()]; activationOK {
+				witness, witnessOK := member.ActivationMember()
+				if activation == nil || !activationGraphCellReady(state, activation) || witnessOK && !witness.Available() || member.WriteCount() != 0 {
 					return nil, false
 				}
 				continue
 			}
-			factor := shape.Output
+			rule, ruleOK := rules[member.Rule()]
+			if !ruleOK || !validOrdinaryGraphMember(rule, member) {
+				return nil, false
+			}
+			factor := rule.directRuleOutputFactor()
 			if _, carried := carriedFactors[factor]; !carried {
 				continue
 			}
 			node, nodeOK := ensureNode(factor, group.Output())
-			if !nodeOK || uint64(member.WriteCount()) != shape.WriteCount {
+			if !nodeOK {
 				return nil, false
 			}
-			for writeIndex := uint64(0); writeIndex < shape.WriteCount; writeIndex++ {
-				write, writeOK := rule.write(writeIndex)
-				if !writeOK {
-					return nil, false
-				}
-				surface, surfaceOK := member.WriteAt(int(writeIndex))
-				if !surfaceOK {
-					return nil, false
-				}
-				switch write.Kind {
-				case composition.WriteExact:
-					if write.Route != 0 {
-						return nil, false
-					}
-					node.direct = append(node.direct, surface)
-				case composition.WriteRoute:
-					if write.Route == 0 || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone {
-						return nil, false
-					}
-					node.route = true
-				default:
-					return nil, false
-				}
+			surface, surfaceOK := member.WriteAt(0)
+			routeRead, routeOK := member.WriteRouteRead(0)
+			if !surfaceOK || !routeOK {
+				return nil, false
 			}
-			if shape.CarryCount == 0 {
+			switch rule.directRuleWriteMode() {
+			case directRuleWriteExact:
+				if routeRead != 0 || surface.Form != equation.SurfaceWriteExact {
+					return nil, false
+				}
+				node.direct = append(node.direct, surface)
+			case directRuleWriteRoute:
+				if routeRead != rule.directRuleRouteRead() || routeRead == 0 || surface.Form != equation.SurfaceWriteRoute || surface.Mode != equation.TargetModeNone {
+					return nil, false
+				}
+				node.route = true
+			default:
+				return nil, false
+			}
+			if !rule.directRuleCarryPresent() {
 				continue
 			}
-			if shape.CarryCount != 1 {
-				return nil, false
-			}
-			carry, carryOK := rule.carry(0)
-			if !carryOK || carry.Factor != factor {
-				return nil, false
-			}
-			input, inputOK := group.InputAt(int(carry.Input))
+			input, inputOK := group.InputAt(int(rule.directRuleCarryInput()))
 			if !inputOK {
 				return nil, false
 			}
@@ -495,25 +523,23 @@ func mergeCarrySurfaces(left, right []equation.Surface) []equation.Surface {
 	return merged
 }
 
-func buildGraphBindingCatalog(schema *Schema, graph *equation.Graph) (*graphBindingCatalog, bool) {
-	if schema == nil || !schema.Available() || graph == nil || graph.CompositionID() != schema.cold.ID() {
+func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) (*graphBindingCatalog, bool) {
+	if state == nil {
 		return nil, false
 	}
-	factorCount, ruleCount, queryCount, _, shapeOK := schema.shapeCount()
+	state.mu.Lock()
+	schema, sealed := state.schema, state.phase == schemaBindingSealed && state.authority != nil
+	state.mu.Unlock()
+	if !sealed || schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
+		return nil, false
+	}
+	ordinary, activations, mapsOK := buildSealedGraphRuleMaps(state)
+	if !mapsOK {
+		return nil, false
+	}
+	factorCount, _, queryCount, _, shapeOK := schema.shapeCount()
 	if !shapeOK {
 		return nil, false
-	}
-	rules := make(map[composition.Key]*schemaRuleRef, ruleCount)
-	for ordinal := 0; ordinal < ruleCount; ordinal++ {
-		key := schema.ruleSemanticAt(uint64(ordinal))
-		if !key.Available() {
-			return nil, false
-		}
-		ref := &schemaRuleRef{schema: schema, ordinal: uint64(ordinal)}
-		if _, duplicate := rules[key]; duplicate {
-			return nil, false
-		}
-		rules[key] = ref
 	}
 	queries := make(map[composition.Key]struct{}, queryCount)
 	for ordinal := 0; ordinal < queryCount; ordinal++ {
@@ -537,7 +563,7 @@ func buildGraphBindingCatalog(schema *Schema, graph *equation.Graph) (*graphBind
 		}
 		catalog.factors[key] = &graphFactorUses{}
 	}
-	closures, closuresOK := buildGraphCarryClosures(schema, graph, rules)
+	closures, closuresOK := buildGraphCarryClosures(state, graph, ordinary, activations)
 	if !closuresOK {
 		return nil, false
 	}
@@ -552,54 +578,63 @@ func buildGraphBindingCatalog(schema *Schema, graph *equation.Graph) (*graphBind
 			if !ok || !member.Key().Available() || !member.Rule().Available() {
 				return nil, false
 			}
-			rule, present := rules[member.Rule()]
-			shape, shapeOK := rule.shape()
-			if !present || !shapeOK || uint64(member.ReadCount()) != shape.ReadCount || uint64(member.WriteCount()) != shape.WriteCount {
-				return nil, false
-			}
-			if shape.CarryCount != 0 {
-				if shape.OutputKind != composition.FactorOutput || shape.CarryCount != 1 {
+			activation, activationMember := activations[member.Rule()]
+			activationWitness, activationWitnessPresent := member.ActivationMember()
+			if activationMember {
+				if activation == nil || !activationGraphCellReady(state, activation) || activationWitnessPresent && !activationWitness.Available() || member.WriteCount() != 0 {
 					return nil, false
 				}
-				carry, carryOK := rule.carry(0)
-				input, inputOK := group.InputAt(int(carry.Input))
-				if !carryOK || !inputOK {
+			} else {
+				rule, present := ordinary[member.Rule()]
+				if !present || !validOrdinaryGraphMember(rule, member) {
 					return nil, false
 				}
-				closureKey := graphCarryClosureKey{factor: shape.Output, point: input.Point().Key()}
-				closure, closureOK := catalog.carryClosures[closureKey]
-				if !closureOK || !appendGraphCarryTargets(catalog, shape.Output, member.Key(), closure) {
-					return nil, false
-				}
-				for _, target := range closure.targets {
-					if !appendGraphTarget(catalog, target) {
+				if rule.directRuleCarryPresent() {
+					input, inputOK := group.InputAt(int(rule.directRuleCarryInput()))
+					if !inputOK {
 						return nil, false
 					}
+					factor := rule.directRuleOutputFactor()
+					closureKey := graphCarryClosureKey{factor: factor, point: input.Point().Key()}
+					closure, closureOK := catalog.carryClosures[closureKey]
+					if !factor.Available() || !closureOK || !appendGraphCarryTargets(catalog, factor, member.Key(), closure) {
+						return nil, false
+					}
+					for _, target := range closure.targets {
+						if !appendGraphTarget(catalog, target) {
+							return nil, false
+						}
+					}
 				}
+			}
+			var owner schemaRuleBindingCell
+			if activationMember {
+				owner = activations[member.Rule()]
+			} else {
+				owner = ordinary[member.Rule()]
 			}
 			for readIndex := 0; readIndex < member.ReadCount(); readIndex++ {
 				surface, ok := member.ReadAt(readIndex)
 				if !ok || !surface.Available() {
 					return nil, false
 				}
-				use := graphReadUse{rule: rule, index: readIndex, surface: surface}
-				readShape, readOK := rule.read(uint64(readIndex))
-				if !readOK || !readShape.Factor.Available() {
+				row := owner.schemaRuleReadAt(uint64(readIndex))
+				if row == nil || !row.sealed() || row.owner != owner || row.ownerOrdinal != owner.schemaRuleOrdinal() || row.readOrdinal != uint64(readIndex) || !row.factor.Available() || row.factor != surface.Factor {
 					return nil, false
 				}
+				use := graphReadUse{row: row, index: readIndex, surface: surface}
 				if !appendGraphRead(catalog, surface, use) {
 					return nil, false
 				}
 			}
-			for writeIndex := 0; writeIndex < member.WriteCount(); writeIndex++ {
-				surface, ok := member.WriteAt(writeIndex)
-				if !ok || !surface.Available() {
+			if !activationMember {
+				rule := ordinary[member.Rule()]
+				surface, surfaceOK := member.WriteAt(0)
+				routeRead, routeOK := member.WriteRouteRead(0)
+				if rule == nil || !surfaceOK || !routeOK || !surface.Available() {
 					return nil, false
 				}
-				use := graphWriteUse{rule: rule, index: writeIndex, surface: surface}
-				if _, writeOK := rule.write(uint64(writeIndex)); !writeOK {
-					return nil, false
-				}
+				use := graphWriteUse{index: 0, routeRead: routeRead, surface: surface}
 				if !appendGraphWrite(catalog, surface, use) {
 					return nil, false
 				}

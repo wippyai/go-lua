@@ -3,6 +3,7 @@ package engine
 import (
 	"sync/atomic"
 
+	"github.com/wippyai/go-lua/analysis/engine/internal/lifetime"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -29,7 +30,7 @@ type selectorFrame struct {
 	requireCurrent bool
 	routes         selectorRouteSink
 	active         atomic.Bool
-	call           generationCell
+	call           lifetime.Cell
 }
 
 // stagedReadSelector is the minimal immutable read geometry consumed by the
@@ -43,7 +44,7 @@ type stagedReadSelector interface {
 }
 
 func (frame *selectorFrame) valid() bool {
-	return frame != nil && frame.execution != nil && frame.execution.active.holds(frame.epoch) && frame.read != nil && frame.active.Load()
+	return frame != nil && frame.execution != nil && frame.execution.active.Holds(frame.epoch) && frame.read != nil && frame.active.Load()
 }
 
 func (frame *selectorFrame) rowLive() bool {
@@ -52,7 +53,7 @@ func (frame *selectorFrame) rowLive() bool {
 
 func (context SelectorContext) valid() bool {
 	frame := context.frame
-	return frame != nil && frame.valid() && frame.call.holds(context.call)
+	return frame != nil && frame.valid() && frame.call.Holds(context.call)
 }
 
 func (frame *selectorFrame) poison() {
@@ -73,12 +74,12 @@ func runReadSelector(frame *selectorFrame, locate func(SelectorContext) bool) bo
 // contexts re-entering while active and invalidates escaped contexts before
 // the next row/candidate.
 func runSelector(frame *selectorFrame, invoke func(SelectorContext) bool) bool {
-	if frame == nil || frame.execution == nil || !frame.execution.active.holds(frame.epoch) || invoke == nil || !frame.active.CompareAndSwap(false, true) {
+	if frame == nil || frame.execution == nil || !frame.execution.active.Holds(frame.epoch) || invoke == nil || !frame.active.CompareAndSwap(false, true) {
 		frame.poison()
 		return false
 	}
 	defer frame.active.Store(false)
-	call, issued := frame.call.advance()
+	call, issued := frame.call.Advance()
 	if !issued {
 		frame.poison()
 		return false
@@ -271,47 +272,39 @@ func validSelectorSelection[Tag selectionTag, S any](context SelectorContext, se
 	return ok && actual == selection.selectionID
 }
 
-func SelectionCount[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S]) (int, bool) {
-	if !validSelection(access, row, selection) || selection.count == nil {
-		poisonSelection(access)
+func SelectionCount[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S]) (int, bool) {
+	if !validSelection(frame, selection) || selection.count == nil {
+		poisonFrame(frame)
 		return 0, false
 	}
-	count, ok := selection.count(row.index)
+	count, ok := selection.count(frame.row)
 	if !ok || count < 0 {
-		poisonSelection(access)
+		poisonFrame(frame)
 		return 0, false
 	}
 	return count, true
 }
 
-func SelectionAt[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S], index int) (Tag, S, bool) {
+func SelectionAt[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S], index int) (Tag, S, bool) {
 	var tag Tag
 	var value S
-	if !validSelection(access, row, selection) || index < 0 || selection.at == nil {
-		poisonSelection(access)
+	if !validSelection(frame, selection) || index < 0 || selection.at == nil {
+		poisonFrame(frame)
 		return tag, value, false
 	}
-	tag, value, ok := selection.at(row.index, index)
+	tag, value, ok := selection.at(frame.row, index)
 	if !ok {
-		poisonSelection(access)
+		poisonFrame(frame)
 		return tag, value, false
 	}
 	return tag, value, true
 }
 
-func validSelection[V, O any, Tag selectionTag, S any](access Access[V, O], row Row, selection Selection[Tag, S]) bool {
-	execution := access.execution
-	if execution == nil || access.owner == nil || execution.owner != access.owner || !execution.active.holds(access.epoch) || execution.product == nil ||
-		row.session == nil || row.session != execution.product || row.epoch != access.epoch || row.index != execution.product.current || row.index < 0 || row.index >= len(row.session.values) ||
-		selection.session != row.session || selection.epoch != access.epoch || selection.read < 0 || selection.read >= len(row.session.reads) || selection.selectionID == 0 {
+func validSelection[V, O any, Tag selectionTag, S any](frame Frame[V, O], selection Selection[Tag, S]) bool {
+	execution := frame.execution
+	if !validFrame(frame) || selection.session != execution.product || selection.epoch != frame.epoch || selection.read < 0 || selection.read >= len(execution.product.reads) || selection.selectionID == 0 {
 		return false
 	}
-	actual, ok := row.session.readID(row.index, selection.read)
+	actual, ok := execution.product.readID(frame.row, selection.read)
 	return ok && actual == selection.selectionID
-}
-
-func poisonSelection[V, O any](access Access[V, O]) {
-	if access.execution != nil {
-		access.execution.failed.Store(true)
-	}
 }

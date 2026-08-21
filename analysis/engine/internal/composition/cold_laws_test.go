@@ -8,10 +8,6 @@ func coldKey(value byte) Key {
 	return Key{ID: id, Version: 1}
 }
 
-func coldAdmission() Admission {
-	return Admission{Kind: AdmissionTrustedTheorem, Identity: coldKey(250)}
-}
-
 func TestActivationFamilyIsOneSemanticCapability(t *testing.T) {
 	first, firstOK := CanonicalActivationFamily(ActivationFamily{Semantic: coldKey(181)})
 	second, secondOK := CanonicalActivationFamily(ActivationFamily{Semantic: coldKey(181)})
@@ -37,7 +33,6 @@ func TestColdSealRejectsOrphanActivationFamily(t *testing.T) {
 	base.Rules = []Rule{{
 		Key:           coldKey(199),
 		OperandFamily: coldKey(200),
-		Admission:     coldAdmission(),
 		OutputKind:    StructuralOutput,
 		Activations:   []ActivationRange{{Family: family}},
 	}}
@@ -51,7 +46,7 @@ func TestColdCompositionIDIgnoresEquationTopology(t *testing.T) {
 	query, freezer := coldKey(4), coldKey(5)
 	first, ok := Seal(Candidate{
 		Factors: []Factor{{Key: factor}, {Key: read}},
-		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
+		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
 		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	})
 	if !ok || first == nil || !first.ID().Available() {
@@ -59,7 +54,7 @@ func TestColdCompositionIDIgnoresEquationTopology(t *testing.T) {
 	}
 	second, ok := Seal(Candidate{
 		Factors: []Factor{{Key: read}, {Key: factor}},
-		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
+		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: read}}, Writes: []Write{{Kind: WriteExact, Factor: factor}}}},
 		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	})
 	if !ok || first.ID() != second.ID() {
@@ -76,7 +71,7 @@ func TestRoutedWriteReadCoordinateEntersCompositionIdentity(t *testing.T) {
 		return Candidate{
 			Factors: []Factor{{Key: factor}, {Key: other}},
 			Rules: []Rule{{
-				Key: coldKey(8), OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 2,
+				Key: coldKey(8), OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 2,
 				Reads: []Read{
 					{Kind: ReadExact, Input: 0, Factor: factor},
 					{Kind: ReadSelect, Input: 0, Factor: factor, Semantic: factor, Dependencies: []uint64{0}},
@@ -94,13 +89,13 @@ func TestRoutedWriteReadCoordinateEntersCompositionIdentity(t *testing.T) {
 	}
 }
 
-func TestRuleAdmissionIsMandatoryAndCanonical(t *testing.T) {
+func TestRuleOperandFamilyIsMandatoryAndCanonical(t *testing.T) {
 	factor, rule, query, freezer := coldKey(201), coldKey(202), coldKey(203), coldKey(204)
 	base := func() Candidate {
 		return Candidate{
 			Factors: []Factor{{Key: factor}},
 			Rules: []Rule{{
-				Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor,
+				Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor,
 				Writes: []Write{{Kind: WriteExact, Factor: factor}},
 			}},
 			Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
@@ -108,23 +103,7 @@ func TestRuleAdmissionIsMandatoryAndCanonical(t *testing.T) {
 	}
 	first, firstOK := Seal(base())
 	if !firstOK || first == nil {
-		t.Fatal("admitted cold rule rejected")
-	}
-	missing := base()
-	missing.Rules[0].Admission = Admission{}
-	if sealed, ok := Seal(missing); ok || sealed != nil {
-		t.Fatal("cold rule without admission was accepted")
-	}
-	changed := base()
-	changed.Rules[0].Admission.Identity = coldKey(205)
-	second, secondOK := Seal(changed)
-	if !secondOK || second == nil || first.ID() == second.ID() {
-		t.Fatal("admission identity was omitted from cold composition identity")
-	}
-	invalidKind := base()
-	invalidKind.Rules[0].Admission.Kind = AdmissionInvalid
-	if sealed, ok := Seal(invalidKind); ok || sealed != nil {
-		t.Fatal("invalid admission kind was accepted")
+		t.Fatal("cold rule with operand family rejected")
 	}
 	missingOperandFamily := base()
 	missingOperandFamily.Rules[0].OperandFamily = Key{}
@@ -145,7 +124,7 @@ func TestTransformedCarryFormIsValidatedAndChangesColdIdentity(t *testing.T) {
 		return Candidate{
 			Factors: []Factor{{Key: factor}},
 			Rules: []Rule{{
-				Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 1,
+				Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1,
 				Carries: []Carry{{Input: 0, Factor: factor}},
 			}},
 			Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
@@ -190,12 +169,12 @@ func TestColdQueryReadOrderChangesIdentityButNotFactorGraph(t *testing.T) {
 	family, freezer := coldKey(34), coldKey(35)
 	first, firstOK := Seal(Candidate{
 		Factors: []Factor{{Key: left}, {Key: right}},
-		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
+		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
 		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: left}, {Kind: QueryFactorExact, Factor: right}}}},
 	})
 	second, secondOK := Seal(Candidate{
 		Factors: []Factor{{Key: right}, {Key: left}},
-		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
+		Rules:   []Rule{{Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: left, Inputs: 1, Reads: []Read{{Kind: ReadExact, Input: 0, Factor: right}}, Writes: []Write{{Kind: WriteExact, Factor: left}}}},
 		Queries: []QueryFamily{{Key: family, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: right}, {Kind: QueryFactorExact, Factor: left}}}},
 	})
 	if !firstOK || !secondOK || first == nil || second == nil || first.ID() == second.ID() {
@@ -317,7 +296,7 @@ func TestColdDeclaredFormsObeyPublicGlobalClaimLaw(t *testing.T) {
 			name: "rule-key",
 			candidate: func() Candidate {
 				candidate := base(coldKey(39))
-				candidate.Rules = []Rule{{Key: coldKey(39), OperandFamily: coldKey(40), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Writes: []Write{{Kind: WriteExact, Factor: factor}}}}
+				candidate.Rules = []Rule{{Key: coldKey(39), OperandFamily: coldKey(40), OutputKind: FactorOutput, Output: factor, Writes: []Write{{Kind: WriteExact, Factor: factor}}}}
 				return candidate
 			}(),
 		},
@@ -370,7 +349,7 @@ func TestRuleOutputDispositionIsCanonicalAndExclusive(t *testing.T) {
 		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},
 	}
 	factorRule := Rule{
-		Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 1,
+		Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 1,
 		Reads:  []Read{{Kind: ReadExact, Input: 0, Factor: input}},
 		Writes: []Write{{Kind: WriteExact, Factor: factor}},
 	}
@@ -397,7 +376,7 @@ func TestRuleOutputDispositionIsCanonicalAndExclusive(t *testing.T) {
 		Factors:    []Factor{{Key: factor}},
 		Completion: Completion{Semantic: completion, Prune: prune},
 		Rules: []Rule{{
-			Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: StructuralOutput, Inputs: 1,
+			Key: rule, OperandFamily: coldKey(249), OutputKind: StructuralOutput, Inputs: 1,
 			Supports: []Support{{Semantic: completion}}, Prunes: []Prune{{Semantic: prune}},
 		}},
 		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QuerySupport}}}},
@@ -423,7 +402,7 @@ func TestStructuralOutputRuleEntersCompositionIdentity(t *testing.T) {
 	structural := Candidate{
 		Factors:    []Factor{{Key: factor}},
 		Completion: Completion{Semantic: completion, Prune: prune},
-		Rules:      []Rule{{Key: coldKey(56), OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: StructuralOutput, Inputs: 1, Supports: []Support{{Semantic: completion}}, Prunes: []Prune{{Semantic: prune}}}},
+		Rules:      []Rule{{Key: coldKey(56), OperandFamily: coldKey(249), OutputKind: StructuralOutput, Inputs: 1, Supports: []Support{{Semantic: completion}}, Prunes: []Prune{{Semantic: prune}}}},
 		Queries:    []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QuerySupport}}}},
 	}
 	first, firstOK := Seal(structural)
@@ -443,7 +422,7 @@ func TestFactorRuleRetainsArbitraryOrderedInputArity(t *testing.T) {
 	candidate := Candidate{
 		Factors: []Factor{{Key: factor}, {Key: input}},
 		Rules: []Rule{{
-			Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 3,
+			Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 3,
 			Reads:   []Read{{Kind: ReadExact, Input: 2, Factor: input}},
 			Carries: []Carry{{Input: 1, Factor: factor}},
 			Writes:  []Write{{Kind: WriteExact, Factor: factor}},
@@ -466,7 +445,7 @@ func TestFactorRuleAdmitsZeroInputIngress(t *testing.T) {
 	sealed, ok := Seal(Candidate{
 		Factors: []Factor{{Key: factor}},
 		Rules: []Rule{{
-			Key: rule, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: factor, Inputs: 0,
+			Key: rule, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: factor, Inputs: 0,
 			Writes: []Write{{Kind: WriteExact, Factor: factor}},
 		}},
 		Queries: []QueryFamily{{Key: query, Freezer: freezer, Projections: []QueryProjection{{Kind: QueryFactorExact, Factor: factor}}}},

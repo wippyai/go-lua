@@ -9,7 +9,7 @@ import (
 // declareMountedQuery states one mounted query row. The row is addressed by
 // the mount and reusable artifact point ID; the dense point handle is resolved
 // only when runtimeProgram is built.
-func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool) {
+func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || row.state != state || state.authority != authority {
 		return declaredQueryRow{}, nil, false
@@ -23,13 +23,13 @@ func (implementation *SummaryQueryImplementation[V, R]) declareMountedQuery(stat
 		return declaredQueryRow{}, nil, false
 	}
 	projection, _ := state.schema.queryProjectionShapeAt(row.ordinal, 0)
-	return declared, &ruleSummaryMapping{
+	return declared, []*ruleSummaryMapping{{
 		state: state, authority: authority, factor: projection.Factor, normalizer: projection.Normalizer,
 		surface: mapping.Surface, keys: mapping.Keys,
-	}, true
+	}}, true
 }
 
-func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, *ruleSummaryMapping, bool) {
+func (implementation *ExactQueryImplementation[V, R]) declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool) {
 	row, ok := implementation.sealedRow()
 	if !ok || row.state != state || state.authority != authority {
 		return declaredQueryRow{}, nil, false

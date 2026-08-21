@@ -37,10 +37,14 @@ type pendingRuleIssuance struct {
 	application  identity.SemanticKey
 	issuer       *MountedActivationCandidateIssuer
 	// binder is the sealed cell that mints this issuance's runtime row, and
-	// coords the neutral coordinates it resolves its operand from. Both are
+	// coords are the neutral coordinates used for its declaration. Both are
 	// stated here and bound by the committed program, never by this pass.
 	binder ProgramRule
 	coords OperandCoords
+	// operand is the single canonical owner-issued value for this issuance.
+	// The binder receives it directly and never resolves or canonicalizes it
+	// again.
+	operand declaredRuleOperand
 }
 
 // declaredActivationCandidate is one body route a mounted activation trigger
@@ -158,16 +162,16 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		if row.admit == nil || !rows.hasMountedSite(row.Mount, row.Point) {
 			return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailurePoint, uint32(ordinal)), ProgramAdmissionQuery, false
 		}
-		query, summary, ok := row.admit.declareMountedQuery(state, authority, row.ID, row.Mount, row.Point)
+		query, summaries, ok := row.admit.declareMountedQuery(state, authority, row.ID, row.Mount, row.Point)
 		if !ok {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 		}
-		if summary != nil {
-			summaries, appended := appendDeclaredSummary(declaration.summaries, summary, state, authority)
+		for _, summary := range summaries {
+			var appended bool
+			declaration.summaries, appended = appendDeclaredSummary(declaration.summaries, summary, state, authority)
 			if !appended {
 				return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 			}
-			declaration.summaries = summaries
 		}
 		query.Admit = row.admit
 		declaration.queries = append(declaration.queries, query)
@@ -304,7 +308,7 @@ func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingSta
 	if !surfacesOK {
 		return pendingRuleIssuance{}, false
 	}
-	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces = semantic, family, anchor, surfaces
+	issuance.semantic, issuance.family, issuance.anchor, issuance.surfaces, issuance.operand = semantic, family, anchor, surfaces, operand
 	return issuance, true
 }
 
@@ -417,7 +421,7 @@ func resolveDeclaredMemberRow(state *schemaBindingState, authority *schemaBindin
 	member := declaredMemberRow{
 		Plane: issuance.plane, ID: issuance.member, Role: issuance.role,
 		Mount: issuance.mount, Point: issuance.point, Occurrence: issuance.occurrence,
-		Row: row, Bind: issuance.binder, Coords: issuance.coords,
+		Row: row, Bind: issuance.binder, Coords: issuance.coords, Operand: issuance.operand,
 	}
 	if issuance.activation {
 		application := compositionKeyOf(issuance.application)
@@ -462,7 +466,8 @@ func declareActivationCandidates(schema *Schema, issuance pendingRuleIssuance) (
 // appendDeclaredSummary folds one declared summary surface into the program's
 // summary plane. A surface declared twice must carry the same key vector.
 func appendDeclaredSummary(summaries []equation.SummaryMapping, mapping *ruleSummaryMapping, state *schemaBindingState, authority *schemaBindingAuthority) ([]equation.SummaryMapping, bool) {
-	if mapping == nil || (mapping.state == nil) == (mapping.proof == nil) || len(mapping.keys) == 0 ||
+	if mapping == nil || mapping.state == nil || mapping.authority == nil ||
+		!summaryKeysAllowed(state, mapping.factor, mapping.keys) ||
 		!validateSummarySurface(mapping, state, authority) {
 		return nil, false
 	}

@@ -29,6 +29,41 @@ func exactObservationReadSurface(member exactObservationWriteMember, factor comp
 	return read, read.Available()
 }
 
+// exactObservationReadSurfaceForFactor derives one exact read for a
+// heterogeneous observation. A member may carry unrelated exact writes, but
+// the requested Factor must have exactly one strong, unrouted exact write;
+// duplicate writes for that Factor remain an authenticated-shape refusal.
+func exactObservationReadSurfaceForFactor(member exactObservationWriteMember, factor composition.Key) (equation.Surface, bool) {
+	if member == nil || !factor.Available() || member.WriteCount() == 0 {
+		return equation.Surface{}, false
+	}
+	var matched equation.Surface
+	matchedCount := 0
+	for index := 0; index < member.WriteCount(); index++ {
+		write, writeOK := member.WriteAt(index)
+		if !writeOK || !write.Available() {
+			return equation.Surface{}, false
+		}
+		if write.Factor != factor {
+			continue
+		}
+		if write.Form != equation.SurfaceWriteExact || write.Mode != equation.TargetModeStrong || write.Local == 0 || write.Semantic.Available() || write.Normalizer.Available() {
+			return equation.Surface{}, false
+		}
+		route, routeOK := member.WriteRouteRead(index)
+		if !routeOK || route != 0 {
+			return equation.Surface{}, false
+		}
+		matched = write
+		matchedCount++
+	}
+	if matchedCount != 1 {
+		return equation.Surface{}, false
+	}
+	read := equation.Surface{Factor: matched.Factor, Form: equation.SurfaceReadExact, Local: matched.Local}
+	return read, read.Available()
+}
+
 // indexObservationPoints is constructed lazily only when optional
 // observations are requested. It is linear in the committed member plane and
 // gives O(1) output lookup for every subsequent selected occurrence.

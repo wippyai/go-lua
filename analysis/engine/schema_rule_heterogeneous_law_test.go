@@ -14,7 +14,7 @@ func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *tes
 	writeForm, writeOK := factor.ExactWrite()
 	rule, ruleOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(960_003), OperandFamily: unitOperandFamily, Inputs: 1,
-		Admission: SchemaAdmission{Basis: RuleAdmissionBasisDerivation, Identity: coldKey(960_004)}, Output: factor.Ref(),
+		Output: factor.Ref(),
 	})
 	input, inputOK := rule.Input(0)
 	exactRead, exactReadOK := SchemaRead(rule, exact, input)
@@ -31,24 +31,24 @@ func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *tes
 	}
 	hot := HotRuleSpec[uint64, ruleUnit]{
 		OperandContent: ruleUnitContent,
-		Admission:      AdmitRuleByDerivation(coldKey(960_004), func(derivation RuleDerivation[uint64, ruleUnit]) (RuleEvidence, bool) { return derivation.Accept() }),
-		Transfer: func(access Access[uint64, ruleUnit]) bool {
-			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
+		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
+			return Staged(frame, uint64(1))
 		},
 	}
 	var exactRuntime Read[OrderedCells[uint64]]
 	var summaryRuntime Read[OrderedCells[uint64]]
 	bindOK := BindSelectedRuleDirect[uint64](binding, rule, carry, writeSlot, factor.Ref(), hot, HotCarrySpec[uint64, ruleUnit]{}, func(ruleUnit) (uint64, bool) { return 2, true })
 	exactRuntime, exactBindOK := BindSelectedRuleDirectExactRead[uint64, uint64, ruleUnit, uint64](binding, rule, exactRead, factor.Ref(), func(ruleUnit) (uint64, bool) { return 1, true })
-	summaryRuntime, summaryBindOK := BindSelectedRuleDirectSummaryRead[uint64, uint64, ruleUnit, uint64, OrderedCells[uint64]](binding, rule, summaryRead, factor.Ref(), summary, nil)
+	summaryRuntime, summaryBindOK := BindSelectedRuleDirectSummaryRead[uint64, uint64, ruleUnit, uint64, OrderedCells[uint64]](binding, rule, summaryRead, factor.Ref(), summary)
 	if !bindOK || !exactBindOK || !summaryBindOK || !binding.Seal() {
 		t.Fatal("heterogeneous rule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
-	if !implementationOK || implementation == nil || exactRuntime.origin == nil || summaryRuntime.origin == nil || exactRuntime.origin.readKind() != composition.ReadExact || summaryRuntime.origin.readKind() != composition.ReadSummary {
+	if !implementationOK || implementation == nil || exactRuntime.row == nil || summaryRuntime.row == nil || exactRuntime.row.kind != composition.ReadExact || summaryRuntime.row.kind != composition.ReadSummary {
 		t.Fatal("heterogeneous rule lost one read authority")
 	}
-	if summaryRuntime.origin.semanticKey() != compositionKeyOf(coldKey(960_002)) || implementation.binding.proof.carries != 1 {
+	shape, shapeOK := implementation.cell.schema.ruleShapeAt(implementation.ordinal)
+	if summaryRuntime.row.semantic != compositionKeyOf(coldKey(960_002)) || !shapeOK || shape.CarryCount != 1 {
 		t.Fatal("heterogeneous rule summary or carry proof changed")
 	}
 }

@@ -83,7 +83,7 @@ func stagedSchemaArtifactCandidate(locatorLaw, target Key, dependencies []uint64
 		// staged target below changes the read surface, not the Factor universe.
 		Factors: []Factor{{Key: output}, {Key: left}, {Key: right}, {Key: coldKey(82)}, {Key: coldKey(84)}},
 		Rules: []Rule{{
-			Key: locatorLaw, OperandFamily: coldKey(249), Admission: coldAdmission(), OutputKind: FactorOutput, Output: output, Inputs: 4,
+			Key: locatorLaw, OperandFamily: coldKey(249), OutputKind: FactorOutput, Output: output, Inputs: 4,
 			Reads: []Read{
 				{Kind: ReadExact, Input: 0, Factor: left},
 				{Kind: ReadExact, Input: 2, Factor: right},

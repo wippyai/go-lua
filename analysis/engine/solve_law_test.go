@@ -180,27 +180,6 @@ func TestSolverPublicationStampsFenceCompletedResults(t *testing.T) {
 	}
 }
 
-func TestExecutionStampCellsAdmitOnlyTheirLiveStamp(t *testing.T) {
-	var sequence generationSequence
-	first, issued := sequence.issue()
-	second, reissued := sequence.issue()
-	if !issued || !reissued || !first.Precedes(second) || second != first.Next() {
-		t.Fatal("generation sequence did not advance")
-	}
-	var cell generationCell
-	if cell.live().Available() || cell.claim(0) || cell.claim(first) == false || cell.claim(second) || cell.claim(first) {
-		t.Fatal("generation cell accepted an invalid or duplicate holder")
-	}
-	if !cell.holds(first) || cell.holds(second) || cell.revoke(second) || !cell.revoke(first) || cell.holds(first) {
-		t.Fatal("generation cell did not enforce one live stamp")
-	}
-	cell.open(second)
-	next, advanced := cell.advance()
-	if !advanced || next != second.Next() || !cell.holds(next) || cell.holds(second) {
-		t.Fatal("generation cell did not supersede its live stamp")
-	}
-}
-
 // TestProgramSealStagesAreSeparableBySiteDigest is the current sealed-program
 // replacement for the old construction-stage localization law.  Every stage
 // has one recoverable site, and the public runtime seal mint is a different

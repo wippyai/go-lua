@@ -1,6 +1,9 @@
 package programschema
 
-import "github.com/wippyai/go-lua/analysis/identity"
+import (
+	"github.com/wippyai/go-lua/analysis/identity"
+	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
+)
 
 // Append-only slots keep all pre-existing Program family addresses stable.
 // Static type rows were added after the diagnostic catalog, so existing
@@ -169,6 +172,258 @@ func (row Program) StaticTypeNodeReferenceCanonicalKeyCount() (int, bool) {
 }
 func (row Program) StaticTypeNodeReferenceCanonicalKeyAt(index int) (StaticTypeNodeReferenceCanonicalKey, bool) {
 	return staticTypeNodeFamilyAt(row, StaticTypeNodeReferenceCanonicalKeyFamily(), index)
+}
+
+type staticTypeNodeChildRow interface {
+	Row
+	ChildID() identity.ContentID
+}
+
+func staticTypeNodeProgramCatalog(row Program) (identity.ContentID, bool) {
+	if !row.Frozen.Published() || !row.ProgramID.Available() || !row.SchemaID.Available() {
+		return identity.ContentID{}, false
+	}
+	return CatalogID(row.SchemaID)
+}
+
+func staticTypeNodeFamilyAtSealed[V Row](row Program, family Family[V], catalog identity.ContentID, index int) (V, bool) {
+	var absent V
+	if !catalog.Available() {
+		return absent, false
+	}
+	return family.At(&row.Frozen, catalog, index)
+}
+
+func staticTypeNodeFamilyForSealed[V staticTypeNodeParentRow](row Program, index, childIndex int, family Family[V], span func(StaticTypeNode) (uint32, uint32, bool)) (V, bool) {
+	var absent V
+	catalog, catalogOK := staticTypeNodeProgramCatalog(row)
+	if !catalogOK || index < 0 || childIndex < 0 {
+		return absent, false
+	}
+	parent, parentOK := staticTypeNodeFamilyAtSealed(row, StaticTypeNodeFamily(), catalog, index)
+	if !parentOK {
+		return absent, false
+	}
+	offset, count, spanOK := span(parent)
+	if !spanOK || uint64(childIndex) >= uint64(count) {
+		return absent, false
+	}
+	child, childOK := staticTypeNodeFamilyAtSealed(row, family, catalog, int(offset)+childIndex)
+	return child, childOK && child.ParentID() == parent.ID() && child.Position() == uint32(childIndex)
+}
+
+func appendStaticTypeNodeFamily[V staticTypeNodeChildRow](count uint32, at func(int) (V, bool), children *[]identity.ContentID) bool {
+	for position := uint32(0); position < count; position++ {
+		child, ok := at(int(position))
+		if !ok || !child.Available() || !child.ChildID().Available() {
+			return false
+		}
+		*children = append(*children, child.ChildID())
+	}
+	return true
+}
+
+func staticTypeNodeMetadataSpan[V Row](parent identity.ContentID, offset, count uint32, at func(int) (V, bool), parentID func(V) identity.ContentID, position func(V) uint32) bool {
+	for ordinal := uint32(0); ordinal < count; ordinal++ {
+		row, ok := at(int(offset + ordinal))
+		if !ok || !row.Available() || parentID(row) != parent || position(row) != ordinal {
+			return false
+		}
+	}
+	return true
+}
+
+// StaticTypeNodeChildren reconstructs the semantic child order of one
+// canonical static node from its typed Program families. The order is shared
+// by Artifact identity replay and the detached type authority; no generic
+// child row or projected graph is retained. Strict reference validation is
+// used by Artifact sealing, while identity replay accepts the historical
+// target-optional form for unresolved references.
+func (program Program) StaticTypeNodeChildren(index int, row StaticTypeNode, strict bool) ([]identity.ContentID, bool) {
+	catalog, catalogOK := staticTypeNodeProgramCatalog(program)
+	if !catalogOK || index < 0 {
+		return nil, false
+	}
+	owner, ownerOK := staticTypeNodeFamilyAtSealed(program, StaticTypeNodeFamily(), catalog, index)
+	if !ownerOK || owner.ID() != row.ID() {
+		return nil, false
+	}
+	var result []identity.ContentID
+	add := func(id identity.ContentID, ok bool) bool {
+		if !ok || !id.Available() {
+			return false
+		}
+		result = append(result, id)
+		return true
+	}
+	optional := func(id identity.ContentID, present bool) bool {
+		if !present {
+			return true
+		}
+		return add(id, true)
+	}
+	switch row.Kind() {
+	case StaticNodeOptional:
+		id, ok := row.OptionalInner()
+		if !add(id, ok) {
+			return nil, false
+		}
+	case StaticNodeUnion:
+		_, count, spanOK := row.UnionMemberSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeUnionMember, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeUnionMemberFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.UnionMemberSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeIntersection:
+		_, count, spanOK := row.IntersectionMemberSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeIntersectionMember, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeIntersectionMemberFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.IntersectionMemberSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeGeneric:
+		id, ok := row.GenericBase()
+		if !add(id, ok) {
+			return nil, false
+		}
+		_, count, spanOK := row.GenericArgumentSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeGenericArgument, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeGenericArgumentFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.GenericArgumentSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeArray:
+		id, ok := row.ArrayElement()
+		if !add(id, ok) {
+			return nil, false
+		}
+	case StaticNodeMap:
+		id, ok := row.MapKey()
+		if !add(id, ok) {
+			return nil, false
+		}
+		id, ok = row.MapValue()
+		if !add(id, ok) {
+			return nil, false
+		}
+	case StaticNodeRecord:
+		_, count, spanOK := row.RecordFieldSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeRecordField, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeRecordFieldFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.RecordFieldSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeReference:
+		id, ok := row.ReferenceTarget()
+		if strict {
+			switch staticrefs.Resolution(row.Resolution()) {
+			case staticrefs.Unresolved:
+				if id.Available() {
+					return nil, false
+				}
+			case staticrefs.Declaration, staticrefs.CanonicalPath:
+				if !add(id, ok) {
+					return nil, false
+				}
+			default:
+				return nil, false
+			}
+		} else if id.Available() && !optional(id, ok) {
+			return nil, false
+		}
+		sourceOffset, sourceCount, sourceOK := row.ReferenceSourceKeySpan()
+		canonicalOffset, canonicalCount, canonicalOK := row.ReferenceCanonicalKeySpan()
+		if !sourceOK || !canonicalOK ||
+			!staticTypeNodeMetadataSpan(row.ID(), sourceOffset, sourceCount, func(index int) (StaticTypeNodeReferenceSourceKey, bool) {
+				return staticTypeNodeFamilyAtSealed(program, StaticTypeNodeReferenceSourceKeyFamily(), catalog, index)
+			},
+				func(value StaticTypeNodeReferenceSourceKey) identity.ContentID { return value.ParentID() },
+				func(value StaticTypeNodeReferenceSourceKey) uint32 { return value.Position() }) ||
+			!staticTypeNodeMetadataSpan(row.ID(), canonicalOffset, canonicalCount, func(index int) (StaticTypeNodeReferenceCanonicalKey, bool) {
+				return staticTypeNodeFamilyAtSealed(program, StaticTypeNodeReferenceCanonicalKeyFamily(), catalog, index)
+			},
+				func(value StaticTypeNodeReferenceCanonicalKey) identity.ContentID { return value.ParentID() },
+				func(value StaticTypeNodeReferenceCanonicalKey) uint32 { return value.Position() }) {
+			return nil, false
+		}
+	case StaticNodeAlias:
+		id, ok := row.AliasTarget()
+		if !add(id, ok) {
+			return nil, false
+		}
+		_, count, spanOK := row.AliasParameterSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeAliasParameter, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeAliasParameterFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.AliasParameterSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeTypeParam:
+		id, ok := row.TypeParamConstraint()
+		if id.Available() && !optional(id, ok) {
+			return nil, false
+		}
+	case StaticNodeInterface:
+		_, count, spanOK := row.InterfaceExtendSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeInterfaceExtend, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeInterfaceExtendFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.InterfaceExtendSpan() })
+		}, &result) {
+			return nil, false
+		}
+		_, count, spanOK = row.InterfaceMemberSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeInterfaceMember, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeInterfaceMemberFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.InterfaceMemberSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeTypeFunction:
+		if id, ok := row.TypeFunctionVariadic(); ok && !add(id, true) {
+			return nil, false
+		}
+		_, count, spanOK := row.TypeFunctionTypeParameterSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeTypeFunctionTypeParameter, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeTypeFunctionTypeParameterFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.TypeFunctionTypeParameterSpan() })
+		}, &result) {
+			return nil, false
+		}
+		_, count, spanOK = row.TypeFunctionParameterSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeTypeFunctionParameter, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeTypeFunctionParameterFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.TypeFunctionParameterSpan() })
+		}, &result) {
+			return nil, false
+		}
+		_, count, spanOK = row.TypeFunctionReturnSpan()
+		if !spanOK || !appendStaticTypeNodeFamily(count, func(position int) (StaticTypeNodeTypeFunctionReturn, bool) {
+			return staticTypeNodeFamilyForSealed(program, index, position, StaticTypeNodeTypeFunctionReturnFamily(), func(parent StaticTypeNode) (uint32, uint32, bool) { return parent.TypeFunctionReturnSpan() })
+		}, &result) {
+			return nil, false
+		}
+	case StaticNodeKeyOf:
+		id, ok := row.KeyOfChild()
+		if !add(id, ok) {
+			return nil, false
+		}
+	case StaticNodeIndex:
+		id, ok := row.IndexObject()
+		if !add(id, ok) {
+			return nil, false
+		}
+		id, ok = row.IndexKey()
+		if !add(id, ok) {
+			return nil, false
+		}
+	case StaticNodeConditional:
+		a, b, c, d, ok := row.ConditionalChildren()
+		if !ok || !add(a, true) || !add(b, true) || !add(c, true) || !add(d, true) {
+			return nil, false
+		}
+	case StaticNodeAssertion:
+		id, ok := row.AssertionNarrowID()
+		if id.Available() && !optional(id, ok) {
+			return nil, false
+		}
+	}
+	return result, true
 }
 
 type staticTypeNodeParentRow interface {

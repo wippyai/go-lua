@@ -156,7 +156,7 @@ func TestScopedStatesRejectMixedEqualityOrderMergeReplaceAndContribution(t *test
 	if !ok {
 		t.Fatal("identity-shaped plan")
 	}
-	contribution, ok := composition.SealContribution(2, []shape.Slot{0}, nil, false)
+	contribution, ok := composition.SealContribution(2, []shape.Slot{0}, nil)
 	if !ok {
 		t.Fatal("contribution")
 	}

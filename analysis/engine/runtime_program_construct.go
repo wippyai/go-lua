@@ -95,7 +95,7 @@ func mintProgramSolver(runtime *solverRuntime) (*Solver, SolveFailure, bool) {
 		return nil, ProgramStageFailure(ProgramSealStageSolverMint), false
 	}
 	relation, relationOK := runtime.topology.InitialRelation()
-	store, storeOK := solverStores.issue()
+	store, storeOK := solverStores.Issue()
 	if !relationOK || !storeOK {
 		return nil, ProgramStageFailure(ProgramSealStageSolverMint), false
 	}

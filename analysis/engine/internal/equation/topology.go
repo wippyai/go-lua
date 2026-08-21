@@ -172,6 +172,14 @@ type compiledRowDirectory struct {
 // compileTopologyWithFailure is the sealed topology compiler's closed
 // diagnostic form. The returned phase names only a compiler boundary; no
 // mutable row or raw builder reference escapes this package.
+// derivedActivationReverse is a compiler-local graph incidence. It is never a
+// caller-authored activation row and is not retained by Topology.
+type derivedActivationReverse struct {
+	binding composition.Key
+	target  composition.Key
+	trigger composition.Key
+}
+
 func compileTopologyWithFailure(source *composition.Composition, topology TopologySpec, activationReverses []derivedActivationReverse, deferredQueries bool) (*Graph, compiledRowDirectory, SealFailure, bool) {
 	if source == nil || !validTopologyBatch(topology.Batch, topology) || len(topology.Points) == 0 {
 		return nil, compiledRowDirectory{}, sealRefused(SealFailureFamilyCompile, "input"), false

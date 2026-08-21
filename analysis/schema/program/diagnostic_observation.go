@@ -18,10 +18,29 @@ const (
 	DiagnosticObservationSiteInvalid DiagnosticObservationSite = iota
 	DiagnosticObservationSiteCallArgument
 	DiagnosticObservationSiteAssignment
+	// DiagnosticObservationSiteMember measures one established constructor
+	// member. The measured value is the member's own value row and the
+	// declaration is the member's own node in the declared graph, so the
+	// subject differs from an assignment only in where it sits inside a value.
+	DiagnosticObservationSiteMember
+	// DiagnosticObservationSiteMemberAbsent names one required declared field
+	// the constructor's established key set does not supply. An absence has no
+	// value of its own, so the row measures the allocation's own value against
+	// the missing field's node.
+	DiagnosticObservationSiteMemberAbsent
+	diagnosticObservationSiteLimit
 )
 
 func (site DiagnosticObservationSite) Valid() bool {
-	return site == DiagnosticObservationSiteCallArgument || site == DiagnosticObservationSiteAssignment
+	return site > DiagnosticObservationSiteInvalid && site < diagnosticObservationSiteLimit
+}
+
+// Structural reports whether the site measures inside a constructor rather
+// than at the whole value a statement binds or passes. A structural site
+// carries a member-granular declaration: its declared node is the field,
+// element, or map-value node, never the node of the enclosing declaration.
+func (site DiagnosticObservationSite) Structural() bool {
+	return site == DiagnosticObservationSiteMember || site == DiagnosticObservationSiteMemberAbsent
 }
 
 // The diagnostic families are appended after the existing Program families.
