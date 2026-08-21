@@ -539,7 +539,6 @@ func artifactID(artifact *Artifact) identity.ContentID {
 		return identity.ContentID{}
 	}
 	sink.add(uintField(uint64(typeNodeCount)))
-	program := programschema.Program{Frozen: artifact.frozen, ProgramID: artifact.key.ProgramID(), SchemaID: artifact.key.SchemaDigest()}
 	// Replay the historical StaticTypeNode preimage from the canonical parent
 	// and typed child/metadata families. The order and fields below are kept
 	// byte-for-byte identical to the former artifact-local row walk; spans are
@@ -652,7 +651,7 @@ func artifactID(artifact *Artifact) identity.ContentID {
 			}
 			sink.add(uintField(uint64(key.Key())))
 		}
-		childRows, childOK := program.StaticTypeNodeChildren(index, row, false)
+		childRows, childOK := artifact.canonicalStaticNodeChildren(row, false)
 		if !childOK {
 			return identity.ContentID{}
 		}

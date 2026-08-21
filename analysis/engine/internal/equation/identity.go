@@ -621,13 +621,11 @@ type WeakTargetMapping struct {
 // consistently renumbering these local references leaves all compiled
 // identities unchanged. It has no authority after SealTopology succeeds.
 type TopologySpec struct {
-	Batch *Batch
-	// ActivationRows is the one disposable activation plane.  SealTopology
-	// consumes these recipes into its immutable activation-row directory; no
-	// per-row receipt or candidate index survives the seal.
-	ActivationRows []ActivationRowSpec
-	Rules          []RuleInstance
-	Points         []PointSpec
+	Batch            *Batch
+	Materializations []TemplateMaterialization
+	DirectCandidates []DirectActivationCandidate
+	Rules            []RuleInstance
+	Points           []PointSpec
 	// PointRanks optionally supplies the canonical semantic order for the
 	// dense graph nodes represented by Points.  When present it must be a
 	// complete permutation of [0,len(Points)); when absent the historical

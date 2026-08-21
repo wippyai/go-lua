@@ -22,11 +22,15 @@ func TestEquationRejectsStrongSurfaceAsWeakTarget(t *testing.T) {
 		Rules: []composition.Rule{{
 			Key:           rule,
 			OperandFamily: operandFamily,
-			OutputKind:    composition.FactorOutput,
-			Output:        factor,
-			Inputs:        1,
-			Reads:         []composition.Read{{Kind: composition.ReadExact, Input: 0, Factor: factor}},
-			Writes:        []composition.Write{{Kind: composition.WriteExact, Factor: factor}},
+			Admission: composition.Admission{
+				Kind:     composition.AdmissionTrustedTheorem,
+				Identity: weakTargetKey(5),
+			},
+			OutputKind: composition.FactorOutput,
+			Output:     factor,
+			Inputs:     1,
+			Reads:      []composition.Read{{Kind: composition.ReadExact, Input: 0, Factor: factor}},
+			Writes:     []composition.Write{{Kind: composition.WriteExact, Factor: factor}},
 		}},
 		Queries: []composition.QueryFamily{{
 			Key: query, Freezer: weakTargetKey(6),

@@ -28,13 +28,12 @@ func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T)
 	schema, _ := bootstrapFixture(t)
 	bootID, bootIDOK := schema.BootIDAt(0)
 	key, keyOK := schema.KeyForBootID(bootID)
-	rootID, rootIDOK := schema.BootRootID(key)
-	rootValue, rootValueOK := schema.BootValue(key)
-	if !bootIDOK || !keyOK || !rootIDOK || !rootValueOK || !rootValue.Valid() {
-		t.Fatal("bootstrap root row")
+	root, rootOK := bootstrap.NewRoot(schema, key)
+	if !bootIDOK || !keyOK || !rootOK {
+		t.Fatal("bootstrap root receipt")
 	}
-	if !rootID.Available() {
-		t.Fatal("bootstrap root row ID")
+	if id, issued := root.ID(); !issued || !id.Available() {
+		t.Fatal("bootstrap root ID receipt")
 	}
 
 	builder := engine.NewSchema()
@@ -44,7 +43,7 @@ func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T)
 	if !ownerOK || !fragmentOK || !coldOK || cold == nil {
 		t.Fatal("bootstrap receipt cold schema")
 	}
-	bind := func(domain heapdomain.Schema) (*heapowner.HotOwner, *bootstrap.HotRule, *heapowner.RuleImplementation[heapdomain.Key], *engine.SchemaBinding) {
+	bind := func(domain heapdomain.Schema) (*heapowner.HotOwner, *bootstrap.HotRule, *heapowner.RuleImplementation[bootstrap.Root], *engine.SchemaBinding) {
 		binding := engine.NewSchemaBinding(cold)
 		owner, ownerHotOK := heapowner.BindHot(binding, ownerFragment, domain)
 		rule, ruleOK := bootstrap.BindHot(fragment, owner)
@@ -64,10 +63,10 @@ func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T)
 	if implementation, issued := heapowner.ResolveRuleImplementationFor(owner, issuer); !issued || implementation == nil {
 		t.Fatal("bootstrap hot receipt issue")
 	}
-	localKey, localOK := schema.KeyForBootID(bootID)
-	localID, localIssued := schema.BootRootID(localKey)
-	if !localOK || !localIssued || !localID.Available() || localKey != key || rule.Count() != schema.BootCount() {
-		t.Fatal("local bootstrap occurrence row")
+	localRoot, localKey, localOK := rule.Catalog().ReceiptForID(bootID)
+	localID, localIssued := localRoot.ID()
+	if !localOK || !localIssued || !localID.Available() || localKey != key || !rule.Catalog().FencedTo(schema) {
+		t.Fatal("local bootstrap occurrence receipt")
 	}
 
 	foreignSchema, _ := bootstrapFixture(t)
@@ -81,9 +80,9 @@ func TestHotBootstrapUsesSealedRootReceiptAndRejectsForeignBinding(t *testing.T)
 	if implementation, accepted := heapowner.ResolveRuleImplementationFor(foreignOwner, foreignIssuer); !accepted || implementation == nil {
 		t.Fatal("foreign equal binding rejected own bootstrap receipt")
 	}
-	var zero heapdomain.Key
-	if _, issued := schema.BootRootID(zero); issued {
-		t.Fatal("zero bootstrap key acquired a row")
+	var zero bootstrap.Root
+	if _, issued := zero.ID(); issued {
+		t.Fatal("zero bootstrap root acquired a receipt")
 	}
 }
 
@@ -94,13 +93,14 @@ func TestBootstrapReceiptNativeHeaderAndRawAbsence(t *testing.T) {
 	for rootIndex := 0; rootIndex < schema.BootCount(); rootIndex++ {
 		bootID, bootOK := schema.BootIDAt(rootIndex)
 		key, keyOK := schema.KeyForBootID(bootID)
-		value, resultOK := schema.BootValue(key)
+		root, rootOK := bootstrap.NewRoot(schema, key)
+		_, value, resultOK := bootstrap.ResultForSchemaTest(schema, root)
 		world, worldOK := value.WorldAt(0)
 		object, objectOK := world.Exact()
 		shape, frozen, headerOK := object.Header()
 		wantFrozen, wantFrozenOK := schema.BootFrozen(key)
-		if !bootOK || !keyOK || !resultOK || !worldOK || !objectOK || !headerOK || !wantFrozenOK || world.Kind() != heapdomain.WorldExact || shape != heapdomain.ShapeEligible || frozen != wantFrozen {
-			t.Fatalf("bootstrap header root=%d row", rootIndex)
+		if !bootOK || !keyOK || !rootOK || !resultOK || !worldOK || !objectOK || !headerOK || !wantFrozenOK || world.Kind() != heapdomain.WorldExact || shape != heapdomain.ShapeEligible || frozen != wantFrozen {
+			t.Fatalf("bootstrap header root=%d receipt", rootIndex)
 		}
 		if frozen == heapdomain.FrozenMutable {
 			seenMutable = true
@@ -148,12 +148,12 @@ func TestBootstrapReceiptNativeHeaderAndRawAbsence(t *testing.T) {
 	foreignSchema, _ := bootstrapFixture(t)
 	foreignBootID, foreignBootOK := foreignSchema.BootIDAt(0)
 	foreignKey, foreignKeyOK := foreignSchema.KeyForBootID(foreignBootID)
-	_, foreignValueOK := foreignSchema.BootValue(foreignKey)
-	if !foreignBootOK || !foreignKeyOK || !foreignValueOK {
+	foreignRoot, foreignRootOK := bootstrap.NewRoot(foreignSchema, foreignKey)
+	if !foreignBootOK || !foreignKeyOK || !foreignRootOK {
 		t.Fatal("foreign bootstrap evaluator fixture")
 	}
-	if _, foreignAccepted := schema.BootValue(foreignKey); foreignAccepted {
-		t.Fatal("bootstrap evaluator accepted a foreign key/schema pair")
+	if _, _, foreignAccepted := bootstrap.ResultForSchemaTest(schema, foreignRoot); foreignAccepted {
+		t.Fatal("bootstrap evaluator accepted a foreign root/schema pair")
 	}
 }
 

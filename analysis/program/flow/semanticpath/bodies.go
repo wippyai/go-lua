@@ -8,12 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/body"
-	"github.com/wippyai/go-lua/analysis/program/flow/containment"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-func deriveBodyPaths(sourceView source.View, view authored.View, bodies *body.Result, forest *containment.Result, edges [keyspace.FamilyCount][]edgeDescriptor, roots [keyspace.FamilyCount][]identity.ContentID, resolver *structuralResolver) ([]identity.ContentID, error) {
+func deriveBodyPaths(view authored.View, bodies *body.Result, resolver *structuralResolver) ([]identity.ContentID, error) {
 	paths := make([]identity.ContentID, bodies.BodyCount())
 	resolver.body = paths
 	relations, children, rootsOfForest, err := indexBodyRelations(view, bodies)

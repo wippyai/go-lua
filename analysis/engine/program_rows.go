@@ -160,6 +160,66 @@ func bindingOwnsQuerySchema(schema *Schema, key composition.Key) bool {
 	return ok
 }
 
+func validateBindingRuleRows(schema *Schema, rule equation.RuleInstance) bool {
+	if schema == nil || !rule.ValidFor(schema.cold) {
+		return false
+	}
+	ordinal, found := schema.ruleOrdinalOf(rule.Schema)
+	shape, shapeOK := schema.ruleShapeAt(ordinal)
+	if !found || !shapeOK || rule.OperandFamily != shape.OperandFamily || uint64(len(rule.Reads)) != shape.ReadCount || uint64(len(rule.Carries)) != shape.CarryCount || uint64(len(rule.Writes)) != shape.WriteCount {
+		return false
+	}
+	for index, read := range rule.Reads {
+		want, ok := schema.ruleReadShapeAt(ordinal, uint64(index))
+		if !ok || read.Index != uint64(index) || !validBindingReadSurface(want, read.Surface) {
+			return false
+		}
+	}
+	for index, carry := range rule.Carries {
+		want, ok := schema.ruleCarryShapeAt(ordinal, uint64(index))
+		if !ok || carry.Index != uint64(index) || !bindingOwnsFactorSchema(schema, want.Factor) {
+			return false
+		}
+	}
+	for index, write := range rule.Writes {
+		want, ok := schema.ruleWriteShapeAt(ordinal, uint64(index))
+		if !ok || write.Index != uint64(index) || !validBindingWriteSurface(want, write) {
+			return false
+		}
+	}
+	return true
+}
+
+func validBindingReadSurface(shape composition.RuleReadShape, surface equation.Surface) bool {
+	if !surface.Available() || surface.Factor != shape.Factor || surface.Mode != equation.TargetModeNone {
+		return false
+	}
+	switch shape.Kind {
+	case composition.ReadExact:
+		return surface.Form == equation.SurfaceReadExact && !surface.Semantic.Available() && !surface.Normalizer.Available()
+	case composition.ReadSummary:
+		return surface.Form == equation.SurfaceReadSummary && surface.Semantic == shape.Normalizer && surface.Normalizer == shape.Normalizer && shape.Normalizer.Available()
+	case composition.ReadSelect:
+		return surface.Form == equation.SurfaceReadSelect && surface.Semantic == shape.Semantic && !surface.Normalizer.Available() && shape.Semantic.Available()
+	default:
+		return false
+	}
+}
+
+func validBindingWriteSurface(shape composition.RuleWriteShape, write equation.ResolvedWrite) bool {
+	if !write.Surface.Available() || write.Surface.Factor != shape.Factor || write.Route != shape.Route {
+		return false
+	}
+	switch shape.Kind {
+	case composition.WriteExact:
+		return write.Surface.Form == equation.SurfaceWriteExact
+	case composition.WriteRoute:
+		return write.Surface.Form == equation.SurfaceWriteRoute
+	default:
+		return false
+	}
+}
+
 func bindingOwnsInput(batch *equation.Batch, input equation.Input) bool {
 	return batch != nil && input.Available() && batch.OwnsSite(input.Source()) && batch.OwnsSite(input.Target())
 }

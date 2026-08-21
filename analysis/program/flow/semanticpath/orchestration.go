@@ -21,11 +21,8 @@ import (
 // derivedPlanes is intentionally private. certificate.go is in this package
 // and may consume the planes, while no downstream owner can manufacture one.
 type derivedPlanes struct {
-	edges           [keyspace.FamilyCount][]edgeDescriptor
-	rootDescriptors [keyspace.FamilyCount][]identity.ContentID
-	body            []identity.ContentID
-	roots           [keyspace.FamilyCount][]identity.ContentID
-	terms           [keyspace.FamilyCount][]identity.ContentID
+	roots [keyspace.FamilyCount][]identity.ContentID
+	terms [keyspace.FamilyCount][]identity.ContentID
 }
 
 // derive builds every body-qualified structural plane in one owner-fenced
@@ -66,19 +63,19 @@ func derive(sourceView source.View, cellRoles source.CellRoles, authoredView aut
 		return out, err
 	}
 	resolver := structuralResolver{source: sourceView, forest: forest, edges: edges, descriptors: rootDescriptors, memo: make(map[keyspace.Term]identity.ContentID), visiting: make(map[keyspace.Term]bool)}
-	bodyPaths, err := deriveBodyPaths(sourceView, authoredView, bodies, forest, edges, rootDescriptors, &resolver)
+	bodyPaths, err := deriveBodyPaths(authoredView, bodies, &resolver)
 	if err != nil {
 		return out, err
 	}
-	rootPaths, err := deriveRootPaths(sourceView, bodies, bodyPaths, rootDescriptors)
+	rootPaths, err := deriveRootPaths(sourceView, bodyPaths, rootDescriptors)
 	if err != nil {
 		return out, err
 	}
 	resolver.body = bodyPaths
-	termPaths, err := deriveTermPaths(sourceView, cellRoles, authoredView, bindings, bodies, forest, outcomes, edges, bodyPaths, rootDescriptors, rootPaths, &resolver)
+	termPaths, err := deriveTermPaths(sourceView, cellRoles, authoredView, bindings, bodies, forest, outcomes, bodyPaths, &resolver)
 	if err != nil {
 		return out, err
 	}
-	out.edges, out.rootDescriptors, out.body, out.roots, out.terms = edges, rootDescriptors, bodyPaths, rootPaths, termPaths
+	out.roots, out.terms = rootPaths, termPaths
 	return out, nil
 }

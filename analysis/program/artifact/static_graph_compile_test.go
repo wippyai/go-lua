@@ -8,7 +8,6 @@ import (
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -99,7 +98,7 @@ func canonicalPathStaticReferenceProgram(t *testing.T) *program.Program {
 		_ = sourceFinalizer.Abort()
 		t.Fatalf("imports.Finalizer canonical reference fixture: %v", err)
 	}
-	flowDraft, err := flow.Build(authored.Input{Counts: counts})
+	flowDraft, err := flow.Build(flow.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()

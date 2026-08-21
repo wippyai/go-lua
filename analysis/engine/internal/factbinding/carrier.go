@@ -1677,14 +1677,8 @@ func (work *bindingWork[K, V]) ObserveUnder(root carrier.RootHandle, unit carrie
 		return false
 	}
 	descriptor, ok := binding.units[unit]
-	if !ok {
+	if !ok || len(descriptor.keys) == 0 {
 		return false
-	}
-	// A zero-width Factor has one schema-level optional-empty summary unit.
-	// It carries no coordinate and therefore emits no observation rows; the
-	// caller still receives a successful empty fold over the declared domain.
-	if len(descriptor.keys) == 0 {
-		return binding.algebra != nil && binding.algebra.keyEnd == 0
 	}
 	if support.Empty(within) {
 		return true

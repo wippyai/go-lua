@@ -64,12 +64,12 @@ type declaredMemberRow struct {
 	Point        identity.ContentID
 	Occurrence   identity.ContentID
 	Row          equation.RuleInstance
-	// Bind is the sealed cell that mints this row's runtime member. Operand is
-	// the canonical value issued by the declaration owner; the committed
-	// program passes it through at every seal without re-resolving it.
-	Bind    ProgramRule
-	Coords  OperandCoords
-	Operand declaredRuleOperand
+	// Bind is the sealed cell that mints this row's runtime member, and
+	// Coords the neutral coordinates it resolves its operand from. The
+	// declaration states both; the committed program binds them at every
+	// seal and the geometry reads neither.
+	Bind   ProgramRule
+	Coords OperandCoords
 	// Activation marks the row as one activation trigger, and Application is
 	// the application identity that trigger instantiates its candidates
 	// under. The application is declared by the trigger itself, so a trigger
@@ -113,6 +113,8 @@ type topologyDeclaration struct {
 	points             []declaredPointRow
 	members            []declaredMemberRow
 	queries            []declaredQueryRow
+	materializations   []equation.TemplateMaterialization
+	directCandidates   []equation.DirectActivationCandidate
 	environmentEdges   []equation.EnvironmentEdge
 	factorEdges        []equation.FactorEdge
 	summaries          []equation.SummaryMapping
@@ -300,11 +302,12 @@ type constructedQueryPlane struct {
 	ordinalByID map[identity.ContentID]uint64
 }
 
-// constructedActivationPlane is the disposable activation-row recipe passed
-// to equation.Topology.  The equation sealer consumes it into its one
-// immutable activation-row directory; no receipt object is retained here.
+// constructedActivationPlane is the finished candidate geometry: the exact
+// target tuples each registered trigger owns, and the per-trigger denominator
+// that makes a candidate set complete.
 type constructedActivationPlane struct {
-	rows []equation.ActivationRowSpec
+	materializations []equation.TemplateMaterialization
+	directCandidates []equation.DirectActivationCandidate
 }
 
 // constructTopology folds one sealed declaration into the committed geometry.
@@ -395,6 +398,9 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 	if !pointOK || !declaration.bootstrap.OwnerID().Available() {
 		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, 0)
 	}
+	if !validateSealedLinkBootstrapCatalog(source.state, declaration.bootstrap) {
+		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, 0)
+	}
 	for index := 0; index < declaration.bootstrap.OccurrenceCount(); index++ {
 		occurrence, occurrenceOK := declaration.bootstrap.OccurrenceAt(index)
 		capability, capabilityOK := declaration.bootstrap.capabilityFor(occurrence)
@@ -403,18 +409,18 @@ func constructMountPlane(declaration topologyDeclaration, source constructedSour
 		}
 	}
 	authorized, authorizedOK := sealedLinkBootstrapTransportPair(source.state)
-	transports := declaration.bootstrap.transportCapabilityCount()
-	if transports != 0 && transports != 2 || (transports == 0) == authorizedOK {
-		return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapRow, transports)
-	}
-	seenTransport := make(map[composition.Key]struct{}, transports)
-	for index := 0; index < transports; index++ {
-		capability, capabilityOK := declaration.bootstrap.transportCapabilityAt(index)
-		factor, factorOK := linkTransportFactorSemantic(source.state, capability)
-		if _, duplicate := seenTransport[factor]; !capabilityOK || !factorOK || duplicate || capability != authorized[index] {
-			return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+	if authorizedOK {
+		seenTransport := make(map[composition.Key]struct{}, len(authorized))
+		for index, capability := range authorized {
+			factor, factorOK := linkTransportFactorSemantic(source.state, capability)
+			if !factorOK {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+			}
+			if _, duplicate := seenTransport[factor]; duplicate {
+				return constructedMountPlane{}, refuseAdmission(topologyConstructionStepBootstrapTransport, index)
+			}
+			seenTransport[factor] = struct{}{}
 		}
-		seenTransport[factor] = struct{}{}
 	}
 	plane.bootstrap, plane.point, plane.owner = declaration.bootstrap, point, declaration.bootstrap.OwnerID()
 
@@ -833,12 +839,16 @@ func constructTransferEdge(declaration topologyDeclaration, source constructedSo
 // constructBootstrapTransports lowers the Link bootstrap factor transports:
 // one edge per transported capability into every mount's initial Point.
 func constructBootstrapTransports(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane) ([]equation.FactorEdge, topologyConstructionRefusal) {
-	count := mounts.bootstrap.transportCapabilityCount()
+	authorized, authorizedOK := sealedLinkBootstrapTransportPair(source.state)
+	if !authorizedOK {
+		return nil, topologyConstructionRefusal{}
+	}
+	count := len(authorized)
 	edges := make([]equation.FactorEdge, 0, count*len(mounts.mounts))
 	for ordinal := 0; ordinal < count; ordinal++ {
-		capability, capabilityOK := mounts.bootstrap.transportCapabilityAt(ordinal)
+		capability := authorized[ordinal]
 		semantic, factorOK := constructedTransportFactor(source, capability, false)
-		if !capabilityOK || !factorOK || !bindingOwnsFactorSchema(source.schema, semantic) {
+		if !factorOK || !bindingOwnsFactorSchema(source.schema, semantic) {
 			return nil, refuseAdmission(topologyConstructionStepBootstrapTransport, ordinal)
 		}
 		for mountIndex, mount := range mounts.mounts {
@@ -910,7 +920,8 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		row := cloneBindingRuleRow(member.Row)
 		if !row.Schema.Available() || !row.OperandFamily.Available() || !row.Occurrence.Available() || !row.Operand.Available() ||
 			!source.batch.OwnsOccurrence(row.Occurrence) || !source.batch.OwnsOperand(row.Operand) ||
-			!row.Operand.Occurrence().Same(row.Occurrence) || !bindingOwnsRuleSchema(source.schema, row.Schema) {
+			!row.Operand.Occurrence().Same(row.Occurrence) || !bindingOwnsRuleSchema(source.schema, row.Schema) ||
+			!validateBindingRuleRows(source.schema, row) {
 			return constructedMemberPlane{}, refuseAdmission(topologyConstructionStepMemberRow, ordinal)
 		}
 		ref := equation.RuleAt(len(plane.specs))
@@ -924,7 +935,7 @@ func constructMemberPlane(declaration topologyDeclaration, source constructedSou
 		plane.refByID[coordinates.member] = ref
 		plane.bindings = append(plane.bindings, programMemberBinding{
 			member: coordinates.member, activation: coordinates.activation,
-			activated: member.Activation, operand: member.Operand, binder: member.Bind,
+			activated: member.Activation, coords: member.Coords, binder: member.Bind,
 		})
 		plane.specs = append(plane.specs, row)
 		plane.groups = append(plane.groups, group)
@@ -1125,65 +1136,97 @@ func constructedMountedPoint(points constructedPointPlane, mount, reusable ident
 	return ref, located && refOK && ref != 0
 }
 
-// constructActivationPlane derives the disposable activation-row geometry.
-// Every row names its trigger by ordinal; the trigger must already publish a
-// stable activation identity, and every row of one trigger must name the same
-// application. A registered trigger may intentionally have no row: the
-// trigger binding is the completeness authority for that empty set.
+// constructActivationPlane derives the candidate geometry. Every candidate
+// names its trigger by ordinal; the trigger must already publish a stable
+// activation identity, and every candidate of one trigger must name the same
+// application. A registered trigger with no candidate is refused: its
+// candidate set would be complete and empty at once.
 func constructActivationPlane(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, members constructedMemberPlane) (constructedActivationPlane, topologyConstructionRefusal) {
-	declared, refusal := constructDeclaredCandidates(declaration, mounts, points, members)
+	declared, refusal := constructDeclaredCandidates(declaration, source, mounts, points, members)
 	if refusal.Available() {
 		return constructedActivationPlane{}, refusal
 	}
-	// This is an admission-local duplicate fence only. Equation.Topology owns
-	// the sealed row directory after this phase has finished.
-	type activationTuple struct {
-		trigger             equation.RuleRef
-		application, target composition.Key
-		endpoint            composition.Key
+	// These indexes are admission-local duplicate fences. Equation.Topology
+	// owns the sealed materialization and candidate receipts; retaining the
+	// lookup tables in the engine's semantic directory would create a second
+	// candidate authority after this phase has finished.
+	materializationAt := make(map[equation.TemplateMaterialization]struct{}, len(declaration.materializations))
+	directCandidateAt := make(map[equation.DirectActivationCandidate]struct{}, len(declaration.directCandidates)+len(declared))
+	directCandidateKey := make(map[composition.Key]struct{}, len(declaration.directCandidates)+len(declared))
+	candidates := make(map[equation.RuleRef]uint64, len(members.activationAt))
+	application := make(map[equation.RuleRef]composition.Key, len(members.activationAt))
+	for ref, declared := range members.applicationAt {
+		application[ref] = declared
 	}
-	tupleAt := make(map[activationTuple]struct{}, len(declared))
-	plane := constructedActivationPlane{rows: make([]equation.ActivationRowSpec, 0, len(declared))}
-	for ordinal, row := range declared {
-		if row.TriggerOrdinal < 0 || row.TriggerOrdinal >= len(members.specs) {
-			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+	plane := constructedActivationPlane{
+		materializations: make([]equation.TemplateMaterialization, 0, len(declaration.materializations)),
+		directCandidates: make([]equation.DirectActivationCandidate, 0, len(declaration.directCandidates)),
+	}
+	trigger := func(origin equation.MaterializationOrigin, originOK bool) (equation.RuleRef, bool) {
+		if !originOK || origin.TriggerOrdinal < 0 || origin.TriggerOrdinal >= len(members.specs) {
+			return 0, false
 		}
-		ref := equation.RuleAt(row.TriggerOrdinal)
+		ref := equation.RuleAt(origin.TriggerOrdinal)
 		if _, registered := members.activationAt[ref]; !registered {
+			return 0, false
+		}
+		shape, shapeOK := memberActivationShape(source, members.specs[origin.TriggerOrdinal])
+		if !shapeOK || shape.ActivationCount != 1 || shape.ActivationFamily != origin.Family {
+			return 0, false
+		}
+		if application, seen := application[ref]; seen && application != origin.Application {
+			return 0, false
+		}
+		return ref, origin.Application.Available()
+	}
+	for ordinal, value := range declaration.materializations {
+		origin, originOK := value.Origin()
+		ref, refOK := trigger(origin, originOK)
+		_, duplicate := materializationAt[value]
+		if !refOK || duplicate || !value.OwnedBy(source.schema.cold, source.batch) {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
-		shape, shapeOK := memberActivationShape(source, members.specs[row.TriggerOrdinal])
-		application, applicationOK := members.applicationAt[ref]
-		if !shapeOK || shape.ActivationCount != 1 || shape.ActivationFamily != row.Family || !applicationOK || application != row.Application ||
-			!row.Family.Available() || !row.Application.Available() || !row.Target.Available() || !row.Endpoint.Available() || row.Target == row.Endpoint {
+		plane.materializations = append(plane.materializations, value)
+		materializationAt[value] = struct{}{}
+		candidates[ref]++
+		application[ref] = origin.Application
+	}
+	for ordinal, value := range append(append([]equation.DirectActivationCandidate(nil), declaration.directCandidates...), declared...) {
+		origin, originOK := value.Origin()
+		ref, refOK := trigger(origin, originOK)
+		key := value.Key()
+		_, duplicate := directCandidateAt[value]
+		_, duplicateKey := directCandidateKey[key]
+		if !refOK || duplicate || duplicateKey || !key.Available() || !value.OwnedBy(source.schema.cold, source.batch) {
 			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
-		tuple := activationTuple{trigger: ref, application: row.Application, target: row.Target, endpoint: row.Endpoint}
-		if _, duplicate := tupleAt[tuple]; duplicate {
-			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+		plane.directCandidates = append(plane.directCandidates, value)
+		directCandidateAt[value] = struct{}{}
+		directCandidateKey[key] = struct{}{}
+		candidates[ref]++
+		application[ref] = origin.Application
+	}
+	for ref := range members.activationAt {
+		if !application[ref].Available() {
+			return constructedActivationPlane{}, refuseAdmission(topologyConstructionStepCandidateRow, int(uint64(ref)))
 		}
-		tupleAt[tuple] = struct{}{}
-		row.Imports = append([]composition.Key(nil), row.Imports...)
-		row.Entries = append([]equation.PointRef(nil), row.Entries...)
-		row.Exits = append([]equation.PointRef(nil), row.Exits...)
-		plane.rows = append(plane.rows, row)
 	}
 	return plane, topologyConstructionRefusal{}
 }
 
 // constructDeclaredCandidates folds the mounted candidate coordinates into
-// activation-row recipes. The trigger Point and the body's entry/exit Points
-// are resolved against this construction's own planes; the declaration
-// carries no dense address.
-func constructDeclaredCandidates(declaration topologyDeclaration, mounts constructedMountPlane, points constructedPointPlane, members constructedMemberPlane) ([]equation.ActivationRowSpec, topologyConstructionRefusal) {
+// direct activation candidates. The trigger Point, the body's entry and exit
+// Points, and the transport vector are resolved against this construction's
+// own planes; the declaration carries no dense address.
+func constructDeclaredCandidates(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, members constructedMemberPlane) ([]equation.DirectActivationCandidate, topologyConstructionRefusal) {
 	if len(declaration.candidates) == 0 {
 		return nil, topologyConstructionRefusal{}
 	}
 	if !declaration.mounted() {
 		return nil, refuseAdmission(topologyConstructionStepCandidateRow, 0)
 	}
-	built := make([]equation.ActivationRowSpec, 0, len(declaration.candidates))
-	transports := make(map[artifactMountedBody]constructedActivationTransport, len(declaration.candidates))
+	built := make([]equation.DirectActivationCandidate, 0, len(declaration.candidates))
+	transports := make(map[artifactMountedBody]equation.DirectActivationTransportSet, len(declaration.candidates))
 	for ordinal, candidate := range declaration.candidates {
 		ref, registered := members.refByID[candidate.Member]
 		activation, isTrigger := members.activationAt[ref]
@@ -1191,54 +1234,46 @@ func constructDeclaredCandidates(declaration topologyDeclaration, mounts constru
 		if !registered || !isTrigger || !activation.Available() || !triggerOK {
 			return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 		}
-		transport, resolved := transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}]
+		set, resolved := transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}]
 		if !resolved {
 			var setOK bool
-			transport.entries, transport.exits, setOK = constructBodyTransportRows(mounts, points, candidate)
+			set, setOK = constructBodyTransportSet(source, mounts, points, candidate)
 			if !setOK {
 				return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
 			}
-			transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}] = transport
+			transports[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}] = set
 		}
-		built = append(built, equation.ActivationRowSpec{
+		origin := equation.MaterializationOrigin{
+			Family: candidate.Family, Application: candidate.Application,
+			Target: candidate.Target, Endpoint: candidate.Endpoint,
 			TriggerOrdinal: int(uint64(ref)) - 1,
-			Family:         candidate.Family,
-			Application:    candidate.Application,
-			Target:         candidate.Target,
-			Endpoint:       candidate.Endpoint,
-			Trigger:        trigger,
-			Entries:        append([]equation.PointRef(nil), transport.entries...),
-			Exits:          append([]equation.PointRef(nil), transport.exits...),
-			Imports:        append([]composition.Key(nil), candidate.Imports...),
-			Export:         candidate.Export,
-		})
+		}
+		value, valueOK := equation.NewDirectActivationCandidate(source.schema.cold, source.batch, origin, trigger, set)
+		if !valueOK {
+			return nil, refuseAdmission(topologyConstructionStepCandidateRow, ordinal)
+		}
+		built = append(built, value)
 	}
 	return built, topologyConstructionRefusal{}
 }
 
-type constructedActivationTransport struct {
-	entries []equation.PointRef
-	exits   []equation.PointRef
-}
-
-// constructBodyTransportRows resolves one mounted body's entry and exit
-// Points from the sealed template. The equation sealer later pairs these rows
-// with the declared transport vector and assigns immutable transport-row IDs.
-func constructBodyTransportRows(mounts constructedMountPlane, points constructedPointPlane, candidate declaredActivationCandidate) ([]equation.PointRef, []equation.PointRef, bool) {
+// constructBodyTransportSet resolves one mounted body's entry and exit Points
+// from the sealed template and pairs them with the declared transport vector.
+func constructBodyTransportSet(source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, candidate declaredActivationCandidate) (equation.DirectActivationTransportSet, bool) {
 	handle, mounted := mounts.bodies[artifactMountedBody{mount: candidate.Mount, body: candidate.Body}]
 	if !mounted || handle.mount < 0 || handle.mount >= len(mounts.mounts) {
-		return nil, nil, false
+		return equation.DirectActivationTransportSet{}, false
 	}
 	template := mounts.mounts[handle.mount].template
 	body, bodyOK := template.BodyAt(handle.body)
 	if !bodyOK || body.ID != candidate.Body || len(body.Entry) == 0 || len(body.Exits) == 0 {
-		return nil, nil, false
+		return equation.DirectActivationTransportSet{}, false
 	}
 	entries := make([]equation.PointRef, 0, len(body.Entry))
 	for _, reusable := range body.Entry {
 		ref, ok := constructedMountedPoint(points, candidate.Mount, reusable)
 		if !ok {
-			return nil, nil, false
+			return equation.DirectActivationTransportSet{}, false
 		}
 		entries = append(entries, ref)
 	}
@@ -1246,11 +1281,11 @@ func constructBodyTransportRows(mounts constructedMountPlane, points constructed
 	for _, reusable := range body.Exits {
 		ref, ok := constructedMountedPoint(points, candidate.Mount, reusable)
 		if !ok {
-			return nil, nil, false
+			return equation.DirectActivationTransportSet{}, false
 		}
 		exits = append(exits, ref)
 	}
-	return entries, exits, true
+	return equation.NewDirectActivationTransportSet(source.schema.cold, source.batch, entries, exits, candidate.Imports, candidate.Export)
 }
 
 // constructSemanticRows folds the four published address planes into the one
@@ -1306,7 +1341,8 @@ func constructSemanticRows(points constructedPointPlane, members constructedMemb
 func sealConstructedTopology(declaration topologyDeclaration, source constructedSourcePlane, mounts constructedMountPlane, points constructedPointPlane, edges constructedEdgePlane, members constructedMemberPlane, queries constructedQueryPlane, activations constructedActivationPlane, semantic *bindingSemanticRows) (constructedTopology, topologyConstructionRefusal) {
 	spec := equation.TopologySpec{
 		Batch:              source.batch,
-		ActivationRows:     activations.rows,
+		Materializations:   activations.materializations,
+		DirectCandidates:   activations.directCandidates,
 		ActivationTriggers: members.triggers,
 		Rules:              members.specs,
 		Points:             points.specs,

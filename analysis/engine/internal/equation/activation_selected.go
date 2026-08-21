@@ -42,21 +42,22 @@ func (topology *Topology) SelectedStructuralFactorEdges(base *Graph, accepted []
 		if !topology.ownsMember(member) {
 			return nil, false
 		}
-		if topology.activation != nil {
-			transports, found := topology.activation.transports(member.Binding())
-			if !found {
-				return nil, false
-			}
-			for _, transport := range transports {
-				edge, edgeOK := topology.selectedDirectActivationEdge(base, member.Binding(), acceptedMember.Premise(), transport)
-				if !edgeOK {
-					return nil, false
-				}
-				result = append(result, edge)
-			}
+		candidate, found := topology.directCandidate(member.Binding())
+		if !found || !candidate.Available() {
+			// Materialized candidates already belong to the base graph.
 			continue
 		}
-		return nil, false
+		for transportIndex := 0; transportIndex < candidate.TransportCount(); transportIndex++ {
+			transport, transportOK := candidate.TransportAt(transportIndex)
+			if !transportOK {
+				return nil, false
+			}
+			edge, edgeOK := topology.selectedDirectActivationEdge(base, member.Binding(), acceptedMember.Premise(), transport)
+			if !edgeOK {
+				return nil, false
+			}
+			result = append(result, edge)
+		}
 	}
 	sort.Slice(result, func(left, right int) bool { return lessKey(result[left].key, result[right].key) })
 	for index := 1; index < len(result); index++ {

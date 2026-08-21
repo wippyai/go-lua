@@ -103,7 +103,7 @@ func TestMergeContributionRightEmptySlotSkipsTypedTraversalAndRetainsSupportChan
 	if !ok {
 		t.Fatal("right state")
 	}
-	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("left publication plan")
 	}

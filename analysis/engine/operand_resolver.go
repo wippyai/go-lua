@@ -20,14 +20,13 @@ type OperandCoords struct {
 // on this rule's sealed cell. A second install is rejected: one rule has
 // exactly one resolver.
 func (implementation *RuleImplementation[K, V, O]) InstallOperandResolver(resolve func(OperandCoords) (O, bool)) bool {
-	cell, cellOK := implementation.sealedRuleCell()
-	if !cellOK || cell.state == nil || resolve == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.state == nil || resolve == nil {
 		return false
 	}
-	state := cell.state
+	state := implementation.binding.state
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	hot := cell.impl
+	hot := implementation.binding.cell.impl
 	if hot == nil || hot.operandResolver != nil {
 		return false
 	}
@@ -38,11 +37,10 @@ func (implementation *RuleImplementation[K, V, O]) InstallOperandResolver(resolv
 // HasOperandResolver reports whether this rule's sealed cell already holds
 // its owner-supplied resolver.
 func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		return false
 	}
-	return cell.impl.operandResolver != nil
+	return implementation.binding.cell.impl.operandResolver != nil
 }
 
 // programRule is the engine's private row issuer. It is wrapped by ProgramRule
@@ -56,119 +54,90 @@ type programRule interface {
 	// declareRuleSurfaces places the cold shape's surfaces over that operand
 	// at the sealed anchor the engine minted.
 	declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool)
-	programMemberBinder
 }
 
-// programMemberBinder is the shared member-row lane. The ordinary issuer
-// embeds it through programRule; activation keeps the same typed lane without
-// duplicating the bind method in a second interface.
 type programMemberBinder interface {
-	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool)
+	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool)
 }
 
 // ProgramRule is one sealed, engine-owned rule row issuer. Composition emits
 // these values in catalog order; the constructor consumes the aligned slice
 // directly and never recovers a program from a hot schema cell.
 type ProgramRule struct {
-	rule       programRule
-	activation programMemberBinder
+	issuer programRule
+	binder programMemberBinder
 }
 
 // Available reports whether the primitive was issued by the engine.
-// Exactly one issuer lane is valid: ordinary Rule or activation, never both.
-func (program ProgramRule) Available() bool {
-	return (program.rule != nil) != (program.activation != nil)
-}
+func (program ProgramRule) Available() bool { return program.binder != nil }
 
 func (program ProgramRule) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	if !program.Available() || program.rule == nil {
+	if program.issuer == nil {
 		return composition.Key{}, composition.Key{}, false
 	}
-	return program.rule.declaredRuleSchema()
+	return program.issuer.declaredRuleSchema()
 }
 
 func (program ProgramRule) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
-	if !program.Available() || program.rule == nil {
+	if program.issuer == nil {
 		return declaredRuleOperand{}, false
 	}
-	return program.rule.declareRuleOperand(coords)
+	return program.issuer.declareRuleOperand(coords)
 }
 
 func (program ProgramRule) declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
-	if !program.Available() || program.rule == nil {
+	if program.issuer == nil {
 		return declaredRuleSurfaces{}, false
 	}
-	return program.rule.declareRuleSurfaces(operand, anchor)
+	return program.issuer.declareRuleSurfaces(operand, anchor)
 }
 
-func (program ProgramRule) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool) {
-	if !program.Available() {
+func (program ProgramRule) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool) {
+	if program.binder == nil {
 		return nil, false
 	}
-	if program.rule != nil {
-		return program.rule.bindProgramMember(plane, topology, member, operand)
-	}
-	if program.activation != nil {
-		return program.activation.bindProgramMember(plane, topology, member, operand)
-	}
-	return nil, false
+	return program.binder.bindProgramMember(plane, topology, member, coords)
 }
 
 // SealProgramRule turns the exact sealed typed implementation into the one
 // primitive construction input. The generic boundary is deliberately here so
 // schema composition never needs to name engine's private issuer interface.
 func SealProgramRule[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O]) (ProgramRule, bool) {
-	if _, ok := implementation.sealedRuleCell(); !ok {
+	if implementation == nil || !implementation.binding.valid() {
 		return ProgramRule{}, false
 	}
-	program := ProgramRule{rule: implementation}
-	if !program.Available() {
-		return ProgramRule{}, false
-	}
-	return program, true
+	return ProgramRule{issuer: implementation, binder: implementation}, true
 }
 
 // SealActivationProgramRule publishes the activation issuer through the same
 // sealed primitive while preserving activation's separate admission path.
 func SealActivationProgramRule(implementation *ActivationRuleImplementation) (ProgramRule, bool) {
-	cell, ok := implementation.sealedActivationCell()
-	if !ok || !cell.schemaRuleComplete() {
+	if implementation == nil || !implementation.binding.valid() {
 		return ProgramRule{}, false
 	}
-	program := ProgramRule{activation: implementation}
-	if !program.Available() {
-		return ProgramRule{}, false
-	}
-	return program, true
+	return ProgramRule{binder: implementation}, true
 }
 
 func (implementation *RuleImplementation[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell == nil || cell.impl == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
 		return composition.Key{}, composition.Key{}, false
 	}
-	semantic, family := cell.impl.ruleSemantic, cell.impl.operandFamily
+	semantic, family := implementation.binding.proof.semantic, implementation.binding.proof.operandFamily
 	return semantic, family, semantic.Available() && family.Available()
 }
 
 func (implementation *ActivationRuleImplementation) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	cell, ok := implementation.sealedActivationCell()
-	if !ok || !cell.schemaRuleComplete() {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.proof == nil {
 		return composition.Key{}, composition.Key{}, false
 	}
-	shape, shapeOK := cell.schema.ruleShapeAt(implementation.ordinal)
-	if !shapeOK {
-		return composition.Key{}, composition.Key{}, false
-	}
-	semantic, family := cell.schema.ruleSemanticAt(implementation.ordinal), shape.OperandFamily
+	semantic, family := implementation.binding.proof.semantic, implementation.binding.proof.operandFamily
 	return semantic, family, semantic.Available() && family.Available()
 }
 
 func (implementation *RuleImplementation[K, V, O]) resolveOperand(coords OperandCoords) (O, bool) {
 	var absent O
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil || cell.impl.operandResolver == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil || implementation.binding.cell.impl.operandResolver == nil {
 		return absent, false
 	}
-	return cell.impl.operandResolver(coords)
+	return implementation.binding.cell.impl.operandResolver(coords)
 }

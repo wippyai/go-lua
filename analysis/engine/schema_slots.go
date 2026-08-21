@@ -73,7 +73,7 @@ func builderOpen(builder *SchemaBuilder) bool {
 }
 
 // claim reserves each public semantic identity exactly once before its row is
-// appended. References (operand families and route families) are not
+// appended. References (operand families, admissions, route families) are not
 // claims; Factors, optional forms, completion/prune, activation families,
 // Rules, carry transforms, and Query/freezer rows are.
 func (builder *SchemaBuilder) claim(keys ...identity.SemanticKey) bool {
@@ -218,6 +218,29 @@ func appendRuleRow[R any](rule *schemaRuleDraft, index int) (*rowDraft[R], slotH
 	draft := &rowDraft[R]{ruleRow{builder: builder, rule: rule, index: index}}
 	builder.rows = append(builder.rows, &draft.ruleRow)
 	return draft, issue(builder, draft, SchemaFormInvalid)
+}
+
+// SchemaAdmission is the callback-free provenance row for one Rule.  The
+// identity is semantic evidence, not an executable checker.
+type SchemaAdmission struct {
+	Basis    RuleAdmissionBasis
+	Identity identity.SemanticKey
+}
+
+func (admission SchemaAdmission) cold() (coldcomposition.Admission, bool) {
+	if !admission.Identity.Available() {
+		return coldcomposition.Admission{}, false
+	}
+	var kind coldcomposition.AdmissionKind
+	switch admission.Basis {
+	case RuleAdmissionBasisTrustedTheorem:
+		kind = coldcomposition.AdmissionTrustedTheorem
+	case RuleAdmissionBasisDerivation:
+		kind = coldcomposition.AdmissionDerivation
+	default:
+		return coldcomposition.Admission{}, false
+	}
+	return coldcomposition.Admission{Kind: kind, Identity: compositionKeyOf(admission.Identity)}, true
 }
 
 // FactorRef is a typed output/reference projection of a FactorSlot.  It
@@ -475,6 +498,7 @@ type SchemaRuleSpec[V any] struct {
 	Semantic      identity.SemanticKey
 	OperandFamily identity.SemanticKey
 	Inputs        uint64
+	Admission     SchemaAdmission
 	Output        FactorRef[V]
 }
 
@@ -524,6 +548,11 @@ func DeclareRuleSlot[V, O any](builder *SchemaBuilder, spec SchemaRuleSpec[V]) (
 		return nil, false
 	}
 	builder.phase = schemaBuilderChildren
+	admission, ok := spec.Admission.cold()
+	if !ok {
+		builder.poison()
+		return nil, false
+	}
 	if !builder.claim(spec.Semantic) {
 		return nil, false
 	}
@@ -533,7 +562,7 @@ func DeclareRuleSlot[V, O any](builder *SchemaBuilder, spec SchemaRuleSpec[V]) (
 		return nil, false
 	}
 	draft := &schemaRuleDraft{builder: builder, index: index, output: outputDraft}
-	builder.candidate.Rules = append(builder.candidate.Rules, coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(spec.OperandFamily), OutputKind: coldcomposition.FactorOutput, Output: compositionKeyOf(outputDraft.semantic), Inputs: spec.Inputs})
+	builder.candidate.Rules = append(builder.candidate.Rules, coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(spec.OperandFamily), Admission: admission, OutputKind: coldcomposition.FactorOutput, Output: compositionKeyOf(outputDraft.semantic), Inputs: spec.Inputs})
 	builder.rules = append(builder.rules, draft)
 	return &RuleSlot[V, O]{issue(builder, draft, SchemaFormInvalid)}, true
 }
@@ -893,6 +922,7 @@ func DeclareSchemaActivationFamily(builder *SchemaBuilder, semantic identity.Sem
 type SchemaStructuralRuleSpec struct {
 	Semantic   identity.SemanticKey
 	Inputs     uint64
+	Admission  SchemaAdmission
 	Completion SchemaCompletion
 	Prune      SchemaPrune
 	Activation SchemaActivationFamily
@@ -972,6 +1002,11 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 		return slotHandle[schemaRuleDraft]{}, false
 	}
 	builder.phase = schemaBuilderChildren
+	admission, ok := spec.Admission.cold()
+	if !ok {
+		builder.poison()
+		return slotHandle[schemaRuleDraft]{}, false
+	}
 	if !builder.claim(spec.Semantic) {
 		return slotHandle[schemaRuleDraft]{}, false
 	}
@@ -984,7 +1019,7 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 	// Structural Rules have the engine-owned unit operand family.  It is not a
 	// caller-supplied semantic identity: support and activation execution both
 	// consume the engine's private ruleUnit proof.
-	row := coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(unitOperandFamily), OutputKind: coldcomposition.StructuralOutput, Inputs: spec.Inputs}
+	row := coldcomposition.Rule{Key: compositionKeyOf(spec.Semantic), OperandFamily: compositionKeyOf(unitOperandFamily), Admission: admission, OutputKind: coldcomposition.StructuralOutput, Inputs: spec.Inputs}
 	if activation {
 		family, _ := spec.Activation.draft()
 		row.Activations = []coldcomposition.ActivationRange{{Family: compositionKeyOf(family.semantic)}}

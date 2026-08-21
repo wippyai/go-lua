@@ -342,11 +342,11 @@ func TestPointRHSOverlaySharesUntouchedFactorRoot(t *testing.T) {
 	if !ok {
 		t.Fatal("composition")
 	}
-	allWrites, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	allWrites, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("all-writes plan")
 	}
-	valueWrite, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	valueWrite, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("value-only plan")
 	}
@@ -861,11 +861,11 @@ func TestRuleContributionPointInputsCarryCloseLatentAndDefault(t *testing.T) {
 	}
 	binding, _, slot, composition, fixture := bindingState(t, manager, transportConfig(7), whole)
 	writePlan := compositionPlan(t, composition)
-	carryPlan, ok := composition.SealContribution(1, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}})
+	carryPlan, ok := composition.SealContribution(1, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}}, false)
 	if !ok {
 		t.Fatal("carry plan")
 	}
-	expansionPlan, ok := composition.SealContribution(0, nil, nil)
+	expansionPlan, ok := composition.SealContribution(0, nil, nil, false)
 	if !ok {
 		t.Fatal("expansion plan")
 	}

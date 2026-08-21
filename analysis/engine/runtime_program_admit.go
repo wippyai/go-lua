@@ -38,35 +38,34 @@ func (declared declaredRuleOperand) Available() bool {
 // cold shape order.
 type declaredRuleSurfaces struct {
 	reads   []RuleReadSurface
-	writes  []ruleWriteSurface
+	writes  []RuleWriteSurface
 	carries uint64
+}
+
+func (implementation *RuleImplementation[K, V, O]) AdmitsMounted(mount, point, occurrence identity.ContentID) bool {
+	if implementation == nil {
+		return false
+	}
+	_, resolved := implementation.resolveOperand(OperandCoords{Mount: mount, Point: point, Occurrence: occurrence})
+	return resolved
 }
 
 // declareRuleOperand resolves the neutral coordinates to this rule's typed
 // operand and canonicalizes it. The typed value never leaves the cell in a
 // nameable form: it travels back to declareRuleSurfaces erased.
 func (implementation *RuleImplementation[K, V, O]) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
+	if implementation == nil || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		return declaredRuleOperand{}, false
 	}
 	operand, resolved := implementation.resolveOperand(coords)
 	if !resolved {
 		return declaredRuleOperand{}, false
 	}
-	return implementation.issueDeclaredOperand(operand)
-}
-
-func (implementation *RuleImplementation[K, V, O]) issueDeclaredOperand(operand O) (declaredRuleOperand, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
-		return declaredRuleOperand{}, false
-	}
-	canonical, digest, contentOK := cell.impl.operandContent(operand)
+	_, digest, contentOK := implementation.binding.cell.impl.operandContent(operand)
 	if !contentOK || digest == [32]byte{} {
 		return declaredRuleOperand{}, false
 	}
-	return declaredRuleOperand{value: canonical, digest: digest}, true
+	return declaredRuleOperand{value: operand, digest: digest}, true
 }
 
 // declareRuleSurfaces places the cold shape's surfaces over one issuance. It
@@ -74,11 +73,10 @@ func (implementation *RuleImplementation[K, V, O]) issueDeclaredOperand(operand 
 // projectors, and the anchor the engine minted.
 func (implementation *RuleImplementation[K, V, O]) declareRuleSurfaces(declared declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
 	operand, typed := declared.value.(O)
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || !typed || cell.impl == nil {
+	if implementation == nil || !typed || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		return declaredRuleSurfaces{}, false
 	}
-	semantic, semanticOK := semanticKeyFromComposition(cell.impl.ruleSemantic)
+	semantic, semanticOK := semanticKeyFromComposition(implementation.binding.proof.semantic)
 	if !semanticOK {
 		return declaredRuleSurfaces{}, false
 	}
@@ -89,32 +87,26 @@ func (implementation *RuleImplementation[K, V, O]) declareRuleSurfaces(declared 
 	return declaredRuleSurfaces{reads: reads, writes: writes, carries: carries}, true
 }
 
-func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identity.SemanticKey, anchor ruleSurfaceAnchor, operand O) ([]RuleReadSurface, []ruleWriteSurface, uint64, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || !semantic.Available() || cell.impl == nil {
+func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identity.SemanticKey, anchor ruleSurfaceAnchor, operand O) ([]RuleReadSurface, []RuleWriteSurface, uint64, bool) {
+	if implementation == nil || !semantic.Available() || !implementation.binding.valid() || implementation.binding.cell == nil || implementation.binding.cell.impl == nil {
 		return nil, nil, 0, false
 	}
-	hot := cell.impl
-	state := cell.state
-	authority := state.authority
-	ordinal := implementation.ordinal
-	readCount := uint64(len(hot.reads))
-	if hot.writeMode == 0 || (hot.writeMode != directRuleWriteExact && hot.writeMode != directRuleWriteRoute) {
+	hot := implementation.binding.cell.impl
+	state := implementation.binding.state
+	authority := implementation.binding.authority
+	ordinal := implementation.binding.proof.ordinal
+	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
+	if !shapeOK || uint64(len(hot.reads)) != shape.ReadCount || shape.WriteCount != 1 {
 		return nil, nil, 0, false
 	}
-	reads := make([]RuleReadSurface, readCount)
-	readRows := make([]*schemaRuleReadRow, readCount)
-	writes := make([]ruleWriteSurface, 1)
-	for index := uint64(0); index < readCount; index++ {
-		if index >= uint64(len(hot.reads)) || hot.reads[index] == nil {
+	reads := make([]RuleReadSurface, shape.ReadCount)
+	writes := make([]RuleWriteSurface, shape.WriteCount)
+	for index := uint64(0); index < shape.ReadCount; index++ {
+		readShape, readOK := state.schema.ruleReadShapeAt(ordinal, index)
+		if !readOK {
 			return nil, nil, 0, false
 		}
-		row := hot.reads[index].readRow()
-		if row == nil || row.owner != cell || row.ownerOrdinal != ordinal || row.readOrdinal != index {
-			return nil, nil, 0, false
-		}
-		readRows[index] = row
-		switch row.kind {
+		switch readShape.Kind {
 		case composition.ReadExact:
 			local, projected := hot.reads[index].projectLocal(operand)
 			factor := hot.reads[index].exactAdmitFactor()
@@ -127,21 +119,33 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 			}
 			reads[index] = surface
 		case composition.ReadSelect:
-			deps := make([]RuleReadSurface, len(row.dependencies))
-			for dep, depIndex := range row.dependencies {
-				if depIndex >= index || depIndex >= uint64(len(reads)) || !reads[depIndex].value.Available() {
+			deps := make([]RuleReadSurface, readShape.DependencyCount)
+			for dep := uint64(0); dep < readShape.DependencyCount; dep++ {
+				depIndex, depOK := state.schema.ruleReadDependencyAt(ordinal, index, dep)
+				if !depOK || depIndex >= uint64(index) || !reads[depIndex].value.Available() {
 					return nil, nil, 0, false
 				}
 				deps[dep] = reads[depIndex]
 			}
-			surface, surfaceOK := anchoredSelectedReadSurface(state, authority, semantic, anchor, row, readRows, deps, reads)
-			if !surfaceOK || !surface.value.Available() {
+			proofOK := implementation.selectedRead(index)
+			surface, surfaceOK := anchoredSelectedReadSurface(state, authority, semantic, anchor, implementation.binding.proof, index, deps, reads)
+			if !proofOK || !surfaceOK || !surface.value.Available() {
 				return nil, nil, 0, false
 			}
 			reads[index] = surface
 		case composition.ReadSummary:
-			surface, surfaceOK := readSummarySurface(state, authority, row, operand)
-			if !surfaceOK || !surface.value.Available() {
+			proofOK := implementation.summaryRead(index)
+			provider, providerOK := hot.reads[index].(interface{ summarySurfaceAdmit() any })
+			if !proofOK || !providerOK {
+				return nil, nil, 0, false
+			}
+			project, projectOK := provider.summarySurfaceAdmit().(func(any) (any, bool))
+			if !projectOK || project == nil {
+				return nil, nil, 0, false
+			}
+			refs, refsOK := project(operand)
+			surface, surfaceOK := readSummarySurface(implementation.binding.proof, index, refs)
+			if !refsOK || !surfaceOK || !surface.value.Available() {
 				return nil, nil, 0, false
 			}
 			reads[index] = surface
@@ -150,11 +154,17 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 		}
 	}
 	var carries uint64
-	if hot.carryPresent {
+	if shape.CarryCount == 1 {
 		carries = 1
+	} else if shape.CarryCount != 0 {
+		return nil, nil, 0, false
 	}
-	switch hot.writeMode {
-	case directRuleWriteExact:
+	writeShape, writeOK := state.schema.ruleWriteShapeAt(ordinal, 0)
+	if !writeOK {
+		return nil, nil, 0, false
+	}
+	switch writeShape.Kind {
+	case composition.WriteExact:
 		local, projected := hot.projectWrite(operand)
 		if !projected || hot.output == nil {
 			return nil, nil, 0, false
@@ -165,13 +175,10 @@ func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identi
 		}
 		writes[0] = surface
 		return reads, writes, carries, true
-	case directRuleWriteRoute:
-		readRow := (*schemaRuleReadRow)(nil)
-		if hot.routeRead > 0 && hot.routeRead-1 < uint64(len(readRows)) {
-			readRow = readRows[hot.routeRead-1]
-		}
-		surface, surfaceOK := anchoredRouteWriteSurface(state, authority, semantic, anchor, ordinal, 0, hot.routeRead, hot.output.schemaFactorSemanticKey(), readRow)
-		if !surfaceOK || !surface.value.Available() {
+	case composition.WriteRoute:
+		_, proofOK := implementation.routeWrite()
+		surface, surfaceOK := anchoredRouteWriteSurface(state, authority, semantic, anchor, implementation.binding.proof, 0)
+		if !proofOK || !surfaceOK || !surface.value.Available() {
 			return nil, nil, 0, false
 		}
 		writes[0] = surface

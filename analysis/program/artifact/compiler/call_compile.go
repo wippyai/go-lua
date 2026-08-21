@@ -1,12 +1,8 @@
 package compiler
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/accessgeometry"
-	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -17,7 +13,14 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 	calls := compiler.input.Flow().Authored().Calls().Count()
 	compiler.calls = make([]programschema.Call, 0, calls)
 	compiler.callResults = compiler.callResults[:0]
-	callIDs := make([]identity.ContentID, calls+1)
+	compiler.callResultGeometryComputed = false
+	compiler.callResultGeometryOK = false
+	compiler.callResultGeometryByTerm = nil
+	compiler.callResultGeometryByTerm, compiler.callResultGeometryOK = compiler.buildCallResultGeometryIndex()
+	compiler.callResultGeometryComputed = true
+	if !compiler.callResultGeometryOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
+	}
 	compiler.callOperands = compiler.callOperands[:0]
 	compiler.callArguments = compiler.callArguments[:0]
 	compiler.callTypeArguments = compiler.callTypeArguments[:0]
@@ -95,46 +98,14 @@ func (compiler *compiler) copyCallRowsFailure() CompileFailure {
 		if !rowOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		ordinal := keyspace.TermOrdinal(call.term)
-		if ordinal == 0 || uint64(ordinal) >= uint64(len(callIDs)) || callIDs[ordinal].Available() {
+		compiler.calls = append(compiler.calls, row)
+		result, resultPresent, resultOK := compiler.callResultGeometry(call.term, call.id)
+		if !resultOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
-		callIDs[ordinal] = call.id
-		compiler.calls = append(compiler.calls, row)
-	}
-	// Flow already owns the complete ordered Call-result geometry walk. Join it
-	// once to the dense Call IDs compiled above instead of rebuilding a second
-	// term-to-geometry index in the Artifact compiler.
-	type resultAt struct {
-		ordinal uint32
-		row     programschema.CallResult
-	}
-	results := make([]resultAt, 0)
-	geometryOK := compiler.input.Flow().VisitCallResultGeometry(func(geometry flow.CallResultGeometry) bool {
-		ordinal := keyspace.TermOrdinal(geometry.Call)
-		if keyspace.TermFamily(geometry.Call) != keyspace.FamilyCall || ordinal == 0 || uint64(ordinal) >= uint64(len(callIDs)) ||
-			!callIDs[ordinal].Available() {
-			return false
+		if resultPresent {
+			compiler.callResults = append(compiler.callResults, result)
 		}
-		result, ok := programschema.NewCallResultWithMultiplicity(
-			callIDs[ordinal], geometry.Values, geometry.Value, geometry.Tail, geometry.Position,
-			geometry.Form, geometry.Multiplicity, geometry.Count,
-		)
-		if !ok {
-			return false
-		}
-		results = append(results, resultAt{ordinal: ordinal, row: result})
-		return true
-	})
-	if !geometryOK {
-		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceCall)
-	}
-	sort.Slice(results, func(left, right int) bool { return results[left].ordinal < results[right].ordinal })
-	for index, result := range results {
-		if index != 0 && results[index-1].ordinal == result.ordinal {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, int(result.ordinal)-1, -1, CompileReasonOccurrenceCall)
-		}
-		compiler.callResults = append(compiler.callResults, result.row)
 	}
 	return CompileFailure{}
 }

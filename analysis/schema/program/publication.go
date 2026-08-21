@@ -52,8 +52,6 @@ type Publication struct {
 	StaticTypeNodeRecordFields               []StaticTypeNodeRecordField
 	StaticTypeNodeReferenceSourceKeys        []StaticTypeNodeReferenceSourceKey
 	StaticTypeNodeReferenceCanonicalKeys     []StaticTypeNodeReferenceCanonicalKey
-	StorageCellLifetimes                     []StorageCellLifetime
-	SubjectLifetimes                         []SubjectLiveness
 	Regions                                  []Region
 	RegionMembers                            []RegionMember
 	WTOEvents                                []WTOEvent
@@ -90,6 +88,10 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		ValuesFamily().Put(&builder, publication.Values, catalog) &&
 		ValuesMemberFamily().Put(&builder, publication.ValuesMembers, catalog) &&
 		HeapIndexFamily().Put(&builder, publication.HeapIndexes, catalog) &&
+		OccurrenceFamily().Put(&builder, publication.Occurrences, catalog) &&
+		OccurrencePointFamily().Put(&builder, publication.OccurrencePoints, catalog) &&
+		OccurrenceInputFamily().Put(&builder, publication.OccurrenceInputs, catalog) &&
+		RuleOccurrenceFamily().Put(&builder, publication.RuleOccurrences, catalog) &&
 		ExactScalarSummaryFamily().Put(&builder, publication.ExactScalarSummaries, catalog) &&
 		ArithmeticSummaryFamily().Put(&builder, publication.ArithmeticSummaries, catalog) &&
 		UnarySummaryFamily().Put(&builder, publication.UnarySummaries, catalog) &&
@@ -103,29 +105,7 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		EnvironmentResetFamily().Put(&builder, publication.EnvironmentResets, catalog) &&
 		StaticTypeValueFamily().Put(&builder, publication.StaticTypeValues, catalog) &&
 		StaticExpressionFamily().Put(&builder, publication.StaticExpressions, catalog) &&
-		RegionFamily().Put(&builder, publication.Regions, catalog) &&
-		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
-		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog) &&
-		BodyFamily().Put(&builder, publication.Bodies, catalog) &&
-		BodyEntryFamily().Put(&builder, publication.BodyEntries, catalog) &&
-		BodyRootFamily().Put(&builder, publication.BodyRoots, catalog) &&
-		OutcomeFamily().Put(&builder, publication.Outcomes, catalog) &&
-		OutcomeReturnValueFamily().Put(&builder, publication.OutcomeReturnValues, catalog) &&
-		OutcomePointFamily().Put(&builder, publication.OutcomePoints, catalog) &&
-		FunctionBoundaryFamily().Put(&builder, publication.FunctionBoundaries, catalog) &&
-		FunctionFormalFamily().Put(&builder, publication.FunctionFormals, catalog) &&
-		FunctionVarargFamily().Put(&builder, publication.FunctionVarargs, catalog) &&
-		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog) &&
 		StaticInputFamily().Put(&builder, publication.StaticInputs, catalog) &&
-		LocalTransferFamily().Put(&builder, publication.LocalTransfers, catalog) &&
-		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog) &&
-		OccurrenceFamily().Put(&builder, publication.Occurrences, catalog) &&
-		OccurrencePointFamily().Put(&builder, publication.OccurrencePoints, catalog) &&
-		OccurrenceInputFamily().Put(&builder, publication.OccurrenceInputs, catalog) &&
-		RuleOccurrenceFamily().Put(&builder, publication.RuleOccurrences, catalog) &&
-		DiagnosticObservationFamily().Put(&builder, publication.DiagnosticObservations, catalog) &&
-		DiagnosticEvidenceFamily().Put(&builder, publication.DiagnosticEvidence, catalog) &&
-		DiagnosticPathFamily().Put(&builder, publication.DiagnosticPaths, catalog) &&
 		StaticTypeNodeFamily().Put(&builder, publication.StaticTypeNodes, catalog) &&
 		StaticTypeNodeUnionMemberFamily().Put(&builder, publication.StaticTypeNodeUnionMembers, catalog) &&
 		StaticTypeNodeIntersectionMemberFamily().Put(&builder, publication.StaticTypeNodeIntersectionMembers, catalog) &&
@@ -139,8 +119,24 @@ func (publication Publication) Seal(catalog identity.ContentID, store identity.S
 		StaticTypeNodeRecordFieldFamily().Put(&builder, publication.StaticTypeNodeRecordFields, catalog) &&
 		StaticTypeNodeReferenceSourceKeyFamily().Put(&builder, publication.StaticTypeNodeReferenceSourceKeys, catalog) &&
 		StaticTypeNodeReferenceCanonicalKeyFamily().Put(&builder, publication.StaticTypeNodeReferenceCanonicalKeys, catalog) &&
-		StorageCellLifetimeFamily().Put(&builder, publication.StorageCellLifetimes, catalog) &&
-		SubjectLivenessFamily().Put(&builder, publication.SubjectLifetimes, catalog) &&
+		RegionFamily().Put(&builder, publication.Regions, catalog) &&
+		RegionMemberFamily().Put(&builder, publication.RegionMembers, catalog) &&
+		WTOEventFamily().Put(&builder, publication.WTOEvents, catalog) &&
+		BodyFamily().Put(&builder, publication.Bodies, catalog) &&
+		BodyEntryFamily().Put(&builder, publication.BodyEntries, catalog) &&
+		BodyRootFamily().Put(&builder, publication.BodyRoots, catalog) &&
+		OutcomeFamily().Put(&builder, publication.Outcomes, catalog) &&
+		OutcomeReturnValueFamily().Put(&builder, publication.OutcomeReturnValues, catalog) &&
+		OutcomePointFamily().Put(&builder, publication.OutcomePoints, catalog) &&
+		FunctionBoundaryFamily().Put(&builder, publication.FunctionBoundaries, catalog) &&
+		FunctionFormalFamily().Put(&builder, publication.FunctionFormals, catalog) &&
+		FunctionVarargFamily().Put(&builder, publication.FunctionVarargs, catalog) &&
+		FunctionCaptureFamily().Put(&builder, publication.FunctionCaptures, catalog) &&
+		LocalTransferFamily().Put(&builder, publication.LocalTransfers, catalog) &&
+		LocalTransferWriteFamily().Put(&builder, publication.LocalTransferWrites, catalog) &&
+		DiagnosticObservationFamily().Put(&builder, publication.DiagnosticObservations, catalog) &&
+		DiagnosticEvidenceFamily().Put(&builder, publication.DiagnosticEvidence, catalog) &&
+		DiagnosticPathFamily().Put(&builder, publication.DiagnosticPaths, catalog) &&
 		CallResultFamily().Put(&builder, publication.CallResults, catalog)
 	if !sealed {
 		return snapshot.Frozen{}, false

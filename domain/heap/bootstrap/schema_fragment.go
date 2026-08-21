@@ -9,7 +9,7 @@ import (
 
 // SchemaFragment is Heap/bootstrap's callback-free Rule surface.
 type SchemaFragment struct {
-	slot     *engine.RuleSlot[heapdomain.Value, heapdomain.Key]
+	slot     *engine.RuleSlot[heapdomain.Value, Root]
 	write    engine.SchemaWriteSlot[heapdomain.Value]
 	semantic identity.SemanticKey
 }
@@ -19,7 +19,7 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	if builder == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) {
 		return nil, false
 	}
-	slot, ok := engine.NewRuleSlot[heapdomain.Value, heapdomain.Key](builder, engine.SchemaRuleSpec[heapdomain.Value]{
+	slot, ok := engine.NewRuleSlot[heapdomain.Value, Root](builder, engine.SchemaRuleSpec[heapdomain.Value]{
 		Semantic: semantic, OperandFamily: operandFamily, Inputs: 0,
 		Output: owner.Ref(),
 	})
@@ -33,6 +33,6 @@ func DeclareSchema(builder *engine.SchemaBuilder, semantic, operandFamily identi
 	return &SchemaFragment{slot: slot, write: write, semantic: semantic}, true
 }
 
-func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, heapdomain.Key] {
+func (fragment *SchemaFragment) RuleSlot() *engine.RuleSlot[heapdomain.Value, Root] {
 	return fragment.slot
 }

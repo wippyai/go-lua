@@ -59,7 +59,7 @@ func (member Member) Binding() composition.Key {
 
 // Locator returns the exact accepted relation coordinates. It is available
 // only to the engine package through this internal boundary; domain code gets
-// its opaque projection from a live read frame instead of an
+// its opaque projection from a live Access or RuleDerivation instead of an
 // equation Member capability.
 func (member Member) Locator() (PairLocator, bool) {
 	if !member.Available() {

@@ -22,7 +22,7 @@ import (
 type programMemberBinding struct {
 	member     identity.ContentID
 	activation identity.ContentID
-	operand    declaredRuleOperand
+	coords     OperandCoords
 	binder     ProgramRule
 	activated  bool
 }
@@ -52,10 +52,6 @@ func declaredQueryBindings(queries []declaredQueryRow) []programQueryBinding {
 // The committed program is unchanged by a seal: an inventory that binds is one
 // Solver, and a later inventory over the same program binds its own plane.
 func (committed *CommittedProgram) Seal(observations []ProgramObservationAdmission) (*Solver, SolveFailure, bool) {
-	return committed.seal(observations)
-}
-
-func (committed *CommittedProgram) seal(observations []ProgramObservationAdmission) (*Solver, SolveFailure, bool) {
 	if !committed.valid() {
 		return nil, ProgramStageFailure(ProgramSealStageAdmission), false
 	}
@@ -111,7 +107,7 @@ func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtim
 		if _, duplicate := bound[member.Key()]; duplicate {
 			return nil, false
 		}
-		row, ok := declared.binder.bindProgramMember(plane, committed.topology, member, declared.operand)
+		row, ok := declared.binder.bindProgramMember(plane, committed.topology, member, declared.coords)
 		if !ok || row == nil || row.member().Key() != member.Key() {
 			return nil, false
 		}
@@ -196,11 +192,15 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 	return rows, observationSealFailureNone
 }
 
-// bindProgramMember mints one rule member's runtime row from the canonical
-// operand issued by declaration. The owner resolver and content projector have
-// already run before this boundary.
-func (implementation *RuleImplementation[K, V, O]) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool) {
+// bindProgramMember mints one rule member's runtime row. The operand is
+// resolved from the neutral coordinates the declaration published; a rule
+// whose owner cannot seal an operand for them binds nothing.
+func (implementation *RuleImplementation[K, V, O]) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, coords OperandCoords) (runtimeMember, bool) {
 	if implementation == nil || topology == nil || plane == nil || plane.runtime == nil || !topology.OwnsGraph(plane.runtime.graph) {
+		return nil, false
+	}
+	operand, resolved := implementation.resolveOperand(coords)
+	if !resolved {
 		return nil, false
 	}
 	return bindProgramRuleMember(plane, implementation, member, operand)
@@ -209,10 +209,9 @@ func (implementation *RuleImplementation[K, V, O]) bindProgramMember(plane *prog
 // bindProgramMember mints one activation trigger's runtime row. An activation
 // carries no operand: its row is compiled from the trigger member the geometry
 // published and the sealed Factor plane.
-func (implementation *ActivationRuleImplementation) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, _ declaredRuleOperand) (runtimeMember, bool) {
-	cell, cellOK := implementation.sealedActivationCell()
-	if !cellOK || !cell.schemaRuleComplete() || plane == nil || !plane.frozen || plane.runtime == nil || plane.byKey == nil ||
-		cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
+func (implementation *ActivationRuleImplementation) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, _ OperandCoords) (runtimeMember, bool) {
+	if implementation == nil || plane == nil || !plane.frozen || plane.runtime == nil || plane.byKey == nil ||
+		implementation.binding.state != plane.runtime.state || implementation.binding.authority != plane.runtime.authority {
 		return nil, false
 	}
 	row, ok := bindActivationMember(member, implementation, topology, member.Key(), plane.runtime.graph, plane.byKey)

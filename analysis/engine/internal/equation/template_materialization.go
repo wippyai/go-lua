@@ -7,18 +7,38 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-type activationTargetRows struct{ data *activationTargetRowsData }
+// TemplateMaterialization is the sealed receipt of one target-owned lowering
+// transaction. The ordinary Batch and Inputs below are the only materialized
+// semantic rows; this receipt only authenticates their exact cold Composition,
+// TemplateBinding, and formal-row correspondence.
+type TemplateMaterialization struct{ data *templateMaterializationData }
 
-type activationTargetRowsData struct {
-	source  *composition.Composition
-	binding *templateBindingData
-	batch   *Batch
-	key     composition.Key
-	sites   []Site // formal Batch Site row -> exact target-owned Site
-	inputs  []Input
+// MaterializationOrigin authenticates the trigger row and locator that caused
+// a receipt to be admitted.  Selection consumes this receipt-origin metadata;
+// it never reopens a template or lowers a selected member.
+type MaterializationOrigin struct {
+	Family         composition.Key
+	Application    composition.Key
+	Target         composition.Key
+	Endpoint       composition.Key
+	TriggerOrdinal int
 }
 
-// lowerActivationTargetRows consumes one exact TemplateBinding and the
+type templateMaterializationAuthority struct{ marker byte }
+
+type templateMaterializationData struct {
+	source    *composition.Composition
+	binding   *templateBindingData
+	batch     *Batch
+	key       composition.Key
+	authority *templateMaterializationAuthority
+	sites     []Site // formal Batch Site row -> exact target-owned Site
+	inputs    []Input
+	origin    MaterializationOrigin
+	hasOrigin bool
+}
+
+// MaterializeTemplateBoundary consumes one exact TemplateBinding and the
 // complete Site denominator of its formal Batch. It reissues those Sites and
 // the supplied ordinary Inputs into one new sealed target Batch. No cross-Batch
 // Input or unresolved formal Site survives the transaction.
@@ -28,28 +48,28 @@ type activationTargetRowsData struct {
 // Local formal decisions are alpha-renamed beneath that ambient Scope; the
 // existing boundScope/boundExpr/boundReindex functions remain the sole lowering
 // implementation.
-func lowerActivationTargetRows(source *composition.Composition, binding TemplateBinding, sites []Site, inputs []Input) (activationTargetRows, bool) {
+func MaterializeTemplateBoundary(source *composition.Composition, binding TemplateBinding, sites []Site, inputs []Input) (TemplateMaterialization, bool) {
 	if source == nil || !source.ID().Available() || !binding.Available() {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	data := binding.data
 	if data == nil || len(sites) != len(data.formals.sites) || len(sites) == 0 {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	if !validateTemplateBindingReads(source, binding) {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	formalSites, sitesOK := exactFormalSiteDenominator(data.formals, sites)
 	if !sitesOK {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	ambient, ambientOK := templateBindingAmbient(binding)
 	if !ambientOK {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
-	alpha, alphaOK := activationTargetAlpha(binding)
+	alpha, alphaOK := templateMaterializationAlpha(binding)
 	if !alphaOK {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 
 	target := NewBatch()
@@ -59,12 +79,12 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	for index, formalSite := range formalSites {
 		formalRow, rowOK := data.formals.sealedSite(formalSite.row)
 		if !rowOK {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		if formalRow.formal {
 			bindingRow, bound := bindingRowForPort(binding, FormalPort{batch: data.formals, row: formalSite.row})
 			if !bound || !sameScope(bindingRow.actual.Scope(), ambient) {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 			if existing, found := actualSites[bindingRow.actual.Key()]; found {
 				targetSites[index] = existing
@@ -73,41 +93,41 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 			}
 			init, disposition, initialized := bindingRow.actual.Init()
 			if !initialized {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
-			lowered, admitted := target.AdmitSite(bindingRow.actual.Source(), bindingRow.actual.Scope(), init, disposition)
+			materialized, admitted := target.AdmitSite(bindingRow.actual.Source(), bindingRow.actual.Scope(), init, disposition)
 			if !admitted {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
-			actualSites[bindingRow.actual.Key()] = lowered
-			targetSites[index] = lowered
+			actualSites[bindingRow.actual.Key()] = materialized
+			targetSites[index] = materialized
 			targetScopes[index] = ambient
 			continue
 		}
 		scope, scoped := boundScope(formalSite.Scope(), ambient, alpha)
 		init, disposition, initialized := formalSite.Init()
 		if !scoped || !initialized {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		init, initialized = boundExpr(init, alpha)
 		if !initialized {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
-		sourceKey, keyed := identityKey("analysis/engine/equation/activation-target-site-source", func(writer *canonical.DigestWriter) bool {
+		sourceKey, keyed := identityKey("analysis/engine/equation/template-materialized-site-source", func(writer *canonical.DigestWriter) bool {
 			return writeSite(writer, formalSite) && writeKey(writer, binding.Key())
 		})
 		if !keyed {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
-		lowered, admitted := target.AdmitSite(sourceKey, scope, init, disposition)
+		materialized, admitted := target.AdmitSite(sourceKey, scope, init, disposition)
 		if !admitted {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
-		targetSites[index] = lowered
+		targetSites[index] = materialized
 		targetScopes[index] = scope
 	}
 
-	loweredInputs := make([]Input, len(inputs))
+	materializedInputs := make([]Input, len(inputs))
 	type pendingInput struct {
 		source, target Site
 		provenance     composition.Key
@@ -120,40 +140,40 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	for index, input := range inputs {
 		if !input.Available() || input.Source().batch != data.formals || input.Target().batch != data.formals ||
 			input.Source().dynamic != nil || input.Target().dynamic != nil {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		if _, duplicate := seenInputs[input.Key()]; duplicate {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		seenInputs[input.Key()] = struct{}{}
-		sourcePoint, sourceOK := activationTargetResolvedPointOpen(binding, input.Source(), targetSites, targetScopes, PortImport)
-		targetPoint, targetOK := activationTargetResolvedPointOpen(binding, input.Target(), targetSites, targetScopes, PortExport)
+		sourcePoint, sourceOK := materializationResolvedPointOpen(binding, input.Source(), targetSites, targetScopes, PortImport)
+		targetPoint, targetOK := materializationResolvedPointOpen(binding, input.Target(), targetSites, targetScopes, PortExport)
 		if !sourceOK || !targetOK {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		reindex, reindexed := boundReindex(input.Reindex(), sourcePoint, targetPoint, ambient, alpha)
 		if !reindexed {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		pre, post := input.Pre(), input.Post()
 		var bound bool
 		if sourcePoint.local {
 			pre, bound = boundExpr(pre, alpha)
 			if !bound {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 		}
 		if targetPoint.local {
 			post, bound = boundExpr(post, alpha)
 			if !bound {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 		}
-		provenance, keyed := identityKey("analysis/engine/equation/activation-target-input-provenance", func(writer *canonical.DigestWriter) bool {
+		provenance, keyed := identityKey("analysis/engine/equation/template-materialized-input-provenance", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, input.Provenance()) && writeKey(writer, binding.Key()) && writeKey(writer, input.Key())
 		})
 		if !keyed {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		pending[index] = pendingInput{source: sourcePoint.site, target: targetPoint.site, provenance: provenance, pre: pre, reindex: reindex, post: post}
 	}
@@ -167,7 +187,7 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	formalOccurrences := make(map[uint32]Occurrence, len(data.formals.occurrences))
 	for index, row := range data.formals.occurrences {
 		if row.site == 0 || uint64(row.site) > uint64(len(targetSites)) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		site := targetSites[row.site-1]
 		var occurrence Occurrence
@@ -183,7 +203,7 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 			admitted = false
 		}
 		if !admitted {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		formalOccurrences[uint32(index+1)] = occurrence
 	}
@@ -191,11 +211,11 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	for index, row := range data.formals.operands {
 		occurrence, found := formalOccurrences[row.occurrence]
 		if !found {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		operand, admitted := target.admitOperandInRealm(occurrence, row.entity, binding.Key())
 		if !admitted {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		formalOperands[uint32(index+1)] = operand
 	}
@@ -214,8 +234,8 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 		if !value.Source.Available() || !value.Target.Available() || value.Source.batch != data.formals || value.Target.batch != data.formals {
 			return BatchInput{}, false
 		}
-		sourcePoint, sourceOK := activationTargetResolvedPointOpen(binding, value.Source, targetSites, targetScopes, PortImport)
-		targetPoint, targetOK := activationTargetResolvedPointOpen(binding, value.Target, targetSites, targetScopes, PortExport)
+		sourcePoint, sourceOK := materializationResolvedPointOpen(binding, value.Source, targetSites, targetScopes, PortImport)
+		targetPoint, targetOK := materializationResolvedPointOpen(binding, value.Target, targetSites, targetScopes, PortExport)
 		if !sourceOK || !targetOK {
 			return BatchInput{}, false
 		}
@@ -236,7 +256,7 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 				return BatchInput{}, false
 			}
 		}
-		provenance, ok := identityKey("analysis/engine/equation/activation-target-target-input-provenance", func(writer *canonical.DigestWriter) bool {
+		provenance, ok := identityKey("analysis/engine/equation/template-materialized-target-input-provenance", func(writer *canonical.DigestWriter) bool {
 			return writeKey(writer, value.Provenance) && writeKey(writer, binding.Key())
 		})
 		if !ok {
@@ -246,132 +266,133 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	}
 	for _, point := range data.formals.targets.points {
 		if !point.Site.Available() || point.Site.batch != data.formals || point.Site.row == 0 || uint64(point.Site.row) > uint64(len(targetSites)) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		if _, admitted := target.AdmitPoint(targetSites[point.Site.row-1]); !admitted {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, rule := range data.formals.targets.rules {
 		occurrence, occurrenceOK := formalOccurrences[rule.Occurrence.row]
 		operand, operandOK := formalOperands[rule.Operand.row]
 		if !occurrenceOK || !operandOK {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		copy := copyInstance(rule)
 		copy.Occurrence, copy.Operand = occurrence, operand
 		if !target.AdmitRule(copy) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, group := range data.formals.targets.groups {
 		output, outputOK := resolveTargetPoint(group.Output)
 		if !outputOK {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 		bound := BatchGroup{Members: append([]RuleRef(nil), group.Members...), Output: output, Premise: group.Premise}
 		if bound.Premise.Available() {
 			bound.Premise, outputOK = boundExpr(bound.Premise, alpha)
 			if !outputOK {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 		}
 		for _, input := range group.Inputs {
 			value, inputOK := resolveTargetInput(input)
 			if !inputOK {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 			bound.Inputs = append(bound.Inputs, value)
 		}
 		if group.EnvironmentInput != nil {
 			value, inputOK := resolveTargetInput(*group.EnvironmentInput)
 			if !inputOK {
-				return activationTargetRows{}, false
+				return TemplateMaterialization{}, false
 			}
 			bound.EnvironmentInput = &value
 		}
 		if !target.AdmitGroup(bound) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, edge := range data.formals.targets.factorEdges {
 		targetPoint, targetOK := resolveTargetPoint(edge.Target)
 		input, inputOK := resolveTargetInput(edge.Input)
 		if !targetOK || !inputOK || !target.AdmitFactorEdge(BatchFactorEdge{Target: targetPoint, Input: input, Factor: edge.Factor}) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, edge := range data.formals.targets.environment {
 		targetPoint, targetOK := resolveTargetPoint(edge.Target)
 		input, inputOK := resolveTargetInput(edge.Input)
 		if !targetOK || !inputOK || !target.AdmitEnvironmentEdge(BatchEnvironmentEdge{Target: targetPoint, Input: input}) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, input := range data.formals.targets.inputs {
 		bound, inputOK := resolveTargetInput(input)
 		if !inputOK || !target.AdmitInput(bound) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, value := range pending {
 		if !target.AdmitInput(TargetBoundaryInput(value.source, value.target, value.provenance, value.pre, value.reindex, value.post)) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
-	// Metadata is part of the formal Batch rows, not an engine-side
+	// Metadata is part of the formal Batch receipt, not an engine-side
 	// reconstruction. Re-admit the exact sealed rows into this target Batch
 	// before its single Seal so summaries/weak-target coverage cannot vanish
-	// between formal issuance and topology sealing.
-	summaries, weakTargets, metadataOK := activationTargetMetadata(source, binding)
+	// between formal issuance and topology assembly.
+	summaries, weakTargets, metadataOK := materializationMetadata(source, binding)
 	if !metadataOK {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	for _, summary := range summaries {
 		if !target.AdmitSummary(summary) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for _, weak := range weakTargets {
 		if !target.AdmitWeakTarget(weak) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 
 	// Sites and all target rows are admitted in one open transaction. Inputs
-	// are immutable rows, so their keys can only be derived after the sole
+	// are immutable receipts, so their keys can only be derived after the sole
 	// Batch seal; no provisional seal or second target directory is permitted.
 	if !target.Seal() {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
 	for _, site := range targetSites {
 		if !target.ownsConcreteSite(site) {
-			return activationTargetRows{}, false
+			return TemplateMaterialization{}, false
 		}
 	}
 	for index, value := range pending {
-		loweredInputs[index] = BoundaryInput(value.source, value.target, value.provenance, value.pre, value.reindex, value.post)
-		if !loweredInputs[index].Available() || loweredInputs[index].Source().batch != target || loweredInputs[index].Target().batch != target {
-			return activationTargetRows{}, false
+		materializedInputs[index] = BoundaryInput(value.source, value.target, value.provenance, value.pre, value.reindex, value.post)
+		if !materializedInputs[index].Available() || materializedInputs[index].Source().batch != target || materializedInputs[index].Target().batch != target {
+			return TemplateMaterialization{}, false
 		}
 	}
 
-	key, keyed := activationTargetKey(source, binding, target, loweredInputs)
+	key, keyed := templateMaterializationKey(source, binding, target, materializedInputs)
 	if !keyed {
-		return activationTargetRows{}, false
+		return TemplateMaterialization{}, false
 	}
-	result := &activationTargetRowsData{
-		source: source, binding: binding.data, batch: target, key: key, sites: targetSites, inputs: loweredInputs,
+	result := &templateMaterializationData{
+		source: source, binding: binding.data, batch: target, key: key,
+		authority: &templateMaterializationAuthority{marker: 1}, sites: targetSites, inputs: materializedInputs,
 	}
-	return activationTargetRows{data: result}, true
+	return TemplateMaterialization{data: result}, true
 }
 
-// activationTargetMetadata reissues the formal metadata rows through the
+// materializationMetadata reissues the formal metadata receipt through the
 // exact port-read substitutions carried by TemplateBinding. A weak candidate
 // that names an imported formal surface must resolve to its caller surface;
 // collapsing two formal candidates to one caller surface is rejected rather
 // than silently changing coverage.
-func activationTargetMetadata(source *composition.Composition, binding TemplateBinding) ([]SummaryMapping, []WeakTargetMapping, bool) {
+func materializationMetadata(source *composition.Composition, binding TemplateBinding) ([]SummaryMapping, []WeakTargetMapping, bool) {
 	if source == nil || !binding.Available() {
 		return nil, nil, false
 	}
@@ -441,11 +462,11 @@ func activationTargetMetadata(source *composition.Composition, binding TemplateB
 	return summaries, weakTargets, true
 }
 
-// activationTargetResolvedPointOpen resolves a formal endpoint while the
+// materializationResolvedPointOpen resolves a formal endpoint while the
 // target Batch is still open. It carries the already-authenticated scope
 // computed by the materializer; it deliberately does not read Site identity
 // before the transaction's single seal.
-func activationTargetResolvedPointOpen(binding TemplateBinding, formal Site, targets []Site, scopes []Scope, required PortMode) (templateResolvedPoint, bool) {
+func materializationResolvedPointOpen(binding TemplateBinding, formal Site, targets []Site, scopes []Scope, required PortMode) (templateResolvedPoint, bool) {
 	if !binding.Available() || !formal.Available() || formal.batch != binding.data.formals || formal.dynamic != nil || formal.row == 0 || uint64(formal.row) > uint64(len(targets)) || len(scopes) != len(targets) {
 		return templateResolvedPoint{}, false
 	}
@@ -552,7 +573,7 @@ func templateBindingAmbient(binding TemplateBinding) (Scope, bool) {
 	return ambient, ambient.Available()
 }
 
-func activationTargetAlpha(binding TemplateBinding) (decisionAlpha, bool) {
+func templateMaterializationAlpha(binding TemplateBinding) (decisionAlpha, bool) {
 	if !binding.Available() {
 		return nil, false
 	}
@@ -569,7 +590,7 @@ func activationTargetAlpha(binding TemplateBinding) (decisionAlpha, bool) {
 			if _, found := result[decision.key]; found {
 				continue
 			}
-			key, ok := identityKey("analysis/engine/equation/activation-target-decision", func(writer *canonical.DigestWriter) bool {
+			key, ok := identityKey("analysis/engine/equation/template-materialized-decision", func(writer *canonical.DigestWriter) bool {
 				return writeKey(writer, decision.key) && writeKey(writer, binding.data.formals.Key()) && writeKey(writer, binding.Key())
 			})
 			if !ok {
@@ -585,7 +606,7 @@ func activationTargetAlpha(binding TemplateBinding) (decisionAlpha, bool) {
 	return result, true
 }
 
-func activationTargetKey(source *composition.Composition, binding TemplateBinding, batch *Batch, inputs []Input) (composition.Key, bool) {
+func templateMaterializationKey(source *composition.Composition, binding TemplateBinding, batch *Batch, inputs []Input) (composition.Key, bool) {
 	if source == nil || !source.ID().Available() || !binding.Available() || batch == nil || !batch.Sealed() {
 		return composition.Key{}, false
 	}
@@ -603,7 +624,7 @@ func activationTargetKey(source *composition.Composition, binding TemplateBindin
 		}
 	}
 	compositionID := source.ID()
-	return identityKey("analysis/engine/equation/activation-target-rows", func(writer *canonical.DigestWriter) bool {
+	return identityKey("analysis/engine/equation/template-materialization", func(writer *canonical.DigestWriter) bool {
 		if writer.Bytes(compositionID[:]) != nil || !writeKey(writer, binding.Key()) || !writeKey(writer, batch.Key()) || writer.Count(uint64(len(keys))) != nil {
 			return false
 		}
@@ -616,29 +637,68 @@ func activationTargetKey(source *composition.Composition, binding TemplateBindin
 	})
 }
 
-func (value activationTargetRows) Available() bool {
+func (value TemplateMaterialization) Available() bool {
 	data := value.data
 	return data != nil && data.source != nil && data.source.ID().Available() && data.binding != nil && data.batch != nil && data.batch.Sealed() &&
-		(TemplateBinding{data: data.binding}).Available() && data.key.Available() && len(data.sites) == len(data.binding.formals.sites)
+		(TemplateBinding{data: data.binding}).Available() && data.key.Available() && data.authority != nil && data.authority.marker == 1 &&
+		len(data.sites) == len(data.binding.formals.sites)
 }
 
-func (value activationTargetRows) Key() composition.Key {
+// OwnedBy proves the materialization was issued from this exact cold
+// composition and TemplateBinding actuals batch. It is an admission witness,
+// not a projection of the underlying binding internals.
+func (value TemplateMaterialization) OwnedBy(source *composition.Composition, base *Batch) bool {
+	return value.Available() && source != nil && base != nil && value.data.source == source && value.data.binding != nil && value.data.binding.authority != nil && value.data.binding.actuals == base && value.data.batch != nil && value.data.batch != base
+}
+
+func (value TemplateMaterialization) Same(other TemplateMaterialization) bool {
+	return value.Available() && other.Available() && value.data == other.data
+}
+
+func (value TemplateMaterialization) Key() composition.Key {
 	if !value.Available() {
 		return composition.Key{}
 	}
 	return value.data.key
 }
 
-func (value activationTargetRows) Batch() *Batch {
+func (value TemplateMaterialization) Batch() *Batch {
 	if !value.Available() {
 		return nil
 	}
 	return value.data.batch
 }
 
+// WithOrigin returns the same sealed materialization authenticated for one
+// concrete activation locator. It is the only production route for attaching
+// trigger metadata to a receipt.
+func (value TemplateMaterialization) WithOrigin(origin MaterializationOrigin) (TemplateMaterialization, bool) {
+	if !value.Available() || !origin.Family.Available() || !origin.Application.Available() || !origin.Target.Available() || !origin.Endpoint.Available() || origin.TriggerOrdinal < 0 {
+		return TemplateMaterialization{}, false
+	}
+	key, ok := identityKey("analysis/engine/equation/template-materialization-origin", func(writer *canonical.DigestWriter) bool {
+		return writeKey(writer, value.data.key) && writeKey(writer, origin.Family) && writeKey(writer, origin.Application) && writeKey(writer, origin.Target) && writeKey(writer, origin.Endpoint) && writer.Uint(uint64(origin.TriggerOrdinal)) == nil
+	})
+	if !ok {
+		return TemplateMaterialization{}, false
+	}
+	copy := *value.data
+	copy.key = key
+	copy.origin = origin
+	copy.hasOrigin = true
+	return TemplateMaterialization{data: &copy}, true
+}
+
+func (value TemplateMaterialization) Origin() (MaterializationOrigin, bool) {
+	if !value.Available() || !value.data.hasOrigin {
+		return MaterializationOrigin{}, false
+	}
+	return value.data.origin, true
+}
+
 // Site returns the ordinary target-owned Site corresponding to one exact
 // formal-Batch Site capability.
-func (value activationTargetRows) Site(formal Site) (Site, bool) {
+func (value TemplateMaterialization) Site(formal Site) (Site, bool) {
 	if !value.Available() || !formal.Available() || formal.batch != value.data.binding.formals || formal.dynamic != nil || formal.row == 0 || uint64(formal.row) > uint64(len(value.data.sites)) {
 		return Site{}, false
 	}
@@ -646,24 +706,24 @@ func (value activationTargetRows) Site(formal Site) (Site, bool) {
 	return result, result.Available() && result.batch == value.data.batch
 }
 
-func (value activationTargetRows) InputCount() int {
+func (value TemplateMaterialization) InputCount() int {
 	if !value.Available() {
 		return 0
 	}
 	return len(value.data.inputs)
 }
 
-func (value activationTargetRows) InputAt(index int) (Input, bool) {
+func (value TemplateMaterialization) InputAt(index int) (Input, bool) {
 	if !value.Available() || index < 0 || index >= len(value.data.inputs) {
 		return Input{}, false
 	}
 	return value.data.inputs[index], true
 }
 
-// ResolveImport returns the lowered target Site and the exact caller read
+// ResolveImport returns the materialized target Site and the exact caller read
 // slots only after this transaction authenticated their Factor/form against
 // its cold Composition.
-func (value activationTargetRows) ResolveImport(port FormalPort) (Site, []PortRead, bool) {
+func (value TemplateMaterialization) ResolveImport(port FormalPort) (Site, []PortRead, bool) {
 	if !value.Available() || !port.Available() || port.batch != value.data.binding.formals {
 		return Site{}, nil, false
 	}
@@ -676,9 +736,9 @@ func (value activationTargetRows) ResolveImport(port FormalPort) (Site, []PortRe
 	return site, reads, ok
 }
 
-// ResolveExport returns the lowered target Site only for an export
+// ResolveExport returns the materialized target Site only for an export
 // capability authenticated by this transaction's exact TemplateBinding.
-func (value activationTargetRows) ResolveExport(port FormalPort) (Site, bool) {
+func (value TemplateMaterialization) ResolveExport(port FormalPort) (Site, bool) {
 	if !value.Available() || !port.Available() || port.batch != value.data.binding.formals {
 		return Site{}, false
 	}

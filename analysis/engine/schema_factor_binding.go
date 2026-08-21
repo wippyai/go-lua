@@ -216,13 +216,9 @@ func (cell *schemaFactorBindingCell[K, V]) schemaFactorSummaryKeys() ([]uint64, 
 		return nil, false
 	}
 	keyEnd := cell.impl.algebra.KeyEnd()
-	if keyEnd > uint64(^uint(0)>>1) {
+	if keyEnd == 0 || keyEnd > uint64(^uint(0)>>1) {
 		return nil, false
 	}
-	// A zero-width Factor has a canonical empty summary domain. It does not
-	// mint a neutral key: there is no owner-issued coordinate in an empty
-	// domain. The schema-level summary remains issuable so a heterogeneous
-	// consumer can observe the absence without inventing a root.
 	if len(cell.summaryKeys) == 0 {
 		cell.summaryKeys = make([]uint64, int(keyEnd))
 		for index := range cell.summaryKeys {

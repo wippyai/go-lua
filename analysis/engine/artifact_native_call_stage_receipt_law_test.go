@@ -46,11 +46,11 @@ func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLaw
 	read, readOK := factor.ExactRead()
 	rule, ruleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(947_102), OperandFamily: coldKey(947_103),
-		Output: factor.Ref(),
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(947_104)}, Output: factor.Ref(),
 	})
 	foreignRule, foreignRuleOK := DeclareRuleSlot[uint64, struct{}](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(947_105), OperandFamily: coldKey(947_106),
-		Output: factor.Ref(),
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(947_107)}, Output: factor.Ref(),
 	})
 	write, writeOK := SchemaWrite(rule, form)
 	foreignWrite, foreignWriteOK := SchemaWrite(foreignRule, form)
@@ -67,13 +67,14 @@ func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLaw
 	binding := NewSchemaBinding(schema)
 	spec := HotRuleSpec[uint64, struct{}]{
 		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x71}, true },
-		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
-			return Staged(frame, uint64(1))
-		},
+		Admission:      AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_104)),
+		Transfer:       func(Access[uint64, struct{}]) bool { return true },
 	}
+	foreignSpec := spec
+	foreignSpec.Admission = AdmitRuleByTrustedTheorem[uint64, struct{}](coldKey(947_107))
 	querySpec := hotExactQuerySpec()
 	querySpec.Result.Semantic = coldKey(947_109)
-	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !BindRule[uint64, uint64, struct{}](binding, foreignRule, foreignWrite, factor, spec, testRuleProjector[struct{}]) {
+	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindRule[uint64, uint64, struct{}](binding, rule, write, factor, spec, testRuleProjector[struct{}]) || !BindRule[uint64, uint64, struct{}](binding, foreignRule, foreignWrite, factor, foreignSpec, testRuleProjector[struct{}]) {
 		t.Fatal("native Call stage binding")
 	}
 	if queried && !BindExactQuery(binding, query, factor, querySpec) {

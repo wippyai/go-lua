@@ -31,8 +31,9 @@ type contributionPlan struct {
 	// carrySlots is the seal-time issuance of the slots carries name. Finish
 	// asks membership of it instead of rescanning the carry vector once per
 	// physical slot.
-	carrySlots  change.Slots
-	environment bool
+	carrySlots   change.Slots
+	supportPrune bool
+	environment  bool
 }
 
 // ContributionBase is a single-use, unpublishable write predecessor. Its
@@ -76,10 +77,13 @@ type contributionBase struct {
 }
 
 // SealContribution freezes the structural projection of one Rule group before
-// any evaluator Work exists. Input positions are an ordered finite vector:
+// any evaluator Work exists. A plan may include a structural support prune
+// alongside distinct Factor writes/carries; they still enter only through one
+// atomic contribution. A zero-write prune is simply the degenerate member
+// set, not a second transaction. Input positions are an ordered finite vector:
 // zero inputs name an explicit immutable ingress rather than an implicit
 // predecessor.
-func (composition *Composition) SealContribution(inputCount int, writes []shape.Slot, carries []ContributionSource, environment ...bool) (ContributionPlan, bool) {
+func (composition *Composition) SealContribution(inputCount int, writes []shape.Slot, carries []ContributionSource, supportPrune bool, environment ...bool) (ContributionPlan, bool) {
 	if composition == nil || composition.shape == nil || inputCount < 0 {
 		return ContributionPlan{}, false
 	}
@@ -96,7 +100,7 @@ func (composition *Composition) SealContribution(inputCount int, writes []shape.
 	// still belongs to its Group's one atomic transaction.  The empty plan is
 	// therefore a valid degenerate contribution, not a second evaluator.
 	if len(writes) == 0 && len(carries) == 0 {
-		return ContributionPlan{value: &contributionPlan{composition: composition, inputs: inputCount, environment: hasEnvironment}}, true
+		return ContributionPlan{value: &contributionPlan{composition: composition, inputs: inputCount, supportPrune: supportPrune, environment: hasEnvironment}}, true
 	}
 	orderedWrites := append([]shape.Slot(nil), writes...)
 	sort.Slice(orderedWrites, func(left, right int) bool { return orderedWrites[left] < orderedWrites[right] })
@@ -112,7 +116,7 @@ func (composition *Composition) SealContribution(inputCount int, writes []shape.
 			return ContributionPlan{}, false
 		}
 	}
-	plan := &contributionPlan{composition: composition, inputs: inputCount, writes: orderedWrites, carries: orderedCarries, environment: hasEnvironment}
+	plan := &contributionPlan{composition: composition, inputs: inputCount, writes: orderedWrites, carries: orderedCarries, supportPrune: supportPrune, environment: hasEnvironment}
 	for _, carry := range orderedCarries {
 		plan.carrySlots.Set(int(carry.Slot))
 	}
@@ -373,7 +377,17 @@ func (work *Work) OwnsRuleContributionStates(base RuleContributionBase, inputs [
 // normal Composition authority; the temporary base is invalidated regardless
 // of success, so it cannot become a second publication route.
 func (work *Work) FinishContribution(base ContributionBase, patches []Patch) (Contribution, bool) {
-	return work.finishContribution(base.value, patches)
+	return work.finishContribution(base.value, patches, support.Mask{}, false)
+}
+
+// FinishContributionWithSupport closes the same one-shot contribution with a
+// support result proven by structural Rule members. The support remains tied
+// to the common full predecessor used by every Factor Patch, so a mixed group
+// cannot publish a prune before its sibling typed patches have all passed
+// admission. Only a plan declared with supportPrune may retain a strict
+// subset; ordinary groups retain their exact input-intersection ∩ premise.
+func (work *Work) FinishContributionWithSupport(base ContributionBase, patches []Patch, retained support.Mask) (Contribution, bool) {
+	return work.finishContribution(base.value, patches, retained, true)
 }
 
 // FinishRuleContribution closes a PointState-input rule base at the same one
@@ -381,14 +395,25 @@ func (work *Work) FinishContribution(base ContributionBase, patches []Patch) (Co
 // nominal role seal. In particular, carried latent PointState branches cannot
 // escape into the returned RuleContribution.
 func (work *Work) FinishRuleContribution(base RuleContributionBase, patches []Patch) (RuleContribution, bool) {
-	value, ok := work.finishContribution(base.value, patches)
+	value, ok := work.finishContribution(base.value, patches, support.Mask{}, false)
 	if !ok {
 		return RuleContribution{}, false
 	}
 	return work.AsRuleContribution(value)
 }
 
-func (work *Work) finishContribution(owner *contributionBase, patches []Patch) (Contribution, bool) {
+// FinishRuleContributionWithSupport is the structural-prune form of
+// FinishRuleContribution. It shares the same final coverage assembly and
+// whole-root closure transaction as every other Finish path.
+func (work *Work) FinishRuleContributionWithSupport(base RuleContributionBase, patches []Patch, retained support.Mask) (RuleContribution, bool) {
+	value, ok := work.finishContribution(base.value, patches, retained, true)
+	if !ok {
+		return RuleContribution{}, false
+	}
+	return work.AsRuleContribution(value)
+}
+
+func (work *Work) finishContribution(owner *contributionBase, patches []Patch, retained support.Mask, withSupport bool) (Contribution, bool) {
 	// Establish exact base ownership before touching any caller-supplied
 	// Patch. A foreign Work/base pair retains both resources for its owner.
 	if !work.ownsContributionBase(owner) {
@@ -404,8 +429,15 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch) (
 		dropPatches(patches)
 		return Contribution{}, false
 	}
-	retained := owner.state.support
-	if !retained.Valid() || retained.Manager() != work.composition.guards {
+	if withSupport {
+		if owner.plan == nil || !owner.plan.supportPrune {
+			dropPatches(patches)
+			return Contribution{}, false
+		}
+	} else {
+		retained = owner.state.support
+	}
+	if !retained.Valid() || retained.Manager() != work.composition.guards || !work.entailsSupport(retained, owner.state.support) || !owner.plan.supportPrune && !retained.Equal(owner.state.support) {
 		dropPatches(patches)
 		return Contribution{}, false
 	}
@@ -469,9 +501,9 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch) (
 	// their exact authored Target rows and ordinary Finish retains the complete
 	// predecessor support. Therefore the final C assembled above is a direct
 	// construction proof: re-closing and comparing every typed root would only
-	// rebuild the same sparse planes. Carry and environment paths deliberately
-	// stay on the general close below.
-	if !owner.plan.environment && len(owner.plan.carries) == 0 {
+	// rebuild the same sparse planes. Carry, environment, and support-prune
+	// paths deliberately stay on the general close below.
+	if !withSupport && !owner.plan.environment && len(owner.plan.carries) == 0 {
 		state, _, committed := work.commit(owner.state, patches, retained, split.RightOnly(), split.LeftOnly(), nil)
 		if !committed {
 			return Contribution{}, false
@@ -543,9 +575,9 @@ func (work *Work) finishContribution(owner *contributionBase, patches []Patch) (
 		// without reopening the typed close when this slot is untouched and the
 		// final surface is unchanged.  The helper revalidates both opaque roots
 		// through State.HandleAt before allowing the sparse commit to omit this
-		// slot; any patch, alias, or coverage difference stays on
+		// slot; any patch, support prune, alias, or coverage difference stays on
 		// the ordinary typed close below.
-		if original == nil && work.canBorrowClosedContributionSlot(owner, physical, retained, coverage.slot(physical)) {
+		if original == nil && !withSupport && !owner.plan.supportPrune && work.canBorrowClosedContributionSlot(owner, physical, retained, coverage.slot(physical)) {
 			continue
 		}
 		change, valid := slot.CloseContributionUnder(owner.state.roots[position], candidate, split, coverageRows(coverage.slot(physical)), delta)

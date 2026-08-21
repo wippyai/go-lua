@@ -10,10 +10,10 @@ const (
 	instanceOperandEntityDomain         = "analysis/engine/operand-entity"
 )
 
-// operandEntity is the opaque equation-owned content identity used by the
-// runtime binder when it validates a materialized member. It is not a
+// OperandEntity is the opaque equation-owned content identity used by the
+// receipt runtime when it validates a materialized rule member. It is not a
 // source-admission capability.
-type operandEntity struct{ key composition.Key }
+type OperandEntity struct{ key composition.Key }
 
 // operandEntityForContent derives the operand entity identity from an issuer
 // content digest. The digest is a framed preimage under this domain rather

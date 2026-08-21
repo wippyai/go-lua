@@ -162,11 +162,11 @@ func TestFinishRuleContributionBorrowsClosedCarryAndEnvironmentRoots(t *testing.
 	if !ok {
 		t.Fatal("composition")
 	}
-	sourcePlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	sourcePlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("source plan")
 	}
-	plan, ok := composition.SealContribution(1, nil, []ContributionSource{{Slot: 0, Input: 0}}, true)
+	plan, ok := composition.SealContribution(1, nil, []ContributionSource{{Slot: 0, Input: 0}}, false, true)
 	if !ok {
 		t.Fatal("carry/environment plan")
 	}
@@ -273,7 +273,7 @@ func contributionPendingPatch(t testing.TB, work *Work, operation *carryOnlyOper
 
 func TestContributionZeroInputFactorIngress(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal zero-input factor ingress")
 	}
@@ -324,7 +324,7 @@ func TestContributionZeroInputIngressUsesExplicitStrictTargetScope(t *testing.T)
 	if !ok || !build.Seal() {
 		t.Fatal("strict target support")
 	}
-	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("zero-input ingress plan")
 	}
@@ -346,7 +346,7 @@ func TestContributionZeroInputIngressUsesExplicitStrictTargetScope(t *testing.T)
 
 func TestContributionZeroInputStructuralIngressUsesInitialRoots(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(0, nil, nil)
+	plan, ok := composition.SealContribution(0, nil, nil, true)
 	if !ok {
 		t.Fatal("seal zero-input structural ingress")
 	}
@@ -374,11 +374,11 @@ func TestContributionZeroInputStructuralIngressUsesInitialRoots(t *testing.T) {
 
 func TestContributionMultiInputStructuralPrune(t *testing.T) {
 	manager, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(3, nil, nil)
+	plan, ok := composition.SealContribution(3, nil, nil, true)
 	if !ok {
 		t.Fatal("seal multi-input structural prune")
 	}
-	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal input publication")
 	}
@@ -408,13 +408,49 @@ func TestContributionMultiInputStructuralPrune(t *testing.T) {
 	contributionSevered(t, base)
 }
 
+func TestContributionAtomicallyCommitsFactorPatchAndStructuralPrune(t *testing.T) {
+	manager, whole, composition, operations, _ := contributionFixture(t, 1)
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, true)
+	if !ok {
+		t.Fatal("seal mixed factor/support contribution")
+	}
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
+	if !ok {
+		t.Fatal("seal input publication")
+	}
+	work, ok := composition.NewWork()
+	if !ok {
+		t.Fatal("work")
+	}
+	input := contributionWrittenPoint(t, work, inputPlan, composition.Scope(), whole, contributionSlotWrite{operation: operations[0], slot: 0, root: 2})
+	base, ok := work.BeginRuleContribution(plan, composition.Scope(), []PointState{input}, whole)
+	if !ok {
+		t.Fatal("begin mixed contribution")
+	}
+	patch := contributionPatch(t, work, operations[0], base.State(), 0, 1)
+	empty, ok := support.FromGuard(manager, manager.False())
+	if !ok {
+		t.Fatal("empty support")
+	}
+	result, ok := work.FinishRuleContributionWithSupport(base, []Patch{patch}, empty)
+	if !ok || !result.Valid() || !support.Empty(result.Support()) {
+		t.Fatal("mixed contribution did not publish the atomic retained support")
+	}
+	inputRoot, _ := input.HandleAt(0)
+	resultRoot, _ := result.HandleAt(0)
+	if resultRoot == inputRoot {
+		t.Fatal("mixed contribution lost its Factor patch while pruning support")
+	}
+	contributionSevered(t, base)
+}
+
 func TestContributionCarriesFromInputBeyondSecondPort(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(3, []shape.Slot{0}, []ContributionSource{{Slot: 0, Input: 2}})
+	plan, ok := composition.SealContribution(3, []shape.Slot{0}, []ContributionSource{{Slot: 0, Input: 2}}, false)
 	if !ok {
 		t.Fatal("seal third-input carry")
 	}
-	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal input publication")
 	}
@@ -445,7 +481,7 @@ func TestContributionCarriesFromInputBeyondSecondPort(t *testing.T) {
 
 func TestContributionFailedPublicationIsAtomicAndConsumesBase(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 2)
-	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("seal zero-input two-factor ingress")
 	}
@@ -480,11 +516,11 @@ func TestContributionFailedPublicationIsAtomicAndConsumesBase(t *testing.T) {
 
 func TestContributionProjectsOnlyDeclaredCarries(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 2)
-	plan, ok := composition.SealContribution(1, []shape.Slot{0}, []ContributionSource{{Slot: 0, Input: 0}})
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, []ContributionSource{{Slot: 0, Input: 0}}, false)
 	if !ok {
 		t.Fatal("seal contribution")
 	}
-	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("seal input publication")
 	}
@@ -531,15 +567,15 @@ func TestContributionProjectsOnlyDeclaredCarries(t *testing.T) {
 
 func TestContributionSharesOnePatchPredecessorAndDropsOwnedDisallowedSlot(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 3)
-	plan, ok := composition.SealContribution(2, []shape.Slot{0, 1}, []ContributionSource{{Slot: 0, Input: 0}, {Slot: 1, Input: 1}})
+	plan, ok := composition.SealContribution(2, []shape.Slot{0, 1}, []ContributionSource{{Slot: 0, Input: 0}, {Slot: 1, Input: 1}}, false)
 	if !ok {
 		t.Fatal("seal two-input contribution")
 	}
-	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	leftPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal left input publication")
 	}
-	rightPlan, ok := composition.SealContribution(0, []shape.Slot{1}, nil)
+	rightPlan, ok := composition.SealContribution(0, []shape.Slot{1}, nil, false)
 	if !ok {
 		t.Fatal("seal right input publication")
 	}
@@ -593,11 +629,11 @@ func TestContributionSharesOnePatchPredecessorAndDropsOwnedDisallowedSlot(t *tes
 
 func TestSupportContributionRestrictsAllRoots(t *testing.T) {
 	manager, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(1, nil, nil)
+	plan, ok := composition.SealContribution(1, nil, nil, true)
 	if !ok {
 		t.Fatal("seal support contribution")
 	}
-	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	inputPlan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal input publication")
 	}
@@ -639,7 +675,7 @@ func TestSupportContributionRestrictsAllRoots(t *testing.T) {
 
 func TestContributionAbortConsumesBaseAndRejectsZeroOrForeign(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("seal contribution")
 	}
@@ -687,11 +723,11 @@ func TestContributionComputesInputIntersectionAndStructuralPremise(t *testing.T)
 	if !ok {
 		t.Fatal("composition")
 	}
-	plan, ok := composition.SealContribution(2, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(2, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("plan")
 	}
-	zeroPlan, ok := composition.SealContribution(0, nil, nil)
+	zeroPlan, ok := composition.SealContribution(0, nil, nil, false)
 	if !ok {
 		t.Fatal("zero-input plan")
 	}
@@ -742,7 +778,7 @@ func TestContributionComputesInputIntersectionAndStructuralPremise(t *testing.T)
 
 func TestContributionForeignWorkCannotConsumeOwnerPatch(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("plan")
 	}
@@ -773,7 +809,7 @@ func TestContributionForeignWorkCannotConsumeOwnerPatch(t *testing.T) {
 
 func TestContributionForeignPatchRemainsUntouchedAndSeversOwnedBase(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("plan")
 	}
@@ -810,7 +846,7 @@ func TestContributionForeignPatchRemainsUntouchedAndSeversOwnedBase(t *testing.T
 
 func TestSupportContributionForeignPatchRemainsCallerOwned(t *testing.T) {
 	_, whole, composition, operations, initial := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(1, []shape.Slot{0}, nil, true)
 	if !ok {
 		t.Fatal("support plan")
 	}
@@ -827,7 +863,7 @@ func TestSupportContributionForeignPatchRemainsCallerOwned(t *testing.T) {
 		t.Fatal("base")
 	}
 	foreign := contributionPatch(t, foreignWork, operations[0], base.State(), 0, 2)
-	if _, finished := ownerWork.FinishRuleContribution(base, []Patch{foreign}); finished {
+	if _, finished := ownerWork.FinishRuleContributionWithSupport(base, []Patch{foreign}, whole); finished {
 		t.Fatal("support finish consumed foreign patch")
 	}
 	if foreign.change.record == nil || foreign.change.record.consumed {
@@ -841,7 +877,7 @@ func TestSupportContributionForeignPatchRemainsCallerOwned(t *testing.T) {
 
 func TestContributionCancellationAtFinishDropsOwnedPatchAndBase(t *testing.T) {
 	_, whole, composition, operations, _ := contributionFixture(t, 1)
-	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("plan")
 	}

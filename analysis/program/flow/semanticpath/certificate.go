@@ -32,7 +32,6 @@ type certificateState struct {
 	flowID   identity.ContentID
 	staticID identity.ContentID
 	moduleID identity.ContentID
-	body     []identity.ContentID
 	roots    [keyspace.FamilyCount][]identity.ContentID
 	terms    [keyspace.FamilyCount][]identity.ContentID
 }
@@ -60,22 +59,15 @@ func (c *Certificate) Matches(sourceID, flowID, staticID, moduleID identity.Cont
 	return c.matches(sourceID, flowID, staticID, moduleID)
 }
 
-// BodyPathAt, RootPathAt, and TermPathAt are Flow's narrow projections of
+// BodyPathAt and TermPathAt are Flow's narrow projections of
 // the sole sealed certificate. They expose one already-issued identity, never
 // an extendable plane or Term mapper.
 func (c *Certificate) BodyPathAt(sourceID, flowID, staticID, moduleID identity.ContentID, ordinal uint32) (identity.ContentID, bool) {
-	if !c.Matches(sourceID, flowID, staticID, moduleID) || ordinal == 0 || uint64(ordinal) > uint64(len(c.state.body)) {
+	paths := c.state.terms[keyspace.FamilyBody]
+	if !c.Matches(sourceID, flowID, staticID, moduleID) || ordinal == 0 || uint64(ordinal) >= uint64(len(paths)) {
 		return identity.ContentID{}, false
 	}
-	id := c.state.body[ordinal-1]
-	return id, id.Available()
-}
-
-func (c *Certificate) RootPathAt(sourceID, flowID, staticID, moduleID identity.ContentID, family keyspace.Family, ordinal uint32) (identity.ContentID, bool) {
-	if !c.Matches(sourceID, flowID, staticID, moduleID) || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) > uint64(len(c.state.roots[family])) {
-		return identity.ContentID{}, false
-	}
-	id := c.state.roots[family][ordinal-1]
+	id := paths[ordinal]
 	return id, id.Available()
 }
 
@@ -106,13 +98,14 @@ func Seal(cellRoles source.CellRoles, view source.View, authoredView authored.Vi
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrDeriveFailure, err)
 	}
-	if len(planes.body) != view.Identity().FamilyCount(keyspace.FamilyBody) {
-		return nil, fmt.Errorf("%w: got %d, want %d", ErrBodyCardinalityMismatch, len(planes.body), view.Identity().FamilyCount(keyspace.FamilyBody))
+	bodyTerms := planes.terms[keyspace.FamilyBody]
+	if len(bodyTerms) != view.Identity().FamilyCount(keyspace.FamilyBody)+1 {
+		return nil, fmt.Errorf("%w: got %d, want %d", ErrBodyCardinalityMismatch, len(bodyTerms)-1, view.Identity().FamilyCount(keyspace.FamilyBody))
 	}
-	certificate := &Certificate{state: &certificateState{sourceID: sourceID, flowID: flowID, staticID: staticID, moduleID: moduleID, body: append([]identity.ContentID(nil), planes.body...)}}
-	for ordinal := range certificate.state.body {
-		if !certificate.state.body[ordinal].Available() {
-			return nil, fmt.Errorf("%w: ordinal %d path is unavailable", ErrInvalidBodyRow, ordinal+1)
+	certificate := &Certificate{state: &certificateState{sourceID: sourceID, flowID: flowID, staticID: staticID, moduleID: moduleID}}
+	for ordinal := 1; ordinal < len(bodyTerms); ordinal++ {
+		if !bodyTerms[ordinal].Available() {
+			return nil, fmt.Errorf("%w: ordinal %d path is unavailable", ErrInvalidBodyRow, ordinal)
 		}
 	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
@@ -212,14 +205,18 @@ func (p *VertexCatalogPaths) BodyCount() int {
 	if p == nil || p.certificate == nil {
 		return 0
 	}
-	return len(p.certificate.body)
+	paths := p.certificate.terms[keyspace.FamilyBody]
+	if len(paths) == 0 {
+		return 0
+	}
+	return len(paths) - 1
 }
 
 func (p *VertexCatalogPaths) BodyAt(ordinal uint32) (identity.ContentID, bool) {
-	if p == nil || p.certificate == nil || ordinal == 0 || uint64(ordinal) > uint64(len(p.certificate.body)) {
+	if p == nil || p.certificate == nil || ordinal == 0 || uint64(ordinal) >= uint64(len(p.certificate.terms[keyspace.FamilyBody])) {
 		return identity.ContentID{}, false
 	}
-	id := p.certificate.body[ordinal-1]
+	id := p.certificate.terms[keyspace.FamilyBody][ordinal]
 	return id, id.Available()
 }
 

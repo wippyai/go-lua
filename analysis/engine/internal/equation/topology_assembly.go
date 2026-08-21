@@ -7,68 +7,68 @@ import (
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
-// activationBatchRows is the closed batch-composition temporary batch rows for one ordinary
-// base Batch and its exact template-activation target outputs. It accepts no
+// TopologyAssembly is the closed batch-composition receipt for one ordinary
+// base Batch and its exact template-materialization outputs. It accepts no
 // arbitrary Batch list: every target must carry the TemplateBinding proving it
-// was lowered against this exact base. lowering reissues one canonical
+// was materialized against this exact base. Assembly reissues one canonical
 // directory Batch, so later topology compilation never needs mixed-Batch
 // capabilities.
-type activationBatchRows struct{ data *activationBatchRowsData }
+type TopologyAssembly struct{ data *topologyAssemblyData }
 
-type activationBatchRowsData struct {
+type topologyAssemblyData struct {
 	base      *Batch
 	directory *Batch
 	key       composition.Key
-	entries   map[loweringRowKey]loweringRows
+	entries   map[assemblyRowKey]assemblyRows
 	inputs    map[composition.Key]Input
 	targets   []TopologySpec
 }
 
-type loweringRowKey struct {
+type assemblyRowKey struct {
 	batch *Batch
 	row   uint32
 	kind  uint8
 }
 
 const (
-	loweringSiteRow uint8 = iota + 1
-	loweringOccurrenceRow
-	loweringOperandRow
+	assemblySiteRow uint8 = iota + 1
+	assemblyOccurrenceRow
+	assemblyOperandRow
 )
 
-type loweringRows struct {
+type assemblyRows struct {
 	site       Site
 	occurrence Occurrence
 	operand    Operand
 }
 
-// sealActivationBatchRows consumes the base Batch and only target batches issued
-// by lowerActivationTargetRows through a binding whose actual Batch is that
+// SealTopologyAssembly consumes the base Batch and only target batches issued
+// by MaterializeTemplateBoundary through a binding whose actual Batch is that
 // exact base. It is deliberately one-shot and non-generic.
-func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activationBatchRows, bool) {
+func SealTopologyAssembly(base *Batch, values []TemplateMaterialization) (TopologyAssembly, bool) {
 	if base == nil || !base.Sealed() {
-		return activationBatchRows{}, false
+		return TopologyAssembly{}, false
 	}
 	if len(values) == 0 {
-		key, ok := activationBatchRowsKey(base, nil, base, map[composition.Key]Input{})
+		key, ok := topologyAssemblyKey(base, nil, base, map[composition.Key]Input{})
 		if !ok {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
-		return activationBatchRows{data: &activationBatchRowsData{base: base, directory: base, key: key, entries: map[loweringRowKey]loweringRows{}, inputs: map[composition.Key]Input{}}}, true
+		return TopologyAssembly{data: &topologyAssemblyData{base: base, directory: base, key: key, entries: map[assemblyRowKey]assemblyRows{}, inputs: map[composition.Key]Input{}}}, true
 	}
-	ordered := append([]activationTargetRows(nil), values...)
+	ordered := append([]TemplateMaterialization(nil), values...)
 	sort.Slice(ordered, func(left, right int) bool { return lessKey(ordered[left].Key(), ordered[right].Key()) })
 	seenKeys := make(map[composition.Key]struct{}, len(ordered))
 	seenBatches := make(map[*Batch]struct{}, len(ordered))
 	for _, value := range ordered {
 		if !value.Available() || value.data == nil || value.data.batch == nil || value.data.binding == nil || value.data.binding.actuals != base {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
 		if _, duplicate := seenKeys[value.Key()]; duplicate {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
 		if _, duplicate := seenBatches[value.data.batch]; duplicate || value.data.batch == base {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
 		seenKeys[value.Key()] = struct{}{}
 		seenBatches[value.data.batch] = struct{}{}
@@ -79,24 +79,24 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 		batches = append(batches, value.data.batch)
 	}
 	directory := NewBatch()
-	entries := make(map[loweringRowKey]loweringRows)
+	entries := make(map[assemblyRowKey]assemblyRows)
 	for _, batch := range batches {
 		for index, row := range batch.sites {
 			if row.formal || !validSiteSource(row.source, row.scope, row.init, row.disposition) {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			site, ok := directory.AdmitSite(row.source, row.scope, row.init, row.disposition)
 			if !ok {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
-			entries[loweringRowKey{batch: batch, row: uint32(index + 1), kind: loweringSiteRow}] = loweringRows{site: site}
+			entries[assemblyRowKey{batch: batch, row: uint32(index + 1), kind: assemblySiteRow}] = assemblyRows{site: site}
 		}
 	}
 	for _, batch := range batches {
 		for index, row := range batch.occurrences {
-			siteRows, present := entries[loweringRowKey{batch: batch, row: row.site, kind: loweringSiteRow}]
+			siteRows, present := entries[assemblyRowKey{batch: batch, row: row.site, kind: assemblySiteRow}]
 			if !present || !directory.OwnsOpenSite(siteRows.site) {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			var occurrence Occurrence
 			var ok bool
@@ -108,32 +108,32 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 			case OccurrenceRelation:
 				occurrence, ok = directory.Relation(siteRows.site, row.entity)
 			default:
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			if !ok || !directory.OwnsOpenOccurrence(occurrence) {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
-			entry := entries[loweringRowKey{batch: batch, row: row.site, kind: loweringSiteRow}]
+			entry := entries[assemblyRowKey{batch: batch, row: row.site, kind: assemblySiteRow}]
 			entry.occurrence = occurrence
-			entries[loweringRowKey{batch: batch, row: row.site, kind: loweringSiteRow}] = entry
-			entries[loweringRowKey{batch: batch, row: uint32(index + 1), kind: loweringOccurrenceRow}] = loweringRows{occurrence: occurrence}
+			entries[assemblyRowKey{batch: batch, row: row.site, kind: assemblySiteRow}] = entry
+			entries[assemblyRowKey{batch: batch, row: uint32(index + 1), kind: assemblyOccurrenceRow}] = assemblyRows{occurrence: occurrence}
 		}
 	}
 	for _, batch := range batches {
 		for index, row := range batch.operands {
-			occurrenceRows, present := entries[loweringRowKey{batch: batch, row: row.occurrence, kind: loweringOccurrenceRow}]
+			occurrenceRows, present := entries[assemblyRowKey{batch: batch, row: row.occurrence, kind: assemblyOccurrenceRow}]
 			if !present || !directory.OwnsOpenOccurrence(occurrenceRows.occurrence) {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			operand, ok := directory.admitOperandInRealm(occurrenceRows.occurrence, row.entity, batch.key)
 			if !ok {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
-			entries[loweringRowKey{batch: batch, row: uint32(index + 1), kind: loweringOperandRow}] = loweringRows{operand: operand}
+			entries[assemblyRowKey{batch: batch, row: uint32(index + 1), kind: assemblyOperandRow}] = assemblyRows{operand: operand}
 		}
 	}
 	if !directory.Seal() {
-		return activationBatchRows{}, false
+		return TopologyAssembly{}, false
 	}
 	inputs := make(map[composition.Key]Input)
 	targets := make([]TopologySpec, 0, len(ordered))
@@ -141,8 +141,8 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 		if !input.Available() || input.Source().batch != batch || input.Target().batch != batch {
 			return Input{}, false
 		}
-		sourceRows, sourceOK := entries[loweringRowKey{batch: batch, row: input.Source().row, kind: loweringSiteRow}]
-		targetRows, targetOK := entries[loweringRowKey{batch: batch, row: input.Target().row, kind: loweringSiteRow}]
+		sourceRows, sourceOK := entries[assemblyRowKey{batch: batch, row: input.Source().row, kind: assemblySiteRow}]
+		targetRows, targetOK := entries[assemblyRowKey{batch: batch, row: input.Target().row, kind: assemblySiteRow}]
 		if !sourceOK || !targetOK {
 			return Input{}, false
 		}
@@ -152,49 +152,49 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 	for _, value := range ordered {
 		for _, input := range value.data.inputs {
 			if !input.Available() || input.Source().batch != value.data.batch || input.Target().batch != value.data.batch {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
-			sourceRows, sourceOK := entries[loweringRowKey{batch: value.data.batch, row: input.Source().row, kind: loweringSiteRow}]
-			targetRows, targetOK := entries[loweringRowKey{batch: value.data.batch, row: input.Target().row, kind: loweringSiteRow}]
+			sourceRows, sourceOK := entries[assemblyRowKey{batch: value.data.batch, row: input.Source().row, kind: assemblySiteRow}]
+			targetRows, targetOK := entries[assemblyRowKey{batch: value.data.batch, row: input.Target().row, kind: assemblySiteRow}]
 			if !sourceOK || !targetOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			reissued := BoundaryInput(sourceRows.site, targetRows.site, input.Provenance(), input.Pre(), input.Reindex(), input.Post())
 			if !reissued.Available() {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			if existing, duplicate := inputs[input.Key()]; duplicate {
 				if existing.Key() != reissued.Key() {
-					return activationBatchRows{}, false
+					return TopologyAssembly{}, false
 				}
 				continue
 			}
 			inputs[input.Key()] = reissued
 		}
 		// Standalone inputs authored in the formal/target Batch are part of
-		// that same activation target temporary batch rows even when no Group or edge owns
+		// that same materialization receipt even when no Group or edge owns
 		// them. Reissue them through the directory so topology compilation
 		// never retains a target-Batch capability.
 		targetInputs, targetInputsOK := value.data.batch.TargetInputRows()
 		if !targetInputsOK {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
 		for _, input := range targetInputs {
 			if !input.Available() || input.Source().batch != value.data.batch || input.Target().batch != value.data.batch {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
-			sourceRows, sourceOK := entries[loweringRowKey{batch: value.data.batch, row: input.Source().row, kind: loweringSiteRow}]
-			targetRows, targetOK := entries[loweringRowKey{batch: value.data.batch, row: input.Target().row, kind: loweringSiteRow}]
+			sourceRows, sourceOK := entries[assemblyRowKey{batch: value.data.batch, row: input.Source().row, kind: assemblySiteRow}]
+			targetRows, targetOK := entries[assemblyRowKey{batch: value.data.batch, row: input.Target().row, kind: assemblySiteRow}]
 			if !sourceOK || !targetOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			reissued := BoundaryInput(sourceRows.site, targetRows.site, input.Provenance(), input.Pre(), input.Reindex(), input.Post())
 			if !reissued.Available() {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			if existing, duplicate := inputs[input.Key()]; duplicate {
 				if existing.Key() != reissued.Key() {
-					return activationBatchRows{}, false
+					return TopologyAssembly{}, false
 				}
 				continue
 			}
@@ -202,23 +202,23 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 		}
 		targetSpec, targetSpecOK := MaterializeTargetBatch(value.data.batch)
 		if !targetSpecOK {
-			return activationBatchRows{}, false
+			return TopologyAssembly{}, false
 		}
 		reissuedTarget := TopologySpec{Batch: directory, Points: make([]PointSpec, len(targetSpec.Points)), PointRanks: append([]int(nil), targetSpec.PointRanks...), Rules: make([]RuleInstance, len(targetSpec.Rules)), Groups: make([]Group, len(targetSpec.Groups)), FactorEdges: make([]FactorEdge, len(targetSpec.FactorEdges)), EnvironmentEdges: make([]EnvironmentEdge, len(targetSpec.EnvironmentEdges)), Summaries: append([]SummaryMapping(nil), targetSpec.Summaries...), WeakTargets: append([]WeakTargetMapping(nil), targetSpec.WeakTargets...)}
 		pointRefs := make(map[PointRef]PointRef, len(targetSpec.Points))
 		for index, point := range targetSpec.Points {
-			site, siteOK := loweringSiteFromEntries(entries, value.data.batch, point.Site)
+			site, siteOK := assemblySiteFromEntries(entries, value.data.batch, point.Site)
 			if !siteOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			reissuedTarget.Points[index] = PointSpec{Site: site}
 			pointRefs[PointAt(index)] = PointAt(index)
 		}
 		for index, rule := range targetSpec.Rules {
-			occurrence, occurrenceOK := loweringOccurrenceFromEntries(entries, value.data.batch, rule.Occurrence)
-			operand, operandOK := loweringOperandFromEntries(entries, value.data.batch, rule.Operand)
+			occurrence, occurrenceOK := assemblyOccurrenceFromEntries(entries, value.data.batch, rule.Occurrence)
+			operand, operandOK := assemblyOperandFromEntries(entries, value.data.batch, rule.Operand)
 			if !occurrenceOK || !operandOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			rule.Occurrence, rule.Operand = occurrence, operand
 			reissuedTarget.Rules[index] = rule
@@ -226,12 +226,12 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 		for index, group := range targetSpec.Groups {
 			output, outputOK := pointRefs[group.Output]
 			if !outputOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			members := make([]RuleRef, len(group.Members))
 			for memberIndex, member := range group.Members {
 				if uint64(member) == 0 || uint64(member) > uint64(len(reissuedTarget.Rules)) {
-					return activationBatchRows{}, false
+					return TopologyAssembly{}, false
 				}
 				members[memberIndex] = member
 			}
@@ -239,14 +239,14 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 			for _, input := range group.Inputs {
 				valueInput, inputOK := reissueInput(value.data.batch, input)
 				if !inputOK {
-					return activationBatchRows{}, false
+					return TopologyAssembly{}, false
 				}
 				bound.Inputs = append(bound.Inputs, valueInput)
 			}
 			if group.EnvironmentInput.Available() {
 				valueInput, inputOK := reissueInput(value.data.batch, group.EnvironmentInput)
 				if !inputOK {
-					return activationBatchRows{}, false
+					return TopologyAssembly{}, false
 				}
 				bound.EnvironmentInput = valueInput
 			}
@@ -256,7 +256,7 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 			input, inputOK := reissueInput(value.data.batch, edge.Input)
 			target, targetOK := pointRefs[edge.Target]
 			if !inputOK || !targetOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			reissuedTarget.FactorEdges[index] = FactorEdge{Target: target, Input: input, Factor: edge.Factor}
 		}
@@ -264,35 +264,35 @@ func sealActivationBatchRows(base *Batch, values []activationTargetRows) (activa
 			input, inputOK := reissueInput(value.data.batch, edge.Input)
 			target, targetOK := pointRefs[edge.Target]
 			if !inputOK || !targetOK {
-				return activationBatchRows{}, false
+				return TopologyAssembly{}, false
 			}
 			reissuedTarget.EnvironmentEdges[index] = EnvironmentEdge{Target: target, Input: input, TransportOnly: edge.TransportOnly}
 		}
 		targets = append(targets, reissuedTarget)
 	}
-	key, ok := activationBatchRowsKey(base, ordered, directory, inputs)
+	key, ok := topologyAssemblyKey(base, ordered, directory, inputs)
 	if !ok {
-		return activationBatchRows{}, false
+		return TopologyAssembly{}, false
 	}
-	return activationBatchRows{data: &activationBatchRowsData{base: base, directory: directory, key: key, entries: entries, inputs: inputs, targets: targets}}, true
+	return TopologyAssembly{data: &topologyAssemblyData{base: base, directory: directory, key: key, entries: entries, inputs: inputs, targets: targets}}, true
 }
 
-func loweringSiteFromEntries(entries map[loweringRowKey]loweringRows, batch *Batch, site Site) (Site, bool) {
-	row, ok := entries[loweringRowKey{batch: batch, row: site.row, kind: loweringSiteRow}]
+func assemblySiteFromEntries(entries map[assemblyRowKey]assemblyRows, batch *Batch, site Site) (Site, bool) {
+	row, ok := entries[assemblyRowKey{batch: batch, row: site.row, kind: assemblySiteRow}]
 	return row.site, ok && row.site.Available()
 }
 
-func loweringOccurrenceFromEntries(entries map[loweringRowKey]loweringRows, batch *Batch, occurrence Occurrence) (Occurrence, bool) {
-	row, ok := entries[loweringRowKey{batch: batch, row: occurrence.row, kind: loweringOccurrenceRow}]
+func assemblyOccurrenceFromEntries(entries map[assemblyRowKey]assemblyRows, batch *Batch, occurrence Occurrence) (Occurrence, bool) {
+	row, ok := entries[assemblyRowKey{batch: batch, row: occurrence.row, kind: assemblyOccurrenceRow}]
 	return row.occurrence, ok && row.occurrence.Available()
 }
 
-func loweringOperandFromEntries(entries map[loweringRowKey]loweringRows, batch *Batch, operand Operand) (Operand, bool) {
-	row, ok := entries[loweringRowKey{batch: batch, row: operand.row, kind: loweringOperandRow}]
+func assemblyOperandFromEntries(entries map[assemblyRowKey]assemblyRows, batch *Batch, operand Operand) (Operand, bool) {
+	row, ok := entries[assemblyRowKey{batch: batch, row: operand.row, kind: assemblyOperandRow}]
 	return row.operand, ok && row.operand.Available()
 }
 
-func activationBatchRowsKey(base *Batch, values []activationTargetRows, directory *Batch, inputs map[composition.Key]Input) (composition.Key, bool) {
+func topologyAssemblyKey(base *Batch, values []TemplateMaterialization, directory *Batch, inputs map[composition.Key]Input) (composition.Key, bool) {
 	if base == nil || !base.Sealed() || directory == nil || !directory.Sealed() {
 		return composition.Key{}, false
 	}
@@ -304,7 +304,7 @@ func activationBatchRowsKey(base *Batch, values []activationTargetRows, director
 		keys = append(keys, key)
 	}
 	sort.Slice(keys, func(left, right int) bool { return lessKey(keys[left], keys[right]) })
-	return identityKey("analysis/engine/equation/topology-lowering", func(writer *canonical.DigestWriter) bool {
+	return identityKey("analysis/engine/equation/topology-assembly", func(writer *canonical.DigestWriter) bool {
 		if !writeKey(writer, base.Key()) || !writeKey(writer, directory.Key()) || writer.Count(uint64(len(values))) != nil {
 			return false
 		}
@@ -325,58 +325,58 @@ func activationBatchRowsKey(base *Batch, values []activationTargetRows, director
 	})
 }
 
-func (value activationBatchRows) available() bool {
+func (value TopologyAssembly) Available() bool {
 	return value.data != nil && value.data.base != nil && value.data.base.Sealed() && value.data.directory != nil && value.data.directory.Sealed() && value.data.key.Available() && value.data.entries != nil && value.data.inputs != nil
 }
 
-func (value activationBatchRows) keyValue() composition.Key {
-	if !value.available() {
+func (value TopologyAssembly) Key() composition.Key {
+	if !value.Available() {
 		return composition.Key{}
 	}
 	return value.data.key
 }
 
-func (value activationBatchRows) batchValue() *Batch {
-	if !value.available() {
+func (value TopologyAssembly) Batch() *Batch {
+	if !value.Available() {
 		return nil
 	}
 	return value.data.directory
 }
 
-func (value activationBatchRows) site(site Site) (Site, bool) {
-	if !value.available() || !site.Available() || site.dynamic != nil {
+func (value TopologyAssembly) Site(site Site) (Site, bool) {
+	if !value.Available() || !site.Available() || site.dynamic != nil {
 		return Site{}, false
 	}
-	row, ok := value.data.entries[loweringRowKey{batch: site.batch, row: site.row, kind: loweringSiteRow}]
+	row, ok := value.data.entries[assemblyRowKey{batch: site.batch, row: site.row, kind: assemblySiteRow}]
 	return row.site, ok && row.site.Available() && row.site.batch == value.data.directory
 }
 
-func (value activationBatchRows) occurrence(occurrence Occurrence) (Occurrence, bool) {
-	if !value.available() || !occurrence.Available() || occurrence.dynamic != nil {
+func (value TopologyAssembly) Occurrence(occurrence Occurrence) (Occurrence, bool) {
+	if !value.Available() || !occurrence.Available() || occurrence.dynamic != nil {
 		return Occurrence{}, false
 	}
-	row, ok := value.data.entries[loweringRowKey{batch: occurrence.batch, row: occurrence.row, kind: loweringOccurrenceRow}]
+	row, ok := value.data.entries[assemblyRowKey{batch: occurrence.batch, row: occurrence.row, kind: assemblyOccurrenceRow}]
 	return row.occurrence, ok && row.occurrence.Available() && row.occurrence.batch == value.data.directory
 }
 
-func (value activationBatchRows) operand(operand Operand) (Operand, bool) {
-	if !value.available() || !operand.Available() || operand.dynamic != nil {
+func (value TopologyAssembly) Operand(operand Operand) (Operand, bool) {
+	if !value.Available() || !operand.Available() || operand.dynamic != nil {
 		return Operand{}, false
 	}
-	row, ok := value.data.entries[loweringRowKey{batch: operand.batch, row: operand.row, kind: loweringOperandRow}]
+	row, ok := value.data.entries[assemblyRowKey{batch: operand.batch, row: operand.row, kind: assemblyOperandRow}]
 	return row.operand, ok && row.operand.Available() && row.operand.batch == value.data.directory
 }
 
-func (value activationBatchRows) input(input Input) (Input, bool) {
-	if !value.available() || !input.Available() {
+func (value TopologyAssembly) Input(input Input) (Input, bool) {
+	if !value.Available() || !input.Available() {
 		return Input{}, false
 	}
 	row, ok := value.data.inputs[input.Key()]
 	return row, ok && row.Available() && row.Source().batch == value.data.directory && row.Target().batch == value.data.directory
 }
 
-func (value activationBatchRows) targetsValue() []TopologySpec {
-	if !value.available() {
+func (value TopologyAssembly) Targets() []TopologySpec {
+	if !value.Available() {
 		return nil
 	}
 	result := make([]TopologySpec, len(value.data.targets))

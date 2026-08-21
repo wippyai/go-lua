@@ -144,72 +144,94 @@ func TestRuleContributionTransportPreservesExplicitDefaultDistinctFromAbsent(t *
 	}
 }
 
-func TestCarryFinishClosesSupportBeforeLaterExpansion(t *testing.T) {
-	manager := testTransportManager(t, []guard.Atom{1})
-	regions := support.New(manager)
-	on, ok := regions.Literal(1, true)
-	if !ok {
-		t.Fatal("on")
-	}
-	whole := regions.True()
-	if !regions.Seal() {
-		t.Fatal("regions")
-	}
-	binding, _, slot, composition, fixture := bindingState(t, manager, transportConfig(0), whole)
-	writePlan := compositionPlan(t, composition)
-	normalCarry, ok := composition.SealContribution(2, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}})
-	if !ok {
-		t.Fatal("normal carry plan")
-	}
-	expansionPlan, ok := composition.SealContribution(0, nil, nil)
-	if !ok {
-		t.Fatal("support expansion plan")
-	}
-	work := newWork(t, composition)
-	source := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4)
+func TestCarryFinishClosesNormalAndPrunedSupportBeforeLaterExpansion(t *testing.T) {
+	run := func(t *testing.T, pruned bool) {
+		t.Helper()
+		manager := testTransportManager(t, []guard.Atom{1})
+		regions := support.New(manager)
+		on, ok := regions.Literal(1, true)
+		if !ok {
+			t.Fatal("on")
+		}
+		whole := regions.True()
+		if !regions.Seal() {
+			t.Fatal("regions")
+		}
+		binding, _, slot, composition, fixture := bindingState(t, manager, transportConfig(0), whole)
+		writePlan := compositionPlan(t, composition)
+		normalCarry, ok := composition.SealContribution(2, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}}, false)
+		if !ok {
+			t.Fatal("normal carry plan")
+		}
+		prunedCarry, ok := composition.SealContribution(1, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}}, true)
+		if !ok {
+			t.Fatal("pruned carry plan")
+		}
+		expansionPlan, ok := composition.SealContribution(0, nil, nil, true)
+		if !ok {
+			t.Fatal("support expansion plan")
+		}
+		work := newWork(t, composition)
+		source := finishContributionAt(t, work, writePlan, composition.Scope(), binding, fixture.target(t, 0, carrier.StrongTarget), whole, 4)
 
-	narrowState, made := carrier.NewState(composition, composition.Scope(), on)
-	if !made {
-		t.Fatal("narrow input state")
-	}
-	narrow, made := work.EmptyContribution(narrowState)
-	if !made {
-		t.Fatal("narrow input contribution")
-	}
-	base, began := work.BeginContribution(normalCarry, composition.Scope(), []carrier.Contribution{source, narrow}, whole)
-	if !began {
-		t.Fatal("begin normal carry")
-	}
-	carried, ok := work.FinishContribution(base, nil)
-	if !ok {
-		t.Fatal("finish normal carry")
-	}
-	if !carried.Support().Equal(on) {
-		t.Fatal("carry did not retain narrowed support")
+		var carried carrier.Contribution
+		if pruned {
+			base, began := work.BeginContribution(prunedCarry, composition.Scope(), []carrier.Contribution{source}, whole)
+			if !began {
+				t.Fatal("begin pruned carry")
+			}
+			carried, ok = work.FinishContributionWithSupport(base, nil, on)
+			if !ok {
+				t.Fatal("finish pruned carry")
+			}
+		} else {
+			narrowState, made := carrier.NewState(composition, composition.Scope(), on)
+			if !made {
+				t.Fatal("narrow input state")
+			}
+			narrow, made := work.EmptyContribution(narrowState)
+			if !made {
+				t.Fatal("narrow input contribution")
+			}
+			base, began := work.BeginContribution(normalCarry, composition.Scope(), []carrier.Contribution{source, narrow}, whole)
+			if !began {
+				t.Fatal("begin normal carry")
+			}
+			carried, ok = work.FinishContribution(base, nil)
+			if !ok {
+				t.Fatal("finish normal carry")
+			}
+		}
+		if !carried.Support().Equal(on) {
+			t.Fatal("carry did not retain narrowed support")
+		}
+
+		expansionBase, began := work.BeginContribution(expansionPlan, composition.Scope(), nil, whole)
+		if !began {
+			t.Fatal("begin support expansion")
+		}
+		expansion, ok := work.FinishContributionWithSupport(expansionBase, nil, whole)
+		if !ok {
+			t.Fatal("finish support expansion")
+		}
+		expanded, _, ok := work.MergeContribution(carried, expansion)
+		if !ok || !expanded.Support().Equal(whole) {
+			t.Fatal("later support expansion")
+		}
+		root, ok := expanded.HandleAt(slot)
+		if !ok {
+			t.Fatal("expanded root")
+		}
+		if got, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(atom guard.Atom) bool { return atom == 1 }); !valid || !present || got != 4 {
+			t.Fatalf("retained carry value = %d/%t/%t, want 4/true/true", got, present, valid)
+		}
+		if got, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 0 {
+			t.Fatalf("pruned carry payload revived = %d/%t/%t, want 0/false/true", got, present, valid)
+		}
 	}
 
-	expansionBase, began := work.BeginContribution(expansionPlan, composition.Scope(), nil, whole)
-	if !began {
-		t.Fatal("begin support expansion")
-	}
-	expansion, ok := work.FinishContribution(expansionBase, nil)
-	if !ok {
-		t.Fatal("finish support expansion")
-	}
-	expanded, _, ok := work.MergeContribution(carried, expansion)
-	if !ok || !expanded.Support().Equal(whole) {
-		t.Fatal("later support expansion")
-	}
-	root, ok := expanded.HandleAt(slot)
-	if !ok {
-		t.Fatal("expanded root")
-	}
-	if got, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(atom guard.Atom) bool { return atom == 1 }); !valid || !present || got != 4 {
-		t.Fatalf("retained carry value = %d/%t/%t, want 4/true/true", got, present, valid)
-	}
-	if got, present, valid := observedExactValue(binding, work, root, fixture.unit(t, 0), whole, func(guard.Atom) bool { return false }); !valid || present || got != 0 {
-		t.Fatalf("pruned carry payload revived = %d/%t/%t, want 0/false/true", got, present, valid)
-	}
+	t.Run("normal Finish", func(t *testing.T) { run(t, false) })
+	t.Run("FinishWithSupport", func(t *testing.T) { run(t, true) })
 }
 
 func TestSelectedContributionWidenPreservesPresenceAndClosesRootToExactCoverage(t *testing.T) {
@@ -309,7 +331,7 @@ func TestSelectedContributionWidenClosesUnselectedFactorToPredecessorSupport(t *
 	if !ok || selectedSlot == unselectedSlot {
 		t.Fatal("unselected slot")
 	}
-	plan, ok := composition.SealContribution(0, []shape.Slot{selectedSlot, unselectedSlot}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{selectedSlot, unselectedSlot}, nil, false)
 	if !ok {
 		t.Fatal("two-factor contribution plan")
 	}

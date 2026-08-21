@@ -136,7 +136,7 @@ func rootClass(view authored.View, root keyspace.Term) identity.ContentID {
 	return base
 }
 
-func deriveRootPaths(sourceView source.View, bodies *body.Result, bodyPaths []identity.ContentID, descriptors [keyspace.FamilyCount][]identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
+func deriveRootPaths(sourceView source.View, bodyPaths []identity.ContentID, descriptors [keyspace.FamilyCount][]identity.ContentID) ([keyspace.FamilyCount][]identity.ContentID, error) {
 	var paths [keyspace.FamilyCount][]identity.ContentID
 	sourceIdentity, index := sourceView.Identity(), sourceView.Index()
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {

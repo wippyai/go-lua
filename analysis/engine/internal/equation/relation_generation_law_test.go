@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -15,18 +16,30 @@ import (
 // activation binding, so its publications can be advanced.
 func relationLawTopology(t testing.TB) (*Topology, AcceptedMember) {
 	t.Helper()
-	fixture := newTriggerBindingFixture(t)
-	target, endpoint := boundaryKey(95), boundaryKey(96)
-	row := fixture.row(fixture.application, target, endpoint)
-	topology, sealed := fixture.sealWithRows(
-		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application}},
-		[]ActivationRowSpec{row},
-	)
+	fixture := newTemplateMaterializationFixture(t)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("relation law materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Points:           []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
+	})
 	if !sealed || topology == nil {
 		t.Fatal("relation law topology seal")
 	}
-	trigger := topology.rows.members[0]
-	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: fixture.application, Target: target, Endpoint: endpoint})
+	origin := MaterializationOrigin{Family: boundaryKey(92), Application: boundaryKey(94), Target: boundaryKey(95), Endpoint: boundaryKey(96), TriggerOrdinal: 0}
+	materialized, materializedOK = materialized.WithOrigin(origin)
+	if !materializedOK {
+		t.Fatal("relation law origin")
+	}
+	trigger := boundaryKey(93)
+	topology.materializations = []TemplateMaterialization{materialized}
+	topology.instanceKeys = []composition.Key{trigger}
+	topology.triggers[trigger] = activationTriggerBinding{family: origin.Family, application: origin.Application}
+	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: origin.Application, Target: origin.Target, Endpoint: origin.Endpoint})
 	if !memberOK {
 		t.Fatal("relation law binding member")
 	}

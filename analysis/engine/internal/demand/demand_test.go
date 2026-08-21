@@ -82,7 +82,7 @@ func wideRoutingGraph(t testing.TB, width int) *equation.Graph {
 	for index := 0; index < width; index++ {
 		factor, rule := routingKey(3, index), routingKey(4, index)
 		factors[index] = composition.Factor{Key: factor}
-		rules[index] = composition.Rule{Key: rule, OperandFamily: routingOperandFamily(rule), OutputKind: composition.FactorOutput, Output: factor, Inputs: 1, Writes: []composition.Write{{Kind: composition.WriteExact, Factor: factor}}}
+		rules[index] = composition.Rule{Key: rule, OperandFamily: routingOperandFamily(rule), Admission: composition.Admission{Kind: composition.AdmissionTrustedTheorem, Identity: routingKey(5, index)}, OutputKind: composition.FactorOutput, Output: factor, Inputs: 1, Writes: []composition.Write{{Kind: composition.WriteExact, Factor: factor}}}
 		site, admitted := batch.AdmitSite(routingKey(2, index+1), scope, equation.FalseExpr(), equation.InitAbsent)
 		occurrence, occurred := batch.At(site)
 		operand, attached := batch.AdmitOperand(occurrence, routingOperand(rule))
@@ -174,7 +174,7 @@ func wideRouteChangeSet(t testing.TB, width int) (*carrier.Composition, []carrie
 	if !ok {
 		t.Fatal("routing attach")
 	}
-	coveragePlan, ok := runtime.SealContribution(0, []shape.Slot{0}, nil)
+	coveragePlan, ok := runtime.SealContribution(0, []shape.Slot{0}, nil, false)
 	if !ok {
 		t.Fatal("routing coverage plan")
 	}

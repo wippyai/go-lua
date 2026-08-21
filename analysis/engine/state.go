@@ -3,7 +3,6 @@ package engine
 import (
 	"math"
 
-	"github.com/wippyai/go-lua/analysis/engine/internal/lifetime"
 	"github.com/wippyai/go-lua/analysis/identity"
 )
 
@@ -31,7 +30,7 @@ type completionAuthority struct {
 // append-only and a store number is never reused, so an address minted by one
 // Solver is not addressable in another and a saturated sequence fails closed
 // rather than aliasing a live store.
-var solverStores lifetime.Sequence[identity.StoreID]
+var solverStores idSequence[identity.StoreID]
 
 // resultLane names the two published result columns of a State. It is part of
 // the address, so an address into one column can never read the other.

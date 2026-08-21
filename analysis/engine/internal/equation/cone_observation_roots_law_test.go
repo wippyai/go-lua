@@ -3,12 +3,17 @@ package equation
 import "testing"
 
 func TestDemandWithExplicitRootsAdmitsQuerylessGraphAndRejectsForeignRoots(t *testing.T) {
-	fixture := newTriggerBindingFixture(t)
-	target, endpoint := triggerBindingKey(11), triggerBindingKey(12)
-	topology, sealed := fixture.sealWithRows(
-		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application}},
-		[]ActivationRowSpec{fixture.row(fixture.application, target, endpoint)},
-	)
+	fixture := newTemplateMaterializationFixture(t)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("queryless root materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Points:           []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
+	})
 	if !sealed || topology == nil {
 		t.Fatal("queryless root topology")
 	}
@@ -28,12 +33,15 @@ func TestDemandWithExplicitRootsAdmitsQuerylessGraphAndRejectsForeignRoots(t *te
 		t.Fatal("explicit root did not demand queryless graph")
 	}
 
-	foreignFixture := newTriggerBindingFixture(t)
-	foreignTopology, foreignSealed := foreignFixture.sealWithRows(
-		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: foreignFixture.family, Application: foreignFixture.application}},
-		[]ActivationRowSpec{foreignFixture.row(foreignFixture.application, target, endpoint)},
-	)
-	if !foreignSealed || foreignTopology == nil {
+	foreignFixture := newTemplateMaterializationFixture(t)
+	foreignMaterialized, foreignMaterializedOK := MaterializeTemplateBoundary(foreignFixture.source, foreignFixture.binding,
+		[]Site{foreignFixture.input.Site(), foreignFixture.local, foreignFixture.output.Site()}, foreignFixture.inputs)
+	foreignTopology, foreignSealed := SealTopology(foreignFixture.source, TopologySpec{
+		Batch:            foreignFixture.actuals,
+		Materializations: []TemplateMaterialization{foreignMaterialized},
+		Points:           []PointSpec{{Site: foreignFixture.actualInput}, {Site: foreignFixture.actualOutput}},
+	})
+	if !foreignMaterializedOK || !foreignSealed || foreignTopology == nil {
 		t.Fatal("foreign root graph")
 	}
 	foreignGraph, foreignGraphOK := initialGraph(foreignTopology)

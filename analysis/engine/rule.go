@@ -1,64 +1,45 @@
 package engine
 
-import (
-	"github.com/wippyai/go-lua/analysis/identity"
-)
+import "github.com/wippyai/go-lua/analysis/identity"
 
 // Read is the typed, positional capability issued by SchemaBinding.
-// Its compiled row is shared with the owning hot implementation; no
-// construction state or cold execution carrier is retained here.
+// Its origin is sealed to one binding state and Rule ordinal; no declaration
+// object or cold execution carrier is retained here.
 type Read[S any] struct {
-	row     *schemaRuleReadRow
+	origin  *schemaRuleReadOrigin
 	index   int
 	resolve func(*productSession, int, uint64) (S, bool)
 }
 
-func (read Read[S]) matchesRuntimeOwner(owner anyRule) bool {
-	if owner == nil || read.index < 0 || read.resolve == nil || read.row == nil {
+func (read Read[S]) matchesRuntimeOwner(owner interface{ runtimeRuleProof() *ruleRuntimeProof }) bool {
+	if owner == nil || read.index < 0 || read.resolve == nil || read.origin == nil {
 		return false
 	}
-	cell := owner.runtimeRuleCell()
-	return cell != nil && read.row.sealed() && read.index == int(read.row.readOrdinal) && read.row.owner == cell && read.row.ownerOrdinal == owner.runtimeRuleOrdinal()
+	return read.origin.matches(owner.runtimeRuleProof(), uint64(read.index))
 }
 
-// matchesActivationOwner is the activation-only Read fence. Activation
-// compilation has already rejected the complete sealed Schema/read geometry;
-// Fold-time compares the retained owner row and exact read ordinal directly.
-// Ordinary Rule reads use the same canonical cell/ordinal address.
-func (read Read[S]) matchesActivationOwner(owner *compiledActivationRule) bool {
-	if owner == nil || owner.cell == nil || owner.cell.state == nil || owner.cell.ordinal != owner.ordinal || read.index != 0 || read.resolve == nil || read.row == nil || owner.readCount != 1 {
-		return false
-	}
-	return read.row.sealed() && read.row.owner == owner.cell && read.row.ownerOrdinal == owner.ordinal && read.row.readOrdinal == 0
+func (read Read[S]) matchesRuleProof(proof *ruleRuntimeProof) bool {
+	return proof != nil && read.index >= 0 && read.resolve != nil && read.origin != nil && read.origin.matches(proof, uint64(read.index))
 }
 
-// Frame is one opaque, synchronous Product row issued by the engine to a
-// Rule Fold. It grants typed reads and operand access for that row only; it
-// carries no Patch, target, Work, or publication capability.
-type Frame[V, O any] struct {
+// Access is the typed execution frame issued by receipt assembly. It
+// carries no declaration callback or cold composition capability.
+type Access[V, O any] struct {
 	execution *ruleExecution
-	owner     *boundRuleMember[V, O]
+	owner     *boundRule[V, O]
 	epoch     identity.Generation
-	row       int
+	output    outputAccess[V]
 }
 
-type ruleResultKind uint8
+// ActivationCoordinates is the exact accepted dynamic relation that
+// materialized one Rule row. Ordinary Rules have no coordinates.
+type ActivationCoordinates struct {
+	binding     identity.SemanticKey
+	application identity.SemanticKey
+	target      identity.SemanticKey
+	endpoint    identity.SemanticKey
+}
 
-const (
-	ruleResultInvalid ruleResultKind = iota
-	ruleResultNoCandidate
-	ruleResultStaged
-	ruleResultRouted
-)
-
-// RuleResult is an opaque row-local publication intent. Domain folds can
-// construct it only through the engine constructors; the engine alone owns
-// target authentication, carry application, and Patch mutation.
-type RuleResult[V any] struct {
-	execution *ruleExecution
-	epoch     identity.Generation
-	row       int
-	kind      ruleResultKind
-	value     V
-	route     routeOutputBatch[V]
+func (value ActivationCoordinates) Available() bool {
+	return value.binding.Available() && value.application.Available() && value.target.Available() && value.endpoint.Available()
 }

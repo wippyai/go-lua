@@ -35,8 +35,8 @@ func framingLawCapability(t *testing.T, kind ruleCapabilityKind, ordinal uint64,
 // recorded: a narrow vector never digests as the wide vector spelling the same
 // values, and the digest is not the bare concatenation of the keys.
 func TestSummaryVectorDigestSeparatesKeyWidthAndDomain(t *testing.T) {
-	narrow := summaryVectorDigest([]uint32{1, 2, 3})
-	wide := summaryVectorDigest([]uint64{1, 2, 3})
+	narrow := SummaryVectorDigest([]uint32{1, 2, 3})
+	wide := SummaryVectorDigest([]uint64{1, 2, 3})
 	if narrow == ([32]byte{}) || wide == ([32]byte{}) {
 		t.Fatal("summary vector digest is unavailable")
 	}
@@ -56,7 +56,7 @@ func TestSummaryVectorDigestSeparatesKeyWidthAndDomain(t *testing.T) {
 	if wide == concatenated {
 		t.Fatal("summary vector digest is the bare key concatenation and carries no domain")
 	}
-	if summaryVectorDigest([]uint64{1, 2}) == summaryVectorDigest([]uint64{1, 2, 0}) {
+	if SummaryVectorDigest([]uint64{1, 2}) == SummaryVectorDigest([]uint64{1, 2, 0}) {
 		t.Fatal("summary vector length does not participate in its digest")
 	}
 }

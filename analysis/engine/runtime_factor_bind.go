@@ -304,7 +304,7 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *Facto
 		}
 		keyRange, ranged := graph.SummaryKeyRange(representative)
 		count := keyRange.Count()
-		if !ranged || count < 0 || count == 0 && keyEnd != 0 {
+		if !ranged || count == 0 {
 			return false
 		}
 		keys := make([]K, count)

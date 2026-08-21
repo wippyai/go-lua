@@ -115,6 +115,8 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 	patches := cache.patches[:0]
 	patchRows := cache.patchRows[:0]
 	reads = cache.reads[:0]
+	retained := within
+	supportPrune := false
 	activations := make([]equation.AcceptedMember, 0)
 	live := true
 	defer func() {
@@ -126,7 +128,7 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 		if epoch.canceled() {
 			return carrier.RuleContribution{}, nil, false
 		}
-		result := row.member.execute(epoch.work, base, cache.inputStates, within)
+		result := row.exec(epoch.work, base, cache.inputStates, within)
 		if !result.valid {
 			// The failing member's identity is recovered from the Group the
 			// producer already holds; the hot row carries only its position.
@@ -138,6 +140,24 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 			return carrier.RuleContribution{}, nil, false
 		}
 		reads = append(reads, result.reads...)
+		if result.hasSupport {
+			if !result.retained.Valid() || !result.retained.Entails(within) {
+				return carrier.RuleContribution{}, nil, false
+			}
+			if supportPrune {
+				var valid bool
+				retained, valid = support.IntersectWithCheckpoint(func() bool { return !epoch.canceled() }, retained, result.retained)
+				if !valid {
+					return carrier.RuleContribution{}, nil, false
+				}
+			} else {
+				// The first retained support is already proven to be a subset of
+				// within above, so intersecting within with it only rebuilds the
+				// result in a disposable guard Work.
+				retained = result.retained
+			}
+			supportPrune = true
+		}
 		if len(result.activations) != 0 {
 			if !canonicalAcceptedActivations(result.activations) {
 				epoch.recordGroupFailure(SolveFailureReasonActivationMerge, producer.group.Output(), producer.group)
@@ -146,12 +166,11 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 			activations = append(activations, result.activations...)
 		}
 		if result.wrote {
-			slot, hasSlot := row.member.outputSlot()
-			if !hasSlot {
+			if !row.hasSlot {
 				return carrier.RuleContribution{}, nil, false
 			}
 			patches = append(patches, result.patch)
-			patchRows = append(patchRows, contributionPatch{slot: slot, patch: result.patch})
+			patchRows = append(patchRows, contributionPatch{slot: row.outputSlot, patch: result.patch})
 		}
 	}
 	if len(activations) != 0 {
@@ -170,7 +189,12 @@ func (epoch *executorEpoch) evaluate(producer *runtimeProducer, cache *producerE
 	for _, row := range patchRows {
 		patches = append(patches, row.patch)
 	}
-	next, ok := epoch.work.FinishRuleContribution(base, patches)
+	var next carrier.RuleContribution
+	if supportPrune {
+		next, ok = epoch.work.FinishRuleContributionWithSupport(base, patches, retained)
+	} else {
+		next, ok = epoch.work.FinishRuleContribution(base, patches)
+	}
 	if !ok {
 		return carrier.RuleContribution{}, nil, false
 	}

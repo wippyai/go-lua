@@ -41,15 +41,15 @@ func TestContributionCoverageDistinguishesDefaultNoCandidateKeysAndGuards(t *tes
 		},
 		LessOrEq: func(left, right uint64) bool { return left <= right },
 	}, whole)
-	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
 	if !ok {
 		t.Fatal("coverage contribution plan")
 	}
-	carryPlan, ok := composition.SealContribution(1, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}})
+	carryPlan, ok := composition.SealContribution(1, nil, []carrier.ContributionSource{{Slot: slot, Input: 0}}, false)
 	if !ok {
 		t.Fatal("carry contribution plan")
 	}
-	supportPlan, ok := composition.SealContribution(1, nil, nil)
+	supportPlan, ok := composition.SealContribution(1, nil, nil, true)
 	if !ok {
 		t.Fatal("support-only contribution plan")
 	}
@@ -112,7 +112,7 @@ func TestContributionCoverageDistinguishesDefaultNoCandidateKeysAndGuards(t *tes
 	if !ok {
 		t.Fatal("begin support-only contribution")
 	}
-	supportOnly, ok := work.FinishContribution(supportBase, nil)
+	supportOnly, ok := work.FinishContributionWithSupport(supportBase, nil, whole)
 	if !ok {
 		t.Fatal("finish support-only contribution")
 	}
@@ -234,7 +234,7 @@ func BenchmarkContributionCoverageTargetLocalFold(b *testing.B) {
 		},
 		LessOrEq: func(left, right uint64) bool { return left <= right },
 	}, whole)
-	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{slot}, nil, false)
 	if !ok {
 		b.Fatal("plan")
 	}

@@ -50,6 +50,9 @@ func TestAxisAuthorityVerdictRendersItsOwnName(t *testing.T) {
 	if got := ProgramBindingFailureAxisAuthority.String(); got != "axis-authority" {
 		t.Fatalf("the axis-authority verdict renders as %q", got)
 	}
+	if got := ProgramBindingFailureRuntimeContexts.String(); got != "runtime-contexts" {
+		t.Fatalf("the runtime-contexts verdict renders as %q", got)
+	}
 }
 
 // TestMountPhaseWithoutAnAxisNamesNoAxisVerdict states the phase half: a

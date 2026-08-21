@@ -1,17 +1,12 @@
 package publication
 
 import (
-	"crypto/sha256"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 )
-
-func publicationLawID(label string) identity.ContentID {
-	return identity.ContentID(sha256.Sum256([]byte("publication-law/" + label)))
-}
 
 const branchValueObservationLawProducer schema.Key = "value-summary"
 

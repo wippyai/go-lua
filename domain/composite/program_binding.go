@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -30,6 +32,12 @@ type ProgramBinding struct {
 	allocations *allocationcatalog.Catalog
 
 	value *valueowner.HotOwner
+
+	// runtimeContexts retains only the already-sealed Pack/Heap authorities
+	// needed to join an externally-issued runtime context later. It owns no
+	// runtime policy or live capability: those remain runtime inputs and are
+	// revoked by their authority, not by compilation.
+	runtimeContexts RuntimeAllocationContextOwner
 
 	// queries holds every declared query family's sealed implementation at its
 	// slot, opaque here and recovered at its type by the accessor the family's
@@ -138,6 +146,60 @@ func (bound *ProgramBinding) QueryAdmission(id, mount, point identity.ContentID,
 	return registry.queryContributors[position].admit(bound.binding, cell, id, mount, point)
 }
 
+// RuntimeContexts is the cold authority pair a runtime joins to open allocation
+// contexts against this exact binding.
+func (bound *ProgramBinding) RuntimeContexts() RuntimeAllocationContextOwner {
+	if bound == nil {
+		return RuntimeAllocationContextOwner{}
+	}
+	return bound.runtimeContexts
+}
+
+// RuntimeAllocationContextOwner is Plan-local cold authority for creating a
+// Pack/Heap issuer after a runtime supplies its policy identity. Keeping this
+// pair in the binding makes a positive publication proof join the exact schemas
+// that produced it; a separate equal-content reseal cannot enter through
+// matching scalar IDs.
+type RuntimeAllocationContextOwner struct {
+	pack *packdomain.Schema
+	heap heapdomain.Schema
+}
+
+func newRuntimeAllocationContextOwner(packSchema *packdomain.Schema, heapSchema heapdomain.Schema) (RuntimeAllocationContextOwner, bool) {
+	owner := RuntimeAllocationContextOwner{pack: packSchema, heap: heapSchema}
+	return owner, owner.Valid()
+}
+
+func (owner RuntimeAllocationContextOwner) Valid() bool {
+	return owner.pack != nil && owner.heap.Valid() && owner.heap.LinkOwner().Matches(owner.pack.LinkOwner())
+}
+
+// Pack is the sealed pack schema this owner joins against.
+func (owner RuntimeAllocationContextOwner) Pack() *packdomain.Schema { return owner.pack }
+
+// Heap is the sealed heap schema this owner joins against.
+func (owner RuntimeAllocationContextOwner) Heap() heapdomain.Schema { return owner.heap }
+
+// Begin joins a runtime-owned policy identity to this exact Plan's sealed
+// Pack/Heap pair. The returned authority remains short-lived and must be
+// closed by the runtime owner; neither this Plan-local owner nor Result keeps
+// a live context capability.
+func (owner RuntimeAllocationContextOwner) Begin(policyID identity.ContentID) (*heapdomain.RuntimeAllocationContextAuthority, packdomain.RuntimeAllocationContextBindingIssuer, bool) {
+	if !owner.Valid() {
+		return nil, packdomain.RuntimeAllocationContextBindingIssuer{}, false
+	}
+	authority, authorityOK := owner.heap.BeginRuntimeAllocationContexts(policyID)
+	if !authorityOK {
+		return nil, packdomain.RuntimeAllocationContextBindingIssuer{}, false
+	}
+	issuer, issuerOK := packdomain.NewRuntimeAllocationContextBindingIssuer(owner.pack, owner.heap, authority)
+	if !issuerOK {
+		authority.Close()
+		return nil, packdomain.RuntimeAllocationContextBindingIssuer{}, false
+	}
+	return authority, issuer, true
+}
+
 // BindProgram binds the complete global schema in one SchemaBinding. The
 // caller supplies the one immutable compilation handle obtained at the
 // composition root and the record the mount phase produced; the factor
@@ -148,11 +210,16 @@ func BindProgram(compilation Compilation, inputs LinkInputs) (*ProgramBinding, B
 	if failure.Available() {
 		return nil, failure
 	}
+	runtimeContexts, runtimeContextsOK := newRuntimeAllocationContextOwner(inputs.PackSchema, inputs.HeapSchema)
+	if !runtimeContextsOK {
+		return nil, BindFailure{Stage: BindStageRuntimeContexts}
+	}
 	return &ProgramBinding{
-		binding:     bound.binding,
-		rules:       bound.rules,
-		allocations: bound.allocations,
-		value:       bound.value,
-		queries:     bound.queries,
+		binding:         bound.binding,
+		rules:           bound.rules,
+		allocations:     bound.allocations,
+		value:           bound.value,
+		runtimeContexts: runtimeContexts,
+		queries:         bound.queries,
 	}, BindFailure{}
 }

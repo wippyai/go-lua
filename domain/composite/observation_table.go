@@ -11,13 +11,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
-// The observation inventory is the declaration half of the two live
+// The observation inventory is the declaration half of the three live
 // observation producers. Its rows name existing query families and generated
 // denominator relations; no runtime attachment or result value crosses this
 // boundary.
 const (
-	ObservationBranchValueSummary      schema.Key = "value-summary/branch-condition"
-	ObservationConformanceValueSummary schema.Key = "value-summary/type-conformance"
+	ObservationBranchValueSummary         schema.Key = "value-summary/branch-condition"
+	ObservationConformanceValueSummary    schema.Key = "value-summary/type-conformance"
+	ObservationDirectAllocationMembership schema.Key = "value-summary/direct-allocation-membership"
+	ObservationPublicationTransition      schema.Key = "effect-exact/publication-transition"
 )
 
 // These semantic roles are owned by the composite declaration. The generic
@@ -26,19 +28,29 @@ const (
 const (
 	observationGeometryBranchRole      = "observation/geometry/branch-evidence"
 	observationGeometryConformanceRole = "observation/geometry/type-conformance-evidence"
+	observationGeometryDirectRole      = "observation/geometry/direct-allocation-membership"
+	observationGeometryPublicationRole = "observation/geometry/publication-transition"
 	observationAnchorEvidenceRole      = "observation/anchor/evidence-point"
+	observationAnchorCallEffectRole    = "observation/anchor/selected-call-effect"
+	observationAnchorPublicationRole   = "observation/anchor/publication-effect"
 )
 
 const (
-	observationRelationBranchCondition schema.Key = "ProgramFlowControl@-"
-	observationRelationTypeConformance schema.Key = "ProgramFlowCall@-"
+	observationRelationBranchCondition       schema.Key = "ProgramFlowControl@-"
+	observationRelationTypeConformance       schema.Key = "ProgramFlowCall@-"
+	observationRelationDirectAllocation      schema.Key = "TargetOperation@TargetOperationEffect"
+	observationRelationPublicationTransition schema.Key = "TargetOperation@TargetPublicationEffect"
 )
 
 func observationRoleVocabulary() []structure.Spec {
 	return vocabulary.RoleSpecs(
 		observationGeometryBranchRole,
 		observationGeometryConformanceRole,
+		observationGeometryDirectRole,
+		observationGeometryPublicationRole,
 		observationAnchorEvidenceRole,
+		observationAnchorCallEffectRole,
+		observationAnchorPublicationRole,
 	)
 }
 
@@ -60,7 +72,12 @@ func observationSpecs(queries []*query.Registration) ([]observation.Spec, bool) 
 	if !seen[QueryFamilyValueSummary] || !seen[QueryFamilyEffectExact] {
 		return nil, false
 	}
-	for _, relation := range [...]schema.Key{observationRelationBranchCondition, observationRelationTypeConformance} {
+	for _, relation := range [...]schema.Key{
+		observationRelationBranchCondition,
+		observationRelationTypeConformance,
+		observationRelationDirectAllocation,
+		observationRelationPublicationTransition,
+	} {
 		if _, declared := denominator.GeneratedRelationByKey(relation); !declared {
 			return nil, false
 		}
@@ -92,6 +109,26 @@ func observationSpecs(queries []*query.Registration) ([]observation.Spec, bool) 
 			Geometry: observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationGeometryConformanceRole)),
 			Anchor:   observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationAnchorEvidenceRole)),
 			Codec:    observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey("query-result/value-summary")),
+		},
+		{
+			Key:      ObservationDirectAllocationMembership,
+			Producer: observationReference(schema.SurfaceKindQuery, QueryFamilyValueSummary),
+			Population: observation.Population{
+				Relation: observationReference(schema.SurfaceKindDenominator, observationRelationDirectAllocation),
+			},
+			Geometry: observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationGeometryDirectRole)),
+			Anchor:   observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationAnchorCallEffectRole)),
+			Codec:    observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey("query-result/value-summary")),
+		},
+		{
+			Key:      ObservationPublicationTransition,
+			Producer: observationReference(schema.SurfaceKindQuery, QueryFamilyEffectExact),
+			Population: observation.Population{
+				Relation: observationReference(schema.SurfaceKindDenominator, observationRelationPublicationTransition),
+			},
+			Geometry: observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationGeometryPublicationRole)),
+			Anchor:   observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey(observationAnchorPublicationRole)),
+			Codec:    observationReference(schema.SurfaceKindStructure, vocabulary.RoleKey("query-result/effect-exact")),
 		},
 	}, true
 }

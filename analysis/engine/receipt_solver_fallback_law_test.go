@@ -96,7 +96,9 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		queryResultSemantic   = 998_603
 		activationFamily      = 998_604
 		activationRule        = 998_605
+		activationAdmission   = 998_606
 		ordinaryRule          = 998_607
+		ordinaryAdmission     = 998_608
 		triggerPoint          = 998_609
 		targetPoint           = 998_610
 		bodyPoint             = 998_611
@@ -122,12 +124,12 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	query, queryOK := DeclareQuerySlot[uint64](builder, SchemaQuerySpec{Semantic: coldKey(querySemantic), Freezer: coldKey(queryResultSemantic)})
 	ordinary, ordinaryOK := DeclareRuleSlot[uint64, ruleUnit](builder, SchemaRuleSpec[uint64]{
 		Semantic: coldKey(ordinaryRule), OperandFamily: unitOperandFamily, Inputs: 0,
-		Output: factor.Ref(),
+		Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(ordinaryAdmission)}, Output: factor.Ref(),
 	})
 	ordinaryWrite, ordinaryWriteOK := SchemaWrite(ordinary, writeForm)
 	family, familyOK := DeclareSchemaActivationFamily(builder, coldKey(activationFamily))
 	activation, activationOK := DeclareSchemaActivationRule(builder, SchemaStructuralRuleSpec{
-		Semantic: coldKey(activationRule), Activation: family,
+		Semantic: coldKey(activationRule), Admission: SchemaAdmission{Basis: RuleAdmissionBasisTrustedTheorem, Identity: coldKey(activationAdmission)}, Activation: family,
 	})
 	queryReadOK := SchemaQueryRead(query, readForm)
 	schema, schemaOK := builder.Seal()
@@ -146,9 +148,10 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	}
 	ordinarySpec := HotRuleSpec[uint64, ruleUnit]{
 		OperandContent: ruleUnitContent,
-		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
+		Admission:      AdmitRuleByTrustedTheorem[uint64, ruleUnit](coldKey(ordinaryAdmission)),
+		Transfer: func(access Access[uint64, ruleUnit]) bool {
 			*transfers++
-			return Staged(frame, uint64(1))
+			return Product(access, func(row Row) bool { return StageValue(access, row, uint64(1)) })
 		},
 	}
 	binding := NewSchemaBinding(schema)
@@ -159,15 +162,11 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		t.Fatal("selected overlay factor/query binding")
 	}
 	application, target, endpoint := coldKey(activationApplication), coldKey(activationTarget), coldKey(activationEndpoint)
-	activationSpec := HotActivationSpec{Fold: func(frame ActivationFrame) ActivationResult {
+	activationSpec := HotActivationSpec{Admission: AdmitActivationByTrustedTheorem(coldKey(activationAdmission)), Run: func(value Activation) bool {
 		if candidateCount == 0 {
-			return Activated(frame)
+			return true
 		}
-		locator, locatorOK := NewActivationLocator(application, target, endpoint)
-		if !locatorOK {
-			return ActivationResult{}
-		}
-		return Activated(frame, locator)
+		return Activate(value, application, target, endpoint)
 	}}
 	if !BindActivationRule(binding, activation, activationSpec) {
 		t.Fatal("selected overlay activation binding")

@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
-	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/imports"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
@@ -168,7 +167,7 @@ func rootAssembly(t *testing.T, name string) *flow.Assembly {
 		t.Fatalf("imports.Finalizer: %v", err)
 	}
 
-	flowDraft, err := flow.Build(authored.Input{Counts: counts})
+	flowDraft, err := flow.Build(flow.Input{Counts: counts})
 	if err != nil {
 		_ = moduleFinalizer.Abort()
 		_ = sourceFinalizer.Abort()

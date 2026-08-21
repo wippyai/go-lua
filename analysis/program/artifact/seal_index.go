@@ -320,7 +320,7 @@ func (artifact *Artifact) validateSealIndexes(state *sealValidationState) bool {
 		if !held {
 			return false
 		}
-		children, childrenOK := program.StaticTypeNodeChildren(index, row, true)
+		children, childrenOK := artifact.canonicalStaticNodeChildren(row, true)
 		if !childrenOK {
 			return false
 		}

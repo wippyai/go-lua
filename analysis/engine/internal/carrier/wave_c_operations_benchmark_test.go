@@ -90,7 +90,7 @@ func newWaveCCarrierOperationFixture(tb testing.TB, factors, inputs int, shared 
 	join := composition.AllMergeScope()
 	widen, widenOK := composition.SealWidening(nil)
 	narrow, narrowOK := composition.SealNarrowing(nil)
-	plan, planOK := composition.SealContribution(inputs, nil, nil)
+	plan, planOK := composition.SealContribution(inputs, nil, nil, true)
 	if !restricted || !widenOK || !narrowOK || !planOK {
 		tb.Fatal("Wave-C operation setup")
 	}

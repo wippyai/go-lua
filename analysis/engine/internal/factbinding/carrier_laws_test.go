@@ -321,7 +321,7 @@ func TestMergeSelectedPointStateUsesExactRightOutsideSelectedKeys(t *testing.T) 
 		t.Fatal("composition")
 	}
 	selection := scopedWidenScope(t, composition, selectedFixture, 0)
-	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("all-writes plan")
 	}
@@ -449,7 +449,7 @@ func TestMergeSelectedPointStateNarrowUsesFullExactRight(t *testing.T) {
 	if !ok {
 		t.Fatal("narrow selection")
 	}
-	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("all-writes plan")
 	}
@@ -525,7 +525,7 @@ func TestMergeSelectedPointStateNarrowRejectsUnselectedExactRightGrowth(t *testi
 	if !ok {
 		t.Fatal("narrow selection")
 	}
-	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil)
+	plan, ok := composition.SealContribution(0, []shape.Slot{0, 1}, nil, false)
 	if !ok {
 		t.Fatal("all-writes plan")
 	}

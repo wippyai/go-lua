@@ -356,7 +356,7 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 			environment = &bound
 		}
 		fold := folds[index]
-		plan, planOK := runtime.SealContribution(group.InputCount(), fold.writes, fold.sources, environment != nil)
+		plan, planOK := runtime.SealContribution(group.InputCount(), fold.writes, fold.sources, fold.supportPrune, environment != nil)
 		if !planOK {
 			return nil, false
 		}

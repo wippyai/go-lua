@@ -11,11 +11,17 @@ import (
 // second initial-publication call is an identity lookup, not another spec copy or
 // compilation.
 func TestTopologyGraphReturnsSealedInitialPayload(t *testing.T) {
-	fixture := newTriggerBindingFixture(t)
-	topology, sealed := fixture.sealWithRows(
-		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application}},
-		[]ActivationRowSpec{fixture.row(fixture.application, triggerBindingKey(11), triggerBindingKey(12))},
-	)
+	fixture := newTemplateMaterializationFixture(t)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Points:           []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
+	})
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
@@ -37,17 +43,30 @@ func TestTopologyGraphReturnsSealedInitialPayload(t *testing.T) {
 }
 
 func TestTopologyGraphAcceptedRevisionIsACompactSharedView(t *testing.T) {
-	fixture := newTriggerBindingFixture(t)
-	target, endpoint := triggerBindingKey(11), triggerBindingKey(12)
-	topology, sealed := fixture.sealWithRows(
-		[]ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application}},
-		[]ActivationRowSpec{fixture.row(fixture.application, target, endpoint)},
-	)
+	fixture := newTemplateMaterializationFixture(t)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Points:           []PointSpec{{Site: fixture.actualInput}, {Site: fixture.actualOutput}},
+	})
 	if !sealed || topology == nil {
 		t.Fatal("topology seal")
 	}
-	trigger := topology.rows.members[0]
-	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: fixture.application, Target: target, Endpoint: endpoint})
+	origin := MaterializationOrigin{Family: boundaryKey(92), Application: boundaryKey(94), Target: boundaryKey(95), Endpoint: boundaryKey(96), TriggerOrdinal: 0}
+	materialized, materializedOK = materialized.WithOrigin(origin)
+	if !materializedOK {
+		t.Fatal("binding origin")
+	}
+	trigger := boundaryKey(93)
+	topology.materializations = []TemplateMaterialization{materialized}
+	topology.instanceKeys = []composition.Key{trigger}
+	topology.triggers[trigger] = activationTriggerBinding{family: origin.Family, application: origin.Application}
+	member, memberOK := topology.SelectActivationMember(trigger, PairLocator{Application: origin.Application, Target: origin.Target, Endpoint: origin.Endpoint})
 	if !memberOK {
 		t.Fatal("binding member")
 	}
@@ -74,7 +93,7 @@ func TestTopologyGraphAcceptedRevisionIsACompactSharedView(t *testing.T) {
 }
 
 func TestGraphSummaryKeyRangeRetainsSealedOwnerAndOrder(t *testing.T) {
-	fixture := newActivationRowFixtureWithGrammar(t, true, false)
+	fixture := newTemplateMaterializationFixtureWithGrammar(t, true, false)
 	surface := Surface{Factor: boundaryKey(201), Form: SurfaceReadSummary, Local: 1,
 		Semantic: boundaryKey(218), Normalizer: boundaryKey(218)}
 	keys := []uint64{1, 3}
@@ -120,7 +139,23 @@ func TestGraphSummaryKeyRangeRetainsSealedOwnerAndOrder(t *testing.T) {
 }
 
 func TestActivationGraphOverlayBuildsFeedbackCertificate(t *testing.T) {
-	topology := newOverlayBaseTopology(t)
+	fixture := newTemplateMaterializationFixtureWithGrammar(t, true, true)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Queries: []QueryInstance{{Family: fixture.query, Point: PointAt(0), Surfaces: []Surface{{
+			Factor: boundaryKey(201), Form: SurfaceReadSummary, Local: 1,
+			Semantic: boundaryKey(218), Normalizer: boundaryKey(218),
+		}}}},
+	})
+	if !sealed || topology == nil {
+		t.Fatal("topology seal")
+	}
 	base, baseOK := initialGraph(topology)
 	if !baseOK || base == nil || base.FactorEdgeTotal() == 0 {
 		t.Fatal("base factor edge")
@@ -147,13 +182,29 @@ func TestActivationGraphOverlayBuildsFeedbackCertificate(t *testing.T) {
 	if !addedOK || added.Key() != selected.Key() {
 		t.Fatal("selected factor addition certificate")
 	}
-	if _, demanded := overlay.DemandWithPoints([]Point{selected.Target()}); !demanded {
-		t.Fatal("feedback overlay explicit demand")
+	if _, demanded := overlay.Demand(); !demanded {
+		t.Fatal("feedback overlay demand")
 	}
 }
 
 func TestActivationGraphOverlayCarriesInstalledDirectEdgesAcrossFrontiers(t *testing.T) {
-	topology := newOverlayBaseTopology(t)
+	fixture := newTemplateMaterializationFixtureWithGrammar(t, true, true)
+	materialized, materializedOK := MaterializeTemplateBoundary(fixture.source, fixture.binding,
+		[]Site{fixture.input.Site(), fixture.local, fixture.output.Site()}, fixture.inputs)
+	if !materializedOK {
+		t.Fatal("materialization")
+	}
+	topology, sealed := SealTopology(fixture.source, TopologySpec{
+		Batch:            fixture.actuals,
+		Materializations: []TemplateMaterialization{materialized},
+		Queries: []QueryInstance{{Family: fixture.query, Point: PointAt(0), Surfaces: []Surface{{
+			Factor: boundaryKey(201), Form: SurfaceReadSummary, Local: 1,
+			Semantic: boundaryKey(218), Normalizer: boundaryKey(218),
+		}}}},
+	})
+	if !sealed || topology == nil {
+		t.Fatal("topology seal")
+	}
 	base, baseOK := initialGraph(topology)
 	if !baseOK || base == nil || base.FactorEdgeTotal() == 0 {
 		t.Fatal("base factor edge")
@@ -208,42 +259,6 @@ func TestActivationGraphOverlayCarriesInstalledDirectEdgesAcrossFrontiers(t *tes
 			t.Fatal("feedback direct edge certificate")
 		}
 	}
-}
-
-// newOverlayBaseTopology builds the smallest ordinary graph with one static
-// Factor edge. The overlay laws are about publication of a semantic graph
-// delta, so their base does not need a second activation receipt or a formal
-// target transaction.
-func newOverlayBaseTopology(t testing.TB) *Topology {
-	t.Helper()
-	factor := boundaryKey(151)
-	source, sourceOK := composition.Seal(composition.Candidate{Factors: []composition.Factor{{Key: factor}}})
-	if !sourceOK || source == nil {
-		t.Fatal("overlay composition")
-	}
-	scope := EmptyScope()
-	batch := NewBatch()
-	left, leftOK := batch.AdmitSite(boundaryKey(152), scope, FalseExpr(), InitAbsent)
-	right, rightOK := batch.AdmitSite(boundaryKey(153), scope, FalseExpr(), InitAbsent)
-	omega, omegaOK := NewReindex(scope, scope, nil)
-	if !leftOK || !rightOK || !omegaOK || !batch.Seal() {
-		t.Fatal("overlay base batch")
-	}
-	input := BoundaryInput(left, right, boundaryKey(154), TrueExpr(), omega, TrueExpr())
-	if !input.Available() {
-		t.Fatal("overlay base input")
-	}
-	topology, sealed := SealTopology(source, TopologySpec{
-		Batch:  batch,
-		Points: []PointSpec{{Site: left}, {Site: right}},
-		FactorEdges: []FactorEdge{{
-			Target: PointAt(1), Input: input, Factor: factor,
-		}},
-	})
-	if !sealed || topology == nil {
-		t.Fatal("overlay base topology")
-	}
-	return topology
 }
 
 // initialGraph is the test-local spelling of "the sealed base publication":

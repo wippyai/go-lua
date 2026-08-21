@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
-	"github.com/wippyai/go-lua/analysis/program/flow/body"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
@@ -16,7 +15,7 @@ func TestRootClassUsesStableFamilyDiscriminatorsForUnavailableRows(t *testing.T)
 	if !first.Available() || !second.Available() || first == second {
 		t.Fatal("rootClass did not preserve stable family-qualified identities")
 	}
-	paths, err := deriveRootPaths(structuralSourceViewForTest(), &body.Result{}, nil, [keyspace.FamilyCount][]identity.ContentID{})
+	paths, err := deriveRootPaths(structuralSourceViewForTest(), nil, [keyspace.FamilyCount][]identity.ContentID{})
 	if err != nil || len(paths) != int(keyspace.FamilyCount) {
 		t.Fatalf("empty root path derivation = %#v, %v; want empty planes", paths, err)
 	}

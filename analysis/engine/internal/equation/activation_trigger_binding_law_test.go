@@ -38,6 +38,7 @@ func newTriggerBindingFixture(t testing.TB) triggerBindingFixture {
 		Rules: []composition.Rule{{
 			Key:           rule,
 			OperandFamily: operandFamily,
+			Admission:     composition.Admission{Kind: composition.AdmissionTrustedTheorem, Identity: triggerBindingKey(5)},
 			OutputKind:    composition.StructuralOutput,
 			Activations:   []composition.ActivationRange{{Family: family}},
 		}},
@@ -63,35 +64,33 @@ func newTriggerBindingFixture(t testing.TB) triggerBindingFixture {
 }
 
 func (fixture triggerBindingFixture) seal(bindings []ActivationTriggerBinding) (*Topology, bool) {
-	return fixture.sealWithRows(bindings, nil)
+	return fixture.sealWithCandidates(bindings, nil)
 }
 
-func (fixture triggerBindingFixture) sealWithRows(bindings []ActivationTriggerBinding, rows []ActivationRowSpec) (*Topology, bool) {
+func (fixture triggerBindingFixture) sealWithCandidates(bindings []ActivationTriggerBinding, candidates []DirectActivationCandidate) (*Topology, bool) {
 	return SealTopology(fixture.cold, TopologySpec{
 		Batch:              fixture.batch,
 		Rules:              []RuleInstance{fixture.instance},
 		Points:             fixture.points,
 		Groups:             []Group{fixture.group},
-		ActivationRows:     rows,
+		DirectCandidates:   candidates,
 		ActivationTriggers: bindings,
 	})
 }
 
-// row builds one direct activation row anchored on the single trigger
-// instance, under the locator the caller states.
-func (fixture triggerBindingFixture) row(application, target, endpoint composition.Key) ActivationRowSpec {
-	return ActivationRowSpec{
-		TriggerOrdinal: 0,
-		Family:         fixture.family,
-		Application:    application,
-		Target:         target,
-		Endpoint:       endpoint,
-		Trigger:        PointAt(0),
-		Entries:        []PointRef{PointAt(0)},
-		Exits:          []PointRef{PointAt(0)},
-		Imports:        []composition.Key{fixture.factor},
-		Export:         fixture.export,
+// candidate builds one direct candidate anchored on the single trigger
+// instance, under the origin the caller states.
+func (fixture triggerBindingFixture) candidate(t testing.TB, origin MaterializationOrigin) DirectActivationCandidate {
+	t.Helper()
+	set, setOK := NewDirectActivationTransportSet(fixture.cold, fixture.batch, []PointRef{PointAt(0)}, []PointRef{PointAt(0)}, []composition.Key{fixture.factor}, fixture.export)
+	if !setOK {
+		t.Fatal("trigger binding transport set")
 	}
+	value, valueOK := NewDirectActivationCandidate(fixture.cold, fixture.batch, origin, PointAt(0), set)
+	if !valueOK {
+		t.Fatal("trigger binding candidate")
+	}
+	return value
 }
 
 // TestActivationTriggerIsBoundWithoutACandidate proves the trigger's family and
@@ -158,28 +157,28 @@ func TestActivationTriggerBindingRejectsMalformedDeclarations(t *testing.T) {
 	}
 }
 
-// TestActivationRowCannotDisagreeWithItsTrigger keeps the row plane downstream
-// of the trigger declaration: a row indexes transports of a bound trigger
-// under that trigger's family and application, and cannot introduce a trigger
-// or application of its own.
-func TestActivationRowCannotDisagreeWithItsTrigger(t *testing.T) {
+// TestActivationReceiptCannotDisagreeWithItsTrigger keeps the candidate plane
+// downstream of the trigger declaration: a receipt indexes candidates of a
+// bound trigger under that trigger's family and application, and cannot
+// introduce a trigger, a family, or an application of its own.
+func TestActivationReceiptCannotDisagreeWithItsTrigger(t *testing.T) {
 	fixture := newTriggerBindingFixture(t)
 	declared := []ActivationTriggerBinding{{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application}}
-	agreeing := fixture.row(fixture.application, triggerBindingKey(11), triggerBindingKey(12))
-	topology, sealed := fixture.sealWithRows(declared, []ActivationRowSpec{agreeing})
+	agreeing := MaterializationOrigin{TriggerOrdinal: 0, Family: fixture.family, Application: fixture.application, Target: triggerBindingKey(11), Endpoint: triggerBindingKey(12)}
+	topology, sealed := fixture.sealWithCandidates(declared, []DirectActivationCandidate{fixture.candidate(t, agreeing)})
 	if !sealed || topology == nil {
-		t.Fatal("a row agreeing with its declared trigger was refused")
+		t.Fatal("a candidate agreeing with its declared trigger was refused")
 	}
-	for name, row := range map[string]ActivationRowSpec{
-		"foreign-application": fixture.row(triggerBindingKey(13), triggerBindingKey(11), triggerBindingKey(12)),
+	for name, origin := range map[string]MaterializationOrigin{
+		"foreign-application": {TriggerOrdinal: 0, Family: fixture.family, Application: triggerBindingKey(13), Target: triggerBindingKey(11), Endpoint: triggerBindingKey(12)},
 		"unbound-trigger":     agreeing,
 	} {
 		bindings := declared
 		if name == "unbound-trigger" {
 			bindings = nil
 		}
-		if topology, sealed := fixture.sealWithRows(bindings, []ActivationRowSpec{row}); sealed || topology != nil {
-			t.Fatalf("%s row was sealed", name)
+		if topology, sealed := fixture.sealWithCandidates(bindings, []DirectActivationCandidate{fixture.candidate(t, origin)}); sealed || topology != nil {
+			t.Fatalf("%s candidate was sealed", name)
 		}
 	}
 }

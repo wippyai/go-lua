@@ -195,30 +195,6 @@ func (binding *SchemaBinding) Seal() bool {
 		state.poisonLocked()
 		return false
 	}
-	// Inventory the terminal Rule lanes before mutating any ordinary cell. A
-	// non-activation Rule must have the package-private finalizer; otherwise a
-	// newly introduced ordinary implementation could be silently published
-	// with its draft handles still live. Activation has its own sealed lane and
-	// deliberately retains its draft Rule/read state.
-	for _, cell := range state.rules {
-		if _, ordinary := cell.(interface{ finalizeOrdinaryRuleCell() }); ordinary {
-			continue
-		}
-		if _, activation := cell.(*schemaActivationRuleBindingCell); activation {
-			continue
-		}
-		state.poisonLocked()
-		return false
-	}
-	// Every fallible check is complete. Ordinary Rule cells now publish their
-	// direct immutable geometry and drop the draft Rule/write/carry handles;
-	// activation cells do not implement this method and retain their separate
-	// validation/execution lane.
-	for _, cell := range state.rules {
-		if finalizer, ok := cell.(interface{ finalizeOrdinaryRuleCell() }); ok {
-			finalizer.finalizeOrdinaryRuleCell()
-		}
-	}
 	state.phase = schemaBindingSealed
 	return true
 }

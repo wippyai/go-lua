@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 )
 
-func deriveTermPaths(sourceView source.View, cellRoles source.CellRoles, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, outcomes *outcome.Result, edges [keyspace.FamilyCount][]edgeDescriptor, bodyPaths []identity.ContentID, descriptors [keyspace.FamilyCount][]identity.ContentID, roots [keyspace.FamilyCount][]identity.ContentID, resolver *structuralResolver) ([keyspace.FamilyCount][]identity.ContentID, error) {
+func deriveTermPaths(sourceView source.View, cellRoles source.CellRoles, view authored.View, bindings binding.Result, bodies *body.Result, forest *containment.Result, outcomes *outcome.Result, bodyPaths []identity.ContentID, resolver *structuralResolver) ([keyspace.FamilyCount][]identity.ContentID, error) {
 	var paths [keyspace.FamilyCount][]identity.ContentID
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
 		// Every family owns its ordinal-zero sentinel, including an empty
