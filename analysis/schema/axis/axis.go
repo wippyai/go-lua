@@ -410,7 +410,6 @@ func Payload[T any](cell Cell) (T, bool) {
 // is immutable once built.
 type Template[A any] struct {
 	key schema.Key
-	id  schema.EntryID
 
 	storage      Storage
 	cardinality  Cardinality
@@ -433,7 +432,6 @@ func New[A any](spec Spec[A]) (*Template[A], bool) {
 	}
 	template := &Template[A]{
 		key:          spec.Key,
-		id:           schema.NewEntryID(schema.SurfaceKindAxis, spec.Key),
 		storage:      spec.Storage,
 		cardinality:  spec.Cardinality,
 		lifetime:     spec.Lifetime,
@@ -479,7 +477,12 @@ func specAdmissible[A any](spec Spec[A]) bool {
 
 func (template *Template[A]) Key() schema.Key { return template.key }
 
-func (template *Template[A]) ID() schema.EntryID { return template.id }
+func (template *Template[A]) ID() schema.EntryID {
+	if template == nil {
+		return schema.EntryID{}
+	}
+	return schema.NewEntryID(schema.SurfaceKindAxis, template.key)
+}
 
 func (template *Template[A]) Storage() Storage { return template.storage }
 
@@ -568,7 +571,7 @@ func (template *Template[A]) declaredRoles() []schema.Key {
 // surface's own law, stated by Seal, so an incomplete axis is reported as the
 // incomplete axis it is rather than as an unidentifiable row.
 func (template *Template[A]) EntryAvailable() bool {
-	return template != nil && template.key.Available() && template.id.Available()
+	return template != nil && template.key.Available() && template.ID().Available()
 }
 
 // EntryContent writes this axis's declarative half: the semantic roles it is
@@ -748,15 +751,16 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		// that the identity a verdict carries is this surface's own derivation
 		// of this entry's key, so an entry cannot travel under another
 		// surface's identity.
-		if !template.key.Available() || template.id != schema.NewEntryID(schema.SurfaceKindAxis, template.key) {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawAxisIdentity, schema.DispositionMalformed)
+		if !template.EntryAvailable() {
+			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.ID(), LawAxisIdentity, schema.DispositionMalformed)
 		}
-		keys[template.key] = template.id
+		id := template.ID()
+		keys[template.key] = id
 		if !template.metadataComplete() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawMetadataComplete, schema.DispositionIncomplete)
+			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMetadataComplete, schema.DispositionIncomplete)
 		}
 		if !template.fieldsComplete() {
-			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawFieldComplete, schema.DispositionIncomplete)
+			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawFieldComplete, schema.DispositionIncomplete)
 		}
 		// Every role an axis names is a declared member of the semantic role
 		// vocabulary. The vocabulary raises the two ways the name fails - one it
@@ -765,7 +769,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		// here is this declaration.
 		for _, role := range template.declaredRoles() {
 			if _, disposition := structure.Resolve(sealed, role, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawSemanticIdentity, disposition)
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawSemanticIdentity, disposition)
 			}
 		}
 		// One role is one axis. Two axes declared under one role would be one
@@ -774,7 +778,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 		if prior, duplicate := semantics[template.semantic]; duplicate {
 			return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawSemanticUnique, schema.DispositionDuplicate)
 		}
-		semantics[template.semantic] = template.id
+		semantics[template.semantic] = id
 	}
 	// One published column has one writer. The pair a publication is admitted
 	// under is exactly the pair sealed here, so a second declaration of one
@@ -784,12 +788,12 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, output := range template.outputs {
 			if !output.Available() {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputDeclared, schema.DispositionIncomplete)
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.ID(), LawOutputDeclared, schema.DispositionIncomplete)
 			}
 			if prior, duplicate := outputs[output.Key]; duplicate {
 				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawOutputUnique, schema.DispositionDuplicate)
 			}
-			outputs[output.Key] = template.id
+			outputs[output.Key] = template.ID()
 		}
 	}
 	// A writer is a declared axis, because an axis is a writer principal. A
@@ -798,7 +802,7 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, output := range template.outputs {
 			if _, declared := keys[output.Writer]; !declared {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputWriterResolves, schema.DispositionIncomplete)
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.ID(), LawOutputWriterResolves, schema.DispositionIncomplete)
 			}
 		}
 	}
@@ -807,10 +811,10 @@ func (contribution surface[A]) Seal(view schema.View, sealed schema.Sealed) sche
 	for _, template := range templates {
 		for _, dependency := range template.dependencies {
 			if dependency == template.key {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionMalformed)
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.ID(), LawDependencyResolves, schema.DispositionMalformed)
 			}
 			if _, declared := keys[dependency]; !declared {
-				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawDependencyResolves, schema.DispositionIncomplete)
+				return schema.SurfaceLawFailure(schema.SurfaceKindAxis, template.ID(), LawDependencyResolves, schema.DispositionIncomplete)
 			}
 		}
 	}
@@ -837,7 +841,7 @@ func firstCyclicEntry[A any](templates []*Template[A]) (schema.EntryID, bool) {
 	}
 	for _, template := range templates {
 		if _, done := placed[template.key]; !done {
-			return template.id, true
+			return template.ID(), true
 		}
 	}
 	return schema.EntryID{}, true
