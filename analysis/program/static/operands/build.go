@@ -4,11 +4,11 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // Build validates and seals Static's exact operand sidecars. It consumes the
@@ -39,11 +39,6 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, types statictypes.T
 			return Table{}, errors.New("program/static/operands: oversized claim table")
 		}
 	}
-	claimTarget, ok := rows.NewTable(keyspace.FamilyValueClaim, targets)
-	if !ok {
-		return Table{}, errors.New("program/static/operands: oversized claim lookup")
-	}
-
 	typeValue := rows.NewTableBuilder[keyspace.Term](keyspace.FamilyTypeValue)
 	for _, row := range input.TypeValue {
 		if !validTypeValueTarget(counts, types, refs, row.Target) {
@@ -69,11 +64,10 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32, types statictypes.T
 		return Table{}, errors.New("program/static/operands: oversized annotation index")
 	}
 	return Table{
-		claim:       claim.Seal(),
-		claimTarget: claimTarget,
-		typeValue:   typeValue.Seal(),
-		annotation:  annotations,
-		index:       index,
+		claim:      claim.Seal(),
+		typeValue:  typeValue.Seal(),
+		annotation: annotations,
+		index:      index,
 	}, nil
 }
 

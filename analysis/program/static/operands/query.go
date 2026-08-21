@@ -1,6 +1,8 @@
 package operands
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	staticrole "github.com/wippyai/go-lua/analysis/program/static/role"
 )
@@ -60,8 +62,22 @@ func (view ClaimTargets) Target(claim keyspace.Term) (keyspace.Term, bool) {
 	if !view.view.available {
 		return 0, false
 	}
-	target, ok := view.view.table.claimTarget.Row(claim)
-	return target, ok && target != 0
+	if keyspace.TermFamily(claim) != keyspace.FamilyValueClaim || keyspace.TermOrdinal(claim) == 0 {
+		return 0, false
+	}
+	rows := view.view.table.claim
+	position := sort.Search(rows.Count(), func(index int) bool {
+		row, ok := rows.At(index)
+		return ok && row.Claim >= claim
+	})
+	if position == rows.Count() {
+		return 0, false
+	}
+	row, ok := rows.At(position)
+	if !ok || row.Claim != claim || row.Target == 0 {
+		return 0, false
+	}
+	return row.Target, true
 }
 
 func (view TypeValueTargets) Count() int {

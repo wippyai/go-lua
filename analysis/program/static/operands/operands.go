@@ -10,9 +10,9 @@ package operands
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/internal/rows"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/rows"
 )
 
 // ClaimTarget is the optional authored type operand of one Flow ValueClaim.
@@ -102,14 +102,12 @@ func (index AnnotationIndex) find(target keyspace.Term) int {
 // Table is the sealed immutable operand relation set.
 //
 // claim is the sparse semantic relation in canonical Flow ValueClaim order.
-// claimTarget is its dense ordinal lookup derivative: a zero entry means the
-// sparse relation has no row for that Flow claim.
+// Queries resolve it directly; no second dense target plane is retained.
 type Table struct {
-	claim       rows.Rows[ClaimTarget]
-	claimTarget rows.Table[keyspace.Term]
-	typeValue   rows.Table[keyspace.Term]
-	annotation  rows.Table[Annotation]
-	index       AnnotationIndex
+	claim      rows.Rows[ClaimTarget]
+	typeValue  rows.Table[keyspace.Term]
+	annotation rows.Table[Annotation]
+	index      AnnotationIndex
 }
 
 // ClaimCount is the sparse semantic ClaimTarget denominator: only claims with
@@ -170,8 +168,8 @@ func (table Table) VisitContainment(attach func(parent, child keyspace.Term) boo
 	if attach == nil {
 		return false
 	}
-	for claim, target := range table.claimTarget.Terms() {
-		if target != 0 && !attach(claim, target) {
+	for _, row := range table.claim.All() {
+		if row.Target != 0 && !attach(row.Claim, row.Target) {
 			return false
 		}
 	}

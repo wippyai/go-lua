@@ -14,8 +14,8 @@ const (
 )
 
 // WriteContent emits the sparse ClaimTarget relation and the two dense
-// sidecars. The dense claim lookup and the annotation query index are derived
-// indexes and are intentionally excluded from the stream.
+// sidecars. The annotation query index is a derived index and is intentionally
+// excluded from the stream.
 func WriteContent(writer *framing.Writer, table Table) error {
 	if writer == nil {
 		return framing.ErrNilDestination
