@@ -21,23 +21,6 @@ type Result struct {
 	hosts         []keyspace.Term
 	chunk         keyspace.Term
 	functionCells []keyspace.Term
-	captures      []captureCellRole
-	loops         []loopCellRole
-}
-
-// These private inverse sidecars are populated while their authoritative CSR
-// rows are sealed.  They let the semantic certificate prove one Cell's
-// capture/loop position without reopening or scanning Function/Loop storage.
-type captureCellRole struct {
-	function keyspace.Term
-	outer    keyspace.Term
-	position uint32
-}
-
-type loopCellRole struct {
-	loop     keyspace.Term
-	position uint32
-	kind     kind.LoopKind
 }
 
 // Matches reports whether r was sealed for the exact Source and authored Flow

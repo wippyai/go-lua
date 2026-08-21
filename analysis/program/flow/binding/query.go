@@ -86,43 +86,6 @@ func (r Result) FunctionCell(function keyspace.Term) (keyspace.Term, bool) {
 	return cell, true
 }
 
-// CaptureRoleForCell is the exact inverse of the Function capture CSR sealed
-// by Result.  It is owner-fenced and O(1): callers cannot reopen Functions to
-// discover or re-rank a capture.
-func (r Result) CaptureRoleForCell(cell keyspace.Term) (function, outer keyspace.Term, position int, ok bool) {
-	if !r.available() || len(r.captures) != len(r.roles) {
-		return 0, 0, 0, false
-	}
-	ordinal, valid := r.cellOrdinal(cell)
-	if !valid || r.roles[ordinal] != kind.CellCapture {
-		return 0, 0, 0, false
-	}
-	inverse := r.captures[ordinal]
-	if inverse.function == 0 || inverse.outer == 0 || inverse.function != r.hosts[ordinal] ||
-		keyspace.TermFamily(inverse.function) != keyspace.FamilyFunction || keyspace.TermFamily(inverse.outer) != keyspace.FamilyCell {
-		return 0, 0, 0, false
-	}
-	return inverse.function, inverse.outer, int(inverse.position), true
-}
-
-// LoopRoleForCell is the exact inverse of the Loop Cell CSR sealed by
-// Result. It preserves the authoritative local position and Loop kind.
-func (r Result) LoopRoleForCell(cell keyspace.Term) (loop keyspace.Term, loopKind kind.LoopKind, position int, ok bool) {
-	if !r.available() || len(r.loops) != len(r.roles) {
-		return 0, 0, 0, false
-	}
-	ordinal, valid := r.cellOrdinal(cell)
-	if !valid || r.roles[ordinal] != kind.CellLoop {
-		return 0, 0, 0, false
-	}
-	inverse := r.loops[ordinal]
-	if inverse.loop == 0 || inverse.loop != r.hosts[ordinal] || keyspace.TermFamily(inverse.loop) != keyspace.FamilyLoop ||
-		(inverse.kind != kind.LoopNumericFor && inverse.kind != kind.LoopGenericFor) {
-		return 0, 0, 0, false
-	}
-	return inverse.loop, inverse.kind, int(inverse.position), true
-}
-
 func (r Result) cellOrdinal(cell keyspace.Term) (uint32, bool) {
 	if keyspace.TermFamily(cell) != keyspace.FamilyCell {
 		return 0, false

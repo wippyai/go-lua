@@ -119,22 +119,11 @@ func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view 
 				return err
 			}
 		case kind.CellCapture:
-			function, outer, position, inverseOK := bindings.CaptureRoleForCell(cell)
-			outerRole, outerOK := bindings.Role(outer)
-			if !inverseOK || function != host || outer == cell || !outerOK || outerRole < kind.CellGlobal || outerRole > kind.CellChunkVararg {
-				return errors.New("semanticpath: Function Capture inverse is invalid")
-			}
-			if err := claim(cell, kind.CellCapture, function, bodyTerm, uint32(position+1), 0); err != nil {
-				return err
-			}
+			// Capture rows are joined in one canonical Functions pass below;
+			// Binding has already authenticated this Cell's role and host.
 		case kind.CellLoop:
-			loop, loopKind, position, inverseOK := bindings.LoopRoleForCell(cell)
-			if !inverseOK || loop != host {
-				return errors.New("semanticpath: Loop Cell inverse is invalid")
-			}
-			if err := claim(cell, kind.CellLoop, loop, bodyTerm, uint32(position+1), uint32(loopKind)); err != nil {
-				return err
-			}
+			// Loop rows are joined in one canonical Loops pass below; Binding
+			// has already authenticated this Cell's role and host.
 		case kind.CellChunkVararg:
 			entry, entryOK := bodies.Entry()
 			chunk, chunkOK := bindings.ChunkVararg()
@@ -146,6 +135,60 @@ func deriveCellTermPaths(sourceView source.View, catalog source.CellRoles, view 
 			}
 		default:
 			return errors.New("semanticpath: Cell role is invalid")
+		}
+	}
+	functions := view.Functions()
+	for index := 0; index < functions.Count(); index++ {
+		function, functionOK := functions.At(index)
+		if !functionOK {
+			return errors.New("semanticpath: Function row is unavailable")
+		}
+		captureCount, countOK := functions.CaptureCount(function)
+		if !countOK || captureCount < 0 {
+			return errors.New("semanticpath: Function capture range is unavailable")
+		}
+		for position := 0; position < captureCount; position++ {
+			inner, outer, captureOK := functions.CaptureAt(function, position)
+			outerRole, outerOK := bindings.Role(outer)
+			if !captureOK || inner == outer || !outerOK || outerRole < kind.CellGlobal || outerRole > kind.CellChunkVararg {
+				return errors.New("semanticpath: Function Capture inverse is invalid")
+			}
+			_, innerBody, _, innerOK := cells.Get(inner)
+			if !innerOK {
+				return errors.New("semanticpath: Function Capture Cell is unavailable")
+			}
+			if err := claim(inner, kind.CellCapture, function, innerBody, uint32(position+1), 0); err != nil {
+				return err
+			}
+		}
+	}
+	loops := view.Control().Loops()
+	for index := 0; index < loops.Count(); index++ {
+		loop, loopOK := loops.At(index)
+		if !loopOK {
+			return errors.New("semanticpath: Loop row is unavailable")
+		}
+		_, loopBody, loopKind, _, rowOK := loops.Get(loop)
+		if !rowOK {
+			return errors.New("semanticpath: Loop row is unavailable")
+		}
+		// While/Repeat rows do not carry lexical header Cells. Binding's
+		// inverse query historically exposed only the two header kinds.
+		if loopKind != kind.LoopNumericFor && loopKind != kind.LoopGenericFor {
+			continue
+		}
+		cellCount, countOK := loops.CellCount(loop)
+		if !countOK || cellCount < 0 {
+			return errors.New("semanticpath: Loop Cell range is unavailable")
+		}
+		for position := 0; position < cellCount; position++ {
+			cell, cellOK := loops.CellAt(loop, position)
+			if !cellOK {
+				return errors.New("semanticpath: Loop Cell range is unavailable")
+			}
+			if err := claim(cell, kind.CellLoop, loop, loopBody, uint32(position+1), uint32(loopKind)); err != nil {
+				return err
+			}
 		}
 	}
 	for ordinal := 1; ordinal <= cells.Count(); ordinal++ {
