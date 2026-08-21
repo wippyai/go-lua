@@ -34,24 +34,22 @@ func installIndex(a *authority, input IndexInput) error {
 // and position validation, but remain absent from authored ContentID.
 func installOutcomeIdentity(a *authority, origins []keyspace.Term) error {
 	if a == nil || a.identity.counts[keyspace.FamilyOutcome] != 0 ||
-		len(a.identity.spans[keyspace.FamilyOutcome]) != 0 {
+		len(a.identity.spans[keyspace.FamilyOutcome]) != 0 || len(a.identity.outcomeOrigins) != 0 {
 		return errors.New("program/source: Outcome identity was already installed")
 	}
 	if !keyspace.TermOrdinalFits(len(origins)) {
 		return errors.New("program/source: Outcome cardinality overflow")
 	}
-	spans := make([]storedSpan, len(origins))
-	for index, body := range origins {
+	for _, body := range origins {
 		if !a.validFamilyTerm(body, keyspace.FamilyBody) {
 			return errors.New("program/source: invalid Outcome origin Body")
 		}
-		spans[index] = a.identity.spans[keyspace.FamilyBody][keyspace.TermOrdinal(body)-1]
 	}
-	if uint64(a.identity.termCount)+uint64(len(spans)) > uint64(^uint32(0)) {
+	if uint64(a.identity.termCount)+uint64(len(origins)) > uint64(^uint32(0)) {
 		return errors.New("program/source: final Term cardinality overflow")
 	}
-	a.identity.counts[keyspace.FamilyOutcome] = uint32(len(spans))
-	a.identity.spans[keyspace.FamilyOutcome] = spans
-	a.identity.termCount += uint32(len(spans))
+	a.identity.counts[keyspace.FamilyOutcome] = uint32(len(origins))
+	a.identity.outcomeOrigins = append([]keyspace.Term(nil), origins...)
+	a.identity.termCount += uint32(len(origins))
 	return nil
 }

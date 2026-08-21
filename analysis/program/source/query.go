@@ -115,10 +115,26 @@ func (v Identity) Span(term keyspace.Term) (Span, bool) {
 		return Span{}, false
 	}
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if family == keyspace.FamilyInvalid || ordinal == 0 || uint64(ordinal) > uint64(len(a.identity.spans[family])) {
+	if family == keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || ordinal > a.identity.counts[family] {
 		return Span{}, false
 	}
-	stored := a.identity.spans[family][ordinal-1]
+	var stored storedSpan
+	if family == keyspace.FamilyOutcome {
+		if uint64(ordinal) > uint64(len(a.identity.outcomeOrigins)) {
+			return Span{}, false
+		}
+		body := a.identity.outcomeOrigins[ordinal-1]
+		bodyOrdinal := keyspace.TermOrdinal(body)
+		if keyspace.TermFamily(body) != keyspace.FamilyBody || bodyOrdinal == 0 || uint64(bodyOrdinal) > uint64(len(a.identity.spans[keyspace.FamilyBody])) {
+			return Span{}, false
+		}
+		stored = a.identity.spans[keyspace.FamilyBody][bodyOrdinal-1]
+	} else {
+		if uint64(ordinal) > uint64(len(a.identity.spans[family])) {
+			return Span{}, false
+		}
+		stored = a.identity.spans[family][ordinal-1]
+	}
 	return Span{File: a.identity.name, StartLine: stored.startLine, StartCol: stored.startCol, EndLine: stored.endLine, EndCol: stored.endCol}, true
 }
 

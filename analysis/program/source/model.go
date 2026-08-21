@@ -164,10 +164,11 @@ type IndexInput struct {
 type termRange struct{ start, end uint32 }
 
 type identityStore struct {
-	name      string
-	termCount uint32
-	counts    [keyspace.FamilyCount]uint32
-	spans     [keyspace.FamilyCount][]storedSpan
+	name           string
+	termCount      uint32
+	counts         [keyspace.FamilyCount]uint32
+	spans          [keyspace.FamilyCount][]storedSpan
+	outcomeOrigins []keyspace.Term
 }
 
 // storedSpan omits the repeated source file. Public queries reconstruct File
