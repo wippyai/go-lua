@@ -120,6 +120,18 @@ type ActionSequence struct {
 // wrapper arm contributes one carrier per slice member it declares. An arm this
 // cannot read is refused rather than becoming an implicit non-sequence.
 func SequenceCarriers(root string) ([]SequenceCarrier, error) {
+	records, err := parserRecordTypes(root)
+	if err != nil {
+		return nil, err
+	}
+	return sequenceCarriers(root, records)
+}
+
+// sequenceCarriers derives the list-carrier denominator from parser source
+// using an already-issued parser-private record table. DiscoverProducts has
+// to retain that table for product construction, so reparsing parser.go.y here
+// would make one source census pay for the same record authority twice.
+func sequenceCarriers(root string, records map[string][]Field) ([]SequenceCarrier, error) {
 	path := filepath.Join(root, "compiler", "parse", "parser.go.y")
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -130,10 +142,6 @@ func SequenceCarriers(root string) ([]SequenceCarrier, error) {
 		return nil, err
 	}
 	union, err := declaredUnion(path, string(contents))
-	if err != nil {
-		return nil, err
-	}
-	records, err := parserRecordTypes(root)
 	if err != nil {
 		return nil, err
 	}

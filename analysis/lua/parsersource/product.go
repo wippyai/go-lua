@@ -292,7 +292,10 @@ func newProductBuilder(root string) (*productBuilder, error) {
 		slots:        make(map[string]UseSlot),
 		carriers:     make(map[string][]SequenceCarrier),
 	}
-	carriers, err := SequenceCarriers(root)
+	// Sequence carriers consume the same parser-private record table already
+	// admitted above. Keeping this derivation on the existing table avoids a
+	// second parser.go.y parse during one product census.
+	carriers, err := sequenceCarriers(root, records)
 	if err != nil {
 		return nil, err
 	}
