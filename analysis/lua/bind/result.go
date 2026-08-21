@@ -15,8 +15,7 @@ type Result struct {
 
 	nextSymbolID Symbol
 
-	names map[Symbol]string
-	kinds map[Symbol]SymbolKind
+	symbols map[Symbol]symbolInfo
 
 	functions       []*ast.FunctionExpr
 	functionOrigins map[*ast.FunctionExpr]FunctionOrigin
@@ -76,8 +75,7 @@ func newResult() *Result {
 		identSymbols:             make(map[*ast.IdentExpr]Symbol),
 		implicitGlobalUses:       make(map[*ast.IdentExpr]struct{}),
 		callSpellings:            make(map[*ast.FuncCallExpr]string),
-		names:                    make(map[Symbol]string),
-		kinds:                    make(map[Symbol]SymbolKind),
+		symbols:                  make(map[Symbol]symbolInfo),
 		functionOrigins:          make(map[*ast.FunctionExpr]FunctionOrigin),
 		directCaptures:           make(map[*ast.FunctionExpr][]Capture),
 		varargSymbols:            make(map[*ast.FunctionExpr]Symbol),

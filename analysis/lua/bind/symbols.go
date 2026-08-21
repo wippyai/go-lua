@@ -21,6 +21,15 @@ const (
 // lowering publishes canonical Program identities.
 type Symbol uint64
 
+// symbolInfo is the single metadata row for one Result-scoped symbol.
+// Name and Kind are two views of the same declaration identity; keeping them
+// together prevents the binder from maintaining parallel keyed stores that
+// can disagree.
+type symbolInfo struct {
+	name string
+	kind SymbolKind
+}
+
 // SymbolOf returns the declaration symbol bound to an identifier occurrence.
 func (r *Result) SymbolOf(ident *ast.IdentExpr) (Symbol, bool) {
 	if r == nil || ident == nil {
@@ -155,7 +164,7 @@ func (r *Result) Name(id Symbol) string {
 	if r == nil {
 		return ""
 	}
-	return r.names[id]
+	return r.symbols[id].name
 }
 
 // CallSpelling returns the binder-owned optional authored name for one parser
@@ -174,8 +183,8 @@ func (r *Result) Kind(id Symbol) (SymbolKind, bool) {
 	if r == nil {
 		return SymbolUnknown, false
 	}
-	kind, ok := r.kinds[id]
-	return kind, ok
+	info, ok := r.symbols[id]
+	return info.kind, ok
 }
 
 // LocalSymbolAt returns the local symbol at index for stmt.
@@ -232,8 +241,7 @@ func cloneSymbols(ids []Symbol) []Symbol {
 func (r *Result) newSymbol(name string, kind SymbolKind) Symbol {
 	r.nextSymbolID++
 	id := r.nextSymbolID
-	r.names[id] = name
-	r.kinds[id] = kind
+	r.symbols[id] = symbolInfo{name: name, kind: kind}
 	return id
 }
 

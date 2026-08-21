@@ -192,7 +192,7 @@ func (b *binder) recordDirectCapture(id Symbol) {
 	if current == nil {
 		return
 	}
-	kind, ok := b.result.kinds[id]
+	kind, ok := b.result.Kind(id)
 	if !ok || (kind != SymbolLocal && kind != SymbolParam) {
 		return
 	}
@@ -214,7 +214,7 @@ func (b *binder) recordDirectCapture(id Symbol) {
 	seen[id] = struct{}{}
 	b.result.directCaptures[current] = append(b.result.directCaptures[current], Capture{
 		Captured:          id,
-		CapturedName:      b.result.names[id],
+		CapturedName:      b.result.Name(id),
 		DeclaringFunction: declaringFn,
 	})
 }
