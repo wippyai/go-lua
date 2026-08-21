@@ -6,19 +6,18 @@ import (
 )
 
 // View is the immutable query surface over a sealed declaration table. It
-// holds the sealed table by value: the enclosing owner checks its publication
-// fence once when it mints the view, and the rows a view already holds cannot
-// change afterwards. A zero View is permanently unavailable.
+// holds the sealed table by value. A valid table's canonical Alias table
+// carries the publication fence, so the view does not retain a second
+// availability flag. A zero View is permanently unavailable.
 type View struct {
-	table     Table
-	available bool
+	table Table
 }
 
 // View returns a query surface over this sealed table.
-func (table Table) View() View { return View{table: table, available: true} }
+func (table Table) View() View { return View{table: table} }
 
 // Available reports whether this view resolves to a sealed declaration set.
-func (view View) Available() bool { return view.available }
+func (view View) Available() bool { return view.table.alias.Family() == keyspace.FamilyTypeAlias }
 
 type Aliases struct{ view View }
 type TypeParams struct{ view View }
@@ -40,7 +39,7 @@ func (view Interfaces) Count() int    { return view.view.count(keyspace.FamilyTy
 func (view DeclaredTypes) Count() int { return view.view.count(keyspace.FamilyDeclaredType) }
 
 func (view View) count(family keyspace.Family) int {
-	if !view.available {
+	if !view.Available() {
 		return 0
 	}
 	return view.table.Count(family)
@@ -61,14 +60,14 @@ func (view DeclaredTypes) At(index int) (keyspace.Term, bool) {
 
 // term is the one canonical index-to-term projection of this vertical.
 func (view View) term(family keyspace.Family, index int) (keyspace.Term, bool) {
-	if !view.available || index < 0 || index >= view.table.Count(family) {
+	if !view.Available() || index < 0 || index >= view.table.Count(family) {
 		return 0, false
 	}
 	return keyspace.MakeTerm(family, uint32(index+1)), true
 }
 
 func (view Aliases) Get(term keyspace.Term) (keyspace.Term, keyspace.Term, keyspace.Key, source.Coordinate, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, 0, 0, source.Coordinate{}, false
 	}
 	row, ok := view.view.table.alias.Row(term)
@@ -76,7 +75,7 @@ func (view Aliases) Get(term keyspace.Term) (keyspace.Term, keyspace.Term, keysp
 }
 
 func (view Aliases) ParamCount(term keyspace.Term) (int, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	row, ok := view.view.table.alias.Row(term)
@@ -87,7 +86,7 @@ func (view Aliases) ParamCount(term keyspace.Term) (int, bool) {
 }
 
 func (view Aliases) ParamAt(term keyspace.Term, index int) (keyspace.Term, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	row, ok := view.view.table.alias.Row(term)
@@ -98,7 +97,7 @@ func (view Aliases) ParamAt(term keyspace.Term, index int) (keyspace.Term, bool)
 }
 
 func (view TypeParams) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, keyspace.Term, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, 0, 0, false
 	}
 	row, ok := view.view.table.param.Row(term)
@@ -106,7 +105,7 @@ func (view TypeParams) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, key
 }
 
 func (view Interfaces) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, source.Coordinate, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, 0, source.Coordinate{}, false
 	}
 	row, ok := view.view.table.iface.Row(term)
@@ -114,7 +113,7 @@ func (view Interfaces) Get(term keyspace.Term) (keyspace.Term, keyspace.Key, sou
 }
 
 func (view Interfaces) ExtendCount(term keyspace.Term) (int, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	row, ok := view.view.table.iface.Row(term)
@@ -125,7 +124,7 @@ func (view Interfaces) ExtendCount(term keyspace.Term) (int, bool) {
 }
 
 func (view Interfaces) ExtendAt(term keyspace.Term, index int) (keyspace.Term, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	row, ok := view.view.table.iface.Row(term)
@@ -136,7 +135,7 @@ func (view Interfaces) ExtendAt(term keyspace.Term, index int) (keyspace.Term, b
 }
 
 func (view Interfaces) MemberCount(term keyspace.Term) (int, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	row, ok := view.view.table.iface.Row(term)
@@ -147,7 +146,7 @@ func (view Interfaces) MemberCount(term keyspace.Term) (int, bool) {
 }
 
 func (view Interfaces) MemberAt(term keyspace.Term, index int) (InterfaceMember, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return InterfaceMember{}, false
 	}
 	row, ok := view.view.table.iface.Row(term)
@@ -158,7 +157,7 @@ func (view Interfaces) MemberAt(term keyspace.Term, index int) (InterfaceMember,
 }
 
 func (view DeclaredTypes) Get(term keyspace.Term) (keyspace.Term, keyspace.Term, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, 0, false
 	}
 	row, ok := view.view.table.declaredType.Row(term)
@@ -169,7 +168,7 @@ func (view DeclaredTypes) Get(term keyspace.Term) (keyspace.Term, keyspace.Term,
 // means this locally valid Cell has no authored declared type; it says nothing
 // about the Cell's later lexical role, which Static does not own.
 func (view DeclaredTypes) ForCell(cell keyspace.Term) (keyspace.Term, bool) {
-	if !view.view.available {
+	if !view.view.Available() {
 		return 0, false
 	}
 	term, ok := view.view.table.declaredByCell.Row(cell)
