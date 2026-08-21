@@ -681,16 +681,12 @@ func (r *Result) installBoundRoutePaths() error {
 	if r == nil || (len(r.boundRouteRows) == 0 && len(r.index.refs) != 0) {
 		return fmt.Errorf("bound-route phase=directory row=-1 arm=none reason=row-empty")
 	}
-	canonicalIndexBySlot := make([]int, len(r.routeIndex))
-	for index := range canonicalIndexBySlot {
-		canonicalIndexBySlot[index] = -1
-	}
 	for index := range r.index.refs {
 		ref := &r.index.refs[index]
-		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) || canonicalIndexBySlot[ref.routeIndexOrdinal] != -1 || !routeRefsEqual(ref, &r.routeIndex[ref.routeIndexOrdinal].ref) {
+		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
+		if !canonicalOK || canonical != ref || !routeRefsEqual(ref, canonical) {
 			return fmt.Errorf("bound-route phase=canonical row=%d arm=%d reason=route-index-mismatch", index, ref.arm)
 		}
-		canonicalIndexBySlot[ref.routeIndexOrdinal] = index
 	}
 	for index := range r.index.refs {
 		ref := &r.index.refs[index]
@@ -703,14 +699,10 @@ func (r *Result) installBoundRoutePaths() error {
 		}
 		ref.fromPoint, ref.toPoint = row.fromPath, row.toPath
 		ref.diagnostic = row.diagnostic
-		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
-			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=from-to-unavailable", index, ref.arm)
-		}
-		slot := ref.routeIndexOrdinal
-		if !routeRefsEqual(ref, &r.routeIndex[slot].ref) {
+		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
+		if !canonicalOK || canonical != ref || !routeRefsEqual(ref, canonical) {
 			return fmt.Errorf("bound-route phase=index row=%d arm=%d reason=route-index-oob", index, ref.arm)
 		}
-		r.routeIndex[slot].ref = *ref
 	}
 	for index := range r.boundaries.rows {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
@@ -731,15 +723,14 @@ func (r *Result) installBoundRoutePaths() error {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=route-index-oob", index, arm)
 				}
 				slot := ref.routeIndexOrdinal
-				canonical := &r.routeIndex[slot].ref
-				canonicalIndex := canonicalIndexBySlot[slot]
-				if canonicalIndex < 0 || !routeRefsEqual(&r.index.refs[canonicalIndex], canonical) || !routeRefsEqual(ref, canonical) {
+				canonical, canonicalOK := r.routeLookupRef(slot)
+				if !canonicalOK || !routeRefsEqual(ref, canonical) {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=canonical-route-mismatch", index, arm)
 				}
 				if !ref.planOrdinalSet || !canonical.planOrdinalSet || ref.planOrdinal != canonical.planOrdinal {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=plan-ordinal-mismatch", index, arm)
 				}
-				if ref.routeIndexOrdinal != slot || canonical.routeIndexOrdinal != slot || r.index.refs[canonicalIndex].routeIndexOrdinal != slot ||
+				if ref.routeIndexOrdinal != slot || canonical.routeIndexOrdinal != slot ||
 					!canonical.fromPoint.Available() || !canonical.toPoint.Available() ||
 					ref.fromPoint != canonical.fromPoint || ref.toPoint != canonical.toPoint {
 					return fmt.Errorf("bound-route phase=boundary row=%d arm=%d reason=endpoint-row-mismatch", index, arm)
@@ -754,16 +745,17 @@ func (r *Result) installBoundRoutePaths() error {
 			if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 				return fmt.Errorf("bound-route phase=write row=%d arm=%d reason=route-index-oob", index, ref.arm)
 			}
-			*ref = r.routeIndex[ref.routeIndexOrdinal].ref
+			canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
+			if !canonicalOK {
+				return fmt.Errorf("bound-route phase=write row=%d arm=%d reason=route-index-oob", index, ref.arm)
+			}
+			*ref = *canonical
 		}
 	}
 	// All aliases now contain the exact canonical ref. Drop every seal-only
 	// ordinal before publication so no Plan capability survives in any copy.
 	for index := range r.index.refs {
 		r.index.refs[index].planOrdinal, r.index.refs[index].planOrdinalSet = 0, false
-	}
-	for index := range r.routeIndex {
-		r.routeIndex[index].ref.planOrdinal, r.routeIndex[index].ref.planOrdinalSet = 0, false
 	}
 	for row := range r.boundaries.rows {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
@@ -877,9 +869,6 @@ func (r *Result) prepareWTORows() error {
 	// They must not survive as a second route/provenance authority.
 	for index := range r.index.refs {
 		r.index.refs[index].diagnostic = routeDiagnostic{}
-	}
-	for index := range r.routeIndex {
-		r.routeIndex[index].ref.diagnostic = routeDiagnostic{}
 	}
 	for row := range r.boundaries.rows {
 		for _, arm := range [...]BoundaryArmKind{BoundaryResume, BoundarySelectTrue, BoundarySelectFalse, BoundaryTail, BoundaryThrow, BoundaryYield, BoundaryCancel} {
@@ -1153,7 +1142,6 @@ func (r *Result) classifyWTORoutes(store *wtoStore, nodeRegion []uint32) error {
 	if len(lcas) != len(r.index.refs) {
 		return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyLCA, -1, -1, -1)
 	}
-	membership := make(map[identity.ContentID]identity.ContentID, len(r.index.refs))
 	for index, ref := range r.index.refs {
 		if !ref.routeDigest.Available() || !ref.semanticPath.Available() {
 			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyRoute, -1, -1, index)
@@ -1166,10 +1154,6 @@ func (r *Result) classifyWTORoutes(store *wtoStore, nodeRegion []uint32) error {
 				return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyMembership, int(region), -1, index)
 			}
 		}
-		if _, duplicate := membership[ref.routeDigest]; duplicate {
-			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyMembership, -1, -1, index)
-		}
-		membership[ref.routeDigest] = id
 		r.index.refs[index].wtoRegion = id
 		ref.wtoRegion = id
 		if region != none {
@@ -1183,11 +1167,10 @@ func (r *Result) classifyWTORoutes(store *wtoStore, nodeRegion []uint32) error {
 		}
 	}
 	for index := range r.routeIndex {
-		id, present := membership[r.routeIndex[index].ref.routeDigest]
-		if !present {
+		ref, refOK := r.routeLookupRef(uint32(index))
+		if !refOK || ref.routeDigest != r.routeIndex[index].digest {
 			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyRoute, index, -1, -1)
 		}
-		r.routeIndex[index].ref.wtoRegion = id
 	}
 	for index, ref := range r.index.writeCommitRefs {
 		if !ref.routeDigest.Available() {
@@ -1196,11 +1179,11 @@ func (r *Result) classifyWTORoutes(store *wtoStore, nodeRegion []uint32) error {
 			}
 			continue
 		}
-		id, present := membership[ref.routeDigest]
-		if !present || !ref.local || !isLocalArm(ref.arm) {
+		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
+		if !canonicalOK || canonical.routeDigest != ref.routeDigest || !canonical.local || !isLocalArm(canonical.arm) {
 			return failWTO(wtoFailurePhaseClassify, wtoFailureReasonClassifyWrite, index, -1, -1)
 		}
-		r.index.writeCommitRefs[index].wtoRegion = id
+		r.index.writeCommitRefs[index].wtoRegion = canonical.wtoRegion
 	}
 	for index := range store.regions {
 		routes := store.regions[index].routes

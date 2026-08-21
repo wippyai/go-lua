@@ -211,8 +211,11 @@ type successorRef struct {
 }
 
 type routeLookup struct {
-	digest identity.ContentID
-	ref    successorRef
+	// digest is the sorted inverse key. sourceIndex points back to the sole
+	// canonical successor-ref directory; the route ordinal is the lookup's
+	// position in Result.routeIndex and is stamped on that canonical ref.
+	digest      identity.ContentID
+	sourceIndex uint32
 }
 
 // Result is the immutable final causal authority. It retains only local Edge
@@ -295,8 +298,8 @@ type Result struct {
 	// not a third edge plane.
 	sites siteStore
 	// routeIndex is a sorted inverse over existing successor refs. It retains
-	// no endpoint/CFG copy; only the stable digest and the existing ref are
-	// needed for logarithmic semantic resolution.
+	// only the stable digest and the source ordinal into index.refs. The
+	// canonical successor ref remains the sole mutable seal/publication owner.
 	routeIndex  []routeLookup
 	routesReady bool
 	// rowsSealed records that sealRows has proven every retained Edge and

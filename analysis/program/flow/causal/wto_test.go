@@ -145,10 +145,10 @@ func TestClassifyWTORoutesUsesLowestCommonRegionAndExplicitCrossDisposition(t *t
 	rootID, childID, otherID := identity.ContentID{11}, identity.ContentID{12}, identity.ContentID{13}
 	firstDigest, secondDigest := identity.ContentID{21}, identity.ContentID{22}
 	firstPath, secondPath := identity.ContentID{31}, identity.ContentID{32}
-	first := successorRef{local: true, arm: BoundaryLocal, routeDigest: firstDigest, semanticPath: firstPath}
-	second := successorRef{local: true, arm: BoundaryLocal, routeDigest: secondDigest, semanticPath: secondPath}
+	first := successorRef{local: true, arm: BoundaryLocal, routeDigest: firstDigest, semanticPath: firstPath, routeIndexOrdinal: 0}
+	second := successorRef{local: true, arm: BoundaryLocal, routeDigest: secondDigest, semanticPath: secondPath, routeIndexOrdinal: 1}
 	r.index.refs = []successorRef{first, second}
-	r.routeIndex = []routeLookup{{digest: firstDigest, ref: first}, {digest: secondDigest, ref: second}}
+	r.routeIndex = []routeLookup{{digest: firstDigest, sourceIndex: 0}, {digest: secondDigest, sourceIndex: 1}}
 	r.pendingNodeSites = make([][]uint32, 3)
 	r.pendingWTORoutes = []pendingWTORoute{{from: 0, to: 1}, {from: 1, to: 2}}
 	store := wtoStore{
@@ -158,10 +158,10 @@ func TestClassifyWTORoutesUsesLowestCommonRegionAndExplicitCrossDisposition(t *t
 	if err := r.classifyWTORoutes(&store, []uint32{1, 0, 2}); err != nil {
 		t.Fatalf("classifyWTORoutes rejected valid nested/cross membership: %v", err)
 	}
-	if r.index.refs[0].wtoRegion != rootID || r.routeIndex[0].ref.wtoRegion != rootID || len(store.regions[0].routes) != 1 {
+	if r.index.refs[0].wtoRegion != rootID || len(store.regions[0].routes) != 1 {
 		t.Fatal("nested route was not assigned to its lowest common parent region")
 	}
-	if r.index.refs[1].wtoRegion.Available() || r.routeIndex[1].ref.wtoRegion.Available() || len(store.regions[2].routes) != 0 {
+	if r.index.refs[1].wtoRegion.Available() || len(store.regions[2].routes) != 0 {
 		t.Fatal("cross-root route was not retained as an explicit zero membership")
 	}
 }

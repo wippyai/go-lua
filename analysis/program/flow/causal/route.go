@@ -282,16 +282,10 @@ func (r *Result) installRouteSemanticPaths() bool {
 		if uint64(index) >= uint64(len(r.routeIndex)) {
 			return false
 		}
-		lookup := &r.routeIndex[index].ref
-		if !routeRefsEqual(ref, lookup) || lookup.routeIndexOrdinal != index {
+		lookup, lookupOK := r.routeLookupRef(index)
+		if !lookupOK || lookup != ref || lookup.routeIndexOrdinal != index {
 			return false
 		}
-		lookup.semanticPath = ref.semanticPath
-		lookup.semanticResetPath = ref.semanticResetPath
-		lookup.resetMembers = ref.resetMembers
-		lookup.semanticMuPath = ref.semanticMuPath
-		lookup.guardContext = ref.guardContext
-		lookup.guardDecisionPath = ref.guardDecisionPath
 		if !ref.local {
 			if uint64(ref.index) >= uint64(len(r.boundaries.rows)) || !isBoundaryArm(ref.arm) {
 				return false
@@ -317,7 +311,10 @@ func (r *Result) installRouteSemanticPaths() bool {
 		if uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 			return false
 		}
-		canonical := &r.routeIndex[ref.routeIndexOrdinal].ref
+		canonical, canonicalOK := r.routeLookupRef(ref.routeIndexOrdinal)
+		if !canonicalOK {
+			return false
+		}
 		ref.semanticPath = canonical.semanticPath
 		ref.semanticResetPath = canonical.semanticResetPath
 		ref.resetMembers = canonical.resetMembers
@@ -342,6 +339,24 @@ func routeRefsEqual(left, right *successorRef) bool {
 	return left.index == right.index && left.local == right.local && left.arm == right.arm && left.routeDigest == right.routeDigest
 }
 
+// routeLookupRef resolves one sorted route-directory ordinal to the sole
+// canonical successor reference. The sorted inverse stores no route payload;
+// every reader and seal phase must come back through this owner.
+func (r *Result) routeLookupRef(ordinal uint32) (*successorRef, bool) {
+	if r == nil || uint64(ordinal) >= uint64(len(r.routeIndex)) {
+		return nil, false
+	}
+	lookup := &r.routeIndex[ordinal]
+	if uint64(lookup.sourceIndex) >= uint64(len(r.index.refs)) {
+		return nil, false
+	}
+	ref := &r.index.refs[lookup.sourceIndex]
+	if ref.routeIndexOrdinal != ordinal || ref.routeDigest != lookup.digest {
+		return nil, false
+	}
+	return ref, true
+}
+
 // issuedRef authenticates one projection against the sole sorted route
 // directory. The directory ordinal is retained after sealing specifically so
 // hot readers can prove owner membership without rebuilding an Edge or
@@ -350,8 +365,8 @@ func (r *Result) issuedRef(ref *successorRef) bool {
 	if r == nil || !r.available() || !r.routesReady || uint64(ref.routeIndexOrdinal) >= uint64(len(r.routeIndex)) {
 		return false
 	}
-	canonical := &r.routeIndex[ref.routeIndexOrdinal].ref
-	return canonical.routeIndexOrdinal == ref.routeIndexOrdinal && routeRefsEqual(ref, canonical)
+	canonical, ok := r.routeLookupRef(ref.routeIndexOrdinal)
+	return ok && routeRefsEqual(ref, canonical)
 }
 
 // RouteIdentity is the immutable semantic identity of one final causal
@@ -704,7 +719,7 @@ func (proof RouteRecurrence) ResetDigest() (identity.ContentID, bool) {
 }
 
 // buildRouteIndex derives semantic identities from the existing two-plane
-// rows and combined successor refs. It retains only the sorted digest/ref
+// rows and combined successor refs. It retains only the sorted digest/source
 // inverse after validation; all descriptors and reset copies die at return.
 func (r *Result) buildRouteIndex() error {
 	if r == nil || !r.available() {
@@ -743,7 +758,7 @@ func (r *Result) buildRouteIndex() error {
 			return errors.New("program/flow/causal: route directory source is unavailable")
 		}
 		// Stamp the exact sorted directory slot onto the existing canonical ref.
-		// Both the canonical ref and the lookup copy carry the same path.
+		// The lookup stores only this canonical source ordinal, never a ref copy.
 		r.index.refs[descriptor.sourceIndex].routeIndexOrdinal = uint32(index)
 		descriptor.ref.routeIndexOrdinal = uint32(index)
 		// The boundary row is an alias of the canonical combined-index ref.
@@ -753,7 +768,7 @@ func (r *Result) buildRouteIndex() error {
 		if !descriptor.ref.local && uint64(descriptor.ref.index) < uint64(len(r.boundaries.rows)) && isBoundaryArm(descriptor.ref.arm) {
 			r.boundaries.rows[descriptor.ref.index].refs[descriptor.ref.arm].routeIndexOrdinal = uint32(index)
 		}
-		r.routeIndex[index] = routeLookup{digest: descriptor.id.Digest, ref: descriptor.ref}
+		r.routeIndex[index] = routeLookup{digest: descriptor.id.Digest, sourceIndex: uint32(descriptor.sourceIndex)}
 	}
 	r.routesReady = true
 	return nil

@@ -579,12 +579,15 @@ func (v Successors) Resolve(identity RouteIdentity) (Successor, bool) {
 	if found == -1 {
 		return Successor{}, false
 	}
-	ref := &v.result.routeIndex[found].ref
+	ref, refOK := v.result.routeLookupRef(uint32(found))
+	if !refOK {
+		return Successor{}, false
+	}
 	candidate, ok := v.result.routeIdentityFastForRef(ref)
 	if !ok || !compareRouteID(candidate, identity) {
 		return Successor{}, false
 	}
-	return v.result.successorForRef(&v.result.routeIndex[found].ref)
+	return v.result.successorForRef(ref)
 }
 
 func (r *Result) validResultTerm(term keyspace.Term) bool {
