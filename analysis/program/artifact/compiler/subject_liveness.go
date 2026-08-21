@@ -2,8 +2,10 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/flow/subjectflow"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	programstorage "github.com/wippyai/go-lua/analysis/program/storage"
 	"github.com/wippyai/go-lua/analysis/program/valuesource"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
@@ -37,20 +39,143 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 		// aggregate occurrence, and allocation-backed values use their own
 		// artifact identity).
 		flowSubjectID, flowSubjectOK := compiler.input.Flow().SemanticTermPath(flowRow.Subject.Term)
-		kind, kindOK := artifactSubjectLivenessKind(flowRow.Subject.Kind)
-		subjectID, subjectOK := compiler.subjectLivenessID(programID, flowRow.Subject)
+		subjects, subjectsOK := compiler.subjectLivenessCoordinates(programID, flowRow.Subject)
 		state, stateOK := artifactSubjectLivenessState(flowRow.State)
-		if !flowSubjectOK || flowSubjectID != flowRow.Subject.ID || !kindOK || !subjectOK || !stateOK || !subjectID.Available() {
+		if !flowSubjectOK || flowSubjectID != flowRow.Subject.ID || !subjectsOK || !stateOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
-		id, idOK := lifecycle.SubjectLivenessIdentity(flowRow.YieldRoute, kind, subjectID)
-		row, emitted := lifecycle.NewSubjectLiveness(id, flowRow.YieldRoute, flowRow.YieldFromPath, flowRow.YieldToPath, subjectID, kind, state)
-		if !idOK || !emitted {
-			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		for subjectIndex, subject := range subjects {
+			id, idOK := lifecycle.SubjectLivenessIdentity(flowRow.YieldRoute, subject.kind, subject.id)
+			row, emitted := lifecycle.NewSubjectLiveness(id, flowRow.YieldRoute, flowRow.YieldFromPath, flowRow.YieldToPath, subject.id, subject.kind, state)
+			if !idOK || !emitted {
+				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
+			}
+			compiler.subjectLifetimes = append(compiler.subjectLifetimes, row)
 		}
-		compiler.subjectLifetimes = append(compiler.subjectLifetimes, row)
 	}
 	return CompileFailure{}
+}
+
+type subjectLivenessCoordinate struct {
+	kind lifecycle.SubjectLivenessKind
+	id   identity.ContentID
+}
+
+// subjectLivenessCoordinates performs the sole Flow-subject to Program-value
+// ownership join. Most subjects project one coordinate. A Call subject is an
+// abstract producer until Program has sealed its consumer-side CallResult
+// geometry, so each finite result slot projects its own ValueID. Discarded and
+// open outputs have no finite scalar Value coordinate and publish no scalar
+// liveness row; they are not represented by the Call occurrence identity.
+func (compiler *compiler) subjectLivenessCoordinates(programID identity.ContentID, subject subjectflow.Subject) ([]subjectLivenessCoordinate, bool) {
+	if subject.Kind == subjectflow.SubjectValues {
+		if compiler == nil || compiler.input == nil || !programID.Available() || compiler.key.ProgramID() != programID ||
+			compiler.input.ContentID() != programID || keyspace.TermFamily(subject.Term) != keyspace.FamilyValues || !subject.ID.Available() {
+			return nil, false
+		}
+		aggregateID, aggregateIDOK := compiler.input.Flow().ValuesOccurrenceID(subject.Term)
+		if !aggregateIDOK || !aggregateID.Available() {
+			return nil, false
+		}
+		var aggregateIndex int
+		var aggregateFound bool
+		for index, aggregate := range compiler.values {
+			if aggregate.ID() != aggregateID {
+				continue
+			}
+			if aggregateFound {
+				return nil, false
+			}
+			aggregateIndex, aggregateFound = index, true
+		}
+		if !aggregateFound {
+			return nil, false
+		}
+		aggregate := compiler.values[aggregateIndex]
+		if _, open := aggregate.Tail(); !open {
+			return []subjectLivenessCoordinate{{kind: lifecycle.SubjectLivenessValues, id: aggregate.ID()}}, true
+		}
+		// An open tail has no finite scalar denominator. Preserve the known
+		// aggregate/member coordinates, but do not turn its Call/Vararg producer
+		// into a fabricated Value. Pack owns that future runtime-width proof.
+		offset, count, spanOK := aggregate.MemberSpan()
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(compiler.valuesMembers)) {
+			return nil, false
+		}
+		coordinates := make([]subjectLivenessCoordinate, 0, count+1)
+		coordinates = append(coordinates, subjectLivenessCoordinate{kind: lifecycle.SubjectLivenessValue, id: aggregate.ID()})
+		for index := uint32(0); index < count; index++ {
+			member := compiler.valuesMembers[offset+index]
+			if !member.Available() {
+				return nil, false
+			}
+			coordinates = append(coordinates, subjectLivenessCoordinate{kind: lifecycle.SubjectLivenessValue, id: member.ID()})
+		}
+		return coordinates, true
+	}
+	if keyspace.TermFamily(subject.Term) != keyspace.FamilyCall {
+		kind, kindOK := artifactSubjectLivenessKind(subject.Kind)
+		id, idOK := compiler.subjectLivenessID(programID, subject)
+		if !kindOK || !idOK || !id.Available() {
+			return nil, false
+		}
+		return []subjectLivenessCoordinate{{kind: kind, id: id}}, true
+	}
+	if compiler == nil || compiler.input == nil || subject.Kind != subjectflow.SubjectValue ||
+		!programID.Available() || compiler.key.ProgramID() != programID || compiler.input.ContentID() != programID ||
+		keyspace.TermOrdinal(subject.Term) == 0 {
+		return nil, false
+	}
+	ordinal := keyspace.TermOrdinal(subject.Term)
+	identities, callOK := compiler.input.CallIdentityAt(int(ordinal - 1))
+	if !callOK || !identities.Call.Available() {
+		return nil, false
+	}
+	var resultIndex int
+	var resultFound bool
+	for index, result := range compiler.callResults {
+		if result.CallID() != identities.Call {
+			continue
+		}
+		if resultFound {
+			return nil, false
+		}
+		resultIndex, resultFound = index, true
+	}
+	if !resultFound {
+		// A statement Call or a consumer admitting zero results has no Value.
+		return nil, true
+	}
+	result := compiler.callResults[resultIndex]
+	open, openOK := result.ResultsOpen()
+	offset, count, spanOK := result.SlotSpan()
+	if !openOK || !spanOK || open {
+		// Open results belong to the Pack/Values producer plane; no finite
+		// scalar coordinate may be fabricated for them here.
+		return nil, openOK && spanOK && open
+	}
+	if uint64(offset)+uint64(count) > uint64(len(compiler.callResultSlots)) {
+		return nil, false
+	}
+	coordinates := make([]subjectLivenessCoordinate, 0, count)
+	seen := make(map[identity.ContentID]struct{}, count)
+	for index := uint32(0); index < count; index++ {
+		slot := compiler.callResultSlots[offset+index]
+		if !slot.Available() || slot.CallID() != identities.Call {
+			return nil, false
+		}
+		valueID, valueOK := slot.ValueID()
+		if !valueOK {
+			// Structural consumers do not issue a materialized Value coordinate.
+			continue
+		}
+		if _, duplicate := seen[valueID]; duplicate {
+			return nil, false
+		}
+		seen[valueID] = struct{}{}
+		coordinates = append(coordinates, subjectLivenessCoordinate{kind: lifecycle.SubjectLivenessValue, id: valueID})
+	}
+	return coordinates, true
 }
 
 func artifactSubjectLivenessKind(kind subjectflow.SubjectKind) (lifecycle.SubjectLivenessKind, bool) {
@@ -77,12 +202,16 @@ func artifactSubjectLivenessState(state subjectflow.LivenessState) (lifecycle.Su
 	case subjectflow.LivenessDiesBefore:
 		return lifecycle.SubjectLivenessDiesBefore, true
 	default:
-		return lifecycle.SubjectLivenessUnknown, false
+		// Unknown is an authenticated Flow verdict. An out-of-vocabulary state
+		// has no Program projection and must remain invalid even if a caller
+		// accidentally drops the boolean.
+		return lifecycle.SubjectLivenessState(0), false
 	}
 }
 
 func (compiler *compiler) subjectLivenessID(programID identity.ContentID, subject subjectflow.Subject) (identity.ContentID, bool) {
-	if compiler == nil || compiler.input == nil || !compiler.input.Available() || !programID.Available() || !subject.ID.Available() || subject.Term == 0 {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() || !programID.Available() ||
+		compiler.key.ProgramID() != programID || compiler.input.ContentID() != programID || !subject.ID.Available() || subject.Term == 0 {
 		return identity.ContentID{}, false
 	}
 	flowView := compiler.input.Flow()
@@ -139,36 +268,178 @@ func flowSubjectKindTerm(kind subjectflow.SubjectKind, term keyspace.Term) bool 
 }
 
 func (compiler *compiler) valueLivenessID(programID identity.ContentID, term keyspace.Term) (identity.ContentID, bool) {
-	if term == 0 {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() || !programID.Available() ||
+		compiler.key.ProgramID() != programID || compiler.input.ContentID() != programID || term == 0 {
 		return identity.ContentID{}, false
 	}
+	input, flowView := compiler.input, compiler.input.Flow()
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
 	switch family {
 	case keyspace.FamilyFunction, keyspace.FamilyTable:
-		if id, ok := compiler.input.Flow().AllocationID(term); ok {
+		if id, ok := flowView.AllocationID(term); ok {
 			return id, true
 		}
 	case keyspace.FamilyNil, keyspace.FamilyBool, keyspace.FamilyInteger,
 		keyspace.FamilyFloat, keyspace.FamilyString:
 		if ordinal != 0 {
-			sourceID, _, issued, ok := valuesource.IdentityAt(compiler.input, family, int(ordinal-1))
+			sourceID, _, issued, ok := valuesource.IdentityAt(input, family, int(ordinal-1))
 			if ok && issued == term && sourceID.Available() {
 				return sourceID, true
 			}
 		}
+	case keyspace.FamilyRead:
+		// A storage read is owned by StorageReadIdentity. An index read is an
+		// evaluated result and reuses its owner-issued Span identity; it must not
+		// acquire a second compiler-private result identity.
+		if ordinal != 0 {
+			readID, issued, ok := programstorage.ReadIdentityAt(input, int(ordinal-1))
+			if ok && issued == term && readID.Available() {
+				return readID, true
+			}
+			if id, ok := compiler.indexReadResultLivenessID(term); ok {
+				return id, true
+			}
+		}
+	case keyspace.FamilyCall:
+		// A Call occurrence is not a Value coordinate. Its result identities
+		// exist only after copyCallRowsFailure seals consumer-side geometry and
+		// are expanded by subjectLivenessCoordinates.
+		return identity.ContentID{}, false
+	case keyspace.FamilyVararg:
+		// A storage Vararg is mounted only through the Values-tail equation.
+		// The reverse lookup is required because Flow exposes ValuesTailID on
+		// the owning Values row, while SubjectFlow carries the tail producer.
+		if id, ok := compiler.valuesTailLivenessID(term); ok {
+			return id, true
+		}
 	case keyspace.FamilyTypeValue:
-		// TypeValue is a static-only subject. Preserve its owner-issued
-		// semantic path so the Program row remains auditable; no Placement
-		// allocation consumer will project this non-allocation identity.
-		return compiler.input.Flow().SemanticTermPath(term)
+		// TypeValue is a value-source occurrence, not a generic Flow path. The
+		// source owner authenticates the executable TypeValue target and emits
+		// the identity that Link mounts for its Value coordinate.
+		if ordinal != 0 {
+			sourceID, _, issued, ok := valuesource.IdentityAt(input, family, int(ordinal-1))
+			if ok && issued == term && sourceID.Available() {
+				return sourceID, true
+			}
+		}
+	case keyspace.FamilyUnary, keyspace.FamilyBinary, keyspace.FamilySelect, keyspace.FamilyValueClaim:
+		// Link publishes these three computation rows by their exact existing
+		// Span context. Keep this as an explicit owner whitelist; no other
+		// family is allowed to borrow Span geometry as a substitute identity.
+		if id, ok := compiler.computationLivenessID(term); ok {
+			return id, true
+		}
 	}
-	// A runtime value that has no dedicated artifact semantic occurrence is
-	// still projected by its exact EvaluationSpan. If even that geometry is
-	// absent, preserve the Flow semantic path as an opaque Program subject;
-	// mounted consumers will conservatively return Unknown rather than
-	// inventing a Value coordinate.
-	if span, _, _, ok := compiler.input.EvaluationSpan(term); ok && span.Available() {
-		return span, true
+	// Missing owner issuance is a construction failure. Returning a neutral
+	// Flow path here would create a semantic row that Link cannot mount and
+	// would silently compensate for a missing value owner.
+	return identity.ContentID{}, false
+}
+
+func (compiler *compiler) indexReadResultLivenessID(term keyspace.Term) (identity.ContentID, bool) {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() ||
+		keyspace.TermFamily(term) != keyspace.FamilyRead || keyspace.TermOrdinal(term) == 0 {
+		return identity.ContentID{}, false
 	}
-	return compiler.input.Flow().SemanticTermPath(term)
+	reads := compiler.input.Flow().AccessGeometry().IndexAccesses().Reads()
+	for index := 0; index < reads.Count(); index++ {
+		rowTerm, rowOK := reads.At(index)
+		if !rowOK {
+			return identity.ContentID{}, false
+		}
+		if rowTerm != term {
+			continue
+		}
+		row, compiled := compiler.indexReadAt(index)
+		if !compiled || row.term != term || !row.resultID.Available() {
+			return identity.ContentID{}, false
+		}
+		return row.resultID, true
+	}
+	return identity.ContentID{}, false
+}
+
+// valuesTailLivenessID resolves the authored Values rows whose open tail is
+// term. Multiple rows may reuse a tail producer, but every owner must issue
+// the same ValuesTailID; disagreement is ambiguous and fails closed. No new
+// reverse index or term-path identity is retained by Artifact.
+func (compiler *compiler) valuesTailLivenessID(term keyspace.Term) (identity.ContentID, bool) {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() ||
+		keyspace.TermFamily(term) != keyspace.FamilyVararg || keyspace.TermOrdinal(term) == 0 {
+		return identity.ContentID{}, false
+	}
+	flowView := compiler.input.Flow()
+	if _, _, varargOK := flowView.Authored().Storage().Varargs().Get(term); !varargOK {
+		return identity.ContentID{}, false
+	}
+	values := flowView.Authored().Values()
+	var result identity.ContentID
+	matches := 0
+	for index := 0; index < values.Count(); index++ {
+		valueTerm, termOK := values.At(index)
+		_, tail, rowOK := values.Get(valueTerm)
+		if !termOK || !rowOK {
+			return identity.ContentID{}, false
+		}
+		if tail != term {
+			continue
+		}
+		id, idOK := flowView.ValuesTailID(valueTerm)
+		if !idOK || !id.Available() {
+			return identity.ContentID{}, false
+		}
+		matches++
+		if matches == 1 {
+			result = id
+			continue
+		}
+		if id != result {
+			return identity.ContentID{}, false
+		}
+	}
+	return result, matches > 0 && result.Available()
+}
+
+// computationLivenessID is deliberately a closed whitelist. Link's sealed
+// semantic directory publishes Unary, the Binary primitive classes lowered
+// by copyComputations, Select, and ValueClaim by existing Span context;
+// unsupported computation families have no mounted identity.
+func (compiler *compiler) computationLivenessID(term keyspace.Term) (identity.ContentID, bool) {
+	if compiler == nil || compiler.input == nil || !compiler.input.Available() || term == 0 ||
+		!compiler.input.Flow().Executable().Contains(term) {
+		return identity.ContentID{}, false
+	}
+	operators := compiler.input.Flow().Authored().Operators()
+	claims := compiler.input.Flow().Authored().Claims()
+	var related bool
+	switch keyspace.TermFamily(term) {
+	case keyspace.FamilyUnary:
+		_, _, _, related = operators.Unaries().Get(term)
+	case keyspace.FamilyBinary:
+		if compiler.input.Flow().Candidates().Concat().Contains(term) {
+			related = true
+			break
+		}
+		primitive, primitiveOK := compiler.input.Flow().BinaryPrimitives().Primitive(term)
+		source, sourceOK := primitive.Source()
+		operation, operationOK := primitive.Operation()
+		op := operation.Op
+		related = primitiveOK && sourceOK && source == term && operationOK &&
+			(flowkind.IsBinaryArithmetic(op) || op == flowkind.BinaryEqual || op == flowkind.BinaryNotEqual || flowkind.IsBinaryOrder(op))
+	case keyspace.FamilySelect:
+		_, _, _, _, related = operators.Selects().Get(term)
+	case keyspace.FamilyValueClaim:
+		_, _, _, related = claims.Get(term)
+	default:
+		return identity.ContentID{}, false
+	}
+	if !related {
+		return identity.ContentID{}, false
+	}
+	span, spanOK := compiler.input.Span(term)
+	if !spanOK || !compiler.input.OwnsSpan(span) {
+		return identity.ContentID{}, false
+	}
+	id := span.ContextID()
+	return id, id.Available()
 }
