@@ -193,10 +193,8 @@ type orderStore struct {
 	bodyRanges   []termRange
 	bindTerms    []keyspace.Term
 	bindRanges   []termRange
-	bindOwners   []keyspace.Term
 	formalTerms  []keyspace.Term
 	formalRanges []termRange
-	formalOwners []keyspace.Term
 }
 
 type spellingStore struct {

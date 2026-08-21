@@ -170,38 +170,41 @@ func buildCellRoleAuthority(a *authority) (*cellRoleAuthority, error) {
 	}
 	roles := &cellRoleAuthority{authority: a, denominator: a.identity.counts[keyspace.FamilyCell], sealed: true}
 	roles.locals = make([]cellRoleLocal, int(roles.denominator)+1)
-	if len(a.order.bindTerms) != len(a.order.bindOwners) || len(a.order.formalTerms) != len(a.order.formalOwners) {
-		return nil, errors.New("program/source: Cell role order is incomplete")
-	}
-	if err := installCellRoleLocals(roles, a.order.bindTerms, a.order.bindOwners, keyspace.FamilyBind, CellRoleBind); err != nil {
+	if err := installCellRoleLocals(roles, a.order.bindTerms, a.order.bindRanges, keyspace.FamilyBind, CellRoleBind); err != nil {
 		return nil, err
 	}
-	if err := installCellRoleLocals(roles, a.order.formalTerms, a.order.formalOwners, keyspace.FamilyFunction, CellRoleFormal); err != nil {
+	if err := installCellRoleLocals(roles, a.order.formalTerms, a.order.formalRanges, keyspace.FamilyFunction, CellRoleFormal); err != nil {
 		return nil, err
 	}
 	return roles, nil
 }
 
-func installCellRoleLocals(roles *cellRoleAuthority, terms, owners []keyspace.Term, family keyspace.Family, kind CellRoleKind) error {
-	if roles == nil || len(terms) != len(owners) {
+func installCellRoleLocals(roles *cellRoleAuthority, terms []keyspace.Term, ranges []termRange, family keyspace.Family, kind CellRoleKind) error {
+	if roles == nil {
 		return errors.New("program/source: Cell role local order is unavailable")
 	}
-	var lastOwner keyspace.Term
-	var position uint32
-	for index, cell := range terms {
-		owner := owners[index]
-		if keyspace.TermFamily(owner) != family || keyspace.TermOrdinal(owner) == 0 {
+	previousEnd := uint32(0)
+	for ownerOrdinal, row := range ranges {
+		if !validRange(terms, row) || row.start != previousEnd {
+			return errors.New("program/source: Cell role local range is invalid")
+		}
+		owner := keyspace.MakeTerm(family, uint32(ownerOrdinal+1))
+		if owner == 0 {
 			return errors.New("program/source: Cell role local owner is invalid")
 		}
-		if owner != lastOwner {
-			lastOwner, position = owner, 0
+		for index := row.start; index < row.end; index++ {
+			cell := terms[index]
+			ordinal := keyspace.TermOrdinal(cell)
+			position := index - row.start
+			if !keyspace.ValidTerm(cell, keyspace.FamilyCell, int(roles.denominator)) || roles.locals[ordinal].kind != CellRoleInvalid {
+				return errors.New("program/source: Cell role local membership is invalid")
+			}
+			roles.locals[ordinal] = cellRoleLocal{kind: kind, owner: owner, position: position, index: index}
 		}
-		ordinal := keyspace.TermOrdinal(cell)
-		if !keyspace.ValidTerm(cell, keyspace.FamilyCell, int(roles.denominator)) || roles.locals[ordinal].kind != CellRoleInvalid {
-			return errors.New("program/source: Cell role local membership is invalid")
-		}
-		roles.locals[ordinal] = cellRoleLocal{kind: kind, owner: owner, position: position, index: uint32(index)}
-		position++
+		previousEnd = row.end
+	}
+	if previousEnd != uint32(len(terms)) {
+		return errors.New("program/source: Cell role local order is incomplete")
 	}
 	return nil
 }

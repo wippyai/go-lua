@@ -244,7 +244,6 @@ func buildBindOrder(a *authority, rows []BindCells, cells []bool) error {
 			}
 			cells[keyspace.TermOrdinal(cell)-1] = true
 			a.order.bindTerms = append(a.order.bindTerms, cell)
-			a.order.bindOwners = append(a.order.bindOwners, row.Bind)
 		}
 		r, ok := makeRange(start, len(row.Cells))
 		if !ok {
@@ -272,7 +271,6 @@ func buildFormalOrder(a *authority, rows []FunctionFormals, cells []bool) error 
 			}
 			cells[keyspace.TermOrdinal(formal)-1] = true
 			a.order.formalTerms = append(a.order.formalTerms, formal)
-			a.order.formalOwners = append(a.order.formalOwners, row.Function)
 		}
 		r, ok := makeRange(start, len(row.Formals))
 		if !ok {
