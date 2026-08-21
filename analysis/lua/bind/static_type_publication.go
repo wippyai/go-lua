@@ -232,7 +232,7 @@ func (b *binder) staticTypeValueDecl(ident *ast.IdentExpr) (TypeDecl, bool) {
 
 func (b *binder) qualifiedTypeAliasSource(expr ast.Expr) (QualifiedTypeAlias, bool) {
 	if ident, ok := expr.(*ast.IdentExpr); ok {
-		decl, found := b.typeValueRefs[ident]
+		decl, found := b.result.typeValueRefs[ident]
 		return QualifiedTypeAlias{Decl: decl}, found
 	}
 	root, suffix, ok := dottedTypeValuePath(expr)

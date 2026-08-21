@@ -270,7 +270,6 @@ type binder struct {
 
 	implicitGlobalSymbols map[Symbol]struct{}
 	staticOnlyGlobals     map[Symbol]struct{}
-	typeValueRefs         map[*ast.IdentExpr]TypeDecl
 	directCaptureSeen     map[*ast.FunctionExpr]map[Symbol]struct{}
 	declaringFunctions    map[Symbol]*ast.FunctionExpr
 	globals               map[string]Symbol
@@ -559,10 +558,6 @@ func (b *binder) recordTypeValueRef(ident *ast.IdentExpr, decl TypeDecl) {
 	if b == nil || b.result == nil || ident == nil || decl.ID == 0 {
 		return
 	}
-	if b.typeValueRefs == nil {
-		b.typeValueRefs = make(map[*ast.IdentExpr]TypeDecl)
-	}
-	b.typeValueRefs[ident] = decl
 	if b.result.typeValueRefs == nil {
 		b.result.typeValueRefs = make(map[*ast.IdentExpr]TypeDecl)
 	}
