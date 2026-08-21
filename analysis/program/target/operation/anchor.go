@@ -22,25 +22,30 @@ const (
 
 // operationAnchor issues the stable semantic anchor for one already-frozen
 // binding set. The operation owner, rather than Boot, is the only issuer of
-// this identity.
-func operationAnchor(bindings []vocabulary.BindingSpec, keys exactkey.Table) (identity.ContentID, error) {
-	for _, binding := range bindings {
-		if !vocabulary.ValidBinding(binding) {
-			return identity.ContentID{}, errors.New("target/operation: invalid operation binding")
-		}
+// this identity. It streams the sealed geometry rows directly; reconstructing
+// BindingSpec values here would only create a temporary mirror of the same
+// owner/member columns.
+func operationAnchor(geometry Geometry, span rows.Span, keys exactkey.Table) (identity.ContentID, error) {
+	bindingCount := geometry.bindings.Count(span)
+	if bindingCount != span.Len() {
+		return identity.ContentID{}, errors.New("target/operation: malformed operation binding range")
 	}
 	return semanticID(semanticOperationAnchor, func(writer *framing.Writer) error {
-		if err := writer.Count(uint64(len(bindings))); err != nil {
+		if err := writer.Count(uint64(bindingCount)); err != nil {
 			return err
 		}
-		for _, binding := range bindings {
-			if err := writer.Uint(uint64(binding.Namespace)); err != nil {
+		for index := 0; index < bindingCount; index++ {
+			binding, ok := geometry.bindings.At(span, index)
+			if !ok || !validBindingRow(geometry, binding) {
+				return errors.New("target/operation: invalid operation binding")
+			}
+			if err := writer.Uint(uint64(binding.namespace)); err != nil {
 				return err
 			}
-			if err := encodeBindingSegments(writer, binding.Owner, keys); err != nil {
+			if err := encodeBindingSegments(writer, geometry.segments, binding.owner, keys); err != nil {
 				return err
 			}
-			if err := encodeBindingSegments(writer, binding.Member, keys); err != nil {
+			if err := encodeBindingSegments(writer, geometry.segments, binding.member, keys); err != nil {
 				return err
 			}
 		}
@@ -48,11 +53,46 @@ func operationAnchor(bindings []vocabulary.BindingSpec, keys exactkey.Table) (id
 	})
 }
 
-func encodeBindingSegments(writer *framing.Writer, segments []string, keys exactkey.Table) error {
-	if err := writer.Count(uint64(len(segments))); err != nil {
+func validBindingRow(geometry Geometry, binding bindingRow) bool {
+	ownerCount := geometry.segments.Count(binding.owner)
+	memberCount := geometry.segments.Count(binding.member)
+	if ownerCount != binding.owner.Len() || memberCount != binding.member.Len() || memberCount == 0 {
+		return false
+	}
+	for _, span := range []rows.Span{binding.owner, binding.member} {
+		for index := 0; index < geometry.segments.Count(span); index++ {
+			segment, ok := geometry.segments.At(span, index)
+			if !ok || segment == "" {
+				return false
+			}
+			if _, err := vocabulary.CheckedStoredLength("binding segment bytes", len(segment)); err != nil {
+				return false
+			}
+		}
+	}
+	switch binding.namespace {
+	case vocabulary.BindingBuiltin:
+		return ownerCount == 0
+	case vocabulary.BindingModule, vocabulary.BindingProvider:
+		return ownerCount != 0
+	default:
+		return false
+	}
+}
+
+func encodeBindingSegments(writer *framing.Writer, segments rows.Pool[string], span rows.Span, keys exactkey.Table) error {
+	count := segments.Count(span)
+	if count != span.Len() {
+		return errors.New("target/operation: malformed binding segment")
+	}
+	if err := writer.Count(uint64(count)); err != nil {
 		return err
 	}
-	for _, segment := range segments {
+	for index := 0; index < count; index++ {
+		segment, ok := segments.At(span, index)
+		if !ok {
+			return errors.New("target/operation: malformed binding segment")
+		}
 		key, ok := keys.Handle(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: segment})
 		if !ok {
 			return errors.New("target/operation: unresolved operation binding key")
@@ -95,7 +135,7 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 	}
 	anchors := make([]anchorRow, geometry.operations.Count())
 	incoming := make([]producedRow, geometry.operations.Count())
-	foundIncoming := make([]bool, geometry.operations.Count())
+	selectorScratch := []byte(nil)
 	for index := 0; index < geometry.sourceN; index++ {
 		operation, ok := geometry.operations.At(index)
 		if !ok {
@@ -112,10 +152,9 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 				return Core{}, errors.New("target/operation: produced child outside geometry")
 			}
 			if geometry.bindings.Count(childRow.bindings) == 0 {
-				if foundIncoming[child] {
+				if incoming[child].parent != 0 {
 					return Core{}, errors.New("target/operation: duplicate produced anchor parent")
 				}
-				foundIncoming[child] = true
 				incoming[child] = row
 			}
 		}
@@ -125,19 +164,15 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 		if !ok {
 			return Core{}, errors.New("target/operation: malformed operation geometry")
 		}
-		bindings, err := geometry.bindingSpecs(row.bindings)
-		if err != nil {
-			return Core{}, err
-		}
-		if len(bindings) != 0 {
-			id, anchorErr := operationAnchor(bindings, keys)
+		if geometry.bindings.Count(row.bindings) != 0 {
+			id, anchorErr := operationAnchor(geometry, row.bindings, keys)
 			if anchorErr != nil {
 				return Core{}, anchorErr
 			}
 			anchors[index] = anchorRow{id: id}
 			continue
 		}
-		if !foundIncoming[index] {
+		if incoming[index].parent == 0 {
 			return Core{}, errors.New("target/operation: produced-only operation has no parent")
 		}
 		parent := incoming[index]
@@ -156,19 +191,24 @@ func CompileAnchors(geometry Geometry, keys exactkey.Table) (Core, error) {
 		if !selectorOK {
 			return Core{}, errors.New("target/operation: malformed produced outcome selector")
 		}
-		selector := make([]byte, geometry.anchors.Count(outcome.anchor))
-		for selectorIndex := range selector {
+		selectorCount := geometry.anchors.Count(outcome.anchor)
+		if selectorCount > cap(selectorScratch) {
+			selectorScratch = make([]byte, selectorCount)
+		} else {
+			selectorScratch = selectorScratch[:selectorCount]
+		}
+		for selectorIndex := range selectorScratch {
 			value, valueOK := geometry.anchors.At(outcome.anchor, selectorIndex)
 			if !valueOK {
 				return Core{}, errors.New("target/operation: malformed produced outcome selector")
 			}
-			selector[selectorIndex] = value
+			selectorScratch[selectorIndex] = value
 		}
 		id, anchorErr := semanticID(semanticProducedAnchor, func(writer *framing.Writer) error {
 			if err := writer.Bytes(parentAnchor[:]); err != nil {
 				return err
 			}
-			if err := writer.Bytes(selector); err != nil {
+			if err := writer.Bytes(selectorScratch); err != nil {
 				return err
 			}
 			if err := writer.Uint(uint64(parent.outcome)); err != nil {
@@ -280,32 +320,4 @@ func appendBindingKeys(pool *rows.PoolBuilder[vocabulary.ExactKey], geometry Geo
 		return rows.Span{}, errors.New("target/operation: binding key pool overflow")
 	}
 	return span, nil
-}
-
-func (geometry Geometry) bindingSpecs(span rows.Span) ([]vocabulary.BindingSpec, error) {
-	bindings := make([]vocabulary.BindingSpec, geometry.bindings.Count(span))
-	for index := range bindings {
-		row, ok := geometry.bindings.At(span, index)
-		if !ok {
-			return nil, errors.New("target/operation: malformed binding geometry")
-		}
-		owner := make([]string, geometry.segments.Count(row.owner))
-		for segment := range owner {
-			value, valueOK := geometry.segments.At(row.owner, segment)
-			if !valueOK {
-				return nil, errors.New("target/operation: malformed binding owner")
-			}
-			owner[segment] = value
-		}
-		member := make([]string, geometry.segments.Count(row.member))
-		for segment := range member {
-			value, valueOK := geometry.segments.At(row.member, segment)
-			if !valueOK {
-				return nil, errors.New("target/operation: malformed binding member")
-			}
-			member[segment] = value
-		}
-		bindings[index] = vocabulary.BindingSpec{Namespace: row.namespace, Owner: owner, Member: member}
-	}
-	return bindings, nil
 }

@@ -351,16 +351,3 @@ func (core Core) BindingAt(op vocabulary.Operation, index int) (vocabulary.Bindi
 	}
 	return vocabulary.BindingSpec{Namespace: binding.namespace, Owner: owner, Member: member}, true
 }
-
-func (core Core) bindingSpecs(op vocabulary.Operation) ([]vocabulary.BindingSpec, error) {
-	count := core.BindingCount(op)
-	bindings := make([]vocabulary.BindingSpec, count)
-	for index := range bindings {
-		binding, ok := core.BindingAt(op, index)
-		if !ok {
-			return nil, errors.New("target/operation: malformed binding projection")
-		}
-		bindings[index] = binding
-	}
-	return bindings, nil
-}
