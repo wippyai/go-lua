@@ -181,9 +181,6 @@ func validateRows(
 			}
 		}
 	}
-	if err := validateBodyTopology(counts, functions, loops, bodies); err != nil {
-		return err
-	}
 	for index := 0; index < breaks.Count(); index++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBreak, uint32(index+1))
 		owner, _, ok := breaks.Get(term)
@@ -193,125 +190,6 @@ func validateRows(
 			return errors.New("program/flow/control: invalid Break selection")
 		}
 		breakLoop[index+1] = loop
-	}
-	return nil
-}
-
-// validateBodyTopology cross-checks the current authored Function→Body and
-// Loop→Body relations against the immutable Body topology. The local recurrence
-// is construction scratch only: an entry starts at zero; a Function child
-// starts a new activation and clears the enclosing loop; every other child
-// inherits activation and takes its authored Loop at that Body or its parent's
-// nearest loop. Body remains the sole owner of the published projections.
-func validateBodyTopology(
-	counts [keyspace.FamilyCount]int,
-	functions authored.Functions,
-	loops authored.Loops,
-	bodies *body.Result,
-) error {
-	bodyCount := counts[keyspace.FamilyBody]
-	functionAt := make([]keyspace.Term, bodyCount+1)
-	loopAt := make([]keyspace.Term, bodyCount+1)
-	for index := 0; index < functions.Count(); index++ {
-		term := keyspace.MakeTerm(keyspace.FamilyFunction, uint32(index+1))
-		owner, child, _, ok := functions.Get(term)
-		if !ok || !validTerm(owner, counts, keyspace.FamilyBody) || !validTerm(child, counts, keyspace.FamilyBody) || owner == child {
-			return errors.New("program/flow/control: invalid Function Body shape")
-		}
-		childOrdinal := keyspace.TermOrdinal(child)
-		if functionAt[childOrdinal] != 0 || loopAt[childOrdinal] != 0 {
-			return errors.New("program/flow/control: duplicate Function Body")
-		}
-		parent, parentOK := bodies.Parent(child)
-		activation, activationOK := bodies.Activation(child)
-		nearest, nearestOK := bodies.NearestLoop(child)
-		if !parentOK || parent != owner || !activationOK || activation != term || !nearestOK || nearest != 0 {
-			return errors.New("program/flow/control: Function Body disagrees with Body topology")
-		}
-		functionAt[childOrdinal] = term
-	}
-	for index := 0; index < loops.Count(); index++ {
-		term := keyspace.MakeTerm(keyspace.FamilyLoop, uint32(index+1))
-		owner, child, _, _, ok := loops.Get(term)
-		if !ok || !validTerm(owner, counts, keyspace.FamilyBody) || !validTerm(child, counts, keyspace.FamilyBody) || owner == child {
-			return errors.New("program/flow/control: invalid Loop Body shape")
-		}
-		childOrdinal := keyspace.TermOrdinal(child)
-		if loopAt[childOrdinal] != 0 || functionAt[childOrdinal] != 0 {
-			return errors.New("program/flow/control: duplicate Loop Body")
-		}
-		parent, parentOK := bodies.Parent(child)
-		if !parentOK || parent != owner {
-			return errors.New("program/flow/control: Loop Body disagrees with Body topology")
-		}
-		loopAt[childOrdinal] = term
-	}
-
-	expectedActivation := make([]keyspace.Term, bodyCount+1)
-	expectedNearestLoop := make([]keyspace.Term, bodyCount+1)
-	state := make([]uint8, bodyCount+1)
-	path := make([]uint32, 0)
-	for index := 0; index < bodyCount; index++ {
-		bodyTerm, ok := bodies.BodyAt(index)
-		if !ok {
-			return errors.New("program/flow/control: Body view expired")
-		}
-		bodyOrdinal := keyspace.TermOrdinal(bodyTerm)
-		if state[bodyOrdinal] == 2 {
-			continue
-		}
-		path = path[:0]
-		current := bodyTerm
-		for {
-			currentOrdinal := keyspace.TermOrdinal(current)
-			if currentOrdinal == 0 || int(currentOrdinal) > bodyCount {
-				return errors.New("program/flow/control: invalid Body topology index")
-			}
-			switch state[currentOrdinal] {
-			case 2:
-				current = 0
-			case 1:
-				return errors.New("program/flow/control: cyclic Body topology")
-			default:
-				state[currentOrdinal] = 1
-				path = append(path, currentOrdinal)
-				parent, hasParent := bodies.Parent(current)
-				if !hasParent {
-					current = 0
-				} else {
-					current = parent
-				}
-			}
-			if current == 0 {
-				break
-			}
-		}
-		for pathIndex := len(path) - 1; pathIndex >= 0; pathIndex-- {
-			ordinal := path[pathIndex]
-			bodyTerm, _ := bodies.BodyAt(int(ordinal - 1))
-			parent, hasParent := bodies.Parent(bodyTerm)
-			active, nearest := keyspace.Term(0), keyspace.Term(0)
-			if hasParent {
-				parentOrdinal := keyspace.TermOrdinal(parent)
-				if parentOrdinal == 0 || int(parentOrdinal) > bodyCount || state[parentOrdinal] != 2 {
-					return errors.New("program/flow/control: unresolved Body topology parent")
-				}
-				active = expectedActivation[parentOrdinal]
-				nearest = expectedNearestLoop[parentOrdinal]
-			}
-			if functionAt[ordinal] != 0 {
-				active, nearest = functionAt[ordinal], 0
-			} else if loopAt[ordinal] != 0 {
-				nearest = loopAt[ordinal]
-			}
-			expectedActivation[ordinal], expectedNearestLoop[ordinal] = active, nearest
-			state[ordinal] = 2
-			actualActivation, activationOK := bodies.Activation(bodyTerm)
-			actualNearest, nearestOK := bodies.NearestLoop(bodyTerm)
-			if !activationOK || !nearestOK || actualActivation != active || actualNearest != nearest {
-				return errors.New("program/flow/control: Body topology recurrence mismatch")
-			}
-		}
 	}
 	return nil
 }
