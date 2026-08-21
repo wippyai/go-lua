@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -265,6 +266,9 @@ func (a *authority) build(spec Spec) error {
 		}
 		moduleByName[name] = s
 	}
+	if err := a.admitModuleRequests(moduleByName); err != nil {
+		return err
+	}
 	sort.Slice(spec.AnalysisRoots, func(i, j int) bool { return spec.AnalysisRoots[i].Name < spec.AnalysisRoots[j].Name })
 	a.roots = make([]rootRow, len(spec.AnalysisRoots))
 	rootByName := make(map[string]uint32, len(spec.AnalysisRoots))
@@ -366,6 +370,63 @@ func (a *authority) build(spec Spec) error {
 	var ok bool
 	if a.counts, ok = buildCountRows(a.component); !ok {
 		return errors.New("link/module: unavailable module denominator rows")
+	}
+	return nil
+}
+
+// admitModuleRequests is the module-request admission gate. Every executable
+// authored require names one module, and exactly two declarations answer such
+// a name: a module path the Target declares, or a module this Link mounts. A
+// request neither declaration holds names a surface no authority owns, so the
+// seal refuses it here. Leaving it to resolve as an unknown value would admit
+// an undeclared host contract as a typed member plane.
+//
+// Only the authored literal request is admitted, which is the only request an
+// Import row carries. A require whose module is computed is an ordinary call
+// with no Import row and is unaffected.
+func (a *authority) admitModuleRequests(moduleByName map[string]linkproject.Shard) error {
+	if a == nil || a.project == nil || a.boundary == nil {
+		return errors.New("link/module: missing module request authority")
+	}
+	target, targetOK := a.boundary.Target()
+	if !targetOK || target == nil {
+		return errors.New("link/module: unavailable Target module declaration")
+	}
+	mounts := a.project.Mounts()
+	for index := 0; index < mounts.Count(); index++ {
+		shard, shardOK := mounts.At(index)
+		name, nameOK := mounts.Name(shard)
+		source, programOK := mounts.Program(shard)
+		if !shardOK || !nameOK || !programOK || source == nil {
+			return errors.New("link/module: malformed project mount")
+		}
+		flow := source.Flow()
+		imports := flow.Authored().Imports()
+		literals := source.Source().Literals().Strings()
+		for at := 0; at < imports.Count(); at++ {
+			term, termOK := imports.At(at)
+			if !termOK {
+				return errors.New("link/module: malformed Program Import table")
+			}
+			row, rowOK := imports.Get(term)
+			if !rowOK || row.Call == 0 || row.Request == 0 || keyspace.TermFamily(row.Request) != keyspace.FamilyString {
+				return errors.New("link/module: malformed Program Import")
+			}
+			if !flow.Executable().Contains(row.Call) {
+				continue
+			}
+			_, _, request, requestOK := literals.At(int(keyspace.TermOrdinal(row.Request)) - 1)
+			if !requestOK || request == "" {
+				return errors.New("link/module: Import carries no authored module request")
+			}
+			if _, mounted := moduleByName[request]; mounted {
+				continue
+			}
+			if _, declared := target.InitialRootByModulePath(request); declared {
+				continue
+			}
+			return fmt.Errorf("link/module: module %q requires %q, which is neither a declared host module nor a mounted module", name, request)
+		}
 	}
 	return nil
 }

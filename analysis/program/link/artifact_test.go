@@ -177,7 +177,11 @@ func TestArtifactRoundTripAndTamperRejection(t *testing.T) {
 func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	sealed := contract(t)
 	p := source(t, `require("dependency")`)
-	linked := linked(t, sealed, linkproject.Module{Name: "main", Program: p})
+	dependency := source(t, `return 1`)
+	linked := linked(t, sealed,
+		linkproject.Module{Name: "main", Program: p},
+		linkproject.Module{Name: "dependency", Program: dependency},
+	)
 	term := call(t, p, 0)
 	originalApplication, originalApplicationOK := callApplicationForTerm(t, linked, term)
 	if !originalApplicationOK {
@@ -200,7 +204,7 @@ func TestArtifactReplayPreservesProjectCallIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := linkartifact.Decode(data, sealed, artifactProgramPool(p))
+	replayed, err := linkartifact.Decode(data, sealed, artifactProgramPool(p, dependency))
 	if err != nil {
 		t.Fatal(err)
 	}

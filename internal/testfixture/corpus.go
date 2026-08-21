@@ -20,7 +20,7 @@ import (
 // FrozenLuaFileCount is the exact checked-in Lua fixture denominator. Corpus
 // changes require an explicit test-contract update rather than silently
 // changing the analysis denominator.
-const FrozenLuaFileCount = 1178
+const FrozenLuaFileCount = 1179
 
 type corpusManifest struct {
 	Files []string `json:"files"`
