@@ -71,7 +71,7 @@ func (view TypeFunctions) TypeParamCount(term keyspace.Term) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.view.table.typeParams.Count(row.TypeParams), true
+	return view.view.table.terms.Count(row.TypeParams), true
 }
 
 func (view TypeFunctions) TypeParamAt(term keyspace.Term, index int) (keyspace.Term, bool) {
@@ -79,7 +79,7 @@ func (view TypeFunctions) TypeParamAt(term keyspace.Term, index int) (keyspace.T
 	if !ok {
 		return 0, false
 	}
-	return view.view.table.typeParams.At(row.TypeParams, index)
+	return view.view.table.terms.At(row.TypeParams, index)
 }
 
 func (view TypeFunctions) ParameterCount(term keyspace.Term) (int, bool) {
@@ -103,7 +103,7 @@ func (view TypeFunctions) ReturnCount(term keyspace.Term) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.view.table.returns.Count(row.Returns), true
+	return view.view.table.terms.Count(row.Returns), true
 }
 
 func (view TypeFunctions) ReturnAt(term keyspace.Term, index int) (keyspace.Term, bool) {
@@ -111,7 +111,7 @@ func (view TypeFunctions) ReturnAt(term keyspace.Term, index int) (keyspace.Term
 	if !ok {
 		return 0, false
 	}
-	return view.view.table.returns.At(row.Returns, index)
+	return view.view.table.terms.At(row.Returns, index)
 }
 
 // Get returns the authored assertion row fields in their canonical order.

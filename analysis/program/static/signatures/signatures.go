@@ -71,9 +71,8 @@ type TypeFunctionRow struct {
 type Table struct {
 	function   rows.Table[TypeFunctionRow]
 	assert     rows.Table[TypeAsserts]
-	typeParams rows.Pool[keyspace.Term]
+	terms      rows.Pool[keyspace.Term]
 	parameters rows.Pool[Parameter]
-	returns    rows.Pool[keyspace.Term]
 }
 
 // Count reports the sealed row denominator of one signature family.
@@ -155,7 +154,7 @@ func (table Table) VisitFunctionTypeParams(claim func(owner, param keyspace.Term
 		return false
 	}
 	for owner, row := range table.function.Terms() {
-		for _, param := range table.typeParams.All(row.TypeParams) {
+		for _, param := range table.terms.All(row.TypeParams) {
 			if !claim(owner, param) {
 				return false
 			}
@@ -182,7 +181,7 @@ func (table Table) VisitContainment(attach, attachReturn func(parent, child keys
 		if row.Variadic != 0 && !attach(parent, row.Variadic) {
 			return false
 		}
-		for _, child := range table.returns.All(row.Returns) {
+		for _, child := range table.terms.All(row.Returns) {
 			if !attachReturn(parent, child) {
 				return false
 			}

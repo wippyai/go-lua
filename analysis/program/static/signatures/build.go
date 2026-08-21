@@ -13,15 +13,14 @@ import (
 // denominator. It retains direct typed rows and source-order columns only; no
 // generic static node or child-edge representation is introduced here.
 func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
-	var typeParams rows.PoolBuilder[keyspace.Term]
+	var terms rows.PoolBuilder[keyspace.Term]
 	var parameters rows.PoolBuilder[Parameter]
-	var returns rows.PoolBuilder[keyspace.Term]
 	function := rows.NewTableBuilder[TypeFunctionRow](keyspace.FamilyTypeFunction)
 	for _, row := range input.TypeFunction {
 		if !validSignature(counts, row) {
 			return Table{}, errors.New("program/static/signatures: invalid type function")
 		}
-		params, ok := typeParams.Append(row.TypeParams)
+		params, ok := terms.Append(row.TypeParams)
 		if !ok {
 			return Table{}, errors.New("program/static/signatures: oversized type function parameters")
 		}
@@ -29,7 +28,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 		if !ok {
 			return Table{}, errors.New("program/static/signatures: oversized type function fixed parameters")
 		}
-		results, ok := returns.Append(row.Returns)
+		results, ok := terms.Append(row.Returns)
 		if !ok {
 			return Table{}, errors.New("program/static/signatures: oversized type function returns")
 		}
@@ -53,7 +52,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 	}
 	return Table{
 		function: function.Seal(), assert: assert.Seal(),
-		typeParams: typeParams.Seal(), parameters: parameters.Seal(), returns: returns.Seal(),
+		terms: terms.Seal(), parameters: parameters.Seal(),
 	}, nil
 }
 

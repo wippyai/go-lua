@@ -28,7 +28,7 @@ func WriteContent(writer *framing.Writer, table Table) error {
 		if err := writer.Uint(uint64(row.Scope)); err != nil {
 			return err
 		}
-		if err := wire.WriteTermSpan(writer, table.typeParams, row.TypeParams); err != nil {
+		if err := wire.WriteTermSpan(writer, table.terms, row.TypeParams); err != nil {
 			return err
 		}
 		if err := writer.Count(uint64(table.parameters.Count(row.Parameters))); err != nil {
@@ -54,7 +54,7 @@ func WriteContent(writer *framing.Writer, table Table) error {
 		if err := writer.Bool(row.ReturnsKnown); err != nil {
 			return err
 		}
-		if err := wire.WriteTermSpan(writer, table.returns, row.Returns); err != nil {
+		if err := wire.WriteTermSpan(writer, table.terms, row.Returns); err != nil {
 			return err
 		}
 	}
