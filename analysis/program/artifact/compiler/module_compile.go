@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
 )
@@ -27,9 +28,8 @@ import (
 // Cell, Source String, or exact Key fails closed rather than becoming a
 // partially useful publication row.
 func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
-	moduleIDs := denominator.GeneratedProgramModuleIDs()
 	if compiler == nil || compiler.input == nil || !compiler.input.Available() {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleUnavailable, -1, -1)
 	}
 	sourceView := compiler.input.Source()
 	flowView := compiler.input.Flow()
@@ -44,10 +44,10 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 	if !sourceID.Available() || !flowID.Available() || !staticID.Available() ||
 		!moduleID.Available() || !provenance.Available() || provenance.Source != sourceID ||
 		provenance.Flow != flowID || provenance.Static != staticID || provenance.Module != moduleID {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleUnavailable, -1, -1)
 	}
 	if imports.Count() != sourceView.Identity().FamilyCount(keyspace.FamilyImport) {
-		return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, -1, -1)
+		return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, -1, -1)
 	}
 
 	compiler.publication.ModuleImports = make([]programschema.ModuleImport, 0, imports.Count())
@@ -74,10 +74,10 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 			(row.Alias != 0 && (keyspace.TermFamily(row.Alias) != keyspace.FamilyCell || keyspace.TermOrdinal(row.Alias) == 0)) ||
 			keyspace.TermFamily(row.Request) != keyspace.FamilyString ||
 			keyspace.TermOrdinal(row.Request) == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		if _, duplicate := seenCalls[row.Call]; duplicate {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		seenCalls[row.Call] = struct{}{}
 		callOrdinal := keyspace.TermOrdinal(row.Call)
@@ -89,7 +89,7 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 			receiver != 0 || keyspace.TermFamily(callee) != keyspace.FamilyRead ||
 			keyspace.TermOrdinal(callee) == 0 || keyspace.TermFamily(actuals) != keyspace.FamilyValues ||
 			keyspace.TermOrdinal(actuals) == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		actualOwner, tail, valuesOK := values.Get(actuals)
 		length, lengthOK := values.Len(actuals)
@@ -97,40 +97,40 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 		if !valuesOK || actualOwner != owner || tail != 0 || !lengthOK || length != 1 ||
 			!positionOK || position.Fixed != row.Request ||
 			keyspace.TermFamily(position.Fixed) != keyspace.FamilyString || keyspace.TermOrdinal(position.Fixed) == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		readOwner, readSource, _, readOK := reads.Get(callee)
 		if !readOK || readOwner != owner || keyspace.TermFamily(readSource) != keyspace.FamilyCell || keyspace.TermOrdinal(readSource) == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		cellKind, cellBody, cellKey, cellOK := cells.Get(readSource)
 		if !cellOK || cellKind != flowauthored.CellGlobal || cellBody != 0 || cellKey == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		atom, atomOK := keys.Exact(cellKey)
 		if !atomOK || atom != (keyspace.LiteralValue{Kind: keyspace.LiteralString, String: "require"}) {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		requestOrdinal := keyspace.TermOrdinal(row.Request)
 		if requestOrdinal == 0 || requestOrdinal > uint32(strings.Count()) {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		requestTerm, requestOwner, text, requestOK := strings.At(int(requestOrdinal - 1))
 		if !requestOK || requestTerm != row.Request || requestOwner != owner || text == "" {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		requestKey, requestKeyOK := keys.Find(keyspace.LiteralValue{Kind: keyspace.LiteralString, String: text})
 		if !requestKeyOK || requestKey == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		valueIndex := int(requestOrdinal) - 1
 		valueSource, valueSourceOK := compiler.valueSourceAt(5, valueIndex)
 		if !valueSourceOK || valueSource.term != row.Request || valueSource.id == (identity.ContentID{}) || !valueSource.id.Available() {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		importID, importIDOK := flowView.SemanticTermPath(importTerm)
 		if !importIDOK || !importID.Available() {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		aliasID := identity.ContentID{}
 		hasAlias := row.Alias != 0
@@ -138,19 +138,19 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 			var aliasOK bool
 			aliasID, aliasOK = rowidentity.StorageCellID(compiler.key.ProgramID(), flowView, row.Alias)
 			if !aliasOK || !aliasID.Available() {
-				return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+				return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 			}
 		}
 		if !fitsUint32(len(compiler.publication.ModuleRequests)) {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		requestRow, requestRowOK := programschema.NewModuleRequest(valueSource.id, importID, valueSource.id, requestKey)
 		if !requestRowOK {
-			return programconstruction.New(moduleIDs.ProgramModuleRequest, programconstruction.IssueModuleRequest, index, -1)
+			return programconstruction.New(programcatalog.ModuleRequest(), programconstruction.IssueModuleRequest, index, -1)
 		}
 		importRow, importRowOK := programschema.NewModuleImport(importID, construction.id, aliasID, uint32(len(compiler.publication.ModuleRequests)), 1, hasAlias)
 		if !importRowOK {
-			return programconstruction.New(moduleIDs.ProgramModuleImport, programconstruction.IssueModuleImport, index, -1)
+			return programconstruction.New(programcatalog.ModuleImport(), programconstruction.IssueModuleImport, index, -1)
 		}
 		compiler.publication.ModuleRequests = append(compiler.publication.ModuleRequests, requestRow)
 		compiler.publication.ModuleImports = append(compiler.publication.ModuleImports, importRow)
@@ -160,7 +160,7 @@ func (compiler *compiler) copyModuleRowsFailure() programconstruction.Fault {
 		return failure
 	}
 	if !compiler.installModuleCounts() {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleUnavailable, -1, -1)
 	}
 	return programconstruction.Fault{}
 }
@@ -211,9 +211,8 @@ func (compiler *compiler) installModuleCounts() bool {
 }
 
 func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
-	moduleIDs := denominator.GeneratedProgramModuleIDs()
 	if compiler == nil || compiler.input == nil {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleUnavailable, -1, -1)
 	}
 	flowView := compiler.input.Flow()
 	authored := flowView.Authored()
@@ -221,17 +220,17 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 	executable := flowView.Executable()
 	directFunctions := flowView.DirectFunctions()
 	if bodies == nil || executable == nil || directFunctions == nil {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	entry, entryOK := bodies.Entry()
 	if !entryOK || keyspace.TermFamily(entry) != keyspace.FamilyBody || keyspace.TermOrdinal(entry) == 0 {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	if parent, hasParent := bodies.Parent(entry); hasParent || parent != 0 {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	if activation, activationOK := bodies.Activation(entry); !activationOK || activation != 0 {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 
 	returns := authored.Control().Returns()
@@ -239,38 +238,38 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 	returnCount := returns.Count()
 	fieldCount := fields.Count()
 	if !fitsUint32(returnCount) || !fitsUint32(fieldCount) {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	for index := 0; index < returnCount; index++ {
 		term, ok := returns.At(index)
 		if !ok || term != keyspace.MakeTerm(keyspace.FamilyReturn, uint32(index+1)) {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 	}
 	for index := 0; index < fieldCount; index++ {
 		term, ok := fields.At(index)
 		if !ok || term != keyspace.MakeTerm(keyspace.FamilyTableField, uint32(index+1)) {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 	}
 	exactCount := compiler.input.Source().Keys().ExactCount()
 	if exactCount < 0 || !fitsUint32(exactCount) {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	keyScratch := moduleKeyScratch{marks: make([]uint32, exactCount+1)}
 	if len(keyScratch.marks) == 0 {
-		return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, -1, -1)
 	}
 	for index := 0; index < returnCount; index++ {
 		returned := keyspace.MakeTerm(keyspace.FamilyReturn, uint32(index+1))
 		owner, valuesTerm, returnOK := returns.Get(returned)
 		if !returnOK || keyspace.TermFamily(owner) != keyspace.FamilyBody || keyspace.TermOrdinal(owner) == 0 ||
 			keyspace.TermFamily(valuesTerm) != keyspace.FamilyValues || keyspace.TermOrdinal(valuesTerm) == 0 {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		ownerActivation, ownerActivationOK := bodies.Activation(owner)
 		if !ownerActivationOK {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		if ownerActivation != 0 || !executable.Contains(returned) {
 			continue
@@ -278,7 +277,7 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 		valuesOwner, tail, valuesOwnerOK := authored.Values().Get(valuesTerm)
 		fixedCount, fixedOK := authored.Values().Len(valuesTerm)
 		if !valuesOwnerOK || valuesOwner != owner || tail != 0 || !fixedOK || fixedCount < 0 || !fitsUint32(fixedCount) {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		// The entry identity names the authored Return occurrence. ReturnID
 		// instead joins the root activation's canonical Return Outcome. A
@@ -292,42 +291,42 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 		if !entryIDOK || !entryID.Available() || !returnOutcomeOK ||
 			keyspace.TermFamily(returnOutcome) != keyspace.FamilyOutcome ||
 			!returnedIDOK || !returnedID.Available() {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		rootCellOffset, rootFunctionOffset, memberOffset := len(compiler.publication.ModuleEntryRootCells), len(compiler.publication.ModuleEntryRootFunctions), len(compiler.publication.ModuleEntryMembers)
 		for position := 0; position < fixedCount; position++ {
 			value, valueOK := authored.Values().Member(valuesTerm, position)
 			if !valueOK || !fitsUint32(position) {
-				return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, position)
+				return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, position)
 			}
 			memberID, memberIDOK := flowView.ValuesMemberID(valuesTerm, position)
 			if !memberIDOK || !memberID.Available() {
 				if _, functionOK := moduleEntryDirectFunction(value, executable, directFunctions); functionOK {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootFunction, programconstruction.IssueModuleRootFunction, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootFunction(), programconstruction.IssueModuleRootFunction, index, position)
 				}
 				if _, cellOK := moduleEntryDirectCell(flowView, value); cellOK {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootCell, programconstruction.IssueModuleRootCell, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootCell(), programconstruction.IssueModuleRootCell, index, position)
 				}
 			}
 			if function, functionOK := moduleEntryDirectFunction(value, executable, directFunctions); functionOK {
 				functionID, functionIDOK := compiler.moduleFunctionID(function)
 				if !functionIDOK {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootFunction, programconstruction.IssueModuleRootFunction, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootFunction(), programconstruction.IssueModuleRootFunction, index, position)
 				}
 				child, childOK := programschema.NewModuleEntryRootFunction(memberID, entryID, functionID, uint32(position))
 				if !childOK {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootFunction, programconstruction.IssueModuleRootFunction, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootFunction(), programconstruction.IssueModuleRootFunction, index, position)
 				}
 				compiler.publication.ModuleEntryRootFunctions = append(compiler.publication.ModuleEntryRootFunctions, child)
 			}
 			if cell, cellOK := moduleEntryDirectCell(flowView, value); cellOK {
 				cellID, cellIDOK := rowidentity.StorageCellID(compiler.key.ProgramID(), flowView, cell)
 				if !cellIDOK || !cellID.Available() {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootCell, programconstruction.IssueModuleRootCell, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootCell(), programconstruction.IssueModuleRootCell, index, position)
 				}
 				child, childOK := programschema.NewModuleEntryRootCell(memberID, entryID, cellID, uint32(position))
 				if !childOK {
-					return programconstruction.New(moduleIDs.ProgramModuleEntryRootCell, programconstruction.IssueModuleRootCell, index, position)
+					return programconstruction.New(programcatalog.ModuleEntryRootCell(), programconstruction.IssueModuleRootCell, index, position)
 				}
 				compiler.publication.ModuleEntryRootCells = append(compiler.publication.ModuleEntryRootCells, child)
 			}
@@ -341,14 +340,14 @@ func (compiler *compiler) copyModuleEntriesFailure() programconstruction.Fault {
 			!fitsUint32(len(compiler.publication.ModuleEntryRootCells)-rootCellOffset) ||
 			!fitsUint32(len(compiler.publication.ModuleEntryRootFunctions)-rootFunctionOffset) ||
 			!fitsUint32(len(compiler.publication.ModuleEntryMembers)-memberOffset) {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		row, rowOK := programschema.NewModuleEntry(entryID, returnedID, uint32(index+1), uint32(fixedCount),
 			uint32(rootCellOffset), uint32(len(compiler.publication.ModuleEntryRootCells)-rootCellOffset),
 			uint32(rootFunctionOffset), uint32(len(compiler.publication.ModuleEntryRootFunctions)-rootFunctionOffset),
 			uint32(memberOffset), uint32(len(compiler.publication.ModuleEntryMembers)-memberOffset))
 		if !rowOK {
-			return programconstruction.New(moduleIDs.ProgramModuleEntry, programconstruction.IssueModuleEntry, index, -1)
+			return programconstruction.New(programcatalog.ModuleEntry(), programconstruction.IssueModuleEntry, index, -1)
 		}
 		compiler.publication.ModuleEntries = append(compiler.publication.ModuleEntries, row)
 	}
@@ -477,10 +476,9 @@ type moduleTableFrame struct {
 }
 
 func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID identity.ContentID, rootPosition uint32, scratch *moduleKeyScratch) programconstruction.Fault {
-	moduleIDs := denominator.GeneratedProgramModuleIDs()
 	selected, ok := compiler.selectModuleFields(table, scratch)
 	if !ok {
-		return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+		return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 	}
 	stack := []moduleTableFrame{{table: table, parent: parent, selected: selected, containerAt: -1}}
 	for len(stack) != 0 {
@@ -499,17 +497,17 @@ func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID
 		tableID, tableOK := compiler.moduleTableID(frame.table)
 		parentID, parentOK := compiler.moduleTableOrFieldID(frame.parent)
 		if !fieldOK || !tableOK || !parentOK {
-			return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+			return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 		}
 		function, functionOK := moduleEntryDirectFunction(candidate.value, compiler.input.Flow().Executable(), compiler.input.Flow().DirectFunctions())
 		if functionOK {
 			valueID, valueOK := compiler.moduleFunctionID(function)
 			if !valueOK {
-				return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+				return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 			}
 			member, memberOK := programschema.NewModuleEntryMember(fieldID, fieldID, parentID, valueID, entryID, tableID, candidate.key, rootPosition, true)
 			if !memberOK {
-				return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+				return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 			}
 			compiler.publication.ModuleEntryMembers = append(compiler.publication.ModuleEntryMembers, member)
 			continue
@@ -519,11 +517,11 @@ func (compiler *compiler) appendModuleTable(table, parent keyspace.Term, entryID
 		}
 		nested, nestedOK := compiler.selectModuleFields(candidate.value, scratch)
 		if !nestedOK {
-			return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+			return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 		}
 		member, memberOK := programschema.NewModuleEntryMember(fieldID, fieldID, parentID, identity.ContentID{}, entryID, tableID, candidate.key, rootPosition, false)
 		if !memberOK {
-			return programconstruction.New(moduleIDs.ProgramModuleEntryMember, programconstruction.IssueModuleMember, -1, -1)
+			return programconstruction.New(programcatalog.ModuleEntryMember(), programconstruction.IssueModuleMember, -1, -1)
 		}
 		compiler.publication.ModuleEntryMembers = append(compiler.publication.ModuleEntryMembers, member)
 		stack = append(stack, moduleTableFrame{table: candidate.value, parent: candidate.field, selected: nested, containerAt: len(compiler.publication.ModuleEntryMembers) - 1})

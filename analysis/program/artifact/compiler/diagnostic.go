@@ -459,7 +459,8 @@ func (failure CompileFailure) Error() string {
 		if !subrowOK {
 			subrow = -1
 		}
-		return fmt.Sprintf("program artifact compile: family=%x issue=%s row=%d subrow=%d", failure.construction.Family(), failure.construction.Issue(), row, subrow)
+		family := failure.construction.Family()
+		return fmt.Sprintf("program artifact compile: family=%s slot=%d issue=%s row=%d subrow=%d", family.Name(), family.Slot(), failure.construction.Issue(), row, subrow)
 	}
 	return fmt.Sprintf("program artifact compile: stage=%s row-kind=%s row=%d subrow=%d reason=%s", failure.stage, failure.kind, failure.row, failure.subrow, failure.reason)
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/source"
 	staticquery "github.com/wippyai/go-lua/analysis/program/static/query"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 	programdiagnostic "github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 )
 
@@ -75,39 +77,6 @@ func (input Input) OwnsSite(site causal.Site) bool {
 	return input.Program != nil && input.Program.OwnsSite(site)
 }
 
-// FaultKind is the compact child-to-parent failure vocabulary. The parent
-// maps this once to its global CompileFailure vocabulary.
-type FaultKind uint8
-
-const (
-	FaultInvalidInput FaultKind = iota + 1
-	FaultUnavailable
-	FaultRouteUnavailable
-	FaultRouteGuard
-	FaultStorageRead
-	FaultCall
-	FaultDuplicate
-)
-
-// Fault identifies the source row and optional child row that prevented
-// canonical diagnostic publication.
-type Fault struct {
-	kind   FaultKind
-	row    int
-	subrow int
-	failed bool
-}
-
-func (fault Fault) Failed() bool    { return fault.failed }
-func (fault Fault) Available() bool { return !fault.failed }
-func (fault Fault) Kind() FaultKind { return fault.kind }
-func (fault Fault) Row() int        { return fault.row }
-func (fault Fault) Subrow() int     { return fault.subrow }
-
-func failure(kind FaultKind, row, subrow int) Fault {
-	return Fault{kind: kind, row: row, subrow: subrow, failed: true}
-}
-
 type callArgumentSource struct {
 	term  keyspace.Term
 	index int
@@ -139,10 +108,10 @@ type compiler struct {
 // Compile admits all diagnostic observations and returns the one canonical
 // publication. The returned publication owns the only slices retained by the
 // parent; all indexes and scratch state die with this child transaction.
-func Compile(input Input) (programdiagnostic.Publication, Fault) {
+func Compile(input Input) (programdiagnostic.Publication, programconstruction.Fault) {
 	if input.Program == nil || !input.Program.Available() || !input.ProgramID.Available() ||
 		input.BodyBoundary == nil || input.Allocations == nil || input.PointIDsBySite == nil {
-		return programdiagnostic.Publication{}, failure(FaultInvalidInput, -1, -1)
+		return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticInvalidInput, -1, -1)
 	}
 	compiler := &compiler{
 		input:                     input,
@@ -152,22 +121,22 @@ func Compile(input Input) (programdiagnostic.Publication, Fault) {
 		diagnosticObservationByID: make(map[identity.ContentID]int),
 	}
 	if !compiler.indexCallArgumentSources() {
-		return programdiagnostic.Publication{}, failure(FaultCall, -1, -1)
+		return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
 	}
-	if fault := compiler.copyDiagnosticObservationsFailure(); fault.Failed() {
+	if fault := compiler.copyDiagnosticObservationsFailure(); fault.Available() {
 		return programdiagnostic.Publication{}, fault
 	}
 	identity.SortByContentID(compiler.diagnosticObservations, func(row programdiagnostic.DiagnosticObservation) identity.ContentID { return row.ID() })
 	for index := 1; index < len(compiler.diagnosticObservations); index++ {
 		if compiler.diagnosticObservations[index-1].ID() == compiler.diagnosticObservations[index].ID() {
-			return programdiagnostic.Publication{}, failure(FaultDuplicate, index, -1)
+			return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticDuplicate, index, -1)
 		}
 	}
 	return programdiagnostic.Publication{
 		DiagnosticObservations: compiler.diagnosticObservations,
 		DiagnosticEvidence:     compiler.diagnosticEvidence,
 		DiagnosticPaths:        compiler.diagnosticPaths,
-	}, Fault{}
+	}, programconstruction.Fault{}
 }
 
 func (compiler *compiler) indexCallArgumentSources() bool {

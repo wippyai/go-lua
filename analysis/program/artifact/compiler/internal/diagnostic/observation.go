@@ -10,15 +10,17 @@ import (
 	staticrefs "github.com/wippyai/go-lua/analysis/program/static/references"
 	programstorage "github.com/wippyai/go-lua/analysis/program/storage"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 	programdiagnostic "github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 )
 
 // copyDiagnosticObservationsFailure builds the complete immutable diagnostic
 // column directly from canonical Program/Flow/Source views. No Program
 // diagnostic union is retained or reopened by the artifact compiler.
-func (compiler *compiler) copyDiagnosticObservationsFailure() Fault {
+func (compiler *compiler) copyDiagnosticObservationsFailure() programconstruction.Fault {
 	if compiler == nil || !compiler.input.Available() {
-		return failure(FaultUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
 	compiler.diagnosticObservations = compiler.diagnosticObservations[:0]
 	compiler.diagnosticEvidence = compiler.diagnosticEvidence[:0]
@@ -32,7 +34,7 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() Fault {
 	for index := 0; index < routes.TotalCount(); index++ {
 		route, routeOK := routes.FinalAt(index)
 		if !routeOK {
-			return failure(FaultRouteUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteUnavailable, index, -1)
 		}
 		if failure := compiler.admitDiagnosticBranchFailure(route, index); failure.Available() {
 			return failure
@@ -53,40 +55,40 @@ func (compiler *compiler) copyDiagnosticObservationsFailure() Fault {
 	if failure := compiler.copyWriteConformanceObservationsFailure(); failure.Available() {
 		return failure
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // admitDiagnosticBranchFailure copies one eligible Branch route. A guarded
 // route from another decision family, or a Branch whose arm rewrite is not
 // scope-preserving, intentionally emits no diagnostic row.
-func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, rowIndex int) Fault {
+func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, rowIndex int) programconstruction.Fault {
 	if !route.Available() {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	if _, fromOK := route.From(); !fromOK {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	if _, toOK := route.To(); !toOK {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	guard, guardOK := route.GuardProof()
 	if !guardOK {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	identityValue, identityOK := route.Identity()
 	if !identityOK {
-		return failure(FaultRouteGuard, rowIndex, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
 	decisionTerm := identityValue.Decision
 	termOK := decisionTerm != 0
 	if !termOK || keyspace.TermFamily(decisionTerm) != keyspace.FamilyBranch {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	// Branches.Get returns (owner, condition, true arm, false arm, ok).
 	owner, branchCondition, branchTrue, branchFalse, branchRelationOK := compiler.input.Flow().Authored().Control().Branches().Get(decisionTerm)
 	_ = owner
 	if !branchRelationOK || !compiler.diagnosticBranchScopeRewriteSafe(branchTrue, branchFalse) {
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	span, spanOK := compiler.input.Span(branchCondition)
 	location, locationOK := compiler.input.Source().Identity().Span(branchCondition)
@@ -95,7 +97,7 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 	if !spanOK || !compiler.input.OwnsSpan(span) || !locationOK || !programdiagnostic.ValidSpan(location) ||
 		!finishOK || !compiler.input.OwnsSite(finish) || len(compiler.pointIDs(finish)) == 0 ||
 		!pathOK || !decisionPath.Available() {
-		return failure(FaultRouteGuard, rowIndex, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
 	attachments := compiler.pointIDs(finish)
 	points := make([]identity.ContentID, len(attachments))
@@ -103,10 +105,10 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 	for index := range points {
 		points[index] = attachments[index]
 		if !points[index].Available() {
-			return failure(FaultRouteGuard, rowIndex, index)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, index)
 		}
 		if _, duplicate := seen[points[index]]; duplicate {
-			return failure(FaultRouteGuard, rowIndex, index)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, index)
 		}
 		seen[points[index]] = struct{}{}
 	}
@@ -115,9 +117,9 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)), decisionPath, span.ContextID(),
 	)
 	if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
-		return failure(FaultRouteGuard, rowIndex, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // diagnosticBranchScopeRewriteSafe is the artifact builder's copy of the
@@ -217,14 +219,14 @@ func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
 	return true
 }
 
-func (compiler *compiler) copyUnresolvedTypeObservationsFailure() Fault {
+func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstruction.Fault {
 	view := compiler.input.Static()
 	types := view.StaticTypes()
 	references := view.References()
 	for index := 0; index < types.Count(); index++ {
 		ref, refOK := types.At(index)
 		if !refOK {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		term := ref.Term()
 		resolution, target, rootTerm, relationOK := references.Get(term)
@@ -234,7 +236,7 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() Fault {
 		location, locationOK := compiler.input.Source().Identity().Span(term)
 		count, countOK := references.SourceCount(term)
 		if !locationOK || !programdiagnostic.ValidSpan(location) || !countOK || count == 0 {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		path := make([]string, count)
 		for pathIndex := range path {
@@ -243,44 +245,44 @@ func (compiler *compiler) copyUnresolvedTypeObservationsFailure() Fault {
 			componentOK = componentOK && componentLiteral.Kind == keyspace.LiteralString
 			component := componentLiteral.String
 			if !keyOK || !componentOK || component == "" {
-				return failure(FaultUnavailable, index, pathIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, pathIndex)
 			}
 			path[pathIndex] = component
 		}
 		root := identity.ContentID{}
 		if len(path) == 1 {
 			if rootTerm != 0 {
-				return failure(FaultUnavailable, index, -1)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 			}
 		} else {
 			if rootTerm == 0 || keyspace.TermFamily(rootTerm) != keyspace.FamilyCell {
-				return failure(FaultUnavailable, index, -1)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 			}
 			var rootOK bool
 			root, rootOK = staticquery.ScopeID(compiler.input.ContentID(), rootTerm)
 			if !rootOK {
-				return failure(FaultUnavailable, index, -1)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 			}
 		}
 		reference, referenceOK := staticquery.TypeReferenceID(compiler.input.ContentID(), ref)
 		if !referenceOK {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		row, rowOK := programdiagnostic.NewDiagnosticObservationTypeReferenceUnresolved(
 			programdiagnostic.TypeReferenceUnresolvedIdentity(compiler.input.ContentID(), location, reference, root, path),
 			location, uint32(len(compiler.diagnosticPaths)), uint32(len(path)), reference, root,
 		)
 		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, path) {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // copyUnresolvedValueObservationsFailure consumes only Flow's sparse
 // implicit-read denominator. It never scans names or infers binder absence
 // from the ordinary Read catalog.
-func (compiler *compiler) copyUnresolvedValueObservationsFailure() Fault {
+func (compiler *compiler) copyUnresolvedValueObservationsFailure() programconstruction.Fault {
 	reads := compiler.input.Flow().Authored().Storage().Reads()
 	for index := 0; index < reads.ImplicitCount(); index++ {
 		term, termOK := reads.ImplicitAt(index)
@@ -296,17 +298,17 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() Fault {
 			!cellRelationOK || kind != authored.CellGlobal || body != 0 || key == 0 ||
 			!literalOK || literal.Kind != keyspace.LiteralString || literal.String == "" ||
 			!locationOK || !programdiagnostic.ValidSpan(location) {
-			return failure(FaultStorageRead, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticStorageRead, index, -1)
 		}
 		row, rowOK := programdiagnostic.NewDiagnosticObservationValueReferenceUnresolved(
 			programdiagnostic.ValueReferenceUnresolvedIdentity(compiler.input.ContentID(), location, readID, cellID, literal.String),
 			location, readID, cellID, literal.String,
 		)
 		if !rowOK || !compiler.admitDiagnosticObservation(row, nil, nil) {
-			return failure(FaultStorageRead, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticStorageRead, index, -1)
 		}
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // The evidence points of a conformance row are the argument's own evaluation
@@ -317,17 +319,17 @@ func (compiler *compiler) copyUnresolvedValueObservationsFailure() Fault {
 // selected direct-call argument whose formal declares a static type. Selection
 // is the sealed DirectFunctions join already stored on the cold Call row: uncalled
 // interiors do not emit. Method, tail, generic, and vararg calls stay silent.
-func (compiler *compiler) copyTypeConformanceObservationsFailure() Fault {
+func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstruction.Fault {
 	if compiler == nil || !compiler.input.Available() {
-		return failure(FaultCall, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
 	}
 	selected, selectedOK := compiler.selectedDirectCalleeBodies()
 	if !selectedOK {
-		return failure(FaultCall, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
 	}
 	for index, call := range compiler.calls {
 		if !call.Available() {
-			return failure(FaultCall, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		targetBody, targetOK := call.DirectTargetBody()
 		if !targetOK {
@@ -341,7 +343,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() Fault {
 		}
 		boundary, boundaryOK := compiler.bodyBoundary.FunctionBoundaryForBody(targetBody)
 		if !boundaryOK || !boundary.Available() {
-			return failure(FaultCall, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		argumentOffset, argumentCount, argumentSpanOK := call.ArgumentSpan()
 		if !argumentSpanOK || boundary.HasVararg() || boundary.FormalCount() != int(argumentCount) {
@@ -349,11 +351,11 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() Fault {
 		}
 		for argumentIndex := 0; argumentIndex < int(argumentCount); argumentIndex++ {
 			if uint64(argumentOffset)+uint64(argumentIndex) >= uint64(len(compiler.input.CallArguments)) {
-				return failure(FaultCall, index, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, argumentIndex)
 			}
 			argument := compiler.input.CallArguments[int(argumentOffset)+argumentIndex]
 			if !argument.Available() || argument.CallID() != call.ID() || argument.Index() != uint32(argumentIndex) {
-				return failure(FaultCall, index, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, argumentIndex)
 			}
 			formal, formalOK := compiler.bodyBoundary.FunctionFormalAt(boundary, argumentIndex)
 			declared, declaredOK := formal.DeclaredStaticTypeID()
@@ -363,16 +365,16 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() Fault {
 			memberTerm, sourceIndex, memberOK := compiler.callArgumentSource(argument.ID())
 			location, locationOK := compiler.input.Source().Identity().Span(memberTerm)
 			if !memberOK || !locationOK || !programdiagnostic.ValidSpan(location) || !argument.SpanID().Available() {
-				return failure(FaultCall, sourceIndex, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			memberSpan, memberSpanOK := compiler.input.Span(memberTerm)
 			memberFinish, memberFinishOK := memberSpan.Finish()
 			if !memberSpanOK || !compiler.input.OwnsSpan(memberSpan) || !memberFinishOK || !compiler.input.OwnsSite(memberFinish) {
-				return failure(FaultCall, sourceIndex, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			points := compiler.pointIDs(memberFinish)
 			if len(points) == 0 {
-				return failure(FaultCall, sourceIndex, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			site := programdiagnostic.DiagnosticObservationSiteCallArgument
 			row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(
@@ -381,14 +383,14 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() Fault {
 				site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex),
 			)
 			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
-				return failure(FaultCall, sourceIndex, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			if !compiler.copyStructuralMemberConformanceObservationsFailure(call.ID(), argument.MemberID(), declared, memberTerm) {
-				return failure(FaultCall, sourceIndex, argumentIndex)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 		}
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // selectedDirectCalleeBodies computes the sealed DirectFunctions closure once
@@ -587,13 +589,13 @@ func equalDiagnosticObservationCanonical(left, right programdiagnostic.Diagnosti
 // measured against that declaration, with the written value's own evaluation
 // finish as its evidence. An index or lens write has no declared cell and
 // contributes no row.
-func (compiler *compiler) copyWriteConformanceObservationsFailure() Fault {
+func (compiler *compiler) copyWriteConformanceObservationsFailure() programconstruction.Fault {
 	if compiler == nil || !compiler.input.Available() {
-		return failure(FaultUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
 	selected, selectedOK := compiler.selectedDirectCalleeBodies()
 	if !selectedOK {
-		return failure(FaultUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
 	view := compiler.input.Flow()
 	assigns := view.Authored().Storage().Assigns()
@@ -604,14 +606,14 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() Fault {
 		owner, valuesTerm, relationOK := assigns.Get(term)
 		width, widthOK := assigns.WriteCount(term)
 		if !termOK || !relationOK || !widthOK {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		if !view.Executable().Contains(term) {
 			continue
 		}
 		bodyPath, bodyOK := view.BodyPath(owner)
 		if !bodyOK || !bodyPath.Available() {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
 			continue
@@ -625,7 +627,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() Fault {
 			writeTerm, writeOK := assigns.WriteAt(term, position)
 			writeAssign, target, writeRelationOK := writes.Get(writeTerm)
 			if !writeOK || !writeRelationOK || writeAssign != term {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.ProgramID, compiler.input.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
@@ -634,14 +636,14 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() Fault {
 				continue
 			}
 			if !compiler.admitConformanceObservation(programdiagnostic.DiagnosticObservationSiteAssignment, assignmentID, member.ID(), declared, memberTerm, uint32(position)) {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 			if !compiler.copyStructuralMemberConformanceObservationsFailure(assignmentID, member.ID(), declared, memberTerm) {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 		}
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }
 
 // admitConformanceObservation mints and admits one conformance row from the
@@ -677,13 +679,13 @@ func (compiler *compiler) admitConformanceObservation(site programdiagnostic.Dia
 // DirectFunctions closure reaches emit, so an uncalled interior stays silent.
 // A bind position with no declared type, no fixed member, or an open tail
 // contributes no row rather than a row measured against nothing.
-func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Fault {
+func (compiler *compiler) copyAssignmentConformanceObservationsFailure() programconstruction.Fault {
 	if compiler == nil || !compiler.input.Available() {
-		return failure(FaultUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
 	selected, selectedOK := compiler.selectedDirectCalleeBodies()
 	if !selectedOK {
-		return failure(FaultUnavailable, -1, -1)
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, -1, -1)
 	}
 	view := compiler.input.Flow()
 	binds := view.Authored().Storage().Binds()
@@ -693,21 +695,21 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Fault {
 		owner, valuesTerm, relationOK := binds.Get(term)
 		width, widthOK := compiler.input.Source().Binds().Len(term)
 		if !termOK || !relationOK || !widthOK {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		if !view.Executable().Contains(term) {
 			continue
 		}
 		bodyPath, bodyOK := view.BodyPath(owner)
 		if !bodyOK || !bodyPath.Available() {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		if _, ownerSelected := selected[bodyPath]; !ownerSelected {
 			continue
 		}
 		bindID, bindIDOK := rowidentity.StorageBindID(compiler.input.Program, compiler.input.ProgramID, index)
 		if !bindIDOK || !bindID.Available() {
-			return failure(FaultUnavailable, index, -1)
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, -1)
 		}
 		valueRow, valueRowOK := compiler.valueRowForTerm(valuesTerm)
 		if !valueRowOK {
@@ -716,7 +718,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Fault {
 		for position := 0; position < width; position++ {
 			cellTerm, cellOK := compiler.input.Source().Binds().At(term, position)
 			if !cellOK {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.ProgramID, compiler.input.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
@@ -725,12 +727,12 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() Fault {
 				continue
 			}
 			if !compiler.admitConformanceObservation(programdiagnostic.DiagnosticObservationSiteAssignment, bindID, member.ID(), declared, memberTerm, uint32(position)) {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 			if !compiler.copyStructuralMemberConformanceObservationsFailure(bindID, member.ID(), declared, memberTerm) {
-				return failure(FaultUnavailable, index, position)
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 		}
 	}
-	return Fault{}
+	return programconstruction.Fault{}
 }

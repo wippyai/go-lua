@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
 	calltargetcompile "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/calltarget"
+	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/diagnostic"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/localtransfer"
 	stageplan "github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/stage"
 	"github.com/wippyai/go-lua/analysis/program/artifact/issuance"
@@ -78,9 +79,21 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	if failure := transaction.copyOccurrenceCatalogFailure(); failure.Available() {
 		return nil, failure
 	}
-	if failure := transaction.copyDiagnosticObservationsFailure(); failure.Available() {
-		return nil, failure
+	diagnosticPublication, diagnosticFault := diagnostic.Compile(diagnostic.Input{
+		Program:        transaction.input,
+		ProgramID:      transaction.key.ProgramID(),
+		Values:         transaction.publication.Values,
+		ValuesMembers:  transaction.publication.ValuesMembers,
+		Calls:          transaction.publication.Calls,
+		CallArguments:  transaction.publication.CallArguments,
+		BodyBoundary:   transaction.bodyBoundary,
+		Allocations:    transaction.allocations,
+		PointIDsBySite: transaction.pointIDsBySite,
+	})
+	if diagnosticFault.Available() {
+		return nil, CompileFailure{construction: diagnosticFault}
 	}
+	transaction.publication.Diagnostic = diagnosticPublication
 	// Diagnostic construction is the final Site-to-point consumer. Its child
 	// package owns all diagnostic-only indexes and caches; only the immutable
 	// publication remains on the transaction for sealing.
