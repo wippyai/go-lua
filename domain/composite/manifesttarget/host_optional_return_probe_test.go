@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/runtimekind"
-	"github.com/wippyai/go-lua/domain/static"
 	"github.com/wippyai/go-lua/domain/type/normalize"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
@@ -93,7 +92,7 @@ func hostProbeNormalValues(t *testing.T, sealed *contract.Contract, operation vo
 // hostProbeAdmitsNil is the spelling-independent question the checker actually
 // asks of a declared type: may a value of it carry the nil runtime family.
 func hostProbeAdmitsNil(value typ.Type) bool {
-	return static.MayRuntimeKinds(value)&runtimekind.Bit(runtimekind.Nil) != 0
+	return typ.MayRuntimeKinds(value)&runtimekind.Bit(runtimekind.Nil) != 0
 }
 
 // hostProbeSealed seals the standard providers plus one probe module.
@@ -143,7 +142,7 @@ func TestHostDeclaredOptionalReturnKeepsItsNilability(t *testing.T) {
 	decoded := hostProbeNormalReturn(t, sealed, hostProbeModuleBinding("maybe_name"), 0)
 	if !hostProbeAdmitsNil(decoded) {
 		t.Fatalf("host declared maybe_name() -> string?; the sealed Target publishes %s, which admits %d and excludes nil, so every consumer reads a nil-free proof the host never gave",
-			decoded, static.MayRuntimeKinds(decoded))
+			decoded, typ.MayRuntimeKinds(decoded))
 	}
 }
 

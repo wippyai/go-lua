@@ -486,9 +486,15 @@ func operationFromDeclaration(declaration manifest.Function) (vocabulary.Operati
 		fixed = append(fixed, materialize(parameter.Type))
 	}
 	open := function.Type.Variadic != nil || len(optional) != 0
+	// A declared return crosses the boundary exactly as the provider wrote it.
+	// The manifest is the whole evidence the analyzer has about a native body,
+	// so a declared nil member is a stated answer, and dropping it here would
+	// intern a non-nilness proof the provider never gave. A provider whose nil
+	// answer belongs to a separate arm states that arm in its operation law
+	// (AppendNormal / ReplaceNormal); the signature never implies one.
 	returns := make([]typ.Type, len(function.Type.Returns))
 	for index, value := range function.Type.Returns {
-		returns[index] = successfulResultType(materialize(value))
+		returns[index] = materialize(value)
 	}
 	operation := normal(binding, fixed, open, returns, function.ResultTail != nil)
 	if function.ResultTail != nil {
@@ -641,11 +647,4 @@ func checkedFormalInt32(value int) (int32, error) {
 		return 0, fmt.Errorf("value %d is outside signed int32 range", value)
 	}
 	return int32(value), nil
-}
-
-func successfulResultType(value typ.Type) typ.Type {
-	if optional, ok := typ.UnwrapTransparentWrappers(value).(*typ.Optional); ok && optional.Inner != nil {
-		return optional.Inner
-	}
-	return value
 }
