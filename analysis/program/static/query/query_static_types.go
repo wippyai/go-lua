@@ -13,12 +13,12 @@ type StaticTypes struct {
 	authority staticTypeAuthority
 }
 
-// StaticTypeRef is a capability for one published Static type. Its owner is
-// the immutable query snapshot, not the root Component; Term remains the
-// local (family, ordinal) encoding used by the canonical keyspace.
+// StaticTypeRef is one checked local Static type term. The owning query
+// validates the term before issuing this value; the reference carries no
+// copied Snapshot or census. Term remains the local (family, ordinal) encoding
+// used by the canonical keyspace.
 type StaticTypeRef struct {
-	authority staticTypeAuthority
-	term      keyspace.Term
+	term keyspace.Term
 }
 
 // staticTypeAuthority is the canonical identity/census pair needed by this
@@ -69,7 +69,7 @@ func (types StaticTypes) At(index int) (StaticTypeRef, bool) {
 		count := uint64(types.authority.census[family])
 		if offset < count {
 			term := keyspace.MakeTerm(family, uint32(offset+1))
-			return StaticTypeRef{authority: types.authority, term: term}, true
+			return StaticTypeRef{term: term}, true
 		}
 		offset -= count
 	}
@@ -83,7 +83,7 @@ func (types StaticTypes) Ref(term keyspace.Term) (StaticTypeRef, bool) {
 	if !types.available() || !types.staticTypeTerm(term) {
 		return StaticTypeRef{}, false
 	}
-	return StaticTypeRef{authority: types.authority, term: term}, true
+	return StaticTypeRef{term: term}, true
 }
 
 func (types StaticTypes) staticTypeTerm(term keyspace.Term) bool {
@@ -97,10 +97,7 @@ func (types StaticTypes) staticTypeTerm(term keyspace.Term) bool {
 
 // Term recovers the checked local Term. A zero ref returns zero.
 func (ref StaticTypeRef) Term() keyspace.Term {
-	if ref.authority.contentID.Available() && staticTypeTerm(ref.authority.census, ref.term) {
-		return ref.term
-	}
-	return 0
+	return ref.term
 }
 
 func staticTypeTerm(census [keyspace.FamilyCount]uint32, term keyspace.Term) bool {

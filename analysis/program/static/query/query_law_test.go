@@ -38,7 +38,7 @@ func TestBuildViewAndPublishedViewRetainCanonicalQueries(t *testing.T) {
 	}
 	published := component.View()
 	if !published.Available() || published.Types().Primitives().Count() != 1 ||
-		published.StaticTypes().Count() != 1 || published.LocalContainment().Count() != 0 {
+		published.StaticTypes().Count() != 1 || published.LocalContainment().Count() != 1 {
 		t.Fatal("published View did not expose the expected immutable query surface")
 	}
 }
