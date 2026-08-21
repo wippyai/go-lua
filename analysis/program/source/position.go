@@ -16,35 +16,28 @@ func installPositions(a *authority, input IndexInput) (*sealedindex.Table, error
 	// occurrences are mandatory, while Terms outside that closure have no
 	// source-position projection. Position.Term is the sole row identity, and
 	// the explicit family/ordinal order is part of this boundary.
-	// Allocate the retained batch exactly once. The input is already canonical
-	// by (Family, Ordinal), so each family can be carved from this backing array
-	// without per-family geometric growth or a sorting/counting pass.
-	entries := make([]sealedindex.Row, len(input.Positions))
+	// The owner-issued builder retains the canonical rows directly. There is no
+	// caller-owned DTO batch for the index package to copy before publication.
+	builder := sealedindex.NewBuilder(len(input.Positions))
 	var directCounts [keyspace.FamilyCount]int
-	var previousFamily keyspace.Family
-	var previousOrdinal uint32
-	for position, row := range input.Positions {
+	for _, row := range input.Positions {
 		if !a.validTerm(row.Term) || !a.validTerm(row.Root) || !a.validFamilyTerm(row.Body, keyspace.FamilyBody) ||
 			!a.validFamilyTerm(row.FrontierBody, keyspace.FamilyBody) ||
 			!a.validDirectBodyTerm(row.Root) || row.Offset > keyspace.MaxTermOrdinal || row.Cursor > keyspace.MaxTermOrdinal ||
 			keyspace.TermFamily(row.Term) == keyspace.FamilyOutcome {
 			return nil, errors.New("program/source: invalid source position")
 		}
-		family, termOrdinal := keyspace.TermFamily(row.Term), keyspace.TermOrdinal(row.Term)
-		if previousFamily != keyspace.FamilyInvalid &&
-			(family < previousFamily || family == previousFamily && termOrdinal <= previousOrdinal) {
-			return nil, errors.New("program/source: noncanonical source position order")
-		}
-		previousFamily, previousOrdinal = family, termOrdinal
 		if row.Term == row.Root {
-			directCounts[family]++
+			directCounts[keyspace.TermFamily(row.Term)]++
 		}
-		entries[position] = sealedindex.NewRow(
+		if err := builder.Add(
 			row.Term, row.Root, row.Body, row.Offset, row.Cursor,
 			row.FrontierBody, row.FrontierCursor,
-		)
+		); err != nil {
+			return nil, err
+		}
 	}
-	table, err := sealedindex.Seal(entries)
+	table, err := builder.Seal()
 	if err != nil {
 		return nil, err
 	}

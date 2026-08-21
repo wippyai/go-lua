@@ -7,29 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 )
 
-// Row is one validated Source position row supplied by the Source owner.
-// Construction is intentionally opaque so the table remains the only owner
-// of retained row storage.
-type Row struct {
-	term           keyspace.Term
-	root           keyspace.Term
-	body           keyspace.Term
-	offset         uint32
-	cursor         uint32
-	frontierBody   keyspace.Term
-	frontierCursor uint32
-}
-
-// NewRow creates one immutable table input row. Source performs the
-// authority-specific direct-root and frontier checks before issuing rows to
-// Seal; this package owns only canonical table shape and retention.
-func NewRow(term, root, body keyspace.Term, offset, cursor uint32, frontierBody keyspace.Term, frontierCursor uint32) Row {
-	return Row{
-		term: term, root: root, body: body, offset: offset, cursor: cursor,
-		frontierBody: frontierBody, frontierCursor: frontierCursor,
-	}
-}
-
 // Slot is the immutable position projection returned by Table lookup.
 type Slot struct {
 	root           keyspace.Term
@@ -70,6 +47,71 @@ func (rows familyRows) lookup(ordinal uint32) (Slot, bool) {
 	return rows[low].slot, true
 }
 
+// builderState is shared by copied Builder values. The state fence makes the
+// ownership transfer in Seal one-shot even if a caller copies the capability;
+// no post-seal Add can mutate the backing allocation retained by Table.
+type builderState struct {
+	entries         []entry
+	starts          [keyspace.FamilyCount]int
+	counts          [keyspace.FamilyCount]int
+	previousFamily  keyspace.Family
+	previousOrdinal uint32
+	sealed          bool
+}
+
+// Builder is the owner-issued construction capability for one sparse Source
+// position table. It retains private entries while Source-specific validation
+// runs, then transfers that backing allocation directly to Table at Seal.
+// There is no caller-owned row DTO for Table to copy.
+type Builder struct {
+	state *builderState
+}
+
+// NewBuilder creates an empty position-table builder with capacity for the
+// expected retained rows. Capacity is only an allocation hint; sparse family
+// ordinals remain the sole table denominator.
+func NewBuilder(capacity int) *Builder {
+	if capacity < 0 {
+		capacity = 0
+	}
+	return &Builder{state: &builderState{entries: make([]entry, 0, capacity)}}
+}
+
+// Add appends one canonical position row. Source owns semantic validation of
+// roots, Bodies, and Repeat frontier geometry; this package owns only the
+// table's family/ordinal order and immutable scalar retention.
+func (builder *Builder) Add(term, root, body keyspace.Term, offset, cursor uint32, frontierBody keyspace.Term, frontierCursor uint32) error {
+	if builder == nil || builder.state == nil {
+		return errors.New("program/source/index: invalid position builder")
+	}
+	state := builder.state
+	if state.sealed {
+		return errors.New("program/source/index: position builder is sealed")
+	}
+	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
+	if family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount ||
+		family == keyspace.FamilyOutcome || ordinal == 0 {
+		return errors.New("program/source/index: invalid position term")
+	}
+	if state.previousFamily != keyspace.FamilyInvalid &&
+		(family < state.previousFamily || family == state.previousFamily && ordinal <= state.previousOrdinal) {
+		return errors.New("program/source/index: noncanonical position order")
+	}
+	if state.counts[family] == 0 {
+		state.starts[family] = len(state.entries)
+	}
+	state.counts[family]++
+	state.previousFamily, state.previousOrdinal = family, ordinal
+	state.entries = append(state.entries, entry{
+		ordinal: ordinal,
+		slot: Slot{
+			root: root, body: body, offset: offset, cursor: cursor,
+			frontierBody: frontierBody, frontierCursor: frontierCursor,
+		},
+	})
+	return nil
+}
+
 // Table is the one immutable sparse position table issued by Source Commit.
 // It retains only positioned Terms, with exact-capacity family slices over one
 // backing allocation; the authored Source authority remains the identity and
@@ -79,48 +121,32 @@ type Table struct {
 	sealed bool
 }
 
-// Seal copies canonical rows into one immutable sparse table. The Source root
-// validates ownership, direct roots, and frontier geometry before this call;
-// this child closes the table's own family/ordinal ordering and duplicate
-// invariants without retaining the caller's batch.
-func Seal(rows []Row) (*Table, error) {
-	entries := make([]entry, len(rows))
-	var previousFamily keyspace.Family
-	var previousOrdinal uint32
-	for position, row := range rows {
-		family, ordinal := keyspace.TermFamily(row.term), keyspace.TermOrdinal(row.term)
-		if family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount ||
-			family == keyspace.FamilyOutcome || ordinal == 0 {
-			return nil, errors.New("program/source/index: invalid position term")
-		}
-		if previousFamily != keyspace.FamilyInvalid &&
-			(family < previousFamily || family == previousFamily && ordinal <= previousOrdinal) {
-			return nil, errors.New("program/source/index: noncanonical position order")
-		}
-		previousFamily, previousOrdinal = family, ordinal
-		entries[position] = entry{
-			ordinal: ordinal,
-			slot: Slot{
-				root: row.root, body: row.body, offset: row.offset, cursor: row.cursor,
-				frontierBody: row.frontierBody, frontierCursor: row.frontierCursor,
-			},
-		}
+// Seal transfers the builder's private backing allocation into one immutable
+// sparse table. The builder is terminal and releases its slice header, so the
+// published Table is the sole owner of the retained entries.
+func (builder *Builder) Seal() (*Table, error) {
+	if builder == nil || builder.state == nil {
+		return nil, errors.New("program/source/index: invalid position builder")
 	}
+	state := builder.state
+	if state.sealed {
+		return nil, errors.New("program/source/index: position builder is sealed")
+	}
+	state.sealed = true
+	entries := state.entries
+	state.entries = nil
 	table := &Table{sealed: true}
-	if len(entries) == 0 {
-		return table, nil
-	}
-	// Carve exact-capacity views over the one retained backing allocation.
-	start := 0
-	family := keyspace.TermFamily(rows[0].term)
-	for position := 1; position <= len(entries); position++ {
-		if position == len(entries) || keyspace.TermFamily(rows[position].term) != family {
-			table.rows[family] = familyRows(entries[start:position:position])
-			if position < len(entries) {
-				start = position
-				family = keyspace.TermFamily(rows[position].term)
-			}
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		count := state.counts[family]
+		if count == 0 {
+			continue
 		}
+		start := state.starts[family]
+		end := start + count
+		if start < 0 || end < start || end > len(entries) {
+			return nil, errors.New("program/source/index: invalid position builder ranges")
+		}
+		table.rows[family] = familyRows(entries[start:end:end])
 	}
 	return table, nil
 }
