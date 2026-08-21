@@ -49,45 +49,35 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		}
 	}
 
-	ids := make([]vocabulary.SubedgeID, len(items))
+	start := len(core.query.subedges)
 	sourceIDs := make([]vocabulary.SubedgeID, len(items))
-	sourceSeen := make([]bool, len(items))
 	for index, item := range items {
-		if item.Source >= uint32(len(items)) || sourceSeen[item.Source] {
+		if item.Source >= uint32(len(items)) || sourceIDs[item.Source] != 0 {
 			return invalidQuery("subedge source coordinate is malformed")
 		}
-		sourceSeen[item.Source] = true
 		if item.Role == 0 || !vocabulary.ValidSubedgeFamily(item.Family) {
 			return invalidQuery("subedge has invalid role or family")
 		}
-		handle, err := checkedSubedgeHandle(len(core.query.subedges) + index)
+		handle, err := checkedSubedgeHandle(start + index)
 		if err != nil {
 			return err
 		}
-		ids[index] = handle
 		sourceIDs[item.Source] = handle
 	}
-	for source, seen := range sourceSeen {
-		if !seen {
-			return invalidQuery(fmt.Sprintf("subedge source coordinate %d is missing", source))
-		}
-	}
 
-	argsBySource := make([]vocabulary.Values, len(items))
 	pending := make([]querySubedgeRow, len(items))
 	for index, item := range items {
 		row, err := core.prepareSubedgeInput(op, item, operation, input.Semantics)
 		if err != nil {
 			return fmt.Errorf("target/operation: subedge %d: %w", index, err)
 		}
-		argsBySource[item.Source] = row.arguments
 		pending[index] = row
 	}
 
 	for index, item := range items {
 		var err error
 		pending[index].admissionRoute, err = core.appendQuerySubedgeRoute(
-			item.AdmissionRoute, sourceIDs, argsBySource, op, operation,
+			item.AdmissionRoute, sourceIDs, pending, start, op, operation,
 			true, input.Semantics,
 		)
 		if err != nil {
@@ -95,7 +85,7 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		}
 		for terminal, route := range item.Routes {
 			pending[index].routes[terminal], err = core.appendQuerySubedgeRoute(
-				route, sourceIDs, argsBySource, op, operation,
+				route, sourceIDs, pending, start, op, operation,
 				false, input.Semantics,
 			)
 			if err != nil {
@@ -107,7 +97,6 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		}
 	}
 
-	start := len(core.query.subedges)
 	for index := range pending {
 		originStart := len(core.query.subedgeOrigins)
 		for _, origin := range items[index].ArgumentOrigins {
@@ -128,10 +117,10 @@ func (core *Core) appendQuerySubedges(op vocabulary.Operation, operation *queryO
 		if callback.subedge != 0 {
 			return invalidQuery("callback has multiple direct subedges")
 		}
-		callback.subedge = ids[index]
+		callback.subedge = sourceIDs[items[index].Source]
 	}
 	if input.SubedgeRelation != nil {
-		relation, err := core.appendQuerySubedgeRelation(op, operation, *input.SubedgeRelation, ids, len(input.EffectIndices))
+		relation, err := core.appendQuerySubedgeRelation(op, operation, *input.SubedgeRelation, sourceIDs, len(input.EffectIndices))
 		if err != nil {
 			return err
 		}
@@ -626,12 +615,12 @@ func (core Core) validateSubedgeRouteInput(op vocabulary.Operation, route Subedg
 	return outcome, nil
 }
 
-func (core Core) appendQuerySubedgeRoute(input SubedgeRouteInput, ids []vocabulary.SubedgeID, argsBySource []vocabulary.Values, op vocabulary.Operation, operation *queryOperationRow, allowFailure bool, semantics schematype.Semantics) (querySubedgeRouteRow, error) {
+func (core Core) appendQuerySubedgeRoute(input SubedgeRouteInput, sourceIDs []vocabulary.SubedgeID, pending []querySubedgeRow, start int, op vocabulary.Operation, operation *queryOperationRow, allowFailure bool, semantics schematype.Semantics) (querySubedgeRouteRow, error) {
 	outcome, err := core.validateSubedgeRouteInput(op, input, operation, allowFailure, semantics)
 	if err != nil {
 		return querySubedgeRouteRow{}, err
 	}
-	if input.HasSibling && (input.SiblingRank >= uint32(len(ids)) || ids[input.SiblingRank] == 0) {
+	if input.HasSibling && (input.SiblingRank >= uint32(len(sourceIDs)) || sourceIDs[input.SiblingRank] == 0) {
 		return querySubedgeRouteRow{}, errors.New("subedge sibling rank is unresolved")
 	}
 	row := querySubedgeRouteRow{
@@ -642,8 +631,12 @@ func (core Core) appendQuerySubedgeRoute(input SubedgeRouteInput, ids []vocabula
 		row.outcome = outcome
 	}
 	if input.HasSibling {
-		row.subedge = ids[input.SiblingRank]
-		row.destination = argsBySource[input.SiblingRank]
+		row.subedge = sourceIDs[input.SiblingRank]
+		local := int(row.subedge) - start - 1
+		if local < 0 || local >= len(pending) {
+			return querySubedgeRouteRow{}, errors.New("subedge sibling rank is unresolved")
+		}
+		row.destination = pending[local].arguments
 	} else if input.Route == vocabulary.RouteOutcome || input.Route == vocabulary.RouteRejectYield {
 		if outcome == noSubedgeSource || int(outcome) >= operation.outcomes.len() {
 			return querySubedgeRouteRow{}, errors.New("subedge owner outcome is outside owner")
@@ -670,10 +663,11 @@ func (core Core) canonicalOutcome(operation *queryOperationRow, source uint32) (
 	return outcome, nil
 }
 
-func (core *Core) appendQuerySubedgeRelation(op vocabulary.Operation, operation *queryOperationRow, input SubedgeRelationInput, ids []vocabulary.SubedgeID, effectCount int) (uint32, error) {
-	if uint64(input.Operand) >= uint64(core.ValueFormalCount(op)) || input.SubedgeRank >= uint32(len(ids)) {
+func (core *Core) appendQuerySubedgeRelation(op vocabulary.Operation, operation *queryOperationRow, input SubedgeRelationInput, sourceIDs []vocabulary.SubedgeID, effectCount int) (uint32, error) {
+	if uint64(input.Operand) >= uint64(core.ValueFormalCount(op)) || input.SubedgeRank >= uint32(len(sourceIDs)) || sourceIDs[input.SubedgeRank] == 0 {
 		return 0, invalidQuery("subedge relation coordinate is outside owner")
 	}
+	subedge := sourceIDs[input.SubedgeRank]
 	resultOutcome, err := core.canonicalOutcome(operation, input.ResultOutcome)
 	if err != nil || resultOutcome == noSubedgeSource {
 		return 0, invalidQuery("subedge relation outcome is outside owner")
@@ -686,12 +680,12 @@ func (core *Core) appendQuerySubedgeRelation(op vocabulary.Operation, operation 
 			return 0, invalidQuery("subedge relation effect alias is malformed")
 		}
 	}
-	start := len(core.query.subedgeRelationEffects)
+	effectsStart := len(core.query.subedgeRelationEffects)
 	core.query.subedgeRelationEffects = append(core.query.subedgeRelationEffects, input.EffectAliases...)
 	core.query.subedgeRelations = append(core.query.subedgeRelations, querySubedgeRelationRow{
-		operand: input.Operand, selector: input.Selector, subedge: ids[input.SubedgeRank],
+		operand: input.Operand, selector: input.Selector, subedge: subedge,
 		resultOutcome: resultOutcome, result: input.Result,
-		effects: queryRange{start: start, end: len(core.query.subedgeRelationEffects)},
+		effects: queryRange{start: effectsStart, end: len(core.query.subedgeRelationEffects)},
 	})
 	return uint32(len(core.query.subedgeRelations)), nil
 }
