@@ -341,22 +341,16 @@ func (compiler *compiler) indexReadResultLivenessID(term keyspace.Term) (identit
 		keyspace.TermFamily(term) != keyspace.FamilyRead || keyspace.TermOrdinal(term) == 0 {
 		return identity.ContentID{}, false
 	}
-	reads := compiler.input.Flow().AccessGeometry().IndexAccesses().Reads()
-	for index := 0; index < reads.Count(); index++ {
-		rowTerm, rowOK := reads.At(index)
-		if !rowOK {
-			return identity.ContentID{}, false
-		}
-		if rowTerm != term {
-			continue
-		}
-		row, compiled := compiler.indexReadAt(index)
-		if !compiled || row.term != term || !row.resultID.Available() {
-			return identity.ContentID{}, false
-		}
-		return row.resultID, true
+	candidates := compiler.input.Flow().Candidates()
+	if candidates == nil || !candidates.IndexGet().Contains(term) {
+		return identity.ContentID{}, false
 	}
-	return identity.ContentID{}, false
+	span, spanOK := compiler.input.Span(term)
+	if !spanOK || !compiler.input.OwnsSpan(span) {
+		return identity.ContentID{}, false
+	}
+	resultID := span.ContextID()
+	return resultID, resultID.Available()
 }
 
 // valuesTailLivenessID resolves the authored Values rows whose open tail is

@@ -66,9 +66,6 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	if failure := transaction.copySubjectAliasFailure(); failure.Available() {
 		return nil, failure
 	}
-	if failure := transaction.copyHeapGeometryFailure(); failure.Available() {
-		return nil, failure
-	}
 	if failure := transaction.copyLocalWTOFailure(); failure.Available() {
 		return nil, failure
 	}

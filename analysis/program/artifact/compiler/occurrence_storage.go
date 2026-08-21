@@ -81,14 +81,24 @@ func (compiler *compiler) copyStorage() CompileFailure {
 func (compiler *compiler) copyIndexAccess() CompileFailure {
 	geometry := compiler.input.Flow().AccessGeometry()
 	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
+	compiler.publication.HeapIndexes = make([]heapindex.Index, 0, reads.Count()+writes.Count())
 	for index := 0; index < reads.Count(); index++ {
-		read, ok := compiler.indexReadAt(index)
-		if !ok {
-			// AccessGeometry preserves candidate ordinals whose executable
-			// Span proof can be absent. Only a complete artifact row is
-			// executable.
-			continue
+		read, occurrenceOK := compiler.indexReadAt(index)
+		lensKind, exactKey := uint8(0), uint64(0)
+		keySpan := identity.ContentID{}
+		if read.exact {
+			lensKind, exactKey = heapindex.LensExact, uint64(read.exactKey)
+		} else if read.dynamicKeySpan.Available() {
+			lensKind, keySpan = heapindex.LensDynamic, read.dynamicKeySpan.ContextID()
 		}
+		heapRow, heapRowOK := heapindex.NewIndex(read.id, true, read.baseSpan.ContextID(), read.resultSpan.ContextID(), keySpan, lensKind, exactKey, identity.ContentID{}, identity.ContentID{}, -1)
+		if !occurrenceOK || !heapRowOK {
+			// Heap's source denominator is strict: an authored index candidate
+			// without complete geometry refuses the compilation. Do not inherit
+			// copyIndexAccess's former candidate-skipping behavior.
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
+		}
+		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, heapRow)
 		entry, entryOK := read.resultSpan.Entry()
 		finish, finishOK := read.resultSpan.Finish()
 		if !entryOK || !finishOK {
@@ -101,10 +111,21 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 		}
 	}
 	for index := 0; index < writes.Count(); index++ {
-		write, ok := compiler.indexWriteAt(index)
-		if !ok {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexCandidate)
+		write, occurrenceOK := compiler.indexWriteAt(index)
+		valueRow, valueRowOK := compiler.valueRowForTerm(write.values)
+		valueSpan, valueSpanOK := valueRow.RootSpanID()
+		lensKind, exactKey := uint8(0), uint64(0)
+		keySpan := identity.ContentID{}
+		if write.exact {
+			lensKind, exactKey = heapindex.LensExact, uint64(write.exactKey)
+		} else if write.dynamicKeySpan.Available() {
+			lensKind, keySpan = heapindex.LensDynamic, write.dynamicKeySpan.ContextID()
 		}
+		heapRow, heapRowOK := heapindex.NewIndex(write.id, false, write.baseSpan.ContextID(), identity.ContentID{}, keySpan, lensKind, exactKey, valueSpan, valueRow.ID(), write.position)
+		if !occurrenceOK || !valueRowOK || !valueSpanOK || !heapRowOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
+		}
+		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, heapRow)
 		finishPoints := compiler.pointIDs(write.finish)
 		if len(finishPoints) == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
@@ -113,49 +134,6 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 			!compiler.recordOccurrencePredecessor(programschema.OccurrenceIndexWrite, write.id, write.route, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
-	}
-	return CompileFailure{}
-}
-
-// copyHeapGeometryFailure captures Heap's complete cold source denominator
-// while the Program proof is live.  Link later substitutes these scalar rows
-// through its own mounted Values/Keys authority; Heap never needs to reopen a
-// Program after artifact compilation.
-func (compiler *compiler) copyHeapGeometryFailure() CompileFailure {
-	geometry := compiler.input.Flow().AccessGeometry()
-	reads, writes := geometry.IndexAccesses().Reads(), geometry.IndexAccesses().Writes()
-	compiler.publication.HeapIndexes = make([]heapindex.Index, 0, reads.Count()+writes.Count())
-	for index := 0; index < reads.Count(); index++ {
-		occurrence, occurrenceOK := compiler.indexReadAt(index)
-		lensKind, exactKey := uint8(0), uint64(0)
-		keySpan := identity.ContentID{}
-		if occurrence.exact {
-			lensKind, exactKey = heapindex.LensExact, uint64(occurrence.exactKey)
-		} else if occurrence.dynamicKeySpan.Available() {
-			lensKind, keySpan = heapindex.LensDynamic, occurrence.dynamicKeySpan.ContextID()
-		}
-		row, rowOK := heapindex.NewIndex(occurrence.id, true, occurrence.baseSpan.ContextID(), occurrence.resultSpan.ContextID(), keySpan, lensKind, exactKey, identity.ContentID{}, identity.ContentID{}, -1)
-		if !occurrenceOK || !rowOK {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
-		}
-		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, row)
-	}
-	for index := 0; index < writes.Count(); index++ {
-		occurrence, occurrenceOK := compiler.indexWriteAt(index)
-		valueRow, valueRowOK := compiler.valueRowForTerm(occurrence.values)
-		valueSpan, valueSpanOK := valueRow.RootSpanID()
-		lensKind, exactKey := uint8(0), uint64(0)
-		keySpan := identity.ContentID{}
-		if occurrence.exact {
-			lensKind, exactKey = heapindex.LensExact, uint64(occurrence.exactKey)
-		} else if occurrence.dynamicKeySpan.Available() {
-			lensKind, keySpan = heapindex.LensDynamic, occurrence.dynamicKeySpan.ContextID()
-		}
-		row, rowOK := heapindex.NewIndex(occurrence.id, false, occurrence.baseSpan.ContextID(), identity.ContentID{}, keySpan, lensKind, exactKey, valueSpan, valueRow.ID(), occurrence.position)
-		if !occurrenceOK || !valueRowOK || !valueSpanOK || !rowOK {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
-		}
-		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, row)
 	}
 	return CompileFailure{}
 }
