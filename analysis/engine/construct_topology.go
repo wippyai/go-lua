@@ -64,10 +64,11 @@ type declaredMemberRow struct {
 	Point        identity.ContentID
 	Occurrence   identity.ContentID
 	Row          equation.RuleInstance
-	// Bind is the sealed cell that mints this row's runtime member. Operand is
-	// the canonical value issued by the declaration owner; the committed
-	// program passes it through at every seal without re-resolving it.
-	Bind    ProgramRule
+	// Bind is the canonical sealed schema cell that mints this row's runtime
+	// member. Operand is the canonical value issued by that cell's declaration;
+	// the committed program passes it through at every seal without
+	// re-resolving it.
+	Bind    sealedRuleCell
 	Coords  OperandCoords
 	Operand declaredRuleOperand
 	// Activation marks the row as one activation trigger, and Application is

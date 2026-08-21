@@ -505,13 +505,23 @@ func retainActivationFold(compiled *compiledActivationRule, fold func(Activation
 // compileActivationRule is the generation-fenced activation compiler. It
 // consumes the exact sealed activation cell and canonical ordinal.
 func compileActivationRule(implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
+	if implementation == nil {
+		return nil, false
+	}
 	cell, cellOK := implementation.sealedActivationCell()
-	if !cellOK || topology == nil || graph == nil ||
+	if !cellOK {
+		return nil, false
+	}
+	return compileActivationCellRule(cell, implementation.ordinal, topology, trigger, graph)
+}
+
+func compileActivationCellRule(cell *schemaActivationRuleBindingCell, ordinal uint64, topology *equation.Topology, trigger composition.Key, graph *equation.Graph) (*compiledActivationRule, bool) {
+	if cell == nil || !cell.schemaRuleComplete() || topology == nil || graph == nil ||
 		!topology.OwnsComposition(cell.schema.cold) || !topology.OwnsGraph(graph) || !trigger.Available() {
 		return nil, false
 	}
 	state := cell.state
-	shape, shapeOK := state.schema.ruleShapeAt(implementation.ordinal)
+	shape, shapeOK := state.schema.ruleShapeAt(ordinal)
 	if !shapeOK || shape.OutputKind != composition.StructuralOutput || shape.ActivationCount != 1 || !shape.ActivationFamily.Available() {
 		return nil, false
 	}
@@ -534,7 +544,7 @@ func compileActivationRule(implementation *ActivationRuleImplementation, topolog
 	}
 	compiled := &compiledActivationRule{
 		cell:        cell,
-		ordinal:     implementation.ordinal,
+		ordinal:     ordinal,
 		readCount:   readCount,
 		topology:    topology,
 		trigger:     trigger,

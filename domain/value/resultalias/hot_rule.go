@@ -419,16 +419,3 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[valuedomai
 	}
 	return rule.implementation, true
 }
-
-// SealProgramRule publishes the exact generic engine Rule after the shared
-// binding has sealed. The engine receives no ResultAlias-specific behavior.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.values == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

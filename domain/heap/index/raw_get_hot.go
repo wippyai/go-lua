@@ -33,18 +33,6 @@ func (rule *RawGetHotRule) Implementation() (*valueowner.RuleImplementation[Inde
 	return rule.implementation, ok
 }
 
-// SealProgramRule is this typed rule's schema registration.
-func SealRawGetProgramRule(rule *RawGetHotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment, topology *Topology, values *valueowner.HotOwner, calls *callowner.HotOwner, heap *heapowner.HotOwner, packs *packowner.HotOwner) (*RawGetHotRule, bool) {
 	if binding == nil || fragment == nil || topology == nil || !topology.valid() || values == nil || !values.MatchesBinding(binding) || calls == nil || !calls.MatchesBinding(binding) || heap == nil || !heap.MatchesBinding(binding) || packs == nil || !packs.MatchesBinding(binding) || values.Schema() != topology.values || calls.Algebra() != topology.calls || heap.Schema() != topology.heap || !packs.OwnsSchema(topology.packs) {
 		return nil, false

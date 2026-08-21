@@ -60,8 +60,8 @@ func TestSealedPlacementSetEqualsOwnerOperandSet(t *testing.T) {
 				if _, activation := rule.Payload[*callactivation.HotRule](cell); cellOK && activation {
 					return true
 				}
-				program, programOK := rules.ProgramRuleByKey(key)
-				if !programOK || !program.Available() {
+				capability, capabilityOK := rules.CapabilityByKey(key)
+				if !cellOK || !cell.Available() || !capabilityOK || !capability.Mounted() || capability.Activation() {
 					unsealed[key]++
 				}
 				return true

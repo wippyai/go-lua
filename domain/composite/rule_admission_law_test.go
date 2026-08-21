@@ -141,7 +141,9 @@ func TestLinkAdmissionsWalkDeclaredCatalogs(t *testing.T) {
 		t.Fatalf("link admissions=%d declared members=%d", len(admitted), expected)
 	}
 	for _, row := range admitted {
-		if !row.Capability.Link() || !row.Occurrence.Available() || !row.Declaration.Available() {
+		key := capabilityKey(t, bound.Compilation(), rules, row.Capability)
+		cell, cellOK := rules.cellByKey(key)
+		if !row.Capability.Link() || !row.Occurrence.Available() || !cellOK || !cell.Available() {
 			t.Fatal("link admission row")
 		}
 		marked, known := seen[row.Occurrence]
@@ -211,9 +213,11 @@ func TestBodylessCallActivationIsFullyAdmitted(t *testing.T) {
 		t.Fatalf("call-activation placements=%d admissions=%d", placed, len(activations))
 	}
 	for index, row := range activations {
-		if row.Transport == nil || row.Implementation == nil || !row.Application.Available() {
-			t.Fatalf("activation %d admitted without its transport vector or application: transport=%t implementation=%t application=%t",
-				index, row.Transport != nil, row.Implementation != nil, row.Application.Available())
+		key := capabilityKey(t, bound.Compilation(), rules, row.Capability)
+		cell, cellOK := rules.cellByKey(key)
+		if row.Transport == nil || !row.Capability.Activation() || !cellOK || !cell.Available() || !row.Application.Available() {
+			t.Fatalf("activation %d admitted without its transport vector, activation capability, canonical cell, or application: transport=%t capability=%t cell=%t application=%t",
+				index, row.Transport != nil, row.Capability.Activation(), cellOK && cell.Available(), row.Application.Available())
 		}
 		if len(row.Candidates) != 0 {
 			t.Fatalf("activation %d reached %d candidates in a program that declares no body", index, len(row.Candidates))

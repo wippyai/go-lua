@@ -44,12 +44,11 @@ func (rules *RuleBinding) LinkAdmissions() ([]engine.LinkRuleAdmission, bool) {
 	}
 	rows := make([]engine.LinkRuleAdmission, 0)
 	ok := walkLinkCatalogs(rules, func(key schema.Key, id identity.ContentID) bool {
-		program, programOK := rules.ProgramRuleByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !programOK || !capabilityOK || !capability.Link() {
+		if !capabilityOK || !capability.Link() {
 			return false
 		}
-		rows = append(rows, engine.LinkRuleAdmission{Declaration: program, Capability: capability, Occurrence: id})
+		rows = append(rows, engine.LinkRuleAdmission{Capability: capability, Occurrence: id})
 		return true
 	})
 	if !ok {
@@ -98,12 +97,11 @@ func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifac
 			activations = append(activations, admit)
 			return true
 		}
-		program, programOK := rules.ProgramRuleByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !programOK || !capabilityOK || !capability.Mounted() {
+		if !capabilityOK || !capability.Mounted() || capability.Activation() {
 			return false
 		}
-		mounted = append(mounted, engine.MountedRuleAdmission{Declaration: program, Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
+		mounted = append(mounted, engine.MountedRuleAdmission{Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
 		return true
 	})
 	if !ok {

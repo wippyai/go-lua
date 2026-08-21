@@ -3,7 +3,6 @@ package activation
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	callowner "github.com/wippyai/go-lua/domain/call/owner"
 )
 
 // MountedAdmit is the sealed activation admission request. The construction
@@ -29,8 +28,7 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		return engine.MountedActivationAdmit{}, false
 	}
 	capability, capabilityOK := rule.implementation.MountedCapability()
-	implementation, implementationOK := callowner.ResolveActivationRuleImplementationFor(rule.owner, rule.implementation)
-	if !capabilityOK || !implementationOK {
+	if !capabilityOK {
 		return engine.MountedActivationAdmit{}, false
 	}
 	if rule.transport == nil {
@@ -48,14 +46,13 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		}
 	}
 	return engine.MountedActivationAdmit{
-		Implementation: implementation,
-		Transport:      rule.transport,
-		Capability:     capability,
-		Mount:          mountID,
-		Point:          reusablePointID,
-		Occurrence:     occurrenceID,
-		Application:    application,
-		Read:           read,
-		Candidates:     candidates,
+		Transport:   rule.transport,
+		Capability:  capability,
+		Mount:       mountID,
+		Point:       reusablePointID,
+		Occurrence:  occurrenceID,
+		Application: application,
+		Read:        read,
+		Candidates:  candidates,
 	}, true
 }

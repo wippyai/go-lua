@@ -55,13 +55,6 @@ func BindRule[A ruleAuthorities](binding *engine.SchemaBinding, context rule.Bin
 	return BindHot(binding, context.Fragment, context.Authorities.PlacementAuthority(), context.Authorities.ValueAuthority(), context.Authorities.CallAuthority(), context.Authorities.EffectAuthority())
 }
 
-func FinalizeRule[A ruleAuthorities](context rule.Finalization[A, *HotRule]) bool {
-	if context.Rule == nil || context.Rule.owner != context.Authorities.PlacementAuthority() || context.Rule.values != context.Authorities.ValueAuthority() || context.Rule.calls != context.Authorities.CallAuthority() || context.Rule.effects != context.Authorities.EffectAuthority() {
-		return false
-	}
-	return context.Rule.Finalize(context.Authorities.PlacementAuthority())
-}
-
 // StructureSpecs contributes the publication escape rule and operand roles.
 func StructureSpecs() []structure.Spec {
 	return vocabulary.RoleSpecs("rule/placement/publication-escape", "operand/placement/publication-escape")

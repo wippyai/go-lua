@@ -366,7 +366,6 @@ const (
 	RuleBindStageSeal
 	RuleBindStageCapability
 	RuleBindStageFinalize
-	RuleBindStageProgram
 )
 
 func (stage RuleBindStage) String() string {
@@ -387,8 +386,6 @@ func (stage RuleBindStage) String() string {
 		return "capability"
 	case RuleBindStageFinalize:
 		return "finalize"
-	case RuleBindStageProgram:
-		return "program"
 	default:
 		return "none"
 	}
@@ -402,7 +399,6 @@ type RuleBinding struct {
 	catalog    *catalog
 	binding    *engine.SchemaBinding
 	hot        ruleCells
-	programs   []engine.ProgramRule
 	activation ActivationRule
 }
 
@@ -467,25 +463,6 @@ func (rules *RuleBinding) DiagnosticForCapability(capability engine.RuleSlotCapa
 	return DiagnosticRuleUnknown
 }
 
-func (rules *RuleBinding) programRule(key schema.Key) (engine.ProgramRule, bool) {
-	if rules == nil || !key.Available() {
-		return engine.ProgramRule{}, false
-	}
-	slot, ok := ruleSlotForKey(rules.catalog, key)
-	if !ok || slot <= 0 || slot >= len(rules.programs) {
-		return engine.ProgramRule{}, false
-	}
-	program := rules.programs[slot]
-	return program, program.Available()
-}
-
-// ProgramRuleByKey is the sealed construction join for one declared rule.
-// Mounted operand and Link rules publish one primitive; activation publishes
-// none because it has its own admission plane.
-func (rules *RuleBinding) ProgramRuleByKey(key schema.Key) (engine.ProgramRule, bool) {
-	return rules.programRule(key)
-}
-
 func (rules *RuleBinding) LinkCatalogByKey(key schema.Key) (rule.LinkCatalog, bool) {
 	hot, hotOK := rules.cellByKey(key)
 	contributor, contributorOK := ruleContributorFor(rules.catalog, key)
@@ -520,8 +497,7 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 	if state == nil || state.sealed == nil || binding == nil || !set.available() || seal == nil || len(fragments) != len(state.templates)+1 || len(state.ruleContributors) != len(state.templates) {
 		return nil, DiagnosticRuleUnknown, RuleBindStagePrincipal
 	}
-	rules := &RuleBinding{catalog: state, binding: binding, hot: newRuleCells(state.templates), programs: make([]engine.ProgramRule, len(state.templates)+1)}
-	programIssuers := make([]ProgramIssuer, len(state.templates)+1)
+	rules := &RuleBinding{catalog: state, binding: binding, hot: newRuleCells(state.templates)}
 	for position, entry := range state.templates {
 		slot := position + 1
 		if !set.writes(entry.Writes()) || !set.writes(entry.Owner()) {
@@ -530,12 +506,11 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 		if !fragments[slot].Available() {
 			return nil, DiagnosticRule(slot), RuleBindStageFragment
 		}
-		hot, issuer, activation, ok := state.ruleContributors[position].Bind(binding, set, fragments[slot])
+		hot, activation, ok := state.ruleContributors[position].Bind(binding, set, fragments[slot])
 		if !ok {
 			return nil, DiagnosticRule(slot), RuleBindStageBind
 		}
 		rules.hot[slot] = hot
-		programIssuers[slot] = issuer
 		if activation != nil {
 			if rules.activation != nil {
 				return nil, DiagnosticRule(slot), RuleBindStageBind
@@ -599,25 +574,6 @@ func bindRules(state *catalog, binding *engine.SchemaBinding, fragments ruleCell
 		if contributor := state.ruleContributors[position]; !contributor.Finalize(set, rules.hot[slot]) {
 			return nil, DiagnosticRule(slot), RuleBindStageFinalize
 		}
-	}
-	// Schema composition emits one engine primitive from each typed hot row only
-	// after the shared binding and every domain finalizer have sealed. The
-	// aligned slice is the only implementation join; no key-indexed recovery
-	// map or issuer closure survives this pass.
-	for position, entry := range state.templates {
-		slot := position + 1
-		if entry.Lane() == rule.LaneActivation {
-			continue
-		}
-		issuer := programIssuers[slot]
-		if issuer == nil {
-			return nil, DiagnosticRule(slot), RuleBindStageProgram
-		}
-		program, programOK := issuer()
-		if !programOK || !program.Available() {
-			return nil, DiagnosticRule(slot), RuleBindStageProgram
-		}
-		rules.programs[slot] = program
 	}
 	return rules, DiagnosticRuleUnknown, RuleBindStageNone
 }

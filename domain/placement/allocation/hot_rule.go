@@ -70,16 +70,3 @@ func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[operan
 	}
 	return rule.implementation, true
 }
-
-// SealProgramRule issues the engine's sealed Program rule after the shared
-// SchemaBinding publishes its exact Placement implementation.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := placementowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

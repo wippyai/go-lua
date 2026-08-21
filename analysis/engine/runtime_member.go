@@ -202,25 +202,23 @@ func routeSchemaRuleMemberGeometry[K ~uint32 | ~uint64, V, O any](cell *schemaRu
 	return surface, route, true
 }
 
-// bindProgramRuleMember binds one typed Rule implementation against a sealed
-// factor plane. It is the whole join between an implementation and a graph
-// member: the plane fixes the authority the implementation must have been
-// sealed under and the Factor its output names, and nothing else participates.
-// Attachment ledgers and duplicate rejection belong to the caller that keeps
-// them; a bind is the same operation whether it happens at construction or when
-// an activation revision replays it against a later graph.
-func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, implementation *RuleImplementation[K, V, O], member equation.RuleMember, declared declaredRuleOperand) (runtimeMember, bool) {
+// bindSealedRuleCellMember binds one canonical sealed Rule cell against a
+// frozen factor plane. The plane fixes the authority the cell was sealed under
+// and the Factor its output names; no typed implementation handle participates.
+func bindSealedRuleCellMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, cell *schemaRuleBindingCellImpl[K, V, O], member equation.RuleMember, declared declaredRuleOperand) (runtimeMember, bool) {
 	if plane == nil || !plane.frozen || plane.runtime == nil || plane.runtime.graph == nil || plane.carrier == nil || plane.byKey == nil {
 		return nil, false
 	}
-	cell, cellOK := implementation.sealedRuleCell()
-	if !cellOK || cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
+	if cell == nil || !cell.sealedRuleComplete() || cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
 		return nil, false
 	}
 	if !plane.runtime.graph.OwnsMember(member) || !member.Key().Available() {
 		return nil, false
 	}
-	output, present := plane.byKey[implementation.output.schemaFactorSemanticKey()]
+	if cell.impl == nil || cell.impl.output == nil {
+		return nil, false
+	}
+	output, present := plane.byKey[cell.impl.output.schemaFactorSemanticKey()]
 	if !present || output == nil {
 		return nil, false
 	}
@@ -235,16 +233,15 @@ func bindProgramRuleMember[K ~uint32 | ~uint64, V, O any](plane *programPlane, i
 	if !expectedOK || member.Operand().Entity() != expected {
 		return nil, false
 	}
-	row, ok := bindSchemaRuleMember(implementation, member, canonical, declared.digest, output, plane.byKey)
+	row, ok := bindSchemaRuleCellMember(cell, member, canonical, declared.digest, output, plane.byKey)
 	if !ok || row == nil || row.member().Key() != member.Key() {
 		return nil, false
 	}
 	return row, true
 }
 
-func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O], member equation.RuleMember, operand O, content [32]byte, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
-	cell, cellOK := implementation.sealedRuleCell()
-	if !cellOK || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
+func bindSchemaRuleCellMember[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBindingCellImpl[K, V, O], member equation.RuleMember, operand O, content [32]byte, output runtimeFactor, factors map[composition.Key]runtimeFactor) (*boundRuleMember[V, O], bool) {
+	if cell == nil || member.Key() == (composition.Key{}) || !member.Occurrence().Available() || output == nil || factors == nil {
 		return nil, false
 	}
 	hot := cell.impl
@@ -256,11 +253,11 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	}
 	outputKey := hot.output.schemaFactorSemanticKey()
 	boundOutput, outputOK := output.(*boundFactor[K, V])
-	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !factorRowAvailable(boundOutput.implementation.row) || boundOutput.implementation.row != implementation.output || boundOutput.implementation.row.schemaFactorSemanticKey() != outputKey {
+	if !outputOK || boundOutput == nil || boundOutput.implementation == nil || !factorRowAvailable(boundOutput.implementation.row) || boundOutput.implementation.row != cell.impl.output || boundOutput.implementation.row.schemaFactorSemanticKey() != outputKey {
 		return nil, false
 	}
-	surface, memberOK := exactSchemaRuleMemberGeometry(cell, implementation.ordinal, member)
-	_, routeRead, routeOK := routeSchemaRuleMemberGeometry(cell, implementation.ordinal, member)
+	surface, memberOK := exactSchemaRuleMemberGeometry(cell, cell.ordinal, member)
+	_, routeRead, routeOK := routeSchemaRuleMemberGeometry(cell, cell.ordinal, member)
 	if !memberOK && !routeOK {
 		return nil, false
 	}
@@ -289,7 +286,7 @@ func bindSchemaRuleMember[K ~uint32 | ~uint64, V, O any](implementation *RuleImp
 	bound := &boundRuleMember[V, O]{
 		value:             member,
 		cell:              cell,
-		ordinal:           implementation.ordinal,
+		ordinal:           cell.ordinal,
 		outputKey:         outputKey,
 		expectedReadCount: uint64(len(hot.reads)),
 		fold:              hot.fold,
@@ -437,19 +434,29 @@ func (bound *boundActivationMember) execute(work *carrier.Work, base carrier.Rul
 // the exact Schema/family/trigger checks; this bind adds only the Member anchor
 // and returns the runtime member consumed by the epoch executor.
 func bindActivationMember(member equation.RuleMember, implementation *ActivationRuleImplementation, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
+	if implementation == nil {
+		return nil, false
+	}
 	cell, cellOK := implementation.sealedActivationCell()
-	if !cellOK || !cell.schemaRuleComplete() || !member.Key().Available() || topology == nil || graph == nil ||
+	if !cellOK {
+		return nil, false
+	}
+	return bindActivationCellMember(member, cell, implementation.ordinal, topology, trigger, graph, factors)
+}
+
+func bindActivationCellMember(member equation.RuleMember, cell *schemaActivationRuleBindingCell, ordinal uint64, topology *equation.Topology, trigger composition.Key, graph *equation.Graph, factors map[composition.Key]runtimeFactor) (*boundActivationMember, bool) {
+	if cell == nil || !cell.schemaRuleComplete() || !member.Key().Available() || topology == nil || graph == nil ||
 		!topology.OwnsComposition(cell.schema.cold) || !topology.OwnsGraph(graph) || !graph.OwnsMember(member) ||
 		!trigger.Available() || trigger != member.Key() || factors == nil {
 		return nil, false
 	}
-	shape, shapeOK := cell.schema.ruleShapeAt(implementation.ordinal)
-	semantic := cell.schema.ruleSemanticAt(implementation.ordinal)
+	shape, shapeOK := cell.schema.ruleShapeAt(ordinal)
+	semantic := cell.schema.ruleSemanticAt(ordinal)
 	if !shapeOK || !semantic.Available() || member.Rule() != semantic ||
 		member.OperandFamily() != shape.OperandFamily || uint64(member.ReadCount()) != shape.ReadCount || member.WriteCount() != 0 {
 		return nil, false
 	}
-	compiled, ok := compileActivationRule(implementation, topology, trigger, graph)
+	compiled, ok := compileActivationCellRule(cell, ordinal, topology, trigger, graph)
 	if !ok {
 		return nil, false
 	}

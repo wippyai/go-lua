@@ -100,19 +100,6 @@ func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[operan
 	return rule.implementation, true
 }
 
-// SealProgramRule publishes the exact owner-resolved mounted rule after the
-// shared binding seals.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := placementowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func (rule *HotRule) locateSources(context engine.SelectorContext, candidate operand) bool {
 	if rule == nil || rule.values == nil || len(candidate.sources) == 0 {
 		return false

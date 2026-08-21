@@ -31,18 +31,6 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[source.Clos
 	return rule.implementation, ok
 }
 
-// SealProgramRule is this typed rule's schema registration.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.heapOwner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 // BindHot binds the exact heterogeneous Heap/Value read surface, ordinary
 // carry, and exact Heap write through the two owner-issued FactorRefs.
 func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner *heapowner.HotOwner, valueOwner *valueowner.HotOwner, catalog *allocationcatalog.Catalog) (*HotRule, bool) {

@@ -303,15 +303,3 @@ func (rule *BodyHotRule) Implementation() (*effectowner.RuleImplementation[effec
 	_, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 	return rule.implementation, ok
 }
-
-// SealProgramRule is this typed rule's schema registration.
-func SealBodyProgramRule(rule *BodyHotRule) (engine.ProgramRule, bool) {
-	if rule == nil || !rule.valid() {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

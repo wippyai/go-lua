@@ -201,10 +201,8 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 	if setImplOK {
 		setCap, setCapOK = setImpl.MountedCapability()
 	}
-	getDeclaration, getDeclarationOK := indexdomain.SealRawGetProgramRule(fixture.getRule)
-	setDeclaration, setDeclarationOK := indexdomain.SealRawSetProgramRule(fixture.setRule)
-	if !getImplOK || !setImplOK || !getCapOK || !setCapOK || !getDeclarationOK || !setDeclarationOK {
-		t.Fatalf("raw mounted declarations getImpl=%t setImpl=%t getCapability=%t setCapability=%t getRule=%t setRule=%t", getImplOK, setImplOK, getCapOK, setCapOK, getDeclarationOK, setDeclarationOK)
+	if !getImplOK || !setImplOK || !getCapOK || !setCapOK || !getCap.Mounted() || !setCap.Mounted() || getCap.Activation() || setCap.Activation() {
+		t.Fatalf("raw mounted canonical cells getImpl=%t setImpl=%t getCapability=%t setCapability=%t", getImplOK, setImplOK, getCapOK, setCapOK)
 	}
 	mounted := make([]engine.MountedRuleAdmission, 0, len(fixture.valueSeeds)+len(fixture.heapSeeds)+2)
 	for _, seed := range fixture.valueSeeds {
@@ -222,8 +220,8 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 		mounted = append(mounted, admission)
 	}
 	mounted = append(mounted,
-		engine.MountedRuleAdmission{Declaration: getDeclaration, Capability: getCap, Mount: fixture.mountID, Point: fixture.getPoint, Occurrence: fixture.getOccurrence},
-		engine.MountedRuleAdmission{Declaration: setDeclaration, Capability: setCap, Mount: fixture.mountID, Point: fixture.setPoint, Occurrence: fixture.setOccurrence},
+		engine.MountedRuleAdmission{Capability: getCap, Mount: fixture.mountID, Point: fixture.getPoint, Occurrence: fixture.getOccurrence},
+		engine.MountedRuleAdmission{Capability: setCap, Mount: fixture.mountID, Point: fixture.setPoint, Occurrence: fixture.setOccurrence},
 	)
 	valueQueryAdmission, valueQueryOK := engine.NewExactQueryAdmission(fixture.queryImplementation, fixture.queryID, fixture.mountID, fixture.getPoint)
 	heapQueryAdmission, heapQueryOK := engine.NewExactQueryAdmission(fixture.heapQueryImplementationA, fixture.heapQueryIDA, fixture.mountID, fixture.setPoint)
@@ -302,27 +300,17 @@ func TestRawHotMountedPathSolve(t *testing.T) {
 }
 
 func rawHotValueSeedAdmission(mount identity.ContentID, seed rawHotValueSeed) (engine.MountedRuleAdmission, bool) {
-	implementation, implementationOK := valueowner.ResolveRuleImplementation(seed.Implementation)
-	if !implementationOK {
+	if !seed.Capability.Mounted() || seed.Capability.Activation() {
 		return engine.MountedRuleAdmission{}, false
 	}
-	declaration, declarationOK := engine.SealProgramRule(implementation)
-	if !declarationOK {
-		return engine.MountedRuleAdmission{}, false
-	}
-	return engine.MountedRuleAdmission{Declaration: declaration, Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
+	return engine.MountedRuleAdmission{Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
 }
 
 func rawHotHeapSeedAdmission(mount identity.ContentID, seed rawHotHeapSeed) (engine.MountedRuleAdmission, bool) {
-	implementation, implementationOK := heapowner.ResolveRuleImplementation(seed.Implementation)
-	if !implementationOK {
+	if !seed.Capability.Mounted() || seed.Capability.Activation() {
 		return engine.MountedRuleAdmission{}, false
 	}
-	declaration, declarationOK := engine.SealProgramRule(implementation)
-	if !declarationOK {
-		return engine.MountedRuleAdmission{}, false
-	}
-	return engine.MountedRuleAdmission{Declaration: declaration, Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
+	return engine.MountedRuleAdmission{Capability: seed.Capability, Mount: mount, Point: seed.Point, Occurrence: seed.Occurrence}, true
 }
 
 type rawHotMountedPlan struct {

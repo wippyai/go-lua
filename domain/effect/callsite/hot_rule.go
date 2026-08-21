@@ -262,16 +262,3 @@ func (rule *HotRule) Implementation() (*effectowner.RuleImplementation[effectfac
 	_, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
 	return rule.implementation, ok
 }
-
-// SealProgramRule is this typed rule's schema registration. It is the only
-// place the private owner issuer is converted to the engine primitive.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || !rule.valid() {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := effectowner.ResolveRuleImplementationFor(rule.effects, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

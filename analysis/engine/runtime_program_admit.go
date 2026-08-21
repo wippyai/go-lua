@@ -42,62 +42,14 @@ type declaredRuleSurfaces struct {
 	carries uint64
 }
 
-// declareRuleOperand resolves the neutral coordinates to this rule's typed
-// operand and canonicalizes it. The typed value never leaves the cell in a
-// nameable form: it travels back to declareRuleSurfaces erased.
-func (implementation *RuleImplementation[K, V, O]) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
-		return declaredRuleOperand{}, false
-	}
-	operand, resolved := implementation.resolveOperand(coords)
-	if !resolved {
-		return declaredRuleOperand{}, false
-	}
-	return implementation.issueDeclaredOperand(operand)
-}
-
-func (implementation *RuleImplementation[K, V, O]) issueDeclaredOperand(operand O) (declaredRuleOperand, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
-		return declaredRuleOperand{}, false
-	}
-	canonical, digest, contentOK := cell.impl.operandContent(operand)
-	if !contentOK || digest == [32]byte{} {
-		return declaredRuleOperand{}, false
-	}
-	return declaredRuleOperand{value: canonical, digest: digest}, true
-}
-
-// declareRuleSurfaces places the cold shape's surfaces over one issuance. It
-// reads only the sealed schema shape, the owner's declared per-slot
-// projectors, and the anchor the engine minted.
-func (implementation *RuleImplementation[K, V, O]) declareRuleSurfaces(declared declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
-	operand, typed := declared.value.(O)
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || !typed || cell.impl == nil {
-		return declaredRuleSurfaces{}, false
-	}
-	semantic, semanticOK := semanticKeyFromComposition(cell.impl.ruleSemantic)
-	if !semanticOK {
-		return declaredRuleSurfaces{}, false
-	}
-	reads, writes, carries, ok := implementation.placeSurfaces(semantic, anchor, operand)
-	if !ok {
-		return declaredRuleSurfaces{}, false
-	}
-	return declaredRuleSurfaces{reads: reads, writes: writes, carries: carries}, true
-}
-
-func (implementation *RuleImplementation[K, V, O]) placeSurfaces(semantic identity.SemanticKey, anchor ruleSurfaceAnchor, operand O) ([]RuleReadSurface, []ruleWriteSurface, uint64, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || !semantic.Available() || cell.impl == nil {
+func placeSchemaRuleSurfaces[K ~uint32 | ~uint64, V, O any](cell *schemaRuleBindingCellImpl[K, V, O], semantic identity.SemanticKey, anchor ruleSurfaceAnchor, operand O) ([]RuleReadSurface, []ruleWriteSurface, uint64, bool) {
+	if cell == nil || !cell.sealedRuleComplete() || !semantic.Available() || cell.impl == nil {
 		return nil, nil, 0, false
 	}
 	hot := cell.impl
 	state := cell.state
 	authority := state.authority
-	ordinal := implementation.ordinal
+	ordinal := cell.ordinal
 	readCount := uint64(len(hot.reads))
 	if hot.writeMode == 0 || (hot.writeMode != directRuleWriteExact && hot.writeMode != directRuleWriteRoute) {
 		return nil, nil, 0, false

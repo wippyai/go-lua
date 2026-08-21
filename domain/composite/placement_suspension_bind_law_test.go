@@ -26,8 +26,10 @@ func TestPlacementSuspensionBindHotAdmitsAnEmptyMountedCatalog(t *testing.T) {
 		t.Fatal("sealed rule binding is unavailable")
 	}
 	for _, key := range []schema.Key{"placement-suspension", "placement-suspension-evidence"} {
-		if _, programOK := rules.ProgramRuleByKey(key); !programOK {
-			t.Fatalf("%q did not publish a sealed Program rule", key)
+		cell, cellOK := rules.cellByKey(key)
+		capability, capabilityOK := rules.CapabilityByKey(key)
+		if !cellOK || !cell.Available() || !capabilityOK || !capability.Link() {
+			t.Fatalf("%q did not publish its sealed canonical Link cell and capability", key)
 		}
 		catalog, catalogOK := rules.LinkCatalogByKey(key)
 		if !catalogOK || catalog == nil || catalog.Count() != 0 {

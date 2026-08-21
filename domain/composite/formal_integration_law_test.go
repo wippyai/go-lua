@@ -35,9 +35,9 @@ func TestFormalAuthoritiesAreOneMountedTypedJoin(t *testing.T) {
 	if !capabilityOK || !capability.Mounted() || capability.Link() {
 		t.Fatal("formal rule was not published as a mounted capability")
 	}
-	program, programOK := bound.Rules().ProgramRuleByKey(formalKey)
-	if !programOK || !program.Available() {
-		t.Fatal("formal rule did not publish a sealed engine primitive")
+	cell, cellOK := bound.Rules().cellByKey(formalKey)
+	if !cellOK || !cell.Available() || capability.Activation() {
+		t.Fatal("formal rule did not publish its sealed canonical cell and capability")
 	}
 }
 

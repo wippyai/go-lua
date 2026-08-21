@@ -68,17 +68,6 @@ func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[valued
 	return rule.implementation, ok
 }
 
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := placementowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func hotStorageTransferContent(schema *valuedomain.Schema, transfer valuedomain.StorageTransfer) (valuedomain.StorageTransfer, [32]byte, bool) {
 	id, ok := transfer.ID()
 	if schema == nil || !schema.OwnsStorageTransfer(transfer) || !ok || [32]byte(id) == ([32]byte{}) {

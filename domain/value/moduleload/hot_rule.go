@@ -117,17 +117,6 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[valuedomai
 	return rule.implementation, ok
 }
 
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.values, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func hotContent(schema *valuedomain.Schema, row valuedomain.ModuleLoadCall) (valuedomain.ModuleLoadCall, [32]byte, bool) {
 	id, ok := row.ID()
 	if schema == nil || !schema.OwnsModuleLoadCall(row) || !ok || [32]byte(id) == ([32]byte{}) {

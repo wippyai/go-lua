@@ -121,8 +121,8 @@
 //
 // # Compile plane
 //
-// Construction consumes the schema/compose-owned sealed ProgramRule rows at
-// the direct root and folds them into one immutable committed program. Solved
+// Construction consumes the schema/compose-owned sealed Rule cells at the
+// direct root and folds them into one immutable committed program. Solved
 // results are read from Snapshot.Query by family and stable row identity.
 //
 // # Subpackages

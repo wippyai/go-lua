@@ -23,7 +23,7 @@ type programMemberBinding struct {
 	member     identity.ContentID
 	activation identity.ContentID
 	operand    declaredRuleOperand
-	binder     ProgramRule
+	binder     sealedRuleCell
 	activated  bool
 }
 
@@ -101,7 +101,7 @@ func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtim
 	drafts := make([]runtimeMember, 0, len(committed.members))
 	bound := make(map[composition.Key]struct{}, len(committed.members))
 	for _, declared := range committed.members {
-		if !declared.binder.Available() {
+		if declared.binder == nil || !declared.binder.schemaRuleComplete() {
 			return nil, false
 		}
 		member, resolved := committed.declaredMember(declared)
@@ -111,7 +111,7 @@ func (committed *CommittedProgram) bindMemberRows(plane *programPlane) ([]runtim
 		if _, duplicate := bound[member.Key()]; duplicate {
 			return nil, false
 		}
-		row, ok := declared.binder.bindProgramMember(plane, committed.topology, member, declared.operand)
+		row, ok := declared.binder.bindMember(plane, committed.topology, member, declared.operand)
 		if !ok || row == nil || row.member().Key() != member.Key() {
 			return nil, false
 		}
@@ -196,26 +196,24 @@ func (committed *CommittedProgram) bindObservationRows(plane *programPlane, obse
 	return rows, observationSealFailureNone
 }
 
-// bindProgramMember mints one rule member's runtime row from the canonical
-// operand issued by declaration. The owner resolver and content projector have
-// already run before this boundary.
-func (implementation *RuleImplementation[K, V, O]) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool) {
-	if implementation == nil || topology == nil || plane == nil || plane.runtime == nil || !topology.OwnsGraph(plane.runtime.graph) {
+// bindMember mints one ordinary Rule member's runtime row from the canonical
+// operand issued by the same sealed cell. The owner resolver and content
+// projector have already run before this boundary.
+func (cell *schemaRuleBindingCellImpl[K, V, O]) bindMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool) {
+	if cell == nil || topology == nil || plane == nil || plane.runtime == nil || !topology.OwnsGraph(plane.runtime.graph) {
 		return nil, false
 	}
-	return bindProgramRuleMember(plane, implementation, member, operand)
+	return bindSealedRuleCellMember(plane, cell, member, operand)
 }
 
-// bindProgramMember mints one activation trigger's runtime row. An activation
-// carries no operand: its row is compiled from the trigger member the geometry
-// published and the sealed Factor plane.
-func (implementation *ActivationRuleImplementation) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, _ declaredRuleOperand) (runtimeMember, bool) {
-	cell, cellOK := implementation.sealedActivationCell()
-	if !cellOK || !cell.schemaRuleComplete() || plane == nil || !plane.frozen || plane.runtime == nil || plane.byKey == nil ||
-		cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
+// bindMember mints one activation trigger's runtime row. An activation carries
+// no operand: its row is compiled from the trigger member geometry and the
+// sealed Factor plane.
+func (cell *schemaActivationRuleBindingCell) bindMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, _ declaredRuleOperand) (runtimeMember, bool) {
+	if cell == nil || topology == nil || plane == nil || !plane.frozen || plane.runtime == nil || plane.byKey == nil || !cell.schemaRuleComplete() || cell.state != plane.runtime.state || cell.state.authority != plane.runtime.authority {
 		return nil, false
 	}
-	row, ok := bindActivationMember(member, implementation, topology, member.Key(), plane.runtime.graph, plane.byKey)
+	row, ok := bindActivationCellMember(member, cell, cell.ordinal, topology, member.Key(), plane.runtime.graph, plane.byKey)
 	if !ok || row == nil {
 		return nil, false
 	}

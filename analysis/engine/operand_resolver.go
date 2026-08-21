@@ -16,130 +16,78 @@ type OperandCoords struct {
 	Occurrence identity.ContentID
 }
 
-// programRule is the engine's private row issuer. It is wrapped by ProgramRule
-// before crossing the schema/composition boundary; callers can only hand back
-// the sealed primitive and cannot implement or forge this surface.
-type programRule interface {
-	// declaredRuleSchema names the cold rule this handle issues rows for.
+// sealedRuleCell is the engine-owned construction surface of one canonical
+// sealed schema Rule cell. The capability resolver below returns this cell
+// directly; no callback-bearing issuer is constructed.
+// Ordinary and activation cells share only the schema/row identity and member
+// bind operation. Ordinary cells additionally expose their operand/surface
+// declaration, while activation cells use their separate admission plane.
+type sealedRuleCell interface {
+	schemaRuleBindingCell
 	declaredRuleSchema() (semantic, family composition.Key, ok bool)
-	// declareRuleOperand resolves one issuance's canonical operand.
+	bindMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool)
+}
+
+// ordinarySealedRuleCell is the declaration-capable subset of a sealed Rule
+// cell. Activation cells intentionally do not implement these two methods:
+// their trigger read and candidate transport are admitted through the
+// activation-specific inventory.
+type ordinarySealedRuleCell interface {
+	sealedRuleCell
 	declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool)
-	// declareRuleSurfaces places the cold shape's surfaces over that operand
-	// at the sealed anchor the engine minted.
 	declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool)
-	programMemberBinder
 }
 
-// programMemberBinder is the shared member-row lane. The ordinary issuer
-// embeds it through programRule; activation keeps the same typed lane without
-// duplicating the bind method in a second interface.
-type programMemberBinder interface {
-	bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool)
-}
-
-// ProgramRule is one sealed, engine-owned rule row issuer. Composition emits
-// these values in catalog order; the constructor consumes the aligned slice
-// directly and never recovers a program from a hot schema cell.
-type ProgramRule struct {
-	rule       programRule
-	activation programMemberBinder
-}
-
-// Available reports whether the primitive was issued by the engine.
-// Exactly one issuer lane is valid: ordinary Rule or activation, never both.
-func (program ProgramRule) Available() bool {
-	return (program.rule != nil) != (program.activation != nil)
-}
-
-func (program ProgramRule) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	if !program.Available() || program.rule == nil {
-		return composition.Key{}, composition.Key{}, false
-	}
-	return program.rule.declaredRuleSchema()
-}
-
-func (program ProgramRule) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
-	if !program.Available() || program.rule == nil {
-		return declaredRuleOperand{}, false
-	}
-	return program.rule.declareRuleOperand(coords)
-}
-
-func (program ProgramRule) declareRuleSurfaces(operand declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
-	if !program.Available() || program.rule == nil {
-		return declaredRuleSurfaces{}, false
-	}
-	return program.rule.declareRuleSurfaces(operand, anchor)
-}
-
-func (program ProgramRule) bindProgramMember(plane *programPlane, topology *equation.Topology, member equation.RuleMember, operand declaredRuleOperand) (runtimeMember, bool) {
-	if !program.Available() {
-		return nil, false
-	}
-	if program.rule != nil {
-		return program.rule.bindProgramMember(plane, topology, member, operand)
-	}
-	if program.activation != nil {
-		return program.activation.bindProgramMember(plane, topology, member, operand)
-	}
-	return nil, false
-}
-
-// SealProgramRule turns the exact sealed typed implementation into the one
-// primitive construction input. The generic boundary is deliberately here so
-// schema composition never needs to name engine's private issuer interface.
-func SealProgramRule[K ~uint32 | ~uint64, V, O any](implementation *RuleImplementation[K, V, O]) (ProgramRule, bool) {
-	if _, ok := implementation.sealedRuleCell(); !ok {
-		return ProgramRule{}, false
-	}
-	program := ProgramRule{rule: implementation}
-	if !program.Available() {
-		return ProgramRule{}, false
-	}
-	return program, true
-}
-
-// SealActivationProgramRule publishes the activation issuer through the same
-// sealed primitive while preserving activation's separate admission path.
-func SealActivationProgramRule(implementation *ActivationRuleImplementation) (ProgramRule, bool) {
-	cell, ok := implementation.sealedActivationCell()
-	if !ok || !cell.schemaRuleComplete() {
-		return ProgramRule{}, false
-	}
-	program := ProgramRule{activation: implementation}
-	if !program.Available() {
-		return ProgramRule{}, false
-	}
-	return program, true
-}
-
-func (implementation *RuleImplementation[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell == nil || cell.impl == nil {
+func (cell *schemaRuleBindingCellImpl[K, V, O]) declaredRuleSchema() (composition.Key, composition.Key, bool) {
+	if cell == nil || !cell.sealedRuleComplete() || cell.impl == nil {
 		return composition.Key{}, composition.Key{}, false
 	}
 	semantic, family := cell.impl.ruleSemantic, cell.impl.operandFamily
 	return semantic, family, semantic.Available() && family.Available()
 }
 
-func (implementation *ActivationRuleImplementation) declaredRuleSchema() (composition.Key, composition.Key, bool) {
-	cell, ok := implementation.sealedActivationCell()
-	if !ok || !cell.schemaRuleComplete() {
+func (cell *schemaActivationRuleBindingCell) declaredRuleSchema() (composition.Key, composition.Key, bool) {
+	if cell == nil || !cell.schemaRuleComplete() || cell.schema == nil {
 		return composition.Key{}, composition.Key{}, false
 	}
-	shape, shapeOK := cell.schema.ruleShapeAt(implementation.ordinal)
+	shape, shapeOK := cell.schema.ruleShapeAt(cell.ordinal)
 	if !shapeOK {
 		return composition.Key{}, composition.Key{}, false
 	}
-	semantic, family := cell.schema.ruleSemanticAt(implementation.ordinal), shape.OperandFamily
+	semantic, family := cell.schema.ruleSemanticAt(cell.ordinal), shape.OperandFamily
 	return semantic, family, semantic.Available() && family.Available()
 }
 
-func (implementation *RuleImplementation[K, V, O]) resolveOperand(coords OperandCoords) (O, bool) {
-	var absent O
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil || cell.impl.operandResolver == nil {
-		return absent, false
+func (cell *schemaRuleBindingCellImpl[K, V, O]) declareRuleOperand(coords OperandCoords) (declaredRuleOperand, bool) {
+	if cell == nil || !cell.sealedRuleComplete() || cell.impl == nil || cell.impl.operandResolver == nil || cell.impl.operandContent == nil {
+		return declaredRuleOperand{}, false
 	}
-	return cell.impl.operandResolver(coords)
+	operand, resolved := cell.impl.operandResolver(coords)
+	if !resolved {
+		return declaredRuleOperand{}, false
+	}
+	canonical, digest, contentOK := cell.impl.operandContent(operand)
+	if !contentOK || digest == [32]byte{} {
+		return declaredRuleOperand{}, false
+	}
+	return declaredRuleOperand{value: canonical, digest: digest}, true
+}
+
+func (cell *schemaRuleBindingCellImpl[K, V, O]) declareRuleSurfaces(declared declaredRuleOperand, anchor ruleSurfaceAnchor) (declaredRuleSurfaces, bool) {
+	if cell == nil || !cell.sealedRuleComplete() || cell.impl == nil {
+		return declaredRuleSurfaces{}, false
+	}
+	operand, typed := declared.value.(O)
+	if !typed {
+		return declaredRuleSurfaces{}, false
+	}
+	semantic, semanticOK := semanticKeyFromComposition(cell.impl.ruleSemantic)
+	if !semanticOK {
+		return declaredRuleSurfaces{}, false
+	}
+	reads, writes, carries, ok := placeSchemaRuleSurfaces(cell, semantic, anchor, operand)
+	if !ok {
+		return declaredRuleSurfaces{}, false
+	}
+	return declaredRuleSurfaces{reads: reads, writes: writes, carries: carries}, true
 }

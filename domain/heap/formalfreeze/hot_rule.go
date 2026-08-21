@@ -109,19 +109,6 @@ func (rule *HotRule) Implementation() (*heapowner.RuleImplementation[operand], b
 	return rule.implementation, ok
 }
 
-// SealProgramRule publishes the exact engine Rule only after the shared
-// SchemaBinding has sealed.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func (rule *HotRule) resolveOperand(coords engine.OperandCoords) (operand, bool) {
 	if rule == nil || rule.packs == nil || rule.calls == nil {
 		return operand{}, false

@@ -17,8 +17,6 @@ import (
 // authorities are owner-fenced; no raw Target, Pack, Effect Factor, or
 // runtime context enters a selector or fold callback.
 type HotRule struct {
-	program       engine.ProgramRule
-	pending       *placementowner.RuleImplementation[effectfactor.MountedPublicationBatch]
 	owner         *placementowner.HotOwner
 	values        *valueowner.HotOwner
 	calls         *callowner.HotOwner
@@ -98,7 +96,7 @@ func BindHot(
 	if !placementOK {
 		return nil, false
 	}
-	rule.pending, rule.callRead, rule.valueRead, rule.placementRead = pending, callRead, valueRead, placementRead
+	rule.callRead, rule.valueRead, rule.placementRead = callRead, valueRead, placementRead
 	return rule, true
 }
 
@@ -262,35 +260,4 @@ func (rule *HotRule) fold(frame engine.Frame[placementdomain.Placement, effectfa
 		}
 		return applyRoute(route, current), true
 	})
-}
-
-// Finalize seals the owner wrapper after SchemaBinding reaches its sealed
-// phase and publishes the opaque engine ProgramRule.
-func (rule *HotRule) Finalize(owner *placementowner.HotOwner) bool {
-	if rule == nil || owner == nil || rule.pending == nil || rule.program.Available() || rule.owner != owner {
-		return false
-	}
-	implementation, ok := placementowner.ResolveRuleImplementationFor(owner, rule.pending)
-	if !ok || implementation == nil {
-		return false
-	}
-	program, ok := engine.SealProgramRule(implementation)
-	if !ok {
-		return false
-	}
-	rule.program = program
-	return true
-}
-
-// Implementation returns the sealed engine issuer for composition.
-func (rule *HotRule) Implementation() (engine.ProgramRule, bool) {
-	return rule.program, rule != nil && rule.program.Available()
-}
-
-// SealProgramRule publishes the exact mounted ProgramRule primitive.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || !rule.program.Available() {
-		return engine.ProgramRule{}, false
-	}
-	return rule.program, true
 }

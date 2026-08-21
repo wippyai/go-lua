@@ -116,9 +116,9 @@ return root
 	}
 
 	issuer, issued := rule.Implementation()
-	program, sealed := freshdomain.SealProgramRule(rule)
-	if !issued || issuer == nil || !sealed || !program.Available() {
-		t.Fatal("fresh Stack seed did not seal as a Link Rule")
+	capability, capabilityOK := issuer.LinkCapability()
+	if !issued || issuer == nil || !capabilityOK || !capability.Link() || capability.Activation() {
+		t.Fatal("fresh Stack seed did not publish a canonical Link capability")
 	}
 	if resolved, resolvedOK := placementowner.ResolveRuleImplementation(issuer); !resolvedOK || resolved == nil {
 		t.Fatal("fresh Stack seed issuer lost its owner proof")
@@ -179,8 +179,10 @@ func TestFreshRuleEmptyTargetDenominatorRemainsSealed(t *testing.T) {
 	if _, ok := linkInventory.IDAt(0); ok {
 		t.Fatal("empty fresh issuer produced a row")
 	}
-	if _, sealed := freshdomain.SealProgramRule(rule); !sealed {
-		t.Fatal("empty fresh Stack seed did not seal")
+	issuer, issued := rule.Implementation()
+	capability, capabilityOK := issuer.LinkCapability()
+	if !issued || issuer == nil || !capabilityOK || !capability.Link() || capability.Activation() {
+		t.Fatal("empty fresh Stack seed did not publish a canonical Link capability")
 	}
 }
 
@@ -189,7 +191,8 @@ func bindFresh(t testing.TB, cold *engine.Schema, placementFragment *placementow
 	binding := engine.NewSchemaBinding(cold)
 	owner, ownerOK := placementowner.BindHot(binding, placementFragment, placement)
 	rule, ruleOK := freshdomain.BindHot(binding, freshFragment, owner, placement)
-	if !ownerOK || !ruleOK || owner == nil || rule == nil || !binding.Seal() {
+	_, linkOK := engine.RegisterLinkSlot(binding, freshFragment.RuleSlot())
+	if !ownerOK || !ruleOK || owner == nil || rule == nil || !linkOK || !binding.Seal() {
 		t.Fatalf("fresh owner bind owner=%t rule=%t", ownerOK, ruleOK)
 	}
 	return binding, owner, rule

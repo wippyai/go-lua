@@ -264,12 +264,12 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 		t.Fatal("sealed matrix artifact seal")
 	}
 	admission := MountedProgramAdmission{}
-	programRule, programRuleOK := SealProgramRule(ruleImplementation)
-	if !programRuleOK {
+	cell, cellOK := ruleImplementation.sealedRuleCell()
+	if !cellOK || cell == nil {
 		t.Fatal("sealed matrix program rule")
 	}
 	for index := 0; index < count; index++ {
-		admission.Mounted = append(admission.Mounted, MountedRuleAdmission{Declaration: programRule, Capability: capability, Mount: mountID, Point: pointIDs[index+1], Occurrence: programMatrixID(60 + index)})
+		admission.Mounted = append(admission.Mounted, MountedRuleAdmission{Capability: capability, Mount: mountID, Point: pointIDs[index+1], Occurrence: programMatrixID(60 + index)})
 	}
 	queryAdmissions := make([]ProgramQueryAdmission, 0, count)
 	for index := 0; index < count; index++ {

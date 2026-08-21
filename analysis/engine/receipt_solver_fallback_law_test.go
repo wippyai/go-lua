@@ -182,10 +182,10 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	ordinaryImplementation, ordinaryImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, ordinary)
 	activationImplementation, activationImplementationOK := ActivationRuleImplementationAt(binding, activation)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	ordinaryProgram, ordinaryProgramOK := SealProgramRule(ordinaryImplementation)
-	_, activationProgramOK := SealActivationProgramRule(activationImplementation)
-	if !ordinaryImplementationOK || !activationImplementationOK || !queryImplementationOK || !ordinaryProgramOK || !activationProgramOK {
-		t.Fatal("selected overlay sealed implementations")
+	ordinaryCell, ordinaryCellOK := ordinaryImplementation.sealedRuleCell()
+	activationCell, activationCellOK := activationImplementation.sealedActivationCell()
+	if !ordinaryImplementationOK || !activationImplementationOK || !queryImplementationOK || !ordinaryCellOK || ordinaryCell == nil || !activationCellOK || activationCell == nil {
+		t.Fatal("selected overlay sealed canonical cells")
 	}
 	artifact, artifactOK := rows.NewArtifactScalarSpec(selectedOverlayLawID(artifactID), selectedOverlayLawID(programID), identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 3, Events: 5, Rules: 3, Bodies: 1, Regions: 1, Transfers: 1})
 	if !artifactOK {
@@ -243,15 +243,15 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	}
 	admission := MountedProgramAdmission{
 		Mounted: []MountedRuleAdmission{
-			{Declaration: ordinaryProgram, Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[1], Occurrence: selectedOverlayLawID(targetOccurrence)},
-			{Declaration: ordinaryProgram, Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[2], Occurrence: selectedOverlayLawID(bodyOccurrence)},
+			{Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[1], Occurrence: selectedOverlayLawID(targetOccurrence)},
+			{Capability: ordinaryCapability, Mount: selectedOverlayLawID(mountID), Point: points[2], Occurrence: selectedOverlayLawID(bodyOccurrence)},
 		},
 	}
 	candidates := make([]MountedActivationCandidate, 0, candidateCount)
 	for index := 0; index < candidateCount; index++ {
 		candidates = append(candidates, MountedActivationCandidate{Target: coldKey(activationTarget + uint64(index)), Endpoint: coldKey(activationEndpoint + uint64(index)), Mount: selectedOverlayLawID(mountID), Body: selectedOverlayLawID(bodyID)})
 	}
-	activationAdmit := MountedActivationAdmit{Implementation: activationImplementation, Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: triggerRule.Point, Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
+	activationAdmit := MountedActivationAdmit{Transport: issuer, Capability: activationCapability, Mount: selectedOverlayLawID(mountID), Point: triggerRule.Point, Occurrence: selectedOverlayLawID(triggerOccurrence), Application: application, Candidates: candidates}
 	admission.Activation = []MountedActivationAdmit{activationAdmit}
 	if duplicateApplication {
 		activationAdmit.Application = coldKey(activationApplication + 1)

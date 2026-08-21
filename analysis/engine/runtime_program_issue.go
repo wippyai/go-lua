@@ -36,10 +36,11 @@ type pendingRuleIssuance struct {
 	candidates   []MountedActivationCandidate
 	application  identity.SemanticKey
 	issuer       *MountedActivationCandidateIssuer
-	// binder is the sealed cell that mints this issuance's runtime row, and
-	// coords are the neutral coordinates used for its declaration. Both are
-	// stated here and bound by the committed program, never by this pass.
-	binder ProgramRule
+	// binder is the canonical sealed schema cell that mints this issuance's
+	// runtime row, and coords are the neutral coordinates used for its
+	// declaration. Both are stated here and bound by the committed program,
+	// never by this pass.
+	binder sealedRuleCell
 	coords OperandCoords
 	// operand is the single canonical owner-issued value for this issuance.
 	// The binder receives it directly and never resolves or canonicalizes it
@@ -229,7 +230,11 @@ func claimAnchoredSurfaces(claimed map[equation.Surface]struct{}, surfaces decla
 // mount+point+occurrence qualified, so equal reusable artifacts and same IDs
 // on different mounts cannot alias.
 func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row MountedRuleAdmission) (pendingRuleIssuance, bool) {
-	if !row.Declaration.Available() || !row.Capability.mounted() || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
+	if !row.Capability.mounted() || row.Capability.activation || !row.Mount.Available() || !row.Point.Available() || !row.Occurrence.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
+	if !binderOK {
 		return pendingRuleIssuance{}, false
 	}
 	mountedRuleOK := rows.mountedRule(row.Capability, row.Mount, row.Point, row.Occurrence)
@@ -251,9 +256,9 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 		plane: declaredMemberMount, role: row.Capability,
 		mount: row.Mount, point: row.Point, occurrence: row.Occurrence,
 		member: member, activationID: activation,
-		binder: row.Declaration, coords: coords,
+		binder: binder, coords: coords,
 	}
-	result, ok := declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, coords, site, entity, issuance)
+	result, ok := declareIssuanceSurfaces(rowsWorkspace, state, binder, coords, site, entity, issuance)
 	return result, ok
 }
 
@@ -262,7 +267,11 @@ func admitMountedRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactR
 // occurrence: the witness assigned the role, and each occurrence is claimed
 // once.
 func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, row LinkRuleAdmission, claimed map[identity.ContentID]RuleSlotCapability) (pendingRuleIssuance, bool) {
-	if !row.Declaration.Available() || !row.Capability.link() || !row.Occurrence.Available() {
+	if !row.Capability.link() || !row.Occurrence.Available() {
+		return pendingRuleIssuance{}, false
+	}
+	binder, binderOK := resolveOrdinaryRuleCell(row.Capability)
+	if !binderOK {
 		return pendingRuleIssuance{}, false
 	}
 	assigned, found := rows.bootstrap.roles[row.Occurrence]
@@ -281,19 +290,19 @@ func admitLinkRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows
 	issuance := pendingRuleIssuance{
 		plane: declaredMemberLink, role: row.Capability,
 		occurrence: row.Occurrence, member: member,
-		binder: row.Declaration, coords: OperandCoords{Occurrence: row.Occurrence},
+		binder: binder, coords: OperandCoords{Occurrence: row.Occurrence},
 	}
 	// The bootstrap Site is deliberately admitted into the still-open source
 	// Batch. Site.Available requires a sealed Batch and therefore cannot be
 	// used at this pre-seal boundary; admitFrom authenticates the open-batch
 	// capability and preserves the same fence as mounted rows.
-	return declareIssuanceSurfaces(rowsWorkspace, state, row.Declaration, OperandCoords{Occurrence: row.Occurrence}, rows.bootstrap.site, entity, issuance)
+	return declareIssuanceSurfaces(rowsWorkspace, state, binder, OperandCoords{Occurrence: row.Occurrence}, rows.bootstrap.site, entity, issuance)
 }
 
 // declareIssuanceSurfaces is the shared half of every rule issuance: mint the
 // Occurrence and Operand, then read the declaration's two pure projections
 // against that anchor.
-func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration ProgramRule, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
+func declareIssuanceSurfaces(rowsWorkspace *programRows, state *schemaBindingState, declaration ordinarySealedRuleCell, coords OperandCoords, site equation.Site, entity composition.Key, issuance pendingRuleIssuance) (pendingRuleIssuance, bool) {
 	semantic, family, semanticOK := declaration.declaredRuleSchema()
 	if !semanticOK || !declaredRoleOwnsRuleSchema(state, issuance.role, semantic) {
 		return pendingRuleIssuance{}, false
@@ -336,8 +345,12 @@ func admitRuleSurfaceAnchor(rowsWorkspace *programRows, site equation.Site, enti
 // occurrence whose owner bound no transport vector declares no trigger row,
 // which is the lawful no-op for an activation with nothing to instantiate.
 func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifactRows, state *schemaBindingState, admit MountedActivationAdmit) (pendingRuleIssuance, bool, bool) {
-	if admit.Implementation == nil || !admit.Capability.mounted() ||
+	if !admit.Capability.mounted() || !admit.Capability.activation ||
 		!admit.Mount.Available() || !admit.Point.Available() || !admit.Occurrence.Available() {
+		return pendingRuleIssuance{}, false, false
+	}
+	binder, binderOK := resolveActivationRuleCell(admit.Capability)
+	if !binderOK {
 		return pendingRuleIssuance{}, false, false
 	}
 	if admit.Transport == nil {
@@ -353,7 +366,7 @@ func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifa
 	entity, entityOK := mountedRuleOccurrenceKey(admit.Capability, admit.Occurrence)
 	member := mountedRuleMemberID(admit.Capability, admit.Mount, admit.Point, admit.Occurrence)
 	activation := mountedRuleActivationID(admit.Capability, admit.Mount, admit.Point, admit.Occurrence)
-	semantic, family, semanticOK := admit.Implementation.declaredRuleSchema()
+	semantic, family, semanticOK := binder.declaredRuleSchema()
 	if !sited || !entityOK || !member.Available() || !activation.Available() || !semanticOK ||
 		!declaredRoleOwnsRuleSchema(state, admit.Capability, semantic) ||
 		!declaredActivationTransport(state, admit.Transport, admit.Capability, semantic) {
@@ -363,15 +376,11 @@ func admitActivationRuleIssuance(rowsWorkspace *programRows, rows *mountedArtifa
 	if !anchorOK {
 		return pendingRuleIssuance{}, false, false
 	}
-	program, programOK := SealActivationProgramRule(admit.Implementation)
-	if !programOK {
-		return pendingRuleIssuance{}, false, false
-	}
 	return pendingRuleIssuance{
 		plane: declaredMemberMount, role: admit.Capability,
 		mount: admit.Mount, point: admit.Point, occurrence: admit.Occurrence,
 		member: member, activationID: activation, activation: true,
-		binder:   program,
+		binder:   binder,
 		semantic: semantic, family: family, anchor: anchor,
 		surfaces:    declaredActivationSurfaces(admit.Read),
 		candidates:  admit.Candidates,

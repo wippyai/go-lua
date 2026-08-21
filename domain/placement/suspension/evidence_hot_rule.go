@@ -125,17 +125,6 @@ func (rule *EvidenceHotRule) Implementation() (*EvidenceRuleImplementation[opera
 	return rule.implementation, true
 }
 
-func SealEvidenceProgramRule(rule *EvidenceHotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := ResolveEvidenceRuleImplementation(rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func (rule *EvidenceHotRule) locateValues(context engine.SelectorContext, candidate operand) bool {
 	if rule == nil || rule.values == nil || rule.catalog == nil || rule.catalog.values == nil {
 		return false

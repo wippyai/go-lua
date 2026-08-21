@@ -269,10 +269,11 @@ func TestCatalogDeclaresEveryTableRule(t *testing.T) {
 	}
 }
 
-// TestRuleBindingPublishesOneProgramRulePerOperandRule is the construction
-// join: every mounted operand and Link rule publishes exactly one cell-owned
-// construction primitive, and the activation lane publishes none.
-func TestRuleBindingPublishesOneProgramRulePerOperandRule(t *testing.T) {
+// TestRuleBindingPublishesOneCanonicalCellPerRule is the construction join:
+// every mounted operand and Link rule publishes exactly one sealed cell, and
+// the activation lane publishes its distinct activation capability through
+// that same canonical cell directory.
+func TestRuleBindingPublishesOneCanonicalCellPerRule(t *testing.T) {
 	bound := materializerBinding(t, mountedRecord(t, "program-rule", materializerSource))
 	compilation := bound.Compilation()
 	state := compilation.catalog
@@ -287,22 +288,26 @@ func TestRuleBindingPublishesOneProgramRulePerOperandRule(t *testing.T) {
 		if !keyOK || !entryOK {
 			t.Fatalf("table position %d has no declaration", position)
 		}
-		program, programOK := rules.ProgramRuleByKey(key)
+		cell, cellOK := rules.cellByKey(key)
+		capability, capabilityOK := rules.CapabilityByKey(key)
+		if !cellOK || !cell.Available() || !capabilityOK || !capability.Available() {
+			t.Fatalf("key %q has no sealed canonical cell/capability", key)
+		}
 		if entry.Lane() == rule.LaneActivation {
-			if programOK || program.Available() {
-				t.Fatalf("activation %q published a construction primitive", key)
+			if !capability.Activation() {
+				t.Fatalf("activation %q has no activation capability", key)
 			}
 			continue
 		}
-		if !programOK || !program.Available() {
-			t.Fatalf("key %q has no construction primitive", key)
+		if capability.Activation() {
+			t.Fatalf("ordinary key %q has an activation capability", key)
 		}
 		published++
 	}
 	if published == 0 {
-		t.Fatal("no operand rule published a construction primitive")
+		t.Fatal("no ordinary rule published a canonical cell")
 	}
-	if program, ok := rules.ProgramRuleByKey("no-such-rule"); ok || program.Available() {
-		t.Fatal("unknown key published a construction primitive")
+	if cell, ok := rules.cellByKey("no-such-rule"); ok || cell.Available() {
+		t.Fatal("unknown key published a canonical cell")
 	}
 }

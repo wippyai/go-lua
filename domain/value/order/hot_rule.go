@@ -101,18 +101,6 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[value.Bina
 	return rule.implementation, ok
 }
 
-// SealProgramRule is this typed rule's schema registration.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 func hotContent(schema *value.Schema, row value.BinaryOrder) (value.BinaryOrder, [32]byte, bool) {
 	id, ok := row.ID()
 	if schema == nil || !schema.OwnsBinaryOrder(row) || !ok || [32]byte(id) == ([32]byte{}) {

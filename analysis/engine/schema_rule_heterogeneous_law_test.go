@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 )
 
-func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *testing.T) {
+func TestCanonicalRuleCellThreadsExactAndSummaryReadThroughProductEvidencePatch(t *testing.T) {
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(960_001))
 	exact, exactOK := factor.ExactRead()

@@ -36,18 +36,16 @@ const (
 
 // LinkRuleAdmission is one Link-global occurrence to admit.
 type LinkRuleAdmission struct {
-	Declaration ProgramRule
-	Capability  RuleSlotCapability
-	Occurrence  identity.ContentID
+	Capability RuleSlotCapability
+	Occurrence identity.ContentID
 }
 
 // MountedRuleAdmission is one mounted occurrence to admit.
 type MountedRuleAdmission struct {
-	Declaration ProgramRule
-	Capability  RuleSlotCapability
-	Mount       identity.ContentID
-	Point       identity.ContentID
-	Occurrence  identity.ContentID
+	Capability RuleSlotCapability
+	Mount      identity.ContentID
+	Point      identity.ContentID
+	Occurrence identity.ContentID
 }
 
 // programQueryAdmit is the erased mounted query row. Implementations live on

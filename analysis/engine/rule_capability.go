@@ -268,3 +268,66 @@ func registerRuleSlot(binding *SchemaBinding, schema *Schema, ordinal uint64, ca
 func completeCapabilityDirectory(state *schemaBindingState) bool {
 	return state != nil && len(state.roleSlots) != 0
 }
+
+// resolveSealedRuleCell authenticates a parent-issued capability and returns
+// the exact canonical sealed schema cell at its ordinal. The capability's
+// state, authority, role-directory entry, and sealed row all have to agree;
+// callers never reconstruct a RuleImplementation or carry a callback-bearing
+// wrapper across the construction boundary.
+func resolveSealedRuleCell(capability RuleSlotCapability) (sealedRuleCell, bool) {
+	state := capability.state
+	if state == nil || capability.authority == nil || !capability.available() {
+		return nil, false
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.phase != schemaBindingSealed || state.authority != capability.authority || state.roleSlots == nil || state.rules == nil {
+		return nil, false
+	}
+	if _, registered := state.roleSlots[capability]; !registered || capability.ordinal >= uint64(len(state.rules)) {
+		return nil, false
+	}
+	raw := state.rules[capability.ordinal]
+	if raw == nil {
+		return nil, false
+	}
+	if capability.activation {
+		cell, ok := raw.(*schemaActivationRuleBindingCell)
+		if !ok || cell == nil || !cell.schemaRuleComplete() {
+			return nil, false
+		}
+		return cell, true
+	}
+	if _, activation := raw.(*schemaActivationRuleBindingCell); activation {
+		return nil, false
+	}
+	cell, ok := raw.(sealedRuleCell)
+	if !ok || cell == nil || !cell.schemaRuleComplete() {
+		return nil, false
+	}
+	return cell, true
+}
+
+func resolveOrdinaryRuleCell(capability RuleSlotCapability) (ordinarySealedRuleCell, bool) {
+	if capability.activation {
+		return nil, false
+	}
+	cell, ok := resolveSealedRuleCell(capability)
+	if !ok {
+		return nil, false
+	}
+	ordinary, ok := cell.(ordinarySealedRuleCell)
+	return ordinary, ok
+}
+
+func resolveActivationRuleCell(capability RuleSlotCapability) (*schemaActivationRuleBindingCell, bool) {
+	if !capability.activation {
+		return nil, false
+	}
+	cell, ok := resolveSealedRuleCell(capability)
+	if !ok {
+		return nil, false
+	}
+	activation, ok := cell.(*schemaActivationRuleBindingCell)
+	return activation, ok
+}

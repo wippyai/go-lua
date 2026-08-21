@@ -8,12 +8,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
-// ProgramIssuer is a short-lived typed composition closure. WireRule creates
-// it from the already-typed hot implementation; BindRules invokes it only
-// after the shared SchemaBinding seals, then drops it while retaining the
-// resulting engine.ProgramRule.
-type ProgramIssuer func() (engine.ProgramRule, bool)
-
 // ActivationRule is the typed mounted activation admission surface retained
 // by the composed binding. Ordinary operand rules never implement it.
 type ActivationRule interface {
@@ -27,7 +21,7 @@ type RuleContributor[P, A any] struct {
 	declare     func(*engine.SchemaBuilder, vocabulary.Roles, P) (rule.Cell, bool)
 	register    func(*engine.SchemaBinding, rule.Cell) (engine.RuleSlotCapability, bool)
 	pair        func(*engine.SchemaBinding, rule.Cell, func(schema.Key) (engine.RuleSlotCapability, bool)) bool
-	bind        func(*engine.SchemaBinding, A, rule.Cell) (rule.Cell, ProgramIssuer, ActivationRule, bool)
+	bind        func(*engine.SchemaBinding, A, rule.Cell) (rule.Cell, ActivationRule, bool)
 	finalize    func(A, rule.Cell) bool
 	linkCatalog func(rule.Cell) (rule.LinkCatalog, bool)
 }
@@ -50,9 +44,9 @@ func (contributor RuleContributor[P, A]) Pair(binding *engine.SchemaBinding, hol
 	return contributor.pair == nil || contributor.pair(binding, holder, resolve)
 }
 
-func (contributor RuleContributor[P, A]) Bind(binding *engine.SchemaBinding, authorities A, holder rule.Cell) (rule.Cell, ProgramIssuer, ActivationRule, bool) {
+func (contributor RuleContributor[P, A]) Bind(binding *engine.SchemaBinding, authorities A, holder rule.Cell) (rule.Cell, ActivationRule, bool) {
 	if contributor.bind == nil {
-		return rule.Cell{}, nil, nil, false
+		return rule.Cell{}, nil, false
 	}
 	return contributor.bind(binding, authorities, holder)
 }
@@ -82,9 +76,9 @@ func (contributor RuleContributor[P, A]) complete(template *rule.Template) bool 
 }
 
 // WireRule binds a domain's typed declaration, owner registration, and hot
-// implementation registration to one catalog row. The program function is
-// called with the already-typed hot value returned by Bind; no erased cell is
-// decoded to discover construction behavior.
+// implementation registration to one catalog row. Construction later resolves
+// the sealed canonical schema cell by its parent-issued capability; no erased
+// callback-bearing issuer is retained here.
 func WireRule[P, A, F, H any](
 	spec rule.Spec,
 	declare func(*engine.SchemaBuilder, rule.Declaration[P]) (F, bool),
@@ -93,7 +87,6 @@ func WireRule[P, A, F, H any](
 	bind func(*engine.SchemaBinding, rule.Binding[A, F]) (H, bool),
 	finalize func(rule.Finalization[A, H]) bool,
 	catalog func(H) (rule.LinkCatalog, bool),
-	program func(H) (engine.ProgramRule, bool),
 	activation func(H) ActivationRule,
 ) (*rule.Template, RuleContributor[P, A], bool) {
 	if declare == nil || register == nil || bind == nil {
@@ -126,29 +119,23 @@ func WireRule[P, A, F, H any](
 			}
 			return register(binding, rule.Registration[F]{Fragment: fragment})
 		},
-		bind: func(binding *engine.SchemaBinding, set A, holder rule.Cell) (rule.Cell, ProgramIssuer, ActivationRule, bool) {
+		bind: func(binding *engine.SchemaBinding, set A, holder rule.Cell) (rule.Cell, ActivationRule, bool) {
 			fragment, fragmentOK := rule.Payload[F](holder)
 			if !fragmentOK {
-				return rule.Cell{}, nil, nil, false
+				return rule.Cell{}, nil, false
 			}
 			hot, bound := bind(binding, rule.Binding[A, F]{Fragment: fragment, Authorities: set})
 			if !bound {
-				return rule.Cell{}, nil, nil, false
-			}
-			var issuer ProgramIssuer
-			if program != nil {
-				issuer = func() (engine.ProgramRule, bool) {
-					return program(hot)
-				}
+				return rule.Cell{}, nil, false
 			}
 			var activationRule ActivationRule
 			if activation != nil {
 				activationRule = activation(hot)
 				if activationRule == nil {
-					return rule.Cell{}, nil, nil, false
+					return rule.Cell{}, nil, false
 				}
 			}
-			return rule.NewCell(hot), issuer, activationRule, true
+			return rule.NewCell(hot), activationRule, true
 		},
 	}
 	if pair != nil {

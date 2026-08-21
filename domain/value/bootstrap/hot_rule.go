@@ -88,15 +88,3 @@ func (rule *HotRule) Implementation() (*valueowner.RuleImplementation[identity.C
 	}
 	return rule.implementation, true
 }
-
-// SealProgramRule is this typed rule's schema registration.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := valueowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

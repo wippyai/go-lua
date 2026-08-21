@@ -84,15 +84,3 @@ func (rule *HotRule) Implementation() (*placementowner.RuleImplementation[operan
 	}
 	return rule.implementation, true
 }
-
-// SealProgramRule publishes the exact sealed Link-lane Rule row.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || rule.owner == nil || rule.implementation == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := placementowner.ResolveRuleImplementationFor(rule.owner, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

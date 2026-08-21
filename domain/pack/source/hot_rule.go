@@ -75,15 +75,3 @@ func (rule *HotRule) Implementation() (*packowner.RuleImplementation[packdomain.
 	}
 	return rule.implementation, true
 }
-
-// SealProgramRule is this typed rule's schema registration.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := packowner.ResolveRuleImplementation(rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}

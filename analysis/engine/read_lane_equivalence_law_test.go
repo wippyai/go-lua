@@ -180,8 +180,8 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 	}
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(readLaneID(70), readLaneID(71))
-	programRule, programRuleOK := SealProgramRule(implementation)
-	if !templateOK || !bootstrapOK || !programRuleOK {
+	cell, cellOK := implementation.sealedRuleCell()
+	if !templateOK || !bootstrapOK || !cellOK || cell == nil {
 		t.Fatal("read lane artifact seal")
 	}
 	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, readLaneID(110), readLaneID(1), member)
@@ -190,7 +190,7 @@ func constructReadLaneProgram(t testing.TB, binding *SchemaBinding, schema *Sche
 	}
 	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: role, Capability: capability}}, Module: readLaneID(1)}
 	admission := MountedProgramAdmission{Mounted: []MountedRuleAdmission{{
-		Declaration: programRule, Capability: capability, Mount: readLaneID(1),
+		Capability: capability, Mount: readLaneID(1),
 		Point: member, Occurrence: readLaneID(60),
 	}}, Queries: []ProgramQueryAdmission{queryAdmission}}
 	program, refusal, constructed := ConstructProgram(ProgramDeclaration{Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap, Admission: admission})

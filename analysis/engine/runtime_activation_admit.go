@@ -16,13 +16,12 @@ type MountedActivationCandidate struct {
 // owner-issued read surface the trigger row places, and Candidates are the
 // body routes it must instantiate. The topology builder stays in the engine.
 type MountedActivationAdmit struct {
-	Implementation *ActivationRuleImplementation
-	Transport      *MountedActivationCandidateIssuer
-	Capability     RuleSlotCapability
-	Mount          identity.ContentID
-	Point          identity.ContentID
-	Occurrence     identity.ContentID
-	Application    identity.SemanticKey
-	Read           RuleReadSurface
-	Candidates     []MountedActivationCandidate
+	Transport   *MountedActivationCandidateIssuer
+	Capability  RuleSlotCapability
+	Mount       identity.ContentID
+	Point       identity.ContentID
+	Occurrence  identity.ContentID
+	Application identity.SemanticKey
+	Read        RuleReadSurface
+	Candidates  []MountedActivationCandidate
 }

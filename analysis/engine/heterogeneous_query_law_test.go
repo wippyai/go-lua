@@ -253,10 +253,10 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	ruleRowsOK = ruleRowsOK && spec.AddRule(rows.ArtifactScalarRule{Role: roleB, Stage: rows.ArtifactRuleStageIssued3, Point: pointOutput, Input: pointInitial, ID: heterogeneousQueryLawID(11)})
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(heterogeneousQueryLawID(12), heterogeneousQueryLawID(13))
-	programRuleA, programRuleAOK := SealProgramRule(ruleImplementationA)
-	programRuleB, programRuleBOK := SealProgramRule(ruleImplementationB)
-	if !specOK || !roleAOK || !roleBOK || !stageOK || !pointInitialOK || !pointOutputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowsOK || !templateOK || !capabilityAOK || !capabilityBOK || !bootstrapOK || !programRuleAOK || !programRuleBOK {
-		t.Fatalf("heterogeneous artifact spec=%t roles=%t/%t stage=%t points=%t/%t region=%t events=%t body=%t rules=%t template=%t caps=%t/%t bootstrap=%t rules=%t/%t", specOK, roleAOK, roleBOK, stageOK, pointInitialOK, pointOutputOK, regionOK, eventsOK, bodyOK, ruleRowsOK, templateOK, capabilityAOK, capabilityBOK, bootstrapOK, programRuleAOK, programRuleBOK)
+	cellA, cellAOK := ruleImplementationA.sealedRuleCell()
+	cellB, cellBOK := ruleImplementationB.sealedRuleCell()
+	if !specOK || !roleAOK || !roleBOK || !stageOK || !pointInitialOK || !pointOutputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowsOK || !templateOK || !capabilityAOK || !capabilityBOK || !bootstrapOK || !cellAOK || cellA == nil || !cellBOK || cellB == nil {
+		t.Fatalf("heterogeneous artifact spec=%t roles=%t/%t stage=%t points=%t/%t region=%t events=%t body=%t rules=%t template=%t caps=%t/%t bootstrap=%t cells=%t/%t", specOK, roleAOK, roleBOK, stageOK, pointInitialOK, pointOutputOK, regionOK, eventsOK, bodyOK, ruleRowsOK, templateOK, capabilityAOK, capabilityBOK, bootstrapOK, cellAOK, cellBOK)
 	}
 	mount := MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: roleA, Capability: capabilityA}, {Scalar: roleB, Capability: capabilityB}}, Module: mountID}
 	queryID, observationID := heterogeneousQueryLawID(14), heterogeneousQueryLawID(15)
@@ -269,8 +269,8 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 		Binding: binding, Mounts: []MountedProgramArtifact{mount}, Bootstrap: bootstrap,
 		Admission: MountedProgramAdmission{
 			Mounted: []MountedRuleAdmission{
-				{Declaration: programRuleA, Capability: capabilityA, Mount: mountID, Point: pointOutput, Occurrence: heterogeneousQueryLawID(10)},
-				{Declaration: programRuleB, Capability: capabilityB, Mount: mountID, Point: pointOutput, Occurrence: heterogeneousQueryLawID(11)},
+				{Capability: capabilityA, Mount: mountID, Point: pointOutput, Occurrence: heterogeneousQueryLawID(10)},
+				{Capability: capabilityB, Mount: mountID, Point: pointOutput, Occurrence: heterogeneousQueryLawID(11)},
 			},
 			Queries: []ProgramQueryAdmission{queryAdmission},
 		},

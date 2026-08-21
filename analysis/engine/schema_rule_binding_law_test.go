@@ -471,7 +471,7 @@ func TestSchemaRuleBindingDirectRouteAndSelectedReadsComplete(t *testing.T) {
 	}
 }
 
-func TestProgramRuleSurfaceBoundaryRetainsRouteAndAuthorityFences(t *testing.T) {
+func TestCanonicalRuleCellBoundaryRetainsRouteAndAuthorityFences(t *testing.T) {
 	schema, factor, rule, exact, static, operand, carry, write := directRouteRuleLawSchema(t)
 	binding := NewSchemaBinding(schema)
 	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSelectedRouteRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), directRouteRuleHotLaw(), HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }) {
@@ -491,16 +491,16 @@ func TestProgramRuleSurfaceBoundaryRetainsRouteAndAuthorityFences(t *testing.T) 
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
 	if !implementationOK || implementation == nil {
-		t.Fatal("ProgramRule owner")
+		t.Fatal("canonical Rule cell owner")
 	}
-	program, programOK := SealProgramRule(implementation)
-	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
-	anchor := lawProgramRuleAnchor(t)
-	surfaces, surfacesOK := program.declareRuleSurfaces(declared, anchor)
+	cell, cellOK := implementation.sealedRuleCell()
+	declared, declaredOK := cell.declareRuleOperand(lawCanonicalRuleCoords())
+	anchor := lawCanonicalRuleAnchor(t)
+	surfaces, surfacesOK := cell.declareRuleSurfaces(declared, anchor)
 	semantic, family := implementation.cell.impl.ruleSemantic, implementation.cell.impl.operandFamily
 	row, rowOK := resolveDeclaredRuleInstance(schema, binding.state.authority, semantic, family, anchor, surfaces)
 	expectedWrite, expectedWriteOK := schema.ruleWriteShapeAt(implementation.ordinal, 0)
-	if !programOK || !declaredOK || !surfacesOK || !rowOK || !expectedWriteOK || len(row.Writes) != 1 || row.Writes[0].Route != expectedWrite.Route {
+	if !cellOK || !declaredOK || !surfacesOK || !rowOK || !expectedWriteOK || len(row.Writes) != 1 || row.Writes[0].Route != expectedWrite.Route {
 		t.Fatal("route surface did not preserve the sealed graph route index")
 	}
 
@@ -518,7 +518,7 @@ func TestProgramRuleSurfaceBoundaryRetainsRouteAndAuthorityFences(t *testing.T) 
 	}
 }
 
-func TestProgramRuleSurfaceRejectsMalformedSelectedDependencyOrdering(t *testing.T) {
+func TestCanonicalRuleCellRejectsMalformedSelectedDependencyOrdering(t *testing.T) {
 	schema, factor, rule, exact, static, operand, carry, write := directRouteRuleLawSchema(t)
 	binding := NewSchemaBinding(schema)
 	if !BindFactor(binding, factor, hotUintFactorSpec()) || !BindSelectedRouteRuleDirect[uint64](binding, rule, carry, write, factor.Ref(), directRouteRuleHotLaw(), HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }) {
@@ -538,17 +538,17 @@ func TestProgramRuleSurfaceRejectsMalformedSelectedDependencyOrdering(t *testing
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
 	if !implementationOK || implementation == nil {
-		t.Fatal("ProgramRule owner")
+		t.Fatal("canonical Rule cell owner")
 	}
 	row := implementation.cell.schemaRuleReadAt(1)
 	if row == nil || len(row.dependencies) == 0 {
 		t.Fatal("selected dependency row")
 	}
 	row.dependencies[0] = row.readOrdinal
-	program, programOK := SealProgramRule(implementation)
-	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
-	_, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
-	if !programOK || !declaredOK || surfacesOK {
+	cell, cellOK := implementation.sealedRuleCell()
+	declared, declaredOK := cell.declareRuleOperand(lawCanonicalRuleCoords())
+	_, surfacesOK := cell.declareRuleSurfaces(declared, lawCanonicalRuleAnchor(t))
+	if !cellOK || !declaredOK || surfacesOK {
 		t.Fatal("selected surface accepted a non-prior dependency")
 	}
 }
@@ -607,7 +607,7 @@ func TestSchemaRuleBindingDirectConstructorsRejectWrongGeometry(t *testing.T) {
 	}
 }
 
-func lawProgramRuleAnchor(t testing.TB) ruleSurfaceAnchor {
+func lawCanonicalRuleAnchor(t testing.TB) ruleSurfaceAnchor {
 	t.Helper()
 	batch := equation.NewBatch()
 	site, siteOK := batch.AdmitSite(compositionKeyOf(coldKey(997_500)), equation.EmptyScope(), equation.TrueExpr(), equation.InitPresent)
@@ -615,16 +615,16 @@ func lawProgramRuleAnchor(t testing.TB) ruleSurfaceAnchor {
 	entity, entityOK := operandEntityForContent([32]byte{0x5a})
 	operand, operandOK := batch.AdmitOperand(occurrence, entity)
 	if !siteOK || !occurrenceOK || !entityOK || !operandOK || !batch.Seal() {
-		t.Fatal("ProgramRule source anchor")
+		t.Fatal("canonical Rule cell source anchor")
 	}
 	return ruleSurfaceAnchor{occurrence: occurrence, operand: operand}
 }
 
-// TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch
-// rehomes the old compiler-thread law on the current ProgramRule issuer. The
+// TestCanonicalRuleCellThreadsExactReadAndCarryThroughProductEvidenceAndPatch
+// rehomes the old compiler-thread law on the current canonical cell. The
 // sealed cell, compiled read row, carry token and one write surface must all
 // survive into the declaration consumed by ConstructProgram.
-func TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *testing.T) {
+func TestCanonicalRuleCellThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *testing.T) {
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(997_510))
 	readForm, readOK := factor.ExactRead()
@@ -646,40 +646,40 @@ func TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *te
 		readRuntime, bound = BindRuleWithExactReadAndCarry[uint64, uint64, struct{}, uint64, uint64](binding, rule, read, factor, carry, writeSlot, factor, hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 0, true }, func(struct{}) (uint64, bool) { return 1, true })
 	}
 	if !bound || !binding.Seal() {
-		t.Fatalf("exact read/carry ProgramRule binding factor=%t read=%t write=%t rule=%t input=%t readSlot=%t carry=%t writeSlot=%t schema=%t bound=%t poisoned=%t", factorOK, readOK, writeOK, ruleOK, inputOK, readSlotOK, carryOK, writeSlotOK, schemaOK, bound, binding.Poisoned())
+		t.Fatalf("exact read/carry canonical cell binding factor=%t read=%t write=%t rule=%t input=%t readSlot=%t carry=%t writeSlot=%t schema=%t bound=%t poisoned=%t", factorOK, readOK, writeOK, ruleOK, inputOK, readSlotOK, carryOK, writeSlotOK, schemaOK, bound, binding.Poisoned())
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
 	shape, shapeOK := implementation.cell.schema.ruleShapeAt(implementation.ordinal)
 	if !implementationOK || implementation == nil || readRuntime.row == nil || readRuntime.row.kind != composition.ReadExact || !shapeOK || shape.ReadCount != 1 || shape.CarryCount != 1 {
 		t.Fatal("exact read/carry shape thread")
 	}
-	program, programOK := SealProgramRule(implementation)
-	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
-	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
-	if !programOK || !program.Available() || !declaredOK || !surfacesOK || len(surfaces.reads) != 1 || len(surfaces.writes) != 1 || surfaces.carries != 1 || surfaces.reads[0].value.Form != equation.SurfaceReadExact {
-		t.Fatal("exact read/carry ProgramRule surfaces")
+	cell, cellOK := implementation.sealedRuleCell()
+	declared, declaredOK := cell.declareRuleOperand(lawCanonicalRuleCoords())
+	surfaces, surfacesOK := cell.declareRuleSurfaces(declared, lawCanonicalRuleAnchor(t))
+	if !cellOK || !declaredOK || !surfacesOK || len(surfaces.reads) != 1 || len(surfaces.writes) != 1 || surfaces.carries != 1 || surfaces.reads[0].value.Form != equation.SurfaceReadExact {
+		t.Fatal("exact read/carry canonical cell surfaces")
 	}
 }
 
-// TestProgramRuleThreadsSummaryReadThroughProductAndEvidence retains the
+// TestCanonicalRuleCellThreadsSummaryReadThroughProductAndEvidence retains the
 // summary read's normalizer and ordered-cell contract at the sealed Rule
 // boundary; no exact-read fallback or parallel callback may replace it.
-func TestProgramRuleThreadsSummaryReadThroughProductAndEvidence(t *testing.T) {
-	runProgramRuleSummaryThreadLaw(t, 997_520, 8)
+func TestCanonicalRuleCellThreadsSummaryReadThroughProductAndEvidence(t *testing.T) {
+	runCanonicalRuleSummaryThreadLaw(t, 997_520, 8)
 }
 
-// TestProgramRuleThreadsLargeSummaryReadThroughProductAndEvidence uses a
+// TestCanonicalRuleCellThreadsLargeSummaryReadThroughProductAndEvidence uses a
 // wide Factor key plane, preserving the old large-summary no-alias law while
 // exercising only the current sealed binding.
-func TestProgramRuleThreadsLargeSummaryReadThroughProductAndEvidence(t *testing.T) {
-	runProgramRuleSummaryThreadLaw(t, 997_530, 10_000)
+func TestCanonicalRuleCellThreadsLargeSummaryReadThroughProductAndEvidence(t *testing.T) {
+	runCanonicalRuleSummaryThreadLaw(t, 997_530, 10_000)
 }
 
 type summaryLawOperand struct{}
 
 func (summaryLawOperand) SummaryKeys() ([]uint64, bool) { return []uint64{0}, true }
 
-func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
+func runCanonicalRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	t.Helper()
 	builder := NewSchema()
 	factor, factorOK := DeclareFactorSlot[uint64](builder, coldKey(base))
@@ -715,23 +715,23 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	}, func(summaryLawOperand) (uint64, bool) { return 1, true })
 	readRuntime, readBound := BindSelectedRuleDirectSummaryRead[uint64, uint64, summaryLawOperand, uint64, OrderedCells[uint64]](binding, rule, read, factor.Ref(), form)
 	if !bound || !readBound || !binding.Seal() || readRuntime.row == nil || readRuntime.row.kind != composition.ReadSummary {
-		t.Fatal("summary ProgramRule binding")
+		t.Fatal("summary canonical cell binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, summaryLawOperand](binding, rule)
 	shape, shapeOK := implementation.cell.schema.ruleShapeAt(implementation.ordinal)
 	if !implementationOK || implementation == nil || !shapeOK || shape.ReadCount != 1 || shape.CarryCount != 0 {
-		t.Fatal("summary ProgramRule shape thread")
+		t.Fatal("summary canonical cell shape thread")
 	}
-	program, programOK := SealProgramRule(implementation)
-	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
-	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
+	cell, cellOK := implementation.sealedRuleCell()
+	declared, declaredOK := cell.declareRuleOperand(lawCanonicalRuleCoords())
+	surfaces, surfacesOK := cell.declareRuleSurfaces(declared, lawCanonicalRuleAnchor(t))
 	mapped := declaredSummaryMappings(surfaces)
-	if !programOK || !declaredOK || !surfacesOK || len(mapped) != 1 || mapped[0].summary == nil || mapped[0].summary.state != binding.state || mapped[0].summary.authority != binding.state.authority {
-		t.Fatal("summary ProgramRule mapping")
+	if !cellOK || !declaredOK || !surfacesOK || len(mapped) != 1 || mapped[0].summary == nil || mapped[0].summary.state != binding.state || mapped[0].summary.authority != binding.state.authority {
+		t.Fatal("summary canonical cell mapping")
 	}
 	summaries, appended := appendDeclaredSummary(nil, mapped[0].summary, binding.state, binding.state.authority)
 	if !appended || len(summaries) != 1 || len(summaries[0].Keys) != 1 || summaries[0].Keys[0] != 0 {
-		t.Fatal("summary ProgramRule topology mapping")
+		t.Fatal("summary canonical cell topology mapping")
 	}
 	foreign := *mapped[0].summary
 	foreign.authority = &schemaBindingAuthority{marker: 1}
@@ -745,10 +745,10 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	}
 }
 
-// TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence proves the
+// TestCanonicalRuleCellThreadsOneExactCarryThroughProductAndEvidence proves the
 // no-read carry lane still publishes one carried input and one exact write
-// through the same ProgramRule surface issuer.
-func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) {
+// through the same canonical cell surface.
+func TestCanonicalRuleCellThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) {
 	// Construct the current carry lane explicitly so this test cannot pass by
 	// observing the ordinary zero-input Rule shape.
 	builder := NewSchema()
@@ -769,21 +769,21 @@ func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) 
 	}
 	bound := BindFactor(binding, factor, hotUintFactorSpec()) && BindRuleWithCarry[uint64, uint64, struct{}](binding, rule, carry, writeSlot, factor, hot, HotCarrySpec[uint64, struct{}]{}, func(struct{}) (uint64, bool) { return 1, true })
 	if !factorOK || !writeOK || !ruleOK || !inputOK || !carryOK || !writeSlotOK || !schemaOK || !bound || !binding.Seal() {
-		t.Fatal("carry ProgramRule binding")
+		t.Fatal("carry canonical cell binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
 	shape, shapeOK := implementation.cell.schema.ruleShapeAt(implementation.ordinal)
 	if !implementationOK || implementation == nil || !shapeOK || shape.ReadCount != 0 || shape.CarryCount != 1 {
-		t.Fatal("carry ProgramRule shape thread")
+		t.Fatal("carry canonical cell shape thread")
 	}
-	program, programOK := SealProgramRule(implementation)
-	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
-	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
-	if !programOK || !declaredOK || !surfacesOK || len(surfaces.reads) != 0 || len(surfaces.writes) != 1 || surfaces.carries != 1 {
-		t.Fatal("carry ProgramRule surfaces")
+	cell, cellOK := implementation.sealedRuleCell()
+	declared, declaredOK := cell.declareRuleOperand(lawCanonicalRuleCoords())
+	surfaces, surfacesOK := cell.declareRuleSurfaces(declared, lawCanonicalRuleAnchor(t))
+	if !cellOK || !declaredOK || !surfacesOK || len(surfaces.reads) != 0 || len(surfaces.writes) != 1 || surfaces.carries != 1 {
+		t.Fatal("carry canonical cell surfaces")
 	}
 }
 
-func lawProgramRuleCoords() OperandCoords {
+func lawCanonicalRuleCoords() OperandCoords {
 	return OperandCoords{Member: programMatrixID(221), Mount: programMatrixID(222), Point: programMatrixID(223), Occurrence: programMatrixID(224)}
 }

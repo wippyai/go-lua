@@ -82,18 +82,6 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	return hot, true
 }
 
-// SealProgramRule is this typed rule's schema registration.
-func SealProgramRule(rule *HotRule) (engine.ProgramRule, bool) {
-	if rule == nil || !rule.valid() {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := callowner.ResolveHeterogeneousRuleImplementation(rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 // resolveOperand reads Call's owner-fenced occurrence inverse directly. The
 // site validation joins only sealed owner rows and rejects a foreign mount,
 // occurrence, Heap, Pack, Value schema, or Call algebra before publication.

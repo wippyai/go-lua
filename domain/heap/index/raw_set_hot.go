@@ -37,18 +37,6 @@ func (rule *RawSetHotRule) Implementation() (*heapowner.RuleImplementation[Index
 	return rule.implementation, ok
 }
 
-// SealProgramRule is this typed rule's schema registration.
-func SealRawSetProgramRule(rule *RawSetHotRule) (engine.ProgramRule, bool) {
-	if rule == nil {
-		return engine.ProgramRule{}, false
-	}
-	implementation, ok := heapowner.ResolveRuleImplementationFor(rule.heap, rule.implementation)
-	if !ok {
-		return engine.ProgramRule{}, false
-	}
-	return engine.SealProgramRule(implementation)
-}
-
 // BindRawSetHot binds RawSet's r0..r4 read chain, Heap carry, and route write
 // directly at their declared schema ordinals. No construction transaction,
 // cold Owner, Composition Rule, or copied Factor geometry is retained.
