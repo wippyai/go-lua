@@ -59,8 +59,7 @@ func (row TypeRefRow) Resolved() bool {
 // Table is the sealed immutable TypeRef relation.
 type Table struct {
 	ref       rows.Table[TypeRefRow]
-	source    rows.Pool[keyspace.Key]
-	canonical rows.Pool[keyspace.Key]
+	keys      rows.Pool[keyspace.Key]
 }
 
 // Count is the sealed TypeRef denominator.

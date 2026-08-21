@@ -10,18 +10,17 @@ import (
 
 // Build validates and seals the authored TypeRef relation.
 func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
-	var source rows.PoolBuilder[keyspace.Key]
-	var canonical rows.PoolBuilder[keyspace.Key]
+	var keys rows.PoolBuilder[keyspace.Key]
 	ref := rows.NewTableBuilder[TypeRefRow](keyspace.FamilyTypeRef)
 	for _, row := range input.TypeRef {
 		if !validTypeRef(counts, row) {
 			return Table{}, errors.New("program/static/references: invalid type reference")
 		}
-		sourceSpan, ok := source.Append(row.Source)
+		sourceSpan, ok := keys.Append(row.Source)
 		if !ok {
 			return Table{}, errors.New("program/static/references: oversized type reference source")
 		}
-		canonicalSpan, ok := canonical.Append(row.Canonical)
+		canonicalSpan, ok := keys.Append(row.Canonical)
 		if !ok {
 			return Table{}, errors.New("program/static/references: oversized type reference canonical path")
 		}
@@ -33,7 +32,7 @@ func Build(input Input, counts [keyspace.FamilyCount]uint32) (Table, error) {
 			return Table{}, errors.New("program/static/references: oversized type reference table")
 		}
 	}
-	return Table{ref: ref.Seal(), source: source.Seal(), canonical: canonical.Seal()}, nil
+	return Table{ref: ref.Seal(), keys: keys.Seal()}, nil
 }
 
 func validTypeRef(counts [keyspace.FamilyCount]uint32, row TypeRef) bool {

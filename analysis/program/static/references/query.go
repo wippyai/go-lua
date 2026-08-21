@@ -49,7 +49,7 @@ func (view View) SourceCount(term keyspace.Term) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.table.source.Count(row.Source), true
+	return view.table.keys.Count(row.Source), true
 }
 
 func (view View) SourceAt(term keyspace.Term, index int) (keyspace.Key, bool) {
@@ -60,7 +60,7 @@ func (view View) SourceAt(term keyspace.Term, index int) (keyspace.Key, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.table.source.At(row.Source, index)
+	return view.table.keys.At(row.Source, index)
 }
 
 func (view View) CanonicalCount(term keyspace.Term) (int, bool) {
@@ -71,7 +71,7 @@ func (view View) CanonicalCount(term keyspace.Term) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	return view.table.canonical.Count(row.Canonical), true
+	return view.table.keys.Count(row.Canonical), true
 }
 
 func (view View) CanonicalAt(term keyspace.Term, index int) (keyspace.Key, bool) {
@@ -82,5 +82,5 @@ func (view View) CanonicalAt(term keyspace.Term, index int) (keyspace.Key, bool)
 	if !ok {
 		return 0, false
 	}
-	return view.table.canonical.At(row.Canonical, index)
+	return view.table.keys.At(row.Canonical, index)
 }

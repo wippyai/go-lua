@@ -30,10 +30,10 @@ func WriteContent(writer *framing.Writer, table Table) error {
 		if err := writer.Uint(uint64(row.Root)); err != nil {
 			return err
 		}
-		if err := wire.WriteKeySpan(writer, table.source, row.Source); err != nil {
+		if err := wire.WriteKeySpan(writer, table.keys, row.Source); err != nil {
 			return err
 		}
-		if err := wire.WriteKeySpan(writer, table.canonical, row.Canonical); err != nil {
+		if err := wire.WriteKeySpan(writer, table.keys, row.Canonical); err != nil {
 			return err
 		}
 	}
