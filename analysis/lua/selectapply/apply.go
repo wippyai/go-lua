@@ -49,7 +49,8 @@ func Apply(prog *program.Program) []Application {
 		if !callOK || !rowOK || !isChannelModuleSelect(prog, call, callee, receiver) {
 			continue
 		}
-		site, siteOK := callIdentityAt(prog, index)
+		identities, siteOK := prog.CallIdentityAt(index)
+		site := identities.Call
 		if !siteOK || !site.Available() {
 			continue
 		}

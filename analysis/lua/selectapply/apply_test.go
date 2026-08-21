@@ -30,7 +30,8 @@ end
 	if len(apps) != 1 {
 		t.Fatalf("Apply = %d applications, want 1", len(apps))
 	}
-	site, siteOK := callIdentityAt(p, apps[0].Index)
+	identities, siteOK := p.CallIdentityAt(apps[0].Index)
+	site := identities.Call
 	if !siteOK || site != apps[0].Site || !apps[0].Site.Available() {
 		t.Fatalf("application site = %v/%v, schema call identity(%d) = %v/%v", apps[0].Site, apps[0].Site.Available(), apps[0].Index, site, siteOK)
 	}

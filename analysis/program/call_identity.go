@@ -1,17 +1,16 @@
-package selectapply
+package program
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/program"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
-// callIdentityAt is the pre-Artifact site join used by select specialization.
-// Lua lowering runs before Artifact publication, so it consumes only the
-// canonical Flow/Static scalar inputs and the schema-owned pure equation.
-func callIdentityAt(input *program.Program, index int) (identity.ContentID, bool) {
-	if input == nil || !input.Available() || index < 0 {
-		return identity.ContentID{}, false
+// CallIdentityAt is the canonical pre-Artifact Call identity join. It reads
+// only the existing Flow/Static scalar inputs for one authored Call and
+// delegates the identity equation to the published schema codec; Program
+// retains no Call identity table of its own.
+func (input *Program) CallIdentityAt(index int) (programschema.CallIdentitySet, bool) {
+	if !input.Available() || index < 0 {
+		return programschema.CallIdentitySet{}, false
 	}
 	flowView := input.Flow()
 	calls := flowView.Authored().Calls()
@@ -30,12 +29,12 @@ func callIdentityAt(input *program.Program, index int) (identity.ContentID, bool
 	}
 	if !callOK || !rowOK || !bodyOK || !bodyBoundary.Available() || !bodyContext.Available() || !spanOK || !spanID.Available() ||
 		!valuesOK || !valuesID.Available() || !typeCountOK || typeCount < 0 || !typeArgumentsOK || !typeArguments.Available() {
-		return identity.ContentID{}, false
+		return programschema.CallIdentitySet{}, false
 	}
 	identities, identitiesOK := programschema.CallIdentities(programschema.CallIdentityInput{
 		ProgramID: input.ContentID(), Call: call, Form: form, Body: bodyContext, Span: spanID,
 		Callee: callee, Receiver: receiver, Actuals: actuals, Values: valuesID,
 		TypeArgumentCount: typeCount, TypeArguments: typeArguments,
 	})
-	return identities.Call, identitiesOK && identities.Call.Available()
+	return identities, identitiesOK && identities.Call.Available()
 }
