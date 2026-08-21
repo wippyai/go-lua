@@ -150,7 +150,7 @@ func (role CellRole) Position() (int, bool) {
 // MatchesCell is the narrow cold join witness: it authenticates a Flow Cell
 // term without exposing the Source-owned Cell term to downstream consumers.
 func (role CellRole) MatchesCell(cell keyspace.Term) bool {
-	if !role.Available() || !keyspace.ValidTerm(cell, keyspace.FamilyCell, int(role.roles.authority.identity.counts[keyspace.FamilyCell])) {
+	if !role.Available() || !keyspace.ValidTerm(cell, keyspace.FamilyCell, role.roles.authority.identity.familyCount(keyspace.FamilyCell)) {
 		return false
 	}
 	a := role.roles.authority
@@ -168,7 +168,7 @@ func buildCellRoleAuthority(a *authority) (*cellRoleAuthority, error) {
 	if a == nil || !a.content.Available() {
 		return nil, errors.New("program/source: Cell role authority owner unavailable")
 	}
-	roles := &cellRoleAuthority{authority: a, denominator: a.identity.counts[keyspace.FamilyCell], sealed: true}
+	roles := &cellRoleAuthority{authority: a, denominator: uint32(a.identity.familyCount(keyspace.FamilyCell)), sealed: true}
 	roles.locals = make([]cellRoleLocal, int(roles.denominator)+1)
 	if err := installCellRoleLocals(roles, a.order.bindTerms, a.order.bindRanges, keyspace.FamilyBind, CellRoleBind); err != nil {
 		return nil, err

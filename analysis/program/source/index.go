@@ -33,7 +33,7 @@ func installIndex(a *authority, input IndexInput) error {
 // the supplied order. The resulting count/spans participate in final identity
 // and position validation, but remain absent from authored ContentID.
 func installOutcomeIdentity(a *authority, origins []keyspace.Term) error {
-	if a == nil || a.identity.counts[keyspace.FamilyOutcome] != 0 ||
+	if a == nil || a.identity.familyCount(keyspace.FamilyOutcome) != 0 ||
 		len(a.identity.spans[keyspace.FamilyOutcome]) != 0 || len(a.identity.outcomeOrigins) != 0 {
 		return errors.New("program/source: Outcome identity was already installed")
 	}
@@ -45,11 +45,10 @@ func installOutcomeIdentity(a *authority, origins []keyspace.Term) error {
 			return errors.New("program/source: invalid Outcome origin Body")
 		}
 	}
-	if uint64(a.identity.termCount)+uint64(len(origins)) > uint64(^uint32(0)) {
+	termCount, ok := a.identity.termCount()
+	if !ok || uint64(termCount)+uint64(len(origins)) > uint64(^uint32(0)) {
 		return errors.New("program/source: final Term cardinality overflow")
 	}
-	a.identity.counts[keyspace.FamilyOutcome] = uint32(len(origins))
 	a.identity.outcomeOrigins = append([]keyspace.Term(nil), origins...)
-	a.identity.termCount += uint32(len(origins))
 	return nil
 }

@@ -165,8 +165,6 @@ type termRange struct{ start, end uint32 }
 
 type identityStore struct {
 	name           string
-	termCount      uint32
-	counts         [keyspace.FamilyCount]uint32
 	spans          [keyspace.FamilyCount][]storedSpan
 	outcomeOrigins []keyspace.Term
 }
@@ -203,6 +201,33 @@ type spellingStore struct {
 	cells []string
 	// calls is sparse and remains in ascending FamilyCall ordinal order.
 	calls []CallSpelling
+}
+
+// familyCount reads the canonical sealed row storage. Authored families are
+// represented by their span rows; the derived Outcome family is represented by
+// its ordered Body origins. No separate cardinality plane is retained.
+func (identity *identityStore) familyCount(family keyspace.Family) int {
+	if identity == nil || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount {
+		return 0
+	}
+	if family == keyspace.FamilyOutcome {
+		return len(identity.outcomeOrigins)
+	}
+	return len(identity.spans[family])
+}
+
+func (identity *identityStore) termCount() (uint32, bool) {
+	if identity == nil {
+		return 0, false
+	}
+	var total uint64
+	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
+		total += uint64(identity.familyCount(family))
+	}
+	if total == 0 || total > uint64(^uint32(0)) {
+		return 0, false
+	}
+	return uint32(total), true
 }
 
 // directLocation is Seal-only validation scratch. It proves that a root is a

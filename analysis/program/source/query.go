@@ -98,7 +98,8 @@ func (v Identity) TermCount() uint32 {
 	if a == nil {
 		return 0
 	}
-	return a.identity.termCount
+	termCount, _ := a.identity.termCount()
+	return termCount
 }
 
 func (v Identity) FamilyCount(family keyspace.Family) int {
@@ -106,7 +107,7 @@ func (v Identity) FamilyCount(family keyspace.Family) int {
 	if a == nil || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount {
 		return 0
 	}
-	return int(a.identity.counts[family])
+	return a.identity.familyCount(family)
 }
 
 func (v Identity) Span(term keyspace.Term) (Span, bool) {
@@ -115,7 +116,7 @@ func (v Identity) Span(term keyspace.Term) (Span, bool) {
 		return Span{}, false
 	}
 	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
-	if family == keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || ordinal > a.identity.counts[family] {
+	if family == keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || ordinal > uint32(a.identity.familyCount(family)) {
 		return Span{}, false
 	}
 	var stored storedSpan

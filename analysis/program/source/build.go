@@ -112,6 +112,7 @@ func buildIdentity(store *identityStore, name string, rows []FamilySpans) error 
 		return errors.New("program/source: incomplete family spans")
 	}
 	store.name = name
+	var termCount uint64
 	for index, row := range rows {
 		family := keyspace.Family(index + 1)
 		if row.Family != family || !keyspace.TermOrdinalFits(len(row.Spans)) {
@@ -132,14 +133,13 @@ func buildIdentity(store *identityStore, name string, rows []FamilySpans) error 
 			}
 			spans[at] = stored
 		}
-		store.counts[family] = uint32(len(spans))
 		store.spans[family] = spans
-		if uint64(store.termCount)+uint64(len(spans)) > uint64(^uint32(0)) {
+		termCount += uint64(len(spans))
+		if termCount > uint64(^uint32(0)) {
 			return errors.New("program/source: Term cardinality overflow")
 		}
-		store.termCount += uint32(len(spans))
 	}
-	if store.termCount == 0 {
+	if termCount == 0 {
 		return errors.New("program/source: empty Term cardinality")
 	}
 	return nil
@@ -206,7 +206,7 @@ func buildBodyOrder(a *authority, rows []BodySource) error {
 		return errors.New("program/source: Body source cardinality mismatch")
 	}
 	a.order.bodyRanges = make([]termRange, count)
-	seen := newTermMarks(a.identity.counts)
+	seen := newTermMarks(&a.identity)
 	for index, row := range rows {
 		if !a.validFamilyTerm(row.Body, keyspace.FamilyBody) || keyspace.TermOrdinal(row.Body) != uint32(index+1) {
 			return errors.New("program/source: invalid Body source owner")
@@ -282,10 +282,10 @@ func buildFormalOrder(a *authority, rows []FunctionFormals, cells []bool) error 
 }
 
 func (a *authority) count(family keyspace.Family) int {
-	if a == nil || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount {
+	if a == nil {
 		return 0
 	}
-	return int(a.identity.counts[family])
+	return a.identity.familyCount(family)
 }
 
 func (a *authority) validTerm(term keyspace.Term) bool {
@@ -305,10 +305,13 @@ func (a *authority) validFamilyTerm(term keyspace.Term, family keyspace.Family) 
 
 type termMarks struct{ rows [keyspace.FamilyCount][]bool }
 
-func newTermMarks(counts [keyspace.FamilyCount]uint32) termMarks {
+func newTermMarks(identity *identityStore) termMarks {
 	var result termMarks
+	if identity == nil {
+		return result
+	}
 	for family := keyspace.Family(1); family < keyspace.FamilyCount; family++ {
-		result.rows[family] = make([]bool, counts[family])
+		result.rows[family] = make([]bool, identity.familyCount(family))
 	}
 	return result
 }

@@ -21,7 +21,7 @@ const contentRecordSpellings uint64 = 6
 // authoredContentID hashes only Source's owned authored rows. Position/root
 // indexes are Seal projections and deliberately contribute no second identity.
 func authoredContentID(a *authority) (id identity.ContentID) {
-	if a == nil || a.identity.name == "" || a.identity.termCount == 0 {
+	if a == nil || a.identity.name == "" {
 		return identity.ContentID{}
 	}
 	h := sha256.New()
@@ -50,7 +50,7 @@ func writeAuthoredPayload(w *framing.Writer, a *authority) error {
 	if err := w.String(a.identity.name); err != nil {
 		return err
 	}
-	termCount, ok := authoredTermCount(a.identity.counts)
+	termCount, ok := authoredTermCount(&a.identity)
 	if !ok || termCount == 0 {
 		return framing.ErrMalformed
 	}
@@ -145,8 +145,7 @@ func contentSpans(w *framing.Writer, identity *identityStore) bool {
 			continue
 		}
 		spans := identity.spans[family]
-		if uint32(len(spans)) != identity.counts[family] || w.Uint(uint64(family)) != nil ||
-			w.Count(uint64(len(spans))) != nil {
+		if w.Uint(uint64(family)) != nil || w.Count(uint64(len(spans))) != nil {
 			return false
 		}
 		for _, span := range spans {
