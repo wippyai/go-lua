@@ -4,34 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 )
 
-// Counts is the protocol owner's complete denominator contribution. The root
-// target contract publishes these values under schema-owned IDs; no root walk
-// of protocol rows is needed.
-type Counts struct {
-	Protocols          int
-	States             int
-	Acquisitions       int
-	Transitions        int
-	TransitionOutcomes int
-	Escapes            int
-	CallbackHolders    int
-}
-
-func (c *Table) Counts() Counts {
-	if c == nil {
-		return Counts{}
-	}
-	return Counts{
-		Protocols:          c.protocols.Count(),
-		States:             c.states.Len(),
-		Acquisitions:       c.acquisitions.Len(),
-		Transitions:        c.transitions.Len(),
-		TransitionOutcomes: c.transitionOutcomes.Len(),
-		Escapes:            c.escapes.Len() + c.protocols.Count(),
-		CallbackHolders:    c.callbackHolders.Len(),
-	}
-}
-
 func (c *Table) ProtocolCount() int {
 	if c == nil {
 		return 0

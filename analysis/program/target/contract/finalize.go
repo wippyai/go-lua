@@ -35,7 +35,7 @@ func New(input Input) (*Contract, error) {
 		return nil, err
 	}
 	contract.sealed = true
-	counts, err := contract.buildCountRows()
+	counts, err := contract.publishCountRows()
 	if err != nil {
 		return nil, err
 	}

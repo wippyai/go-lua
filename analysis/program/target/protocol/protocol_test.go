@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -61,10 +63,21 @@ func TestCompilePublishesImmutableProtocolValue(t *testing.T) {
 	if got, ok := table.StateAt(protocol, 0); !ok || got == 0 {
 		t.Fatalf("state handle = %d/%v", got, ok)
 	}
-	counts := table.Counts()
-	if counts.Protocols != 1 || counts.States != 1 || counts.Transitions != 1 || counts.TransitionOutcomes != 1 || counts.Escapes != 1 {
-		t.Fatalf("owner counts = %#v", counts)
+	rows := table.CountRows()
+	ids := denominator.GeneratedTargetIDs()
+	check := func(id schema.EntryID, want uint64) {
+		t.Helper()
+		if got, ok := rows.Value(id); !ok || got != want {
+			t.Fatalf("protocol owner row %v = %d/%v, want %d/true", id, got, ok, want)
+		}
 	}
+	check(ids.TargetProtocol, 1)
+	check(ids.TargetProtocolState, 1)
+	check(ids.TargetProtocolAcquisition, 1)
+	check(ids.TargetProtocolTransition, 1)
+	check(ids.TargetProtocolTransitionOutcome, 1)
+	check(ids.TargetProtocolEscape, 1)
+	check(ids.TargetProtocolCallbackHolder, 0)
 }
 
 func TestProtocolRejectsInputOutsideOwnerGeometry(t *testing.T) {

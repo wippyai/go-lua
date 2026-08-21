@@ -456,6 +456,16 @@ func (core *Core) appendQueryContinuation(op vocabulary.Operation, row *queryOpe
 	}
 
 	row.suspensions = queryRange{start: len(core.query.suspensions)}
+	if core.isOpaque(op) {
+		// Opaque continuation behavior is sealed into the same owner row plane
+		// as authored suspensions. Readers and denominator publication therefore
+		// consume retained rows rather than manufacturing a count or relation.
+		for _, reentry := range [...]uint32{0, 1, 3} {
+			core.query.suspensions = append(core.query.suspensions, querySuspensionRow{
+				yield: 2, reentry: reentry, source: vocabulary.ReentryByProvider, multiplicity: vocabulary.ReentryMany,
+			})
+		}
+	}
 	for _, item := range input.Suspensions {
 		if !core.validOutcome(op, item.Yield) || !core.validOutcome(op, item.Reentry) {
 			return invalidQuery("suspension outcome is outside operation")

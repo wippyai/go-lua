@@ -622,18 +622,12 @@ func (core Core) TypeDeclaration(typ vocabulary.Type) (schematype.Type, bool) {
 	return core.query.types[int(typ)-1].declaration, true
 }
 
-const (
-	opaqueSuspensionCount   = 3
-	queryNoTypeValueCapture = ^uint32(0)
-)
+const queryNoTypeValueCapture = ^uint32(0)
 
 func (core Core) SuspensionCount(op vocabulary.Operation) int {
 	row, ok := core.queryOperation(op)
 	if !ok {
 		return 0
-	}
-	if core.isOpaque(op) {
-		return opaqueSuspensionCount
 	}
 	return row.suspensions.len()
 }
@@ -642,16 +636,6 @@ func (core Core) SuspensionAt(op vocabulary.Operation, index int) (yield, reentr
 	row, ok := core.queryOperation(op)
 	if !ok || index < 0 {
 		return 0, 0, 0, 0, false
-	}
-	if core.isOpaque(op) {
-		if index >= opaqueSuspensionCount {
-			return 0, 0, 0, 0, false
-		}
-		reentry := uint32(index)
-		if index == 2 {
-			reentry = 3
-		}
-		return 2, reentry, vocabulary.ReentryByProvider, vocabulary.ReentryMany, true
 	}
 	if index >= row.suspensions.len() {
 		return 0, 0, 0, 0, false

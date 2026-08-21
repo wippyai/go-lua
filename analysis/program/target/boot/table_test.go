@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/target/exactkey"
 	"github.com/wippyai/go-lua/analysis/program/target/operation"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
+	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/denominator"
 )
 
 func stringKey(value string) keyspace.LiteralValue {
@@ -55,9 +57,18 @@ func TestCompileProducesImmutableBootOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if got := table.Counts(); got != (Counts{Roots: 2, Entries: 4, MetatableAttachments: 1}) {
-		t.Fatalf("Counts = %#v", got)
+	rows := table.CountRows()
+	ids := denominator.GeneratedTargetIDs()
+	check := func(id schema.EntryID, want uint64) {
+		t.Helper()
+		if got, ok := rows.Value(id); !ok || got != want {
+			t.Fatalf("boot owner row %v = %d/%v, want %d/true", id, got, ok, want)
+		}
 	}
+	check(ids.TargetBoot, 2)
+	check(ids.TargetBootEntry, 4)
+	check(ids.TargetBootMetatableAttachment, 1)
+	check(ids.TargetBootBinding, 0)
 	global, ok := table.InitialRootByIdentity("Global")
 	if !ok {
 		t.Fatal("Global root missing")
