@@ -425,6 +425,17 @@ func (region WTORegion) row() (wtoRegion, bool) {
 }
 
 func (region WTORegion) Available() bool { _, ok := region.row(); return ok }
+
+// Ordinal returns this exact owner's dense region position. The position is
+// already carried by the issued region capability; consumers must not rebuild
+// an ID-to-position directory merely to lower the canonical region order.
+func (region WTORegion) Ordinal() (uint32, bool) {
+	if _, ok := region.row(); !ok {
+		return 0, false
+	}
+	return region.index, true
+}
+
 func (region WTORegion) ID() identity.ContentID {
 	row, ok := region.row()
 	if !ok {

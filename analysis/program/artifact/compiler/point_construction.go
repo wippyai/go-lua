@@ -7,14 +7,10 @@ import (
 
 func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 	wto := compiler.input.Flow().LocalWTO()
-	regions := make(map[identity.ContentID]int, wto.Count())
 	for index := 0; index < wto.Count(); index++ {
 		parent, ok := wto.At(index)
 		if !ok || !parent.Available() || !parent.ID().Available() {
 			return compileFailure(CompileStageLocalWTO, CompileRowRegion, index, -1, CompileReasonRegionUnavailable)
-		}
-		if _, exists := regions[parent.ID()]; exists {
-			return compileFailure(CompileStageLocalWTO, CompileRowRegion, index, -1, CompileReasonRegionDuplicate)
 		}
 		header, headerOK := parent.HeaderPoint()
 		if !headerOK || !compiler.installPoint(header) {
@@ -37,7 +33,6 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 		if members[0] != header.PathID() {
 			return compileFailure(CompileStageLocalWTO, CompileRowRegion, index, 0, CompileReasonRegionHeaderMismatch)
 		}
-		regions[parent.ID()] = len(compiler.regions)
 		compiler.regions = append(compiler.regions, regionDraft{
 			id: parent.ID(), parent: parent.ParentID(), cyclic: parent.Cyclic(), members: members,
 		})
@@ -63,8 +58,9 @@ func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
 			if !regionOK || !region.Available() {
 				return compileFailure(CompileStageLocalWTO, CompileRowWTOEvent, index, -1, CompileReasonEventRegionUnavailable)
 			}
-			regionIndex, exists := regions[region.ID()]
-			if !exists {
+			ordinal, exists := region.Ordinal()
+			regionIndex := int(ordinal)
+			if !exists || regionIndex < 0 || regionIndex >= len(compiler.regions) || compiler.regions[regionIndex].id != region.ID() {
 				return compileFailure(CompileStageLocalWTO, CompileRowWTOEvent, index, -1, CompileReasonEventRegionUnknown)
 			}
 			if entered[regionIndex] || exited[regionIndex] {
