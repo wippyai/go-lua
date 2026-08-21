@@ -34,8 +34,7 @@
 //	                  owner's Find join, and Ports withholds the sealed term
 //	                  denominator. Each is a capability this altitude declines
 //	                  to publish, not a copy of an owner's rows.
-//	the codec         WriteArtifactSection, ReadArtifactSection, and CountRows
-//	                  on the authored payload.
+//	the denominator   CountRows over sealed owner projections.
 //	the identities    the allocation-path, value-source, storage, call, and
 //	                  function content identities minted once at assembly.
 package flow

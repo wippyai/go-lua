@@ -14,7 +14,6 @@ const contentVersion = 8
 
 var (
 	errInvalidArtifactComponent = errors.New("program/flow: invalid artifact component")
-	errInvalidArtifactSection   = errors.New("program/flow: invalid artifact section")
 )
 
 func contentID(component *component) (id identity.ContentID) {
@@ -33,107 +32,8 @@ func contentID(component *component) (id identity.ContentID) {
 	return id
 }
 
-// WriteArtifactSection writes the authored Flow content without a domain,
-// version, or terminal frame. The enclosing artifact owns those frames.
-// Derived proofs, projections, and owner provenance are intentionally absent.
-func WriteArtifactSection(writer *framing.Writer, view View) error {
-	if writer == nil {
-		return framing.ErrNilDestination
-	}
-	if !view.active() || view.component == nil || !view.component.contentID.Available() {
-		return errInvalidArtifactComponent
-	}
-	return writeContent(writer, view.component)
-}
-
-// ReadArtifactSection reads exactly the nine authored Flow content records.
-// Header and stream completion belong to the enclosing artifact codec. Counts
-// are deliberately left zero: the root artifact injects the dense universes
-// before calling Build.
-func ReadArtifactSection(reader *framing.Reader) (Input, error) {
-	if reader == nil {
-		return Input{}, framing.ErrMalformed
-	}
-	decoder := artifactDecoder{reader: reader}
-	if err := decoder.record(1); err != nil {
-		return Input{}, err
-	}
-	values, err := decoder.values()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(2); err != nil {
-		return Input{}, err
-	}
-	access, err := decoder.access()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(3); err != nil {
-		return Input{}, err
-	}
-	storage, err := decoder.storage()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(4); err != nil {
-		return Input{}, err
-	}
-	tables, err := decoder.tables()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(5); err != nil {
-		return Input{}, err
-	}
-	functions, err := decoder.functions()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(6); err != nil {
-		return Input{}, err
-	}
-	operators, err := decoder.operators()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(7); err != nil {
-		return Input{}, err
-	}
-	calls, err := decoder.calls()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(8); err != nil {
-		return Input{}, err
-	}
-	control, err := decoder.control()
-	if err != nil {
-		return Input{}, err
-	}
-	if err := decoder.record(9); err != nil {
-		return Input{}, err
-	}
-	claims, typeValues, err := decoder.claims()
-	if err != nil {
-		return Input{}, err
-	}
-	return Input{
-		Values:     values,
-		Access:     access,
-		Storage:    storage,
-		Tables:     tables,
-		Functions:  functions,
-		Operators:  operators,
-		Calls:      calls,
-		Control:    control,
-		Claims:     claims,
-		TypeValues: typeValues,
-	}, nil
-}
-
-// writeContent is the one authored row writer shared by ContentID and the
-// payload-only artifact section. Its record and pool ordering is identity:
+// writeContent is the authored row writer used by ContentID. Its record and
+// pool ordering is identity:
 // Table order precedes Table rows, function captures precede Function rows,
 // Control cells precede loops, and Operators precede Calls.
 func writeContent(writer *framing.Writer, component *component) error {
