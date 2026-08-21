@@ -75,7 +75,8 @@ func newReadLaneFixture(t testing.TB) readLaneFixture {
 	}
 	binding := NewSchemaBinding(schema)
 	spec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(961_009)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -97,8 +98,7 @@ func newReadLaneFixture(t testing.TB) readLaneFixture {
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	if !implementationOK || implementation == nil || !queryImplementationOK || queryImplementation == nil ||
-		!implementation.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(961_009)), true }) {
+	if !implementationOK || implementation == nil || !queryImplementationOK || queryImplementation == nil {
 		t.Fatal("read lane rule implementation")
 	}
 	program := constructReadLaneProgram(t, binding, schema, capability, implementation, queryImplementation)
@@ -395,7 +395,8 @@ func newOpenReadLaneBindings(t testing.TB) openReadLaneBindings {
 	}
 	binding := NewSchemaBinding(schema)
 	spec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(961_009)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},

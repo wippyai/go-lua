@@ -23,8 +23,10 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		!fragment.semantic.Available() {
 		return nil, false
 	}
+	rule := &HotRule{owner: owner}
 	implementation, ok := valueowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[value.Value, value.SourceSeed]{
-		OperandContent: sourceSeedContent,
+		OperandContent:  sourceSeedContent,
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.SourceSeed]) engine.RuleResult[value.Value] {
 			seed, operandOK := engine.Operand(frame)
 			if !operandOK {
@@ -44,10 +46,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

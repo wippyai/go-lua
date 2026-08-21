@@ -66,7 +66,8 @@ func buildNativeCallStageLawOwner(t testing.TB, queried bool) nativeCallStageLaw
 	}
 	binding := NewSchemaBinding(schema)
 	spec := HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x71}, true },
+		OperandContent:  func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x71}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},

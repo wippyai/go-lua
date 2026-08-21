@@ -12,7 +12,11 @@ import (
 // cannot restate semantic keys or output shape here.
 type HotRuleSpec[V, O any] struct {
 	OperandContent func(O) (O, [32]byte, bool)
-	Fold           func(Frame[V, O]) RuleResult[V]
+	// OperandResolver is the owner-issued coordinate lookup for this Rule.
+	// It is captured while the binding is open and becomes immutable with the
+	// sealed Rule cell.  No post-seal installation path exists.
+	OperandResolver func(OperandCoords) (O, bool)
+	Fold            func(Frame[V, O]) RuleResult[V]
 }
 
 // HotCarrySpec is the executable half of one declared whole-Factor carry.
@@ -227,7 +231,7 @@ func bindSelectedRuleDirectCell[K ~uint32 | ~uint64, V, O any](binding *SchemaBi
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || (writeMode != directRuleWriteExact && writeMode != directRuleWriteRoute) || writeMode == directRuleWriteExact && projectWrite == nil || carryRequired && (carry.cell == nil || carry.cell.schema != state.schema) {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.OperandResolver == nil || spec.Fold == nil || (writeMode != directRuleWriteExact && writeMode != directRuleWriteRoute) || writeMode == directRuleWriteExact && projectWrite == nil || carryRequired && (carry.cell == nil || carry.cell.schema != state.schema) {
 		state.poisonLocked()
 		return false
 	}
@@ -289,7 +293,7 @@ func bindSelectedRuleDirectCell[K ~uint32 | ~uint64, V, O any](binding *SchemaBi
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          carryBinding,
 		reads:          make([]schemaRuleReadBinding, int(shape.ReadCount)),
-		operandContent: spec.OperandContent, fold: spec.Fold,
+		operandContent: spec.OperandContent, operandResolver: spec.OperandResolver, fold: spec.Fold,
 		projectWrite: projectWrite,
 	}
 	state.rules[ruleOrdinal] = cell
@@ -501,7 +505,7 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor.cell == nil || readFactor.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor.cell == nil || readFactor.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.OperandResolver == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -538,7 +542,7 @@ func BindRuleWithOpaqueExactRead[OK ~uint32 | ~uint64, V, O, RV any](binding *Sc
 	}
 	read := Read[OrderedCells[RV]]{row: row, index: 0, resolve: resolveTypedRead[RV, OrderedCells[RV]]}
 	readBinding := &schemaOpaqueExactRuleReadBinding[RV]{row: row, factor: readCell, read: read, projector: projectExactLocal(projectRead)}
-	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite}
+	cell.impl = &ruleHotImplementation[OK, V, O]{state: state, rule: slot, write: write, output: outputCell, reads: []schemaRuleReadBinding{readBinding}, operandContent: spec.OperandContent, operandResolver: spec.OperandResolver, fold: spec.Fold, projectWrite: projectWrite}
 	state.rules[ruleOrdinal] = cell
 	return read, true
 }

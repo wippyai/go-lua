@@ -39,19 +39,8 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 // the typed Rule slot private to the Heap Factor owner so child rules cannot
 // restate Heap's output factor or its private dense coordinate type.
 type RuleImplementation[O any] struct {
-	owner    *HotOwner
-	slot     *engine.RuleSlot[heap.Value, O]
-	resolver func(engine.OperandCoords) (O, bool)
-}
-
-// InstallOperandResolver records the one owner-supplied operand resolver
-// this rule will publish onto its sealed cell.
-func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
+	owner *HotOwner
+	slot  *engine.RuleSlot[heap.Value, O]
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -249,17 +238,11 @@ func BindExactQuery[R any](owner *HotOwner, query *engine.QuerySlot[R], spec eng
 // ResolveRuleImplementation issues the engine receipt only after the shared
 // binding seals. Heap's coordinate remains private to this owner package.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, heap.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, heap.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true

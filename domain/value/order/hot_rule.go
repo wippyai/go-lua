@@ -24,10 +24,12 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 	var leftRead, rightRead engine.Read[engine.OrderedCells[value.Value]]
 	var left, right engine.Read[engine.OrderedCells[value.Value]]
 	var implementation *valueowner.RuleImplementation[value.BinaryOrder]
+	rule := &HotRule{owner: owner}
 	implementation, bound := valueowner.BindSelectedRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[value.Value, value.BinaryOrder]{
 		OperandContent: func(row value.BinaryOrder) (value.BinaryOrder, [32]byte, bool) {
 			return hotContent(owner.Schema(), row)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.BinaryOrder]) engine.RuleResult[value.Value] {
 			operand, operandOK := engine.Operand(frame)
 			_, _, _, op, endpointsOK := hotEndpoints(owner.Schema(), operand)
@@ -79,10 +81,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		return nil, false
 	}
 	leftRead, rightRead = left, right
-	rule := &HotRule{implementation: implementation, left: left, right: right, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation, rule.left, rule.right = implementation, left, right
 	return rule, true
 }
 

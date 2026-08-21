@@ -72,7 +72,8 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 	var runtimeCall engine.Read[engine.OrderedCells[calldomain.Value]]
 	var runtimeSummary engine.Read[engine.Selection[uint64, engine.OrderedCells[effectfactor.Value]]]
 	implementation, bound := effectowner.BindSelectedRuleDirect(effects, fragment.core.slot, fragment.core.write, engine.HotRuleSpec[effectfactor.Value, effectfactor.MountedCall]{
-		OperandContent: hot.operandContent,
+		OperandContent:  hot.operandContent,
+		OperandResolver: hot.resolveOperand,
 		Fold: func(frame engine.Frame[effectfactor.Value, effectfactor.MountedCall]) engine.RuleResult[effectfactor.Value] {
 			return hot.fold(frame, runtimeCall, runtimeSummary)
 		},
@@ -99,9 +100,6 @@ func BindBodyHot(binding *engine.SchemaBinding, fragment *BodySchemaFragment, ca
 	hot.callRead, hot.summary = callRead, summary
 	runtimeCall, runtimeSummary = callRead, summary
 	hot.implementation = implementation
-	if !implementation.InstallOperandResolver(hot.resolveOperand) {
-		return nil, false
-	}
 	return hot, true
 }
 

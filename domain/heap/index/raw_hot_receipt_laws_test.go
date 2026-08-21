@@ -747,13 +747,14 @@ return b.source`)})
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
+			OperandResolver: func(coords engine.OperandCoords) (identity.ContentID, bool) {
+				return coords.Occurrence, coords.Occurrence == occurrence
+			},
 			Fold: func(frame engine.Frame[valuedomain.Value, identity.ContentID]) engine.RuleResult[valuedomain.Value] {
 				return engine.Staged(frame, fact)
 			},
 		}, func(operand identity.ContentID) (uint64, bool) { return local, operand == occurrence })
-		valueSeedBindOK = valueSeedBindOK && implementationOK && implementation.InstallOperandResolver(func(coords engine.OperandCoords) (identity.ContentID, bool) {
-			return coords.Occurrence, coords.Occurrence == occurrence
-		})
+		valueSeedBindOK = valueSeedBindOK && implementationOK
 		valueSeedImplementations[index] = implementation
 	}
 	heapSeedImplementations := make([]*heapowner.RuleImplementation[identity.ContentID], len(heapSeedRules))
@@ -770,13 +771,14 @@ return b.source`)})
 			OperandContent: func(value identity.ContentID) (identity.ContentID, [32]byte, bool) {
 				return value, sha256.Sum256(value[:]), value.Available()
 			},
+			OperandResolver: func(coords engine.OperandCoords) (identity.ContentID, bool) {
+				return coords.Occurrence, coords.Occurrence == occurrence
+			},
 			Fold: func(frame engine.Frame[heapdomain.Value, identity.ContentID]) engine.RuleResult[heapdomain.Value] {
 				return engine.Staged(frame, fact)
 			},
 		}, func(operand identity.ContentID) (uint64, bool) { return local, operand == occurrence })
-		heapSeedBindOK = heapSeedBindOK && implementationOK && implementation.InstallOperandResolver(func(coords engine.OperandCoords) (identity.ContentID, bool) {
-			return coords.Occurrence, coords.Occurrence == occurrence
-		})
+		heapSeedBindOK = heapSeedBindOK && implementationOK
 		heapSeedImplementations[index] = implementation
 	}
 	querySpec, querySpecOK := rawHotQuerySpec(valueSchema, plan.valueFacts[2])

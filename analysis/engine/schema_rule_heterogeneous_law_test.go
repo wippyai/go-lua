@@ -30,7 +30,8 @@ func TestProgramRuleThreadsExactAndSummaryReadThroughProductEvidencePatch(t *tes
 		t.Fatal("heterogeneous factor forms")
 	}
 	hot := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(997_700)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},

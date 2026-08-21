@@ -79,10 +79,11 @@ func BindHot(
 		rule.preparedByID[prepared.id] = prepared
 	}
 	pending, ok := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placementdomain.Placement, effectfactor.MountedPublicationBatch]{
-		OperandContent: rule.operandContent,
-		Fold:           rule.fold,
+		OperandContent:  rule.operandContent,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[placementdomain.Placement, effectfactor.MountedPublicationBatch]{}, nil)
-	if !ok || pending == nil || !pending.InstallOperandResolver(rule.resolveOperand) {
+	if !ok || pending == nil {
 		return nil, false
 	}
 	callRead, callOK := placementowner.AddSelectedRuleDirectExactRead(pending, fragment.callRead, calls.FactorRef(), rule.projectCall)

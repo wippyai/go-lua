@@ -176,17 +176,8 @@ func AddSelectedRuleDirectOperandRead[O any, RV any, Tag interface {
 
 // RuleImplementation is Placement's opaque pending rule receipt.
 type RuleImplementation[O any] struct {
-	owner    *HotOwner
-	slot     *engine.RuleSlot[placement.Placement, O]
-	resolver func(engine.OperandCoords) (O, bool)
-}
-
-func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
+	owner *HotOwner
+	slot  *engine.RuleSlot[placement.Placement, O]
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -210,15 +201,6 @@ func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.Ru
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, placement.Placement, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if issuer.resolver == nil {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true

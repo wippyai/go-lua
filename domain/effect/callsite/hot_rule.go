@@ -104,7 +104,8 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment, calls *cal
 	hot := &HotRule{binding: binding, fragment: fragment, calls: calls, effects: effects, opaque: opaque}
 	var runtimeRead engine.Read[engine.OrderedCells[calldomain.Value]]
 	implementation, read, ok := effectowner.BindExactReadRule(effects, fragment.slot, fragment.callRead, calls.FactorRef(), fragment.write, engine.HotRuleSpec[effectfactor.Value, effectfactor.MountedCall]{
-		OperandContent: hot.operandContent,
+		OperandContent:  hot.operandContent,
+		OperandResolver: hot.resolveOperand,
 		Fold: func(frame engine.Frame[effectfactor.Value, effectfactor.MountedCall]) engine.RuleResult[effectfactor.Value] {
 			mounted, operandOK := engine.Operand(frame)
 			_, key, root, siteOK := mountedCallRows(hot.binding, hot.calls, hot.effects, mounted)
@@ -145,9 +146,6 @@ func bindHot(binding *engine.SchemaBinding, fragment *schemaFragment, calls *cal
 	}
 	runtimeRead = read
 	hot.implementation, hot.read = implementation, read
-	if !implementation.InstallOperandResolver(hot.resolveOperand) {
-		return nil, false
-	}
 	return hot, true
 }
 

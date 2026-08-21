@@ -30,12 +30,14 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[heapdomain.Value]]
+	rule := &HotRule{owner: owner, catalog: catalog, schema: owner.Schema()}
 	implementation, read, ok := heapowner.BindExactReadAndCarryRule(owner, fragment.slot, fragment.read, fragment.carry, fragment.write, engine.HotRuleSpec[heapdomain.Value, source.Root]{
 		// Root.New issued the complete cold classification receipt. The hot
 		// member, transfer, and derivation paths use only its O(1) fence.
 		OperandContent: func(operand source.Root) (source.Root, [32]byte, bool) {
 			return emptyContent(owner.Schema(), operand)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[heapdomain.Value, source.Root]) engine.RuleResult[heapdomain.Value] {
 			operand, operandOK := engine.Operand(frame)
 			if !operandOK {
@@ -73,10 +75,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner, catalog *alloc
 		return nil, false
 	}
 	runtimeRead = read
-	rule := &HotRule{implementation: implementation, owner: owner, read: read, catalog: catalog, schema: owner.Schema()}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation, rule.read = implementation, read
 	return rule, true
 }
 

@@ -132,13 +132,15 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 		t.Fatal("heterogeneous factor bindings")
 	}
 	ruleSpecA := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(986_010)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			return Staged(frame, uint64(7))
 		},
 	}
 	ruleSpecB := HotRuleSpec[string, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(986_011)), true },
 		Fold: func(frame Frame[string, ruleUnit]) RuleResult[string] {
 			return Staged(frame, "b")
 		},
@@ -218,9 +220,7 @@ func newHeterogeneousQueryLawFixture(t testing.TB) heterogeneousQueryLawFixture 
 	ruleImplementationA, ruleImplementationAOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, ruleA)
 	ruleImplementationB, ruleImplementationBOK := RuleImplementationAt[uint64, string, ruleUnit](binding, ruleB)
 	implementation, implementationOK := HeterogeneousQueryImplementationAt(binding, query)
-	if !ruleImplementationAOK || !ruleImplementationBOK || !implementationOK || implementation == nil ||
-		!ruleImplementationA.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(986_010)), true }) ||
-		!ruleImplementationB.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(986_011)), true }) {
+	if !ruleImplementationAOK || !ruleImplementationBOK || !implementationOK || implementation == nil {
 		t.Fatal("heterogeneous sealed implementations")
 	}
 

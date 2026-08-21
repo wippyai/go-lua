@@ -81,10 +81,11 @@ func BindHot(
 	}
 
 	implementation, ok := heapowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[heapdomain.Value, effectfactor.MountedPublicationBatch]{
-		OperandContent: rule.operandContent,
-		Fold:           rule.fold,
+		OperandContent:  rule.operandContent,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[heapdomain.Value, effectfactor.MountedPublicationBatch]{}, nil)
-	if !ok || implementation == nil || !implementation.InstallOperandResolver(rule.resolveOperand) {
+	if !ok || implementation == nil {
 		return nil, false
 	}
 	rule.implementation = implementation

@@ -82,7 +82,8 @@ func BindHot(
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return operandContent(rule.packs, calls.Algebra(), candidate)
 		},
-		Fold: rule.fold,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[placement.Placement, operand]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
@@ -110,9 +111,6 @@ func BindHot(
 		return nil, false
 	}
 	rule.placementRead = placementRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

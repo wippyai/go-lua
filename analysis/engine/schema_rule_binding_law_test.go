@@ -84,6 +84,7 @@ func lawHotRuleSpec() HotRuleSpec[uint64, struct{}] {
 		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) {
 			return value, [32]byte{0x5a}, true
 		},
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -264,7 +265,8 @@ func TestSchemaRuleBindingReadCarryAndSelectedProductProof(t *testing.T) {
 		t.Fatal("selected Factor binding")
 	}
 	hot := HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x6b}, true },
+		OperandContent:  func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x6b}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -313,7 +315,8 @@ func directSelectedRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *F
 
 func directSelectedRuleHotLaw() HotRuleSpec[uint64, struct{}] {
 	return HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7a}, true },
+		OperandContent:  func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7a}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -390,7 +393,8 @@ func directNoCarryRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *Ru
 
 func directNoCarryRuleHotLaw() HotRuleSpec[uint64, struct{}] {
 	return HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7b}, true },
+		OperandContent:  func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7b}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -435,7 +439,8 @@ func directRouteRuleLawSchema(t testing.TB) (*Schema, *FactorSlot[uint64], *Rule
 
 func directRouteRuleHotLaw() HotRuleSpec[uint64, struct{}] {
 	return HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7c}, true },
+		OperandContent:  func(value struct{}) (struct{}, [32]byte, bool) { return value, [32]byte{0x7c}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return RuleResult[uint64]{}
 		},
@@ -485,7 +490,7 @@ func TestProgramRuleSurfaceBoundaryRetainsRouteAndAuthorityFences(t *testing.T) 
 		t.Fatal("direct routed Rule seal")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !implementationOK || implementation == nil || !implementation.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
+	if !implementationOK || implementation == nil {
 		t.Fatal("ProgramRule owner")
 	}
 	program, programOK := SealProgramRule(implementation)
@@ -532,7 +537,7 @@ func TestProgramRuleSurfaceRejectsMalformedSelectedDependencyOrdering(t *testing
 		t.Fatal("direct routed Rule seal")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !implementationOK || implementation == nil || !implementation.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
+	if !implementationOK || implementation == nil {
 		t.Fatal("ProgramRule owner")
 	}
 	row := implementation.cell.schemaRuleReadAt(1)
@@ -648,7 +653,6 @@ func TestProgramRuleThreadsExactReadAndCarryThroughProductEvidenceAndPatch(t *te
 	if !implementationOK || implementation == nil || readRuntime.row == nil || readRuntime.row.kind != composition.ReadExact || !shapeOK || shape.ReadCount != 1 || shape.CarryCount != 1 {
 		t.Fatal("exact read/carry shape thread")
 	}
-	installLawProgramRuleResolver(t, implementation)
 	program, programOK := SealProgramRule(implementation)
 	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
 	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
@@ -704,6 +708,7 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 		OperandContent: func(summaryLawOperand) (summaryLawOperand, [32]byte, bool) {
 			return summaryLawOperand{}, [32]byte{0x5a}, true
 		},
+		OperandResolver: func(OperandCoords) (summaryLawOperand, bool) { return summaryLawOperand{}, true },
 		Fold: func(frame Frame[uint64, summaryLawOperand]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -716,9 +721,6 @@ func runProgramRuleSummaryThreadLaw(t testing.TB, base uint64, keyEnd uint64) {
 	shape, shapeOK := implementation.cell.schema.ruleShapeAt(implementation.ordinal)
 	if !implementationOK || implementation == nil || !shapeOK || shape.ReadCount != 1 || shape.CarryCount != 0 {
 		t.Fatal("summary ProgramRule shape thread")
-	}
-	if !implementation.InstallOperandResolver(func(OperandCoords) (summaryLawOperand, bool) { return summaryLawOperand{}, true }) {
-		t.Fatal("summary ProgramRule resolver")
 	}
 	program, programOK := SealProgramRule(implementation)
 	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
@@ -759,7 +761,8 @@ func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) 
 	schema, schemaOK := builder.Seal()
 	binding := NewSchemaBinding(schema)
 	hot := HotRuleSpec[uint64, struct{}]{
-		OperandContent: func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true },
+		OperandContent:  func(struct{}) (struct{}, [32]byte, bool) { return struct{}{}, [32]byte{0x5a}, true },
+		OperandResolver: func(OperandCoords) (struct{}, bool) { return struct{}{}, true },
 		Fold: func(frame Frame[uint64, struct{}]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -773,7 +776,6 @@ func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) 
 	if !implementationOK || implementation == nil || !shapeOK || shape.ReadCount != 0 || shape.CarryCount != 1 {
 		t.Fatal("carry ProgramRule shape thread")
 	}
-	installLawProgramRuleResolver(t, implementation)
 	program, programOK := SealProgramRule(implementation)
 	declared, declaredOK := program.declareRuleOperand(lawProgramRuleCoords())
 	surfaces, surfacesOK := program.declareRuleSurfaces(declared, lawProgramRuleAnchor(t))
@@ -784,11 +786,4 @@ func TestProgramRuleThreadsOneExactCarryThroughProductAndEvidence(t *testing.T) 
 
 func lawProgramRuleCoords() OperandCoords {
 	return OperandCoords{Member: programMatrixID(221), Mount: programMatrixID(222), Point: programMatrixID(223), Occurrence: programMatrixID(224)}
-}
-
-func installLawProgramRuleResolver(t testing.TB, implementation *RuleImplementation[uint64, uint64, struct{}]) {
-	t.Helper()
-	if !implementation.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
-		t.Fatal("ProgramRule resolver")
-	}
 }

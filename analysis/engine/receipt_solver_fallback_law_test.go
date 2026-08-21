@@ -145,7 +145,8 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 		return value
 	}
 	ordinarySpec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(998_630)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			*transfers++
 			return Staged(frame, uint64(1))
@@ -185,9 +186,6 @@ func newSelectedOverlayLawFixtureWithOptions(t testing.TB, options selectedOverl
 	_, activationProgramOK := SealActivationProgramRule(activationImplementation)
 	if !ordinaryImplementationOK || !activationImplementationOK || !queryImplementationOK || !ordinaryProgramOK || !activationProgramOK {
 		t.Fatal("selected overlay sealed implementations")
-	}
-	if !ordinaryImplementation.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(998_630)), true }) {
-		t.Fatal("selected overlay operand resolver")
 	}
 	artifact, artifactOK := rows.NewArtifactScalarSpec(selectedOverlayLawID(artifactID), selectedOverlayLawID(programID), identity.ContentID(schema.ID().Digest()), rows.ArtifactScalarCapacity{Roles: 2, Points: 3, Events: 5, Rules: 3, Bodies: 1, Regions: 1, Transfers: 1})
 	if !artifactOK {

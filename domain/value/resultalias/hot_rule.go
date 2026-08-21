@@ -113,7 +113,8 @@ func BindHot(
 		OperandContent: func(row valuedomain.MountedCallResultSlot) (valuedomain.MountedCallResultSlot, [32]byte, bool) {
 			return resultAliasContent(values.Schema(), row)
 		},
-		Fold: rule.fold,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[valuedomain.Value, valuedomain.MountedCallResultSlot]{}, func(row valuedomain.MountedCallResultSlot) (uint64, bool) {
 		coordinate, coordinateOK := row.Coordinate()
 		index, indexOK := values.Schema().CoordinateIndex(coordinate)
@@ -136,9 +137,6 @@ func BindHot(
 		return nil, false
 	}
 	rule.implementation, rule.callRead, rule.actualRead = implementation, callRead, actualRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

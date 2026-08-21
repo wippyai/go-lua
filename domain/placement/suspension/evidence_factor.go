@@ -326,9 +326,8 @@ func SelectRouteTyped[Tag interface {
 }
 
 type EvidenceRuleImplementation[O any] struct {
-	owner    *EvidenceOwner
-	slot     *engine.RuleSlot[Evidence, O]
-	resolver func(engine.OperandCoords) (O, bool)
+	owner *EvidenceOwner
+	slot  *engine.RuleSlot[Evidence, O]
 }
 
 func BindSelectedEvidenceRouteRuleDirect[O any](owner *EvidenceOwner, slot *engine.RuleSlot[Evidence, O], carry engine.SchemaCarrySlot[Evidence], write engine.SchemaWriteSlot[Evidence], spec engine.HotRuleSpec[Evidence, O], carrySpec engine.HotCarrySpec[Evidence, O]) (*EvidenceRuleImplementation[O], bool) {
@@ -354,14 +353,6 @@ func AddSelectedEvidenceRuleDirectOperandRead[O any, RV any, Tag interface {
 	return engine.BindSelectedRuleDirectOperandRead[coordinate, Evidence, O, RV, Tag](issuer.owner.binding, issuer.slot, slot, factor, locate)
 }
 
-func (issuer *EvidenceRuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
-}
-
 func (issuer *EvidenceRuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
 	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return engine.RuleSlotCapability{}, false
@@ -377,17 +368,11 @@ func (issuer *EvidenceRuleImplementation[O]) LinkCapability() (engine.RuleSlotCa
 }
 
 func ResolveEvidenceRuleImplementation[O any](issuer *EvidenceRuleImplementation[O]) (*engine.RuleImplementation[coordinate, Evidence, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, Evidence, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true

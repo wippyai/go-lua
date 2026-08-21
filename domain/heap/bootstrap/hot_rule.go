@@ -23,6 +23,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 		return nil, false
 	}
 	schema := owner.Schema()
+	rule := &HotRule{owner: owner}
 	implementation, ok := heapowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[heapdomain.Value, heapdomain.Key]{
 		OperandContent: func(key heapdomain.Key) (heapdomain.Key, [32]byte, bool) {
 			contentID, contentOK := schema.BootRootID(key)
@@ -31,6 +32,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 			}
 			return key, [32]byte(contentID), true
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[heapdomain.Value, heapdomain.Key]) engine.RuleResult[heapdomain.Value] {
 			key, operandOK := engine.Operand(frame)
 			value, valueOK := schema.BootValue(key)
@@ -46,10 +48,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

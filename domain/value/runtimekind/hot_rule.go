@@ -47,6 +47,7 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		OperandContent: func(row valuedomain.RuntimeKindCall) (valuedomain.RuntimeKindCall, [32]byte, bool) {
 			return hotContent(values.Schema(), row)
 		},
+		OperandResolver: hot.resolveOperand,
 		Fold: func(frame engine.Frame[valuedomain.Value, valuedomain.RuntimeKindCall]) engine.RuleResult[valuedomain.Value] {
 			operand, operandOK := engine.Operand(frame)
 			_, _, endpointsOK := hotEndpoints(values.Schema(), operand)
@@ -120,9 +121,6 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		return nil, false
 	}
 	hot.callRead, hot.valueRead, hot.comparisonRead, hot.implementation = callRead, valueRead, comparisonRead, implementation
-	if !implementation.InstallOperandResolver(hot.resolveOperand) {
-		return nil, false
-	}
 	return hot, true
 }
 

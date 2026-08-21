@@ -24,12 +24,14 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 		!fragment.semantic.Available() {
 		return nil, false
 	}
+	rule := &HotRule{owner: owner}
 	implementation, ok := heapowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[heapdomain.Value, source.Root]{
 		// Root.New issued the complete cold classification receipt. Member,
 		// fold path authenticates that receipt in O(1).
 		OperandContent: func(operand source.Root) (source.Root, [32]byte, bool) {
 			return ingressContent(owner.Schema(), operand)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[heapdomain.Value, source.Root]) engine.RuleResult[heapdomain.Value] {
 			operand, operandOK := engine.Operand(frame)
 			_, value, resultOK := ingressResult(owner.Schema(), operand)
@@ -45,10 +47,7 @@ func BindHot(fragment *SchemaFragment, owner *heapowner.HotOwner) (*HotRule, boo
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

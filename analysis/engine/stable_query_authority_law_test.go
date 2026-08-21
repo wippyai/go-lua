@@ -162,7 +162,8 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	transferRuns, projectRuns, freezeRuns := new(int), new(int), new(int)
 	binding := NewSchemaBinding(schema)
 	ruleSpec := HotRuleSpec[uint64, ruleUnit]{
-		OperandContent: ruleUnitContent,
+		OperandContent:  ruleUnitContent,
+		OperandResolver: func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(955_000)), true },
 		Fold: func(frame Frame[uint64, ruleUnit]) RuleResult[uint64] {
 			*transferRuns++
 			if failTransfer {
@@ -209,8 +210,7 @@ func buildReceiptQueryMatrixFixtureWithOptions(t testing.TB, count int, observed
 	}
 	ruleImplementation, ruleImplementationOK := RuleImplementationAt[uint64, uint64, ruleUnit](binding, rule)
 	queryImplementation, queryImplementationOK := ExactQueryImplementationAt[uint64, uint64](binding, query)
-	if !ruleImplementationOK || !queryImplementationOK || ruleImplementation == nil || queryImplementation == nil ||
-		!ruleImplementation.InstallOperandResolver(func(OperandCoords) (ruleUnit, bool) { return ruleUnitForSemantic(coldKey(955_000)), true }) {
+	if !ruleImplementationOK || !queryImplementationOK || ruleImplementation == nil || queryImplementation == nil {
 		t.Fatal("sealed matrix implementations")
 	}
 	mountID := programMatrixID(1)

@@ -35,19 +35,8 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 // RuleImplementation is a Call-owned pending Factor-output Rule receipt. The
 // private coordinate and Factor slot remain behind this owner boundary.
 type RuleImplementation[O any] struct {
-	owner    *HotOwner
-	slot     *engine.RuleSlot[call.Value, O]
-	resolver func(engine.OperandCoords) (O, bool)
-}
-
-// InstallOperandResolver records the one owner-supplied operand resolver
-// this rule will publish onto its sealed cell.
-func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
+	owner *HotOwner
+	slot  *engine.RuleSlot[call.Value, O]
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -61,17 +50,8 @@ func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapabil
 // whose exact predecessor factor is owned by another domain. It preserves
 // Call's output coordinate fence while retaining the typed input V.
 type HeterogeneousRuleImplementation[RV, O any] struct {
-	owner    *HotOwner
-	slot     *engine.RuleSlot[call.Value, O]
-	resolver func(engine.OperandCoords) (O, bool)
-}
-
-func (issuer *HeterogeneousRuleImplementation[RV, O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
+	owner *HotOwner
+	slot  *engine.RuleSlot[call.Value, O]
 }
 
 // MountedCapability returns the parent-issued capability for this exact
@@ -206,17 +186,11 @@ func BindHeterogeneousExactReadRule[RV, O any](owner *HotOwner, slot *engine.Rul
 }
 
 func ResolveHeterogeneousRuleImplementation[RV, O any](issuer *HeterogeneousRuleImplementation[RV, O]) (*engine.RuleImplementation[coordinate, call.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, call.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true
@@ -225,17 +199,11 @@ func ResolveHeterogeneousRuleImplementation[RV, O any](issuer *HeterogeneousRule
 // ResolveRuleImplementation issues the exact receipt after the shared
 // SchemaBinding seals.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, call.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, call.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true

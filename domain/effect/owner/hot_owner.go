@@ -41,19 +41,8 @@ func (owner *HotOwner) LinkID() identity.ContentID {
 // can resolve and attach only the exact Rule slot bound through this owner;
 // Effect's private coordinate and Factor slot never escape.
 type RuleImplementation[O any] struct {
-	owner    *HotOwner
-	slot     *engine.RuleSlot[factor.Value, O]
-	resolver func(engine.OperandCoords) (O, bool)
-}
-
-// InstallOperandResolver records the one owner-supplied operand resolver
-// this rule will publish onto its sealed cell.
-func (issuer *RuleImplementation[O]) InstallOperandResolver(resolve func(engine.OperandCoords) (O, bool)) bool {
-	if issuer == nil || resolve == nil || issuer.resolver != nil {
-		return false
-	}
-	issuer.resolver = resolve
-	return true
+	owner *HotOwner
+	slot  *engine.RuleSlot[factor.Value, O]
 }
 
 func (issuer *RuleImplementation[O]) MountedCapability() (engine.RuleSlotCapability, bool) {
@@ -224,17 +213,11 @@ func AddSelectedRuleDirectOperandRead[O, RV any, Tag interface {
 // ResolveRuleImplementation issues the engine receipt only after the exact
 // shared SchemaBinding seals.
 func ResolveRuleImplementation[O any](issuer *RuleImplementation[O]) (*engine.RuleImplementation[coordinate, factor.Value, O], bool) {
-	if issuer == nil || issuer.owner == nil || issuer.slot == nil || issuer.resolver == nil {
+	if issuer == nil || issuer.owner == nil || issuer.slot == nil {
 		return nil, false
 	}
 	implementation, ok := engine.RuleImplementationAt[coordinate, factor.Value, O](issuer.owner.binding, issuer.slot)
 	if !ok {
-		return nil, false
-	}
-	if implementation.HasOperandResolver() {
-		return implementation, true
-	}
-	if !implementation.InstallOperandResolver(issuer.resolver) {
 		return nil, false
 	}
 	return implementation, true

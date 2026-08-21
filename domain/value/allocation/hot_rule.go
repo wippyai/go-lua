@@ -28,6 +28,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 		return nil, false
 	}
 	schema := owner.Schema()
+	rule := &HotRule{catalog: catalog, owner: owner}
 	implementation, ok := valueowner.BindCarryRule(owner, fragment.slot, fragment.carry, fragment.write, engine.HotRuleSpec[value.Value, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return allocationOperandContentForSchema(schema, candidate)
@@ -43,6 +44,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 			}
 			return engine.Staged(frame, fresh)
 		},
+		OperandResolver: rule.resolveOperand,
 	}, engine.HotCarrySpec[value.Value, operand]{
 		Apply: func(allocation operand, prior value.Value) (value.Value, bool) {
 			if allocation.result == nil {
@@ -57,10 +59,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner, heap heapdoma
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, catalog: catalog, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

@@ -22,11 +22,13 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 		!fragment.semantic.Available() {
 		return nil, false
 	}
+	rule := &HotRule{owner: owner, schema: schema}
 	implementation, ok := packowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[packdomain.Value, packdomain.Source]{
 		OperandContent: func(source packdomain.Source) (packdomain.Source, [32]byte, bool) {
 			id, ok := source.ContentID()
 			return source, [32]byte(id), ok && id.Available()
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[packdomain.Value, packdomain.Source]) engine.RuleResult[packdomain.Value] {
 			source, operandOK := engine.Operand(frame)
 			if !operandOK {
@@ -48,10 +50,7 @@ func BindHot(fragment *SchemaFragment, owner *packowner.HotOwner, schema *packdo
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, owner: owner, schema: schema}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

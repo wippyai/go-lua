@@ -39,8 +39,9 @@ func BindEvidenceHot(binding *engine.SchemaBinding, fragment *EvidenceSchemaFrag
 	}
 	rule := &EvidenceHotRule{owner: owner, values: values, catalog: catalog}
 	implementation, implementationOK := BindSelectedEvidenceRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, engine.HotRuleSpec[Evidence, operand]{
-		OperandContent: func(candidate operand) (operand, [32]byte, bool) { return rule.operandContent(candidate) },
-		Fold:           rule.fold,
+		OperandContent:  func(candidate operand) (operand, [32]byte, bool) { return rule.operandContent(candidate) },
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[Evidence, operand]{})
 	if !implementationOK || implementation == nil {
 		return nil, false
@@ -61,9 +62,6 @@ func BindEvidenceHot(binding *engine.SchemaBinding, fragment *EvidenceSchemaFrag
 		return nil, false
 	}
 	rule.evidenceRead = evidenceRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

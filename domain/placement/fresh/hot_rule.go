@@ -22,10 +22,12 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		owner.Schema() != schema || !schema.Valid() || !fragment.semantic.Available() {
 		return nil, false
 	}
+	rule := &HotRule{owner: owner}
 	implementation, bound := placementowner.BindExactWriteRule(owner, fragment.slot, fragment.write, engine.HotRuleSpec[placement.Placement, operand]{
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return operandContentForSchema(schema, candidate)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[placement.Placement, operand]) engine.RuleResult[placement.Placement] {
 			return engine.Staged(frame, placement.Stack)
 		},
@@ -35,10 +37,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 	if !bound || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

@@ -21,10 +21,12 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		return nil, false
 	}
 	var runtimeRead engine.Read[engine.OrderedCells[value.Value]]
+	rule := &HotRule{owner: owner}
 	implementation, read, ok := valueowner.BindExactReadAndCarryRule(owner, fragment.slot, fragment.read, fragment.carry, fragment.write, engine.HotRuleSpec[value.Value, value.PresenceRefinement]{
 		OperandContent: func(refinement value.PresenceRefinement) (value.PresenceRefinement, [32]byte, bool) {
 			return hotContent(owner.Schema(), refinement)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[value.Value, value.PresenceRefinement]) engine.RuleResult[value.Value] {
 			refinement, operandOK := engine.Operand(frame)
 			_, present, targetOK := hotTarget(owner.Schema(), refinement)
@@ -61,10 +63,7 @@ func BindHot(fragment *SchemaFragment, owner *valueowner.HotOwner) (*HotRule, bo
 		return nil, false
 	}
 	runtimeRead = read
-	rule := &HotRule{implementation: implementation, read: read, owner: owner}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation, rule.read = implementation, read
 	return rule, true
 }
 

@@ -120,7 +120,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.OperandResolver == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -155,7 +155,7 @@ func BindRule[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, slot *RuleS
 		return false
 	}
 	cell := &schemaRuleBindingCellImpl[K, V, O]{state: state, schema: state.schema, ordinal: ruleOrdinal}
-	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite}
+	cell.impl = &ruleHotImplementation[K, V, O]{state: state, rule: slot, write: write, output: outputCell, operandContent: spec.OperandContent, operandResolver: spec.OperandResolver, fold: spec.Fold, projectWrite: projectWrite}
 	state.rules[ruleOrdinal] = cell
 	return true
 }
@@ -171,7 +171,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.OperandResolver == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return false
 	}
@@ -210,7 +210,7 @@ func BindRuleWithCarry[K ~uint32 | ~uint64, V, O any](binding *SchemaBinding, sl
 	cell.impl = &ruleHotImplementation[K, V, O]{
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[K, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
-		operandContent: spec.OperandContent, fold: spec.Fold, projectWrite: projectWrite,
+		operandContent: spec.OperandContent, operandResolver: spec.OperandResolver, fold: spec.Fold, projectWrite: projectWrite,
 	}
 	state.rules[ruleOrdinal] = cell
 	return true
@@ -227,7 +227,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.Fold == nil || projectWrite == nil {
+	if state.phase != schemaBindingOpen || slot == nil || slot.cell == nil || slot.cell.schema != state.schema || readSlot.cell == nil || readSlot.cell.schema != state.schema || readFactor == nil || readFactor.cell == nil || readFactor.cell.schema != state.schema || carry.cell == nil || carry.cell.schema != state.schema || write.cell == nil || write.cell.schema != state.schema || output == nil || output.cell == nil || output.cell.schema != state.schema || spec.OperandContent == nil || spec.OperandResolver == nil || spec.Fold == nil || projectWrite == nil {
 		state.poisonLocked()
 		return Read[OrderedCells[RV]]{}, false
 	}
@@ -271,7 +271,7 @@ func BindRuleWithExactReadAndCarry[OK ~uint32 | ~uint64, V, O any, RK ~uint32 | 
 		state: state, rule: slot, write: write, output: outputCell,
 		carry:          &schemaRuleCarryBinding[OK, V, O]{state: state, cell: cell, ordinal: ruleOrdinal, slot: carry, factor: outputCell, apply: carrySpec.Apply},
 		reads:          []schemaRuleReadBinding{readBinding},
-		operandContent: spec.OperandContent, fold: spec.Fold,
+		operandContent: spec.OperandContent, operandResolver: spec.OperandResolver, fold: spec.Fold,
 		projectWrite: projectWrite,
 	}
 	state.rules[ruleOrdinal] = cell

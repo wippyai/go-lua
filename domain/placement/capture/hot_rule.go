@@ -36,6 +36,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		OperandContent: func(candidate operand) (operand, [32]byte, bool) {
 			return operandContentForSchema(schema, valueSchema, candidate)
 		},
+		OperandResolver: rule.resolveOperand,
 		Fold: func(frame engine.Frame[placementdomain.Placement, operand]) engine.RuleResult[placementdomain.Placement] {
 			return rule.fold(frame)
 		},
@@ -61,9 +62,6 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.placementRead = placementRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

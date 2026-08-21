@@ -506,13 +506,13 @@ func (cell *schemaRuleBindingCellImpl[K, V, O]) validateOpenRuleCell() bool {
 		}
 	}
 	outputOrdinal, outputOK := cell.impl.output.ordinalFromSchema()
-	return outputOK && outputOrdinal < cell.schema.factorCount() && cell.schema.factorSemanticAt(outputOrdinal) == shape.Output && cell.impl.operandContent != nil && cell.impl.fold != nil
+	return outputOK && outputOrdinal < cell.schema.factorCount() && cell.schema.factorSemanticAt(outputOrdinal) == shape.Output && cell.impl.operandContent != nil && cell.impl.operandResolver != nil && cell.impl.fold != nil
 }
 
 // sealedRuleComplete authenticates only already-published direct geometry.
 // It deliberately has no Schema RuleShape/WriteShape/CarryShape calls.
 func (cell *schemaRuleBindingCellImpl[K, V, O]) sealedRuleComplete() bool {
-	if cell == nil || cell.state == nil || cell.schema == nil || cell.state.phase != schemaBindingSealed || cell.state.schema != cell.schema || cell.state.authority == nil || cell.ordinal >= uint64(len(cell.state.rules)) || cell.state.rules[cell.ordinal] != cell || cell.impl == nil || cell.impl.state != cell.state || cell.impl.rule != nil || cell.impl.write.cell != nil || cell.impl.carry != nil || cell.impl.output == nil || cell.impl.output.schema != cell.schema || cell.impl.output.impl == nil || cell.impl.output.state != cell.state || !cell.impl.ruleSemantic.Available() || !cell.impl.operandFamily.Available() || cell.impl.writeMode == 0 || cell.impl.operandContent == nil || cell.impl.fold == nil {
+	if cell == nil || cell.state == nil || cell.schema == nil || cell.state.phase != schemaBindingSealed || cell.state.schema != cell.schema || cell.state.authority == nil || cell.ordinal >= uint64(len(cell.state.rules)) || cell.state.rules[cell.ordinal] != cell || cell.impl == nil || cell.impl.state != cell.state || cell.impl.rule != nil || cell.impl.write.cell != nil || cell.impl.carry != nil || cell.impl.output == nil || cell.impl.output.schema != cell.schema || cell.impl.output.impl == nil || cell.impl.output.state != cell.state || !cell.impl.ruleSemantic.Available() || !cell.impl.operandFamily.Available() || cell.impl.writeMode == 0 || cell.impl.operandContent == nil || cell.impl.operandResolver == nil || cell.impl.fold == nil {
 		return false
 	}
 	if cell.impl.writeMode == directRuleWriteExact {

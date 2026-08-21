@@ -4,33 +4,24 @@ import "testing"
 
 type canonicalOperandIssuanceLaw struct{ local uint64 }
 
-// TestOperandResolverInstallsOnceOnTheSealedCell proves ownership rather than
-// handle identity: a fresh RuleImplementation view observes the resolver
-// installed through the first view, and the cell rejects a second owner.
-func TestOperandResolverInstallsOnceOnTheSealedCell(t *testing.T) {
-	binding, implementation, _, _, rule, _ := sealedLawRule(t, 0)
-	if implementation.HasOperandResolver() {
-		t.Fatal("fresh sealed cell already carried an operand resolver")
+// TestOperandResolverIsPresealedAndImmutable proves the owner resolver is
+// captured while the binding is open and remains usable after publication.
+// There is deliberately no post-seal mutator to exercise: a second owner
+// cannot replace the cell's resolver through a sealed handle.
+func TestOperandResolverIsPresealedAndImmutable(t *testing.T) {
+	_, implementation, _, _, _, _ := sealedLawRule(t, 0)
+	program, programOK := SealProgramRule(implementation)
+	if !programOK || !program.Available() {
+		t.Fatal("sealed ProgramRule issuer")
 	}
-	if !implementation.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
-		t.Fatal("first resolver install")
-	}
-	if !implementation.HasOperandResolver() {
-		t.Fatal("sealed cell lost its resolver")
-	}
-	again, againOK := RuleImplementationAt[uint64, uint64, struct{}](binding, rule)
-	if !againOK || again == nil || !again.HasOperandResolver() {
-		t.Fatal("later implementation did not observe the cell-owned resolver")
-	}
-	if again.InstallOperandResolver(func(OperandCoords) (struct{}, bool) { return struct{}{}, true }) {
-		t.Fatal("second resolver installed on one sealed cell")
+	if _, resolved := program.declareRuleOperand(lawProgramRuleCoords()); !resolved {
+		t.Fatal("pre-sealed owner resolver did not issue an operand")
 	}
 }
 
-// TestOperandResolverIsRequiredForProgramRuleIssuance maps the old attach
-// precondition onto ProgramRule declaration.  A sealed Rule can be named by a
-// program, but no row operand is issuable until its owner installs the one
-// cell-owned resolver.
+// TestOperandResolverIsRequiredForProgramRuleIssuance maps the construction
+// precondition onto ProgramRule declaration. A Rule without an owner resolver
+// cannot enter a binding; a sealed Rule always carries the pre-sealed resolver.
 func TestOperandResolverIsRequiredForProgramRuleIssuance(t *testing.T) {
 	_, implementation, _, _, _, _ := sealedLawRule(t, 0)
 	program, programOK := SealProgramRule(implementation)
@@ -38,17 +29,9 @@ func TestOperandResolverIsRequiredForProgramRuleIssuance(t *testing.T) {
 		t.Fatal("sealed ProgramRule issuer")
 	}
 	coords := OperandCoords{Member: programMatrixID(211), Mount: programMatrixID(212), Point: programMatrixID(213), Occurrence: programMatrixID(214)}
-	if _, resolved := program.declareRuleOperand(coords); resolved {
-		t.Fatal("ProgramRule issued an operand without its owner resolver")
-	}
-	if !implementation.InstallOperandResolver(func(got OperandCoords) (struct{}, bool) {
-		return struct{}{}, got.Member == coords.Member && got.Mount == coords.Mount && got.Point == coords.Point && got.Occurrence == coords.Occurrence
-	}) {
-		t.Fatal("resolver install")
-	}
 	declared, resolved := program.declareRuleOperand(coords)
 	if !resolved || !declared.Available() {
-		t.Fatal("cell-owned resolver did not issue the sealed operand")
+		t.Fatal("pre-sealed owner resolver did not issue the sealed operand")
 	}
 }
 
@@ -73,6 +56,9 @@ func TestProgramRuleIssuesOnlyTheCanonicalOperand(t *testing.T) {
 		OperandContent: func(canonicalOperandIssuanceLaw) (canonicalOperandIssuanceLaw, [32]byte, bool) {
 			return canonical, [32]byte{0x6d}, true
 		},
+		OperandResolver: func(OperandCoords) (canonicalOperandIssuanceLaw, bool) {
+			return canonicalOperandIssuanceLaw{local: 9}, true
+		},
 		Fold: func(frame Frame[uint64, canonicalOperandIssuanceLaw]) RuleResult[uint64] {
 			return Staged(frame, uint64(1))
 		},
@@ -87,9 +73,7 @@ func TestProgramRuleIssuesOnlyTheCanonicalOperand(t *testing.T) {
 		t.Fatal("canonical operand Rule binding")
 	}
 	implementation, implementationOK := RuleImplementationAt[uint64, uint64, canonicalOperandIssuanceLaw](binding, rule)
-	if !implementationOK || implementation == nil || !implementation.InstallOperandResolver(func(OperandCoords) (canonicalOperandIssuanceLaw, bool) {
-		return canonicalOperandIssuanceLaw{local: 9}, true
-	}) {
+	if !implementationOK || implementation == nil {
 		t.Fatal("canonical operand resolver")
 	}
 	program, programOK := SealProgramRule(implementation)

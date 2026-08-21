@@ -59,6 +59,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 	if !projectionOK {
 		return nil, false
 	}
+	rule := &HotRule{catalog: catalog, heapOwner: heapOwner, heap: heapSchema, values: values}
 	var runtimeHeapRead engine.Read[engine.OrderedCells[heapdomain.Value]]
 	var runtimeValueRead engine.Read[engine.OrderedCells[valuedomain.Value]]
 	implementation, runtimeHeapRead, runtimeValueRead, ok := heapowner.BindExactAndSummaryReadAndCarry[source.Closed, heapdomain.Value, valuedomain.Value, engine.OrderedCells[valuedomain.Value]](
@@ -67,6 +68,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 			OperandContent: func(candidate source.Closed) (source.Closed, [32]byte, bool) {
 				return hotClosedContent(heapSchema, values, candidate)
 			},
+			OperandResolver: rule.resolveOperand,
 			Fold: func(frame engine.Frame[heapdomain.Value, source.Closed]) engine.RuleResult[heapdomain.Value] {
 				operand, operandOK := engine.Operand(frame)
 				if !operandOK || !operand.FencedTo(heapSchema, values) {
@@ -110,10 +112,7 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, heapOwner 
 	if !ok || implementation == nil {
 		return nil, false
 	}
-	rule := &HotRule{implementation: implementation, catalog: catalog, heapOwner: heapOwner, heap: heapSchema, values: values}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

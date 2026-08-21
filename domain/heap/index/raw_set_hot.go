@@ -60,10 +60,11 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	core.runtime = hotRawSetRuntime(values, heap, packs)
 	core.scratch.New = func() any { return &rawSetScratch{} }
 	core.scratch.Put(&rawSetScratch{})
-
+	rule := &RawSetHotRule{core: core, values: values, heap: heap}
 	implementation, bound := heapowner.BindSelectedRouteRuleDirect(heap, fragment.slot, fragment.carry, fragment.write, fragment.heapRef, engine.HotRuleSpec[heapdomain.Value, Index]{
-		OperandContent: core.operandContent,
-		Fold:           core.fold,
+		OperandContent:  core.operandContent,
+		OperandResolver: rule.resolveOperand,
+		Fold:            core.fold,
 	}, engine.HotCarrySpec[heapdomain.Value, Index]{}, nil)
 	if !bound {
 		return nil, false
@@ -88,10 +89,7 @@ func BindRawSetHot(binding *engine.SchemaBinding, fragment *RawSetSchemaFragment
 	if core.source, ok = heapowner.AddSelectedRouteRuleDirectOperandRead[Index, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, fragment.valueRef, core.locateSource); !ok {
 		return nil, false
 	}
-	rule := &RawSetHotRule{implementation: implementation, core: core, values: values, heap: heap}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

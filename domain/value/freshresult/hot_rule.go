@@ -44,7 +44,8 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 			}
 			return row, [32]byte(id), true
 		},
-		Fold: rule.fold,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[valuedomain.Value, valuedomain.FreshResultCall]{
 		Apply: func(row valuedomain.FreshResultCall, prior valuedomain.Value) (valuedomain.Value, bool) {
 			key, keyOK := row.Key()
@@ -74,9 +75,6 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 		return nil, false
 	}
 	rule.implementation, rule.callRead = implementation, callRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

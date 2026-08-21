@@ -80,7 +80,8 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 		return &rawGetScratch{payload: make([]uint64, bitWords(len(topology.catalog.payloads)-1)), source: make([]uint64, bitWords(len(topology.catalog.sources)))}
 	}
 	core.scratch.Put(core.scratch.New())
-	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Index]{OperandContent: core.operandContent, Fold: core.fold}, engine.HotCarrySpec[valuedomain.Value, Index]{}, func(access Index) (uint64, bool) {
+	rule := &RawGetHotRule{core: core, values: values}
+	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, Index]{OperandContent: core.operandContent, OperandResolver: rule.resolveOperand, Fold: core.fold}, engine.HotCarrySpec[valuedomain.Value, Index]{}, func(access Index) (uint64, bool) {
 		result, resultOK := access.Result()
 		index, indexOK := values.Schema().CoordinateIndex(result)
 		return uint64(index), resultOK && indexOK
@@ -111,10 +112,7 @@ func BindRawGetHot(binding *engine.SchemaBinding, fragment *RawGetSchemaFragment
 	if core.sourceRead, ok = valueowner.AddSelectedRuleDirectOperandRead[Index, valuedomain.Value, rawSourceTag](implementation, fragment.sourceRead, values.FactorRef(), core.locateSource); !ok {
 		return nil, false
 	}
-	rule := &RawGetHotRule{implementation: implementation, core: core, values: values}
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
+	rule.implementation = implementation
 	return rule, true
 }
 

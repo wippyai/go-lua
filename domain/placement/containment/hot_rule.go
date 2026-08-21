@@ -153,8 +153,9 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 	}
 	rule := &HotRule{owner: owner, heap: heap, catalogue: catalogue}
 	implementation, bound := placementowner.BindSelectedRouteRuleDirect(owner, fragment.slot, fragment.carry, fragment.write, owner.FactorRef(), engine.HotRuleSpec[placement.Placement, operand]{
-		OperandContent: rule.operandContent,
-		Fold:           rule.fold,
+		OperandContent:  rule.operandContent,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[placement.Placement, operand]{}, nil)
 	if !bound || implementation == nil {
 		return nil, false
@@ -175,9 +176,6 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.implementation, rule.parent, rule.heapRead, rule.routes = implementation, parentRead, heapRead, routes
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 

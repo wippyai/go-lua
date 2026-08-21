@@ -38,7 +38,8 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	}
 	hot := &HotRule{binding: binding, fragment: fragment, values: values, calls: calls, heaps: heaps, packs: packs}
 	implementation, runtimeRead, ok := callowner.BindHeterogeneousExactReadRule(calls, fragment.slot, fragment.read, fragment.value, fragment.write, engine.HotRuleSpec[calldomain.Value, calldomain.MountedCall]{
-		OperandContent: hot.operandContent,
+		OperandContent:  hot.operandContent,
+		OperandResolver: hot.resolveOperand,
 		Fold: func(frame engine.Frame[calldomain.Value, calldomain.MountedCall]) engine.RuleResult[calldomain.Value] {
 			mounted, mountedOK := engine.Operand(frame)
 			bound, siteOK := hot.siteForMounted(mounted)
@@ -78,9 +79,6 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, values *va
 	}
 	hot.read = runtimeRead
 	hot.implementation = implementation
-	if !implementation.InstallOperandResolver(hot.resolveOperand) {
-		return nil, false
-	}
 	return hot, true
 }
 

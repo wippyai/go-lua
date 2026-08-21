@@ -16,35 +16,6 @@ type OperandCoords struct {
 	Occurrence identity.ContentID
 }
 
-// InstallOperandResolver publishes the one owner-supplied operand resolver
-// on this rule's sealed cell. A second install is rejected: one rule has
-// exactly one resolver.
-func (implementation *RuleImplementation[K, V, O]) InstallOperandResolver(resolve func(OperandCoords) (O, bool)) bool {
-	cell, cellOK := implementation.sealedRuleCell()
-	if !cellOK || cell.state == nil || resolve == nil {
-		return false
-	}
-	state := cell.state
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	hot := cell.impl
-	if hot == nil || hot.operandResolver != nil {
-		return false
-	}
-	hot.operandResolver = resolve
-	return true
-}
-
-// HasOperandResolver reports whether this rule's sealed cell already holds
-// its owner-supplied resolver.
-func (implementation *RuleImplementation[K, V, O]) HasOperandResolver() bool {
-	cell, ok := implementation.sealedRuleCell()
-	if !ok || cell.impl == nil {
-		return false
-	}
-	return cell.impl.operandResolver != nil
-}
-
 // programRule is the engine's private row issuer. It is wrapped by ProgramRule
 // before crossing the schema/composition boundary; callers can only hand back
 // the sealed primitive and cannot implement or forge this surface.

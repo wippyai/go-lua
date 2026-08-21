@@ -30,7 +30,8 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		OperandContent: func(candidate valuedomain.StorageTransfer) (valuedomain.StorageTransfer, [32]byte, bool) {
 			return hotStorageTransferContent(values.Schema(), candidate)
 		},
-		Fold: rule.fold,
+		OperandResolver: rule.resolveOperand,
+		Fold:            rule.fold,
 	}, engine.HotCarrySpec[placement.Placement, valuedomain.StorageTransfer]{}, nil)
 	if !ok || implementation == nil {
 		return nil, false
@@ -48,9 +49,6 @@ func BindHot(binding *engine.SchemaBinding, fragment *SchemaFragment, owner *pla
 		return nil, false
 	}
 	rule.placementRead = placementRead
-	if !implementation.InstallOperandResolver(rule.resolveOperand) {
-		return nil, false
-	}
 	return rule, true
 }
 
