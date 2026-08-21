@@ -199,6 +199,40 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 	}
 
+	// Concat is an intentional non-member of the binary primitive projection:
+	// the operation has no arithmetic representation lattice to project. Its
+	// occurrence is therefore issued from the executable candidate bucket, so
+	// every `..` term still has one artifact owner for its operand pair and
+	// its evaluation span. The bucket is already proof-filtered, so a row it
+	// names that cannot be sealed is corruption rather than a dead candidate.
+	concat := flowView.Candidates().Concat()
+	binaries := flowView.Authored().Operators().Binaries()
+	for index := 0; index < concat.Count(); index++ {
+		term, termOK := concat.At(index)
+		_, op, left, right, rowOK := binaries.Get(term)
+		span, spanOK := compiler.input.Span(term)
+		body, bodyOK := compiler.input.ContainingBody(term)
+		leftID, leftOK := valuesource.SubjectSpan(compiler.input, left)
+		rightID, rightOK := valuesource.SubjectSpan(compiler.input, right)
+		entry, entryOK := span.Entry()
+		finish, finishOK := span.Finish()
+		if !termOK || !rowOK || op != flowkind.BinaryConcat || !executable.Contains(term) ||
+			!spanOK || !bodyOK || !compiler.input.OwnsSpan(span) || !compiler.input.OwnsBody(body) ||
+			!leftOK || !rightOK ||
+			!entryOK || !finishOK || !compiler.input.OwnsSite(entry) || !compiler.input.OwnsSite(finish) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+		entryPoints := compiler.pointIDs(entry)
+		finishPoints := compiler.pointIDs(finish)
+		if len(entryPoints) == 0 || len(finishPoints) == 0 || !compiler.recordOccurrenceSpan(programschema.OccurrenceBinaryConcat, span.ContextID(), entryPoints, finishPoints) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAttachment)
+		}
+		points := append(append([]identity.ContentID(nil), entryPoints...), finishPoints...)
+		if !compiler.appendOccurrence(programschema.OccurrenceBinaryConcat, span.ContextID(), body.PathID(), points, []identity.ContentID{leftID, rightID}, uint64(op)) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
+		}
+	}
+
 	unaries := flowView.Authored().Operators().Unaries()
 	for index := 0; index < unaries.Count(); index++ {
 		term, termOK := unaries.At(index)

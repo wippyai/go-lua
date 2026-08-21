@@ -43,10 +43,15 @@ const (
 	OccurrenceReturnBoundary
 	OccurrenceFormalEntry
 	OccurrenceOperationPredicateRefinement
+	// OccurrenceBinaryConcat is the structural occurrence of a `..` term. The
+	// operation carries no representation lattice, so it has no binary
+	// primitive projection; the row names the operand pair and the evaluation
+	// span under which the concatenation is reached.
+	OccurrenceBinaryConcat
 )
 
 func (kind OccurrenceKind) Valid() bool {
-	return kind >= OccurrencePointAttachment && kind <= OccurrenceOperationPredicateRefinement
+	return kind >= OccurrencePointAttachment && kind <= OccurrenceBinaryConcat
 }
 
 // occurrenceOutputOperand names the operand position at which a family whose
@@ -154,6 +159,9 @@ func (row Occurrence) Available() bool {
 		return false
 	}
 	if row.kind == OccurrenceBinaryOrder && row.inputCount != 2 {
+		return false
+	}
+	if row.kind == OccurrenceBinaryConcat && (!row.body.Available() || row.inputCount != 2) {
 		return false
 	}
 	if row.kind == OccurrenceBinaryPresenceRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 4) {

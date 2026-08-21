@@ -30,11 +30,12 @@ const (
 	routeLawVersion        = uint64(3)
 	valuesLawVersion       = uint64(1)
 	bodyOutcomeLawVersion  = uint64(4)
-	// Heap allocation geometry now commits the parent-issued
-	// SharesFirstValueCell relation. Keep this generic occurrence law separate
-	// from Pack's row law: changing Heap rows must invalidate only the
-	// reusable occurrence/artifact identity contract.
-	occurrenceLawVersion  = uint64(12)
+	// The occurrence vocabulary carries the structural BinaryConcat family, so
+	// the same source seals a wider occurrence plane than the previous law
+	// admitted. Keep this generic occurrence law separate from Pack's row law:
+	// changing Heap rows must invalidate only the reusable
+	// occurrence/artifact identity contract.
+	occurrenceLawVersion  = uint64(13)
 	compileKeyDomain      = "analysis/program-artifact/compile-key"
 	artifactIDDomain      = "analysis/program-artifact/artifact"
 	executionSchemaDomain = "analysis/program-artifact/execution-schema"

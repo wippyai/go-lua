@@ -140,7 +140,8 @@ func occurrenceVocabulary() []structure.Spec {
 		"call-activation", "call-boundary", "call-arm", "call-argument", "call-type-argument",
 		"unary", "select",
 		"value-claim", "binary-arithmetic", "binary-equality", "binary-order",
-		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement")
+		"binary-presence-refinement", "return-boundary", "formal-entry", "operation-predicate-refinement",
+		"binary-concat")
 	declare(structure.CategoryIssuanceForm, "base")
 	specs = append(specs,
 		structure.Spec{Key: "issuance/local", Category: structure.CategoryIssuanceForm, Ordinal: 2, Spelling: "local", Accepted: true, Framing: "analysis/program-artifact/local-stage"},

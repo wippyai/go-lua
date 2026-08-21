@@ -94,6 +94,8 @@ func OccurrenceSemanticAvailable(row Occurrence) bool {
 		return inputCount == 2 && flowkind.IsBinaryArithmetic(flowkind.BinaryOp(row.Code()))
 	case OccurrenceBinaryOrder:
 		return inputCount == 2 && flowkind.IsBinaryOrder(flowkind.BinaryOp(row.Code()))
+	case OccurrenceBinaryConcat:
+		return inputCount == 2 && flowkind.BinaryOp(row.Code()) == flowkind.BinaryConcat
 	case OccurrenceBinaryPresenceRefinement:
 		return row.Code() <= 1
 	case OccurrenceOperationPredicateRefinement:
