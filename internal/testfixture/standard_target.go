@@ -46,6 +46,10 @@ func sealStandardLibraryTarget() (*contract.Contract, error) {
 		Identity:    "testfixture.wippy.process",
 		Mount:       manifest.MountModule,
 		Declaration: processHostManifest,
+	}, manifest.Provider{
+		Identity:    "testfixture.wippy.uuid",
+		Mount:       manifest.MountModule,
+		Declaration: uuidHostManifest,
 	})
 	catalogue, err := manifest.Seal(providers...)
 	if err != nil {
@@ -75,6 +79,20 @@ func channelHostManifest() *manifestwire.Manifest {
 	declaration.SetExport(typetable.NewRecord().
 		Field("select", selectType).
 		Field("new", newType).
+		Build())
+	return declaration
+}
+
+// uuidHostManifest declares the identifier generator surface the corpus
+// fixtures require. Only v7 is declared, because that is the only member the
+// fixture corpus calls; a generated identifier is a plain string value and the
+// call carries no ownership, dispatch, or transfer effect.
+func uuidHostManifest() *manifestwire.Manifest {
+	v7Type := typ.Func().Returns(typ.String).Build()
+	declaration := manifestwire.New("uuid")
+	declaration.DefineFunctionSignature("v7", signature.Function{Type: v7Type})
+	declaration.SetExport(typetable.NewRecord().
+		Field("v7", v7Type).
 		Build())
 	return declaration
 }

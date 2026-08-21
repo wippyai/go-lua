@@ -137,8 +137,8 @@ func corpusSemanticAcceptanceJudgment(run *corpusHarnessRun) []string {
 // resolves every require against a mount name, so a fixture's declared file
 // order and its selected entry carry no obligation the sealed Link could hold
 // differently: the whole declared inventory is mounted, rooted, and wired.
-// The canonical fixture Target likewise admits the process and channel host
-// module contracts; other package names remain fenced until their provider
+// The canonical fixture Target likewise admits the process, channel, and uuid
+// host module contracts; other package names remain fenced until their provider
 // declarations are represented at that same boundary.
 // Placement is likewise not an input contract: its check is judged after the
 // solve through domain/placement/publication, where a missing family is an
@@ -157,7 +157,7 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 	}
 	for _, packageName := range expectation.manifest.Packages {
 		switch packageName {
-		case "process", "channel":
+		case "process", "channel", "uuid":
 			// These host modules are mounted by the canonical fixture Target.
 		default:
 			unsupported = append(unsupported, fmt.Sprintf("manifest package host contract %q has no canonical require-able host module surface", packageName))
