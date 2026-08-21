@@ -63,13 +63,13 @@ type identityColumns struct {
 }
 
 type inputFormalIDRow struct {
-	id     identity.ContentID
+	index  uint32
 	op     vocabulary.Operation
 	formal vocabulary.ValueFormal
 }
 
 type outcomeResultIDRow struct {
-	id      identity.ContentID
+	index   uint32
 	op      vocabulary.Operation
 	outcome uint32
 	result  uint32

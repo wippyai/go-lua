@@ -41,8 +41,9 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operatio
 			if err != nil {
 				return err
 			}
+			idIndex := start.start + uint32(formal)
 			c.inputFormalIDs = append(c.inputFormalIDs, id)
-			c.inputFormalIndex = append(c.inputFormalIndex, inputFormalIDRow{id: id, op: op, formal: selector})
+			c.inputFormalIndex = append(c.inputFormalIndex, inputFormalIDRow{index: idIndex, op: op, formal: selector})
 		}
 		c.inputFormalRanges[operationIndex] = start
 	}
@@ -78,15 +79,16 @@ func (c *Contract) sealHostIdentityRelations(outcomeOwners []vocabulary.Operatio
 			if err != nil {
 				return err
 			}
+			idIndex := start.start + selector
 			c.outcomeResultIDs = append(c.outcomeResultIDs, id)
-			c.outcomeResultIndex = append(c.outcomeResultIndex, outcomeResultIDRow{id: id, op: owner, outcome: ordinal, result: selector})
+			c.outcomeResultIndex = append(c.outcomeResultIndex, outcomeResultIDRow{index: idIndex, op: owner, outcome: ordinal, result: selector})
 		}
 		c.outcomeResultRanges[outcomeIndex] = start
 	}
-	if err := sortInputFormalIDs(c.inputFormalIndex); err != nil {
+	if err := sortInputFormalIDs(c.inputFormalIDs, c.inputFormalIndex); err != nil {
 		return err
 	}
-	if err := sortOutcomeResultIDs(c.outcomeResultIndex); err != nil {
+	if err := sortOutcomeResultIDs(c.outcomeResultIDs, c.outcomeResultIndex); err != nil {
 		return err
 	}
 	if err := sortCallbackContentIDs(c.callbackContentIndex); err != nil {
@@ -109,19 +111,33 @@ func compareSemanticID(left, right identity.ContentID) int {
 	}
 	return 0
 }
-func sortInputFormalIDs(rows []inputFormalIDRow) error {
-	sort.Slice(rows, func(i, j int) bool { return compareSemanticID(rows[i].id, rows[j].id) < 0 })
+func sortInputFormalIDs(ids []identity.ContentID, rows []inputFormalIDRow) error {
+	for _, row := range rows {
+		if uint64(row.index) >= uint64(len(ids)) {
+			return errors.New("target: malformed semantic input formal index")
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return compareSemanticID(ids[rows[i].index], ids[rows[j].index]) < 0
+	})
 	for i := 1; i < len(rows); i++ {
-		if compareSemanticID(rows[i-1].id, rows[i].id) == 0 {
+		if compareSemanticID(ids[rows[i-1].index], ids[rows[i].index]) == 0 {
 			return errors.New("target: duplicate semantic input formal identity")
 		}
 	}
 	return nil
 }
-func sortOutcomeResultIDs(rows []outcomeResultIDRow) error {
-	sort.Slice(rows, func(i, j int) bool { return compareSemanticID(rows[i].id, rows[j].id) < 0 })
+func sortOutcomeResultIDs(ids []identity.ContentID, rows []outcomeResultIDRow) error {
+	for _, row := range rows {
+		if uint64(row.index) >= uint64(len(ids)) {
+			return errors.New("target: malformed semantic outcome result index")
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return compareSemanticID(ids[rows[i].index], ids[rows[j].index]) < 0
+	})
 	for i := 1; i < len(rows); i++ {
-		if compareSemanticID(rows[i-1].id, rows[i].id) == 0 {
+		if compareSemanticID(ids[rows[i-1].index], ids[rows[i].index]) == 0 {
 			return errors.New("target: duplicate semantic outcome result identity")
 		}
 	}
@@ -165,8 +181,14 @@ func (c *Contract) FindInputFormalID(id identity.ContentID) (vocabulary.Operatio
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, false
 	}
-	i := sort.Search(len(c.inputFormalIndex), func(i int) bool { return compareSemanticID(c.inputFormalIndex[i].id, id) >= 0 })
-	if i >= len(c.inputFormalIndex) || compareSemanticID(c.inputFormalIndex[i].id, id) != 0 {
+	i := sort.Search(len(c.inputFormalIndex), func(i int) bool {
+		row := c.inputFormalIndex[i]
+		if uint64(row.index) >= uint64(len(c.inputFormalIDs)) {
+			return true
+		}
+		return compareSemanticID(c.inputFormalIDs[row.index], id) >= 0
+	})
+	if i >= len(c.inputFormalIndex) || uint64(c.inputFormalIndex[i].index) >= uint64(len(c.inputFormalIDs)) || compareSemanticID(c.inputFormalIDs[c.inputFormalIndex[i].index], id) != 0 {
 		return 0, 0, false
 	}
 	x := c.inputFormalIndex[i]
@@ -197,8 +219,14 @@ func (c *Contract) FindOutcomeResultID(id identity.ContentID) (vocabulary.Operat
 	if c == nil || !c.sealed || !id.Available() {
 		return 0, 0, 0, false
 	}
-	i := sort.Search(len(c.outcomeResultIndex), func(i int) bool { return compareSemanticID(c.outcomeResultIndex[i].id, id) >= 0 })
-	if i >= len(c.outcomeResultIndex) || compareSemanticID(c.outcomeResultIndex[i].id, id) != 0 {
+	i := sort.Search(len(c.outcomeResultIndex), func(i int) bool {
+		row := c.outcomeResultIndex[i]
+		if uint64(row.index) >= uint64(len(c.outcomeResultIDs)) {
+			return true
+		}
+		return compareSemanticID(c.outcomeResultIDs[row.index], id) >= 0
+	})
+	if i >= len(c.outcomeResultIndex) || uint64(c.outcomeResultIndex[i].index) >= uint64(len(c.outcomeResultIDs)) || compareSemanticID(c.outcomeResultIDs[c.outcomeResultIndex[i].index], id) != 0 {
 		return 0, 0, 0, false
 	}
 	x := c.outcomeResultIndex[i]
