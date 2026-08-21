@@ -1,6 +1,10 @@
 package compiler
 
-import "fmt"
+import (
+	"fmt"
+
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
+)
 
 // CompileStage is the closed cold-compiler phase vocabulary.
 type CompileStage uint8
@@ -15,7 +19,6 @@ const (
 	CompileStageCanonicalize
 	CompileStageSeal
 	CompileStageOccurrences
-	CompileStageModule
 )
 
 func (stage CompileStage) valid() bool {
@@ -40,8 +43,6 @@ func (stage CompileStage) String() string {
 		return "seal"
 	case CompileStageOccurrences:
 		return "occurrences"
-	case CompileStageModule:
-		return "module"
 	default:
 		return "invalid"
 	}
@@ -63,12 +64,6 @@ const (
 	CompileRowOutcome
 	CompileRowReturnValue
 	CompileRowOccurrence
-	CompileRowModuleImport
-	CompileRowModuleRequest
-	CompileRowModuleEntry
-	CompileRowModuleRootCell
-	CompileRowModuleRootFunction
-	CompileRowModuleMember
 )
 
 func (kind CompileRowKind) valid() bool {
@@ -99,18 +94,6 @@ func (kind CompileRowKind) String() string {
 		return "return-value"
 	case CompileRowOccurrence:
 		return "occurrence"
-	case CompileRowModuleImport:
-		return "module-import"
-	case CompileRowModuleRequest:
-		return "module-request"
-	case CompileRowModuleEntry:
-		return "module-entry"
-	case CompileRowModuleRootCell:
-		return "module-root-cell"
-	case CompileRowModuleRootFunction:
-		return "module-root-function"
-	case CompileRowModuleMember:
-		return "module-member"
 	default:
 		return "invalid"
 	}
@@ -214,13 +197,6 @@ const (
 	CompileReasonOccurrenceIndexAppend
 	CompileReasonOccurrenceAllocation
 	CompileReasonOccurrenceCall
-	CompileReasonModuleUnavailable
-	CompileReasonModuleImport
-	CompileReasonModuleRequest
-	CompileReasonModuleEntry
-	CompileReasonModuleRootCell
-	CompileReasonModuleRootFunction
-	CompileReasonModuleMember
 )
 
 func (reason CompileReason) valid() bool {
@@ -413,20 +389,6 @@ func (reason CompileReason) String() string {
 		return "occurrence-allocation"
 	case CompileReasonOccurrenceCall:
 		return "occurrence-call"
-	case CompileReasonModuleUnavailable:
-		return "module-unavailable"
-	case CompileReasonModuleImport:
-		return "module-import"
-	case CompileReasonModuleRequest:
-		return "module-request"
-	case CompileReasonModuleEntry:
-		return "module-entry"
-	case CompileReasonModuleRootCell:
-		return "module-root-cell"
-	case CompileReasonModuleRootFunction:
-		return "module-root-function"
-	case CompileReasonModuleMember:
-		return "module-member"
 	default:
 		return "invalid"
 	}
@@ -441,6 +403,10 @@ type CompileFailure struct {
 	reason CompileReason
 	row    int
 	subrow int
+	// construction is the schema-owned refusal path used by migrated
+	// construction families. Legacy stage/kind/reason fields remain only for
+	// the not-yet-migrated compiler phases.
+	construction programconstruction.Fault
 }
 
 func compileFailure(stage CompileStage, kind CompileRowKind, row, subrow int, reason CompileReason) CompileFailure {
@@ -452,22 +418,48 @@ func compileFailure(stage CompileStage, kind CompileRowKind, row, subrow int, re
 }
 
 func (failure CompileFailure) Available() bool {
+	if failure.construction.Available() {
+		return true
+	}
 	return failure.stage.valid() && failure.kind.valid() && failure.reason.valid() && failure.row >= -1 && failure.subrow >= -1
 }
 
 func (failure CompileFailure) Stage() CompileStage     { return failure.stage }
 func (failure CompileFailure) RowKind() CompileRowKind { return failure.kind }
 func (failure CompileFailure) Reason() CompileReason   { return failure.reason }
+
+// Construction returns the schema-owned refusal when this failure belongs to
+// a migrated construction family. It is unavailable for legacy phases.
+func (failure CompileFailure) Construction() programconstruction.Fault {
+	return failure.construction
+}
 func (failure CompileFailure) Row() (int, bool) {
+	if failure.construction.Available() {
+		return failure.construction.Row()
+	}
 	return failure.row, failure.Available() && failure.row >= 0
 }
 func (failure CompileFailure) Subrow() (int, bool) {
+	if failure.construction.Available() {
+		return failure.construction.Subrow()
+	}
 	return failure.subrow, failure.Available() && failure.subrow >= 0
 }
 
 func (failure CompileFailure) Error() string {
 	if !failure.Available() {
 		return "program artifact compile succeeded"
+	}
+	if failure.construction.Available() {
+		row, rowOK := failure.construction.Row()
+		subrow, subrowOK := failure.construction.Subrow()
+		if !rowOK {
+			row = -1
+		}
+		if !subrowOK {
+			subrow = -1
+		}
+		return fmt.Sprintf("program artifact compile: family=%x issue=%s row=%d subrow=%d", failure.construction.Family(), failure.construction.Issue(), row, subrow)
 	}
 	return fmt.Sprintf("program artifact compile: stage=%s row-kind=%s row=%d subrow=%d reason=%s", failure.stage, failure.kind, failure.row, failure.subrow, failure.reason)
 }

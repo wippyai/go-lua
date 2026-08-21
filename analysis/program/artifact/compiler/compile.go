@@ -58,7 +58,7 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 		return nil, failure
 	}
 	if failure := transaction.copyModuleRowsFailure(); failure.Available() {
-		return nil, failure
+		return nil, CompileFailure{construction: failure}
 	}
 	if failure := transaction.copySubjectLivenessFailure(); failure.Available() {
 		return nil, failure
