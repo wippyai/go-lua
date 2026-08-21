@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	recordProtocol               uint64 = 17
-	recordState                  uint64 = 18
-	recordAcquisition            uint64 = 19
-	recordTransition             uint64 = 20
-	recordTransitionOutcome      uint64 = 21
-	recordEscape                 uint64 = 22
-	recordProtocolCallbackHolder uint64 = 23
+	recordProtocol               uint64 = 18
+	recordState                  uint64 = 19
+	recordAcquisition            uint64 = 20
+	recordTransition             uint64 = 21
+	recordTransitionOutcome      uint64 = 22
+	recordEscape                 uint64 = 23
+	recordProtocolCallbackHolder uint64 = 24
 )
 
 // Encode writes the protocol owner's canonical identity contribution. Record

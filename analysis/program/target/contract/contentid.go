@@ -8,6 +8,8 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// Version 26 restores the canonical protocol record framing after its
+// extraction accidentally reused the result-alias tag.
 // Version 25 carries the authored module-path-to-initial-root relation in
 // addition to the operation-owned formal ownership row and
 // the complete neutral type-contract declaration for each
@@ -23,7 +25,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 25
+const contentIDCodecVersion = 26
 
 // ContentID derives the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
