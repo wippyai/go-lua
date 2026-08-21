@@ -19,6 +19,8 @@
 // actually ships, not against an idealized one.
 package wippyv1
 
+//go:generate go run ./cmd/gendata
+
 import (
 	"github.com/wippyai/go-lua/analysis/program/target/contract"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"

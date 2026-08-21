@@ -1,0 +1,887 @@
+{
+  "path": "expr",
+  "version": "wippy-v1-host",
+  "export": {
+    "kind": "record",
+    "fields": [
+      {
+        "name": "compile",
+        "type": {
+          "kind": "function",
+          "params": [
+            {
+              "name": "text",
+              "type": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "context",
+              "type": {
+                "kind": "any"
+              },
+              "optional": true
+            }
+          ],
+          "returns": [
+            {
+              "kind": "recursive",
+              "name": "expr.Program",
+              "binder": 1,
+              "body": {
+                "kind": "interface",
+                "name": "expr.Program",
+                "methods": [
+                  {
+                    "name": "run",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        },
+                        {
+                          "name": "context",
+                          "type": {
+                            "kind": "any"
+                          },
+                          "optional": true
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "any"
+                        },
+                        {
+                          "kind": "optional",
+                          "element": {
+                            "kind": "recursive",
+                            "name": "Error",
+                            "binder": 2,
+                            "body": {
+                              "kind": "interface",
+                              "name": "Error",
+                              "methods": [
+                                {
+                                  "name": "details",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "any"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "kind",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "message",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "retryable",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "stack",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "kind": "optional",
+              "element": {
+                "kind": "recursiveRef",
+                "binder": 2
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "eval",
+        "type": {
+          "kind": "function",
+          "params": [
+            {
+              "name": "text",
+              "type": {
+                "kind": "string"
+              }
+            },
+            {
+              "name": "context",
+              "type": {
+                "kind": "any"
+              },
+              "optional": true
+            }
+          ],
+          "returns": [
+            {
+              "kind": "any"
+            },
+            {
+              "kind": "optional",
+              "element": {
+                "kind": "recursiveRef",
+                "binder": 2
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "types": [
+    {
+      "name": "Program",
+      "type": {
+        "kind": "recursive",
+        "name": "expr.Program",
+        "binder": 1,
+        "body": {
+          "kind": "interface",
+          "name": "expr.Program",
+          "methods": [
+            {
+              "name": "run",
+              "type": {
+                "kind": "function",
+                "params": [
+                  {
+                    "name": "self",
+                    "type": {
+                      "kind": "recursiveRef",
+                      "binder": 1
+                    }
+                  },
+                  {
+                    "name": "context",
+                    "type": {
+                      "kind": "any"
+                    },
+                    "optional": true
+                  }
+                ],
+                "returns": [
+                  {
+                    "kind": "any"
+                  },
+                  {
+                    "kind": "optional",
+                    "element": {
+                      "kind": "recursive",
+                      "name": "Error",
+                      "binder": 2,
+                      "body": {
+                        "kind": "interface",
+                        "name": "Error",
+                        "methods": [
+                          {
+                            "name": "details",
+                            "type": {
+                              "kind": "function",
+                              "params": [
+                                {
+                                  "name": "self",
+                                  "type": {
+                                    "kind": "recursiveRef",
+                                    "binder": 2
+                                  }
+                                }
+                              ],
+                              "returns": [
+                                {
+                                  "kind": "any"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "kind",
+                            "type": {
+                              "kind": "function",
+                              "params": [
+                                {
+                                  "name": "self",
+                                  "type": {
+                                    "kind": "recursiveRef",
+                                    "binder": 2
+                                  }
+                                }
+                              ],
+                              "returns": [
+                                {
+                                  "kind": "string"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "message",
+                            "type": {
+                              "kind": "function",
+                              "params": [
+                                {
+                                  "name": "self",
+                                  "type": {
+                                    "kind": "recursiveRef",
+                                    "binder": 2
+                                  }
+                                }
+                              ],
+                              "returns": [
+                                {
+                                  "kind": "string"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "retryable",
+                            "type": {
+                              "kind": "function",
+                              "params": [
+                                {
+                                  "name": "self",
+                                  "type": {
+                                    "kind": "recursiveRef",
+                                    "binder": 2
+                                  }
+                                }
+                              ],
+                              "returns": [
+                                {
+                                  "kind": "boolean"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "name": "stack",
+                            "type": {
+                              "kind": "function",
+                              "params": [
+                                {
+                                  "name": "self",
+                                  "type": {
+                                    "kind": "recursiveRef",
+                                    "binder": 2
+                                  }
+                                }
+                              ],
+                              "returns": [
+                                {
+                                  "kind": "string"
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "functionSignatures": [
+    {
+      "name": "Program.run",
+      "type": {
+        "kind": "function",
+        "params": [
+          {
+            "name": "self",
+            "type": {
+              "kind": "recursive",
+              "name": "expr.Program",
+              "binder": 1,
+              "body": {
+                "kind": "interface",
+                "name": "expr.Program",
+                "methods": [
+                  {
+                    "name": "run",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        },
+                        {
+                          "name": "context",
+                          "type": {
+                            "kind": "any"
+                          },
+                          "optional": true
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "any"
+                        },
+                        {
+                          "kind": "optional",
+                          "element": {
+                            "kind": "recursive",
+                            "name": "Error",
+                            "binder": 2,
+                            "body": {
+                              "kind": "interface",
+                              "name": "Error",
+                              "methods": [
+                                {
+                                  "name": "details",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "any"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "kind",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "message",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "retryable",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "boolean"
+                                      }
+                                    ]
+                                  }
+                                },
+                                {
+                                  "name": "stack",
+                                  "type": {
+                                    "kind": "function",
+                                    "params": [
+                                      {
+                                        "name": "self",
+                                        "type": {
+                                          "kind": "recursiveRef",
+                                          "binder": 2
+                                        }
+                                      }
+                                    ],
+                                    "returns": [
+                                      {
+                                        "kind": "string"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "name": "context",
+            "type": {
+              "kind": "any"
+            },
+            "optional": true
+          }
+        ],
+        "returns": [
+          {
+            "kind": "any"
+          },
+          {
+            "kind": "optional",
+            "element": {
+              "kind": "recursiveRef",
+              "binder": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "compile",
+      "type": {
+        "kind": "function",
+        "params": [
+          {
+            "name": "text",
+            "type": {
+              "kind": "string"
+            }
+          },
+          {
+            "name": "context",
+            "type": {
+              "kind": "any"
+            },
+            "optional": true
+          }
+        ],
+        "returns": [
+          {
+            "kind": "recursive",
+            "name": "expr.Program",
+            "binder": 1,
+            "body": {
+              "kind": "interface",
+              "name": "expr.Program",
+              "methods": [
+                {
+                  "name": "run",
+                  "type": {
+                    "kind": "function",
+                    "params": [
+                      {
+                        "name": "self",
+                        "type": {
+                          "kind": "recursiveRef",
+                          "binder": 1
+                        }
+                      },
+                      {
+                        "name": "context",
+                        "type": {
+                          "kind": "any"
+                        },
+                        "optional": true
+                      }
+                    ],
+                    "returns": [
+                      {
+                        "kind": "any"
+                      },
+                      {
+                        "kind": "optional",
+                        "element": {
+                          "kind": "recursive",
+                          "name": "Error",
+                          "binder": 2,
+                          "body": {
+                            "kind": "interface",
+                            "name": "Error",
+                            "methods": [
+                              {
+                                "name": "details",
+                                "type": {
+                                  "kind": "function",
+                                  "params": [
+                                    {
+                                      "name": "self",
+                                      "type": {
+                                        "kind": "recursiveRef",
+                                        "binder": 2
+                                      }
+                                    }
+                                  ],
+                                  "returns": [
+                                    {
+                                      "kind": "any"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "name": "kind",
+                                "type": {
+                                  "kind": "function",
+                                  "params": [
+                                    {
+                                      "name": "self",
+                                      "type": {
+                                        "kind": "recursiveRef",
+                                        "binder": 2
+                                      }
+                                    }
+                                  ],
+                                  "returns": [
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "name": "message",
+                                "type": {
+                                  "kind": "function",
+                                  "params": [
+                                    {
+                                      "name": "self",
+                                      "type": {
+                                        "kind": "recursiveRef",
+                                        "binder": 2
+                                      }
+                                    }
+                                  ],
+                                  "returns": [
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "name": "retryable",
+                                "type": {
+                                  "kind": "function",
+                                  "params": [
+                                    {
+                                      "name": "self",
+                                      "type": {
+                                        "kind": "recursiveRef",
+                                        "binder": 2
+                                      }
+                                    }
+                                  ],
+                                  "returns": [
+                                    {
+                                      "kind": "boolean"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "name": "stack",
+                                "type": {
+                                  "kind": "function",
+                                  "params": [
+                                    {
+                                      "name": "self",
+                                      "type": {
+                                        "kind": "recursiveRef",
+                                        "binder": 2
+                                      }
+                                    }
+                                  ],
+                                  "returns": [
+                                    {
+                                      "kind": "string"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "kind": "optional",
+            "element": {
+              "kind": "recursiveRef",
+              "binder": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "eval",
+      "type": {
+        "kind": "function",
+        "params": [
+          {
+            "name": "text",
+            "type": {
+              "kind": "string"
+            }
+          },
+          {
+            "name": "context",
+            "type": {
+              "kind": "any"
+            },
+            "optional": true
+          }
+        ],
+        "returns": [
+          {
+            "kind": "any"
+          },
+          {
+            "kind": "optional",
+            "element": {
+              "kind": "recursive",
+              "name": "Error",
+              "binder": 1,
+              "body": {
+                "kind": "interface",
+                "name": "Error",
+                "methods": [
+                  {
+                    "name": "details",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "any"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "kind",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "string"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "message",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "string"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "retryable",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "boolean"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "name": "stack",
+                    "type": {
+                      "kind": "function",
+                      "params": [
+                        {
+                          "name": "self",
+                          "type": {
+                            "kind": "recursiveRef",
+                            "binder": 1
+                          }
+                        }
+                      ],
+                      "returns": [
+                        {
+                          "kind": "string"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
