@@ -96,7 +96,7 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 			}
 		}
 	}
-	sort.Slice(d.transitions, func(i, j int) bool { return compareTransition(d.transitions[i], d.transitions[j]) < 0 })
+	sort.Slice(d.transitions, func(i, j int) bool { return compareTransitionKey(d.transitions[i], d.transitions[j]) < 0 })
 	for index := 1; index < len(d.transitions); index++ {
 		if compareTransitionKey(d.transitions[index-1], d.transitions[index]) == 0 {
 			return errors.New("target: duplicate protocol transition")
@@ -113,7 +113,7 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 		}
 		row.operation = op
 	}
-	sort.Slice(d.escapes, func(i, j int) bool { return compareEscape(d.escapes[i], d.escapes[j]) < 0 })
+	sort.Slice(d.escapes, func(i, j int) bool { return compareEscapeKey(d.escapes[i], d.escapes[j]) < 0 })
 	for index := 1; index < len(d.escapes); index++ {
 		if compareEscapeKey(d.escapes[index-1], d.escapes[index]) == 0 {
 			return errors.New("target: duplicate protocol escape")
@@ -205,42 +205,53 @@ func (d *protocolDraft) canonicalizeStates() error {
 			return err
 		}
 	}
-	type edge struct {
-		operation vocabulary.Operation
-		input     vocabulary.InputSource
-		outcome   uint32
-		to        vocabulary.State
-	}
-	outgoing := make([][]edge, len(d.states)+1)
-	for _, transition := range d.transitions {
+	// Keep only transition indexes in the temporary adjacency buckets. The
+	// transition and outcome rows themselves are already canonical and remain
+	// the single source of operation/input/outcome ordering and destinations.
+	outgoing := make([][]int, len(d.states)+1)
+	for transitionIndex := range d.transitions {
+		transition := &d.transitions[transitionIndex]
 		if transition.from == 0 || uint64(transition.from) > uint64(len(d.states)) {
 			return errors.New("target: protocol transition state outside scope")
 		}
-		for _, outcome := range transition.outcomes {
-			outgoing[transition.from] = append(outgoing[transition.from], edge{
-				operation: transition.operation, input: transition.input, outcome: outcome.outcome, to: outcome.to,
-			})
-		}
+		outgoing[transition.from] = append(outgoing[transition.from], transitionIndex)
 	}
 	// d.transitions is ordered by (operation,input,from), and every outcome
 	// vector by outcome. Filtering it into each bucket therefore already gives
 	// the required (operation,input kind,input ordinal,outcome) edge order.
 	for head := 0; head < len(queue); head++ {
 		from := queue[head]
-		for _, item := range outgoing[from] {
-			if err := assign(item.to); err != nil {
-				return err
+		for _, transitionIndex := range outgoing[from] {
+			for _, outcome := range d.transitions[transitionIndex].outcomes {
+				if err := assign(outcome.to); err != nil {
+					return err
+				}
 			}
 		}
 	}
 	if len(ordered) != len(d.states) {
 		return errors.New("target: protocol has unreachable state")
 	}
-	states := make([]stateRow, len(d.states))
-	for index, old := range ordered {
-		states[index] = d.states[uint32(old)-1]
+	// Reorder the existing state rows in place. `ordered` is the permutation
+	// from canonical position to the old local coordinate; consume it as the
+	// cycles are applied so no second state-row slice is retained.
+	for index := range d.states {
+		if ordered[index] == vocabulary.State(index+1) {
+			continue
+		}
+		temporary := d.states[index]
+		position := index
+		for {
+			source := int(ordered[position]) - 1
+			ordered[position] = vocabulary.State(position + 1)
+			if source == index {
+				d.states[position] = temporary
+				break
+			}
+			d.states[position] = d.states[source]
+			position = source
+		}
 	}
-	d.states = states
 	for index := range d.acquisitions {
 		d.acquisitions[index].state = assigned[d.acquisitions[index].state]
 	}
@@ -252,7 +263,7 @@ func (d *protocolDraft) canonicalizeStates() error {
 		}
 	}
 	sort.Slice(d.acquisitions, func(i, j int) bool { return compareAcquisition(d.acquisitions[i], d.acquisitions[j]) < 0 })
-	sort.Slice(d.transitions, func(i, j int) bool { return compareTransition(d.transitions[i], d.transitions[j]) < 0 })
+	sort.Slice(d.transitions, func(i, j int) bool { return compareTransitionKey(d.transitions[i], d.transitions[j]) < 0 })
 	return nil
 }
 
@@ -360,8 +371,6 @@ func compareTransitionKey(a, b transitionDraft) int {
 	return 0
 }
 
-func compareTransition(a, b transitionDraft) int { return compareTransitionKey(a, b) }
-
 func compareEscapeKey(a, b escapeDraft) int {
 	if a.operation != b.operation {
 		if a.operation < b.operation {
@@ -370,10 +379,6 @@ func compareEscapeKey(a, b escapeDraft) int {
 		return 1
 	}
 	return compareInputSource(a.input, b.input)
-}
-
-func compareEscape(a, b escapeDraft) int {
-	return compareEscapeKey(a, b)
 }
 
 func validAuthoredInputSource(source vocabulary.InputSource, valueFormals int, valuesVars uint32) bool {

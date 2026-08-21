@@ -37,127 +37,116 @@ func (c *Table) Encode(w *framing.Writer) error {
 }
 
 func encodeProtocol(w *framing.Writer, c *Table, protocol vocabulary.Protocol) error {
+	protocolRow, protocolOK := c.protocol(protocol)
+	if !protocolOK {
+		return errors.New("target/protocol: malformed protocol table")
+	}
 	if err := w.Record(recordProtocol); err != nil {
 		return err
 	}
 	if err := w.Uint(uint64(protocol)); err != nil {
 		return err
 	}
-	states := c.StateCount(protocol)
+	states := c.states.Count(protocolRow.states)
 	if err := w.Count(uint64(states)); err != nil {
 		return err
 	}
 	for index := 0; index < states; index++ {
-		state, ok := c.StateAt(protocol, index)
-		if !ok {
-			return errors.New("target: malformed protocol state")
-		}
-		final, found := c.StateFinal(protocol, state)
+		state, found := c.states.At(protocolRow.states, index)
 		if !found {
-			return errors.New("target: malformed state finality")
+			return errors.New("target: malformed protocol state")
 		}
 		if err := w.Record(recordState); err != nil {
 			return err
 		}
-		if err := w.Bool(final); err != nil {
+		if err := w.Bool(state.final); err != nil {
 			return err
 		}
 	}
-	acquisitions := c.ProtocolAcquisitionCount(protocol)
+	acquisitions := c.acquisitions.Count(protocolRow.acquisitions)
 	if err := w.Count(uint64(acquisitions)); err != nil {
 		return err
 	}
 	for index := 0; index < acquisitions; index++ {
-		op, outcome, result, state, ok := c.ProtocolAcquisitionAt(protocol, index)
-		if !ok {
+		acquisition, found := c.acquisitions.At(protocolRow.acquisitions, index)
+		if !found {
 			return errors.New("target: malformed acquisition")
 		}
 		if err := w.Record(recordAcquisition); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(op)); err != nil {
+		if err := w.Uint(uint64(acquisition.operation)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(outcome)); err != nil {
+		if err := w.Uint(uint64(acquisition.outcome)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(result)); err != nil {
+		if err := w.Uint(uint64(acquisition.result)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(state)); err != nil {
+		if err := w.Uint(uint64(acquisition.state)); err != nil {
 			return err
 		}
 	}
-	transitions := c.TransitionCount(protocol)
+	transitions := c.transitions.Count(protocolRow.transitions)
 	if err := w.Count(uint64(transitions)); err != nil {
 		return err
 	}
 	for index := 0; index < transitions; index++ {
-		op, kind, ordinal, from, ok := c.TransitionAt(protocol, index)
-		if !ok {
+		transition, found := c.transitions.At(protocolRow.transitions, index)
+		if !found {
 			return errors.New("target: malformed transition")
 		}
 		if err := w.Record(recordTransition); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(op)); err != nil {
+		if err := w.Uint(uint64(transition.operation)); err != nil {
 			return err
 		}
-		if err := encodeCoordinate(w, uint64(kind), uint64(ordinal)); err != nil {
+		if err := encodeCoordinate(w, uint64(transition.input.Kind), uint64(transition.input.Ordinal)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(from)); err != nil {
+		if err := w.Uint(uint64(transition.from)); err != nil {
 			return err
 		}
-		outcomes := c.TransitionOutcomeCount(protocol, index)
+		outcomes := c.transitionOutcomes.Count(transition.outcomes)
 		if err := w.Count(uint64(outcomes)); err != nil {
 			return err
 		}
 		for outcomeIndex := 0; outcomeIndex < outcomes; outcomeIndex++ {
-			outcome, to, found := c.TransitionOutcomeAt(protocol, index, outcomeIndex)
-			if !found {
+			outcome, outcomeFound := c.transitionOutcomes.At(transition.outcomes, outcomeIndex)
+			if !outcomeFound {
 				return errors.New("target: malformed transition outcome")
 			}
 			if err := w.Record(recordTransitionOutcome); err != nil {
 				return err
 			}
-			if err := w.Uint(uint64(outcome)); err != nil {
+			if err := w.Uint(uint64(outcome.outcome)); err != nil {
 				return err
 			}
-			if err := w.Uint(uint64(to)); err != nil {
+			if err := w.Uint(uint64(outcome.to)); err != nil {
 				return err
 			}
 		}
 	}
-	escapes := c.EscapeCount(protocol)
+	authoredEscapes := c.escapes.Count(protocolRow.escapes)
+	escapes := authoredEscapes + derivedProtocolEscapes
 	if err := w.Count(uint64(escapes)); err != nil {
 		return err
 	}
 	for index := 0; index < escapes; index++ {
-		op, kind, ordinal, ok := c.EscapeAt(protocol, index)
-		if !ok {
-			return errors.New("target: malformed escape")
+		var op vocabulary.Operation
+		var input vocabulary.InputSource
+		if index == authoredEscapes {
+			op, input = c.opaque, vocabulary.InputSource{Kind: vocabulary.InputSourceAllInputs}
+		} else {
+			escape, found := c.escapes.At(protocolRow.escapes, index)
+			if !found {
+				return errors.New("target: malformed escape")
+			}
+			op, input = escape.operation, escape.input
 		}
 		if err := w.Record(recordEscape); err != nil {
-			return err
-		}
-		if err := w.Uint(uint64(op)); err != nil {
-			return err
-		}
-		if err := encodeCoordinate(w, uint64(kind), uint64(ordinal)); err != nil {
-			return err
-		}
-	}
-	holders := c.ProtocolCallbackHolderCount(protocol)
-	if err := w.Count(uint64(holders)); err != nil {
-		return err
-	}
-	for index := 0; index < holders; index++ {
-		op, input, callback, ok := c.ProtocolCallbackHolderAt(protocol, index)
-		if !ok {
-			return errors.New("target: malformed protocol callback holder")
-		}
-		if err := w.Record(recordProtocolCallbackHolder); err != nil {
 			return err
 		}
 		if err := w.Uint(uint64(op)); err != nil {
@@ -166,7 +155,26 @@ func encodeProtocol(w *framing.Writer, c *Table, protocol vocabulary.Protocol) e
 		if err := encodeCoordinate(w, uint64(input.Kind), uint64(input.Ordinal)); err != nil {
 			return err
 		}
-		if err := w.Uint(uint64(callback)); err != nil {
+	}
+	holders := c.callbackHolders.Count(protocolRow.callbackHolders)
+	if err := w.Count(uint64(holders)); err != nil {
+		return err
+	}
+	for index := 0; index < holders; index++ {
+		holder, found := c.callbackHolders.At(protocolRow.callbackHolders, index)
+		if !found || holder.operation == 0 || holder.callback == 0 {
+			return errors.New("target: malformed protocol callback holder")
+		}
+		if err := w.Record(recordProtocolCallbackHolder); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(holder.operation)); err != nil {
+			return err
+		}
+		if err := encodeCoordinate(w, uint64(holder.input.Kind), uint64(holder.input.Ordinal)); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(holder.callback)); err != nil {
 			return err
 		}
 	}
