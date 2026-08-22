@@ -1,0 +1,12 @@
+{
+  "description": "The negative control for the channel lifecycle family (channel.send.closed, channel.close.closed). Every function here runs a correct channel protocol: a channel is created open, every send happens while it is provably still open, receive is permitted in every state including closed, and close is reached at most once on every path. alias_sends_before_the_single_close proves the alias propagation that makes channel-lifecycle-typestate's send_after_alias_close an error does not, by itself, manufacture one: two names for the same channel both sending before the single close is correct. conditional_send_before_close proves a send under a branch, joined with the path that does not send, stays clean. channel-lifecycle-typestate only exercises violation shapes, so nothing else in the corpus proves the channel typestate machinery does not false-positive on the straightforward correct sequence.",
+  "packages": [
+    "channel"
+  ],
+  "check": {
+    "diagnostics": []
+  },
+  "run": {
+    "skip": "diagnostic-only fixture"
+  }
+}

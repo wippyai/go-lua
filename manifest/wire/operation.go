@@ -44,6 +44,14 @@ type Operation struct {
 	// therefore an operation law, addressed the same way every other
 	// result-slot declaration on this boundary is.
 	Acquisitions []Acquisition
+	// Requirements declare the typestate states this callable reads without
+	// moving. Acquisition states where a resource comes from and a lifecycle
+	// transition states where it goes; a member that only reads one - a query
+	// on an open connection, a send on an open channel - constrains the state
+	// without changing it, and has no other row on this boundary to say so.
+	// Without this row such a member is indistinguishable from one that does
+	// not care which state it runs in, and a consumer cannot refuse the call.
+	Requirements []Requirement
 	// Behavior carries provider-owned result and predicate correspondences.
 	// The relation is deliberately a plain wire key: this package is a
 	// portable module boundary and must not import the analyzer's schema
@@ -62,6 +70,23 @@ type Operation struct {
 type Acquisition struct {
 	Outcome  uint32
 	Result   uint32
+	Protocol string
+	State    string
+}
+
+// Requirement declares that one input of this callable must be in the named
+// state of a declared typestate protocol when the call runs, and that the call
+// leaves it in that state. Input addresses the constrained argument exactly as
+// every other input-source declaration on this boundary does. Protocol must
+// name a manifest-declared typestate FSM and State one of its declared states;
+// the FSM alone decides which state may be required.
+//
+// A requirement is deliberately not a transition with equal endpoints. A
+// transition declares a move and is completed on an operation's normal arms
+// only; a requirement declares no move at all, so it constrains every arm and
+// discharges no obligation.
+type Requirement struct {
+	Input    InputSource
 	Protocol string
 	State    string
 }
@@ -646,6 +671,10 @@ func CloneOperation(in Operation) Operation {
 	sort.SliceStable(out.Acquisitions, func(left, right int) bool {
 		return compareAcquisition(out.Acquisitions[left], out.Acquisitions[right]) < 0
 	})
+	out.Requirements = append([]Requirement(nil), in.Requirements...)
+	sort.SliceStable(out.Requirements, func(left, right int) bool {
+		return compareRequirement(out.Requirements[left], out.Requirements[right]) < 0
+	})
 	if in.Behavior != nil {
 		behavior := &OperationBehavior{
 			Results:    append([]OperationResult(nil), in.Behavior.Results...),
@@ -736,6 +765,34 @@ func compareAcquisition(left, right Acquisition) int {
 	}
 	if left.Result != right.Result {
 		if left.Result < right.Result {
+			return -1
+		}
+		return 1
+	}
+	if left.Protocol != right.Protocol {
+		if left.Protocol < right.Protocol {
+			return -1
+		}
+		return 1
+	}
+	if left.State != right.State {
+		if left.State < right.State {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func compareRequirement(left, right Requirement) int {
+	if left.Input.Kind != right.Input.Kind {
+		if left.Input.Kind < right.Input.Kind {
+			return -1
+		}
+		return 1
+	}
+	if left.Input.Ordinal != right.Input.Ordinal {
+		if left.Input.Ordinal < right.Input.Ordinal {
 			return -1
 		}
 		return 1

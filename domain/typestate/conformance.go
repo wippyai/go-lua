@@ -33,3 +33,15 @@ func (d Definition) AdmitsTransition(from, to State) error {
 	}
 	return nil
 }
+
+// AdmitsRequire reports whether an operation may require a resource to be in
+// state without moving it: the required state must be declared. It is the read
+// arm of the same conformance relation AdmitsAcquire and AdmitsTransition
+// state, so a requirement is checked against the state machine rather than
+// against a member name. The returned error names the arm the usage violates.
+func (d Definition) AdmitsRequire(state State) error {
+	if !d.HasState(state) {
+		return fmt.Errorf("protocol %q does not declare required state %q", d.Protocol, state)
+	}
+	return nil
+}

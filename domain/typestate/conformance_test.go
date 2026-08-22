@@ -2,6 +2,15 @@ package typestate
 
 import "testing"
 
+func testObligation(t *testing.T, states ...State) Obligation {
+	t.Helper()
+	obligation, ok := NewObligation(states...)
+	if !ok {
+		t.Fatal("NewObligation rejected valid states")
+	}
+	return obligation
+}
+
 func conformanceFixture() Definition {
 	return Definition{
 		Protocol:    "transaction",
@@ -13,11 +22,8 @@ func conformanceFixture() Definition {
 
 func TestDefinitionAdmitsAcquireAcceptsDeclaredStateAndObligation(t *testing.T) {
 	def := conformanceFixture()
-	if err := def.AdmitsAcquire("active", Obligation{Final: "finished"}); err != nil {
+	if err := def.AdmitsAcquire("active", testObligation(t, "finished")); err != nil {
 		t.Fatalf("AdmitsAcquire(active, finished) = %v, want admitted", err)
-	}
-	if err := def.AdmitsAcquire("active", Obligation{Finals: NewFinalStates("finished")}); err != nil {
-		t.Fatalf("AdmitsAcquire(active, finals[finished]) = %v, want admitted", err)
 	}
 	if err := def.AdmitsAcquire("active", Obligation{}); err != nil {
 		t.Fatalf("AdmitsAcquire(active, no obligation) = %v, want admitted", err)
@@ -26,7 +32,7 @@ func TestDefinitionAdmitsAcquireAcceptsDeclaredStateAndObligation(t *testing.T) 
 
 func TestDefinitionAdmitsAcquireRejectsUndeclaredState(t *testing.T) {
 	def := conformanceFixture()
-	err := def.AdmitsAcquire("pending", Obligation{Final: "finished"})
+	err := def.AdmitsAcquire("pending", testObligation(t, "finished"))
 	if err == nil {
 		t.Fatal("AdmitsAcquire(pending) = nil, want rejection")
 	}
@@ -37,7 +43,7 @@ func TestDefinitionAdmitsAcquireRejectsUndeclaredState(t *testing.T) {
 
 func TestDefinitionAdmitsAcquireRejectsNonFinalObligation(t *testing.T) {
 	def := conformanceFixture()
-	err := def.AdmitsAcquire("active", Obligation{Final: "active"})
+	err := def.AdmitsAcquire("active", testObligation(t, "active"))
 	if err == nil {
 		t.Fatal("AdmitsAcquire(obligation active) = nil, want rejection")
 	}

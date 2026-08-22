@@ -113,11 +113,14 @@ func validateManifestTypestateUsage(m *Manifest) error {
 	return nil
 }
 
-// validateOperationTypestateUsage checks the acquisition rows of one operation
-// law against the declared state machines. The FSM is the sole authority on
-// which state an acquisition may create; the row itself only has to name a
-// declared protocol and a concrete state.
+// validateOperationTypestateUsage checks the acquisition and requirement rows
+// of one operation law against the declared state machines. The FSM is the sole
+// authority on which state may be created or required; a row itself only has to
+// name a declared protocol and a concrete state.
 func validateOperationTypestateUsage(defs map[typestate.Protocol]typestate.Definition, operation Operation) error {
+	if err := validateOperationRequirements(defs, operation); err != nil {
+		return err
+	}
 	for index, acquisition := range operation.Acquisitions {
 		protocol, ok := typestate.ProtocolFromString(acquisition.Protocol)
 		if !ok {
@@ -133,6 +136,34 @@ func validateOperationTypestateUsage(defs map[typestate.Protocol]typestate.Defin
 		}
 		if err := def.AdmitsAcquire(state, typestate.Obligation{}); err != nil {
 			return fmt.Errorf("acquisition %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+// validateOperationRequirements checks the requirement rows of one operation
+// law. A requirement addresses an input, so the row must name one: an
+// unaddressed requirement would constrain nothing and is refused rather than
+// carried as a row a consumer has to guess the subject of.
+func validateOperationRequirements(defs map[typestate.Protocol]typestate.Definition, operation Operation) error {
+	for index, requirement := range operation.Requirements {
+		if requirement.Input.Kind == InputSourceInvalid {
+			return fmt.Errorf("requirement %d has no input", index)
+		}
+		protocol, ok := typestate.ProtocolFromString(requirement.Protocol)
+		if !ok {
+			return fmt.Errorf("requirement %d has no protocol", index)
+		}
+		def, err := declaredTypestateProtocol(defs, protocol)
+		if err != nil {
+			return fmt.Errorf("requirement %d: %w", index, err)
+		}
+		state, ok := typestate.StateFromString(requirement.State)
+		if !ok {
+			return fmt.Errorf("requirement %d has no state", index)
+		}
+		if err := def.AdmitsRequire(state); err != nil {
+			return fmt.Errorf("requirement %d: %w", index, err)
 		}
 	}
 	return nil

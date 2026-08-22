@@ -20,8 +20,4 @@ func StateFromString(name string) (State, bool) {
 	return State(name), true
 }
 
-// OptionalStateFromString returns name as a state, preserving empty as the
-// absence of a state for optional preconditions or obligations.
-func OptionalStateFromString(name string) State { return State(name) }
-
 func (s State) String() string { return string(s) }

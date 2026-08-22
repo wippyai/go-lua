@@ -29,12 +29,3 @@ func TestStateFromStringRejectsEmptyAndPreservesNames(t *testing.T) {
 		t.Fatalf("state String() = %q", got.String())
 	}
 }
-
-func TestOptionalStateFromStringPreservesEmptyAbsence(t *testing.T) {
-	if got := OptionalStateFromString(""); got != "" {
-		t.Fatalf("OptionalStateFromString(empty) = %q, want empty", got)
-	}
-	if got := OptionalStateFromString("closed"); got.String() != "closed" {
-		t.Fatalf("OptionalStateFromString(non-empty) = %q", got.String())
-	}
-}

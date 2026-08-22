@@ -73,6 +73,9 @@ func protocols(catalogue *authoredCatalogue, declarations *manifest.Catalogue) (
 			return nil, err
 		}
 		if law, ok := declaration.Operation(); ok {
+			if err := refuseUncarriedRequirements(path, law); err != nil {
+				return nil, err
+			}
 			if err := appendAcquisitions(drafts, path, ref, law); err != nil {
 				return nil, err
 			}
@@ -99,6 +102,22 @@ func protocols(catalogue *authoredCatalogue, declarations *manifest.Catalogue) (
 		})
 	}
 	return out, nil
+}
+
+// refuseUncarriedRequirements fails a declaration whose operation law states a
+// typestate requirement. The manifest boundary accepts the row and checks it
+// against the declared state machine, but the sealed protocol vocabulary has no
+// requirement relation to carry it into, so admitting the declaration here
+// would seal a target that answers nothing about a constraint the provider
+// stated. Refusing names the missing relation instead of dropping the row.
+func refuseUncarriedRequirements(path string, law moduleio.Operation) error {
+	if len(law.Requirements) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"target catalogue: %s declares %d typestate requirement row(s); the sealed protocol vocabulary carries acquisition, transition, and escape relations only, so a requirement cannot be sealed and is refused rather than dropped",
+		path, len(law.Requirements),
+	)
 }
 
 func newProtocolDraft(definition typestate.Definition) *protocolDraft {
