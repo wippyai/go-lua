@@ -245,9 +245,9 @@ type Registration struct {
 	family schema.Key
 	id     schema.EntryID
 	// entryID is the owner-issued identity of the complete declaration. The
-	// declaration root still indexes the row by Family's generic surface key;
-	// query-site consumers use this identity so a geometry or registration
-	// change cannot reuse an old site address.
+	// declaration root still indexes the row by Family's generic surface key.
+	// Runtime consumers carry this identity as a separate sealed contract fence;
+	// semantic site addresses remain stable across declaration revisions.
 	entryID        schema.EntryID
 	digest         identity.ContentID
 	codec          identity.ContentID
@@ -485,7 +485,7 @@ func (registration *Registration) declarationComplete() bool {
 }
 
 // deriveIdentity computes the declaration digest and the one registration
-// identity that owns all query-site addresses. It deliberately does not use
+// identity that fences every query-site use. It deliberately does not use
 // the root's key-derived ID: that identity must remain resolvable by the
 // generic schema table, while this one is the sealed query contract identity.
 func (registration *Registration) deriveIdentity() (schema.EntryID, identity.ContentID, bool) {
