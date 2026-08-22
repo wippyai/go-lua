@@ -531,16 +531,58 @@ func TestZZProbeSolverLadderSiteTable(t *testing.T) {
 	t.Logf("ZZPROBE site table entries=%d", len(zzProbeSiteTable))
 }
 
-// zzProbeDumpLine is the per-fixture dump record: one line, key=value fields,
-// the failure signature last.
-func zzProbeDumpLine(sample zzProbeSolverSample) string {
-	engineDigest := sample.signature
+// zzProbeDumpCountersLine is the reproducible A/B strip: fixture class, solve
+// counters, and the failure signature. It carries no wall-clock durations.
+func zzProbeDumpCountersLine(sample zzProbeSolverSample) string {
 	return fmt.Sprintf(
-		"fixture=%s\tclass=%s\tstatus=%s\terr=%t\tsolve=%s\tcompile=%s\tseal=%s\tepochs=%d\tpasses=%d\tevaluates=%d\tfails=%d\tfolds=%d\trestarts=%d\tsig=%s\terrtext=%s",
+		"counters\tfixture=%s\tclass=%s\tstatus=%s\terr=%t\tepochs=%d\tpasses=%d\tevaluates=%d\tfails=%d\tfolds=%d\trestarts=%d\tsig=%s\terrtext=%s",
 		sample.name, zzProbeOr(sample.class, "-"), zzProbeOr(sample.status, "-"), sample.err,
-		sample.solve.Round(time.Microsecond), sample.compile.Round(time.Microsecond), sample.seal.Round(time.Microsecond),
 		sample.epochs, sample.passes, sample.evaluates, sample.evaluateFailures, sample.folds, sample.restarts,
-		engineDigest, zzProbeOr(sample.errText, "-"))
+		sample.signature, zzProbeOr(sample.errText, "-"))
+}
+
+// zzProbeDumpTimingLine is the per-fixture wall-clock line. Lanes compare the
+// counters strip, not this line.
+func zzProbeDumpTimingLine(sample zzProbeSolverSample) string {
+	return fmt.Sprintf(
+		"timing\tfixture=%s\tsolve=%s\tcompile=%s\tseal=%s",
+		sample.name,
+		sample.solve.Round(time.Microsecond),
+		sample.compile.Round(time.Microsecond),
+		sample.seal.Round(time.Microsecond),
+	)
+}
+
+// zzProbeDumpLine is the per-fixture dump record: counters then timing.
+func zzProbeDumpLine(sample zzProbeSolverSample) string {
+	return zzProbeDumpCountersLine(sample) + "\n" + zzProbeDumpTimingLine(sample)
+}
+
+func TestZZProbeDumpCountersLineIsIndependentOfTiming(t *testing.T) {
+	left := zzProbeSolverSample{
+		name: "bench/fibonacci", class: "ok", status: "complete", errText: "none",
+		signature: "sig", epochs: 2, passes: 3, evaluates: 4, evaluateFailures: 1, folds: 5, restarts: 6,
+		solve: time.Millisecond, compile: 2 * time.Millisecond, seal: 3 * time.Millisecond,
+	}
+	right := left
+	right.solve = time.Second
+	right.compile = 2 * time.Second
+	right.seal = 3 * time.Second
+	counters := zzProbeDumpCountersLine(left)
+	if counters != zzProbeDumpCountersLine(right) {
+		t.Fatal("counters line followed wall-clock durations")
+	}
+	for _, field := range []string{"solve=", "compile=", "seal="} {
+		if strings.Contains(counters, field) {
+			t.Fatalf("counters line carries %s", field)
+		}
+		if !strings.Contains(zzProbeDumpTimingLine(left), field) {
+			t.Fatalf("timing line omits %s", field)
+		}
+	}
+	if got := zzProbeDumpLine(left); got != counters+"\n"+zzProbeDumpTimingLine(left) {
+		t.Fatalf("dump record is not counters then timing: %q", got)
+	}
 }
 
 // zzProbeClassCensus names every walk class with its own count. A walk that
