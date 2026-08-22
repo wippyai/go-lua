@@ -101,6 +101,7 @@ func Prove(
 	result.flowID = flowID
 	result.staticID = staticID
 	result.moduleID = moduleID
+	result.scopeSensitiveBodies, result.scopeSensitiveAvailable = sealScopeSensitiveBodies(view, staticView, counts)
 	if err := sealStaticStructuralRoles(result, staticView, moduleView); err != nil {
 		return nil, nil, err
 	}

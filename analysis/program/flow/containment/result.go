@@ -18,12 +18,14 @@ import (
 // headers are never copied by value. The fields remain private and there is
 // no mutating or secondary view API.
 type Result struct {
-	total   uint32
-	parents [keyspace.FamilyCount][]keyspace.Term
-	roles   [keyspace.FamilyCount][]uint64
-	pre     [keyspace.FamilyCount][]uint32
-	post    [keyspace.FamilyCount][]uint32
-	static  [keyspace.FamilyCount][]uint64
+	total                   uint32
+	parents                 [keyspace.FamilyCount][]keyspace.Term
+	roles                   [keyspace.FamilyCount][]uint64
+	pre                     [keyspace.FamilyCount][]uint32
+	post                    [keyspace.FamilyCount][]uint32
+	static                  [keyspace.FamilyCount][]uint64
+	scopeSensitiveAvailable bool
+	scopeSensitiveBodies    []bool
 	// Construction-only provenance. These scalar fences are the narrow
 	// authority used by the final assembly; they retain no owner pointers or
 	// generic token.

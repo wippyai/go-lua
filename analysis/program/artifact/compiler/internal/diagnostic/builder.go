@@ -46,10 +46,6 @@ type compiler struct {
 	diagnosticObservationByID map[identity.ContentID]int
 	diagnosticEvidenceScratch map[identity.ContentID]struct{}
 	diagnosticPointScratch    []identity.ContentID
-
-	branchScopeRewriteComputed   bool
-	branchScopeRewriteWellFormed bool
-	branchScopeRewriteOwners     map[keyspace.Term]struct{}
 }
 
 // pointPaths copies one owner-issued Causal span into reusable construction

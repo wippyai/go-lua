@@ -5,8 +5,10 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
 	staticcontracts "github.com/wippyai/go-lua/analysis/program/static/contracts"
+	staticdecl "github.com/wippyai/go-lua/analysis/program/static/declarations"
 	staticoperands "github.com/wippyai/go-lua/analysis/program/static/operands"
 	statictypes "github.com/wippyai/go-lua/analysis/program/static/types"
 )
@@ -72,3 +74,84 @@ func TestProveStaticMarksCallTypeSubtreeOnly(t *testing.T) {
 // includes storage identities owned by marked Bind/Function/Loop constructs,
 // but it does not follow Write, capture-outer, or TableField reference
 // relations as expression edges.
+
+func TestScopeSensitiveBodiesUseSealedCellLabelAndStaticOwners(t *testing.T) {
+	counts := countsFor(
+		c(keyspace.FamilyBody, 6),
+		c(keyspace.FamilyCell, 1),
+		c(keyspace.FamilyNil, 1),
+		c(keyspace.FamilyValues, 1),
+		c(keyspace.FamilyBind, 1),
+		c(keyspace.FamilyLabel, 1),
+		c(keyspace.FamilyTypePrimitive, 1),
+		c(keyspace.FamilyTypeAlias, 1),
+		c(keyspace.FamilyTypeInterface, 1),
+	)
+	body := func(ordinal uint32) keyspace.Term { return keyspace.MakeTerm(keyspace.FamilyBody, ordinal) }
+	cell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
+	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
+	bind := keyspace.MakeTerm(keyspace.FamilyBind, 1)
+	nilValue := keyspace.MakeTerm(keyspace.FamilyNil, 1)
+	alias := keyspace.MakeTerm(keyspace.FamilyTypeAlias, 1)
+	iface := keyspace.MakeTerm(keyspace.FamilyTypeInterface, 1)
+	coordinate, ok := source.CoordinateFromParts(1, 1, 1, 2)
+	if !ok {
+		t.Fatal("CoordinateFromParts rejected fixture")
+	}
+	fixture := newProofFixture(t, proofSpec{
+		counts: counts,
+		rows: [][]keyspace.Term{
+			{body(2), bind},
+			{body(3), keyspace.MakeTerm(keyspace.FamilyLabel, 1)},
+			{body(4), alias},
+			{body(5), iface},
+			{body(6)},
+			nil,
+		},
+		flow: authored.Input{
+			Values: authored.ValuesInput{
+				Rows:  []authored.Value{{Owner: body(1), Fixed: authored.Range{End: 1}}},
+				Terms: []keyspace.Term{nilValue},
+			},
+			Storage: authored.StorageInput{
+				Cells: []authored.Cell{{Kind: authored.CellLocal, Body: body(1)}},
+				Binds: []authored.Bind{{Owner: body(1), Values: values}},
+			},
+			Control: authored.ControlInput{Labels: []authored.Label{{Owner: body(2)}}},
+		},
+		static: static.Input{
+			Types: statictypes.Input{Primitive: []statictypes.Primitive{{Kind: statictypes.PrimitiveAny}}},
+			Declarations: staticdecl.Input{
+				Alias: []staticdecl.TypeAlias{{
+					Owner: body(3), Target: keyspace.MakeTerm(keyspace.FamilyTypePrimitive, 1),
+					Name: 1, NameCoordinate: coordinate,
+				}},
+				Interface: []staticdecl.Interface{{Owner: body(4), Name: 2, NameCoordinate: coordinate}},
+			},
+		},
+		binds:  []source.BindCells{{Bind: bind, Cells: []keyspace.Term{cell}}},
+		module: emptyModule(t),
+	})
+	result, err := fixture.prove()
+	if err != nil {
+		t.Fatalf("Prove: %v", err)
+	}
+	for _, term := range []keyspace.Term{body(1), body(2), body(3), body(4)} {
+		if sensitive, ok := result.ScopeSensitiveBody(term); !ok || !sensitive {
+			t.Fatalf("ScopeSensitiveBody(%v) = %v/%v, want true/true", term, sensitive, ok)
+		}
+	}
+	for _, term := range []keyspace.Term{body(5), body(6)} {
+		if sensitive, ok := result.ScopeSensitiveBody(term); !ok || sensitive {
+			t.Fatalf("ScopeSensitiveBody(%v) = %v/%v, want false/true", term, sensitive, ok)
+		}
+	}
+	if allocations := testing.AllocsPerRun(100, func() {
+		_, _ = result.ScopeSensitiveBody(body(5))
+	}); allocations != 0 {
+		t.Fatalf("ScopeSensitiveBody allocated %.2f times", allocations)
+	}
+	if sensitive, ok := result.ScopeSensitiveBody(0); ok || sensitive {
+		t.Fatalf("ScopeSensitiveBody(0) = %v/%v, want false/false", sensitive, ok)
+	}
+}

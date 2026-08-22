@@ -87,7 +87,13 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 	// Branches.Get returns (owner, condition, true arm, false arm, ok).
 	owner, branchCondition, branchTrue, branchFalse, branchRelationOK := compiler.input.Program.Flow().Authored().Control().Branches().Get(decisionTerm)
 	_ = owner
-	if !branchRelationOK || !compiler.diagnosticBranchScopeRewriteSafe(branchTrue, branchFalse) {
+	containment := compiler.input.Program.Flow().Containment()
+	if !branchRelationOK || containment == nil || branchTrue == branchFalse {
+		return programconstruction.Fault{}
+	}
+	trueSensitive, trueScopeOK := containment.ScopeSensitiveBody(branchTrue)
+	falseSensitive, falseScopeOK := containment.ScopeSensitiveBody(branchFalse)
+	if !trueScopeOK || !falseScopeOK || trueSensitive || falseSensitive {
 		return programconstruction.Fault{}
 	}
 	span, spanOK := compiler.input.Program.Span(branchCondition)
@@ -112,103 +118,6 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
 	return programconstruction.Fault{}
-}
-
-// diagnosticBranchScopeRewriteSafe is the artifact builder's copy of the
-// source-rewrite eligibility law. It consumes only canonical Flow/Static
-// rows; no Source or authored term is retained after row construction.
-//
-// The predicate splits in two: a program-global well-formedness scan over
-// Flow's cells and labels and Static's aliases and interfaces (independent
-// of the route's own arms), and a per-route arm-ownership test against the
-// term set that scan collects. The scan runs once per compile and memoizes
-// on compiler; each route only pays two set lookups.
-func (compiler *compiler) diagnosticBranchScopeRewriteSafe(whenTrue, whenFalse keyspace.Term) bool {
-	if keyspace.TermFamily(whenTrue) != keyspace.FamilyBody || keyspace.TermOrdinal(whenTrue) == 0 ||
-		keyspace.TermFamily(whenFalse) != keyspace.FamilyBody || keyspace.TermOrdinal(whenFalse) == 0 || whenTrue == whenFalse {
-		return false
-	}
-	if !compiler.branchScopeRewriteComputed {
-		compiler.branchScopeRewriteWellFormed = compiler.computeBranchScopeRewriteGlobal()
-		compiler.branchScopeRewriteComputed = true
-	}
-	if !compiler.branchScopeRewriteWellFormed {
-		return false
-	}
-	if _, matched := compiler.branchScopeRewriteOwners[whenTrue]; matched {
-		return false
-	}
-	if _, matched := compiler.branchScopeRewriteOwners[whenFalse]; matched {
-		return false
-	}
-	return true
-}
-
-// computeBranchScopeRewriteGlobal runs the program-global half of
-// diagnosticBranchScopeRewriteSafe once: it validates every Cell/Label row
-// in Flow and every Alias/Interface row in Static, and collects the set of
-// owner terms (CellLocal bodies, label owners, alias owners, interface
-// owners) a route's arms are tested against. It populates
-// compiler.branchScopeRewriteOwners as a side effect even on failure, since
-// the caller only reads the set when well-formedness holds.
-func (compiler *compiler) computeBranchScopeRewriteGlobal() bool {
-	input := compiler.input
-	if !input.Available() {
-		return false
-	}
-	owners := make(map[keyspace.Term]struct{})
-	compiler.branchScopeRewriteOwners = owners
-	authoredView := input.Program.Flow().Authored()
-	cells := authoredView.Storage().Cells()
-	for index := 0; index < cells.Count(); index++ {
-		term, termOK := cells.At(index)
-		kind, body, key, rowOK := cells.Get(term)
-		if !termOK || !rowOK {
-			return false
-		}
-		switch kind {
-		case authored.CellLocal:
-			if key != 0 || keyspace.TermFamily(body) != keyspace.FamilyBody || keyspace.TermOrdinal(body) == 0 {
-				return false
-			}
-			owners[body] = struct{}{}
-		case authored.CellGlobal:
-			if body != 0 || key == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	labels := authoredView.Control().Labels()
-	for index := 0; index < labels.Count(); index++ {
-		term, termOK := labels.At(index)
-		owner, rowOK := labels.Get(term)
-		if !termOK || !rowOK {
-			return false
-		}
-		owners[owner] = struct{}{}
-	}
-	static := input.Program.Static().Declarations()
-	aliases := static.Aliases()
-	for index := 0; index < aliases.Count(); index++ {
-		term, termOK := aliases.At(index)
-		owner, _, _, _, rowOK := aliases.Get(term)
-		if !termOK || !rowOK {
-			return false
-		}
-		owners[owner] = struct{}{}
-	}
-	interfaces := static.Interfaces()
-	for index := 0; index < interfaces.Count(); index++ {
-		term, termOK := interfaces.At(index)
-		owner, _, _, rowOK := interfaces.Get(term)
-		if !termOK || !rowOK {
-			return false
-		}
-		owners[owner] = struct{}{}
-	}
-	return true
 }
 
 func (compiler *compiler) copyUnresolvedTypeObservationsFailure() programconstruction.Fault {
