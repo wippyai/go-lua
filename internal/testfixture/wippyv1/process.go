@@ -188,36 +188,44 @@ func ProcessManifest() *manifestwire.Manifest {
 		declaration.DefineFunctionSignature(name, function)
 		export = export.Field(name, members[name])
 	}
-	declaration.DefineFunctionOperation("send", manifestwire.Operation{
-		Effects: manifestwire.RowSpec{
-			Occurrences: []manifestwire.EffectSpec{{
-				Target:     "process.send",
-				ValueArgs:  []manifestwire.ValueFormal{0, 1},
-				ValuesArgs: []manifestwire.ValuesVar{0},
-				Publication: &manifestwire.PublicationEffectSpec{
-					Kind:        manifestwire.PublicationEffectSendTransfer,
-					Subject:     manifestwire.InputSource{Kind: manifestwire.InputSourceValues, Ordinal: 0},
-					Destination: manifestwire.PublicationDestinationValueFormal,
-					Context:     0,
-					Escape:      manifestwire.PublicationEscapeSendTransfer,
-					Mutability:  manifestwire.PublicationMutabilityCopyOnWrite,
-					Lifetime:    manifestwire.PublicationLifetimePreserve,
-				},
-			}},
-			Tail: manifestwire.RowClosed,
-		},
-		Transfers: []manifestwire.TransferSpec{{
-			Endpoint:     manifestwire.TransferEndpoint{Kind: manifestwire.TransferEndpointExternal},
-			Payload:      manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
-			Alias:        manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
-			Identity:     manifestwire.TransferIdentityUnspecified,
-			Capabilities: manifestwire.TransferCapabilitiesUnspecified,
-			Outcomes: []manifestwire.TransferOutcomeSpec{
-				{Outcome: 0, Possibility: manifestwire.TransferMayDeliver},
-				{Outcome: 1, Possibility: manifestwire.TransferMayReject},
+	sendLaw, sendLawOK := manifestwire.ValueErrorOperation(errorType, signature.Function{Type: members["send"]})
+	if !sendLawOK {
+		panic("wippyv1: process.send value/error outcomes")
+	}
+	sendLaw.Effects = manifestwire.RowSpec{
+		Occurrences: []manifestwire.EffectSpec{{
+			Target:     "process.send",
+			ValueArgs:  []manifestwire.ValueFormal{0, 1},
+			ValuesArgs: []manifestwire.ValuesVar{0},
+			Publication: &manifestwire.PublicationEffectSpec{
+				Kind:        manifestwire.PublicationEffectSendTransfer,
+				Subject:     manifestwire.InputSource{Kind: manifestwire.InputSourceValues, Ordinal: 0},
+				Destination: manifestwire.PublicationDestinationValueFormal,
+				Context:     0,
+				Escape:      manifestwire.PublicationEscapeSendTransfer,
+				Mutability:  manifestwire.PublicationMutabilityCopyOnWrite,
+				Lifetime:    manifestwire.PublicationLifetimePreserve,
 			},
 		}},
-	})
+		Tail: manifestwire.RowClosed,
+	}
+	sendLaw.Transfers = []manifestwire.TransferSpec{{
+		Endpoint:     manifestwire.TransferEndpoint{Kind: manifestwire.TransferEndpointExternal},
+		Payload:      manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
+		Alias:        manifestwire.InputSource{Kind: manifestwire.InputSourceValues},
+		Identity:     manifestwire.TransferIdentityUnspecified,
+		Capabilities: manifestwire.TransferCapabilitiesUnspecified,
+		// send answers the module's value/error pair, so its sealed outcome set
+		// is the throw arm followed by the two correlated normal arms. A send
+		// that raises delivered nothing, the arm answering true with no error
+		// delivered, and the arm answering the error rejected.
+		Outcomes: []manifestwire.TransferOutcomeSpec{
+			{Outcome: 0, Possibility: manifestwire.TransferMayReject},
+			{Outcome: 1, Possibility: manifestwire.TransferMayDeliver},
+			{Outcome: 2, Possibility: manifestwire.TransferMayReject},
+		},
+	}}
+	declaration.DefineFunctionOperation("send", sendLaw)
 	declaration.SetExport(export.Build())
 	return declaration
 }

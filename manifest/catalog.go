@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/wippyai/go-lua/domain/effect"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/domain/type/unwrap"
 	"github.com/wippyai/go-lua/domain/typestate"
@@ -92,6 +93,29 @@ func (f Function) Operation() (moduleio.Operation, bool) {
 		return moduleio.Operation{}, false
 	}
 	return moduleio.CloneOperation(f.operation), true
+}
+
+// Amend returns a copy of this function carrying composition-owned additions:
+// extra signature effect labels and, optionally, an operational law.
+//
+// It exists because a composition may mount a reference manifest it does not
+// author and still owe its corpus a consequence the reference does not state.
+// The reference declaration stays exactly as its provider wrote it; the
+// amendment is a separate, named act by the composition that applies it. An
+// amendment may not overwrite a law the provider already declared, because
+// that would make two authorities answer for one boundary.
+func (f Function) Amend(labels []effect.Label, law moduleio.Operation, hasLaw bool) (Function, error) {
+	if hasLaw && f.hasOperation {
+		return Function{}, fmt.Errorf("manifest: %s already declares an operational law", f.canonicalPath)
+	}
+	out := f.clone()
+	if len(labels) != 0 {
+		out.signature.Effect = out.signature.Effect.With(labels...)
+	}
+	if hasLaw {
+		out.operation, out.hasOperation = moduleio.CloneOperation(law), true
+	}
+	return out, nil
 }
 
 // Binding is one Lua-visible spelling of a callable identity.
@@ -250,6 +274,7 @@ func Seal(input ...Provider) (*Catalogue, error) {
 			}
 		}
 
+		errorType := owned.ScopedErrorType()
 		for local, function := range owned.FunctionSignatures {
 			if _, alias := owned.FunctionAliases[local]; alias {
 				continue
@@ -262,12 +287,17 @@ func Seal(input ...Provider) (*Catalogue, error) {
 				return nil, fmt.Errorf("manifest: duplicate function path %q", name)
 			}
 			catalogue.byFunctionPath[name] = len(catalogue.functions)
-			operation, specialized := owned.FunctionOperations[local]
+			scoped := owned.ScopeSignature(function)
+			declared, specialized := owned.FunctionOperations[local]
+			operation, specialized, err := correlatedOperation(name, errorType, scoped, declared, specialized)
+			if err != nil {
+				return nil, err
+			}
 			catalogue.functions = append(catalogue.functions, Function{
 				providerID:    item.Identity,
 				bindings:      []Binding{{mount: item.Mount, modulePath: owned.Path, member: strings.Split(local, ".")}},
 				canonicalPath: name,
-				signature:     owned.ScopeSignature(function),
+				signature:     scoped,
 				operation:     moduleio.CloneOperation(operation),
 				hasOperation:  specialized,
 			})
@@ -281,10 +311,15 @@ func Seal(input ...Provider) (*Catalogue, error) {
 			if !specialized {
 				return nil, fmt.Errorf("manifest: detached function %q has no operation", name)
 			}
+			scoped := owned.ScopeSignature(function)
+			operation, _, err := correlatedOperation(name, errorType, scoped, operation, true)
+			if err != nil {
+				return nil, err
+			}
 			catalogue.byFunctionPath[name] = len(catalogue.functions)
 			catalogue.functions = append(catalogue.functions, Function{
 				providerID: item.Identity, canonicalPath: name,
-				signature: owned.ScopeSignature(function), operation: moduleio.CloneOperation(operation), hasOperation: true,
+				signature: scoped, operation: moduleio.CloneOperation(operation), hasOperation: true,
 			})
 		}
 
@@ -374,6 +409,41 @@ func (c *Catalogue) InitialEnvironments() []InitialEnvironment {
 		})
 	}
 	return out
+}
+
+// correlatedOperation answers the operational law one callable is sealed
+// with. A module that names its error type states that a trailing optional
+// error is the error half of a value/error pair, and the correlation between
+// the two halves is derived here so no provider has to tag it member by
+// member.
+//
+// A law that states its own normal arms answers for the correlation itself
+// and is returned untouched. A law that states none receives the derived
+// arms. A law that states none and addresses outcomes by ordinal is refused:
+// the derived arms renumber the outcome set it was written against, and
+// dropping them would drop a correlation the module declared.
+func correlatedOperation(
+	path string, errorType typ.Type, sig signature.Function, law moduleio.Operation, declared bool,
+) (moduleio.Operation, bool, error) {
+	if declared && law.AuthorsNormalArms() {
+		return law, true, nil
+	}
+	derived, ok := moduleio.ValueErrorOperation(errorType, sig)
+	if !ok {
+		return law, declared, nil
+	}
+	if !declared {
+		return derived, true, nil
+	}
+	if law.AddressesOutcomes() {
+		return moduleio.Operation{}, false, fmt.Errorf(
+			"manifest: %s answers the module value/error pair and declares an operation addressing outcomes by ordinal; state its normal arms in that operation",
+			path,
+		)
+	}
+	law.ReplaceNormalSet = derived.ReplaceNormalSet
+	law.ReplaceNormal = derived.ReplaceNormal
+	return law, true, nil
 }
 
 func clone(input *moduleio.Manifest) (*moduleio.Manifest, error) {

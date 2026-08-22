@@ -44,25 +44,27 @@ func TestProductionOptionalReturnsKeepTheirNilability(t *testing.T) {
 		{module: "http", member: "MultipartFile.header", index: 0},
 	} {
 		t.Run(probe.module+"."+probe.member, func(t *testing.T) {
-			declared := normalReturn(t, target, memberBinding(probe.module, probe.member), probe.index)
-			if typ.MayRuntimeKinds(declared)&runtimekind.Bit(runtimekind.Nil) == 0 {
-				t.Fatalf("%s.%s is declared to answer an optional; the sealed Target publishes %s, so every caller reads a nil-free proof the module never gave",
-					probe.module, probe.member, declared)
+			for arm, declared := range normalReturns(t, target, memberBinding(probe.module, probe.member), probe.index) {
+				if typ.MayRuntimeKinds(declared)&runtimekind.Bit(runtimekind.Nil) == 0 {
+					t.Fatalf("%s.%s is declared to answer an optional; the sealed Target publishes %s on normal arm %d, so every caller reads a nil-free proof the module never gave",
+						probe.module, probe.member, declared, arm)
+				}
 			}
 		})
 	}
 }
 
-// normalReturn projects one sealed operation's single normal outcome value back
-// into a static type through the published Target query surface only.
-func normalReturn(t *testing.T, sealed *contract.Contract, binding vocabulary.BindingSpec, index int) typ.Type {
+// normalReturns projects one sealed operation's normal outcome values back
+// into static types through the published Target query surface only. A
+// fallible member answers two correlated normal arms, and the declaration owes
+// its nilability on each of them.
+func normalReturns(t *testing.T, sealed *contract.Contract, binding vocabulary.BindingSpec, index int) []typ.Type {
 	t.Helper()
 	operation, ok := sealed.Operations.Lookup(binding)
 	if !ok {
 		t.Fatalf("sealed target has no operation for %+v", binding)
 	}
-	found := false
-	var selected vocabulary.Values
+	var out []typ.Type
 	for outcome := 0; outcome < sealed.Operations.OutcomeCount(operation); outcome++ {
 		kind, values, ok := sealed.Operations.OutcomeAt(operation, outcome)
 		if !ok {
@@ -71,25 +73,22 @@ func normalReturn(t *testing.T, sealed *contract.Contract, binding vocabulary.Bi
 		if kind != flowkind.OutcomeNormal {
 			continue
 		}
-		if found {
-			t.Fatalf("operation %+v publishes more than one normal outcome; this probe measures the single-outcome declaration", binding)
+		valueType, ok := sealed.Operations.ValuesAt(values, index)
+		if !ok {
+			t.Fatalf("operation %+v normal value %d unavailable", binding, index)
 		}
-		selected, found = values, true
+		declaration, ok := sealed.Operations.TypeDeclaration(valueType)
+		if !ok {
+			t.Fatalf("operation %+v normal value %d publishes no type declaration", binding, index)
+		}
+		decoded, err := domaincontract.Decode(context.Background(), declaration, nil)
+		if err != nil || decoded == nil {
+			t.Fatalf("decode operation %+v normal value %d: %v", binding, index, err)
+		}
+		out = append(out, decoded)
 	}
-	if !found {
+	if len(out) == 0 {
 		t.Fatalf("operation %+v publishes no normal outcome", binding)
 	}
-	valueType, ok := sealed.Operations.ValuesAt(selected, index)
-	if !ok {
-		t.Fatalf("operation %+v normal value %d unavailable", binding, index)
-	}
-	declaration, ok := sealed.Operations.TypeDeclaration(valueType)
-	if !ok {
-		t.Fatalf("operation %+v normal value %d publishes no type declaration", binding, index)
-	}
-	decoded, err := domaincontract.Decode(context.Background(), declaration, nil)
-	if err != nil || decoded == nil {
-		t.Fatalf("decode operation %+v normal value %d: %v", binding, index, err)
-	}
-	return decoded
+	return out
 }

@@ -21,12 +21,8 @@ import (
 // applies only operational laws: alternative outcomes, callbacks,
 // yield/resume, allocation identity, aliases, and rule delegation. Parameter
 // and return declarations are never authored here.
-func operations(declarations *manifest.Catalogue) (authoredCatalogue, error) {
-	if declarations == nil {
-		return authoredCatalogue{}, fmt.Errorf("target: nil declaration catalogue")
-	}
+func operations(functions []manifest.Function) (authoredCatalogue, error) {
 	var catalogue authoredCatalogue
-	functions := declarations.Functions()
 	for _, declaration := range functions {
 		operation, lifecycles, err := operationFromManifest(declaration)
 		if err != nil {

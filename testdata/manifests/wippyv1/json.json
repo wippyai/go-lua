@@ -246,6 +246,118 @@
       }
     ]
   },
+  "errorType": {
+    "kind": "recursive",
+    "integrity": "sha256/1:746e1370aa34d313021c8710d9c1868aed3ddc091b85096c84aaddc3307b5aa2",
+    "name": "Error",
+    "binder": 1,
+    "body": {
+      "kind": "interface",
+      "name": "Error",
+      "methods": [
+        {
+          "name": "details",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "any"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        },
+        {
+          "name": "retryable",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "boolean"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stack",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
   "functionSignatures": [
     {
       "name": "decode",

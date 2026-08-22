@@ -302,6 +302,13 @@ func encodeWire(m *Manifest) (*manifestWire, error) {
 		}
 		wm.Export = export
 	}
+	if m.ErrorType != nil {
+		errorType, err := wire.EncodeType(m.ErrorType)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: encode error type: %w", err)
+		}
+		wm.ErrorType = errorType
+	}
 
 	if len(m.Types) > 0 {
 		names := make([]string, 0, len(m.Types))
@@ -486,6 +493,13 @@ func Decode(data []byte) (decoded *Manifest, err error) {
 		}
 		m.Export = export
 	}
+	if wm.ErrorType != nil {
+		errorType, err := wire.DecodeType(wm.ErrorType)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: decode error type: %w", err)
+		}
+		m.ErrorType = errorType
+	}
 
 	for _, named := range wm.Types {
 		t, err := wire.DecodeType(named.Type)
@@ -554,6 +568,7 @@ type manifestWire struct {
 	Version                    string                          `json:"version,omitempty"`
 	SchemaRevision             uint8                           `json:"schemaRevision,omitempty"`
 	Export                     *wire.TypeWire                  `json:"export,omitempty"`
+	ErrorType                  *wire.TypeWire                  `json:"errorType,omitempty"`
 	Types                      []namedTypeWire                 `json:"types,omitempty"`
 	GlobalTypes                []namedTypeWire                 `json:"globalTypes,omitempty"`
 	TypestateProtocols         []typestateProtocolWire         `json:"typestateProtocols,omitempty"`

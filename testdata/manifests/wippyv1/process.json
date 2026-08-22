@@ -1,6 +1,7 @@
 {
   "path": "process",
   "version": "wippy-v1-host",
+  "schemaRevision": 2,
   "export": {
     "kind": "record",
     "integrity": "sha256/1:03ca9ebfafc3c62534f4830e9b7074487319f2881c91ab2ecf45df463d31d9ac",
@@ -1506,6 +1507,118 @@
         }
       }
     ]
+  },
+  "errorType": {
+    "kind": "recursive",
+    "integrity": "sha256/1:746e1370aa34d313021c8710d9c1868aed3ddc091b85096c84aaddc3307b5aa2",
+    "name": "Error",
+    "binder": 1,
+    "body": {
+      "kind": "interface",
+      "name": "Error",
+      "methods": [
+        {
+          "name": "details",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "any"
+              }
+            ]
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        },
+        {
+          "name": "message",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        },
+        {
+          "name": "retryable",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "boolean"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stack",
+          "type": {
+            "kind": "function",
+            "params": [
+              {
+                "name": "self",
+                "type": {
+                  "kind": "recursiveRef",
+                  "binder": 1
+                }
+              }
+            ],
+            "returns": [
+              {
+                "kind": "string"
+              }
+            ]
+          }
+        }
+      ]
+    }
   },
   "types": [
     {
@@ -10174,6 +10287,14 @@
             }
           }
         ]
+      },
+      "effect": {
+        "labels": [
+          {
+            "kind": "ownership.send",
+            "fromParam": 2
+          }
+        ]
       }
     },
     {
@@ -12626,6 +12747,231 @@
             }
           }
         ]
+      }
+    }
+  ],
+  "functionOperations": [
+    {
+      "name": "send",
+      "operation": {
+        "Replace": false,
+        "SelfEffect": false,
+        "ValuesVars": 0,
+        "Input": {
+          "tail": 0
+        },
+        "Outcomes": null,
+        "Callbacks": null,
+        "Subedges": null,
+        "Suspensions": null,
+        "Spawns": null,
+        "Resumes": null,
+        "SubedgeRelation": null,
+        "Effects": {
+          "Occurrences": [
+            {
+              "Target": "process.send",
+              "ValueArgs": [
+                0,
+                1
+              ],
+              "TypeArgs": null,
+              "ValuesArgs": [
+                0
+              ],
+              "RowArgs": null,
+              "Publication": {
+                "Kind": 1,
+                "Subject": {
+                  "Kind": 2,
+                  "Ordinal": 0
+                },
+                "Destination": 2,
+                "Context": 0,
+                "Escape": 2,
+                "Mutability": 4,
+                "Lifetime": 1
+              }
+            }
+          ],
+          "Tail": 1,
+          "Var": 0
+        },
+        "AppendNormal": null,
+        "ReplaceNormal": [
+          {
+            "fixed": [
+              {
+                "kind": "boolean",
+                "integrity": "sha256/1:bfab92eeda21b51b5f81b6382eb0047d51cd24d0099191bc0f693b84f5206c01"
+              },
+              {
+                "kind": "nil",
+                "integrity": "sha256/1:de1b7b6b3e93093eb6646ff3d1c9e1404bef56ab18d6b7cf5923af27401ca833"
+              }
+            ],
+            "tail": 1
+          },
+          {
+            "fixed": [
+              {
+                "kind": "nil",
+                "integrity": "sha256/1:de1b7b6b3e93093eb6646ff3d1c9e1404bef56ab18d6b7cf5923af27401ca833"
+              },
+              {
+                "kind": "recursive",
+                "integrity": "sha256/1:746e1370aa34d313021c8710d9c1868aed3ddc091b85096c84aaddc3307b5aa2",
+                "name": "Error",
+                "binder": 1,
+                "body": {
+                  "kind": "interface",
+                  "name": "Error",
+                  "methods": [
+                    {
+                      "name": "details",
+                      "type": {
+                        "kind": "function",
+                        "params": [
+                          {
+                            "name": "self",
+                            "type": {
+                              "kind": "recursiveRef",
+                              "binder": 1
+                            }
+                          }
+                        ],
+                        "returns": [
+                          {
+                            "kind": "any"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "kind",
+                      "type": {
+                        "kind": "function",
+                        "params": [
+                          {
+                            "name": "self",
+                            "type": {
+                              "kind": "recursiveRef",
+                              "binder": 1
+                            }
+                          }
+                        ],
+                        "returns": [
+                          {
+                            "kind": "string"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "message",
+                      "type": {
+                        "kind": "function",
+                        "params": [
+                          {
+                            "name": "self",
+                            "type": {
+                              "kind": "recursiveRef",
+                              "binder": 1
+                            }
+                          }
+                        ],
+                        "returns": [
+                          {
+                            "kind": "string"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "retryable",
+                      "type": {
+                        "kind": "function",
+                        "params": [
+                          {
+                            "name": "self",
+                            "type": {
+                              "kind": "recursiveRef",
+                              "binder": 1
+                            }
+                          }
+                        ],
+                        "returns": [
+                          {
+                            "kind": "boolean"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "stack",
+                      "type": {
+                        "kind": "function",
+                        "params": [
+                          {
+                            "name": "self",
+                            "type": {
+                              "kind": "recursiveRef",
+                              "binder": 1
+                            }
+                          }
+                        ],
+                        "returns": [
+                          {
+                            "kind": "string"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "tail": 1
+          }
+        ],
+        "ReplaceNormalSet": true,
+        "OutcomeTailTypes": null,
+        "OutcomeAmendments": null,
+        "Transfers": [
+          {
+            "Endpoint": {
+              "Kind": 2,
+              "Input": 0
+            },
+            "Payload": {
+              "Kind": 2,
+              "Ordinal": 0
+            },
+            "Alias": {
+              "Kind": 2,
+              "Ordinal": 0
+            },
+            "Identity": 1,
+            "Capabilities": 1,
+            "Outcomes": [
+              {
+                "Outcome": 0,
+                "Possibility": 2
+              },
+              {
+                "Outcome": 1,
+                "Possibility": 1
+              },
+              {
+                "Outcome": 2,
+                "Possibility": 2
+              }
+            ]
+          }
+        ],
+        "Acquisitions": null,
+        "Requirements": null,
+        "wireRevision": 2
       }
     }
   ]

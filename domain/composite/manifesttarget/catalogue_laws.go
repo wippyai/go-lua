@@ -18,23 +18,75 @@ import (
 	"github.com/wippyai/go-lua/domain/type/typ"
 	domaincontract "github.com/wippyai/go-lua/domain/type/typecontract"
 	"github.com/wippyai/go-lua/manifest"
+	moduleio "github.com/wippyai/go-lua/manifest/wire"
 )
+
+// PreviewAmendment is one composition-owned addition to a reference operation
+// the composition mounts but does not author.
+//
+// A module path belongs to exactly one declaring provider, so a composition
+// that needs a consequence its reference manifest does not state cannot answer
+// by declaring the path twice. It states the addition here instead, against
+// the reference operation's canonical path. Effect carries signature-level
+// ownership labels; Law carries the operational envelope. Naming an operation
+// the catalogue does not hold is a composition error, not a silent no-op.
+type PreviewAmendment struct {
+	Operation string
+	Effect    []effect.Label
+	Law       moduleio.Operation
+	HasLaw    bool
+}
 
 // SealCatalogue is the sole manifest-to-analysis entry point. Providers own
 // declarations; target only validates and freezes their analysis projection.
-func SealCatalogue(declarations *manifest.Catalogue) (*contract.Contract, error) {
-	spec, err := compileCatalogue(declarations)
+// Preview amendments are applied to the reference declarations they name
+// before any projection is derived from them.
+func SealCatalogue(declarations *manifest.Catalogue, amendments ...PreviewAmendment) (*contract.Contract, error) {
+	spec, err := compileCatalogue(declarations, amendments...)
 	if err != nil {
 		return nil, err
 	}
 	return compiler.Seal(&spec)
 }
 
+// amendedFunctions applies every preview amendment onto the reference
+// declaration it names and returns the complete function set the projection
+// is derived from.
+func amendedFunctions(declarations *manifest.Catalogue, amendments []PreviewAmendment) ([]manifest.Function, error) {
+	functions := declarations.Functions()
+	if len(amendments) == 0 {
+		return functions, nil
+	}
+	byPath := make(map[string]int, len(functions))
+	for index, function := range functions {
+		byPath[function.CanonicalPath()] = index
+	}
+	for _, amendment := range amendments {
+		index, ok := byPath[amendment.Operation]
+		if !ok {
+			return nil, fmt.Errorf("target catalogue: preview amendment names unknown operation %q", amendment.Operation)
+		}
+		amended, err := functions[index].Amend(amendment.Effect, amendment.Law, amendment.HasLaw)
+		if err != nil {
+			return nil, fmt.Errorf("target catalogue: preview amendment for %q: %w", amendment.Operation, err)
+		}
+		functions[index] = amended
+	}
+	return functions, nil
+}
+
 // compileCatalogue returns the one-shot authored form used by compiler.Seal. It is
 // exposed for contract-law tests and tools that need to inspect the projection
 // before it becomes immutable.
-func compileCatalogue(declarations *manifest.Catalogue) (declaration.Spec, error) {
-	catalogue, err := operations(declarations)
+func compileCatalogue(declarations *manifest.Catalogue, amendments ...PreviewAmendment) (declaration.Spec, error) {
+	if declarations == nil {
+		return declaration.Spec{}, fmt.Errorf("target: nil declaration catalogue")
+	}
+	functions, err := amendedFunctions(declarations, amendments)
+	if err != nil {
+		return declaration.Spec{}, err
+	}
+	catalogue, err := operations(functions)
 	if err != nil {
 		return declaration.Spec{}, err
 	}
@@ -45,7 +97,7 @@ func compileCatalogue(declarations *manifest.Catalogue) (declaration.Spec, error
 	if err != nil {
 		return declaration.Spec{}, err
 	}
-	protocolSpecs, err := protocols(&catalogue, declarations)
+	protocolSpecs, err := protocols(&catalogue, functions, declarations)
 	if err != nil {
 		return declaration.Spec{}, err
 	}

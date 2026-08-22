@@ -53,7 +53,7 @@ type protocolDraft struct {
 // operation laws own acquisition, and signature lifecycle labels own the
 // transition and escape relations. Nothing here is derived from a member name,
 // a return type, or a provider identity.
-func protocols(catalogue *authoredCatalogue, declarations *manifest.Catalogue) ([]vocabulary.ProtocolSpec, error) {
+func protocols(catalogue *authoredCatalogue, functions []manifest.Function, declarations *manifest.Catalogue) ([]vocabulary.ProtocolSpec, error) {
 	definitions := declarations.TypestateProtocols()
 	if len(definitions) == 0 {
 		return nil, nil
@@ -66,7 +66,7 @@ func protocols(catalogue *authoredCatalogue, declarations *manifest.Catalogue) (
 	}
 	sort.Slice(names, func(left, right int) bool { return names[left] < names[right] })
 
-	for _, declaration := range declarations.Functions() {
+	for _, declaration := range functions {
 		path := declaration.CanonicalPath()
 		ref, err := catalogue.require(path)
 		if err != nil {

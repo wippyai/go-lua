@@ -75,14 +75,25 @@ func TestStandardLibraryTargetProcessSendCarriesTransferAndFormalSend(t *testing
 	if identity != vocabulary.TransferIdentityUnspecified || capabilities != vocabulary.TransferCapabilitiesUnspecified {
 		t.Fatalf("process.send relation = identity %d, capabilities %d", identity, capabilities)
 	}
-	if got := contract.Operations.TransferOutcomeCount(op, 0); got != 2 {
-		t.Fatalf("process.send transfer outcome count = %d, want 2", got)
+	// send answers the module's value/error pair, so its sealed outcome set is
+	// the throw arm followed by the two correlated normal arms, and its
+	// transfer states a possibility for each: only the arm that answered true
+	// with no error delivered.
+	if got := contract.Operations.TransferOutcomeCount(op, 0); got != 3 {
+		t.Fatalf("process.send transfer outcome count = %d, want the throw arm and both correlated normal arms", got)
 	}
-	if _, possibility, ok := contract.Operations.TransferOutcomeAt(op, 0, 0); !ok || possibility != vocabulary.TransferMayDeliver {
-		t.Fatalf("process.send normal transfer outcome = %d/%v, want deliver", possibility, ok)
-	}
-	if _, possibility, ok := contract.Operations.TransferOutcomeAt(op, 0, 1); !ok || possibility != vocabulary.TransferMayReject {
-		t.Fatalf("process.send throw transfer outcome = %d/%v, want reject", possibility, ok)
+	for _, want := range []struct {
+		outcome     int
+		arm         string
+		possibility vocabulary.TransferPossibility
+	}{
+		{outcome: 0, arm: "throw", possibility: vocabulary.TransferMayReject},
+		{outcome: 1, arm: "value", possibility: vocabulary.TransferMayDeliver},
+		{outcome: 2, arm: "error", possibility: vocabulary.TransferMayReject},
+	} {
+		if _, possibility, ok := contract.Operations.TransferOutcomeAt(op, 0, want.outcome); !ok || possibility != want.possibility {
+			t.Fatalf("process.send %s arm transfer outcome = %d/%v, want %d", want.arm, possibility, ok, want.possibility)
+		}
 	}
 	if got := contract.Operations.FormalEffectCount(op); got != 1 {
 		t.Fatalf("process.send formal effect count = %d, want 1", got)

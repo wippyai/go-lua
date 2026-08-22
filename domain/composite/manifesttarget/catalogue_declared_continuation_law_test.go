@@ -380,97 +380,213 @@ func TestManifestCaptureOrdinalsAddressDeclaredCoordinates(t *testing.T) {
 	}
 }
 
-// argumentSuffixHostManifest declares a target-machine application whose
-// operand vector has both a fixed prefix and a suffix. The suffix segment is
-// the one the wire ArgumentSegment vocabulary reaches only through
-// ArgumentSuffix: a fixed operand is addressed by its prefix index and an open
-// tail by its variable, so an operand that sits after the prefix but is still
-// exactly typed has no other spelling.
-// argumentSuffixOrigin addresses one operand in the subedge's suffix segment.
-// The operation's own rule supplies it, so it names no declared input.
-func argumentSuffixOrigin(index uint32) manifestwire.ArgumentOrigin {
-	return manifestwire.ArgumentOrigin{
-		Segment: manifestwire.ArgumentSuffix, Index: index, Kind: manifestwire.ArgumentSourceRule,
-	}
-}
-
-func argumentSuffixHostManifest(suffix manifestwire.ArgumentOrigin) *manifestwire.Manifest {
+// A Lua Values relation is a fixed prefix, an optional variable-length middle,
+// and an end-anchored suffix. ArgumentSuffix is the argument coordinate for
+// that last segment: the operands a native rule places after the caller's
+// forwarded pack, counted from the end of the applied vector. A prefix operand
+// is addressed by its index and the pack by its variable, so an operand that
+// sits behind a variable-length middle has no other spelling, and without it
+// an argument vector carrying one could never receive the complete origin set
+// every applied vector requires.
+//
+// The segment is meaningful only behind a variable middle. A closed vector has
+// no end-relative coordinate, so the seal canonicalizes its authored suffix
+// into the prefix and the same operand is then addressed as ArgumentFixed.
+//
+// suffixApplicationHostManifest declares one host member that applies its
+// callback with exactly that shape: the caller's subject, the caller's
+// forwarded pack, and one trailing operand the member's own rule constructs.
+func suffixApplicationHostManifest(mutate func(*manifestwire.Operation)) *manifestwire.Manifest {
 	declaration := manifestwire.New(relationHostModule)
-	memberType := typ.Func().Param("subject", typ.Any).Returns(typ.Any).Build()
-	declaration.DefineFunctionSignature("indexes", signature.Function{Type: memberType})
-	arguments := manifestwire.Values{
-		Fixed:  []typ.Type{typ.Any},
-		Suffix: []typ.Type{typ.Any},
-		Tail:   manifestwire.ValuesClosed,
+	callbackType := typ.Func().Param("subject", typ.Any).Variadic(typ.Any).Returns(typ.Any).Build()
+	memberType := typ.Func().
+		Param("handler", callbackType).Param("subject", typ.Number).Variadic(typ.Any).Returns(typ.Any).Build()
+	declaration.DefineFunctionSignature("folds", signature.Function{Type: memberType})
+	subedge := syncCallbackSubedge(1, 2)
+	subedge.RuleEntry = false
+	subedge.ArgumentOrigins = []manifestwire.ArgumentOrigin{
+		{Segment: manifestwire.ArgumentFixed, Index: 0, Kind: manifestwire.ArgumentSourceInput,
+			Source: manifestwire.InputSource{Kind: manifestwire.InputSourceValue, Ordinal: 1}},
+		{Segment: manifestwire.ArgumentTail, Index: 0, Kind: manifestwire.ArgumentSourceInput,
+			Source: manifestwire.InputSource{Kind: manifestwire.InputSourceValues, Ordinal: 0}},
+		{Segment: manifestwire.ArgumentSuffix, Index: 0, Kind: manifestwire.ArgumentSourceRule},
 	}
-	declaration.DefineFunctionOperation("indexes", manifestwire.Operation{
-		Replace: true,
-		Input:   manifestwire.Values{Fixed: []typ.Type{typ.Any}, Tail: manifestwire.ValuesClosed},
+	operation := manifestwire.Operation{
+		Replace:    true,
+		ValuesVars: 1,
+		Input: manifestwire.Values{
+			Fixed: []typ.Type{callbackType, typ.Number}, Tail: manifestwire.ValuesVariable, Var: 0, TailType: typ.Any,
+		},
 		Outcomes: []manifestwire.Outcome{
 			{Kind: manifestwire.OutcomeNormal, Values: anyClosed()},
 			{Kind: manifestwire.OutcomeThrow, Values: anyClosed()},
 			{Kind: manifestwire.OutcomeCancel, Values: anyClosed()},
 		},
-		Subedges: []manifestwire.Subedge{{
-			Role:      1,
-			Family:    manifestwire.SubedgeFamilyIndexGet,
+		Callbacks: []manifestwire.Callback{{
+			Function:  manifestwire.InputSource{Kind: manifestwire.InputSourceValue, Ordinal: 0},
 			Admission: manifestwire.CallableAdmissionOrdinary,
-			Arguments: arguments,
-			RuleEntry: true,
-			ArgumentOrigins: []manifestwire.ArgumentOrigin{
-				{Segment: manifestwire.ArgumentFixed, Index: 0, Kind: manifestwire.ArgumentSourceInput,
-					Source: manifestwire.InputSource{Kind: manifestwire.InputSourceValue, Ordinal: 0}},
-				suffix,
+			Arguments: manifestwire.Values{
+				Fixed:    []typ.Type{typ.Any},
+				Tail:     manifestwire.ValuesVariable,
+				Var:      0,
+				TailType: typ.Any,
+				Suffix:   []typ.Type{typ.String},
 			},
-			Outcomes: []manifestwire.Terminal{
-				{Kind: manifestwire.OutcomeNormal, Values: anyClosed()},
-				{Kind: manifestwire.OutcomeReturn, Values: anyClosed()},
-				{Kind: manifestwire.OutcomeThrow, Values: anyClosed()},
-				{Kind: manifestwire.OutcomeYield, Values: anyClosed()},
-				{Kind: manifestwire.OutcomeCancel, Values: anyClosed()},
-			},
-			AdmissionFailure: manifestwire.AdmissionFailure{
-				Values: anyClosed(),
-				Route: manifestwire.AdmissionRoute{
-					Route: manifestwire.SubedgeRouteOutcome, Adjustment: manifestwire.AdjustmentPreserve,
-					Result: anyClosed(), Placement: manifestwire.PlacementFixed, Outcome: 1,
-				},
-			},
-			Routes: []manifestwire.SubedgeRoute{
-				{Kind: manifestwire.OutcomeNormal, Route: manifestwire.SubedgeRouteContinue, Adjustment: manifestwire.AdjustmentExact, Result: anyClosed()},
-				{Kind: manifestwire.OutcomeReturn, Route: manifestwire.SubedgeRouteContinue, Adjustment: manifestwire.AdjustmentExact, Result: anyClosed()},
-				{Kind: manifestwire.OutcomeThrow, Route: manifestwire.SubedgeRouteOutcome, Adjustment: manifestwire.AdjustmentPreserve, Result: anyClosed(), Placement: manifestwire.PlacementFixed, Outcome: 1},
-				{Kind: manifestwire.OutcomeYield, Route: manifestwire.SubedgeRouteRejectYield, Adjustment: manifestwire.AdjustmentExact, Result: rejectedYieldValues(), Placement: manifestwire.PlacementFixed, Outcome: 1},
-				{Kind: manifestwire.OutcomeCancel, Route: manifestwire.SubedgeRouteOutcome, Adjustment: manifestwire.AdjustmentPreserve, Result: anyClosed(), Placement: manifestwire.PlacementFixed, Outcome: 2},
-			},
+			Outcomes:  callbackTerminals(),
+			Lifecycle: manifestwire.CallbackSyncRequiredOnce,
+			Effects:   manifestwire.RowSpec{Tail: manifestwire.RowClosed},
 		}},
-		Effects: manifestwire.RowSpec{Tail: manifestwire.RowClosed},
-	})
+		Subedges: []manifestwire.Subedge{subedge},
+		Effects:  manifestwire.RowSpec{Tail: manifestwire.RowClosed},
+	}
+	if mutate != nil {
+		mutate(&operation)
+	}
+	declaration.DefineFunctionOperation("folds", operation)
 	return declaration
 }
 
-// ArgumentSuffix addresses an operand in the suffix segment of a subedge's
-// argument vector. Every admission path a manifest can use forces that segment
-// to be empty: a RuleEntry subedge must carry no argument product and no
-// origins at all, and a route-fed subedge is only completely fed when the
-// destination vector has no suffix under a fixed placement and is a pure open
-// tail under a tail placement. The segment is therefore unreachable from any
-// provider manifest. The refusals below are named rather than silent, but the
-// constant remains unauthorable, which is a wire-vocabulary gap rather than a
-// provider mistake.
-func TestManifestCannotDeclareASuffixArgumentOrigin(t *testing.T) {
-	_, err := sealRelationCatalogue(argumentSuffixHostManifest(argumentSuffixOrigin(0)))
+// TestManifestDeclaresASuffixArgumentOrigin is the positive law: a manifest
+// declares the suffix segment, the seal admits it, and the sealed Target
+// answers the segment, its exact element type, and the authority that supplies
+// it. The three coordinates together are total over the applied vector, which
+// is what makes the origin set complete.
+func TestManifestDeclaresASuffixArgumentOrigin(t *testing.T) {
+	contract, err := sealRelationCatalogue(suffixApplicationHostManifest(nil))
+	if err != nil {
+		t.Fatalf("a subedge carrying a suffix argument origin was refused: %v", err)
+	}
+	operation, ok := contract.Operations.Lookup(relationBinding("folds"))
+	if !ok {
+		t.Fatal("sealed Target holds no folds operation")
+	}
+	edge, ok := contract.Operations.SubedgeAt(operation, 0)
+	if !ok {
+		t.Fatal("sealed Target holds no application for folds")
+	}
+	arguments, ok := contract.Operations.SubedgeArguments(edge)
+	if !ok {
+		t.Fatal("sealed application holds no argument vector")
+	}
+	if count := contract.Operations.ValuesCount(arguments); count != 1 {
+		t.Fatalf("argument prefix width = %d, want the one declared fixed operand", count)
+	}
+	if count := contract.Operations.ValuesSuffixCount(arguments); count != 1 {
+		t.Fatalf("argument suffix width = %d, want the one declared end-anchored operand", count)
+	}
+	element, ok := contract.Operations.ValuesSuffixAt(arguments, 0)
+	if !ok {
+		t.Fatal("sealed argument suffix holds no element type")
+	}
+	declared, ok := contract.Operations.ValuesAt(arguments, 0)
+	if !ok || element == declared {
+		t.Fatalf("suffix element type %d is not distinct from the prefix element %d", element, declared)
+	}
+	// Origins are stored in canonical (segment, index) order, so the suffix
+	// operand is the second of the three the vector requires.
+	if count := contract.Operations.SubedgeArgumentOriginCount(edge); count != 3 {
+		t.Fatalf("argument origin count = %d, want one per declared segment", count)
+	}
+	segment, index, source, input, ok := contract.Operations.SubedgeArgumentOriginAt(edge, 1)
+	if !ok || segment != vocabulary.ArgumentSuffix || index != 0 ||
+		source != vocabulary.ArgumentSourceRule || input != (vocabulary.InputSource{}) {
+		t.Fatalf("suffix origin = segment %d index %d source %d input %+v (ok %t), want the rule-supplied suffix operand 0",
+			segment, index, source, input, ok)
+	}
+}
+
+// The suffix is a coordinate of the applied vector, not of the declaring
+// member's own parameters. A Lua parameter list is a prefix and an optional
+// pack, so the operation input has no end-relative coordinate and the seal
+// refuses one by name.
+func TestManifestRefusesASuffixOnTheOperationInput(t *testing.T) {
+	_, err := sealRelationCatalogue(suffixApplicationHostManifest(func(operation *manifestwire.Operation) {
+		operation.Input.Suffix = []typ.Type{typ.String}
+	}))
 	if err == nil {
-		t.Fatal("a subedge carrying a suffix argument origin sealed; no admission path admits one")
+		t.Fatal("an operation input carrying a suffix sealed, want a named refusal")
+	}
+	if !strings.Contains(err.Error(), "input Values cannot have a suffix") {
+		t.Fatalf("refusal = %v, want the named input-suffix refusal", err)
+	}
+}
+
+// RuleEntry is the nullary form of ArgumentSourceRule: it states that the
+// owner rule is the entry authority for an application with no operands at
+// all. An application that really has operands states one origin per segment
+// instead, so mixing the two is refused rather than leaving segments unowned.
+func TestManifestRefusesARuleEntryApplicationWithASuffix(t *testing.T) {
+	_, err := sealRelationCatalogue(suffixApplicationHostManifest(func(operation *manifestwire.Operation) {
+		operation.Subedges[0].RuleEntry = true
+		operation.Subedges[0].ArgumentOrigins = nil
+	}))
+	if err == nil {
+		t.Fatal("a RuleEntry application carrying a suffix sealed, want a named refusal")
 	}
 	if !strings.Contains(err.Error(), "RuleEntry requires an empty argument product") {
 		t.Fatalf("refusal = %v, want the named empty-argument-product refusal", err)
 	}
 }
 
+// Every segment of an applied vector needs exactly one authority. Dropping the
+// suffix origin leaves the trailing operand with no source, and the seal
+// refuses the partial set rather than treating the absent segment as unused.
+func TestManifestRefusesAnArgumentOriginSetMissingItsSuffix(t *testing.T) {
+	_, err := sealRelationCatalogue(suffixApplicationHostManifest(func(operation *manifestwire.Operation) {
+		origins := operation.Subedges[0].ArgumentOrigins
+		operation.Subedges[0].ArgumentOrigins = origins[:len(origins)-1]
+	}))
+	if err == nil {
+		t.Fatal("an application whose suffix operand has no origin sealed, want a named refusal")
+	}
+	if !strings.Contains(err.Error(), "argument origins are incomplete") {
+		t.Fatalf("refusal = %v, want the named incomplete-origins refusal", err)
+	}
+}
+
+// A closed vector has no end-relative coordinate: the seal canonicalizes its
+// authored suffix into the prefix so equivalent vectors share one handle, and
+// the ArgumentSuffix coordinate then names no segment. The operand is real and
+// is addressed as ArgumentFixed at its prefix index.
+func TestManifestRefusesASuffixCoordinateOnAClosedArgumentVector(t *testing.T) {
+	_, err := sealRelationCatalogue(suffixApplicationHostManifest(func(operation *manifestwire.Operation) {
+		callback := &operation.Callbacks[0]
+		callback.Arguments.Tail, callback.Arguments.TailType = manifestwire.ValuesClosed, nil
+		origins := operation.Subedges[0].ArgumentOrigins
+		operation.Subedges[0].ArgumentOrigins = []manifestwire.ArgumentOrigin{origins[0], origins[2]}
+	}))
+	if err == nil {
+		t.Fatal("a suffix coordinate on a closed argument vector sealed, want a named refusal")
+	}
+	if !strings.Contains(err.Error(), "argument origin does not name a Values segment") {
+		t.Fatalf("refusal = %v, want the named unaddressed-segment refusal", err)
+	}
+}
+
+// A suffix operand fed from a declared input is type-checked exactly as a
+// prefix operand is: the owner coordinate it names must be assignable to the
+// element type the applied vector declares. The trailing operand is a string
+// and the input it would read is a number, so the seal refuses the relation
+// rather than admitting an unchecked end-anchored operand.
+func TestManifestRefusesATypeIncompatibleSuffixArgumentOrigin(t *testing.T) {
+	_, err := sealRelationCatalogue(suffixApplicationHostManifest(func(operation *manifestwire.Operation) {
+		origins := operation.Subedges[0].ArgumentOrigins
+		origins[len(origins)-1] = manifestwire.ArgumentOrigin{
+			Segment: manifestwire.ArgumentSuffix, Index: 0, Kind: manifestwire.ArgumentSourceInput,
+			Source: manifestwire.InputSource{Kind: manifestwire.InputSourceValue, Ordinal: 1},
+		}
+	}))
+	if err == nil {
+		t.Fatal("a suffix operand read from a type-incompatible input sealed, want a named refusal")
+	}
+	if !strings.Contains(err.Error(), "type-incompatible Values") {
+		t.Fatalf("refusal = %v, want the named type-incompatible refusal", err)
+	}
+}
+
 // A RuleEntry subedge does seal once it carries the empty argument product its
-// entry authority requires, so the refusal above is about the suffix operand
-// and not about rule-entry subedges as such.
+// entry authority requires, so the refusals above are about the declared
+// operands and not about rule-entry subedges as such.
 func TestManifestAdmitsARuleEntrySubedgeWithNoArgumentProduct(t *testing.T) {
 	declaration := lifecycleHostManifest(manifestwire.CallbackSyncRequiredOnce)
 	if _, err := sealRelationCatalogue(declaration); err != nil {
