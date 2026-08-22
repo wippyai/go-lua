@@ -76,7 +76,7 @@ func anchoredRouteWriteSurface(state *schemaBindingState, authority *schemaBindi
 
 // summaryKeySource is the engine-private seam for source operands that own
 // their canonical Value-key issuance. The domain exposes only scalar
-// read-only access; no mutable slice, receipt, callback, or engine reference
+// read-only access; no mutable slice, callback, or engine reference
 // vector crosses the package boundary.
 type summaryKeySource interface {
 	SummaryKeyCount() int

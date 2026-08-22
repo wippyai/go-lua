@@ -319,7 +319,7 @@ type constructedQueryPlane struct {
 
 // constructedActivationPlane is the disposable activation-row recipe passed
 // to equation.Topology.  The equation sealer consumes it into its one
-// immutable activation-row directory; no receipt object is retained here.
+// immutable activation-row directory; no extra object is retained here.
 type constructedActivationPlane struct {
 	rows []equation.ActivationRowSpec
 }

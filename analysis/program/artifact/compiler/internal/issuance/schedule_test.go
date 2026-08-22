@@ -49,17 +49,17 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 		}, input: Input{declaration: predecessorInput, points: []identity.ContentID{base}}},
 	}
 	schedule, scheduled := BuildSchedule(41, plan, requests)
-	if !scheduled || schedule.NodeCount() != 3 || schedule.ReceiptCount() != 2 {
-		t.Fatalf("schedule refused: nodes=%d receipts=%d", schedule.NodeCount(), schedule.ReceiptCount())
+	if !scheduled || schedule.NodeCount() != 3 || schedule.EmissionCount() != 2 {
+		t.Fatalf("schedule refused: nodes=%d emissions=%d", schedule.NodeCount(), schedule.EmissionCount())
 	}
-	predecessorReceipt, _ := schedule.ReceiptAt(1)
-	localReceipt, _ := schedule.ReceiptAt(0)
-	input, inputOK := localReceipt.InputPoint()
-	if !inputOK || input != predecessorReceipt.Point() {
+	predecessor, _ := schedule.EmissionAt(1)
+	local, _ := schedule.EmissionAt(0)
+	input, inputOK := local.InputPoint()
+	if !inputOK || input != predecessor.Point() {
 		t.Fatal("previous-stage input was not selected from sealed stage order")
 	}
-	for _, receipt := range []Receipt{localReceipt, predecessorReceipt} {
-		writers, found := schedule.PointWriters(receipt.Point())
+	for _, emission := range []Emission{local, predecessor} {
+		writers, found := schedule.PointWriters(emission.Point())
 		if !found || len(writers) != 1 || writers[0] != "axis/write" {
 			t.Fatalf("point writers = %v found=%v, want exact owner-issued axis", writers, found)
 		}
@@ -79,7 +79,7 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	}
 }
 
-func TestScheduleReceiptCarriesSealedStageNativeBit(t *testing.T) {
+func TestScheduleEmissionCarriesSealedStageNativeBit(t *testing.T) {
 	table := scheduleTable(t)
 	plan, ok := schemaissuance.NewPlan(table, []schemaissuance.SubscriptionSpec{{
 		Family:      "occurrence/call",
@@ -104,13 +104,13 @@ func TestScheduleReceiptCarriesSealedStageNativeBit(t *testing.T) {
 		input:        Input{declaration: input},
 	}
 	schedule, scheduled := BuildSchedule(41, plan, []Request{request})
-	receipt, receiptOK := schedule.ReceiptAt(0)
-	native, nativeOK := receipt.Native()
-	inputPoint, inputOK := receipt.InputPoint()
-	if !subscriptionOK || !scheduled || schedule.NodeCount() != 2 || schedule.ReceiptCount() != 1 ||
-		!receiptOK || !nativeOK || native != stage.Native() || !native || !inputOK || inputPoint != base {
-		t.Fatalf("native receipt = (subscription=%v scheduled=%v nodes=%d receipts=%d row=%v native=%v/%v input=%x/%v), want sealed native stage over base",
-			subscriptionOK, scheduled, schedule.NodeCount(), schedule.ReceiptCount(), receiptOK, native, nativeOK, inputPoint, inputOK)
+	emission, emissionOK := schedule.EmissionAt(0)
+	native, nativeOK := emission.Native()
+	inputPoint, inputOK := emission.InputPoint()
+	if !subscriptionOK || !scheduled || schedule.NodeCount() != 2 || schedule.EmissionCount() != 1 ||
+		!emissionOK || !nativeOK || native != stage.Native() || !native || !inputOK || inputPoint != base {
+		t.Fatalf("native emission = (subscription=%v scheduled=%v nodes=%d emissions=%d row=%v native=%v/%v input=%x/%v), want sealed native stage over base",
+			subscriptionOK, scheduled, schedule.NodeCount(), schedule.EmissionCount(), emissionOK, native, nativeOK, inputPoint, inputOK)
 	}
 }
 
@@ -140,7 +140,7 @@ func TestScheduleRefusesDeclaredComputationDependencyCycle(t *testing.T) {
 			input: Input{declaration: input},
 		}
 	}
-	if schedule, scheduled := BuildSchedule(41, plan, []Request{request(left, right), request(right, left)}); scheduled || schedule.NodeCount() != 0 || schedule.ReceiptCount() != 0 {
+	if schedule, scheduled := BuildSchedule(41, plan, []Request{request(left, right), request(right, left)}); scheduled || schedule.NodeCount() != 0 || schedule.EmissionCount() != 0 {
 		t.Fatal("cyclic computation dependency schedule was admitted")
 	}
 }

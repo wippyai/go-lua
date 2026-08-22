@@ -8,7 +8,7 @@ import (
 // ArtifactScalarSpec is a single-use neutral template builder. Its state is
 // private and shared by copied handles, so consuming any handle closes all of
 // them. Nested rows are appended through methods below and cannot remain
-// caller-mutable after the receipt takes ownership.
+// caller-mutable after the spec takes ownership.
 type ArtifactScalarSpec struct {
 	state *artifactScalarSpecState
 }

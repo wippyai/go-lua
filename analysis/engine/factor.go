@@ -16,11 +16,11 @@ type Measure[K ~uint32 | ~uint64, V any] struct {
 
 // Factor is a typed cold owner capability. K and V remain available to its
 // owner and the later template binder, but they never enter a mixed engine
-// carrier during receipt schema binding.
+// carrier during schema binding.
 // Ref is an opaque exact-key capability issued by a sealed Factor. Its key
 // remains zero-based even though later equation rows use one-based locals.
 // The sealed Factor row is carried directly beside that dense key; no second
-// provenance record or redeemable receipt is minted for the route.
+// provenance record is minted for the route.
 //
 // Ref is only a cold identity capability. It is not a Program handle, an
 // equation coordinate, or a runtime binding handle.

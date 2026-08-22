@@ -21,7 +21,7 @@ const (
 
 // Keep this non-zero-sized. Go permits pointers to distinct zero-sized
 // allocations to compare equal, which would collapse independent Binding
-// receipt authorities.
+// authorities.
 type schemaBindingAuthority struct{ marker byte }
 
 // SchemaBinding is a copyable handle to one shared lifecycle. It cannot
@@ -123,7 +123,7 @@ func (binding *SchemaBinding) Schema() *Schema {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	if state.phase != schemaBindingSealed || state.authority == nil {
+	if state.phase != schemaBindingSealed {
 		return nil
 	}
 	return state.schema
@@ -136,7 +136,7 @@ func (binding *SchemaBinding) Sealed() bool {
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return state.phase == schemaBindingSealed && state.authority != nil
+	return state.phase == schemaBindingSealed
 }
 
 func (binding *SchemaBinding) Poisoned() bool {
@@ -189,7 +189,7 @@ func (state *schemaBindingState) poisonLocked() {
 	state.authority = nil
 }
 
-// Seal validates the Factor vertical, receipt-native Rule/activation lanes,
+// Seal validates the Factor vertical, Rule/activation lanes,
 // and the currently supported exact-Factor Query lane. Activation families
 // are inventoried separately from their Rule cells and must be complete before
 // one Binding authority is published.

@@ -19,7 +19,7 @@ const (
 	artifactFormat = uint64(34)
 	// Issuance is now one sealed schema-driven machine. Rule stages and inputs
 	// are exact schema keys, stage identity/transport is declaration data, and
-	// the compiler emits final receipts atomically from the generic schedule.
+	// the compiler emits final emissions atomically from the generic schedule.
 	// Advance both laws so artifacts from the ordinal/mirror representation can
 	// never be admitted under the new geometry.
 	compilerLawVersion     = uint64(7)

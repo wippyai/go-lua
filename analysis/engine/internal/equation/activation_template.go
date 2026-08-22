@@ -15,7 +15,7 @@ func validScopedExpr(expr Expr, scope Scope) bool {
 }
 
 // TemplateRole maps one canonical fragment role to one presealed base Point. Axes
-// membership belongs exclusively to the sealed receipt; a binding with a
+// membership belongs exclusively to the sealed template; a binding with a
 // different base mapping is a different fixed-shape binding, never a branch
 // inside this port table.
 type TemplateRole struct {

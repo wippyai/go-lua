@@ -11,7 +11,7 @@ import (
 )
 
 // Node is one canonical execution cut. A node may be present only to close a
-// declared stage predecessor; Receipt remains the set of rule-producing
+// declared stage predecessor; Emission remains the set of rule-producing
 // requests. Both are returned in the same deterministic stage order.
 type Node struct {
 	stage *schemaissuance.Entry
@@ -24,10 +24,10 @@ func (node Node) Stage() *schemaissuance.Entry { return node.stage }
 func (node Node) Base() identity.ContentID     { return node.base }
 func (node Node) Point() identity.ContentID    { return node.point }
 
-// Receipt is the atomic final result of one emitted request. Input is selected
+// Emission is the atomic final result of one emitted request. Input is selected
 // from the sealed input policy before the compiler can publish a rule row, so
 // no downstream input rewrite exists.
-type Receipt struct {
+type Emission struct {
 	request  Request
 	point    identity.ContentID
 	input    identity.ContentID
@@ -35,40 +35,40 @@ type Receipt struct {
 	native   bool
 }
 
-func (receipt Receipt) Request() Request          { return receipt.request }
-func (receipt Receipt) Point() identity.ContentID { return receipt.point }
-func (receipt Receipt) InputPoint() (identity.ContentID, bool) {
-	return receipt.input, receipt.hasInput
+func (emission Emission) Request() Request          { return emission.request }
+func (emission Emission) Point() identity.ContentID { return emission.point }
+func (emission Emission) InputPoint() (identity.ContentID, bool) {
+	return emission.input, emission.hasInput
 }
-func (receipt Receipt) Native() (bool, bool) {
-	return receipt.native, receipt.request.stage != nil && receipt.request.stage.Kind() == schemaissuance.KindStage
+func (emission Emission) Native() (bool, bool) {
+	return emission.native, emission.request.stage != nil && emission.request.stage.Kind() == schemaissuance.KindStage
 }
 
 type Schedule struct {
 	nodes       []Node
-	receipts    []Receipt
+	emissions   []Emission
 	pointWrites map[identity.ContentID][]schema.Key
 	stageWrites map[identity.ContentID]map[schema.Key][]schema.Key
 	sealed      bool
 }
 
-func (schedule Schedule) NodeCount() int    { return len(schedule.nodes) }
-func (schedule Schedule) ReceiptCount() int { return len(schedule.receipts) }
+func (schedule Schedule) NodeCount() int     { return len(schedule.nodes) }
+func (schedule Schedule) EmissionCount() int { return len(schedule.emissions) }
 func (schedule Schedule) NodeAt(index int) (Node, bool) {
 	if index < 0 || index >= len(schedule.nodes) {
 		return Node{}, false
 	}
 	return schedule.nodes[index], true
 }
-func (schedule Schedule) ReceiptAt(index int) (Receipt, bool) {
-	if index < 0 || index >= len(schedule.receipts) {
-		return Receipt{}, false
+func (schedule Schedule) EmissionAt(index int) (Emission, bool) {
+	if index < 0 || index >= len(schedule.emissions) {
+		return Emission{}, false
 	}
-	return schedule.receipts[index], true
+	return schedule.emissions[index], true
 }
 
-// PointWriters returns the exact axis union issued by final receipts at one
-// point. found is false when no receipt owns that point; the caller must not
+// PointWriters returns the exact axis union issued by final emissions at one
+// point. found is false when no emission owns that point; the caller must not
 // confuse absence with an empty transport declaration.
 func (schedule Schedule) PointWriters(point identity.ContentID) ([]schema.Key, bool) {
 	if !schedule.sealed || !point.Available() {
@@ -160,7 +160,7 @@ func BuildSchedule(format uint64, plan schemaissuance.Plan, requests []Request) 
 			!subscription.Available() || !subscription.Writes().Available() {
 			return Schedule{}, false
 		}
-		schedule.receipts = append(schedule.receipts, Receipt{request: request, point: node.point, input: input, hasInput: hasInput, native: stage.Native()})
+		schedule.emissions = append(schedule.emissions, Emission{request: request, point: node.point, input: input, hasInput: hasInput, native: stage.Native()})
 		pointSet := pointSets[node.point]
 		if pointSet == nil {
 			pointSet = make(map[schema.Key]struct{})

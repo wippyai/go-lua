@@ -84,7 +84,7 @@ func diagnosticDeclaration(table schemadiag.Table, code DiagnosticCode) (*schema
 	return table.ForCode(code)
 }
 
-// DiagnosticCollectionFailure is a closed receipt-collector classification;
+// DiagnosticCollectionFailure is a closed collector classification;
 // it never changes inference status or Result identity.
 type DiagnosticCollectionFailure uint8
 

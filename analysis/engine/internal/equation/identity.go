@@ -627,7 +627,7 @@ type TopologySpec struct {
 	Batch *Batch
 	// ActivationRows is the one disposable activation plane.  SealTopology
 	// consumes these recipes into its immutable activation-row directory; no
-	// per-row receipt or candidate index survives the seal.
+	// per-row candidate index survives the seal.
 	ActivationRows []ActivationRowSpec
 	Rules          []RuleInstance
 	Points         []PointSpec
@@ -646,7 +646,7 @@ type TopologySpec struct {
 	// rule instance. The trigger states the family it activates under and the
 	// application its candidates instantiate, so that distinction is published
 	// once by the declaring owner instead of being rediscovered from the
-	// candidate receipts a trigger happens to own. A trigger that reaches no
+	// candidates a trigger happens to own. A trigger that reaches no
 	// candidate is therefore still fully addressed.
 	ActivationTriggers []ActivationTriggerBinding
 }

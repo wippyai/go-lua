@@ -329,7 +329,7 @@ func FactorImplementationAt[K ~uint32 | ~uint64, V any](binding *SchemaBinding, 
 		return nil, false
 	}
 	// Return a fresh immutable implementation snapshot. The shared cell is
-	// never mutated after Seal, so concurrent callers cannot observe a receipt
-	// or descriptor being rewritten underneath a live runtime binder.
+	// never mutated after Seal, so concurrent callers cannot observe a
+	// descriptor being rewritten underneath a live runtime binder.
 	return cell.sealedImplementation(state, state.authority)
 }

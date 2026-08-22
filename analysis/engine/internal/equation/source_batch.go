@@ -677,7 +677,7 @@ func (occurrence Occurrence) Key() composition.Key {
 
 // IdentityKey is the immutable occurrence identity available during both open
 // source admission and after Batch sealing. It exposes no row coordinate and
-// is used only to bind deferred receipt surfaces to their pre-seal source.
+// is used only to bind deferred surfaces to their pre-seal source.
 func (occurrence Occurrence) IdentityKey() composition.Key {
 	if occurrence.dynamic != nil {
 		return occurrence.Key()

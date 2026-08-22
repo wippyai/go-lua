@@ -34,7 +34,7 @@ func Count(input *program.Program, family keyspace.Family) int {
 }
 
 // IdentityAt proves Source, Flow, and Static ownership for one literal or
-// TypeValue source then issues its exact source and span identities. Fallback
+// TypeValue source then issues its exact source and span identities. Derived
 // spans are fenced by the live Program's canonical ContentID.
 func IdentityAt(input *program.Program, family keyspace.Family, index int) (sourceID, spanID identity.ContentID, term keyspace.Term, ok bool) {
 	if input == nil || !input.Available() || index < 0 {

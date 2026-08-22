@@ -6,7 +6,7 @@ import (
 )
 
 // deriveRuleOccurrencesFailure executes the sealed generic issuance machine
-// and publishes only atomic final receipts. No requirement, form, input, or
+// and publishes only atomic final emissions. No requirement, form, input, or
 // stage meaning is switched on in the compiler shell.
 func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	if compiler == nil || compiler.issuanceRows == nil {
@@ -29,20 +29,20 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	if !scheduled {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	compiler.publication.RuleOccurrences = make([]programschema.RuleOccurrence, 0, schedule.ReceiptCount())
-	for index := 0; index < schedule.ReceiptCount(); index++ {
-		receipt, receiptOK := schedule.ReceiptAt(index)
-		if !receiptOK {
+	compiler.publication.RuleOccurrences = make([]programschema.RuleOccurrence, 0, schedule.EmissionCount())
+	for index := 0; index < schedule.EmissionCount(); index++ {
+		emission, emissionOK := schedule.EmissionAt(index)
+		if !emissionOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)
 		}
-		request := receipt.Request()
+		request := emission.Request()
 		subscription := request.Subscription()
-		input, _ := receipt.InputPoint()
-		native, nativeOK := receipt.Native()
+		input, _ := emission.InputPoint()
+		native, nativeOK := emission.Native()
 		route, _ := request.Route()
 		if !nativeOK || !compiler.appendRuleOccurrence(
 			subscription.Rule(), subscription.Writes(), request.Occurrence(),
-			receipt.Point(), input, request.Stage().Key(), request.Input().Declaration().Key(), route, native,
+			emission.Point(), input, request.Stage().Key(), request.Input().Declaration().Key(), route, native,
 		) {
 			compiler.publication.RuleOccurrences = nil
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceUnavailable)

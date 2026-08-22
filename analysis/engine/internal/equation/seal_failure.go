@@ -19,7 +19,7 @@ const (
 	SealFailureFamilyNone SealFailureFamily = iota
 	// Immutable source and target row admission of one Batch.
 	SealFailureFamilySource
-	// Topology seal: assembly, reissue, receipts, and operand realms.
+	// Topology seal: assembly, reissue, and operand realms.
 	SealFailureFamilyTopology
 	// Graph compilation of one sealed topology spec.
 	SealFailureFamilyCompile
@@ -82,7 +82,7 @@ func sealRefused(family SealFailureFamily, site string) SealFailure {
 	return sealFailureAt(family, schema.DispositionMalformed, site)
 }
 
-// The receipt compiler raises these three boundaries on equation's behalf: its
+// The source-batch compiler raises these three boundaries on equation's behalf: its
 // own precondition and batch-identity checks guard a source seal it is about to
 // perform, and its topology-input check guards a sealed Topology it did not
 // receive. Exposing the exact values, rather than the minting constructor,

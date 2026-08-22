@@ -83,7 +83,7 @@ func DeclareQuery(builder *engine.SchemaBuilder, context queryschema.Declaration
 	if read.Schema() != nil {
 		return nil, false
 	}
-	slot, slotOK := engine.NewQuerySlot[calldispatch.CalleeSet](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer})
+	slot, slotOK := engine.NewQuerySlot[calldispatch.CalleeSet](builder, engine.SchemaQuerySpec{Semantic: context.Semantic, Freezer: context.Freezer, Population: context.Population})
 	if !slotOK || !engine.SchemaQueryRead(slot, read) {
 		return nil, false
 	}

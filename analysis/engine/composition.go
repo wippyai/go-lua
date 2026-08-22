@@ -10,20 +10,26 @@ import (
 )
 
 // CompositionID is the canonical identity of a sealed Schema. It is retained
-// as receipt provenance; no declaration root or cold execution owner exists in
+// as composition provenance; no declaration root or cold execution owner exists in
 // the engine package.
 type CompositionID struct{ digest [32]byte }
 
 func (id CompositionID) Available() bool  { return id.digest != [32]byte{} }
 func (id CompositionID) Digest() [32]byte { return id.digest }
 
-// Schema is the immutable cold grammar consumed by SchemaBinding receipts.
+// Schema is the immutable cold grammar consumed by SchemaBinding.
 type Schema struct {
-	cold *coldcomposition.Composition
-	id   CompositionID
+	cold      *coldcomposition.Composition
+	id        CompositionID
+	available bool
 }
 
-func (schema *Schema) Available() bool {
+// Available reports whether this Schema is a sealed cold grammar. SchemaBuilder
+// Seal is the sole issuer and seals the verdict over the canonicalized
+// composition; the zero Schema is unavailable.
+func (schema *Schema) Available() bool { return schema != nil && schema.available }
+
+func (schema *Schema) completeGrammar() bool {
 	return schema != nil && schema.cold != nil && schema.id.Available()
 }
 func (schema *Schema) ID() CompositionID {

@@ -8,7 +8,7 @@ import (
 
 // materialize executes a typed schema projection against one runtimeProgram
 // factor handle. The program resolves the handle and unit once; execution has
-// no query owner or receipt to authenticate.
+// no query owner to authenticate.
 func (projection factorProjection[V, R]) materialize(work *carrier.Work, state carrier.State, factor runtimeFactor, unit carrier.Unit) (frozenValue, solveBoundary, bool) {
 	typed, ok := factor.(interface {
 		stagedObserveWithFailure(*carrier.Work, carrier.State, carrier.Unit, support.Mask, func(factbinding.Observation[V], support.Mask) bool) (stagedObservationFailure, bool)

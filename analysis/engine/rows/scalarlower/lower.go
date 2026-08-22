@@ -96,7 +96,7 @@ func (directory *MountDirectory) Factor(key schema.Key) (rows.ArtifactScalarFact
 // Lower is the sole sealed-snapshot-to-engine structural boundary. It runs
 // once while publishing the content-addressed cache entry. Stage semantics
 // have already been issued into each Program rule occurrence; lowering copies
-// that receipt without consulting or reconstructing its declaration. The plan
+// that occurrence without consulting or reconstructing its declaration. The plan
 // supplies only the closed Factor denominator used by artifact transfers.
 func Lower(snapshot *ingress.Snapshot, vocabulary structure.Table, machine schemaissuance.Plan) (*rows.ArtifactScalarTemplate, *MountDirectory, bool) {
 	if snapshot == nil || !snapshot.Available() {
