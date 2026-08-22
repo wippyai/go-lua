@@ -79,6 +79,61 @@ func TestScheduleResolvesPreviousFromDeclaredStageOrder(t *testing.T) {
 	}
 }
 
+func TestScheduleEmissionIsTheIssuedRequest(t *testing.T) {
+	table := scheduleTable(t)
+	plan, ok := schemaissuance.NewPlan(table, []schemaissuance.SubscriptionSpec{{
+		Family:      "occurrence/storage-write",
+		Requirement: programissuance.RequirementUnrestricted,
+		Form:        programissuance.FormLocalPredecessor,
+		Rule:        "rule/write",
+		Writes:      "axis/write",
+	}})
+	if !ok {
+		t.Fatal("execution plan refused sealed subscription")
+	}
+	subscription, subscriptionOK := plan.At(0)
+	if !subscriptionOK {
+		t.Fatal("sealed subscription unavailable")
+	}
+	base := testID(7)
+	localStage := scheduleEntry(t, table, programissuance.StageLocal, schemaissuance.KindStage)
+	previousInput := scheduleEntry(t, table, programissuance.InputPreviousStage, schemaissuance.KindInput)
+	pointMany := schemaissuance.DataType{Value: schemaissuance.ValuePointRange, Name: schemaissuance.TypePoint, Cardinality: schemaissuance.CardinalityMany}
+	schedule, scheduled := BuildSchedule(41, plan, []Request{{
+		subscription: subscription,
+		stage:        localStage,
+		base:         base,
+		parameters:   []value{{typ: pointMany, present: true, points: []identity.ContentID{base}}},
+		input:        Input{declaration: previousInput},
+	}})
+	if !scheduled {
+		t.Fatal("schedule refused a single issued request")
+	}
+	if schedule.EmissionCount() != 1 {
+		t.Fatalf("EmissionCount=%d, want 1 issued request", schedule.EmissionCount())
+	}
+	if _, ok := schedule.EmissionAt(-1); ok {
+		t.Fatal("EmissionAt(-1) issued a row")
+	}
+	if _, ok := schedule.EmissionAt(1); ok {
+		t.Fatal("EmissionAt past count issued a row")
+	}
+	var emission Emission
+	var emissionOK bool
+	emission, emissionOK = schedule.EmissionAt(0)
+	if !emissionOK {
+		t.Fatal("EmissionAt(0) unavailable")
+	}
+	request := emission.Request()
+	point := emission.Point()
+	if request.Stage() != localStage || !point.Available() {
+		t.Fatalf("emission request/point unavailable: stage=%v point=%s", request.Stage() != nil, point)
+	}
+	if _, nativeOK := emission.Native(); !nativeOK {
+		t.Fatal("Emission.Native unavailable on a KindStage request")
+	}
+}
+
 func TestScheduleEmissionCarriesSealedStageNativeBit(t *testing.T) {
 	table := scheduleTable(t)
 	plan, ok := schemaissuance.NewPlan(table, []schemaissuance.SubscriptionSpec{{

@@ -34,7 +34,7 @@
 //
 // `protocol.Compile` consumes sealed operation geometry and owner-issued
 // callback coordinates. It accepts no Contract, operation draft, mutable
-// builder, binder, callback, or receipt. The returned Table has private storage
+// builder, binder, or callback. The returned Table has private storage
 // and no mutating public method. Target root publishes the Table directly; it
 // does not wrap or re-derive its rows.
 //

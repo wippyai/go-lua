@@ -121,7 +121,7 @@ func (builder *Builder) AddGeometry(kind programschema.OccurrenceKind, occurrenc
 	return true
 }
 
-// Geometry returns the exact owner-issued construction receipt while the
+// Geometry returns the exact owner-issued construction geometry while the
 // builder is live. Consumers receive copies and cannot mutate the eventual
 // sealed row bundle.
 func (builder *Builder) Geometry(kind programschema.OccurrenceKind, occurrence identity.ContentID) ([]identity.ContentID, []identity.ContentID, bool) {
@@ -161,7 +161,7 @@ func (builder *Builder) AddClosureProof(occurrence identity.ContentID) bool {
 	return true
 }
 
-// AddPredecessor admits the environment owner's exact route target receipt.
+// AddPredecessor admits the environment owner's exact route target.
 // No route lookup or finish-membership check occurs in the evaluator.
 func (builder *Builder) AddPredecessor(occurrence, route, point identity.ContentID) bool {
 	if builder == nil || builder.sealed || !occurrence.Available() || !route.Available() || !point.Available() {

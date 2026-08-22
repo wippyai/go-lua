@@ -13,7 +13,7 @@ import (
 	snapshotstore "github.com/wippyai/go-lua/analysis/snapshot"
 )
 
-// Snapshot is the sealed ingress receipt: closed identity columns projected
+// Snapshot is the sealed ingress projection: closed identity columns projected
 // once from a ProgramArtifact. Accessors read these columns; they never hold
 // or reopen the owner.
 type Snapshot struct {
@@ -89,7 +89,7 @@ func (snapshot *Snapshot) SchemaID() identity.ContentID {
 }
 
 // EntryBodyID returns the owner-issued executable-root Body identity carried
-// through this immutable ingress receipt. It is never reconstructed from the
+// through this immutable ingress projection. It is never reconstructed from the
 // ordered Body plane.
 func (snapshot *Snapshot) EntryBodyID() identity.ContentID {
 	if !snapshot.Available() {
