@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/scalar"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 )
 
 type state struct {
@@ -68,34 +70,6 @@ type equation struct {
 	op          flowkind.BinaryOp
 }
 
-// Reason identifies one of the exact-scalar admission failures. The parent
-// maps these closed reasons into its CompileFailure vocabulary.
-type Reason uint8
-
-const (
-	ReasonUnavailable Reason = iota + 1
-	ReasonValueSourceAppend
-	ReasonValues
-	ReasonStorageRead
-	ReasonStorageBind
-)
-
-type Fault struct {
-	reason Reason
-	row    int
-	subrow int
-	failed bool
-}
-
-func (fault Fault) Failed() bool   { return fault.failed }
-func (fault Fault) Reason() Reason { return fault.reason }
-func (fault Fault) Row() int       { return fault.row }
-func (fault Fault) Subrow() int    { return fault.subrow }
-
-func failure(reason Reason, row, subrow int) Fault {
-	return Fault{reason: reason, row: row, subrow: subrow, failed: true}
-}
-
 // Input is the complete canonical row boundary needed by exact-scalar
 // derivation. No Program, Flow, compiler state, or domain callback crosses it.
 type Input struct {
@@ -150,7 +124,7 @@ func captureAt(input Input, boundary programschema.FunctionBoundary, index int) 
 	return row, row.Available() && row.InnerBodyID() == boundary.BodyID()
 }
 
-func Compile(input Input) (*Bundle, Fault) {
+func Compile(input Input) (*Bundle, programconstruction.Fault) {
 	states := make(map[identity.ContentID]state)
 	var equations []equation
 	join := func(id identity.ContentID, incoming state) bool {
@@ -183,21 +157,21 @@ func Compile(input Input) (*Bundle, Fault) {
 		for index := 0; index < boundary.FormalCount(); index++ {
 			formal, ok := formalAt(input, boundary, index)
 			if !ok {
-				return nil, failure(ReasonUnavailable, -1, index)
+				return nil, programconstruction.New(programcatalog.FunctionFormal(), programconstruction.IssueExactScalarUnavailable, -1, index)
 			}
 			join(formal.CellID(), unknown)
 		}
 		if boundary.HasVararg() {
 			row, ok := vararg(input, boundary)
 			if !ok {
-				return nil, failure(ReasonUnavailable, -1, -1)
+				return nil, programconstruction.New(programcatalog.FunctionVararg(), programconstruction.IssueExactScalarUnavailable, -1, -1)
 			}
 			join(row.CellID(), unknown)
 		}
 		for index := 0; index < boundary.CaptureCount(); index++ {
 			capture, ok := captureAt(input, boundary, index)
 			if !ok {
-				return nil, failure(ReasonUnavailable, -1, index)
+				return nil, programconstruction.New(programcatalog.FunctionCapture(), programconstruction.IssueExactScalarUnavailable, -1, index)
 			}
 			join(capture.InnerCellID(), unknown)
 			join(capture.OuterCellID(), unknown)
@@ -206,14 +180,14 @@ func Compile(input Input) (*Bundle, Fault) {
 
 	for index, row := range input.Occurrences {
 		if !programschema.OccurrenceDenseAvailable(row, input.OccurrencePoints, input.OccurrenceInputs) {
-			return nil, failure(ReasonUnavailable, index, -1)
+			return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
 		}
 		switch row.Kind() {
 		case programschema.OccurrenceValueSource:
 			span, spanOK := programschema.OccurrenceValueSourceSpanID(row, input.OccurrenceInputs)
 			family, literal, literalOK := row.Literal()
 			if !spanOK {
-				return nil, failure(ReasonValueSourceAppend, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarValueSourceAppend, index, -1)
 			}
 			if literalOK && (family == keyspace.FamilyInteger || family == keyspace.FamilyFloat) {
 				join(row.ID(), exact(literal))
@@ -225,40 +199,40 @@ func Compile(input Input) (*Bundle, Fault) {
 		case programschema.OccurrenceValuesMember:
 			count, ok := programschema.OccurrenceInputCount(row, input.OccurrenceInputs)
 			if !ok || count != 2 {
-				return nil, failure(ReasonValues, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarValues, index, -1)
 			}
 			span, ok := programschema.OccurrenceInputID(row, input.OccurrenceInputs, 1)
 			if !ok {
-				return nil, failure(ReasonValues, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarValues, index, -1)
 			}
 			equations = append(equations, equation{kind: equationCopy, output: row.ID(), left: span})
 		case programschema.OccurrenceStorageRead:
 			cell, span, ok := programschema.OccurrenceStorageReadOperands(row, input.OccurrenceInputs)
 			if !ok {
-				return nil, failure(ReasonStorageRead, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarStorageRead, index, -1)
 			}
 			equations = append(equations, equation{kind: equationCopy, output: span, left: cell}, equation{kind: equationCopy, output: row.ID(), left: cell})
 		case programschema.OccurrenceStorageBindTransfer, programschema.OccurrenceStorageWrite:
 			count, ok := programschema.OccurrenceInputCount(row, input.OccurrenceInputs)
 			if !ok || count < 3 {
-				return nil, failure(ReasonStorageBind, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarStorageBind, index, -1)
 			}
 			from, fromOK := programschema.OccurrenceInputID(row, input.OccurrenceInputs, 1)
 			to, toOK := programschema.OccurrenceInputID(row, input.OccurrenceInputs, 2)
 			if !fromOK || !toOK {
-				return nil, failure(ReasonStorageBind, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarStorageBind, index, -1)
 			}
 			equations = append(equations, equation{kind: equationCopy, output: to, left: from})
 		case programschema.OccurrenceBinaryArithmetic:
 			left, right, op, ok := programschema.OccurrenceBinaryArithmeticOperands(row, input.OccurrenceInputs)
 			if !ok {
-				return nil, failure(ReasonUnavailable, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
 			}
 			equations = append(equations, equation{kind: equationArithmetic, output: row.ID(), left: left, right: right, op: op})
 		case programschema.OccurrenceUnary:
 			operand, ok := programschema.OccurrenceInputID(row, input.OccurrenceInputs, 0)
 			if !ok {
-				return nil, failure(ReasonUnavailable, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
 			}
 			if flowkind.UnaryOp(row.Code()) == flowkind.UnaryNeg {
 				equations = append(equations, equation{kind: equationUnaryNeg, output: row.ID(), left: operand})
@@ -338,7 +312,7 @@ func Compile(input Input) (*Bundle, Fault) {
 		}
 		left, right, _, ok := programschema.OccurrenceBinaryArithmeticOperands(row, input.OccurrenceInputs)
 		if !ok {
-			return nil, failure(ReasonUnavailable, index, -1)
+			return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
 		}
 		uses := [...]struct {
 			role    programschema.ExactScalarSummaryRole
@@ -355,19 +329,19 @@ func Compile(input Input) (*Bundle, Fault) {
 			}
 			body, ok := row.BodyID()
 			if !ok {
-				return nil, failure(ReasonUnavailable, index, -1)
+				return nil, programconstruction.New(programcatalog.Occurrence(), programconstruction.IssueExactScalarUnavailable, index, -1)
 			}
 			summary, ok := programschema.NewExactScalarSummary(row.ID(), use.subject, body, use.role, programschema.SummaryLiteral{Kind: uint8(literal.Kind), Integer: literal.Integer, FloatBits: literal.FloatBits})
 			if !ok {
-				return nil, failure(ReasonUnavailable, index, -1)
+				return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
 			}
 			if _, duplicate := seen[summary.ID()]; duplicate {
-				return nil, failure(ReasonUnavailable, index, -1)
+				return nil, programconstruction.New(programcatalog.ExactScalarSummary(), programconstruction.IssueExactScalarUnavailable, index, -1)
 			}
 			seen[summary.ID()] = struct{}{}
 			summaries = append(summaries, summary)
 		}
 	}
 	identity.SortByContentID(summaries, func(row programschema.ExactScalarSummary) identity.ContentID { return row.ID() })
-	return &Bundle{states: states, summaries: summaries}, Fault{}
+	return &Bundle{states: states, summaries: summaries}, programconstruction.Fault{}
 }

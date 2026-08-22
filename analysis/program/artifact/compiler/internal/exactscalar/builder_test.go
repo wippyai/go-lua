@@ -8,7 +8,7 @@ import (
 
 func TestCompileEmptyInputOwnsCanonicalEmptyBundle(t *testing.T) {
 	bundle, fault := Compile(Input{})
-	if fault.Failed() || bundle == nil {
+	if fault.Available() || bundle == nil {
 		t.Fatalf("empty compile fault=%v bundle=%v", fault, bundle)
 	}
 	if rows := bundle.Rows(); len(rows) != 0 {

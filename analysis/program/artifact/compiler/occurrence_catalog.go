@@ -407,19 +407,8 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		FunctionVarargs:    compiler.bodyBoundary.FunctionVarargs(),
 		FunctionCaptures:   compiler.bodyBoundary.FunctionCaptures(),
 	})
-	if fault.Failed() {
-		reason := CompileReasonOccurrenceUnavailable
-		switch fault.Reason() {
-		case exactscalar.ReasonValueSourceAppend:
-			reason = CompileReasonOccurrenceValueSourceAppend
-		case exactscalar.ReasonValues:
-			reason = CompileReasonOccurrenceValues
-		case exactscalar.ReasonStorageRead:
-			reason = CompileReasonOccurrenceStorageRead
-		case exactscalar.ReasonStorageBind:
-			reason = CompileReasonOccurrenceStorageBind
-		}
-		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, fault.Row(), fault.Subrow(), reason)
+	if fault.Available() {
+		return CompileFailure{construction: fault}
 	}
 	compiler.exactScalar = bundle
 	return CompileFailure{}
