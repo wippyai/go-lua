@@ -1,0 +1,7 @@
+{
+  "description": "Both declared protocols run their complete correct lifecycle in one pass: connection open->closed via connect/query-while-open/close, and transaction active->committed via connect/begin/commit with the owning connection closed afterward. Neither state machine is ever left in a non-final state, no requirement is checked against a wrong state, and no transition is attempted twice. This is the negative control for the whole resource typestate family (typestate.invalid_requirement, typestate.invalid_transition, typestate.unproven_requirement, effect.lifecycle.unreleased): declared-resource-lifecycle only ever exercises violation shapes, so nothing in the corpus previously proved the machinery does not false-positive on the straightforward, fully-correct sequence.",
+  "packages": ["resource"],
+  "check": {
+    "diagnostics": []
+  }
+}

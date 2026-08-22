@@ -1,0 +1,146 @@
+{
+  "description": "Three shapes of connection escape - returned from the function, stored into a table field, handed to a helper that does not close it - each leave `conn` in a non-final connection state at function exit with no reachable transition to `closed` anywhere in the function, and are expected to produce effect.lifecycle.unreleased at the acquisition site. The message/evidence shape mirrors declared-resource-lifecycle's single-path-leak template (2 evidence rows: acquisition, then missing-proof-at-exit; e.g. its leak_on_pcall_error_path case) rather than its 3-row partial-close template, because none of these three functions contains any resource.close call on any path. There is no separate declared wording for 'escaped' versus 'merely left open': the manifest's own doc comment (internal/testfixture/standard_target.go, resourceHostManifest) and the coverage census (GAP-015: PublicationEffectCloseRelease/PublicationLifetimeRelease are undeclared vocabulary anywhere in this manifest) confirm nothing marks return/store/pass-through as a release of ownership, so a returned or stored handle is exactly as unreleased as one dropped on the floor under the CURRENT declared surface. The fourth function, passes_to_closing_function, hands the connection to a helper that itself calls resource.close on it - ownership moves into the callee and is released there - and is the negative control: zero diagnostics, proving a real (interprocedural) close is still recognized as reaching the final state.",
+  "packages": ["resource"],
+  "check": {
+    "diagnostics": [
+      {
+        "file": "main.lua",
+        "line": 6,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["acquires `conn` as connection:`open`", "requires `closed` before local ownership ends"]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["exit state still has `conn` in protocol connection at `open`", "no proof reaches `closed` or escapes ownership on every path"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[effect.lifecycle.unreleased]: resource `conn` remains in connection state `open` at function exit; expected `closed`",
+          "--> main.lua:6:18",
+          "local conn = resource.connect()",
+          "because:",
+          "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
+          "2. missing proof: exit state still has `conn` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path",
+          "help: Transition `conn` to `closed` or escape ownership on every return path."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 6,
+            "column": 18,
+            "contains": ["resource acquired"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 11,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["acquires `conn` as connection:`open`", "requires `closed` before local ownership ends"]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["exit state still has `conn` in protocol connection at `open`", "no proof reaches `closed` or escapes ownership on every path"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[effect.lifecycle.unreleased]: resource `conn` remains in connection state `open` at function exit; expected `closed`",
+          "--> main.lua:11:18",
+          "local conn = resource.connect()",
+          "because:",
+          "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
+          "2. missing proof: exit state still has `conn` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path",
+          "help: Transition `conn` to `closed` or escape ownership on every return path."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 11,
+            "column": 18,
+            "contains": ["resource acquired"]
+          }
+        ]
+      },
+      {
+        "file": "main.lua",
+        "line": 19,
+        "column": 18,
+        "severity": "warning",
+        "code": "effect.lifecycle.unreleased",
+        "message_contains": ["connection", "expected `closed`"],
+        "evidence_contains": ["no proof reaches `closed`"],
+        "min_evidence": 1,
+        "evidence": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 18,
+            "kind": "abstract fact",
+            "trust": "proven",
+            "contains": ["acquires `conn` as connection:`open`", "requires `closed` before local ownership ends"]
+          },
+          {
+            "kind": "missing proof",
+            "trust": "refuted",
+            "contains": ["exit state still has `conn` in protocol connection at `open`", "no proof reaches `closed` or escapes ownership on every path"]
+          }
+        ],
+        "render_contains": ["because:"],
+        "render_ordered_contains": [
+          "warning[effect.lifecycle.unreleased]: resource `conn` remains in connection state `open` at function exit; expected `closed`",
+          "--> main.lua:19:18",
+          "local conn = resource.connect()",
+          "because:",
+          "1. proven: this call acquires `conn` as connection:`open` and requires `closed` before local ownership ends",
+          "2. missing proof: exit state still has `conn` in protocol connection at `open`; no proof reaches `closed` or escapes ownership on every path",
+          "help: Transition `conn` to `closed` or escape ownership on every return path."
+        ],
+        "render_not_contains": ["^~", "where:", "internal", "summary", "want "],
+        "help_contains": ["Transition"],
+        "label_contains": ["resource acquired"],
+        "labels": [
+          {
+            "file": "main.lua",
+            "line": 19,
+            "column": 18,
+            "contains": ["resource acquired"]
+          }
+        ]
+      }
+    ]
+  }
+}
