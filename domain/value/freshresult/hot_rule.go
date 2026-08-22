@@ -33,7 +33,10 @@ func BindHot(fragment *SchemaFragment, values *valueowner.HotOwner, calls *callo
 	}
 	rule := &HotRule{values: values, calls: calls}
 	schema := values.Schema()
-	implementation, bound := valueowner.BindCarryRule(values, fragment.slot, fragment.carry, fragment.write, engine.HotRuleSpec[valuedomain.Value, valuedomain.FreshResultCall]{
+	// The fragment declares one exact foreign (Call) read beside its carry and
+	// write, so the direct cell binder is the one that allocates the read lane
+	// this rule later fills; the carry-only binder admits no reads at all.
+	implementation, bound := valueowner.BindSelectedRuleDirect(values, fragment.slot, fragment.carry, fragment.write, values.FactorRef(), engine.HotRuleSpec[valuedomain.Value, valuedomain.FreshResultCall]{
 		OperandContent: func(row valuedomain.FreshResultCall) (valuedomain.FreshResultCall, [32]byte, bool) {
 			if !schema.OwnsFreshResultCall(row) {
 				return valuedomain.FreshResultCall{}, [32]byte{}, false

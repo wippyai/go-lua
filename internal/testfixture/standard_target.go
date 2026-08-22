@@ -434,8 +434,15 @@ func resourceHostManifest() *manifestwire.Manifest {
 	commitType := typ.Func().Param("transaction", transactionType).Build()
 
 	declaration.DefineFunctionSignature("connect", signature.Function{Type: connectType})
+	// An acquired resource is a newly allocated host value, so the acquiring
+	// result carries the fresh declaration that gives it an allocation
+	// identity. Without it the acquisition names a result slot with no heap
+	// root, and no per-resource state can be keyed on it.
 	declaration.DefineFunctionOperation("connect", manifestwire.Operation{
 		Acquisitions: []manifestwire.Acquisition{{Protocol: "connection", State: "open"}},
+		OutcomeAmendments: []manifestwire.OutcomeAmendment{{
+			Outcome: 0, FreshResults: []manifestwire.FreshResult{{Result: 0, Class: manifestwire.FreshUserdata}},
+		}},
 	})
 	declaration.DefineFunctionSignature("close", signature.Function{
 		Type: closeType,
@@ -447,6 +454,9 @@ func resourceHostManifest() *manifestwire.Manifest {
 	declaration.DefineFunctionSignature("begin", signature.Function{Type: beginType})
 	declaration.DefineFunctionOperation("begin", manifestwire.Operation{
 		Acquisitions: []manifestwire.Acquisition{{Protocol: "transaction", State: "active"}},
+		OutcomeAmendments: []manifestwire.OutcomeAmendment{{
+			Outcome: 0, FreshResults: []manifestwire.FreshResult{{Result: 0, Class: manifestwire.FreshUserdata}},
+		}},
 	})
 	declaration.DefineFunctionSignature("commit", signature.Function{
 		Type: commitType,

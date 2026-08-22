@@ -1,6 +1,7 @@
-// Package resultalias declares Value's Target ResultAlias consumer. It is
-// intentionally not added to the composite roster until the environment-owned
-// rule roster is available.
+// Package resultalias declares Value's Target ResultAlias consumer. It is a
+// mounted rule: the composite roster subscribes it to the call occurrences
+// that own a fixed valued result-zero slot, which is the exact set Value
+// seals a result-slot operand for.
 package resultalias
 
 import (
@@ -41,9 +42,14 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 		Key:    "value-callresult-resultalias",
 		Writes: "value",
 		Owner:  "value",
+		// Value seals exactly one ResultAlias operand per mounted call that
+		// owns a fixed valued result-zero slot, so the subscription names that
+		// requirement rather than the whole call family: a call with no valued
+		// result slot has no operand to resolve, and a placement for it is a
+		// construction the owner cannot answer.
 		Issues: []rule.Issuance{{
 			Occurrence:  "occurrence/call",
-			Requirement: "program-requirement/unrestricted",
+			Requirement: "program-requirement/call-result-slot",
 			Form:        "program-form/call-summary",
 		}},
 		Lane:     rule.LaneMounted,
@@ -52,8 +58,8 @@ func RuleEntry[P rulePrincipals, A ruleAuthorities]() rule.Spec {
 	}
 }
 
-// DeclareRule contributes only neutral engine shape. The environment chooses
-// whether and where to register this isolated consumer.
+// DeclareRule contributes only neutral engine shape. The roster that composes
+// it stays outside this package.
 func DeclareRule[P rulePrincipals](builder *engine.SchemaBuilder, context rule.Declaration[P]) (*SchemaFragment, bool) {
 	ruleSemantic, ruleOK := context.Roles.Key(vocabulary.RoleKey("rule/value/callresult-resultalias"))
 	operandFamily, operandOK := context.Roles.Key(vocabulary.RoleKey("operand/value/callresult-resultalias"))

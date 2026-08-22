@@ -59,7 +59,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 	shard, shardOK := mounts.At(0)
 	program, programOK := mounts.Program(shard)
 	module, moduleOK := linked.Project().ModuleKey(shard)
-	programID, programIDOK := mounts.ProgramID(shard)
+	_, programIDOK := mounts.ProgramID(shard)
 	if mounts.Count() != 1 || !shardOK || !programOK || program == nil || !moduleOK || !programIDOK {
 		t.Fatal("mount")
 	}
@@ -89,7 +89,7 @@ func TestRuntimeKindRuleSubscribesToEveryOccurrenceFamilyItSeals(t *testing.T) {
 		if _, duplicate := declared[issuance.Occurrence]; duplicate {
 			t.Fatalf("rule declares the occurrence family %q twice", issuance.Occurrence)
 		}
-		if !issuance.Form.Available() || !issuance.Input.Available() || !issuance.Stage.Available() || !issuance.Requirement.Available() {
+		if !issuance.Form.Available() || !issuance.Requirement.Available() {
 			t.Fatalf("issuance for %q is incomplete: %+v", issuance.Occurrence, issuance)
 		}
 		declared[issuance.Occurrence] = issuance

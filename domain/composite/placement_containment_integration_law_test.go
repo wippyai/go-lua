@@ -44,10 +44,24 @@ func TestPlacementContainmentOwnsTheMountedPointLane(t *testing.T) {
 	if len(links) < 2 {
 		t.Fatalf("Link inventory has %d entries, want the two-rule Placement tail", len(links))
 	}
-	wantTail := []schema.Key{suspensionKey, suspensionEvidenceKey}
-	for index, want := range wantTail {
-		if got := links[len(links)-len(wantTail)+index]; got != want {
-			t.Fatalf("Link tail slot %d = %q, want %q", index, got, want)
+	// The evidence producer follows the class producer it witnesses, so the
+	// pair is consecutive in Link order. Their absolute table positions are
+	// pinned by the two slot checks below; a later Link rule appended after
+	// them changes neither relation.
+	wantPair := []schema.Key{suspensionKey, suspensionEvidenceKey}
+	pair := -1
+	for index := range links {
+		if links[index] == wantPair[0] {
+			pair = index
+			break
+		}
+	}
+	if pair < 0 || pair+len(wantPair) > len(links) {
+		t.Fatalf("Link inventory %v does not carry the Placement pair %v", links, wantPair)
+	}
+	for index, want := range wantPair {
+		if got := links[pair+index]; got != want {
+			t.Fatalf("Link pair slot %d = %q, want %q", index, got, want)
 		}
 	}
 	suspensionEntry, suspensionOK := templateForKey(state, suspensionKey)

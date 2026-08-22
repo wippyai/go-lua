@@ -37,10 +37,12 @@ import (
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
+	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
@@ -145,6 +147,13 @@ func RuleTemplates[P Principals, A Authorities]() ([]*rule.Template, []RuleContr
 	// a mounted invocation consumer: Call and Pack actuals are read, Target is
 	// joined through Link's exact Contract, and only Placement is written.
 	add(WireRule(placementtransfer.RuleEntry[P, A](), placementtransfer.DeclareRule[P], placementtransfer.RegisterRule, nil, placementtransfer.BindRule[A], placementtransfer.FinalizeRule[A], nil, nil))
+	// The two Target result consumers are appended to preserve established
+	// rule ordinals. ResultAlias is a mounted consumer of the selected Call
+	// and the mounted actual it aliases; fresh-result is the Link producer
+	// that hands a mounted call result the Heap fresh root Value it allocates,
+	// enumerated from Value's own admitted fresh-result directory.
+	add(WireRule(valueresultalias.RuleEntry[P, A](), valueresultalias.DeclareRule[P], valueresultalias.RegisterRule, nil, valueresultalias.BindRule[A], valueresultalias.FinalizeRule[A], nil, nil))
+	add(WireRule(valuefreshresult.RuleEntry[P, A](), valuefreshresult.DeclareRule[P], valuefreshresult.RegisterRule, nil, valuefreshresult.BindRule[A], valuefreshresult.FinalizeRule[A], valuefreshresult.OccurrenceCatalog, nil))
 
 	return admitted, contributors, !rejected && len(admitted) > 0
 }

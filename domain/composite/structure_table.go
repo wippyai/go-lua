@@ -41,10 +41,12 @@ import (
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic"
 	valuebootstrap "github.com/wippyai/go-lua/domain/value/bootstrap"
 	valueequality "github.com/wippyai/go-lua/domain/value/equality"
+	valuefreshresult "github.com/wippyai/go-lua/domain/value/freshresult"
 	valuemoduleload "github.com/wippyai/go-lua/domain/value/moduleload"
 	valueorder "github.com/wippyai/go-lua/domain/value/order"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 	valuerefinement "github.com/wippyai/go-lua/domain/value/refinement"
+	valueresultalias "github.com/wippyai/go-lua/domain/value/resultalias"
 	valueruntimekind "github.com/wippyai/go-lua/domain/value/runtimekind"
 	valuesource "github.com/wippyai/go-lua/domain/value/source"
 	valuetransfer "github.com/wippyai/go-lua/domain/value/transfer"
@@ -215,6 +217,8 @@ func semanticRoleVocabulary() []structure.Spec {
 		placementpublicationescape.StructureSpecs(),
 		heappublicationfreeze.StructureSpecs(),
 		placementtransfer.StructureSpecs(),
+		valueresultalias.StructureSpecs(),
+		valuefreshresult.StructureSpecs(),
 	}
 	var specs []structure.Spec
 	for _, contribution := range contributions {

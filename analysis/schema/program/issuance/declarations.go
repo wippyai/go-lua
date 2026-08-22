@@ -125,6 +125,7 @@ const (
 
 	RequirementUnrestricted   schema.Key = "program-requirement/unrestricted"
 	RequirementCallResult     schema.Key = "program-requirement/call-result"
+	RequirementCallResultSlot schema.Key = "program-requirement/call-result-slot"
 	RequirementTailTransfer   schema.Key = "program-requirement/tail-transfer-result"
 	RequirementClosureCapture schema.Key = "program-requirement/closure-capture"
 	RequirementModuleLoadCall schema.Key = "program-requirement/module-load-call-result"
@@ -639,6 +640,14 @@ func requirementDeclarations() []schemaissuance.Spec {
 				{Output: OutputResultSlot, Register: 22, Proof: 35},
 				{Output: OutputResultValue, Register: 25, Proof: 35},
 			}},
+		{Key: RequirementCallResultSlot, Kind: schemaissuance.KindRequirement, Ordinal: 6, Space: RowOccurrence,
+			Program: callResultSlotRequirementProgram(), Result: 16,
+			Outputs: []schemaissuance.OutputBinding{
+				{Output: OutputOccurrence, Register: 1, Proof: 16},
+				{Output: OutputCall, Register: 7, Proof: 16},
+				{Output: OutputResultSlot, Register: 10, Proof: 16},
+				{Output: OutputResultValue, Register: 13, Proof: 16},
+			}},
 	}
 }
 
@@ -649,6 +658,33 @@ func moduleLoadCallRequirementProgram() schemaissuance.Program {
 		schemaissuance.Instruction{Op: schemaissuance.OpExactlyOne, Out: 34, Args: [6]uint16{33}},
 		schemaissuance.Instruction{Op: schemaissuance.OpAnd, Out: 35, Args: [6]uint16{32, 34}},
 	)
+}
+
+// callResultSlotRequirementProgram admits one call occurrence that owns a
+// fixed valued result-zero slot, whatever its argument geometry. It is the
+// exact denominator of Value's mounted CallResultSlot directory: a nullary,
+// method, multi-argument, or tail-expanded call still seals a result-slot
+// operand, so the strict unary plain shape of RequirementCallResult would
+// leave those rows unplaced.
+func callResultSlotRequirementProgram() schemaissuance.Program {
+	return schemaissuance.Program{
+		{Op: schemaissuance.OpCurrent, Out: 1},
+		{Op: schemaissuance.OpRead, Out: 2, Args: [6]uint16{1}, Ref: FieldOccurrenceKind},
+		{Op: schemaissuance.OpLiteral, Out: 3, Type: schemaissuance.UintType(TypeOccurrenceKind), Literal: uint64(programschema.OccurrenceCall)},
+		{Op: schemaissuance.OpEqual, Out: 4, Args: [6]uint16{2, 3}},
+		{Op: schemaissuance.OpFollow, Out: 5, Args: [6]uint16{1}, Ref: RelationOccurrenceCall},
+		{Op: schemaissuance.OpExactlyOne, Out: 6, Args: [6]uint16{5}},
+		{Op: schemaissuance.OpOnly, Out: 7, Args: [6]uint16{5, 6}},
+		{Op: schemaissuance.OpFollow, Out: 8, Args: [6]uint16{7}, Ref: RelationCallValuedResultZero},
+		{Op: schemaissuance.OpExactlyOne, Out: 9, Args: [6]uint16{8}},
+		{Op: schemaissuance.OpOnly, Out: 10, Args: [6]uint16{8, 9}},
+		{Op: schemaissuance.OpRead, Out: 11, Args: [6]uint16{10}, Ref: FieldResultSlotValueID},
+		{Op: schemaissuance.OpPresent, Out: 12, Args: [6]uint16{11}},
+		{Op: schemaissuance.OpRequirePresent, Out: 13, Args: [6]uint16{11, 12}},
+		{Op: schemaissuance.OpAnd, Out: 14, Args: [6]uint16{4, 6}},
+		{Op: schemaissuance.OpAnd, Out: 15, Args: [6]uint16{14, 9}},
+		{Op: schemaissuance.OpAnd, Out: 16, Args: [6]uint16{15, 12}},
+	}
 }
 
 func callResultRequirementProgram() schemaissuance.Program {
