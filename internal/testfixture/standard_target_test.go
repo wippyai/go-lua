@@ -194,7 +194,62 @@ func TestResourceHostManifestDeclaresBothLifecycles(t *testing.T) {
 			t.Fatalf("resource.%s acquisitions = %+v, want exactly %+v", member, law.Acquisitions, want)
 		}
 	}
+	for member, want := range map[string]manifestwire.Requirement{
+		"query": {Input: manifestwire.InputSource{Kind: manifestwire.InputSourceValue}, Protocol: "connection", State: "open"},
+		"begin": {Input: manifestwire.InputSource{Kind: manifestwire.InputSourceValue}, Protocol: "connection", State: "open"},
+	} {
+		law, ok := declaration.FunctionOperations[member]
+		if !ok {
+			t.Fatalf("the resource manifest declares no operation law for %s", member)
+		}
+		if len(law.Requirements) != 1 || law.Requirements[0] != want {
+			t.Fatalf("resource.%s requirements = %+v, want exactly %+v", member, law.Requirements, want)
+		}
+	}
 	assertSealedResourceLifecycles(t)
+	assertSealedConnectionRequirements(t)
+}
+
+// assertSealedConnectionRequirements reads the read-only constraints back out
+// of the sealed target. Both members that read a connection without moving it
+// answer the connection machine's open state on their first parameter, and
+// neither of them moves it.
+func assertSealedConnectionRequirements(t *testing.T) {
+	t.Helper()
+	sealed, err := StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := sealed.Protocols()
+	connection, _, found := protocolAcquiredBy(&table, resourceOperation(t, sealed, "connect"))
+	if !found {
+		t.Fatal("no sealed protocol is acquired by resource.connect")
+	}
+	if table.ProtocolRequirementCount(connection) != 2 {
+		t.Fatalf("connection requirement count = %d, want the query and begin rows", table.ProtocolRequirementCount(connection))
+	}
+	for _, member := range []string{"query", "begin"} {
+		operation := resourceOperation(t, sealed, member)
+		rows := table.RequirementsOf(operation)
+		if len(rows) != 1 {
+			t.Fatalf("resource.%s requirements = %+v, want the single connection row", member, rows)
+		}
+		if rows[0].Protocol != connection {
+			t.Fatalf("resource.%s constrains protocol %d, want the connection machine %d", member, rows[0].Protocol, connection)
+		}
+		if rows[0].Input.Kind != vocabulary.InputSourceValueFormal || rows[0].Input.Ordinal != 0 {
+			t.Fatalf("resource.%s constrains %+v, want parameter 0", member, rows[0].Input)
+		}
+		if name, ok := table.StateName(connection, rows[0].State); !ok || name != "open" {
+			t.Fatalf("resource.%s requires state %q/%v, want open", member, name, ok)
+		}
+		for index := 0; index < table.TransitionCount(connection); index++ {
+			moved, _, _, _, transitionOK := table.TransitionAt(connection, index)
+			if transitionOK && moved == operation {
+				t.Fatalf("resource.%s moves the connection; a requirement declares no move", member)
+			}
+		}
+	}
 }
 
 // assertSealedResourceLifecycles reads both declared machines back out of the

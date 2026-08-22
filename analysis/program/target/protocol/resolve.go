@@ -102,6 +102,23 @@ func (d *protocolDraft) resolve(operations operation.Core) error {
 			return errors.New("target: duplicate protocol transition")
 		}
 	}
+	for index := range d.requirements {
+		row := &d.requirements[index]
+		op, err := resolveOperation(row.operationSource)
+		if err != nil {
+			return err
+		}
+		if !validAuthoredInputSource(row.input, operations.InputFormalCount(op), uint32(operations.ValuesVarCount(op))) {
+			return fmt.Errorf("target: requirement %d has source outside scope", index)
+		}
+		row.operation = op
+	}
+	sort.Slice(d.requirements, func(i, j int) bool { return compareRequirementKey(d.requirements[i], d.requirements[j]) < 0 })
+	for index := 1; index < len(d.requirements); index++ {
+		if compareRequirementKey(d.requirements[index-1], d.requirements[index]) == 0 {
+			return errors.New("target: duplicate protocol requirement")
+		}
+	}
 	for index := range d.escapes {
 		row := &d.escapes[index]
 		op, err := resolveOperation(row.operationSource)
@@ -262,8 +279,15 @@ func (d *protocolDraft) canonicalizeStates() error {
 			transition.outcomes[outcome].to = assigned[transition.outcomes[outcome].to]
 		}
 	}
+	// A requirement observes a state; it introduces no edge, so it takes no
+	// part in the traversal above and only follows the coordinates the roots
+	// and edges already fixed.
+	for index := range d.requirements {
+		d.requirements[index].state = assigned[d.requirements[index].state]
+	}
 	sort.Slice(d.acquisitions, func(i, j int) bool { return compareAcquisition(d.acquisitions[i], d.acquisitions[j]) < 0 })
 	sort.Slice(d.transitions, func(i, j int) bool { return compareTransitionKey(d.transitions[i], d.transitions[j]) < 0 })
+	sort.Slice(d.requirements, func(i, j int) bool { return compareRequirementKey(d.requirements[i], d.requirements[j]) < 0 })
 	return nil
 }
 
@@ -366,6 +390,25 @@ func compareTransitionKey(a, b transitionDraft) int {
 		return -1
 	}
 	if a.from > b.from {
+		return 1
+	}
+	return 0
+}
+
+func compareRequirementKey(a, b requirementDraft) int {
+	if a.operation != b.operation {
+		if a.operation < b.operation {
+			return -1
+		}
+		return 1
+	}
+	if order := compareInputSource(a.input, b.input); order != 0 {
+		return order
+	}
+	if a.state < b.state {
+		return -1
+	}
+	if a.state > b.state {
 		return 1
 	}
 	return 0

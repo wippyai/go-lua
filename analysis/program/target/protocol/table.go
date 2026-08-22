@@ -17,6 +17,7 @@ type Table struct {
 	acquisitions       sealedrows.Pool[acquisitionRow]
 	transitions        sealedrows.Pool[transitionRow]
 	transitionOutcomes sealedrows.Pool[transitionOutcomeRow]
+	requirements       sealedrows.Pool[requirementRow]
 	escapes            sealedrows.Pool[escapeRow]
 	callbackHolders    sealedrows.Pool[protocolCallbackHolderRow]
 	opaque             vocabulary.Operation
@@ -26,6 +27,7 @@ type protocolRow struct {
 	acquisitions    sealedrows.Span
 	states          sealedrows.Span
 	transitions     sealedrows.Span
+	requirements    sealedrows.Span
 	escapes         sealedrows.Span
 	callbackHolders sealedrows.Span
 }
@@ -54,6 +56,15 @@ type transitionOutcomeRow struct {
 	to      vocabulary.State
 }
 
+// requirementRow is one sealed read-only state constraint: the operation
+// observes input in state and leaves it there. It deliberately carries no
+// outcome vector, which is what separates it from a transition row.
+type requirementRow struct {
+	operation vocabulary.Operation
+	input     vocabulary.InputSource
+	state     vocabulary.State
+}
+
 type escapeRow struct {
 	operation vocabulary.Operation
 	input     vocabulary.InputSource
@@ -74,6 +85,7 @@ func (c *Table) appendProtocols(input []protocolDraft) error {
 		acquisitionPool       sealedrows.PoolBuilder[acquisitionRow]
 		transitionPool        sealedrows.PoolBuilder[transitionRow]
 		transitionOutcomePool sealedrows.PoolBuilder[transitionOutcomeRow]
+		requirementPool       sealedrows.PoolBuilder[requirementRow]
 		escapePool            sealedrows.PoolBuilder[escapeRow]
 		callbackHolderPool    sealedrows.PoolBuilder[protocolCallbackHolderRow]
 	)
@@ -95,6 +107,14 @@ func (c *Table) appendProtocols(input []protocolDraft) error {
 			return err
 		}
 		row.transitions, err = appendProtocolTransitions(&transitionPool, &transitionOutcomePool, draft.transitions)
+		if err != nil {
+			return err
+		}
+		requirements := make([]requirementRow, len(draft.requirements))
+		for itemIndex, item := range draft.requirements {
+			requirements[itemIndex] = requirementRow{operation: item.operation, input: item.input, state: item.state}
+		}
+		row.requirements, err = appendPool(&requirementPool, requirements, "protocol requirement table")
 		if err != nil {
 			return err
 		}
@@ -124,6 +144,7 @@ func (c *Table) appendProtocols(input []protocolDraft) error {
 	c.acquisitions = acquisitionPool.Seal()
 	c.transitions = transitionPool.Seal()
 	c.transitionOutcomes = transitionOutcomePool.Seal()
+	c.requirements = requirementPool.Seal()
 	c.escapes = escapePool.Seal()
 	c.callbackHolders = callbackHolderPool.Seal()
 	return nil

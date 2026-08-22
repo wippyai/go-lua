@@ -400,10 +400,9 @@ func assert2HostManifest() *manifestwire.Manifest {
 // contract, so it declares exactly the five members that fixture calls.
 //
 // The two state machines are stated in full, each with the member that creates
-// its resource and the member that moves it to its final state. What the
-// manifest vocabulary still cannot state is a requirement: there is no label
-// for a member that reads a resource without moving it, so query's demand for
-// an open connection stays unstated.
+// its resource, the member that moves it to its final state, and the members
+// that read one without moving it: query and begin both demand an open
+// connection and leave it open.
 func resourceHostManifest() *manifestwire.Manifest {
 	declaration := manifestwire.New("resource")
 	connectionType := typ.NewInterface("resource.Connection", nil)
@@ -451,9 +450,27 @@ func resourceHostManifest() *manifestwire.Manifest {
 		}),
 	})
 	declaration.DefineFunctionSignature("query", signature.Function{Type: queryType})
+	// query reads the connection and hands it back in the same state, so the
+	// constraint is a requirement rather than a transition with equal
+	// endpoints: it holds on every arm and discharges no obligation.
+	declaration.DefineFunctionOperation("query", manifestwire.Operation{
+		Requirements: []manifestwire.Requirement{{
+			Input:    manifestwire.InputSource{Kind: manifestwire.InputSourceValue},
+			Protocol: "connection",
+			State:    "open",
+		}},
+	})
 	declaration.DefineFunctionSignature("begin", signature.Function{Type: beginType})
+	// begin acquires a transaction from a connection it only reads: the
+	// connection stays open, so the member carries both an acquisition of one
+	// protocol and a requirement on the other.
 	declaration.DefineFunctionOperation("begin", manifestwire.Operation{
 		Acquisitions: []manifestwire.Acquisition{{Protocol: "transaction", State: "active"}},
+		Requirements: []manifestwire.Requirement{{
+			Input:    manifestwire.InputSource{Kind: manifestwire.InputSourceValue},
+			Protocol: "connection",
+			State:    "open",
+		}},
 		OutcomeAmendments: []manifestwire.OutcomeAmendment{{
 			Outcome: 0, FreshResults: []manifestwire.FreshResult{{Result: 0, Class: manifestwire.FreshUserdata}},
 		}},

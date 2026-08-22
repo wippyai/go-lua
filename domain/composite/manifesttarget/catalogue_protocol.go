@@ -45,6 +45,7 @@ type protocolDraft struct {
 
 	acquisitions []vocabulary.AcquisitionSpec
 	transitions  []vocabulary.TransitionSpec
+	requirements []vocabulary.RequirementSpec
 	escapes      []vocabulary.EscapeSpec
 }
 
@@ -73,10 +74,10 @@ func protocols(catalogue *authoredCatalogue, functions []manifest.Function, decl
 			return nil, err
 		}
 		if law, ok := declaration.Operation(); ok {
-			if err := refuseUncarriedRequirements(path, law); err != nil {
+			if err := appendAcquisitions(drafts, path, ref, law); err != nil {
 				return nil, err
 			}
-			if err := appendAcquisitions(drafts, path, ref, law); err != nil {
+			if err := appendRequirements(drafts, path, ref, law); err != nil {
 				return nil, err
 			}
 		}
@@ -98,26 +99,11 @@ func protocols(catalogue *authoredCatalogue, functions []manifest.Function, decl
 			Acquisitions: draft.acquisitions,
 			States:       draft.states,
 			Transitions:  draft.transitions,
+			Requirements: draft.requirements,
 			Escapes:      draft.escapes,
 		})
 	}
 	return out, nil
-}
-
-// refuseUncarriedRequirements fails a declaration whose operation law states a
-// typestate requirement. The manifest boundary accepts the row and checks it
-// against the declared state machine, but the sealed protocol vocabulary has no
-// requirement relation to carry it into, so admitting the declaration here
-// would seal a target that answers nothing about a constraint the provider
-// stated. Refusing names the missing relation instead of dropping the row.
-func refuseUncarriedRequirements(path string, law moduleio.Operation) error {
-	if len(law.Requirements) == 0 {
-		return nil
-	}
-	return fmt.Errorf(
-		"target catalogue: %s declares %d typestate requirement row(s); the sealed protocol vocabulary carries acquisition, transition, and escape relations only, so a requirement cannot be sealed and is refused rather than dropped",
-		path, len(law.Requirements),
-	)
 }
 
 func newProtocolDraft(definition typestate.Definition) *protocolDraft {
@@ -174,6 +160,37 @@ func appendAcquisitions(drafts map[typestate.Protocol]*protocolDraft, path strin
 		draft.acquisitions = append(draft.acquisitions, vocabulary.AcquisitionSpec{
 			Operation: vocabulary.SpecRef(ref), Outcome: acquisition.Outcome,
 			Result: acquisition.Result, State: stateRef,
+		})
+	}
+	return nil
+}
+
+// appendRequirements projects the operation-law requirement rows. A
+// requirement names an input and a state and declares no move, so it carries
+// no outcome vector: the sealed relation constrains every arm of the operation
+// and completes no obligation.
+func appendRequirements(drafts map[typestate.Protocol]*protocolDraft, path string, ref operationRef, law moduleio.Operation) error {
+	for index, requirement := range law.Requirements {
+		protocol, ok := typestate.ProtocolFromString(requirement.Protocol)
+		if !ok {
+			return fmt.Errorf("target catalogue: %s requirement %d has no protocol", path, index)
+		}
+		draft, err := requireProtocolDraft(drafts, protocol)
+		if err != nil {
+			return fmt.Errorf("target catalogue: %s requirement %d: %w", path, index, err)
+		}
+		state, ok := typestate.StateFromString(requirement.State)
+		if !ok {
+			return fmt.Errorf("target catalogue: %s requirement %d has no state", path, index)
+		}
+		stateRef, err := draft.stateRef(state)
+		if err != nil {
+			return fmt.Errorf("target catalogue: %s requirement %d: %w", path, index, err)
+		}
+		draft.requirements = append(draft.requirements, vocabulary.RequirementSpec{
+			Operation: vocabulary.SpecRef(ref),
+			Input:     convertInputSource(requirement.Input),
+			State:     stateRef,
 		})
 	}
 	return nil

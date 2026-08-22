@@ -21,8 +21,11 @@ func TestCompileCatalogueStandardLibraryContentIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Formal ownership and the explicit authored module-path-to-root relation
-	// are both part of Target semantic identity.
-	const want = "ab22f33ff187917a746dde25c78978f2cc818e827bebd120cfd0a853f8aff3c4"
+	// are both part of Target semantic identity. The digest moved when the
+	// protocol requirement relation entered the sealed contract: every protocol
+	// now frames its requirement rows, and the codec version that fences the
+	// preceding layout advanced with it.
+	const want = "fa73c5de46e0cce5689e11048e067b16f9c5b0b7adb623214621213ed1ba4b9f"
 	if got := contract.ContentID().String(); got != want {
 		t.Fatalf("standard-library Target identity = %s, want %s", got, want)
 	}

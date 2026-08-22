@@ -15,6 +15,7 @@ const (
 	recordTransitionOutcome      uint64 = 22
 	recordEscape                 uint64 = 23
 	recordProtocolCallbackHolder uint64 = 24
+	recordProtocolRequirement    uint64 = 33
 )
 
 // Encode writes the protocol owner's canonical identity contribution. Record
@@ -129,6 +130,28 @@ func encodeProtocol(w *framing.Writer, c *Table, protocol vocabulary.Protocol) e
 			}
 		}
 	}
+	requirements := c.requirements.Count(protocolRow.requirements)
+	if err := w.Count(uint64(requirements)); err != nil {
+		return err
+	}
+	for index := 0; index < requirements; index++ {
+		requirement, found := c.requirements.At(protocolRow.requirements, index)
+		if !found {
+			return errors.New("target: malformed requirement")
+		}
+		if err := w.Record(recordProtocolRequirement); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(requirement.operation)); err != nil {
+			return err
+		}
+		if err := encodeCoordinate(w, uint64(requirement.input.Kind), uint64(requirement.input.Ordinal)); err != nil {
+			return err
+		}
+		if err := w.Uint(uint64(requirement.state)); err != nil {
+			return err
+		}
+	}
 	authoredEscapes := c.escapes.Count(protocolRow.escapes)
 	escapes := authoredEscapes + derivedProtocolEscapes
 	if err := w.Count(uint64(escapes)); err != nil {
@@ -187,3 +210,8 @@ func encodeCoordinate(w *framing.Writer, kind, ordinal uint64) error {
 	}
 	return w.Uint(ordinal)
 }
+
+// RequirementRecord exposes the record tag the requirement relation is framed
+// under so the contract that owns the shared target-contract record space can
+// state that no two relations claim the same tag.
+func RequirementRecord() uint64 { return recordProtocolRequirement }

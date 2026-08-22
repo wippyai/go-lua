@@ -8,6 +8,9 @@ import (
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
+// Version 27 carries the protocol requirement relation: a read-only state
+// constraint on one operation input, framed per protocol between the
+// transition and escape relations.
 // Version 26 restores the canonical protocol record framing after its
 // extraction accidentally reused the result-alias tag.
 // Version 25 carries the authored module-path-to-initial-root relation in
@@ -25,7 +28,7 @@ import (
 // Version 18 adds retained callback-holder protocol rows and the mandatory
 // zero-holder branch of a callback release. A target identity from any
 // preceding layout must never be reused as this schema.
-const contentIDCodecVersion = 26
+const contentIDCodecVersion = 27
 
 // ContentID is the SHA-256 identity of the complete observable sealed
 // contract. It encodes no authoring references, Go object identities, lookup
@@ -103,6 +106,7 @@ const (
 	recordFreshResult
 	recordInitialMetatableAttachment
 	recordOperationSubedgeRelation
+	recordProtocolRequirement
 )
 
 func encodeCoordinate(w *framing.Writer, kind, ordinal uint64) error {

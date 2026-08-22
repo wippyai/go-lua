@@ -10,7 +10,7 @@ import (
 // this vector with the operation and boot owner vectors.
 func (table Table) CountRows() denominator.CountRows {
 	ids := denominator.GeneratedTargetIDs()
-	counts := make([]denominator.CountRow, 0, 7)
+	counts := make([]denominator.CountRow, 0, 8)
 	add := func(id schema.EntryID, value int) bool {
 		if value < 0 {
 			return false
@@ -27,6 +27,7 @@ func (table Table) CountRows() denominator.CountRows {
 		!add(ids.TargetProtocolAcquisition, table.acquisitions.Len()) ||
 		!add(ids.TargetProtocolTransition, table.transitions.Len()) ||
 		!add(ids.TargetProtocolTransitionOutcome, table.transitionOutcomes.Len()) ||
+		!add(ids.TargetProtocolRequirement, table.requirements.Len()) ||
 		!add(ids.TargetProtocolEscape, table.escapes.Len()+table.protocols.Count()) ||
 		!add(ids.TargetProtocolCallbackHolder, table.callbackHolders.Len()) {
 		return denominator.CountRows{}

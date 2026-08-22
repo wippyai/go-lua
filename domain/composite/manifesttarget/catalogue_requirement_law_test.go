@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/composite/manifesttarget"
 	"github.com/wippyai/go-lua/domain/type/typ"
 	"github.com/wippyai/go-lua/manifest"
@@ -30,14 +31,10 @@ func requirementSessionManifest() *manifestwire.Manifest {
 	return declaration
 }
 
-// A requirement the manifest boundary admits has no relation in the sealed
-// protocol vocabulary to be carried into. Sealing refuses the catalogue and
-// names the missing relation, so a provider's stated constraint is never
-// dropped on the way to a target that would then answer nothing about it.
-//
-// This law is the visible edge of the gap: it turns green into a compile of the
-// requirement relation, and until then it holds the drop closed.
-func TestSealedTargetRefusesRequirementItCannotCarry(t *testing.T) {
+// A requirement the manifest boundary admits is carried into the sealed
+// protocol table as its own relation, and the sealed target answers the exact
+// Protocol x Operation x InputSource x State constraint the provider stated.
+func TestDeclaredRequirementSealsIntoTheProtocolTable(t *testing.T) {
 	catalogue, err := manifest.Seal(append(stdlib.Providers(), manifest.Provider{
 		Identity: "session", Mount: manifest.MountModule,
 		Declaration: requirementSessionManifest,
@@ -46,19 +43,79 @@ func TestSealedTargetRefusesRequirementItCannotCarry(t *testing.T) {
 		t.Fatalf("the manifest boundary refused a well-formed requirement: %v", err)
 	}
 	sealed, err := manifesttarget.SealCatalogue(catalogue)
-	if err == nil {
-		t.Fatalf("a declared requirement sealed into a target that carries no requirement relation: %v", sealed != nil)
+	if err != nil {
+		t.Fatalf("a declared requirement did not seal: %v", err)
 	}
-	for _, want := range []string{"typestate requirement", "refused rather than dropped"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("refusal = %v, want it to name %q", err, want)
+	table := sealed.Protocols()
+	protocol, ok := table.ProtocolAt(0)
+	if !ok {
+		t.Fatal("sealed target has no protocol handle")
+	}
+	if table.ProtocolRequirementCount(protocol) != 1 {
+		t.Fatalf("requirement count = %d, want the declared row", table.ProtocolRequirementCount(protocol))
+	}
+	operation, input, state, found := table.ProtocolRequirementAt(protocol, 0)
+	if !found {
+		t.Fatal("the sealed protocol answers no requirement row")
+	}
+	if operation != sessionOperation(t, sealed, "query") {
+		t.Fatalf("requirement operation = %d, want session.query", operation)
+	}
+	if input.Kind != vocabulary.InputSourceValueFormal || input.Ordinal != 0 {
+		t.Fatalf("requirement input = %+v, want value formal 0", input)
+	}
+	if name, nameOK := table.StateName(protocol, state); !nameOK || name != "open" {
+		t.Fatalf("required state = %q/%v, want open", name, nameOK)
+	}
+	rows := table.RequirementsOf(operation)
+	if len(rows) != 1 || rows[0].Protocol != protocol || rows[0].State != state {
+		t.Fatalf("RequirementsOf(session.query) = %+v, want the single sealed row", rows)
+	}
+}
+
+// The requirement is a read, not a move. Carrying it adds no transition row
+// and no outcome arm to the protocol that declares it, so nothing about the
+// state machine's edges changed.
+func TestCarriedRequirementAddsNoTransition(t *testing.T) {
+	catalogue, err := manifest.Seal(append(stdlib.Providers(), manifest.Provider{
+		Identity: "session", Mount: manifest.MountModule,
+		Declaration: requirementSessionManifest,
+	})...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := manifesttarget.SealCatalogue(catalogue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := sealed.Protocols()
+	protocol, ok := table.ProtocolAt(0)
+	if !ok {
+		t.Fatal("sealed target has no protocol handle")
+	}
+	baseline := sealSessionCatalogue(t).Protocols()
+	baseProtocol, baseOK := baseline.ProtocolAt(0)
+	if !baseOK {
+		t.Fatal("baseline target has no protocol handle")
+	}
+	if table.TransitionCount(protocol) != baseline.TransitionCount(baseProtocol) {
+		t.Fatalf("transition count = %d, want the baseline %d",
+			table.TransitionCount(protocol), baseline.TransitionCount(baseProtocol))
+	}
+	for index := 0; index < table.TransitionCount(protocol); index++ {
+		operation, kind, ordinal, from, transitionOK := table.TransitionAt(protocol, index)
+		if !transitionOK {
+			t.Fatalf("transition %d is not readable", index)
+		}
+		if operation == sessionOperation(t, sealed, "query") {
+			t.Fatalf("the requirement produced a transition on session.query: %d/%d from %d", kind, ordinal, from)
 		}
 	}
 }
 
-// The refusal is scoped to the requirement row alone: the same catalogue
-// without it seals, so nothing about acquisition, transition, or escape
-// changed.
+// The requirement relation is additive: the same catalogue without a
+// requirement row seals with the acquisition, transition, and escape relations
+// exactly as before.
 func TestSealedTargetStillSealsWithoutRequirementRows(t *testing.T) {
 	sealed := sealSessionCatalogue(t)
 	table := sealed.Protocols()
@@ -75,9 +132,9 @@ func TestSealedTargetStillSealsWithoutRequirementRows(t *testing.T) {
 	}
 }
 
-// A requirement is still checked against the declared state machine before it
-// reaches the target compiler, so the refusal above is the only thing the
-// target layer adds - not the validation.
+// A requirement is checked against the declared state machine before it
+// reaches the target compiler. The target layer carries the row; it is not the
+// authority on which state may be required.
 func TestRequirementIsCheckedAtTheManifestBoundaryNotTheTarget(t *testing.T) {
 	declaration := func() *manifestwire.Manifest {
 		out := sessionManifest()

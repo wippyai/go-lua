@@ -122,6 +122,7 @@ func censusFromReadSurface(t *testing.T, contract *contract.Contract) map[schema
 		add(ids.TargetProtocolAcquisition, protocolTable(contract).ProtocolAcquisitionCount(protocol))
 		add(ids.TargetProtocolEscape, protocolTable(contract).EscapeCount(protocol))
 		add(ids.TargetProtocolCallbackHolder, protocolTable(contract).ProtocolCallbackHolderCount(protocol))
+		add(ids.TargetProtocolRequirement, protocolTable(contract).ProtocolRequirementCount(protocol))
 		for transition := 0; transition < protocolTable(contract).TransitionCount(protocol); transition++ {
 			add(ids.TargetProtocolTransition, 1)
 			add(ids.TargetProtocolTransitionOutcome, protocolTable(contract).TransitionOutcomeCount(protocol, transition))

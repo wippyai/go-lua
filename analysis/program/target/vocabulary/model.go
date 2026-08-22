@@ -305,12 +305,28 @@ type EscapeSpec struct {
 	Input     InputSource
 }
 
+// RequirementSpec observes State at invocation entry for one existing input
+// coordinate and leaves it there. Operation and State are authoring-only
+// references; Seal retains the exact Protocol x Operation x InputSource x
+// State relation.
+//
+// A requirement is deliberately not a transition with equal endpoints. A
+// transition declares a completed move and carries the outcome arms that
+// complete it; a requirement declares no move, so it carries no outcome, and
+// it constrains every arm while discharging no obligation.
+type RequirementSpec struct {
+	Operation SpecRef
+	Input     InputSource
+	State     StateRef
+}
+
 // ProtocolSpec owns one nominal protocol and its complete acquisition set.
 // There is deliberately no free-form protocol name or second operation ID.
 type ProtocolSpec struct {
 	Acquisitions    []AcquisitionSpec
 	States          []StateSpec
 	Transitions     []TransitionSpec
+	Requirements    []RequirementSpec
 	Escapes         []EscapeSpec
 	CallbackHolders []ProtocolCallbackHolderSpec
 }

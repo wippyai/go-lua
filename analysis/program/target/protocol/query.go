@@ -194,3 +194,59 @@ func (c *Table) ProtocolCallbackHolderAt(protocol vocabulary.Protocol, index int
 	}
 	return holder.operation, holder.input, holder.callback, true
 }
+
+// Requirement is one sealed read-only state constraint as a reader receives
+// it: the protocol whose state machine names State, the input coordinate of
+// the operation that is constrained, and the state it must be in. It carries
+// no outcome, because a requirement completes no move.
+type Requirement struct {
+	Protocol vocabulary.Protocol
+	Input    vocabulary.InputSource
+	State    vocabulary.State
+}
+
+func (c *Table) ProtocolRequirementCount(protocol vocabulary.Protocol) int {
+	row, ok := c.protocol(protocol)
+	if !ok {
+		return 0
+	}
+	return c.requirements.Count(row.requirements)
+}
+
+// ProtocolRequirementAt returns one exact
+// Protocol x Operation x InputSource x State declaration.
+func (c *Table) ProtocolRequirementAt(protocol vocabulary.Protocol, index int) (vocabulary.Operation, vocabulary.InputSource, vocabulary.State, bool) {
+	row, ok := c.protocol(protocol)
+	if !ok || index < 0 {
+		return 0, vocabulary.InputSource{}, 0, false
+	}
+	requirement, found := c.requirements.At(row.requirements, index)
+	if !found || requirement.operation == 0 || requirement.state == 0 {
+		return 0, vocabulary.InputSource{}, 0, false
+	}
+	return requirement.operation, requirement.input, requirement.state, true
+}
+
+// RequirementsOf answers every state constraint one operation carries, across
+// every protocol that states one. A consumer holding an operation handle asks
+// the relation directly instead of rediscovering it by walking protocols.
+func (c *Table) RequirementsOf(operation vocabulary.Operation) []Requirement {
+	if c == nil || operation == 0 {
+		return nil
+	}
+	var out []Requirement
+	for index := 0; index < c.ProtocolCount(); index++ {
+		protocol, ok := c.ProtocolAt(index)
+		if !ok {
+			continue
+		}
+		for row := 0; row < c.ProtocolRequirementCount(protocol); row++ {
+			owner, input, state, found := c.ProtocolRequirementAt(protocol, row)
+			if !found || owner != operation {
+				continue
+			}
+			out = append(out, Requirement{Protocol: protocol, Input: input, State: state})
+		}
+	}
+	return out
+}

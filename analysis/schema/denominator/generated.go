@@ -96,13 +96,14 @@ var generatedRelationEntries = []*RelationEntry{
 	{key: schema.Key("TargetProtocol@TargetProtocolTransitionOutcome"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransitionOutcome")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransition")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolState")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOutcome"))}},
 	{key: schema.Key("TargetProtocol@TargetProtocolEscape"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolEscape")), owner: RelationOwnerTarget, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetABI"))}},
 	{key: schema.Key("TargetProtocol@TargetProtocolCallbackHolder"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolCallbackHolder")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallback")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetABI"))}},
+	{key: schema.Key("TargetProtocol@TargetProtocolRequirement"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolRequirement")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolState")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetABI"))}},
 	{key: schema.Key("TargetBoot@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@-")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetContract@-"))}},
 	{key: schema.Key("TargetBoot@TargetBootEntry"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@TargetBootEntry")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@-"))}},
 	{key: schema.Key("TargetBoot@TargetBootMetatableAttachment"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@TargetBootMetatableAttachment")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@-"))}},
 	{key: schema.Key("TargetBoot@TargetBootBinding"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@TargetBootBinding")), owner: RelationOwnerTarget, form: RelationFormAuthored, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetBoot@TargetBootEntry"))}},
 	{key: schema.Key("LinkProjectShardMount@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkProjectShardMount@-")), owner: RelationOwnerLinkProject, form: RelationFormAuthored},
 	{key: schema.Key("LinkProjectBaseApplication@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkProjectBaseApplication@-")), owner: RelationOwnerLinkProject, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkProjectShardMount@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowCall@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowUnaryNumeric")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowLength")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowArithmetic")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowBitwise")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowConcat")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowEquality")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowOrder")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowIndexGet")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowOperators@ProgramFlowIndexSet")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("ProgramFlowControl@ProgramFlowGenericFor"))}},
-	{key: schema.Key("LinkBoundary@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkBoundary@-")), owner: RelationOwnerLinkBoundary, form: RelationFormVirtualPredicate, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkProjectBaseApplication@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetABI")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedge")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallback")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetBinding")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResume")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSpawn")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOpaque")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOperationEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackRelease")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetTransfer")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetTransferOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSuspension")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResumeOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSpawnSibling")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedgeArgumentOrigin")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackResult")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResultAlias")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetProduced")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetProducedCapture")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetFreshResult")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetPublicationEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedgeRelation")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetFormalEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolState")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolAcquisition")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransition")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransitionOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolEscape")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolCallbackHolder"))}},
+	{key: schema.Key("LinkBoundary@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkBoundary@-")), owner: RelationOwnerLinkBoundary, form: RelationFormVirtualPredicate, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkProjectBaseApplication@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetABI")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedge")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallback")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetBinding")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResume")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSpawn")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOpaque")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOperationEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackRelease")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetTransfer")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetTransferOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSuspension")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResumeOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSpawnSibling")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedgeArgumentOrigin")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetCallbackResult")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetResultAlias")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetProduced")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetProducedCapture")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetFreshResult")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetPublicationEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetSubedgeRelation")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetOperation@TargetFormalEffect")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@-")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolState")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolAcquisition")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransition")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolTransitionOutcome")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolEscape")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolCallbackHolder")), schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("TargetProtocol@TargetProtocolRequirement"))}},
 	{key: schema.Key("LinkModule@-"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkModule@-")), owner: RelationOwnerLinkModule, form: RelationFormAuthored},
 	{key: schema.Key("LinkModule@LinkModuleCache"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkModule@LinkModuleCache")), owner: RelationOwnerLinkModule, form: RelationFormAuthored},
 	{key: schema.Key("LinkModule@LinkModuleRepresentative"), id: schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkModule@LinkModuleRepresentative")), owner: RelationOwnerLinkModule, form: RelationFormSealDerived, parents: []schema.EntryID{schema.NewEntryID(schema.SurfaceKindDenominator, schema.Key("LinkModule@LinkModuleCache"))}},
@@ -308,40 +309,42 @@ func GeneratedRelationByKey(key schema.Key) (*RelationEntry, bool) {
 		return generatedRelationEntries[89], true
 	case schema.Key("TargetProtocol@TargetProtocolCallbackHolder"):
 		return generatedRelationEntries[90], true
-	case schema.Key("TargetBoot@-"):
+	case schema.Key("TargetProtocol@TargetProtocolRequirement"):
 		return generatedRelationEntries[91], true
-	case schema.Key("TargetBoot@TargetBootEntry"):
+	case schema.Key("TargetBoot@-"):
 		return generatedRelationEntries[92], true
-	case schema.Key("TargetBoot@TargetBootMetatableAttachment"):
+	case schema.Key("TargetBoot@TargetBootEntry"):
 		return generatedRelationEntries[93], true
-	case schema.Key("TargetBoot@TargetBootBinding"):
+	case schema.Key("TargetBoot@TargetBootMetatableAttachment"):
 		return generatedRelationEntries[94], true
-	case schema.Key("LinkProjectShardMount@-"):
+	case schema.Key("TargetBoot@TargetBootBinding"):
 		return generatedRelationEntries[95], true
-	case schema.Key("LinkProjectBaseApplication@-"):
+	case schema.Key("LinkProjectShardMount@-"):
 		return generatedRelationEntries[96], true
-	case schema.Key("LinkBoundary@-"):
+	case schema.Key("LinkProjectBaseApplication@-"):
 		return generatedRelationEntries[97], true
-	case schema.Key("LinkModule@-"):
+	case schema.Key("LinkBoundary@-"):
 		return generatedRelationEntries[98], true
-	case schema.Key("LinkModule@LinkModuleCache"):
+	case schema.Key("LinkModule@-"):
 		return generatedRelationEntries[99], true
-	case schema.Key("LinkModule@LinkModuleRepresentative"):
+	case schema.Key("LinkModule@LinkModuleCache"):
 		return generatedRelationEntries[100], true
-	case schema.Key("LinkModule@LinkModuleAnalysisRoot"):
+	case schema.Key("LinkModule@LinkModuleRepresentative"):
 		return generatedRelationEntries[101], true
-	case schema.Key("LinkStatic@-"):
+	case schema.Key("LinkModule@LinkModuleAnalysisRoot"):
 		return generatedRelationEntries[102], true
-	case schema.Key("LinkHost@-"):
+	case schema.Key("LinkStatic@-"):
 		return generatedRelationEntries[103], true
-	case schema.Key("LinkHost@LinkHostExposure"):
+	case schema.Key("LinkHost@-"):
 		return generatedRelationEntries[104], true
-	case schema.Key("LinkHost@LinkHostBoot"):
+	case schema.Key("LinkHost@LinkHostExposure"):
 		return generatedRelationEntries[105], true
-	case schema.Key("LinkHost@LinkHostMember"):
+	case schema.Key("LinkHost@LinkHostBoot"):
 		return generatedRelationEntries[106], true
-	case schema.Key("LinkHost@LinkHostEndpointTarget"):
+	case schema.Key("LinkHost@LinkHostMember"):
 		return generatedRelationEntries[107], true
+	case schema.Key("LinkHost@LinkHostEndpointTarget"):
+		return generatedRelationEntries[108], true
 	default:
 		return nil, false
 	}
@@ -632,6 +635,7 @@ type GeneratedTargetRelationIDs struct {
 	TargetProtocolTransitionOutcome schema.EntryID
 	TargetProtocolEscape            schema.EntryID
 	TargetProtocolCallbackHolder    schema.EntryID
+	TargetProtocolRequirement       schema.EntryID
 	TargetBoot                      schema.EntryID
 	TargetBootEntry                 schema.EntryID
 	TargetBootMetatableAttachment   schema.EntryID
@@ -674,10 +678,11 @@ func GeneratedTargetIDs() GeneratedTargetRelationIDs {
 		TargetProtocolTransitionOutcome: generatedRelationEntries[88].ID(),
 		TargetProtocolEscape:            generatedRelationEntries[89].ID(),
 		TargetProtocolCallbackHolder:    generatedRelationEntries[90].ID(),
-		TargetBoot:                      generatedRelationEntries[91].ID(),
-		TargetBootEntry:                 generatedRelationEntries[92].ID(),
-		TargetBootMetatableAttachment:   generatedRelationEntries[93].ID(),
-		TargetBootBinding:               generatedRelationEntries[94].ID(),
+		TargetProtocolRequirement:       generatedRelationEntries[91].ID(),
+		TargetBoot:                      generatedRelationEntries[92].ID(),
+		TargetBootEntry:                 generatedRelationEntries[93].ID(),
+		TargetBootMetatableAttachment:   generatedRelationEntries[94].ID(),
+		TargetBootBinding:               generatedRelationEntries[95].ID(),
 	}
 }
 
@@ -720,6 +725,7 @@ var generatedTargetOwnerIDs = []schema.EntryID{
 	generatedRelationEntries[92].ID(),
 	generatedRelationEntries[93].ID(),
 	generatedRelationEntries[94].ID(),
+	generatedRelationEntries[95].ID(),
 }
 
 // GeneratedTargetOwnerIDs is the immutable catalog-order totality of Target relation identities.
@@ -735,14 +741,14 @@ type GeneratedLinkProjectRelationIDs struct {
 
 func GeneratedLinkProjectIDs() GeneratedLinkProjectRelationIDs {
 	return GeneratedLinkProjectRelationIDs{
-		LinkProjectShardMount:      generatedRelationEntries[95].ID(),
-		LinkProjectBaseApplication: generatedRelationEntries[96].ID(),
+		LinkProjectShardMount:      generatedRelationEntries[96].ID(),
+		LinkProjectBaseApplication: generatedRelationEntries[97].ID(),
 	}
 }
 
 var generatedLinkProjectOwnerIDs = []schema.EntryID{
-	generatedRelationEntries[95].ID(),
 	generatedRelationEntries[96].ID(),
+	generatedRelationEntries[97].ID(),
 }
 
 // GeneratedLinkProjectOwnerIDs is the immutable catalog-order totality of LinkProject relation identities.
@@ -757,12 +763,12 @@ type GeneratedLinkBoundaryRelationIDs struct {
 
 func GeneratedLinkBoundaryIDs() GeneratedLinkBoundaryRelationIDs {
 	return GeneratedLinkBoundaryRelationIDs{
-		LinkBoundary: generatedRelationEntries[97].ID(),
+		LinkBoundary: generatedRelationEntries[98].ID(),
 	}
 }
 
 var generatedLinkBoundaryOwnerIDs = []schema.EntryID{
-	generatedRelationEntries[97].ID(),
+	generatedRelationEntries[98].ID(),
 }
 
 // GeneratedLinkBoundaryOwnerIDs is the immutable catalog-order totality of LinkBoundary relation identities.
@@ -780,18 +786,18 @@ type GeneratedLinkModuleRelationIDs struct {
 
 func GeneratedLinkModuleIDs() GeneratedLinkModuleRelationIDs {
 	return GeneratedLinkModuleRelationIDs{
-		LinkModule:               generatedRelationEntries[98].ID(),
-		LinkModuleCache:          generatedRelationEntries[99].ID(),
-		LinkModuleRepresentative: generatedRelationEntries[100].ID(),
-		LinkModuleAnalysisRoot:   generatedRelationEntries[101].ID(),
+		LinkModule:               generatedRelationEntries[99].ID(),
+		LinkModuleCache:          generatedRelationEntries[100].ID(),
+		LinkModuleRepresentative: generatedRelationEntries[101].ID(),
+		LinkModuleAnalysisRoot:   generatedRelationEntries[102].ID(),
 	}
 }
 
 var generatedLinkModuleOwnerIDs = []schema.EntryID{
-	generatedRelationEntries[98].ID(),
 	generatedRelationEntries[99].ID(),
 	generatedRelationEntries[100].ID(),
 	generatedRelationEntries[101].ID(),
+	generatedRelationEntries[102].ID(),
 }
 
 // GeneratedLinkModuleOwnerIDs is the immutable catalog-order totality of LinkModule relation identities.
@@ -806,12 +812,12 @@ type GeneratedLinkStaticRelationIDs struct {
 
 func GeneratedLinkStaticIDs() GeneratedLinkStaticRelationIDs {
 	return GeneratedLinkStaticRelationIDs{
-		LinkStatic: generatedRelationEntries[102].ID(),
+		LinkStatic: generatedRelationEntries[103].ID(),
 	}
 }
 
 var generatedLinkStaticOwnerIDs = []schema.EntryID{
-	generatedRelationEntries[102].ID(),
+	generatedRelationEntries[103].ID(),
 }
 
 // GeneratedLinkStaticOwnerIDs is the immutable catalog-order totality of LinkStatic relation identities.
@@ -830,20 +836,20 @@ type GeneratedLinkHostRelationIDs struct {
 
 func GeneratedLinkHostIDs() GeneratedLinkHostRelationIDs {
 	return GeneratedLinkHostRelationIDs{
-		LinkHost:               generatedRelationEntries[103].ID(),
-		LinkHostExposure:       generatedRelationEntries[104].ID(),
-		LinkHostBoot:           generatedRelationEntries[105].ID(),
-		LinkHostMember:         generatedRelationEntries[106].ID(),
-		LinkHostEndpointTarget: generatedRelationEntries[107].ID(),
+		LinkHost:               generatedRelationEntries[104].ID(),
+		LinkHostExposure:       generatedRelationEntries[105].ID(),
+		LinkHostBoot:           generatedRelationEntries[106].ID(),
+		LinkHostMember:         generatedRelationEntries[107].ID(),
+		LinkHostEndpointTarget: generatedRelationEntries[108].ID(),
 	}
 }
 
 var generatedLinkHostOwnerIDs = []schema.EntryID{
-	generatedRelationEntries[103].ID(),
 	generatedRelationEntries[104].ID(),
 	generatedRelationEntries[105].ID(),
 	generatedRelationEntries[106].ID(),
 	generatedRelationEntries[107].ID(),
+	generatedRelationEntries[108].ID(),
 }
 
 // GeneratedLinkHostOwnerIDs is the immutable catalog-order totality of LinkHost relation identities.

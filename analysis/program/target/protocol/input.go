@@ -21,6 +21,7 @@ type protocolDraft struct {
 	states          []stateRow
 	acquisitions    []acquisitionDraft
 	transitions     []transitionDraft
+	requirements    []requirementDraft
 	escapes         []escapeDraft
 	callbackHolders []protocolCallbackHolderDraft
 }
@@ -46,6 +47,13 @@ type transitionOutcomeDraft struct {
 	outcomeSource uint32
 	outcome       uint32
 	to            vocabulary.State
+}
+
+type requirementDraft struct {
+	operationSource vocabulary.SpecRef
+	operation       vocabulary.Operation
+	input           vocabulary.InputSource
+	state           vocabulary.State
 }
 
 type escapeDraft struct {
@@ -121,6 +129,17 @@ func freezeProtocol(input vocabulary.ProtocolSpec) (protocolDraft, error) {
 			outcomes[outcomeIndex] = transitionOutcomeDraft{outcomeSource: outcome.Outcome, to: to}
 		}
 		draft.transitions[index] = transitionDraft{operationSource: item.Operation, input: item.Input, from: from, outcomes: outcomes}
+	}
+	if _, err := vocabulary.CheckedStoredLength("protocol requirement table", len(input.Requirements)); err != nil {
+		return protocolDraft{}, err
+	}
+	draft.requirements = make([]requirementDraft, len(input.Requirements))
+	for index, item := range input.Requirements {
+		state, ok := resolveStateRef(stateRefs, item.State)
+		if !ok || item.Operation == 0 {
+			return protocolDraft{}, fmt.Errorf("requirement %d outside scope", index)
+		}
+		draft.requirements[index] = requirementDraft{operationSource: item.Operation, input: item.Input, state: state}
 	}
 	if _, err := vocabulary.CheckedStoredLength("protocol escape table", len(input.Escapes)); err != nil {
 		return protocolDraft{}, err
