@@ -1,6 +1,7 @@
 package acceptance_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,33 +9,88 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	programlower "github.com/wippyai/go-lua/analysis/lua/lower"
 	"github.com/wippyai/go-lua/analysis/program"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
+	"github.com/wippyai/go-lua/internal/testfixture"
 )
+
+// loadFixtureCorpus enumerates the checked-in corpus once per package run
+// through the one canonical walker. Every consumer of the frozen fixture set
+// in this package reads through this census rather than re-walking
+// testdata/fixtures with a private filter.
+var loadFixtureCorpus = sync.OnceValues(func() (*testfixture.Corpus, error) {
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		return nil, errAcceptanceTestSourceLocation
+	}
+	repository, err := testfixture.RepositoryRoot(filepath.Dir(current))
+	if err != nil {
+		return nil, err
+	}
+	return testfixture.LoadCorpus(repository)
+})
+
+var errAcceptanceTestSourceLocation = errors.New("acceptance test source location unavailable")
+
+func fixtureCorpus(t *testing.T) *testfixture.Corpus {
+	t.Helper()
+	corpus, err := loadFixtureCorpus()
+	if err != nil {
+		t.Fatalf("load frozen corpus: %v", err)
+	}
+	return corpus
+}
+
+type fixtureSource struct {
+	path string
+	text []byte
+}
+
+// frozenFixtureSources reads every file the canonical corpus census declares,
+// through the corpus project's own SourceText accessor. No path outside the
+// census-declared file set is read or counted.
+func frozenFixtureSources(t *testing.T) []fixtureSource {
+	t.Helper()
+	var sources []fixtureSource
+	for _, project := range fixtureCorpus(t).Projects() {
+		for index := 0; index < project.FileCount(); index++ {
+			relative, ok := project.FileAt(index)
+			if !ok {
+				t.Fatalf("fixture project %s has malformed file index %d", project.Name(), index)
+			}
+			text, err := project.SourceText(filepath.Base(relative))
+			if err != nil {
+				t.Fatalf("read fixture %s: %v", relative, err)
+			}
+			sources = append(sources, fixtureSource{
+				path: filepath.ToSlash(filepath.Join("testdata", "fixtures", relative)),
+				text: text,
+			})
+		}
+	}
+	return sources
+}
 
 // Content identity is a semantic artifact boundary, not a cached lowerer
 // detail.  Exercise the frozen corpus twice so every currently reachable
 // Program relation must be safe to encode and deterministic on reconstruction.
 func TestFrozenFixtureCorpusHasStableProgramContentID(t *testing.T) {
-	for _, fixture := range frozenFixturePaths(t) {
-		source, err := os.ReadFile(fixture.absolute)
+	for _, fixture := range frozenFixtureSources(t) {
+		first, err := programlower.Lower(programlower.Source{Name: fixture.path, Text: fixture.text})
 		if err != nil {
-			t.Fatalf("read %s: %v", fixture.relative, err)
+			t.Fatalf("first lower %s: %v", fixture.path, err)
 		}
-		first, err := programlower.Lower(programlower.Source{Name: fixture.relative, Text: source})
+		second, err := programlower.Lower(programlower.Source{Name: fixture.path, Text: fixture.text})
 		if err != nil {
-			t.Fatalf("first lower %s: %v", fixture.relative, err)
-		}
-		second, err := programlower.Lower(programlower.Source{Name: fixture.relative, Text: source})
-		if err != nil {
-			t.Fatalf("second lower %s: %v", fixture.relative, err)
+			t.Fatalf("second lower %s: %v", fixture.path, err)
 		}
 		left, right := first.ContentID(), second.ContentID()
 		if !left.Available() || left != right {
-			t.Fatalf("ContentID(%s) = %v / %v; want equal available semantic IDs", fixture.relative, left, right)
+			t.Fatalf("ContentID(%s) = %v / %v; want equal available semantic IDs", fixture.path, left, right)
 		}
 	}
 }
@@ -68,11 +124,6 @@ func TestProgramContentIDTracksSourceSemanticsAndCoordinates(t *testing.T) {
 	}
 }
 
-// frozenFixtureLuaFiles is the complete parser-valid fixture denominator at
-// the canonical Program cut. Changing it is a target-contract change, not a
-// way to hide an unlowered source family.
-const frozenFixtureLuaFiles = 1181
-
 var sourcePositionSuffix = regexp.MustCompile(` at [0-9]+:[0-9]+$`)
 
 type fixtureFailureCluster struct {
@@ -87,23 +138,18 @@ type fixtureFailureCluster struct {
 // cases that later analysis must diagnose rather than reject here.
 func TestFrozenFixtureCorpusLowersAndSeals(t *testing.T) {
 	t.Helper()
-	fixtures := frozenFixturePaths(t)
-	if len(fixtures) != frozenFixtureLuaFiles {
+	fixtures := frozenFixtureSources(t)
+	if len(fixtures) != testfixture.FrozenLuaFileCount {
 		t.Fatalf(
 			"frozen fixture denominator = %d Lua files; want exactly %d (corpus changes require an explicit target-contract update)",
-			len(fixtures), frozenFixtureLuaFiles,
+			len(fixtures), testfixture.FrozenLuaFileCount,
 		)
 	}
 	failures := make(map[string]*fixtureFailureCluster)
 	for _, fixture := range fixtures {
-		source, err := os.ReadFile(fixture.absolute)
+		lowered, err := programlower.Lower(programlower.Source{Name: fixture.path, Text: fixture.text})
 		if err == nil {
-			var loweredErr error
-			lowered, loweredErr := programlower.Lower(programlower.Source{Name: fixture.relative, Text: source})
-			err = loweredErr
-			if err == nil {
-				_, err = programCountRows(lowered)
-			}
+			_, err = programCountRows(lowered)
 		}
 		if err == nil {
 			continue
@@ -112,7 +158,7 @@ func TestFrozenFixtureCorpusLowersAndSeals(t *testing.T) {
 		if failures[cluster] == nil {
 			failures[cluster] = &fixtureFailureCluster{summary: cluster}
 		}
-		failures[cluster].paths = append(failures[cluster].paths, fixture.relative)
+		failures[cluster].paths = append(failures[cluster].paths, fixture.path)
 	}
 	if len(failures) == 0 {
 		return
@@ -162,43 +208,6 @@ func programCountRows(p *program.Program) (denominator.CountRows, error) {
 		return denominator.CountRows{}, fmt.Errorf("Program denominator rows unavailable or incomplete")
 	}
 	return rows, nil
-}
-
-type fixturePath struct {
-	absolute string
-	relative string
-}
-
-func frozenFixturePaths(t *testing.T) []fixturePath {
-	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot resolve fixture census test location")
-	}
-	repository := repositoryRoot(t, filepath.Dir(thisFile))
-	root := filepath.Join(repository, "testdata", "fixtures")
-	var fixtures []fixturePath
-	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".lua" {
-			return nil
-		}
-		relative, err := filepath.Rel(repository, path)
-		if err != nil {
-			return err
-		}
-		fixtures = append(fixtures, fixturePath{
-			absolute: path,
-			relative: filepath.ToSlash(relative),
-		})
-		return nil
-	}); err != nil {
-		t.Fatalf("walk frozen fixture corpus: %v", err)
-	}
-	sort.Slice(fixtures, func(i, j int) bool { return fixtures[i].relative < fixtures[j].relative })
-	return fixtures
 }
 
 // repositoryRoot is intentionally independent of the process working
