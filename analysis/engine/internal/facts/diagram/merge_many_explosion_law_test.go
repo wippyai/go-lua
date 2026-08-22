@@ -140,13 +140,11 @@ func TestMergeSoleManyPreviousComplexityIsIndependentOfPreviousLane(t *testing.T
 		if regions == nil {
 			t.Fatal("regions")
 		}
-		merged, valid := builder.MergeSoleFactorMany(previous, []Root[uint64, uint64, uint8]{left, right}, scratch, regions, func(_ uint64, values []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
-			for index, included := range present {
-				if included {
-					return values[index], true
-				}
+		merged, valid := builder.MergeSoleFactorMany(previous, []Root[uint64, uint64, uint8]{left, right}, scratch, regions, func(_ uint64, values []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+			if len(values) == 0 {
+				return terminal.ID[uint8]{}, false
 			}
-			return terminal.ID[uint8]{}, false
+			return values[0], true
 		}, func(key uint64, output []support.Mask) bool {
 			if key != 7 || len(output) != 2 {
 				return false

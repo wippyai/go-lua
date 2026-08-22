@@ -48,27 +48,42 @@ type SoleScratch[K scalar.Key, V any] struct {
 	manyHeads       []*keyNode[K, V]
 	manyHeap        []int
 	manyNodes       []*node[V]
-	manyWidth       int
 	manySupports    []support.Mask
 	manyViews       []support.Decomposition
 	manyRegionRanks []uint64
 	manyNodeRanks   []uint64
-	manyPresent     []bool
-	manyIDs         []terminal.ID[V]
 
 	manyLowNodes     []*node[V]
 	manyHighNodes    []*node[V]
 	manyLowSupports  []support.Mask
 	manyHighSupports []support.Mask
+	// manyLaneNodes/manyLaneSupports and manyPendingIDs/manyPendingNodes are
+	// the classification buffers of one candidate state: the live coordinates
+	// that survive it and the contribution set it has already fixed.
+	manyLaneNodes    []*node[V]
+	manyLaneSupports []support.Mask
+	manyLaneViews    []support.Decomposition
+	manyPendingIDs   []terminal.ID[V]
+	manyPendingNodes []*node[V]
+	manyPendingRanks []uint32
 	manyTupleNodes   []*node[V]
 	manyTupleSupport []support.Mask
+	// manyTupleView holds the region decomposition classification already
+	// computed for each live coordinate, so a state's traversal step reads it
+	// instead of decomposing the same region a second time.
+	manyTupleView    []support.Decomposition
+	manySettledIDs   []terminal.ID[V]
+	manySettledNodes []*node[V]
+	manySettledRanks []uint32
 	manyStates       []soleManyState[V]
 	manyStack        []int
 	manyMemo         map[uint64]int
 	manyNodeIDs      map[*node[V]]uint32
 	manyMaskIDs      map[support.Mask]uint32
+	manyTermIDs      map[terminal.ID[V]]uint32
 	// many seed is a separate iterative predecessor import. It is never read
-	// by manyState, so reconstruction cannot widen the fused operand product.
+	// by state classification, so reconstruction cannot widen the fused
+	// operand traversal.
 	manySeedStack []soleManySeedFrame[V]
 	manySeedState map[*node[V]]uint8
 
@@ -119,13 +134,19 @@ func BorrowRootVector[F ~uint64, K scalar.Key, V any](scratch *SoleScratch[K, V]
 	return vector.roots
 }
 
+// soleManyState is one fused traversal position. Its identity is the vector
+// of live operand coordinates plus the contribution set already fixed by
+// settled operands; a lane that can no longer contribute is not part of it.
 type soleManyState[V any] struct {
-	offset    int
-	next      int
-	low, high int
-	atom      guard.Atom
-	result    *node[V]
-	phase     uint8
+	offset       int
+	width        int
+	settledStart int
+	settledCount int
+	next         int
+	low, high    int
+	atom         guard.Atom
+	result       *node[V]
+	phase        uint8
 }
 
 type soleManySeedFrame[V any] struct {
@@ -207,7 +228,6 @@ func (scratch *SoleScratch[K, V]) clearManyWork() {
 	scratch.manyHeap = scratch.manyHeap[:0]
 	clear(scratch.manyNodes)
 	scratch.manyNodes = scratch.manyNodes[:0]
-	scratch.manyWidth = 0
 	clear(scratch.manySupports)
 	scratch.manySupports = scratch.manySupports[:0]
 	clear(scratch.manyViews)
@@ -216,10 +236,6 @@ func (scratch *SoleScratch[K, V]) clearManyWork() {
 	scratch.manyRegionRanks = scratch.manyRegionRanks[:0]
 	clear(scratch.manyNodeRanks)
 	scratch.manyNodeRanks = scratch.manyNodeRanks[:0]
-	clear(scratch.manyPresent)
-	scratch.manyPresent = scratch.manyPresent[:0]
-	clear(scratch.manyIDs)
-	scratch.manyIDs = scratch.manyIDs[:0]
 	clear(scratch.manyLowNodes)
 	scratch.manyLowNodes = scratch.manyLowNodes[:0]
 	clear(scratch.manyHighNodes)
@@ -236,10 +252,28 @@ func (scratch *SoleScratch[K, V]) clearManyStates() {
 	if scratch == nil {
 		return
 	}
+	clear(scratch.manyLaneNodes)
+	scratch.manyLaneNodes = scratch.manyLaneNodes[:0]
+	clear(scratch.manyLaneSupports)
+	scratch.manyLaneSupports = scratch.manyLaneSupports[:0]
+	clear(scratch.manyLaneViews)
+	scratch.manyLaneViews = scratch.manyLaneViews[:0]
+	clear(scratch.manyPendingIDs)
+	scratch.manyPendingIDs = scratch.manyPendingIDs[:0]
+	clear(scratch.manyPendingNodes)
+	scratch.manyPendingNodes = scratch.manyPendingNodes[:0]
+	scratch.manyPendingRanks = scratch.manyPendingRanks[:0]
 	clear(scratch.manyTupleNodes)
 	scratch.manyTupleNodes = scratch.manyTupleNodes[:0]
 	clear(scratch.manyTupleSupport)
 	scratch.manyTupleSupport = scratch.manyTupleSupport[:0]
+	clear(scratch.manyTupleView)
+	scratch.manyTupleView = scratch.manyTupleView[:0]
+	clear(scratch.manySettledIDs)
+	scratch.manySettledIDs = scratch.manySettledIDs[:0]
+	clear(scratch.manySettledNodes)
+	scratch.manySettledNodes = scratch.manySettledNodes[:0]
+	scratch.manySettledRanks = scratch.manySettledRanks[:0]
 	clear(scratch.manyStates)
 	scratch.manyStates = scratch.manyStates[:0]
 	clear(scratch.manyStack)
@@ -247,6 +281,7 @@ func (scratch *SoleScratch[K, V]) clearManyStates() {
 	clear(scratch.manyMemo)
 	clear(scratch.manyNodeIDs)
 	clear(scratch.manyMaskIDs)
+	clear(scratch.manyTermIDs)
 }
 
 func (scratch *SoleScratch[K, V]) clearManySeed() {
@@ -289,12 +324,6 @@ func (scratch *SoleScratch[K, V]) prepareMany(roots []*keyNode[K, V]) bool {
 	scratch.manyHeads = resizeClear(scratch.manyHeads, count)
 	scratch.manyNodes = resizeClear(scratch.manyNodes, count)
 	scratch.manySupports = resizeClear(scratch.manySupports, count)
-	scratch.manyPresent = resizeClear(scratch.manyPresent, count)
-	scratch.manyIDs = resizeClear(scratch.manyIDs, count)
-	scratch.manyLowNodes = resizeClear(scratch.manyLowNodes, count)
-	scratch.manyHighNodes = resizeClear(scratch.manyHighNodes, count)
-	scratch.manyLowSupports = resizeClear(scratch.manyLowSupports, count)
-	scratch.manyHighSupports = resizeClear(scratch.manyHighSupports, count)
 	for index, root := range roots {
 		scratch.manyCursors[index].begin(root)
 		head, present := scratch.manyCursors[index].next()
@@ -409,11 +438,95 @@ func (scratch *SoleScratch[K, V]) manyMaskID(value support.Mask) uint32 {
 	return id
 }
 
-func (scratch *SoleScratch[K, V]) manyState(nodes []*node[V], supports []support.Mask) (int, bool) {
-	if scratch == nil || len(nodes) == 0 || len(nodes) != len(supports) {
+func (scratch *SoleScratch[K, V]) manyTermID(value terminal.ID[V]) uint32 {
+	if id := scratch.manyTermIDs[value]; id != 0 {
+		return id
+	}
+	if scratch.manyTermIDs == nil {
+		scratch.manyTermIDs = make(map[terminal.ID[V]]uint32)
+	}
+	id := uint32(len(scratch.manyTermIDs) + 1)
+	scratch.manyTermIDs[value] = id
+	return id
+}
+
+// noSoleManyState names the absent predecessor of the root fused state.
+const noSoleManyState = -1
+
+// inheritMany opens one candidate state's classification buffers over the
+// contribution set of an existing state. The candidate is built entirely in
+// these buffers, so interning it can grow the settled store without
+// invalidating what the parent state already published there.
+func (scratch *SoleScratch[K, V]) inheritMany(state int) bool {
+	scratch.manyLaneNodes = scratch.manyLaneNodes[:0]
+	scratch.manyLaneSupports = scratch.manyLaneSupports[:0]
+	scratch.manyLaneViews = scratch.manyLaneViews[:0]
+	scratch.manyPendingIDs = scratch.manyPendingIDs[:0]
+	scratch.manyPendingNodes = scratch.manyPendingNodes[:0]
+	scratch.manyPendingRanks = scratch.manyPendingRanks[:0]
+	if state == noSoleManyState {
+		return true
+	}
+	if state < 0 || state >= len(scratch.manyStates) {
+		return false
+	}
+	parent := scratch.manyStates[state]
+	start, end := parent.settledStart, parent.settledStart+parent.settledCount
+	if start < 0 || end > len(scratch.manySettledIDs) || end > len(scratch.manySettledNodes) || end > len(scratch.manySettledRanks) {
+		return false
+	}
+	scratch.manyPendingIDs = append(scratch.manyPendingIDs, scratch.manySettledIDs[start:end]...)
+	scratch.manyPendingNodes = append(scratch.manyPendingNodes, scratch.manySettledNodes[start:end]...)
+	scratch.manyPendingRanks = append(scratch.manyPendingRanks, scratch.manySettledRanks[start:end]...)
+	return true
+}
+
+// settleMany records one fixed contribution in the candidate state's set. The
+// set is kept ordered by the fold-local terminal identity and holds each
+// contribution once: the fold operator is an idempotent commutative join, so
+// a contribution the state already carries adds nothing, and the order two
+// operands were settled in is not a distinction.
+func (scratch *SoleScratch[K, V]) settleMany(id terminal.ID[V], value *node[V]) {
+	rank := scratch.manyTermID(id)
+	position := 0
+	for position < len(scratch.manyPendingRanks) {
+		existing := scratch.manyPendingRanks[position]
+		if existing == rank {
+			return
+		}
+		if existing > rank {
+			break
+		}
+		position++
+	}
+	scratch.manyPendingIDs = append(scratch.manyPendingIDs, terminal.ID[V]{})
+	scratch.manyPendingNodes = append(scratch.manyPendingNodes, nil)
+	scratch.manyPendingRanks = append(scratch.manyPendingRanks, 0)
+	copy(scratch.manyPendingIDs[position+1:], scratch.manyPendingIDs[position:])
+	copy(scratch.manyPendingNodes[position+1:], scratch.manyPendingNodes[position:])
+	copy(scratch.manyPendingRanks[position+1:], scratch.manyPendingRanks[position:])
+	scratch.manyPendingIDs[position] = id
+	scratch.manyPendingNodes[position] = value
+	scratch.manyPendingRanks[position] = rank
+}
+
+// internManyState interns one already-classified fused state. Identity is the
+// live coordinate vector together with the settled contribution set; the
+// adopted settled leaves and the stored region views are representational and
+// carry no identity.
+func (scratch *SoleScratch[K, V]) internManyState() (int, bool) {
+	nodes, supports, views := scratch.manyLaneNodes, scratch.manyLaneSupports, scratch.manyLaneViews
+	ids, leaves, ranks := scratch.manyPendingIDs, scratch.manyPendingNodes, scratch.manyPendingRanks
+	if scratch == nil || len(nodes) != len(supports) || len(nodes) != len(views) || len(ids) != len(leaves) || len(ids) != len(ranks) {
 		return 0, false
 	}
 	hash := uint64(1469598103934665603)
+	for index := range ranks {
+		hash ^= uint64(ranks[index])
+		hash *= 1099511628211
+	}
+	hash ^= uint64(len(ranks))
+	hash *= 1099511628211
 	for index := range nodes {
 		hash ^= uint64(scratch.manyNodeID(nodes[index]))
 		hash *= 1099511628211
@@ -422,12 +535,15 @@ func (scratch *SoleScratch[K, V]) manyState(nodes []*node[V], supports []support
 	}
 	for link := scratch.manyMemo[hash]; link != 0; link = scratch.manyStates[link-1].next {
 		state := scratch.manyStates[link-1]
+		if state.width != len(nodes) || state.settledCount != len(ids) {
+			continue
+		}
 		equal := true
-		for index := range nodes {
-			if scratch.manyTupleNodes[state.offset+index] != nodes[index] || scratch.manyTupleSupport[state.offset+index] != supports[index] {
-				equal = false
-				break
-			}
+		for index := 0; index < state.settledCount && equal; index++ {
+			equal = scratch.manySettledIDs[state.settledStart+index] == ids[index]
+		}
+		for index := 0; index < state.width && equal; index++ {
+			equal = scratch.manyTupleNodes[state.offset+index] == nodes[index] && scratch.manyTupleSupport[state.offset+index] == supports[index]
 		}
 		if equal {
 			return link - 1, true
@@ -439,8 +555,19 @@ func (scratch *SoleScratch[K, V]) manyState(nodes []*node[V], supports []support
 	offset := len(scratch.manyTupleNodes)
 	scratch.manyTupleNodes = append(scratch.manyTupleNodes, nodes...)
 	scratch.manyTupleSupport = append(scratch.manyTupleSupport, supports...)
+	scratch.manyTupleView = append(scratch.manyTupleView, views...)
+	settledStart := len(scratch.manySettledIDs)
+	scratch.manySettledIDs = append(scratch.manySettledIDs, ids...)
+	scratch.manySettledNodes = append(scratch.manySettledNodes, leaves...)
+	scratch.manySettledRanks = append(scratch.manySettledRanks, ranks...)
 	index := len(scratch.manyStates)
-	scratch.manyStates = append(scratch.manyStates, soleManyState[V]{offset: offset, next: scratch.manyMemo[hash]})
+	scratch.manyStates = append(scratch.manyStates, soleManyState[V]{
+		offset:       offset,
+		width:        len(nodes),
+		settledStart: settledStart,
+		settledCount: len(ids),
+		next:         scratch.manyMemo[hash],
+	})
 	scratch.manyMemo[hash] = index + 1
 	return index, true
 }

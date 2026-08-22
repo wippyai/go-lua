@@ -7,22 +7,34 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/guard"
 )
 
-// SoleManyCombine resolves one completed guarded cell across a fixed ordered
-// operand vector. present distinguishes Absent from Present(Default), whose
-// sparse terminal ID is also zero. The slices are borrowed scratch and must
-// not be retained.
-type SoleManyCombine[K scalar.Key, V any] func(key K, values []terminal.ID[V], present []bool) (terminal.ID[V], bool)
+// SoleManyCombine resolves one completed guarded cell from the contributions
+// present at it. The vector holds each distinct present contribution once and
+// is never empty: a cell no operand covers is Absent and never reaches
+// combine, while a covered sparse zero appears as the zero terminal ID and
+// denotes Present(Default). The operation must therefore be an idempotent,
+// commutative and associative join over that set - a set is all the diagram
+// preserves. The slice is borrowed scratch and must not be retained.
+type SoleManyCombine[K scalar.Key, V any] func(key K, values []terminal.ID[V]) (terminal.ID[V], bool)
 
 // SoleManyRegions fills one exact key-local authored/physical region per
 // operand. The output slice is pre-sized to the input root vector and is
 // borrowed only for this call.
 type SoleManyRegions[K scalar.Key] func(key K, output []support.Mask) bool
 
-// MergeSoleFactorMany performs one synchronized fixed-order fold over a
-// vector of immutable sole-factor roots. It streams the sparse key union once,
+// MergeSoleFactorMany performs one synchronized fold over a vector of
+// immutable sole-factor roots. It streams the sparse key union once,
 // traverses every operand FDD and presence mask together, and constructs one
 // final root. Typed meaning remains in combine; Diagram admits no terminal
 // and owns no presence relation.
+//
+// The fused traversal is a join in the distributive lattice of guarded
+// contributions, so its cost is a property of the operands and the result,
+// never of the product of the operand region spaces. Two positions that hold
+// the same contribution set and the same still-undecided operands are one
+// state, whichever operands produced that set and in whatever order: an
+// operand whose region is empty at a position leaves it, and an operand whose
+// region covers it with an already-resolved value collapses into its
+// contribution set.
 //
 // previous is a reconstruction predecessor: it contributes no terminal or
 // authored presence to the per-column fold. Its sparse keys join the outer
@@ -211,14 +223,7 @@ func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], su
 		return nil, false
 	}
 	scratch.clearManyStates()
-	scratch.manyWidth = len(nodes)
-	scratch.manyPresent = resizeClear(scratch.manyPresent, scratch.manyWidth)
-	scratch.manyIDs = resizeClear(scratch.manyIDs, scratch.manyWidth)
-	scratch.manyLowNodes = resizeClear(scratch.manyLowNodes, scratch.manyWidth)
-	scratch.manyHighNodes = resizeClear(scratch.manyHighNodes, scratch.manyWidth)
-	scratch.manyLowSupports = resizeClear(scratch.manyLowSupports, scratch.manyWidth)
-	scratch.manyHighSupports = resizeClear(scratch.manyHighSupports, scratch.manyWidth)
-	root, ok := scratch.manyState(nodes, supports)
+	root, ok := builder.soleManyState(scratch, regions, nodes, supports, noSoleManyState)
 	if !ok {
 		return nil, false
 	}
@@ -266,8 +271,7 @@ func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], su
 			if low == high {
 				output = low
 			} else {
-				width := len(nodes)
-				for index := 0; index < width; index++ {
+				for index := 0; index < state.width; index++ {
 					candidate := scratch.manyTupleNodes[state.offset+index]
 					if sameDecision(candidate, state.atom, low, high) {
 						output = candidate
@@ -285,33 +289,86 @@ func (builder *Builder[F, K, V]) mergeSoleManyColumn(key K, nodes []*node[V], su
 	return result, result != nil && scratch.live()
 }
 
+// soleManyState classifies one raw operand tuple against the contribution set
+// it inherits and interns the resulting canonical state. Classification is
+// what keeps the fold's live state proportional to its result: an operand
+// whose region is empty here can never contribute below this position and is
+// dropped, and an operand whose region covers this position with a resolved
+// value contributes exactly that value everywhere below, so it is absorbed
+// into the contribution set instead of remaining a coordinate to expand.
+func (builder *Builder[F, K, V]) soleManyState(scratch *SoleScratch[K, V], regions *support.Work, nodes []*node[V], supports []support.Mask, state int) (int, bool) {
+	if builder == nil || builder.diagram == nil || scratch == nil || len(nodes) != len(supports) {
+		return 0, false
+	}
+	if !scratch.inheritMany(state) {
+		return 0, false
+	}
+	for index := range nodes {
+		view, valid := regions.Decompose(supports[index])
+		if !valid {
+			return 0, false
+		}
+		switch {
+		case view.Terminal && !view.Value:
+		case view.Terminal && (nodes[index] == nil || nodes[index].terminal):
+			id, resolved := builder.diagram.terminalAt(nodes[index])
+			if !resolved {
+				return 0, false
+			}
+			scratch.settleMany(id, nodes[index])
+		default:
+			scratch.manyLaneNodes = append(scratch.manyLaneNodes, nodes[index])
+			scratch.manyLaneSupports = append(scratch.manyLaneSupports, supports[index])
+			scratch.manyLaneViews = append(scratch.manyLaneViews, view)
+		}
+	}
+	return scratch.internManyState()
+}
+
 func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scratch *SoleScratch[K, V], regions *support.Work, combine SoleManyCombine[K, V]) (complete bool, output *node[V], atom guard.Atom, low, high int, ok bool) {
 	state := scratch.manyStates[stateIndex]
-	width := scratch.manyWidth
-	if width == 0 || state.offset < 0 || state.offset+width > len(scratch.manyTupleNodes) || state.offset+width > len(scratch.manyTupleSupport) {
+	if state.offset < 0 || state.width < 0 || state.offset+state.width > len(scratch.manyTupleNodes) || state.offset+state.width > len(scratch.manyTupleSupport) ||
+		state.settledStart < 0 || state.settledCount < 0 || state.settledStart+state.settledCount > len(scratch.manySettledIDs) || state.settledStart+state.settledCount > len(scratch.manySettledNodes) {
+		return false, nil, 0, 0, 0, false
+	}
+	settledIDs := scratch.manySettledIDs[state.settledStart : state.settledStart+state.settledCount]
+	settledLeaves := scratch.manySettledNodes[state.settledStart : state.settledStart+state.settledCount]
+	if state.width == 0 {
+		if state.settledCount == 0 {
+			result, valid := builder.canonicalSoleManyTerminal(settledLeaves, terminal.ID[V]{})
+			return true, result, 0, 0, 0, valid
+		}
+		// Even one contribution goes through the typed chooser. That is what
+		// gives complementary sparse-default/equal-terminal leaves one physical
+		// terminal pointer and lets ordinary FDD reduction collapse them without
+		// a separate semantic node-equality pass.
+		merged, accepted := combine(key, settledIDs)
+		if !accepted || !builder.validTerminal(merged) {
+			return false, nil, 0, 0, 0, false
+		}
+		result, valid := builder.canonicalSoleManyTerminal(settledLeaves, merged)
+		return true, result, 0, 0, 0, valid
+	}
+	width := state.width
+	if state.offset+width > len(scratch.manyTupleView) {
 		return false, nil, 0, 0, 0, false
 	}
 	nodes := scratch.manyTupleNodes[state.offset : state.offset+width]
 	supports := scratch.manyTupleSupport[state.offset : state.offset+width]
-	scratch.manyViews = resizeClear(scratch.manyViews, width)
+	views := scratch.manyTupleView[state.offset : state.offset+width]
 	scratch.manyRegionRanks = resizeClear(scratch.manyRegionRanks, width)
 	scratch.manyNodeRanks = resizeClear(scratch.manyNodeRanks, width)
-	views := scratch.manyViews
+	scratch.manyLowNodes = resizeClear(scratch.manyLowNodes, width)
+	scratch.manyHighNodes = resizeClear(scratch.manyHighNodes, width)
+	scratch.manyLowSupports = resizeClear(scratch.manyLowSupports, width)
+	scratch.manyHighSupports = resizeClear(scratch.manyHighSupports, width)
 	regionRanks := scratch.manyRegionRanks
 	nodeRanks := scratch.manyNodeRanks
 	minRank := noRelationRank
-	active := 0
-	allSupportTerminal, allActiveTerminal := true, true
 	for index := 0; index < width; index++ {
-		view, valid := regions.Decompose(supports[index])
-		if !valid {
-			return false, nil, 0, 0, 0, false
-		}
-		views[index] = view
 		regionRank := noRelationRank
-		if !view.Terminal {
-			allSupportTerminal = false
-			rank, ranked := builder.diagram.regionRank(view)
+		if !views[index].Terminal {
+			rank, ranked := builder.diagram.regionRank(views[index])
 			if !ranked {
 				return false, nil, 0, 0, 0, false
 			}
@@ -319,59 +376,14 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 			if rank < minRank {
 				minRank = rank
 			}
-		} else if view.Value {
-			active++
-			if nodes[index] != nil && !nodes[index].terminal {
-				allActiveTerminal = false
-			}
 		}
 		rank, ranked := builder.diagram.nodeRank(nodes[index])
 		if !ranked {
 			return false, nil, 0, 0, 0, false
 		}
-		regionRanks[index] = regionRank
-		nodeRanks[index] = rank
-		if !view.Terminal || view.Value {
-			if rank < minRank {
-				minRank = rank
-			}
-		}
-	}
-	if allSupportTerminal {
-		switch {
-		case active == 0:
-			output, valid := builder.canonicalSoleManyTerminal(nodes, terminal.ID[V]{})
-			return true, output, 0, 0, 0, valid
-		case allActiveTerminal:
-			// Even one active operand goes through the typed chooser. That is
-			// what gives complementary sparse-default/equal-terminal leaves one
-			// physical terminal pointer and lets ordinary FDD reduction collapse
-			// them without a separate semantic node-equality pass.
-			clear(scratch.manyPresent)
-			for index := 0; index < width; index++ {
-				view := views[index]
-				if !view.Terminal {
-					return false, nil, 0, 0, 0, false
-				}
-				scratch.manyPresent[index] = view.Value
-			}
-			clear(scratch.manyIDs)
-			for index := 0; index < width; index++ {
-				if !scratch.manyPresent[index] {
-					continue
-				}
-				id, valid := builder.diagram.terminalAt(nodes[index])
-				if !valid {
-					return false, nil, 0, 0, 0, false
-				}
-				scratch.manyIDs[index] = id
-			}
-			merged, accepted := combine(key, scratch.manyIDs, scratch.manyPresent)
-			if !accepted || !builder.validTerminal(merged) {
-				return false, nil, 0, 0, 0, false
-			}
-			output, valid := builder.canonicalSoleManyTerminal(nodes, merged)
-			return true, output, 0, 0, 0, valid
+		regionRanks[index], nodeRanks[index] = regionRank, rank
+		if rank < minRank {
+			minRank = rank
 		}
 	}
 	if minRank == noRelationRank {
@@ -380,12 +392,10 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 	var selected guard.Atom
 	selectedSet := false
 	for index := 0; index < width && !selectedSet; index++ {
-		view := views[index]
-		regionRank, nodeRank := regionRanks[index], nodeRanks[index]
 		switch {
-		case regionRank == minRank:
-			selected, selectedSet = view.Atom, true
-		case nodeRank == minRank:
+		case regionRanks[index] == minRank:
+			selected, selectedSet = views[index].Atom, true
+		case nodeRanks[index] == minRank:
 			selected, selectedSet = nodes[index].atom, true
 		}
 	}
@@ -393,20 +403,18 @@ func (builder *Builder[F, K, V]) analyzeSoleManyState(key K, stateIndex int, scr
 		return false, nil, 0, 0, 0, false
 	}
 	for index := 0; index < width; index++ {
-		view := views[index]
-		regionRank, nodeRank := regionRanks[index], nodeRanks[index]
 		scratch.manyLowSupports[index], scratch.manyHighSupports[index] = supports[index], supports[index]
-		if regionRank == minRank {
-			scratch.manyLowSupports[index], scratch.manyHighSupports[index] = view.Low, view.High
+		if regionRanks[index] == minRank {
+			scratch.manyLowSupports[index], scratch.manyHighSupports[index] = views[index].Low, views[index].High
 		}
-		scratch.manyLowNodes[index] = branchNode(nodes[index], nodeRank, minRank, false)
-		scratch.manyHighNodes[index] = branchNode(nodes[index], nodeRank, minRank, true)
+		scratch.manyLowNodes[index] = branchNode(nodes[index], nodeRanks[index], minRank, false)
+		scratch.manyHighNodes[index] = branchNode(nodes[index], nodeRanks[index], minRank, true)
 	}
-	lowIndex, valid := scratch.manyState(scratch.manyLowNodes, scratch.manyLowSupports)
+	lowIndex, valid := builder.soleManyState(scratch, regions, scratch.manyLowNodes, scratch.manyLowSupports, stateIndex)
 	if !valid {
 		return false, nil, 0, 0, 0, false
 	}
-	highIndex, valid := scratch.manyState(scratch.manyHighNodes, scratch.manyHighSupports)
+	highIndex, valid := builder.soleManyState(scratch, regions, scratch.manyHighNodes, scratch.manyHighSupports, stateIndex)
 	if !valid {
 		return false, nil, 0, 0, 0, false
 	}

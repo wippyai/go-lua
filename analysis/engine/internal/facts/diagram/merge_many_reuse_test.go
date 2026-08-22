@@ -28,13 +28,11 @@ func TestMergeSoleFactorManyPreservesSemanticValueAndSparsifiesUndefined(t *test
 	left := fixture.sealed(t, relationWrite{key: 1, when: on, value: 20})
 	right := fixture.sealed(t, relationWrite{key: 1, when: notOn, value: 20})
 
-	combine := func(_ relationKey, values []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
-		for index := range values {
-			if present[index] {
-				return values[index], true
-			}
+	combine := func(_ relationKey, values []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+		if len(values) == 0 {
+			return terminal.ID[uint8]{}, false
 		}
-		return terminal.ID[uint8]{}, true
+		return values[0], true
 	}
 
 	t.Run("semantic_value_is_preserved", func(t *testing.T) {
@@ -82,8 +80,10 @@ func TestMergeSoleFactorManyPreservesSemanticValueAndSparsifiesUndefined(t *test
 		if work == nil {
 			t.Fatal("work")
 		}
-		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, _ []terminal.ID[uint8], present []bool) (terminal.ID[uint8], bool) {
-			if len(present) != 2 || present[0] == present[1] {
+		merged, valid := builder.MergeSoleFactorMany(reference, []Root[relationFactor, relationKey, uint8]{fixture.diagram.Empty(), fixture.diagram.Empty()}, NewSoleScratch[relationKey, uint8](), work, func(_ relationKey, values []terminal.ID[uint8]) (terminal.ID[uint8], bool) {
+			// Complementary coverage leaves exactly one contribution present on
+			// either branch, and it is the sparse Default of an empty operand.
+			if len(values) != 1 || values[0] != (terminal.ID[uint8]{}) {
 				return terminal.ID[uint8]{}, false
 			}
 			return terminal.ID[uint8]{}, true

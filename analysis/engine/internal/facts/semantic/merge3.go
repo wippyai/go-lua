@@ -97,13 +97,14 @@ func (domain *Domain[F, K, V]) JoinContributionsMany(previous Plane[F, K, V], in
 	return Plane[F, K, V]{root: root}, true
 }
 
-// terminalsMany supplies the one typed callback for every arity. Presence is
-// carried separately from terminal identity, so a present sparse zero remains
-// Default while an uncovered lane is Absent.
+// terminalsMany supplies the one typed callback for every arity. The diagram
+// hands over the distinct contributions present at a cell, so a covered
+// sparse zero arrives as the zero terminal ID and still means Default, while
+// an uncovered operand simply does not appear.
 func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.SoleManyCombine[K, V] {
 	zero := terminal.ID[V]{}
-	combine := func(_ K, ids []terminal.ID[V], present []bool) (terminal.ID[V], bool) {
-		if values == nil || len(ids) == 0 || len(ids) != len(present) {
+	combine := func(_ K, ids []terminal.ID[V]) (terminal.ID[V], bool) {
+		if values == nil || len(ids) == 0 {
 			return zero, false
 		}
 		dbgSemantic.Cells++
@@ -115,9 +116,6 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 		var accumulatorID terminal.ID[V]
 		have := false
 		for index := range ids {
-			if !present[index] {
-				continue
-			}
 			value := domain.ops.Default
 			valueID := domain.defaultID
 			if ids[index] != zero {
@@ -143,9 +141,6 @@ func (domain *Domain[F, K, V]) terminalsMany(values *terminal.Work[V]) diagram.S
 			if !joined {
 				return zero, false
 			}
-		}
-		if !have {
-			return zero, true
 		}
 		if domain.ops.Equal(accumulator, domain.ops.Default) {
 			return zero, true
