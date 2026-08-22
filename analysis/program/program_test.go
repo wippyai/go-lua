@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow"
 	"github.com/wippyai/go-lua/analysis/program/flow/authored"
+	"github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
 	"github.com/wippyai/go-lua/analysis/program/static"
@@ -131,6 +132,75 @@ func TestPublishedFlowValueIdentitiesRejectUnknownTerms(t *testing.T) {
 	}
 	if id, ok := flowView.ValuesMemberID(unknown, -1); ok || id.Available() {
 		t.Fatalf("ValuesMemberID(unknown,-1) = %x/%v; want unavailable", id, ok)
+	}
+}
+
+func TestSubjectSpellingReadSourceLensUsesAuthoredBase(t *testing.T) {
+	body := keyspace.MakeTerm(keyspace.FamilyBody, 1)
+	globalCell := keyspace.MakeTerm(keyspace.FamilyCell, 1)
+	baseRead := keyspace.MakeTerm(keyspace.FamilyRead, 1)
+	lensRead := keyspace.MakeTerm(keyspace.FamilyRead, 2)
+	key := keyspace.MakeTerm(keyspace.FamilyKey, 1)
+	lens := keyspace.MakeTerm(keyspace.FamilyLensExact, 1)
+	values := keyspace.MakeTerm(keyspace.FamilyValues, 1)
+	returned := keyspace.MakeTerm(keyspace.FamilyReturn, 1)
+	var counts [keyspace.FamilyCount]uint32
+	counts[keyspace.FamilyBody] = 1
+	counts[keyspace.FamilyCell] = 1
+	counts[keyspace.FamilyRead] = 2
+	counts[keyspace.FamilyKey] = 1
+	counts[keyspace.FamilyLensExact] = 1
+	counts[keyspace.FamilyValues] = 1
+	counts[keyspace.FamilyReturn] = 1
+
+	sourceDraft, err := source.Build(source.Input{
+		Name:          "program-subject-spelling-law.lua",
+		Families:      rootFamilySpans("program-subject-spelling-law.lua", counts),
+		ExactAtoms:    []keyspace.LiteralValue{{Kind: keyspace.LiteralString, String: "a"}, {Kind: keyspace.LiteralString, String: "id"}},
+		Keys:          []source.KeyInput{source.NameKey(body, "id")},
+		Bodies:        []source.BodySource{{Body: body, Terms: []keyspace.Term{returned}}},
+		CellSpellings: []source.CellSpelling{{Cell: globalCell}},
+	})
+	if err != nil {
+		t.Fatalf("source.Build: %v", err)
+	}
+	sourceFinalizer, err := sourceDraft.Finalizer()
+	if err != nil {
+		t.Fatalf("source.Finalizer: %v", err)
+	}
+	staticComponent, staticView, err := static.Build(static.Input{Counts: counts})
+	if err != nil {
+		_ = sourceFinalizer.Abort()
+		t.Fatalf("static.Build: %v", err)
+	}
+	flowDraft, err := authored.Build(authored.Input{
+		Counts: counts,
+		Values: authored.ValuesInput{Rows: []authored.Value{{Owner: body, Fixed: authored.Range{End: 1}}}, Terms: []keyspace.Term{lensRead}},
+		Access: authored.AccessInput{Exact: []authored.ExactLens{{Owner: body, Base: baseRead, Source: key, Kind: kind.FieldName}}},
+		Storage: authored.StorageInput{
+			Cells: []authored.Cell{{Kind: authored.CellGlobal, Key: 1}},
+			Reads: []authored.Read{{Owner: body, Source: globalCell}, {Owner: body, Source: lens}},
+		},
+		Control: authored.ControlInput{Returns: []authored.Return{{Owner: body, Values: values}}},
+	})
+	if err != nil {
+		_ = sourceFinalizer.Abort()
+		t.Fatalf("authored.Build: %v", err)
+	}
+	assembly, err := flow.Assemble(sourceFinalizer, staticComponent, staticView, flowDraft, body)
+	if err != nil {
+		t.Fatalf("flow.Assemble: %v", err)
+	}
+	program, err := Publish(assembly)
+	if err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	for term, want := range map[keyspace.Term]string{baseRead: "a", lensRead: "a.id"} {
+		got, ok := program.SubjectSpelling(term)
+		if !ok || got != want {
+			t.Errorf("SubjectSpelling(%v) = %q/%v, want %q/true", term, got, ok, want)
+		}
 	}
 }
 

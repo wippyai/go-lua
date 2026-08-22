@@ -54,7 +54,7 @@ func (program *Program) writeSubjectSpelling(builder *strings.Builder, term keys
 	}
 	switch keyspace.TermFamily(term) {
 	case keyspace.FamilyRead:
-		return program.writeReadSpelling(builder, term)
+		return program.writeReadSpelling(builder, term, depth)
 	case keyspace.FamilyLensExact:
 		return program.writeLensSpelling(builder, term, depth)
 	case keyspace.FamilyCall:
@@ -68,11 +68,14 @@ func (program *Program) writeSubjectSpelling(builder *strings.Builder, term keys
 // its authored key literal, which is the same row the unresolved-value
 // population publishes; every other cell is named by its authored debug
 // spelling row.
-func (program *Program) writeReadSpelling(builder *strings.Builder, term keyspace.Term) bool {
+func (program *Program) writeReadSpelling(builder *strings.Builder, term keyspace.Term, depth int) bool {
 	reads := program.Flow().Authored().Storage().Reads()
 	_, source, _, relationOK := reads.Get(term)
 	if !relationOK || source == 0 {
 		return false
+	}
+	if keyspace.TermFamily(source) == keyspace.FamilyLensExact {
+		return program.writeLensSpelling(builder, source, depth)
 	}
 	cellKind, _, key, cellOK := program.Flow().Authored().Storage().Cells().Get(source)
 	if !cellOK {
