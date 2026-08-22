@@ -30,6 +30,13 @@ func queryPositionPins() []schema.Key {
 	return []schema.Key{QueryFamilyValueSummary, QueryFamilyEffectExact, QueryFamilyPlacementSummary}
 }
 
+// queryIssuancePins includes the producer-only observation family after the
+// three selected-point Result families. The first three positions are the
+// existing Result ordinals and must not move.
+func queryIssuancePins() []schema.Key {
+	return []schema.Key{QueryFamilyValueSummary, QueryFamilyEffectExact, QueryFamilyPlacementSummary, QueryFamilyCallCalleeSet}
+}
+
 // TestQueryTableSeals states that the authored query inventory is admitted and
 // sealed by the one declaration root, and that every family reads a coordinate
 // space the same table declares.
@@ -52,9 +59,9 @@ func TestQueryTableSeals(t *testing.T) {
 	if !axesOK || !viewOK {
 		t.Fatal("sealed table holds no axis or query surface")
 	}
-	families := publishedQueryFamilies()
+	families := queryIssuancePins()
 	if view.Count() != len(families) {
-		t.Fatalf("sealed query surface holds %d rows for %d published families", view.Count(), len(families))
+		t.Fatalf("sealed query surface holds %d rows for %d issued families", view.Count(), len(families))
 	}
 	for _, family := range families {
 		if _, declared := view.ByID(schema.NewEntryID(schema.SurfaceKindQuery, family)); !declared {
@@ -67,11 +74,15 @@ func TestQueryTableSeals(t *testing.T) {
 		if !rowOK || !registrationOK || registration.Key() != entry.Key() {
 			t.Fatalf("query row %d is not the authored family %q", position, entry.Key())
 		}
-		if registration.Population() != query.PopulationSelectedPoint {
-			t.Fatalf("family %q is asked at %q", entry.Key(), registration.Population())
-		}
-		if registration.Projection() != query.ProjectionSummary && registration.Projection() != query.ProjectionExact {
-			t.Fatalf("family %q declares projection %q", entry.Key(), registration.Projection())
+		if position < len(queryPositionPins()) {
+			if registration.Population() != query.PopulationSelectedPoint {
+				t.Fatalf("family %q is asked at %q", entry.Key(), registration.Population())
+			}
+			if registration.Projection() != query.ProjectionSummary && registration.Projection() != query.ProjectionExact {
+				t.Fatalf("family %q declares projection %q", entry.Key(), registration.Projection())
+			}
+		} else if registration.Key() != QueryFamilyCallCalleeSet || registration.Population() != query.PopulationObservation || registration.Projection() != query.ProjectionExact {
+			t.Fatalf("producer-only family %q has population/projection %q/%q", registration.Key(), registration.Population(), registration.Projection())
 		}
 		for index := 0; index < registration.SubjectCount(); index++ {
 			subject, subjectOK := registration.SubjectAt(index)
@@ -102,9 +113,9 @@ func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 	if len(issued) != len(registrations) {
 		t.Fatalf("issuance holds %d families for %d sealed rows", len(issued), len(registrations))
 	}
-	pins := queryPositionPins()
+	pins := queryIssuancePins()
 	if len(issued) != len(pins) {
-		t.Fatalf("query issuance holds %d families, but %d result ordinals are pinned", len(issued), len(pins))
+		t.Fatalf("query issuance holds %d families, but %d issuance ordinals are pinned", len(issued), len(pins))
 	}
 	for position, key := range pins {
 		if issued[position].Family != key {
@@ -144,13 +155,18 @@ func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
 	for _, registration := range registrations {
 		counted[registration.Key()]++
 	}
-	for _, family := range publishedQueryFamilies() {
+	for _, family := range queryIssuancePins() {
 		if counted[family] != 1 {
-			t.Fatalf("published family %q appears %d times in the query inventory", family, counted[family])
+			t.Fatalf("issued family %q appears %d times in the query inventory", family, counted[family])
 		}
 	}
-	if len(counted) != len(publishedQueryFamilies()) {
-		t.Fatalf("query inventory holds %d families for %d published keys", len(counted), len(publishedQueryFamilies()))
+	if len(counted) != len(queryIssuancePins()) {
+		t.Fatalf("query inventory holds %d families for %d issued keys", len(counted), len(queryIssuancePins()))
+	}
+	for _, family := range publishedQueryFamilies() {
+		if counted[family] != 1 {
+			t.Fatalf("selected-point family %q appears %d times in the query inventory", family, counted[family])
+		}
 	}
 }
 
@@ -175,17 +191,52 @@ func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
 	valueCodec, valueCodecOK := roles.Key("semantic/query-result/value-summary")
 	effectCodec, effectCodecOK := roles.Key("semantic/query-result/effect-exact")
 	placementCodec, placementCodecOK := roles.Key("semantic/query-result/placement-summary")
-	if !valueCodecOK || !effectCodecOK || !placementCodecOK {
+	callCodec, callCodecOK := roles.Key("semantic/query-result/call-callee-set")
+	if !valueCodecOK || !effectCodecOK || !placementCodecOK || !callCodecOK {
 		t.Fatal("declared query codec roles did not resolve")
 	}
 	for family, codec := range map[schema.Key]identity.ContentID{
 		QueryFamilyValueSummary:     identity.ContentID(valueCodec.Digest()),
 		QueryFamilyEffectExact:      identity.ContentID(effectCodec.Digest()),
 		QueryFamilyPlacementSummary: identity.ContentID(placementCodec.Digest()),
+		QueryFamilyCallCalleeSet:    identity.ContentID(callCodec.Digest()),
 	} {
 		if declared[family] != codec {
 			t.Fatalf("family %q is declared under a codec the schema does not freeze its results with", family)
 		}
+	}
+}
+
+// TestCallCalleeSetIsAProducerOnlyIssuedFamily states that Call's query is
+// sealed and bound as a typed observation producer, while the Result lane
+// remains absent and therefore cannot acquire a selected-point publication.
+func TestCallCalleeSetIsAProducerOnlyIssuedFamily(t *testing.T) {
+	compilation, compilationOK := Build()
+	if !compilationOK {
+		t.Fatal("compilation unavailable")
+	}
+	roles, rolesOK := SemanticRoles(compilation)
+	registrations, contributors, registrationsOK := queryRegistrations(roles)
+	if !rolesOK || !registrationsOK {
+		t.Fatal("declared query identities did not resolve")
+	}
+	position := -1
+	for index, registration := range registrations {
+		if registration != nil && registration.Key() == QueryFamilyCallCalleeSet {
+			position = index
+			break
+		}
+	}
+	if position != len(queryPositionPins()) || position >= len(contributors) {
+		t.Fatalf("Call producer-only family position = %d, want %d", position, len(queryPositionPins()))
+	}
+	registration := registrations[position]
+	contributor := contributors[position]
+	if registration.Population() != query.PopulationObservation || registration.Projection() != query.ProjectionExact {
+		t.Fatalf("Call query population/projection = %q/%q", registration.Population(), registration.Projection())
+	}
+	if !contributor.producerComplete() || contributor.resultComplete() || contributor.complete() {
+		t.Fatal("Call query did not retain producer-only capability split")
 	}
 }
 
@@ -312,7 +363,7 @@ func TestUnknownQueryPopulationDoesNotAcquireProducerOnlyAdmission(t *testing.T)
 func queryCapabilityLawRoles(t *testing.T) vocabulary.Roles {
 	t.Helper()
 	specs := queryRoleVocabulary()
-	specs = append(specs, vocabulary.RoleSpecs("query/population/observation", "query/population/unknown-law")...)
+	specs = append(specs, vocabulary.RoleSpecs("query/population/unknown-law")...)
 	specs = append(specs, vocabulary.RoleSpecs("query/value-summary", "query-result/value-summary", "factor/value/summary-coordinatewise")...)
 	entries, collected := structure.Collect(specs)
 	if !collected {

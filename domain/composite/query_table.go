@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	callquery "github.com/wippyai/go-lua/domain/call/query"
 	"github.com/wippyai/go-lua/domain/effect/factor"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -22,11 +23,13 @@ const (
 	QueryFamilyValueSummary     = value.SummaryResultFamily
 	QueryFamilyEffectExact      = factor.ExactResultFamily
 	QueryFamilyPlacementSummary = placement.SummaryResultFamily
+	QueryFamilyCallCalleeSet    = callquery.CalleeSetResultFamily
 )
 
 // queryRegistrations is the authored analyzer query inventory: the three
-// families the sealed schema opens a query slot for. Each row instantiates one
-// owning domain's own query declaration, which carries that family's
+// selected-point families and the producer-only Call observation family the
+// sealed schema opens a query slot for. Each row instantiates one owning
+// domain's own query declaration, which carries that family's
 // identities, subject axes, and fold contract. Selected-point rows also carry
 // the Result publication capability; observation rows may carry only their
 // typed producer.
@@ -52,6 +55,7 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 	add(wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer))
 	add(wireQuery(effectowner.QuerySpec(), roles, effectowner.DeclareQuery, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, effectowner.EncodeQueryAnswer))
 	add(wireQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, placementquery.BindQuery, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer))
+	add(wireQuery(callquery.QuerySpec(), roles, callquery.DeclareQuery, callquery.BindQuery, callquery.RecoverQuery, nil, nil))
 
 	if rejected {
 		return nil, nil, false
@@ -65,6 +69,7 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 func queryRoleVocabulary() []structure.Spec {
 	return vocabulary.RoleSpecs(
 		"query/population/selected-point",
+		"query/population/observation",
 		"query/projection/summary",
 		"query/projection/exact",
 	)
