@@ -28,6 +28,8 @@
 package query
 
 import (
+	"encoding/binary"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
@@ -240,8 +242,14 @@ func Payload[T any](cell Cell) (T, bool) {
 // fragment and sealed implementation but carrying the typed contributor that
 // produces both. It is immutable once built.
 type Registration struct {
-	family         schema.Key
-	id             schema.EntryID
+	family schema.Key
+	id     schema.EntryID
+	// entryID is the owner-issued identity of the complete declaration. The
+	// declaration root still indexes the row by Family's generic surface key;
+	// query-site consumers use this identity so a geometry or registration
+	// change cannot reuse an old site address.
+	entryID        schema.EntryID
+	digest         identity.ContentID
 	codec          identity.ContentID
 	fold           Fold
 	contract       identity.ContentID
@@ -253,6 +261,16 @@ type Registration struct {
 	semantic identity.SemanticKey
 	freezer  identity.SemanticKey
 }
+
+const (
+	// registrationDigestFormula commits every declaration-bearing field that
+	// participates in answering a family. It is versioned independently of the
+	// table digest so changing this encoding cannot silently reuse an identity.
+	registrationDigestFormula = "analysis/query-registration-content/v1"
+	// registrationEntryFormula explicitly fences the two Artifact geometry
+	// coordinates and the declaration digest into the owner-issued EntryID.
+	registrationEntryFormula = "analysis/query-registration-entry/v1"
+)
 
 // New admits one authored declaration. The identities the family is
 // published under are resolved from the sealed role vocabulary here, so the
@@ -295,6 +313,11 @@ func New(spec Spec, roles vocabulary.Roles) (*Registration, bool) {
 		semantic:       semantic,
 		freezer:        codec,
 	}
+	entryID, digest, identityOK := registration.deriveIdentity()
+	if !identityOK {
+		return nil, false
+	}
+	registration.entryID, registration.digest = entryID, digest
 	return registration, registration.EntryAvailable() && registration.declarationComplete()
 }
 
@@ -340,6 +363,24 @@ func (registration *Registration) Subjects() []schema.Key {
 func (registration *Registration) Key() schema.Key { return registration.family }
 
 func (registration *Registration) ID() schema.EntryID { return registration.id }
+
+// EntryID returns the one owner-issued identity of this complete
+// registration. It is intentionally distinct from ID, the declaration root's
+// key-derived index identity.
+func (registration *Registration) EntryID() schema.EntryID {
+	if registration == nil {
+		return schema.EntryID{}
+	}
+	return registration.entryID
+}
+
+// Digest returns the canonical declaration digest committed by EntryID.
+func (registration *Registration) Digest() identity.ContentID {
+	if registration == nil {
+		return identity.ContentID{}
+	}
+	return registration.digest
+}
 
 func (registration *Registration) Codec() identity.ContentID { return registration.codec }
 
@@ -407,6 +448,13 @@ func (registration *Registration) EntryAvailable() bool {
 // The contributor is behaviour and not content: what a consumer is owed is the
 // declaration above, and the identities in it are what a contributor is held to.
 func (registration *Registration) EntryContent(content *framing.Writer) error {
+	semanticDigest := registration.semantic.Digest()
+	if err := content.Bytes(semanticDigest[:]); err != nil {
+		return err
+	}
+	if err := content.Uint(registration.semantic.Version()); err != nil {
+		return err
+	}
 	if err := content.Bytes(registration.codec[:]); err != nil {
 		return err
 	}
@@ -434,6 +482,58 @@ func (registration *Registration) declarationComplete() bool {
 	return registration.codec.Available() && registration.fold.Available() &&
 		registration.contract.Available() && len(registration.subjects) > 0 &&
 		registration.population.Available() && registration.populationKind.Available() && registration.projection.Available()
+}
+
+// deriveIdentity computes the declaration digest and the one registration
+// identity that owns all query-site addresses. It deliberately does not use
+// the root's key-derived ID: that identity must remain resolvable by the
+// generic schema table, while this one is the sealed query contract identity.
+func (registration *Registration) deriveIdentity() (schema.EntryID, identity.ContentID, bool) {
+	if registration == nil || !registration.family.Available() ||
+		!registration.semantic.Available() || !registration.freezer.Available() ||
+		!registration.codec.Available() || !registration.contract.Available() ||
+		!registration.fold.Available() || len(registration.subjects) == 0 ||
+		!registration.population.Available() || !registration.populationKind.Available() ||
+		!registration.projection.Available() {
+		return schema.EntryID{}, identity.ContentID{}, false
+	}
+	populationKind, populationKindOK := populationKindFor(registration.population)
+	if !populationKindOK || populationKind != registration.populationKind {
+		return schema.EntryID{}, identity.ContentID{}, false
+	}
+	semanticDigest := registration.semantic.Digest()
+	freezerDigest := registration.freezer.Digest()
+	var semanticVersion [8]byte
+	var freezerVersion [8]byte
+	var fold [8]byte
+	binary.BigEndian.PutUint64(semanticVersion[:], registration.semantic.Version())
+	binary.BigEndian.PutUint64(freezerVersion[:], registration.freezer.Version())
+	binary.BigEndian.PutUint64(fold[:], uint64(registration.fold))
+	parts := make([][]byte, 0, 10+len(registration.subjects))
+	parts = append(parts,
+		[]byte(registration.family),
+		semanticDigest[:], semanticVersion[:],
+		registration.codec[:],
+		freezerDigest[:], freezerVersion[:],
+		fold[:], registration.contract[:],
+	)
+	for _, subject := range registration.subjects {
+		if !subject.Available() {
+			return schema.EntryID{}, identity.ContentID{}, false
+		}
+		parts = append(parts, []byte(subject))
+	}
+	parts = append(parts, []byte(registration.population), []byte(registration.projection))
+	digest, digestOK := identity.DeriveContentID(registrationDigestFormula, parts...)
+	if !digestOK {
+		return schema.EntryID{}, identity.ContentID{}, false
+	}
+	entry, entryOK := identity.DeriveContentID(registrationEntryFormula,
+		[]byte(registration.family), []byte(registration.population), []byte(registration.projection), digest[:])
+	if !entryOK {
+		return schema.EntryID{}, identity.ContentID{}, false
+	}
+	return schema.EntryID(entry), digest, true
 }
 
 func projectionAgrees(fold Fold, projection schema.Key) bool {
@@ -481,6 +581,7 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		return failure(schema.EntryID{}, LawAxisPhase, schema.DispositionIncomplete)
 	}
 	codecs := make(map[identity.ContentID]schema.EntryID, view.Count())
+	entryIDs := make(map[schema.EntryID]schema.EntryID, view.Count())
 	for position := 0; position < view.Count(); position++ {
 		row, rowOK := view.At(position)
 		registration, registrationOK := row.(*Registration)
@@ -537,6 +638,15 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if !projectionAgrees(registration.fold, registration.projection) {
 			return failure(registration.id, LawProjectionFold, schema.DispositionMalformed)
 		}
+		entryID, digest, identityOK := registration.deriveIdentity()
+		if !identityOK || !registration.entryID.Available() || !registration.digest.Available() ||
+			registration.entryID != entryID || registration.digest != digest {
+			return failure(registration.id, LawRegistrationIdentity, schema.DispositionMalformed)
+		}
+		if prior, duplicate := entryIDs[registration.entryID]; duplicate {
+			return failure(prior, LawRegistrationIdentity, schema.DispositionDuplicate)
+		}
+		entryIDs[registration.entryID] = registration.id
 	}
 	return schema.SealFailure{}
 }

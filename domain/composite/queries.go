@@ -38,8 +38,68 @@ func queryPositionForFamily(state *catalog, family schema.Key) (int, bool) {
 	if state == nil || state.sealed == nil {
 		return 0, false
 	}
-	position, declared := state.queryPositions[family]
-	return position, declared
+	witness, declared := state.queryPositions[family]
+	if !declared || witness.Position < 0 || witness.Position >= len(state.queries) {
+		return 0, false
+	}
+	registration := state.queries[witness.Position]
+	return witness.Position, registration != nil && registration.Key() == family && registration.EntryID() == witness.EntryID
+}
+
+// queryRegistrationForFamily returns the sealed registration and its one-based
+// query ordinal from the same lookup witness used by queryPositionForFamily.
+// The ordinal is a publication/layout convenience; EntryID remains the
+// authority and is checked against the registration before it escapes.
+func queryRegistrationForFamily(state *catalog, family schema.Key) (*query.Registration, uint32, bool) {
+	if state == nil || state.sealed == nil {
+		return nil, 0, false
+	}
+	witness, declared := state.queryPositions[family]
+	if !declared || witness.Position < 0 || witness.Position >= len(state.queries) || witness.Ordinal == 0 {
+		return nil, 0, false
+	}
+	registration := state.queries[witness.Position]
+	if registration == nil || registration.Key() != family || registration.EntryID() != witness.EntryID {
+		return nil, 0, false
+	}
+	return registration, witness.Ordinal, true
+}
+
+// QueryRegistrationID resolves the owner-issued registration identity for one
+// authored family. It is a projection of the sealed lookup witness, not a
+// derivation from family text.
+func QueryRegistrationID(compilation Compilation, family schema.Key) (schema.EntryID, bool) {
+	registration, _, ok := queryRegistrationForFamily(compilation.catalog, family)
+	if !ok {
+		return schema.EntryID{}, false
+	}
+	return registration.EntryID(), true
+}
+
+// QueryRegistrationOrdinal resolves the one-based ordinal paired with one
+// sealed family and its owner-issued registration identity.
+func QueryRegistrationOrdinal(compilation Compilation, family schema.Key) (uint32, bool) {
+	_, ordinal, ok := queryRegistrationForFamily(compilation.catalog, family)
+	return ordinal, ok
+}
+
+// QuerySelectedRegistrationOrdinal resolves the dense one-based ordinal in
+// the selected-point Result population. Observation-only registrations return
+// unavailable rather than acquiring a fabricated selected slot.
+func QuerySelectedRegistrationOrdinal(compilation Compilation, family schema.Key) (uint32, bool) {
+	state := compilation.catalog
+	if state == nil || state.sealed == nil {
+		return 0, false
+	}
+	witness, declared := state.queryPositions[family]
+	if !declared || witness.SelectedOrdinal == 0 || witness.Position < 0 || witness.Position >= len(state.queries) {
+		return 0, false
+	}
+	registration := state.queries[witness.Position]
+	if registration == nil || registration.Key() != family || registration.EntryID() != witness.EntryID || registration.Population() != query.PopulationSelectedPoint {
+		return 0, false
+	}
+	return witness.SelectedOrdinal, true
 }
 
 // subjects opens a subject view over one axis pass's payloads, keyed by the

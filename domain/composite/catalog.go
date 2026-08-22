@@ -27,7 +27,7 @@ type catalog struct {
 	queries           []*query.Registration
 	queryContributors []queryContributor
 	observations      observation.Table
-	queryPositions    map[schema.Key]int
+	queryPositions    map[schema.Key]queryPosition
 	axisAdopters      []axisAdopter
 	diagnostics       diagnostic.Table
 	collections       DiagnosticCollections
@@ -52,6 +52,19 @@ type catalog struct {
 	// its slot. The table is the only authority that reads it, and it hands one
 	// fragment back only to the contributor that produced it.
 	queryFragments queryCells
+}
+
+// queryPosition is the one sealed lookup witness for a query declaration. The
+// authored family is the lookup key used by existing callers, while the
+// owner-issued EntryID and one-based ordinal are retained beside the position
+// so a lookup cannot silently pair a family with a different registration.
+// There is no second family-to-identity map: this value is built once from the
+// sealed registration slice and every consumer validates against it.
+type queryPosition struct {
+	Position        int
+	EntryID         schema.EntryID
+	Ordinal         uint32
+	SelectedOrdinal uint32
 }
 
 // Compilation is an opaque proof of the exact sealed schema owner. It is

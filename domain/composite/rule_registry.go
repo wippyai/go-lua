@@ -146,9 +146,48 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	}
 	state.observations = observationTable
 	state.axisAdopters = axisAdopterTable(axes)
-	positions := make(map[schema.Key]int, len(queries))
+	// Build the one query lookup witness from the exact sealed registration
+	// slice. Family and owner-issued EntryID are both identities here: neither
+	// may be silently overwritten by a later row, and the map must cover every
+	// registration before the catalog can become usable.
+	positions := make(map[schema.Key]queryPosition, len(queries))
+	entryIDs := make(map[schema.EntryID]schema.EntryID, len(queries))
+	selectedOrdinal := uint32(0)
 	for position, registration := range queries {
-		positions[registration.Key()] = position
+		if registration == nil || !registration.Key().Available() {
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: query.LawEntryShape, Disposition: schema.DispositionMalformed}
+			return state, state.failure
+		}
+		family := registration.Key()
+		if _, duplicate := positions[family]; duplicate {
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Entry: registration.ID(), Law: schema.LawEntryUnique, Disposition: schema.DispositionDuplicate}
+			return state, state.failure
+		}
+		entryID := registration.EntryID()
+		if !entryID.Available() {
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Entry: registration.ID(), Law: query.LawRegistrationIdentity, Disposition: schema.DispositionIncomplete}
+			return state, state.failure
+		}
+		if prior, duplicate := entryIDs[entryID]; duplicate {
+			state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Entry: prior, Law: query.LawRegistrationIdentity, Disposition: schema.DispositionDuplicate}
+			return state, state.failure
+		}
+		if registration.Population() == query.PopulationSelectedPoint {
+			selectedOrdinal++
+		}
+		rowSelectedOrdinal := uint32(0)
+		if registration.Population() == query.PopulationSelectedPoint {
+			rowSelectedOrdinal = selectedOrdinal
+		}
+		positions[family] = queryPosition{
+			Position: position, EntryID: entryID, Ordinal: uint32(position + 1),
+			SelectedOrdinal: rowSelectedOrdinal,
+		}
+		entryIDs[entryID] = registration.ID()
+	}
+	if len(positions) != len(queries) || len(entryIDs) != len(queries) {
+		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindQuery, Law: query.LawRegistrationIdentity, Disposition: schema.DispositionMalformed}
+		return state, state.failure
 	}
 	slots := make(map[schema.Key]int, len(templates))
 	for position, entry := range templates {

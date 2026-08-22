@@ -80,10 +80,17 @@ func queryRoleVocabulary() []structure.Spec {
 // projection the family is attached through, and the authority
 // ProgramBinding.Query recovers the sealed implementation by.
 type IssuedQuery struct {
-	Family     schema.Key
-	Authority  schema.Key
-	Population schema.Key
-	Projection schema.Key
+	Family schema.Key
+	// Authority is retained as the authored family lookup key for compatibility
+	// with diagnostic collection. RegistrationID is the canonical owner-issued
+	// identity; site and query consumers must carry it rather than rebuilding an
+	// authority from Family, Population, or Projection.
+	Authority       schema.Key
+	RegistrationID  schema.EntryID
+	Ordinal         uint32
+	SelectedOrdinal uint32
+	Population      schema.Key
+	Projection      schema.Key
 }
 
 // QueryIssuance returns this compilation's sealed query inventory in catalog
@@ -97,16 +104,32 @@ func queryIssuance(state *catalog) []IssuedQuery {
 		return nil
 	}
 	issued := make([]IssuedQuery, 0, len(state.queries))
-	for _, registration := range state.queries {
+	selectedOrdinal := uint32(0)
+	for position, registration := range state.queries {
+		// Preserve the sealed inventory's cardinality even when a malformed
+		// construction-only state contains a nil row. A missing row is an
+		// unavailable issuance record, not permission to compact the ordinal
+		// stream or let a later family occupy its slot.
 		if registration == nil {
+			issued = append(issued, IssuedQuery{Ordinal: uint32(position + 1)})
 			continue
 		}
 		family := registration.Key()
+		if registration.Population() == query.PopulationSelectedPoint {
+			selectedOrdinal++
+		}
+		rowSelectedOrdinal := uint32(0)
+		if registration.Population() == query.PopulationSelectedPoint {
+			rowSelectedOrdinal = selectedOrdinal
+		}
 		issued = append(issued, IssuedQuery{
-			Family:     family,
-			Authority:  family,
-			Population: registration.Population(),
-			Projection: registration.Projection(),
+			Family:          family,
+			Authority:       family,
+			RegistrationID:  registration.EntryID(),
+			Ordinal:         uint32(position + 1),
+			SelectedOrdinal: rowSelectedOrdinal,
+			Population:      registration.Population(),
+			Projection:      registration.Projection(),
 		})
 	}
 	return issued
