@@ -7,6 +7,7 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/composite"
+	"github.com/wippyai/go-lua/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -315,7 +316,7 @@ func TestFrozenCorpusDiagnosticExpectationInventory(t *testing.T) {
 	}
 	inventory := catalog.inventory
 
-	if inventory.projects != 939 || inventory.luaFiles != 1206 || inventory.manifests != 558 || inventory.annotatedFiles != 188 {
+	if inventory.projects != 939 || inventory.luaFiles != testfixture.FrozenLuaFileCount || inventory.manifests != 558 || inventory.annotatedFiles != 188 {
 		t.Fatalf("fixture denominator changed: projects=%d lua=%d manifests=%d annotated=%d", inventory.projects, inventory.luaFiles, inventory.manifests, inventory.annotatedFiles)
 	}
 	if inventory.inlineErrors != 727 || inventory.inlineWarnings != 4 {

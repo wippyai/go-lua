@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis"
@@ -64,14 +65,15 @@ func TestFrozenCorpusCatalogReturnsDefensiveViews(t *testing.T) {
 }
 
 // TestSealCorpusProjectResolvesImportsThroughModuleKeys pins the canonical
-// Link-lifetime composition publication. Every executable authored request is
-// represented by a sealed ResolvedImport, while only the mounted sibling is a
-// CacheIngress; the absent sibling remains a source request but is not a
-// fabricated mount or cache row.
+// Link-lifetime composition publication. Every executable authored request to
+// a declared or mounted module is represented by a sealed ResolvedImport and
+// a CacheIngress. A request naming a module that is neither declared nor
+// mounted is refused by the module-request admission gate at seal time: the
+// gate must never be weakened to fabricate a mount or cache row for it.
 func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 	directory := t.TempDir()
 	sources := map[string]string{
-		"main.lua":    "local sibling = require(\"sibling\")\nlocal absent = require(\"absent\")\nreturn sibling\n",
+		"main.lua":    "local sibling = require(\"sibling\")\nreturn sibling\n",
 		"sibling.lua": "return {}\n",
 	}
 	files := make([]string, 0, len(sources))
@@ -113,7 +115,7 @@ func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 	}
 	importingImports, importingPublished := importing.ModuleImportCount()
 	importedImports, importedPublished := imported.ModuleImportCount()
-	if !importingPublished || !importedPublished || importingImports != 2 || importedImports != 0 {
+	if !importingPublished || !importedPublished || importingImports != 1 || importedImports != 0 {
 		t.Fatalf("module cache row runs %d imports -> %d imports, want the requiring module -> the required module",
 			importingImports, importedImports)
 	}
@@ -132,9 +134,34 @@ func TestSealCorpusProjectResolvesImportsThroughModuleKeys(t *testing.T) {
 		}
 		requested = append(requested, literal.String)
 	}
-	sort.Strings(requested)
-	if len(requested) != 2 || requested[0] != "absent" || requested[1] != "sibling" {
-		t.Fatalf("resolved Import requests = %v, want the authored [absent sibling]", requested)
+	if len(requested) != 1 || requested[0] != "sibling" {
+		t.Fatalf("resolved Import requests = %v, want the authored [sibling]", requested)
+	}
+}
+
+// TestSealCorpusProjectRefusesUndeclaredModuleRequests pins the negative half
+// of the module-request admission gate: a require naming a module that is
+// neither a declared host module nor a mounted sibling is refused by name at
+// seal time, and no Link is produced for it.
+func TestSealCorpusProjectRefusesUndeclaredModuleRequests(t *testing.T) {
+	directory := t.TempDir()
+	source := "local absent = require(\"absent\")\nreturn absent\n"
+	if err := os.WriteFile(filepath.Join(directory, "main.lua"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contract, err := StandardLibraryTarget()
+	if err != nil {
+		t.Fatalf("seal canonical target profile: %v", err)
+	}
+	_, err = SealCorpusProject(contract, CorpusProject{
+		relative: "synthetic/import-admission-refusal", directory: directory, files: []string{"main.lua"},
+	})
+	if err == nil {
+		t.Fatal("seal synthetic project: want refusal of the undeclared module request, got nil error")
+	}
+	if !strings.Contains(err.Error(), "absent") ||
+		!strings.Contains(err.Error(), "neither a declared host module nor a mounted module") {
+		t.Fatalf("seal error = %q, want refusal naming %q as neither a declared host module nor a mounted module", err, "absent")
 	}
 }
 
