@@ -60,9 +60,6 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	if failure := transaction.copyModuleRowsFailure(); failure.Available() {
 		return nil, CompileFailure{construction: failure}
 	}
-	if failure := transaction.copySubjectLivenessFailure(); failure.Available() {
-		return nil, failure
-	}
 	if failure := transaction.copySubjectAliasFailure(); failure.Available() {
 		return nil, failure
 	}
@@ -76,6 +73,14 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 		return nil, failure
 	}
 	if failure := transaction.copyOccurrenceCatalogFailure(); failure.Available() {
+		return nil, failure
+	}
+	// The subject-liveness join authenticates a Flow subject against the
+	// Program owner that mounts it. A concat carries no Flow operator
+	// primitive, so its owner is the occurrence issued at its evaluation span
+	// by the catalog above; the join therefore reads the occurrence plane and
+	// runs after it is complete.
+	if failure := transaction.copySubjectLivenessFailure(); failure.Available() {
 		return nil, failure
 	}
 	diagnosticPublication, diagnosticFault := diagnostic.Compile(diagnostic.Input{

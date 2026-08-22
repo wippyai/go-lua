@@ -17,6 +17,7 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	engineprobe "github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/canonical"
@@ -189,12 +190,13 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 	// would consult.
 	failedRule := composite.DiagnosticRuleForSemantic(run.compilation, engineFailure.Rule())
 	return fmt.Sprintf(
-		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s vseal=%s pseal=%s alloc=%s "+
+		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s acompile=%s vseal=%s pseal=%s alloc=%s "+
 			"aseal=%s@%d alower=%s acommit=%s@%d crow=%d obsattach=%s constr=%s comp=%s@%s "+
 			"efail={avail=%t reason=%d site=%s owner=%s point=%v group=%v member=%v rule=%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule, diagnostics.Axis,
 		diagnostics.AssembleStage, diagnostics.Binding, diagnostics.BindingRuleStage,
-		diagnostics.ItemIssuance, diagnostics.ValueSeal, diagnostics.PackSeal, diagnostics.AllocationCatalog,
+		diagnostics.ItemIssuance, zzProbeArtifactCompile(diagnostics.ArtifactCompile),
+		diagnostics.ValueSeal, diagnostics.PackSeal, diagnostics.AllocationCatalog,
 		zzProbeSolveFailure(diagnostics.AssembleSeal), diagnostics.AssembleOrdinal,
 		zzProbeSolveFailure(diagnostics.AssembleLowering),
 		zzProbeSolveFailure(diagnostics.AssembleCommit), diagnostics.AssembleScheduleOrdinal,
@@ -206,6 +208,29 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 		zzProbeSolveFailure(engineFailure.Failure()), failedRule,
 		engineFailure.Point().Available(), engineFailure.Group().Available(),
 		engineFailure.Member().Available(), engineFailure.Rule().Available())
+}
+
+// zzProbeArtifactCompile spells the artifact compiler's own refusal. An
+// artifacts refusal raised outside the compiler carries no such evidence and
+// spells none, which distinguishes a refused Program from a refused Link
+// substitution over admitted Programs.
+func zzProbeArtifactCompile(failure artifactcompiler.CompileFailure) string {
+	if !failure.Available() {
+		return "none"
+	}
+	row, rowOK := failure.Row()
+	if !rowOK {
+		row = -1
+	}
+	subrow, subrowOK := failure.Subrow()
+	if !subrowOK {
+		subrow = -1
+	}
+	if construction := failure.Construction(); construction.Available() {
+		family := construction.Family()
+		return fmt.Sprintf("%s/%s@%d.%d", family.Name(), construction.Issue(), row, subrow)
+	}
+	return fmt.Sprintf("%s/%s/%s@%d.%d", failure.Stage(), failure.RowKind(), failure.Reason(), row, subrow)
 }
 
 // zzProbeCompositionAxis spells the column a composition refusal is about. A

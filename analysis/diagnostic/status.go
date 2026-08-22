@@ -2,6 +2,7 @@ package diagnostic
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
@@ -390,6 +391,14 @@ type AnalyzeDiagnostics struct {
 	AssembleScheduleOrdinal uint32
 	AssembleConstructionRow uint32
 	ObservationAttach       engine.SolveFailure
+	// ArtifactCompile recovers a refused Program-to-Artifact compilation at
+	// the artifact compiler's own evidence type: the compile stage, the row
+	// family, and the row coordinate it stopped on. ItemIssuance names only
+	// which item family could not be issued; this names the act inside it. An
+	// artifacts refusal raised outside the artifact compiler leaves it absent,
+	// which is itself the statement that the compiler admitted every mounted
+	// Program and the Workspace-owned join refused.
+	ArtifactCompile artifactcompiler.CompileFailure
 	// Construction carries one program-constructor refusal as family,
 	// disposition, and opaque site. The constructor's internal stage names
 	// stay inside the engine.

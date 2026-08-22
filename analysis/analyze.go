@@ -161,9 +161,13 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}
-	artifacts, artifactsOK := compileProgramArtifacts(products, source, compilation)
+	artifacts, artifactCompileFailure, artifactsOK := compileProgramArtifacts(products, source, compilation)
 	if !artifactsOK {
 		diagnostics.ItemIssuance = anadiag.AnalyzeDiagnosticItemIssuanceFailureArtifacts
+		// The artifact compiler publishes its refusal as a compile stage, row
+		// family, and row. Recovering it here is what makes an artifacts
+		// refusal name the act it stopped on instead of only its item family.
+		diagnostics.ArtifactCompile = artifactCompileFailure
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}

@@ -32,10 +32,9 @@ func TestArtifactsCloseReleasesEveryOwnedProductReference(t *testing.T) {
 	}
 
 	artifacts := NewArtifacts()
-	product, compiled := artifacts.Compile(input, compilation)
+	product, failure, compiled := artifacts.Compile(input, compilation)
 	if !compiled || product.Artifact == nil || product.Snapshot == nil || product.Template == nil || product.Bindings == nil {
-		issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
-		_, failure := artifactcompiler.CompileDetailed(input, grammar, issuance)
+		_, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 		t.Fatalf("workspace artifact product did not compile: compiled=%v artifact=%t snapshot=%t template=%t bindings=%t issuance=%v failure=%v", compiled, product.Artifact != nil, product.Snapshot != nil, product.Template != nil, product.Bindings != nil, issuanceOK, failure)
 	}
 	artifacts.mu.Lock()
@@ -54,7 +53,7 @@ func TestArtifactsCloseReleasesEveryOwnedProductReference(t *testing.T) {
 	if !released {
 		t.Fatal("Artifacts.Close retained a strong product reference")
 	}
-	if next, ok := artifacts.Compile(input, compilation); ok || next != (ArtifactProduct{}) {
+	if next, _, ok := artifacts.Compile(input, compilation); ok || next != (ArtifactProduct{}) {
 		t.Fatal("closed Artifacts admitted another compiler product")
 	}
 }
@@ -67,7 +66,7 @@ func TestArtifactsLeaderPanicTerminatesFailedEntryBeforeRethrow(t *testing.T) {
 	recovered := make(chan any, 1)
 	go func() {
 		defer func() { recovered <- recover() }()
-		_, _ = artifacts.compile(key, func() (ArtifactProduct, bool) {
+		_, _, _ = artifacts.compile(key, func() (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 			close(started)
 			<-release
 			panic("workspace compiler panic")
@@ -120,11 +119,11 @@ func TestArtifactsLeaderGoexitTerminatesFailedEntry(t *testing.T) {
 	exited := make(chan struct{})
 	go func() {
 		defer close(exited)
-		_, _ = artifacts.compile(key, func() (ArtifactProduct, bool) {
+		_, _, _ = artifacts.compile(key, func() (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 			close(started)
 			<-release
 			runtime.Goexit()
-			return ArtifactProduct{}, false
+			return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 		})
 	}()
 	select {
@@ -199,8 +198,8 @@ return reuse_probe`
 
 	artifacts := NewArtifacts()
 	defer artifacts.Close()
-	first, firstOK := artifacts.Compile(leftInput, compilation)
-	second, secondOK := artifacts.Compile(rightInput, compilation)
+	first, _, firstOK := artifacts.Compile(leftInput, compilation)
+	second, _, secondOK := artifacts.Compile(rightInput, compilation)
 	if !firstOK || !secondOK || first.Artifact == nil {
 		t.Fatalf("equal-content compile = %t/%t", firstOK, secondOK)
 	}
@@ -215,14 +214,101 @@ return reuse_probe`
 	}
 
 	seals := 0
-	served, servedOK := artifacts.compile(key.ID(), func() (ArtifactProduct, bool) {
+	served, _, servedOK := artifacts.compile(key.ID(), func() (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 		seals++
-		return ArtifactProduct{}, true
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, true
 	})
 	if !servedOK || served.Artifact != first.Artifact {
 		t.Fatal("warm CompileKey was not served the retained product")
 	}
 	if seals != 0 {
 		t.Fatalf("warm CompileKey reached the compiler %d times", seals)
+	}
+}
+
+// TestArtifactsPublishTheCompilerRefusalToEveryCaller states the observability
+// law of the workspace compiler directory: a refused Program-to-Artifact
+// compilation is published at the artifact compiler's own evidence type, and
+// the directory entry a joining caller is served carries that same refusal.
+//
+// The directory serializes equal keys, so a caller that joins a compile in
+// flight never runs the compiler itself. Publishing only the invalid product
+// to that caller would leave its item-issuance refusal unnamed while the
+// leader's is named, making the same refused key observable or unobservable
+// depending on arrival order.
+func TestArtifactsPublishTheCompilerRefusalToEveryCaller(t *testing.T) {
+	compilation, compilationOK := composite.Build()
+	if !compilationOK {
+		t.Fatal("artifact compilation is unavailable")
+	}
+	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
+	if !issuanceOK {
+		t.Fatal("artifact issuance directory is unavailable")
+	}
+	// The refusal a real compiler raises: an artifact compilation that cannot
+	// resolve its mounted Program names that act, not a bare bool.
+	_, refusal := artifactcompiler.CompileDetailed(nil, compilation.ExecutionSchemaID(), issuance)
+	if !refusal.Available() {
+		t.Fatal("the artifact compiler published no evidence for a refused compilation")
+	}
+
+	artifacts := NewArtifacts()
+	defer artifacts.Close()
+	key := identity.ContentID{0x43}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	published := make(chan artifactcompiler.CompileFailure, 1)
+	go func() {
+		_, failure, valid := artifacts.compile(key, func() (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
+			close(entered)
+			<-release
+			return ArtifactProduct{}, refusal, false
+		})
+		if valid {
+			t.Error("a refused compilation was published as valid")
+		}
+		published <- failure
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("leader did not enter compiler product construction")
+	}
+	// A joining caller holds exactly this entry and reads what the leader
+	// publishes into it. Taking the entry while the compile is in flight is
+	// the join, without a second racing goroutine.
+	artifacts.mu.Lock()
+	entry := artifacts.entries[key]
+	artifacts.mu.Unlock()
+	if entry == nil {
+		t.Fatal("an in-flight CompileKey has no directory entry to join")
+	}
+	close(release)
+
+	select {
+	case failure := <-published:
+		assertPublishedArtifactRefusal(t, "leader", failure, refusal)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the leader of a refused CompileKey was never published a verdict")
+	}
+	select {
+	case <-entry.ready:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a joined entry was never woken")
+	}
+	if entry.valid {
+		t.Fatal("a refused compilation was published to a joining caller as valid")
+	}
+	assertPublishedArtifactRefusal(t, "joining caller", entry.failure, refusal)
+}
+
+func assertPublishedArtifactRefusal(t *testing.T, caller string, published, expected artifactcompiler.CompileFailure) {
+	t.Helper()
+	if !published.Available() {
+		t.Fatalf("the %s of a refused compilation received no named evidence", caller)
+	}
+	if published.Stage() != expected.Stage() || published.RowKind() != expected.RowKind() || published.Reason() != expected.Reason() {
+		t.Fatalf("the %s received %q, which is not the compiler's own refusal %q", caller, published.Error(), expected.Error())
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/ingress"
 	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	"github.com/wippyai/go-lua/analysis/schema/program/programdiagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
@@ -428,13 +429,19 @@ func declaredTypeProjection(types *typeauthority.Authority, declared identity.Co
 // compileProgramArtifacts compiles each distinct ProgramID once and records
 // every mounted occurrence's exact Link substitution. No Link/domain/runtime
 // authority enters the Workspace-owned artifact directory.
-func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link.Link, compilation composite.Compilation) (*compiledArtifactSet, bool) {
+//
+// A refusal raised by the artifact compiler travels back at the compiler's own
+// evidence type, so the item-issuance phase can name the compile stage, row
+// family, and row that stopped it. A refusal this join raises itself carries
+// no compiler evidence: the absent failure states that every mounted Program
+// compiled and the Link substitution is what refused.
+func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link.Link, compilation composite.Compilation) (*compiledArtifactSet, artifactcompiler.CompileFailure, bool) {
 	if products == nil || source == nil || !source.ContentID().Available() || !compilation.Available() || source.Project() == nil {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	mounts := source.Project().Mounts()
 	if mounts.Count() == 0 {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	result := &compiledArtifactSet{mounts: make([]programmount.MountedArtifact, 0, mounts.Count()), products: make(map[identity.ContentID]analysisworkspace.ArtifactProduct)}
 	for index := 0; index < mounts.Count(); index++ {
@@ -442,18 +449,18 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		mounted, programOK := mounts.Program(shard)
 		moduleKey, moduleOK := source.Project().ModuleKey(shard)
 		if !shardOK || !programOK || mounted == nil || !moduleOK || !moduleKey.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		programID := mounted.ContentID()
 		if !mounted.Available() || !programID.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		applications := selectapply.Apply(mounted)
 		result.selectApplications = append(result.selectApplications, applications...)
 		result.selectHandlers = append(result.selectHandlers, selectapply.Handlers(mounted, applications)...)
-		product, compiled := products.Compile(mounted, compilation)
+		product, compileFailure, compiled := products.Compile(mounted, compilation)
 		if !compiled {
-			return nil, false
+			return nil, compileFailure, false
 		}
 		artifact, snapshot := product.Artifact, product.Snapshot
 		if _, held := result.products[programID]; !held {
@@ -462,48 +469,48 @@ func compileProgramArtifacts(products *analysisworkspace.Artifacts, source *link
 		compiledProgram := artifact.Program()
 		catalog, catalogOK := programcatalog.CatalogID(compiledProgram.SchemaID)
 		if !compiledProgram.Available() || !catalogOK || !catalog.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		program := programmount.Program{
 			ModuleKey: moduleKey,
 			Program:   compiledProgram,
 		}
 		if !program.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		mount := programmount.MountedArtifact{Program: program, Snapshot: snapshot}
 		if !mount.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		result.mounts = append(result.mounts, mount)
 	}
 	producerAxes, axesOK := composite.ProducedValueAxes(compilation)
 	if !axesOK {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	sites, sitesOK := mounted.SealObservationSites(source.Boundary(), result.mounts, producerAxes)
 	if !sitesOK || !sites.Available() {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	result.sites = sites
 	programs := make([]programschema.Program, 0, len(result.products))
 	for _, product := range result.products {
 		if product.Artifact == nil || !product.Artifact.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		compiled := product.Artifact.Program()
 		if !compiled.Available() {
-			return nil, false
+			return nil, artifactcompiler.CompileFailure{}, false
 		}
 		programs = append(programs, compiled)
 	}
 	types, typesErr := typeauthority.SealProgramRows(source.ContentID(), programs)
 	if typesErr != nil || types == nil {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
 	result.types = types
 	if !result.sealDeclaredConformanceTypes() {
-		return nil, false
+		return nil, artifactcompiler.CompileFailure{}, false
 	}
-	return result, true
+	return result, artifactcompiler.CompileFailure{}, true
 }

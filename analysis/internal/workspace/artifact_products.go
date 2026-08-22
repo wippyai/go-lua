@@ -29,7 +29,11 @@ type ArtifactProduct struct {
 }
 
 type artifactEntry struct {
-	ready   chan struct{}
+	ready chan struct{}
+	// failure is the artifact compiler's own refusal for this key. It is
+	// published beside the invalid product so a caller joining a failed
+	// compile receives the same named evidence the first caller did.
+	failure artifactcompiler.CompileFailure
 	product ArtifactProduct
 	valid   bool
 }
@@ -50,20 +54,25 @@ func NewArtifacts() *Artifacts {
 
 // Compile returns the one immutable product for input's complete CompileKey in
 // this directory. Concurrent callers for an equal key join the first compile.
-func (artifacts *Artifacts) Compile(input *program.Program, compilation composite.Compilation) (ArtifactProduct, bool) {
+//
+// A refused compilation returns the artifact compiler's own failure beside the
+// invalid product. The refusal is only ever named when the compiler itself
+// raised it: a directory-owned refusal, which admits no Program to the
+// compiler at all, leaves the failure absent.
+func (artifacts *Artifacts) Compile(input *program.Program, compilation composite.Compilation) (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 	grammar := compilation.ExecutionSchemaID()
 	grammarOK := compilation.Available() && grammar.Available()
 	structural, structuralOK := compilation.Structure()
 	compileKey, keyOK := programartifact.NewCompileKey(input, grammar)
 	if !grammarOK || !structuralOK || !keyOK || !compileKey.Available() || input == nil || !input.Available() || !compilation.Available() {
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 	}
 	programID := input.ContentID()
 	executionSchemaID := compileKey.ExecutionSchemaID().ContentID()
 	if !programID.Available() || !executionSchemaID.Available() || artifacts == nil {
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 	}
-	return artifacts.compile(compileKey.ID(), func() (ArtifactProduct, bool) {
+	return artifacts.compile(compileKey.ID(), func() (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 		return compileArtifactProduct(input, compileKey, programID, executionSchemaID, structural, compilation)
 	})
 }
@@ -71,14 +80,14 @@ func (artifacts *Artifacts) Compile(input *program.Program, compilation composit
 // compile owns one per-key publication. Its terminal defer is deliberately
 // outside the compiler call: a panic or Goexit must still wake every joiner,
 // remove the failed entry, and then continue unwinding.
-func (artifacts *Artifacts) compile(key identity.ContentID, build func() (ArtifactProduct, bool)) (product ArtifactProduct, valid bool) {
+func (artifacts *Artifacts) compile(key identity.ContentID, build func() (ArtifactProduct, artifactcompiler.CompileFailure, bool)) (product ArtifactProduct, failure artifactcompiler.CompileFailure, valid bool) {
 	if artifacts == nil || !key.Available() || build == nil {
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 	}
 	artifacts.mu.Lock()
 	if artifacts.closed || artifacts.entries == nil {
 		artifacts.mu.Unlock()
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 	}
 	entry := artifacts.entries[key]
 	if entry == nil {
@@ -94,6 +103,7 @@ func (artifacts *Artifacts) compile(key identity.ContentID, build func() (Artifa
 			panicValue := recover()
 			artifacts.mu.Lock()
 			entry.product = ArtifactProduct{}
+			entry.failure = artifactcompiler.CompileFailure{}
 			entry.valid = false
 			close(entry.ready)
 			if artifacts.entries != nil && artifacts.entries[key] == entry {
@@ -105,12 +115,13 @@ func (artifacts *Artifacts) compile(key identity.ContentID, build func() (Artifa
 			}
 		}()
 
-		product, valid = build()
+		product, failure, valid = build()
 
 		artifacts.mu.Lock()
 		if valid {
 			entry.product = product
 		}
+		entry.failure = failure
 		entry.valid = valid
 		close(entry.ready)
 		if !valid {
@@ -118,28 +129,28 @@ func (artifacts *Artifacts) compile(key identity.ContentID, build func() (Artifa
 		}
 		artifacts.mu.Unlock()
 		published = true
-		return product, valid
+		return product, failure, valid
 	}
 	ready := entry.ready
 	artifacts.mu.Unlock()
 
 	<-ready
-	return entry.product, entry.valid
+	return entry.product, entry.failure, entry.valid
 }
 
-func compileArtifactProduct(input *program.Program, compileKey programartifact.CompileKey, programID, executionSchemaID identity.ContentID, structural structure.Table, compilation composite.Compilation) (ArtifactProduct, bool) {
+func compileArtifactProduct(input *program.Program, compileKey programartifact.CompileKey, programID, executionSchemaID identity.ContentID, structural structure.Table, compilation composite.Compilation) (ArtifactProduct, artifactcompiler.CompileFailure, bool) {
 	issuance, issuanceOK := composite.ArtifactIssuanceDirectory(compilation)
 	artifact, failure := artifactcompiler.CompileDetailed(input, compileKey.ExecutionSchemaID(), issuance)
 	if !issuanceOK || artifact == nil || failure.Available() {
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, failure, false
 	}
 	snapshot, lowered := ingress.Lower(artifact, structural)
 	if !lowered {
-		return ArtifactProduct{}, false
+		return ArtifactProduct{}, artifactcompiler.CompileFailure{}, false
 	}
 	template, bindings, lowered := scalarlower.Lower(snapshot, structural, issuance)
 	product := ArtifactProduct{Artifact: artifact, Snapshot: snapshot, Template: template, Bindings: bindings}
-	return product, lowered && artifactProductMatches(product, compileKey, programID, executionSchemaID)
+	return product, artifactcompiler.CompileFailure{}, lowered && artifactProductMatches(product, compileKey, programID, executionSchemaID)
 }
 
 func artifactProductMatches(product ArtifactProduct, compileKey programartifact.CompileKey, programID, executionSchemaID identity.ContentID) bool {
