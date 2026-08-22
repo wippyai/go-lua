@@ -83,4 +83,8 @@ const (
 	IssueReturnValueReference         schema.Key = "program.return-value.reference"
 	IssueCallTargetUnavailable        schema.Key = "program.call-target.unavailable"
 	IssueCallTargetDuplicate          schema.Key = "program.call-target.duplicate"
+	IssueHeapAllocationUnavailable    schema.Key = "program.heap-allocation.unavailable"
+	IssueHeapAllocationDuplicate      schema.Key = "program.heap-allocation.duplicate"
+	IssueHeapFieldUnavailable         schema.Key = "program.heap-field.unavailable"
+	IssueHeapFieldDuplicate           schema.Key = "program.heap-field.duplicate"
 )

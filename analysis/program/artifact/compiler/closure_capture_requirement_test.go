@@ -34,7 +34,7 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 		t.Fatalf("value fixture failed: %v", failure)
 	}
 	bundle, fault := allocation.Build(allocation.Input{Program: input, Values: state.publication.Values})
-	if fault.Failed() || bundle == nil {
+	if fault.Available() || bundle == nil {
 		t.Fatalf("allocation fixture fault=%#v bundle=%v", fault, bundle)
 	}
 	boundaryBundle, boundaryFault := bodyboundary.Build(bodyboundary.Input{

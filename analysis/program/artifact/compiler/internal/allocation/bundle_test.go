@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/lua/lower"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 )
 
 func TestBuildReportsCanonicalFieldFault(t *testing.T) {
@@ -12,7 +14,8 @@ func TestBuildReportsCanonicalFieldFault(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle, fault := Build(Input{Program: program})
-	if bundle != nil || !fault.Failed() || fault.Row() != 0 || fault.Field() != 0 {
+	row, rowOK := fault.Row()
+	if bundle != nil || !fault.Available() || fault.Family() != programcatalog.HeapField() || fault.Issue() != programconstruction.IssueHeapFieldUnavailable || !rowOK || row != 0 {
 		t.Fatalf("Build missing value = bundle=%v fault=%#v, want nil row=0 field=0", bundle, fault)
 	}
 }
@@ -23,7 +26,7 @@ func TestTakeCanonicalPlanesTransfersExactlyOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle, fault := Build(Input{Program: program})
-	if fault.Failed() || bundle == nil {
+	if fault.Available() || bundle == nil {
 		t.Fatalf("Build empty allocation = bundle=%v fault=%#v", bundle, fault)
 	}
 	row, rowOK := bundle.RowAt(0)

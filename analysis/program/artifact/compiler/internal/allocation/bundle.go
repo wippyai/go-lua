@@ -12,20 +12,10 @@ import (
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
+	programconstruction "github.com/wippyai/go-lua/analysis/schema/program/construction"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapallocation"
 )
-
-// Fault identifies the allocation row and optional field that could not be
-// constructed. The parent compiler maps it onto its own CompileFailure.
-type Fault struct {
-	row    int
-	field  int
-	failed bool
-}
-
-func (fault Fault) Failed() bool { return fault.failed }
-func (fault Fault) Row() int     { return fault.row }
-func (fault Fault) Field() int   { return fault.field }
 
 // Input is the authority needed to construct allocation rows. Values are
 // already canonical compiler rows, ordered by their Values-family ordinal.
@@ -315,14 +305,12 @@ func (field Field) MemberTerm() (keyspace.Term, bool) {
 	return source.memberTerm, ok && source.memberTerm != 0
 }
 
-func failed(row, field int) Fault { return Fault{row: row, field: field, failed: true} }
-
 // Build compiles every executable table and closure allocation into one
 // private bundle. All failure coordinates are expressed in canonical
 // allocation-row and field order for the parent compiler to map directly.
-func Build(input Input) (*Bundle, Fault) {
+func Build(input Input) (*Bundle, programconstruction.Fault) {
 	if input.Program == nil || !input.Program.Available() {
-		return nil, failed(-1, -1)
+		return nil, programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, -1, -1)
 	}
 	flowView := input.Program.Flow()
 	authored := flowView.Authored()
@@ -348,32 +336,33 @@ func Build(input Input) (*Bundle, Fault) {
 		byID:     make(map[identity.ContentID]uint32, count),
 	}
 	seenTemplates := make(map[identity.ContentID]struct{}, count)
-	compile := func(term keyspace.Term, role heapallocation.Role) Fault {
-		rowIndex := len(bundle.rows)
+	compile := func(term keyspace.Term, role heapallocation.Role) programconstruction.Fault {
+		rowIndex := len(bundle.heapRows)
 		occurrence, occurrenceOK := flowView.AllocationID(term)
 		form := formForFields(flowView, term, role)
 		root, rootOK := input.Program.Span(term)
 		entry, entryOK := root.Entry()
 		finish, finishOK := root.Finish()
 		if !occurrenceOK || !role.Valid() || !form.Valid() || !rootOK || !entryOK || !finishOK || !input.Program.OwnsSpan(root) {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 		}
 		fieldCount := 0
 		if role == heapallocation.RoleTable {
 			var fieldsOK bool
 			fieldCount, fieldsOK = authored.Tables().FieldCount(term)
 			if !fieldsOK {
-				return failed(rowIndex, -1)
+				return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 			}
 		}
 		if role == heapallocation.RoleClosure && fieldCount != 0 {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 		}
 		fields := make([]field, 0, fieldCount)
 		canonicalFields := make([]heapallocation.Field, 0, fieldCount)
 		fieldTerms := make([]keyspace.Term, 0, fieldCount)
 		seenFields := make(map[keyspace.Term]struct{}, fieldCount)
 		for fieldIndex := 0; fieldIndex < fieldCount; fieldIndex++ {
+			fieldOrdinal := len(bundle.heapFields) + fieldIndex
 			fieldTerm, fieldTermOK := authored.Tables().FieldAt(term, fieldIndex)
 			table, selector, valuesTerm, kind, authoredFieldOK := authored.Fields().Get(fieldTerm)
 			resolved, finalOpen, valuesOK := authored.Fields().Values(fieldTerm)
@@ -389,20 +378,20 @@ func Build(input Input) (*Bundle, Fault) {
 				memberTerm, _ = authored.Values().Member(valuesTerm, 0)
 			}
 			if !fieldTermOK || !authoredFieldOK || table != term || selector == 0 && kind == flowkind.FieldKey || valuesTerm == 0 || !valuesOK || resolved != valuesTerm || !widthOK || width < 0 || !valueRowOK || !valueRow.Available() || !valueSpanOK || !fieldSpanOK || !input.Program.OwnsSpan(fieldSpan) || !fieldProofOK || !fieldID.Available() {
-				return failed(rowIndex, fieldIndex)
+				return programconstruction.New(programcatalog.HeapField(), programconstruction.IssueHeapFieldUnavailable, fieldOrdinal, -1)
 			}
 			selectorSpan := program.Span{}
 			if kind == flowkind.FieldKey {
 				selectorSpan, _ = input.Program.Span(selector)
 				if !selectorSpan.Available() || !input.Program.OwnsSpan(selectorSpan) {
-					return failed(rowIndex, fieldIndex)
+					return programconstruction.New(programcatalog.HeapField(), programconstruction.IssueHeapFieldUnavailable, fieldOrdinal, -1)
 				}
 			}
 			if _, duplicate := bundle.fieldIDs[fieldTerm]; duplicate {
-				return failed(rowIndex, fieldIndex)
+				return programconstruction.New(programcatalog.HeapField(), programconstruction.IssueHeapFieldDuplicate, fieldOrdinal, -1)
 			}
 			if _, duplicate := seenFields[fieldTerm]; duplicate {
-				return failed(rowIndex, fieldIndex)
+				return programconstruction.New(programcatalog.HeapField(), programconstruction.IssueHeapFieldDuplicate, fieldOrdinal, -1)
 			}
 			canonicalKind, kindOK := heapFieldKind(kind)
 			valuesSpan, valuesSpanOK := valueRow.RootSpanID()
@@ -412,7 +401,7 @@ func Build(input Input) (*Bundle, Fault) {
 			}
 			canonical, canonicalOK := heapallocation.NewField(fieldID, canonicalKind, fieldSpan.ContextID(), selectorSpanID, valuesSpan, valueRow.ID(), width, finalOpen, sharesFirstValueCell(flowView, fieldTerm, kind, selector, valuesTerm, width), uint64(normalized), normalizedOK)
 			if !kindOK || !valuesSpanOK || !canonicalOK {
-				return failed(rowIndex, fieldIndex)
+				return programconstruction.New(programcatalog.HeapField(), programconstruction.IssueHeapFieldUnavailable, fieldOrdinal, -1)
 			}
 			fields = append(fields, field{values: valueRow, memberTerm: memberTerm})
 			canonicalFields = append(canonicalFields, canonical)
@@ -422,20 +411,20 @@ func Build(input Input) (*Bundle, Fault) {
 		fieldOffset := len(bundle.heapFields)
 		template := heapallocation.TemplateID(occurrence, role, form, canonicalFields)
 		if !template.Available() {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 		}
 		if _, duplicate := seenTemplates[template]; duplicate {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationDuplicate, rowIndex, -1)
 		}
 		if _, duplicate := bundle.byTerm[term]; duplicate {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationDuplicate, rowIndex, -1)
 		}
 		if !fitsUint32(fieldOffset) || !fitsUint32(len(canonicalFields)) || !fitsUint32(len(bundle.heapRows)) {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 		}
 		heapRow, heapRowOK := heapallocation.NewAllocation(template, role, form, root.ContextID(), uint32(fieldOffset), uint32(len(canonicalFields)))
 		if !heapRowOK {
-			return failed(rowIndex, -1)
+			return programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, rowIndex, -1)
 		}
 		seenTemplates[template] = struct{}{}
 		for fieldIndex, fieldTerm := range fieldTerms {
@@ -448,12 +437,12 @@ func Build(input Input) (*Bundle, Fault) {
 		bundle.heapFields = append(bundle.heapFields, canonicalFields...)
 		bundle.heapRows = append(bundle.heapRows, heapRow)
 		bundle.byID[template] = uint32(len(bundle.heapRows) - 1)
-		return Fault{}
+		return programconstruction.Fault{}
 	}
 	for index := 0; index < authored.Tables().Count(); index++ {
 		term, ok := authored.Tables().At(index)
 		if ok && executable.Contains(term) {
-			if fault := compile(term, heapallocation.RoleTable); fault.Failed() {
+			if fault := compile(term, heapallocation.RoleTable); fault.Available() {
 				return nil, fault
 			}
 		}
@@ -461,15 +450,15 @@ func Build(input Input) (*Bundle, Fault) {
 	for index := 0; index < authored.Functions().Count(); index++ {
 		term, ok := authored.Functions().At(index)
 		if ok && executable.Contains(term) {
-			if fault := compile(term, heapallocation.RoleClosure); fault.Failed() {
+			if fault := compile(term, heapallocation.RoleClosure); fault.Available() {
 				return nil, fault
 			}
 		}
 	}
 	if len(bundle.rows) != count || len(bundle.heapRows) != count || len(bundle.byID) != count {
-		return nil, failed(len(bundle.rows), -1)
+		return nil, programconstruction.New(programcatalog.HeapAllocation(), programconstruction.IssueHeapAllocationUnavailable, len(bundle.heapRows), -1)
 	}
-	return bundle, Fault{}
+	return bundle, programconstruction.Fault{}
 }
 
 func formForFields(view flow.View, term keyspace.Term, role heapallocation.Role) heapallocation.Form {
