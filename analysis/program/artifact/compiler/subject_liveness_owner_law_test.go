@@ -20,6 +20,57 @@ func TestSubjectLivenessStateProjectionDoesNotFabricateUnknown(t *testing.T) {
 	}
 }
 
+// TestSubjectLivenessProjectionFoldsSharedProgramCoordinates pins the
+// projection denominator: distinct Flow subjects may resolve to the same
+// Program-owned value coordinate, but an Artifact publishes exactly one
+// all-path liveness judgment for that coordinate.
+func TestSubjectLivenessProjectionFoldsSharedProgramCoordinates(t *testing.T) {
+	fixtures := []struct {
+		name string
+		text string
+	}{
+		{name: "cast multiple in statement", text: `
+local data: any = {a = "1", b = 2, c = true}
+local s, n, b = string(data.a), integer(data.b), boolean(data.c)
+		`},
+		{name: "arithmetic metamethod operand withheld", text: `
+type Vec = { x: number }
+
+local VecMT = {}
+VecMT.__add = function(l: Vec, r: Vec): Vec
+    return { x = math.max(l.x, r.x) }
+end
+
+local function combine(a: Vec, b: Vec): Vec
+    return a + b
+end
+
+return combine(setmetatable({ x = 1 }, VecMT), setmetatable({ x = 2 }, VecMT))
+		`},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			_, view := compileStorageLifetimeLawProgram(t, fixture.text)
+			count, published := view.SubjectLivenessCount()
+			if !published || count == 0 {
+				t.Fatalf("subject-liveness denominator = %d/%t", count, published)
+			}
+			seen := make(map[[32]byte]struct{}, count)
+			for index := 0; index < count; index++ {
+				row, ok := view.SubjectLivenessAt(index)
+				if !ok || !row.Available() {
+					t.Fatalf("subject-liveness row %d unavailable", index)
+				}
+				id := [32]byte(row.ID())
+				if _, duplicate := seen[id]; duplicate {
+					t.Fatalf("Program published duplicate subject-liveness coordinate at row %d", index)
+				}
+				seen[id] = struct{}{}
+			}
+		})
+	}
+}
+
 func subjectLivenessOwnerLawProgram(t testing.TB, text string) *program.Program {
 	t.Helper()
 	input, err := lower.Lower(lower.Source{Name: "subject-liveness-owner-law.lua", Text: []byte(text)})

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	programstorage "github.com/wippyai/go-lua/analysis/program/storage"
 	"github.com/wippyai/go-lua/analysis/program/valuesource"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
 )
 
@@ -26,7 +27,12 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 	if projection == nil || !projection.Available() {
 		return compileFailure(CompileStageBodyOutcomes, CompileRowBody, -1, -1, CompileReasonBodyUnavailable)
 	}
-	compiler.publication.Lifecycle.SubjectLifetimes = make([]lifecycle.SubjectLiveness, 0, projection.LivenessCount())
+	// Flow subjects are authored coordinates. More than one authored subject can
+	// resolve to the same Program value (notably an open Values aggregate and
+	// one of its finite members). Program owns one liveness judgment per
+	// (yield route, kind, Program subject) coordinate, so collect every Flow
+	// verdict before publishing the sealed Program row.
+	projected := make(map[identity.ContentID]*subjectLivenessProjection, projection.LivenessCount())
 	for index := 0; index < projection.LivenessCount(); index++ {
 		flowRow, rowOK := projection.LivenessAt(index)
 		if !rowOK || !flowRow.ID.Available() || !flowRow.YieldRoute.Available() || !flowRow.Subject.ID.Available() {
@@ -40,18 +46,57 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 		// artifact identity).
 		flowSubjectID, flowSubjectOK := compiler.input.Flow().SemanticTermPath(flowRow.Subject.Term)
 		subjects, subjectsOK := compiler.subjectLivenessCoordinates(programID, flowRow.Subject)
-		state, stateOK := artifactSubjectLivenessState(flowRow.State)
+		_, stateOK := artifactSubjectLivenessState(flowRow.State)
 		if !flowSubjectOK || flowSubjectID != flowRow.Subject.ID || !subjectsOK || !stateOK {
 			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
 		}
 		for subjectIndex, subject := range subjects {
 			id, idOK := lifecycle.SubjectLivenessIdentity(flowRow.YieldRoute, subject.kind, subject.id)
-			row, emitted := lifecycle.NewSubjectLiveness(id, flowRow.YieldRoute, flowRow.YieldFromPath, flowRow.YieldToPath, subject.id, subject.kind, state)
-			if !idOK || !emitted {
+			if !idOK {
 				return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
 			}
-			compiler.publication.Lifecycle.SubjectLifetimes = append(compiler.publication.Lifecycle.SubjectLifetimes, row)
+			current, exists := projected[id]
+			if exists {
+				if current.yieldRoute != flowRow.YieldRoute ||
+					current.yieldFromPath != flowRow.YieldFromPath ||
+					current.yieldToPath != flowRow.YieldToPath ||
+					current.subject != subject {
+					return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, subjectIndex, CompileReasonBodyUnavailable)
+				}
+				current.states = append(current.states, flowRow.State)
+				continue
+			}
+			projected[id] = &subjectLivenessProjection{
+				yieldRoute:    flowRow.YieldRoute,
+				yieldFromPath: flowRow.YieldFromPath,
+				yieldToPath:   flowRow.YieldToPath,
+				subject:       subject,
+				states:        []subjectflow.LivenessState{flowRow.State},
+			}
 		}
+	}
+	ids := make([]identity.ContentID, 0, len(projected))
+	for id := range projected {
+		ids = append(ids, id)
+	}
+	identity.SortContentIDs(ids)
+	compiler.publication.Lifecycle.SubjectLifetimes = make([]lifecycle.SubjectLiveness, 0, len(ids))
+	for index, id := range ids {
+		projection := projected[id]
+		state, stateOK := artifactSubjectLivenessState(subjectflow.AggregateLiveness(projection.states))
+		row, emitted := lifecycle.NewSubjectLiveness(
+			id,
+			projection.yieldRoute,
+			projection.yieldFromPath,
+			projection.yieldToPath,
+			projection.subject.id,
+			projection.subject.kind,
+			state,
+		)
+		if !stateOK || !emitted {
+			return compileFailure(CompileStageBodyOutcomes, CompileRowBody, index, -1, CompileReasonBodyUnavailable)
+		}
+		compiler.publication.Lifecycle.SubjectLifetimes = append(compiler.publication.Lifecycle.SubjectLifetimes, row)
 	}
 	return CompileFailure{}
 }
@@ -59,6 +104,14 @@ func (compiler *compiler) copySubjectLivenessFailure() CompileFailure {
 type subjectLivenessCoordinate struct {
 	kind lifecycle.SubjectLivenessKind
 	id   identity.ContentID
+}
+
+type subjectLivenessProjection struct {
+	yieldRoute    identity.ContentID
+	yieldFromPath identity.ContentID
+	yieldToPath   identity.ContentID
+	subject       subjectLivenessCoordinate
+	states        []subjectflow.LivenessState
 }
 
 // subjectLivenessCoordinates performs the sole Flow-subject to Program-value
@@ -406,12 +459,14 @@ func (compiler *compiler) computationLivenessID(term keyspace.Term) (identity.Co
 	operators := compiler.input.Flow().Authored().Operators()
 	claims := compiler.input.Flow().Authored().Claims()
 	var related bool
+	var owner programschema.OccurrenceKind
 	switch keyspace.TermFamily(term) {
 	case keyspace.FamilyUnary:
 		_, _, _, related = operators.Unaries().Get(term)
 	case keyspace.FamilyBinary:
 		if compiler.input.Flow().Candidates().Concat().Contains(term) {
 			related = true
+			owner = programschema.OccurrenceBinaryConcat
 			break
 		}
 		primitive, primitiveOK := compiler.input.Flow().BinaryPrimitives().Primitive(term)
@@ -435,5 +490,22 @@ func (compiler *compiler) computationLivenessID(term keyspace.Term) (identity.Co
 		return identity.ContentID{}, false
 	}
 	id := span.ContextID()
-	return id, id.Available()
+	if !id.Available() {
+		return identity.ContentID{}, false
+	}
+	// Unary, primitive Binary, Select and ValueClaim are already authenticated
+	// by their typed Flow owner above. Concat has no Flow operator/primitive
+	// row: its Program occurrence is the owner that makes the candidate's Span
+	// result mountable. Refuse an absent or duplicate owner instead of treating
+	// candidate membership as a judgment.
+	if !owner.Valid() {
+		return id, true
+	}
+	matches := 0
+	for _, row := range compiler.publication.Occurrences {
+		if row.Kind() == owner && row.ID() == id {
+			matches++
+		}
+	}
+	return id, matches == 1
 }
