@@ -452,3 +452,41 @@ func TestObservationPopulationIsASealedPopulationRole(t *testing.T) {
 		t.Fatalf("observation-only family rejected by sealed population role: law=%d disposition=%s", failure.Law, failure.Disposition)
 	}
 }
+
+// TestProducerEnvelopeIsTheOwnerCompatibilityWitness states the boundary
+// contract consumed by observations: a complete query registration vouches
+// for its resolved execution lane and the exact freezer identity it owns.
+// Observation geometry is deliberately absent from this envelope; the query
+// owner proves only the producer-side facts it can actually own.
+func TestProducerEnvelopeIsTheOwnerCompatibilityWitness(t *testing.T) {
+	registration := mustRegistration(t, summarySpec("value-summary"))
+	envelope, ok := registration.ProducerEnvelope()
+	if !ok || !envelope.Available() {
+		t.Fatal("complete query registration did not issue a producer envelope")
+	}
+	freezer, freezerOK := scratchRoles(t).Key("semantic/query-result/value-summary")
+	if !freezerOK || envelope.Population != PopulationKindSelectedPoint || envelope.Codec != freezer {
+		t.Fatalf("producer envelope = %#v, want selected-point and the owner's freezer", envelope)
+	}
+
+	for name, damage := range map[string]func(*Registration){
+		"population meaning": func(registration *Registration) {
+			registration.populationKind = PopulationKindObservation
+		},
+		"population spelling": func(registration *Registration) {
+			registration.population = PopulationObservation
+		},
+		"codec digest": func(registration *Registration) {
+			registration.codec = identity.ContentID{}
+		},
+		"freezer identity": func(registration *Registration) {
+			registration.freezer, _ = scratchRoles(t).Key("semantic/query-result/effect-exact")
+		},
+	} {
+		broken := mustRegistration(t, summarySpec("value-summary"))
+		damage(broken)
+		if envelope, ok := broken.ProducerEnvelope(); ok || envelope.Available() {
+			t.Fatalf("producer envelope survived nearest %s drift: %#v", name, envelope)
+		}
+	}
+}

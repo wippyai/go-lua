@@ -12,7 +12,9 @@ package observation
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -38,6 +40,7 @@ const (
 	LawCodecDeclared
 	LawCodecPhase
 	LawCodecResolves
+	LawProducerCompatibility
 )
 
 // Reference names one entry on a lower schema surface. A row carries keys,
@@ -231,8 +234,9 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if entry.producer.Surface != schema.SurfaceKindQuery {
 			return failure(entry.id, LawProducerPhase, schema.DispositionMalformed)
 		}
-		if _, disposition := sealed.Resolve(entry.producer.Surface, entry.producer.Key); disposition != schema.DispositionAccepted {
-			return failure(entry.id, LawProducerResolves, disposition)
+		producer, producerDisposition := sealed.Resolve(entry.producer.Surface, entry.producer.Key)
+		if producerDisposition != schema.DispositionAccepted {
+			return failure(entry.id, LawProducerResolves, producerDisposition)
 		}
 		if !entry.population.Available() {
 			return failure(entry.id, LawPopulationDeclared, schema.DispositionIncomplete)
@@ -277,8 +281,20 @@ func (contribution surface) Seal(view schema.View, sealed schema.Sealed) schema.
 		if entry.codec.Surface != schema.SurfaceKindStructure {
 			return failure(entry.id, LawCodecPhase, schema.DispositionMalformed)
 		}
-		if _, disposition := structure.Resolve(sealed, entry.codec.Key, structure.CategorySemanticRole); disposition != schema.DispositionAccepted {
+		codec, disposition := structure.Resolve(sealed, entry.codec.Key, structure.CategorySemanticRole)
+		if disposition != schema.DispositionAccepted {
 			return failure(entry.id, LawCodecResolves, disposition)
+		}
+		producerEnvelope, producerOK := producer.(interface {
+			ProducerEnvelope() (query.ProducerEnvelope, bool)
+		})
+		envelope, envelopeOK := query.ProducerEnvelope{}, false
+		if producerOK {
+			envelope, envelopeOK = producerEnvelope.ProducerEnvelope()
+		}
+		codecIdentity, codecOK := vocabulary.Key(codec.Spelling())
+		if !producerOK || !envelopeOK || !envelope.Available() || !codecOK || envelope.Codec != codecIdentity {
+			return failure(entry.id, LawProducerCompatibility, schema.DispositionMalformed)
 		}
 	}
 	return schema.SealFailure{}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
@@ -17,6 +18,44 @@ func (entry scratchEntry) Key() schema.Key { return entry.key }
 func (entry scratchEntry) EntryAvailable() bool { return entry.key.Available() }
 
 func (entry scratchEntry) EntryContent(*framing.Writer) error { return nil }
+
+func (scratchEntry) ProducerEnvelope() (query.ProducerEnvelope, bool) {
+	codec, codecOK := vocabulary.Key("query-result/test")
+	envelope := query.ProducerEnvelope{Population: query.PopulationKindSelectedPoint, Codec: codec}
+	return envelope, codecOK && envelope.Available()
+}
+
+// producerEntry lets a boundary law issue a deliberately different owner
+// envelope without weakening the ordinary scratch producer used by the rest
+// of this file.
+type producerEntry struct {
+	scratchEntry
+	envelope query.ProducerEnvelope
+	ok       bool
+}
+
+func (entry producerEntry) ProducerEnvelope() (query.ProducerEnvelope, bool) {
+	return entry.envelope, entry.ok
+}
+
+type producerSurface struct {
+	envelope query.ProducerEnvelope
+	ok       bool
+}
+
+func (producerSurface) Kind() schema.SurfaceKind { return schema.SurfaceKindQuery }
+
+func (surface producerSurface) Entries() []schema.Entry {
+	return []schema.Entry{producerEntry{
+		scratchEntry: scratchEntry{key: testProducer},
+		envelope:     surface.envelope,
+		ok:           surface.ok,
+	}}
+}
+
+func (producerSurface) Seal(schema.View, schema.Sealed) schema.SealFailure {
+	return schema.SealFailure{}
+}
 
 type scratchSurface struct {
 	kind schema.SurfaceKind
@@ -49,8 +88,8 @@ const (
 
 func testStructure(t *testing.T) schema.Surface {
 	t.Helper()
-	specs := make([]structure.Spec, 0, int(structure.CategoryConformanceVerdict))
-	for category := structure.CategoryArm; category <= structure.CategoryConformanceVerdict; category++ {
+	specs := make([]structure.Spec, 0, int(structure.CategoryNativeSendSafety))
+	for category := structure.CategoryArm; category <= structure.CategoryNativeSendSafety; category++ {
 		specs = append(specs, structure.Spec{
 			Key:      schema.Key(fmt.Sprintf("test/category/%d", category)),
 			Category: category,
@@ -73,13 +112,18 @@ func testStructure(t *testing.T) schema.Surface {
 
 func sealObservation(t *testing.T, contribution schema.Surface) (*schema.Schema, schema.SealFailure) {
 	t.Helper()
+	return sealObservationWithProducer(t, contribution, scratchSurface{kind: schema.SurfaceKindQuery, keys: []schema.Key{testProducer}})
+}
+
+func sealObservationWithProducer(t *testing.T, contribution schema.Surface, producer schema.Surface) (*schema.Schema, schema.SealFailure) {
+	t.Helper()
 	builder := schema.NewBuilder()
 	for kind := schema.SurfaceKindInvalid + 1; kind.Available(); kind++ {
 		switch kind {
 		case schema.SurfaceKindStructure:
 			builder.Register(testStructure(t))
 		case schema.SurfaceKindQuery:
-			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{testProducer}})
+			builder.Register(producer)
 		case schema.SurfaceKindDenominator:
 			builder.Register(scratchSurface{kind: kind, keys: []schema.Key{testRelation}})
 		case schema.SurfaceKindObservation:
@@ -140,6 +184,54 @@ func TestObservationReportsUnresolvedProducer(t *testing.T) {
 	sealed, failure := sealObservation(t, NewSurface([]*Entry{mustEntry(t, spec)}))
 	if sealed != nil || failure.Law != LawProducerResolves || failure.Disposition != schema.DispositionIncomplete {
 		t.Fatalf("unresolved producer verdict = table=%v law=%d disposition=%s", sealed != nil, failure.Law, failure.Disposition)
+	}
+}
+
+func TestObservationRejectsProducerCodecDrift(t *testing.T) {
+	spec := testSpec()
+	spec.Codec = Reference{Surface: schema.SurfaceKindStructure, Key: schema.Key(testAnchor)}
+	sealed, failure := sealObservation(t, NewSurface([]*Entry{mustEntry(t, spec)}))
+	if sealed != nil || failure.Law != LawProducerCompatibility || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("producer codec drift verdict = table=%v law=%d disposition=%s", sealed != nil, failure.Law, failure.Disposition)
+	}
+}
+
+// TestObservationDoesNotConflateProducerAndDiagnosticPopulation states the
+// positive cross-lane law: either query execution lane can produce an
+// observation. The observation's diagnostic population is not imposed on the
+// producer's own population contract.
+func TestObservationDoesNotConflateProducerAndDiagnosticPopulation(t *testing.T) {
+	codec, codecOK := vocabulary.Key("query-result/test")
+	if !codecOK {
+		t.Fatal("test codec role did not resolve")
+	}
+	for _, producerPopulation := range []query.PopulationKind{
+		query.PopulationKindSelectedPoint,
+		query.PopulationKindObservation,
+	} {
+		producer := producerSurface{
+			envelope: query.ProducerEnvelope{Population: producerPopulation, Codec: codec},
+			ok:       true,
+		}
+		sealed, failure := sealObservationWithProducer(t, NewSurface([]*Entry{mustEntry(t, testSpec())}), producer)
+		if sealed == nil || failure.Available() {
+			t.Fatalf("producer population %v rejected valid observation: law=%d disposition=%s", producerPopulation, failure.Law, failure.Disposition)
+		}
+	}
+}
+
+func TestObservationRejectsUnavailableProducerPopulation(t *testing.T) {
+	codec, codecOK := vocabulary.Key("query-result/test")
+	if !codecOK {
+		t.Fatal("test codec role did not resolve")
+	}
+	producer := producerSurface{
+		envelope: query.ProducerEnvelope{Population: query.PopulationKindInvalid, Codec: codec},
+		ok:       true,
+	}
+	sealed, failure := sealObservationWithProducer(t, NewSurface([]*Entry{mustEntry(t, testSpec())}), producer)
+	if sealed != nil || failure.Law != LawProducerCompatibility || failure.Disposition != schema.DispositionMalformed {
+		t.Fatalf("invalid producer population verdict = table=%v law=%d disposition=%s", sealed != nil, failure.Law, failure.Disposition)
 	}
 }
 

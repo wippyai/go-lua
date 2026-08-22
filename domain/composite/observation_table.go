@@ -171,11 +171,8 @@ func ProducedValueAxes(compilation Compilation) ([]schema.Key, bool) {
 	}
 	subjects := make(map[schema.Key]struct{})
 	for _, issued := range observationIssuance(state) {
-		if !issued.Producer.Available() {
-			continue
-		}
-		registration, found := queryRegistrationFor(state, issued.Producer)
-		if !found {
+		registration, _, producerOK := observationProducerRegistration(state, issued)
+		if !producerOK {
 			return nil, false
 		}
 		for _, subject := range registration.Subjects() {
@@ -210,6 +207,28 @@ func queryRegistrationFor(state *catalog, family schema.Key) (*query.Registratio
 	return nil, false
 }
 
+// observationProducerRegistration resolves one observation's producer and
+// consumes the producer owner's compatibility envelope. The observation's
+// Population is diagnostic geometry, not the query's execution population:
+// both selected-point and explicit-observation query families may produce an
+// observation. The invariant here is that the producer owns a valid lane and
+// that its freezer identity is exactly the codec role the observation names.
+func observationProducerRegistration(state *catalog, issued IssuedObservation) (*query.Registration, query.ProducerEnvelope, bool) {
+	if state == nil || !state.roles.Available() || !issued.Producer.Available() || !issued.Codec.Available() {
+		return nil, query.ProducerEnvelope{}, false
+	}
+	registration, found := queryRegistrationFor(state, issued.Producer)
+	if !found || registration == nil {
+		return nil, query.ProducerEnvelope{}, false
+	}
+	envelope, envelopeOK := registration.ProducerEnvelope()
+	codec, codecOK := state.roles.Key(issued.Codec)
+	if !envelopeOK || !codecOK || envelope.Codec != codec {
+		return nil, query.ProducerEnvelope{}, false
+	}
+	return registration, envelope, true
+}
+
 // ObservationProducerForPopulationKind returns the query family that produces
 // the sealed observation whose population kind is kind.
 func ObservationProducerForPopulationKind(compilation Compilation, kind schema.Key) (schema.Key, bool) {
@@ -218,7 +237,10 @@ func ObservationProducerForPopulationKind(compilation Compilation, kind schema.K
 		return "", false
 	}
 	for _, issued := range observationIssuance(state) {
-		if issued.Population.Kind.Key == kind && issued.Producer.Available() {
+		if issued.Population.Kind.Key != kind {
+			continue
+		}
+		if _, _, producerOK := observationProducerRegistration(state, issued); producerOK {
 			return issued.Producer, true
 		}
 	}
