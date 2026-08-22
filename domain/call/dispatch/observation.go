@@ -59,7 +59,7 @@ func (rule *HotRule) MountedCalleeSetObservation(
 	stage, stageOK := committed.MountedNativeCallStage(capability, mount, occurrence)
 	if !capabilityOK || !stageOK || !stage.Available() || stage.Kind() != programissuance.StageCallDispatch ||
 		stage.MountID() != mount || stage.OccurrenceID() != occurrence || !stage.PointID().Available() ||
-		!stage.InputPointID().Available() || !stage.HasMember() {
+		!stage.HasMember() {
 		return engine.ProgramObservationAdmission{}, false
 	}
 
