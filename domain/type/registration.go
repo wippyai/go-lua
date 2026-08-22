@@ -301,6 +301,7 @@ func DiagnosticSpec() diagnostic.Spec {
 		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
 		Sites:           []diagnostic.Site{diagnostic.SiteAssignment, diagnostic.SiteMember, diagnostic.SiteMemberAbsent},
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
+		VerdictCategory: structure.CategoryConformanceVerdict,
 		Variants: []diagnostic.Variant{
 			{
 				Verdict:      conformance.VerdictViolates.Ordinal(),
@@ -365,15 +366,16 @@ func DiagnosticCallArgumentSpec() diagnostic.Spec {
 		Collection:      diagnostic.Reference{Surface: schema.SurfaceKindObservation, Key: ConformanceCollectionKey},
 		Sites:           []diagnostic.Site{diagnostic.SiteCallArgument},
 		Fact:            diagnostic.Reference{Surface: schema.SurfaceKindAxis, Key: FactKey},
+		VerdictCategory: structure.CategoryConformanceVerdict,
 		Variants: []diagnostic.Variant{
 			{
 				Verdict:      conformance.VerdictViolates.Ordinal(),
-				Requirements: diagnostic.RequiresSubject | diagnostic.RequiresTarget | diagnostic.RequiresActual,
-				Message:      "{subject} is {actual}, not {target}",
-				Help:         "Pass a value compatible with the parameter type, or change the callee signature if that argument is valid.",
+				Requirements: diagnostic.RequiresArgument | diagnostic.RequiresSubject | diagnostic.RequiresParameter | diagnostic.RequiresTarget | diagnostic.RequiresActual | diagnostic.RequiresObserved,
+				Message:      "{argument} is {actual}, not {target}",
+				Help:         "Pass `{subject}` as a value compatible with the parameter type, or change the callee signature if that argument is valid.",
 				Evidence: []diagnostic.Evidence{
-					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{subject} is {actual}"},
-					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "the parameter expects {target}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{argument} has {observed}"},
+					{Anchor: diagnostic.AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{parameter} expects {target}"},
 					{Anchor: diagnostic.AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies the parameter type"},
 				},
 				Labels: []diagnostic.Label{{Anchor: diagnostic.AnchorPrimary, Text: "argument value"}},

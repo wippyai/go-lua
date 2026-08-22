@@ -182,6 +182,9 @@ const (
 	// LaneStatic is collected from artifact-issued rows alone. The disposition
 	// was proven before the program was mounted, so the lane reads no fact.
 	LaneStatic
+	// LaneResult is collected from already-composed post-solve Result facts. It
+	// names no Engine observation, collection, or factor.
+	LaneResult
 	laneLimit
 )
 
@@ -210,9 +213,11 @@ func (site Site) Available() bool { return site > SiteNone && site < siteLimit }
 
 func (site Site) Declared() bool { return site != SiteNone }
 
-// Produces reports whether the lane has an installed producer. Only a lane
-// that consumes an observation population produces findings.
-func (lane Lane) Produces() bool { return lane == LaneBranch || lane == LaneStatic }
+// Produces reports whether the lane has an installed producer. A producer may
+// consume an observation population or an already-composed Result inventory.
+func (lane Lane) Produces() bool {
+	return lane == LaneBranch || lane == LaneStatic || lane == LaneResult
+}
 
 // Reference is one declared identity on another surface: the surface the
 // referenced entry is declared on, and its authored key there. The catalog
@@ -232,7 +237,7 @@ func (reference Reference) Declared() bool { return reference != Reference{} }
 // Requirement is the closed set of typed payload fields a row's presentation
 // reads. A producer supplies exactly this set; nothing else can enter a
 // rendered diagnostic.
-type Requirement uint8
+type Requirement uint16
 
 const (
 	RequiresInvalid Requirement = 0
@@ -251,6 +256,16 @@ const (
 	// RequiresMember is the declared member a finding names: the field a
 	// constructor did not establish.
 	RequiresMember
+	// RequiresArgument is the typed ordinal/name role of a direct-call actual.
+	// It is distinct from RequiresSubject because the argument role remains
+	// meaningful when an expression has no authored name of its own.
+	RequiresArgument
+	// RequiresParameter is the typed callee/ordinal role of a direct-call formal.
+	RequiresParameter
+	// RequiresObserved is the typed description of the observed value (for
+	// example, "literal value 5" or "type number"). The raw spelling remains
+	// RequiresActual for the message half of a finding.
+	RequiresObserved
 )
 
 func (requirement Requirement) has(other Requirement) bool { return requirement&other == other }
@@ -270,6 +285,9 @@ const (
 	PlaceholderMissing
 	PlaceholderActual
 	PlaceholderMember
+	PlaceholderArgument
+	PlaceholderParameter
+	PlaceholderObserved
 )
 
 func placeholderFor(name string) (Placeholder, bool) {
@@ -290,6 +308,12 @@ func placeholderFor(name string) (Placeholder, bool) {
 		return PlaceholderActual, true
 	case "member":
 		return PlaceholderMember, true
+	case "argument":
+		return PlaceholderArgument, true
+	case "parameter":
+		return PlaceholderParameter, true
+	case "observed":
+		return PlaceholderObserved, true
 	default:
 		return PlaceholderInvalid, false
 	}
@@ -312,6 +336,12 @@ func (placeholder Placeholder) Requires() Requirement {
 		return RequiresActual
 	case PlaceholderMember:
 		return RequiresMember
+	case PlaceholderArgument:
+		return RequiresArgument
+	case PlaceholderParameter:
+		return RequiresParameter
+	case PlaceholderObserved:
+		return RequiresObserved
 	default:
 		return RequiresInvalid
 	}
@@ -541,8 +571,8 @@ type Spec struct {
 	DefaultSeverity Severity
 	Lane            Lane
 	// Observation is the population this row is measured over: a member of the
-	// declared observation vocabulary, named by reference. A producing lane
-	// declares exactly one; a declared lane declares none.
+	// declared observation vocabulary, named by reference. Branch and static
+	// lanes declare exactly one; Result and declared lanes declare none.
 	Observation Reference
 	// Collection is the query or observation family that supplies this row's
 	// subjects. A solver-observed row names one; other lanes name none. The
@@ -579,7 +609,10 @@ type Spec struct {
 	// own or a set of variants, never both: two presentations of one code would
 	// leave a reader to decide which one a finding rendered from.
 	Variants []Variant
-	Render   []Section
+	// VerdictCategory is the structural vocabulary whose ordinals select
+	// Variants. It is required exactly when Variants are declared.
+	VerdictCategory structure.Category
+	Render          []Section
 }
 
 // Entry is one admitted diagnostic declaration. It is immutable once built.
@@ -600,6 +633,7 @@ type Entry struct {
 	evidence        []EvidenceRow
 	labels          []LabelRow
 	variants        []VariantRow
+	verdictCategory structure.Category
 	render          []Section
 }
 
@@ -614,7 +648,8 @@ func New(spec Spec) (*Entry, bool) {
 	// A producing lane is measured over exactly one declared population, and a
 	// lane with no producer is measured over none. Which population the name
 	// resolves to is stated at seal, against the vocabulary that declares it.
-	if spec.Observation.Declared() != spec.Observation.Available() || spec.Lane.Produces() != spec.Observation.Declared() {
+	observed := spec.Lane == LaneBranch || spec.Lane == LaneStatic
+	if spec.Observation.Declared() != spec.Observation.Available() || observed != spec.Observation.Declared() {
 		return nil, false
 	}
 	// A solver-observed row is decided by facts, so it names the declaration
@@ -635,11 +670,17 @@ func New(spec Spec) (*Entry, bool) {
 	// Authoring both would publish two renderings of one code; authoring
 	// neither would publish a code that renders nothing.
 	if len(spec.Variants) != 0 {
+		if !spec.VerdictCategory.Available() {
+			return nil, false
+		}
 		if spec.Message != "" || spec.Help != "" || spec.Requirements != RequiresInvalid ||
 			len(spec.Evidence) != 0 || len(spec.Labels) != 0 {
 			return nil, false
 		}
 		return newVariantEntry(spec)
+	}
+	if spec.VerdictCategory.Available() {
+		return nil, false
 	}
 	message, messageOK := newLine(spec.Message)
 	help, helpOK := newLine(spec.Help)
@@ -658,6 +699,7 @@ func New(spec Spec) (*Entry, bool) {
 		fact:            spec.Fact,
 		witnesses:       spec.Witnesses,
 		context:         spec.Context,
+		verdictCategory: spec.VerdictCategory,
 		requirements:    spec.Requirements,
 		message:         message,
 		help:            help,
@@ -699,6 +741,7 @@ func newVariantEntry(spec Spec) (*Entry, bool) {
 		fact:            spec.Fact,
 		witnesses:       spec.Witnesses,
 		context:         spec.Context,
+		verdictCategory: spec.VerdictCategory,
 	}
 	declared := make(map[uint16]struct{}, len(spec.Variants))
 	for _, variant := range spec.Variants {
@@ -941,6 +984,8 @@ func (entry *Entry) Help() Line { return entry.help }
 // presentation of its own has none.
 func (entry *Entry) VariantCount() int { return len(entry.variants) }
 
+func (entry *Entry) VerdictCategory() structure.Category { return entry.verdictCategory }
+
 // VariantAt returns one declared answer in declaration order.
 func (entry *Entry) VariantAt(index int) (VariantRow, bool) {
 	if index < 0 || index >= len(entry.variants) {
@@ -1032,6 +1077,9 @@ func (entry *Entry) EntryContent(content *framing.Writer) error {
 		return err
 	}
 	if err := content.Uint(uint64(entry.lane)); err != nil {
+		return err
+	}
+	if err := content.Uint(uint64(entry.verdictCategory)); err != nil {
 		return err
 	}
 	if err := referenceContent(content, entry.observation); err != nil {
@@ -1324,14 +1372,13 @@ func (entry *Entry) declaresHelp() bool {
 	return false
 }
 
-// sealVariants states that every declared answer names a member of the sealed
-// conformance-verdict vocabulary. The vocabulary's ordinals are owned by the
-// judgment that produces them, so a row keyed by an ordinal the vocabulary does
-// not declare is a presentation no collector can ever select, and a member the
-// judgment adds without a variant is a finding that renders nothing.
+// sealVariants states that every declared answer names a member of the row's
+// sealed verdict vocabulary. The vocabulary's ordinals are owned by the
+// judgment that produces them, so a row keyed by an ordinal the vocabulary
+// does not declare is a presentation no collector can ever select.
 func sealVariants(entry *Entry, sealed schema.Sealed) schema.SealFailure {
 	for _, variant := range entry.variants {
-		if _, disposition := structure.Member(sealed, structure.CategoryConformanceVerdict, variant.verdict); disposition != schema.DispositionAccepted {
+		if _, disposition := structure.Member(sealed, entry.verdictCategory, variant.verdict); disposition != schema.DispositionAccepted {
 			return schema.SurfaceLawFailure(schema.SurfaceKindDiagnostic, entry.id, LawVariantDeclared, disposition)
 		}
 	}

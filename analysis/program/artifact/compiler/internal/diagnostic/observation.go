@@ -248,9 +248,11 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		callTerm, callTermOK := compiler.input.Program.Flow().Authored().Calls().At(index)
+		_, calleeTerm, _, _, callRelationOK := compiler.input.Program.Flow().Authored().Calls().Get(callTerm)
 		functionTerm, functionTermOK := compiler.input.Program.Flow().DirectFunctions().Call(callTerm)
 		targetBoundary, targetBoundaryOK := boundaries.For(functionTerm)
-		if !callTermOK || !functionTermOK || !targetBoundaryOK || !targetBoundary.Available() {
+		calleeSubject, calleeSubjectOK := compiler.input.Program.SubjectSpelling(calleeTerm)
+		if !callTermOK || !callRelationOK || !calleeSubjectOK || !functionTermOK || !targetBoundaryOK || !targetBoundary.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		bodyTerm, bodyTermOK := targetBoundary.Body()
@@ -305,7 +307,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 				programdiagnostic.TypeConformanceIdentity(compiler.input.Program.ContentID(), location, site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex), points),
 				location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
 				site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex),
-				argumentSubject,
+				argumentSubject, calleeSubject,
 			)
 			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
@@ -450,6 +452,7 @@ func equalDiagnosticObservationCanonical(left, right programdiagnostic.Diagnosti
 	return left.DecisionPathID() == right.DecisionPathID() && left.ValueSpanID() == right.ValueSpanID() &&
 		left.StaticReferenceID() == right.StaticReferenceID() && left.RootID() == right.RootID() &&
 		left.ReadID() == right.ReadID() && left.CellID() == right.CellID() && left.Name() == right.Name() &&
+		left.CalleeName() == right.CalleeName() &&
 		left.Site() == right.Site() && left.OwnerID() == right.OwnerID() && left.MeasuredValueID() == right.MeasuredValueID() &&
 		left.DeclaredStaticTypeID() == right.DeclaredStaticTypeID() && left.SpanID() == right.SpanID()
 }

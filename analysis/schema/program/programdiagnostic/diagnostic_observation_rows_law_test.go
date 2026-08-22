@@ -29,3 +29,50 @@ func TestDiagnosticObservationVariantConstructorsRequireOwnedPayloadLaw(t *testi
 		t.Fatal("type-reference variant admitted an empty required path span")
 	}
 }
+
+// TestCallArgumentObservationRequiresOwnerIssuedCalleeLaw states the semantic
+// boundary for the direct-call site. The compiler owns the authored callee
+// spelling while it still has the call relation, so a call row without that
+// field is not a usable observation; assignment rows remain independent.
+func TestCallArgumentObservationRequiresOwnerIssuedCalleeLaw(t *testing.T) {
+	span := programsource.Span{File: "diagnostic.lua", StartLine: 2, StartCol: 18, EndLine: 2, EndCol: 26}
+	row, admitted := programdiagnostic.NewDiagnosticObservationTypeConformance(
+		identity.ContentID{10}, span, 1, 1,
+		programdiagnostic.DiagnosticObservationSiteCallArgument,
+		identity.ContentID{11}, identity.ContentID{12}, identity.ContentID{13}, identity.ContentID{14}, 0,
+		"x", "takes_string",
+	)
+	if !admitted || !row.Available() || row.CalleeName() != "takes_string" {
+		t.Fatal("call argument row did not retain its owner-issued callee")
+	}
+	_, admitted = programdiagnostic.NewDiagnosticObservationTypeConformance(
+		identity.ContentID{10}, span, 1, 1,
+		programdiagnostic.DiagnosticObservationSiteCallArgument,
+		identity.ContentID{11}, identity.ContentID{12}, identity.ContentID{13}, identity.ContentID{14}, 0,
+		"x",
+	)
+	if admitted {
+		t.Fatal("call argument row without an owner-issued callee was admitted")
+	}
+	_, admitted = programdiagnostic.NewDiagnosticObservationTypeConformance(
+		identity.ContentID{10}, span, 1, 1,
+		programdiagnostic.DiagnosticObservationSiteCallArgument,
+		identity.ContentID{11}, identity.ContentID{12}, identity.ContentID{13}, identity.ContentID{14}, 0,
+		"x", "takes_string", "extra",
+	)
+	if admitted {
+		t.Fatal("call argument row with an ambiguous callee payload was admitted")
+	}
+	assignment, admitted := programdiagnostic.NewDiagnosticObservationTypeConformance(
+		identity.ContentID{20}, span, 1, 1,
+		programdiagnostic.DiagnosticObservationSiteAssignment,
+		identity.ContentID{21}, identity.ContentID{22}, identity.ContentID{23}, identity.ContentID{24}, 0,
+		"x",
+	)
+	if !admitted || !assignment.Available() || assignment.CalleeName() != "" {
+		t.Fatal("assignment row incorrectly depended on call-only callee payload")
+	}
+	if assignment.Site() != programdiagnostic.DiagnosticObservationSiteAssignment {
+		t.Fatal("assignment row lost its conformance site")
+	}
+}

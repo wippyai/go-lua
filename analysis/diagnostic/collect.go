@@ -381,9 +381,9 @@ func conformanceSubjects(rows []Observation, contexts executioncontext.Directory
 		for _, context := range eligible {
 			subjects = append(subjects, ConformanceSubject{
 				ID: row.ID, FindingID: id, Mount: row.Mount, Context: context,
-				Location: location, Site: row.Site, Actual: row.Actual,
+				Location: location, Site: row.Site, Position: row.Position, Actual: row.Actual,
 				DeclaredMay: row.DeclaredMay, Target: row.Target, Member: row.Conformance.Member,
-					Subject: row.Conformance.Subject,
+				Subject: row.Conformance.Subject, Callee: row.Conformance.Callee,
 				Points: conformanceProducerPoints(row.Conformance.Producers),
 			})
 		}

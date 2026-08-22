@@ -20,6 +20,7 @@ type ConformanceSubject struct {
 	Context              executioncontext.Context
 	Location             DiagnosticLocation
 	Site                 schemadiag.Site
+	Position             uint32
 	Actual               uint32
 	DeclaredMay          runtimekind.Set
 	Target               string
@@ -31,6 +32,10 @@ type ConformanceSubject struct {
 	// by the compiler that holds the authored access relations. It is empty
 	// for a subject the authored projection does not spell.
 	Subject string
+	// Callee is the authored direct-call target spelling issued with a
+	// call-argument observation. It is not reconstructed from source or result
+	// data in this collector.
+	Callee string
 	// Points are the execution points of the occurrences that produce the
 	// measured value. A statement carries one base evidence point and as many
 	// producing occurrences as it has measured values, so a subject addresses
@@ -258,7 +263,22 @@ func appendConformanceFinding(
 	if !memberOK {
 		member = EmptyName()
 	}
-	data := conformanceTemplateData(verdict, name, target, actual, member)
+	var data diagnosticTemplateData
+	if subject.Site == schemadiag.SiteCallArgument && verdict == conformance.VerdictViolates {
+		// Direct-call wording is backed by the owner-issued authored subject and
+		// callee fields. A missing field is a publication defect, not an excuse
+		// to invent a geometry name in the collector.
+		argumentSubject, subjectOK := NewSemanticName(subject.Subject)
+		callee, calleeOK := NewSemanticName(subject.Callee)
+		argument, argumentOK := NewCallArgument(subject.Position, argumentSubject)
+		parameter, parameterOK := NewCallParameter(subject.Position, callee)
+		if !subjectOK || !calleeOK || !argumentOK || !parameterOK {
+			return false
+		}
+		data = NewCallConformanceTemplateData(argument, argumentSubject, parameter, target, actual)
+	} else {
+		data = conformanceTemplateData(verdict, name, target, actual, member)
+	}
 	if !data.ValidFor(declared, verdict.Ordinal()) {
 		return false
 	}

@@ -73,6 +73,34 @@ func TestWriteArtifactIdentityFieldsReplaysEveryDiagnosticPayload(t *testing.T) 
 	}
 }
 
+func TestWriteArtifactIdentityFieldsReplaysOwnerIssuedCallCallee(t *testing.T) {
+	span := programsource.Span{File: "call.lua", StartLine: 3, StartCol: 20, EndLine: 3, EndCol: 21}
+	call, callOK := NewDiagnosticObservationTypeConformance(
+		programDiagnosticLawID(t, "call-conformance"), span, 0, 1,
+		DiagnosticObservationSiteCallArgument, programDiagnosticLawID(t, "owner"),
+		programDiagnosticLawID(t, "measured"), programDiagnosticLawID(t, "declared"),
+		programDiagnosticLawID(t, "span"), 0, "x", "takes_string",
+	)
+	evidence, evidenceOK := NewDiagnosticEvidence(programDiagnosticLawID(t, "call-evidence"))
+	if !callOK || !evidenceOK {
+		t.Fatal("call identity fixture construction failed")
+	}
+	view := programDiagnosticLawView(t, Publication{
+		DiagnosticObservations: []DiagnosticObservation{call},
+		DiagnosticEvidence:     []DiagnosticEvidence{evidence},
+	}, programDiagnosticLawID(t, "call-catalog"))
+	var replay identityReplay
+	if !view.WriteArtifactIdentityFields(&replay) {
+		t.Fatal("call diagnostic identity replay failed")
+	}
+	for _, field := range replay.fields {
+		if field == "string:takes_string" {
+			return
+		}
+	}
+	t.Fatalf("call diagnostic replay omitted owner-issued callee: %v", replay.fields)
+}
+
 func min(left, right int) int {
 	if left < right {
 		return left

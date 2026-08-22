@@ -103,6 +103,48 @@ const (
 type diagnosticSemanticName struct{ value string }
 type diagnosticTargetType struct{ value string }
 
+// diagnosticCallArgument is the typed role of one direct-call actual. The
+// ordinal is the owner-issued conformance position; the optional subject is
+// the authored spelling published beside it.
+type diagnosticCallArgument struct {
+	ordinal uint32
+	subject diagnosticSemanticName
+}
+
+func (argument diagnosticCallArgument) valid() bool {
+	return argument.ordinal > 0 && (argument.subject == diagnosticSemanticName{} || argument.subject.valid())
+}
+
+func (argument diagnosticCallArgument) text() string {
+	if !argument.valid() {
+		return ""
+	}
+	text := "argument " + strconv.FormatUint(uint64(argument.ordinal), 10)
+	if argument.subject.valid() {
+		text += " (" + argument.subject.value + ")"
+	}
+	return text
+}
+
+// diagnosticCallParameter is the typed role of one direct-call formal. Both
+// the callee spelling and the parameter ordinal are issued by the owner; this
+// type only gives the declaration a closed renderer for the pair.
+type diagnosticCallParameter struct {
+	callee  diagnosticSemanticName
+	ordinal uint32
+}
+
+func (parameter diagnosticCallParameter) valid() bool {
+	return parameter.ordinal > 0 && parameter.callee.valid()
+}
+
+func (parameter diagnosticCallParameter) text() string {
+	if !parameter.valid() {
+		return ""
+	}
+	return parameter.callee.value + " parameter " + strconv.FormatUint(uint64(parameter.ordinal), 10)
+}
+
 // diagnosticTemplateTokenValid admits exactly the closed access-path grammar a
 // finding names its subject by. Report templates interpolate this value into
 // message and evidence text, so the grammar exists to keep that interpolation
@@ -272,11 +314,40 @@ func (form diagnosticClaimForm) text() string {
 // this file renders it. A producer cannot hand in a rendered fragment of its
 // own, so the observed half of a message stays as declarative as the declared
 // half.
-type diagnosticObservedSpelling struct{ value string }
+type diagnosticObservedForm uint8
+
+const (
+	diagnosticObservedFormInvalid diagnosticObservedForm = iota
+	diagnosticObservedFormLiteral
+	diagnosticObservedFormType
+)
+
+type diagnosticObservedSpelling struct {
+	value string
+	form  diagnosticObservedForm
+}
 
 func (spelling diagnosticObservedSpelling) valid() bool { return spelling.value != "" }
 
 func (spelling diagnosticObservedSpelling) text() string { return spelling.value }
+
+// description is the typed evidence form of an observed value. The raw
+// spelling is kept separately for a mismatch message; this form lets a
+// declaration render "literal value 5" versus "type number" without asking
+// the collector to manufacture prose or inspect source/result text.
+func (spelling diagnosticObservedSpelling) description() string {
+	if !spelling.valid() {
+		return ""
+	}
+	switch spelling.form {
+	case diagnosticObservedFormLiteral:
+		return "literal value " + spelling.value
+	case diagnosticObservedFormType:
+		return "type " + spelling.value
+	default:
+		return ""
+	}
+}
 
 // ObservedLiteral is the spelling of a proved scalar constant. The rendering
 // is Lua's own: a string constant renders quoted, a float renders in the
@@ -285,13 +356,13 @@ func (spelling diagnosticObservedSpelling) text() string { return spelling.value
 func ObservedLiteral(literal keyspace.LiteralValue) (diagnosticObservedSpelling, bool) {
 	switch literal.Kind {
 	case keyspace.LiteralBool:
-		return diagnosticObservedSpelling{value: strconv.FormatBool(literal.Bool)}, true
+		return diagnosticObservedSpelling{value: strconv.FormatBool(literal.Bool), form: diagnosticObservedFormLiteral}, true
 	case keyspace.LiteralInteger:
-		return diagnosticObservedSpelling{value: strconv.FormatInt(literal.Integer, 10)}, true
+		return diagnosticObservedSpelling{value: strconv.FormatInt(literal.Integer, 10), form: diagnosticObservedFormLiteral}, true
 	case keyspace.LiteralFloat:
-		return diagnosticObservedSpelling{value: strconv.FormatFloat(math.Float64frombits(literal.FloatBits), 'g', -1, 64)}, true
+		return diagnosticObservedSpelling{value: strconv.FormatFloat(math.Float64frombits(literal.FloatBits), 'g', -1, 64), form: diagnosticObservedFormLiteral}, true
 	case keyspace.LiteralString:
-		return diagnosticObservedSpelling{value: strconv.Quote(literal.String)}, true
+		return diagnosticObservedSpelling{value: strconv.Quote(literal.String), form: diagnosticObservedFormLiteral}, true
 	default:
 		return diagnosticObservedSpelling{}, false
 	}
@@ -299,7 +370,7 @@ func ObservedLiteral(literal keyspace.LiteralValue) (diagnosticObservedSpelling,
 
 // ObservedNil is the spelling of the one value that has no literal of its own.
 func ObservedNil() diagnosticObservedSpelling {
-	return diagnosticObservedSpelling{value: "nil"}
+	return diagnosticObservedSpelling{value: "nil", form: diagnosticObservedFormType}
 }
 
 // ObservedFamilies is the spelling of a value that narrowed to families rather
@@ -325,7 +396,7 @@ func ObservedFamilies(vocabulary structure.Table, kinds runtimekind.Set) (diagno
 		}
 		rendered.WriteString(member.Spelling())
 	}
-	spelling := diagnosticObservedSpelling{value: rendered.String()}
+	spelling := diagnosticObservedSpelling{value: rendered.String(), form: diagnosticObservedFormType}
 	return spelling, spelling.valid()
 }
 
@@ -453,7 +524,10 @@ type diagnosticTemplateData struct {
 	handled   diagnosticNameList
 	missing   diagnosticNameList
 	actual    diagnosticObservedSpelling
+	observed  diagnosticObservedSpelling
 	member    diagnosticSemanticName
+	argument  diagnosticCallArgument
+	parameter diagnosticCallParameter
 }
 
 // witnessAt resolves one declared witness ordinal.
@@ -498,6 +572,15 @@ func (data diagnosticTemplateData) validFor(entry *schemadiag.Entry, verdict uin
 		return false
 	}
 	if !payloadFieldValid(requirements&schemadiag.RequiresMember != 0, data.member.valid(), data.member == diagnosticSemanticName{}) {
+		return false
+	}
+	if !payloadFieldValid(requirements&schemadiag.RequiresArgument != 0, data.argument.valid(), data.argument == diagnosticCallArgument{}) {
+		return false
+	}
+	if !payloadFieldValid(requirements&schemadiag.RequiresParameter != 0, data.parameter.valid(), data.parameter == diagnosticCallParameter{}) {
+		return false
+	}
+	if !payloadFieldValid(requirements&schemadiag.RequiresObserved != 0, data.observed.description() != "", data.observed == diagnosticObservedSpelling{}) {
 		return false
 	}
 	return data.witnessRosterValid(requirements&schemadiag.RequiresWitness != 0, entry.Witnesses())
@@ -571,6 +654,12 @@ func renderDiagnosticLine(line schemadiag.Line, data diagnosticTemplateData) str
 			rendered.WriteString(data.actual.text())
 		case schemadiag.PlaceholderMember:
 			rendered.WriteString(data.member.value)
+		case schemadiag.PlaceholderArgument:
+			rendered.WriteString(data.argument.text())
+		case schemadiag.PlaceholderParameter:
+			rendered.WriteString(data.parameter.text())
+		case schemadiag.PlaceholderObserved:
+			rendered.WriteString(data.observed.description())
 		default:
 			return ""
 		}
@@ -1070,6 +1159,36 @@ func NewVerdictFindingRow(id, subject identity.ContentID, code DiagnosticCode, v
 // same contract every other payload is admitted under.
 func NewConformanceTemplateData(subject diagnosticSemanticName, target diagnosticTargetType, actual diagnosticObservedSpelling, member diagnosticSemanticName) diagnosticTemplateData {
 	return diagnosticTemplateData{subject: subject, target: target, actual: actual, member: member}
+}
+
+// NewCallArgument constructs the typed direct-call actual role from the
+// owner-issued zero-based conformance position and its authored subject.
+func NewCallArgument(position uint32, subject diagnosticSemanticName) (diagnosticCallArgument, bool) {
+	if position == ^uint32(0) {
+		return diagnosticCallArgument{}, false
+	}
+	argument := diagnosticCallArgument{ordinal: position + 1, subject: subject}
+	return argument, argument.valid()
+}
+
+// NewCallParameter constructs the typed direct-call formal role from the
+// owner-issued zero-based conformance position and authored callee spelling.
+func NewCallParameter(position uint32, callee diagnosticSemanticName) (diagnosticCallParameter, bool) {
+	if position == ^uint32(0) {
+		return diagnosticCallParameter{}, false
+	}
+	parameter := diagnosticCallParameter{ordinal: position + 1, callee: callee}
+	return parameter, parameter.valid()
+}
+
+// NewCallConformanceTemplateData is the payload contract for the direct-call
+// conformance row. The call roles and observed description are typed fields;
+// the declaration owns every rendered word around them.
+func NewCallConformanceTemplateData(argument diagnosticCallArgument, subject diagnosticSemanticName, parameter diagnosticCallParameter, target diagnosticTargetType, actual diagnosticObservedSpelling) diagnosticTemplateData {
+	return diagnosticTemplateData{
+		subject: subject, target: target, actual: actual, observed: actual,
+		argument: argument, parameter: parameter,
+	}
 }
 
 // EmptyObservedSpelling is the absent observed spelling.

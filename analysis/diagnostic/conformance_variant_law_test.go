@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/domain/runtimekind"
 	typedomain "github.com/wippyai/go-lua/domain/type"
 	"github.com/wippyai/go-lua/domain/type/conformance"
@@ -120,6 +121,94 @@ func TestConformanceLiteralIsNamedByItsOwnSpelling(t *testing.T) {
 	finding := conformanceVariantFinding(t, fixture, conformance.VerdictViolates, NewConformanceTemplateData(subject, target, families, EmptyName()))
 	if !strings.Contains(finding.Message(), "boolean or number") {
 		t.Fatalf("family spelling = %q", finding.Message())
+	}
+}
+
+// TestDirectCallViolationRendersOwnerIssuedSemanticRoles states the focused
+// direct-call contract. The renderer receives an argument role, a parameter
+// role, and an observed literal as typed payloads; it does not infer ordinal,
+// callee, or evidence prose from the source/result text.
+func TestDirectCallViolationRendersOwnerIssuedSemanticRoles(t *testing.T) {
+	fixture := newDiagnosticTestFixture(t)
+	entry, declared := Declaration(fixture.declarations, typedomain.CallArgumentCode)
+	if !declared {
+		t.Fatal("the sealed table declares no direct-call conformance row")
+	}
+	argumentSubject, subjectOK := NewSemanticName("x")
+	callee, calleeOK := NewSemanticName("takes_string")
+	target, targetOK := NewTargetType("string")
+	actual, actualOK := ObservedLiteral(keyspace.LiteralValue{Kind: keyspace.LiteralInteger, Integer: 5})
+	argument, argumentOK := NewCallArgument(0, argumentSubject)
+	parameter, parameterOK := NewCallParameter(0, callee)
+	if !subjectOK || !calleeOK || !targetOK || !actualOK || !argumentOK || !parameterOK {
+		t.Fatal("direct-call semantic payload rejected by construction")
+	}
+	data := NewCallConformanceTemplateData(argument, argumentSubject, parameter, target, actual)
+	if !data.ValidFor(entry, conformance.VerdictViolates.Ordinal()) {
+		t.Fatal("direct-call semantic payload refused by its declaration")
+	}
+	emptySubject, _ := NewSemanticName("")
+	missingSubject := NewCallConformanceTemplateData(argument, emptySubject, parameter, target, actual)
+	if missingSubject.ValidFor(entry, conformance.VerdictViolates.Ordinal()) {
+		t.Fatal("direct-call violation invented an argument subject")
+	}
+	if _, ok := NewCallParameter(0, EmptyName()); ok {
+		t.Fatal("direct-call parameter role admitted without an authored callee")
+	}
+	report := NewReport(identity.ContentID{41}, identity.ContentID{42}, fixture.compilation, fixture.vocabulary, fixture.declarations, fixture.collections)
+	location, locationOK := NewLocation("main.lua", 3, 21, 3, 35)
+	if !locationOK {
+		t.Fatal("direct-call source location unavailable")
+	}
+	report.AppendFinding(NewVerdictFindingRow(
+		identity.ContentID{43}, identity.ContentID{44}, typedomain.CallArgumentCode,
+		conformance.VerdictViolates.Ordinal(), FindingSeverityError, location, data,
+	))
+	finding, held := report.FindingAt(0)
+	if !held {
+		t.Fatal("direct-call finding was not published")
+	}
+	if finding.Message() != "argument 1 (x) is 5, not string" {
+		t.Fatalf("direct-call message = %q", finding.Message())
+	}
+	if finding.Help() != "Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid." {
+		t.Fatalf("direct-call help = %q", finding.Help())
+	}
+	wantEvidence := []string{
+		"argument 1 (x) has literal value 5",
+		"takes_string parameter 1 expects string",
+		"no proof on this path shows x satisfies the parameter type",
+	}
+	if finding.EvidenceCount() != len(wantEvidence) {
+		t.Fatalf("direct-call evidence count = %d, want %d", finding.EvidenceCount(), len(wantEvidence))
+	}
+	for index, want := range wantEvidence {
+		evidence, evidenceOK := finding.EvidenceAt(index)
+		if !evidenceOK || evidence.Detail() != want {
+			t.Fatalf("direct-call evidence %d = %q, want %q", index+1, evidence.Detail(), want)
+		}
+	}
+	rendered, renderedOK := finding.RenderSource("main.lua", "local function takes_string(s: string): string return s end\nlocal x: number = 5\nreturn takes_string(x)\n")
+	if !renderedOK {
+		t.Fatal("direct-call source render was unavailable")
+	}
+	ordered := []string{
+		"error[type.call.direct.argument_type]: argument 1 (x) is 5, not string",
+		"--> main.lua:3:21",
+		"return takes_string(x)",
+		"because:",
+		"1. proven: argument 1 (x) has literal value 5",
+		"2. claimed: takes_string parameter 1 expects string",
+		"3. missing proof: no proof on this path shows x satisfies the parameter type",
+		"help: Pass `x` as a value compatible with the parameter type, or change the callee signature if that argument is valid.",
+	}
+	last := 0
+	for _, part := range ordered {
+		index := strings.Index(rendered[last:], part)
+		if index < 0 {
+			t.Fatalf("direct-call render missing or out of order %q: %s", part, rendered)
+		}
+		last += index + len(part)
 	}
 }
 

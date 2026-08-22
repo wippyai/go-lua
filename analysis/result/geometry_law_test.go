@@ -36,7 +36,7 @@ func TestProjectKeepsTypeConformanceOnItsOwnPlane(t *testing.T) {
 		Conformance: anadiag.Conformance{
 			Site: diagnostic.SiteCallArgument, Owner: observationID(4), Measured: observationID(5),
 			Declared: observationID(6), Span: observationID(7), Position: 0,
-			DeclaredMay: runtimekind.Bit(runtimekind.String), Target: "string",
+			DeclaredMay: runtimekind.Bit(runtimekind.String), Target: "string", Subject: "x", Callee: "takes_string",
 			Evidence: []identity.ContentID{observationID(8)},
 			Producers: []anadiag.Producer{{
 				Key: "value-transfer", Occurrence: observationID(9), Point: observationID(10), Anchor: observationID(8),

@@ -231,7 +231,11 @@ type Conformance struct {
 	// holds none of them. A subject the authored projection does not spell -
 	// a dynamic key, a literal with no name of its own - carries none, and the
 	// finding names its subject by the geometry's own word instead.
-	Subject  string
+	Subject string
+	// Callee is the authored spelling of the direct-call target for a call
+	// argument site. The Program owner issues it with the observation; this
+	// projection never reconstructs it from source or result data.
+	Callee   string
 	Evidence []identity.ContentID
 	// Producers is the execution geometry of the measured value: the rule
 	// occurrences that produce it and the base evidence point each one anchors
@@ -247,13 +251,20 @@ func (payload Conformance) Available() bool {
 		!payload.Span.Available() || !payload.DeclaredMay.Valid() || len(payload.Evidence) == 0 {
 		return false
 	}
+	if payload.Site == schemadiag.SiteCallArgument {
+		if !diagnosticTemplateTokenValid(payload.Callee) {
+			return false
+		}
+	} else if payload.Callee != "" {
+		return false
+	}
 	return validProducerCoverage(payload.Evidence, payload.Producers)
 }
 
 func (payload Conformance) empty() bool {
 	return !payload.Site.Declared() && !payload.Owner.Available() && !payload.Measured.Available() && !payload.Declared.Available() &&
 		!payload.Span.Available() && payload.Position == 0 && payload.Actual == 0 &&
-		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" && payload.Subject == "" &&
+		payload.DeclaredMay == 0 && payload.Target == "" && payload.Member == "" && payload.Subject == "" && payload.Callee == "" &&
 		len(payload.Evidence) == 0 && len(payload.Producers) == 0
 }
 
@@ -414,8 +425,8 @@ func ProjectSites(sites mounted.ObservationSites, mounts []programmount.MountedA
 				Owner: observation.OwnerID(), Measured: observation.MeasuredValueID(),
 				Declared: observation.DeclaredStaticTypeID(), Span: observation.SpanID(), Position: position,
 				Actual: valueIndex, DeclaredMay: declaredMay, Target: target,
-				Member:    conformanceMemberText(cold, observation),
-				Subject:   observation.Name(),
+				Member:  conformanceMemberText(cold, observation),
+				Subject: observation.Name(), Callee: observation.CalleeName(),
 				Evidence:  append([]identity.ContentID(nil), points...),
 				Producers: producers,
 			}

@@ -112,6 +112,7 @@ func TestConformanceObservationRequiresProducerGeometry(t *testing.T) {
 		Span:        identity.ContentID{5},
 		DeclaredMay: runtimekind.Bit(runtimekind.String),
 		Target:      "string",
+		Callee:      "takes_string",
 		Evidence:    []identity.ContentID{point},
 	}
 	if payload.Available() {

@@ -38,9 +38,6 @@ func (program *Program) SubjectSpelling(term keyspace.Term) (string, bool) {
 	if !program.Available() || term == 0 {
 		return "", false
 	}
-	if true {
-		return "", false
-	}
 	var builder strings.Builder
 	if !program.writeSubjectSpelling(&builder, term, 0) || builder.Len() == 0 || builder.Len() > subjectSpellingByteLimit {
 		return "", false

@@ -70,6 +70,7 @@ type DiagnosticObservation struct {
 	declared identity.ContentID
 	span     identity.ContentID
 	position uint32
+	callee   string
 }
 
 // NewDiagnosticObservationBranchCondition constructs the branch-condition
@@ -131,12 +132,19 @@ func NewDiagnosticObservationTypeConformance(
 	owner, measured, declared, span identity.ContentID,
 	position uint32,
 	subject string,
+	callee ...string,
 ) (DiagnosticObservation, bool) {
+	calleeName := ""
+	if len(callee) == 1 {
+		calleeName = callee[0]
+	} else if len(callee) > 1 {
+		return DiagnosticObservation{}, false
+	}
 	row := DiagnosticObservation{
 		id: id, kind: structure.DiagnosticObservationTypeConformance, location: location,
 		evidenceOffset: evidenceOffset, evidenceCount: evidenceCount,
 		site: site, owner: owner, measured: measured, declared: declared,
-		span: span, position: position, name: subject,
+		span: span, position: position, name: subject, callee: calleeName,
 	}
 	return row, row.Available()
 }
@@ -180,7 +188,8 @@ func (row DiagnosticObservation) Available() bool {
 	case structure.DiagnosticObservationTypeConformance:
 		return row.site.Valid() && row.owner.Available() && row.measured.Available() && row.declared.Available() && row.span.Available() &&
 			!emptyEvidence && emptyPath && row.decision == zero && row.value == zero && row.reference == zero && row.root == zero &&
-			row.read == zero && row.cell == zero
+			row.read == zero && row.cell == zero &&
+			(row.site != DiagnosticObservationSiteCallArgument || row.callee != "")
 	default:
 		return false
 	}
@@ -269,6 +278,17 @@ func (row DiagnosticObservation) Name() string {
 	default:
 		return ""
 	}
+}
+
+// CalleeName is the authored spelling of the direct-call target that owns a
+// call-argument conformance row. It is issued with the row while the compiler
+// still has the authored call relation; Snapshot consumers do not reconstruct
+// it from source or result data.
+func (row DiagnosticObservation) CalleeName() string {
+	if !row.Available() || row.kind != structure.DiagnosticObservationTypeConformance || row.site != DiagnosticObservationSiteCallArgument {
+		return ""
+	}
+	return row.callee
 }
 
 func (row DiagnosticObservation) Site() DiagnosticObservationSite {

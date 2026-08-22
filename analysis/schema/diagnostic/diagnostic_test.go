@@ -444,6 +444,40 @@ func TestDiagnosticRequirementsCoverPlaceholders(t *testing.T) {
 	}
 }
 
+// TestDirectCallPlaceholdersCarryTypedSemanticRolesLaw pins the focused call
+// contract to the closed placeholder vocabulary. Ordinal/name roles and the
+// observed-value description are declaration reads; a row that omits one of
+// their requirement bits cannot seal.
+func TestDirectCallPlaceholdersCarryTypedSemanticRolesLaw(t *testing.T) {
+	spec := scratchSpec("type.call.direct.argument_type", scratchFamilyType)
+	spec.Requirements = RequiresArgument | RequiresSubject | RequiresParameter | RequiresTarget | RequiresActual | RequiresObserved
+	spec.Message = "{argument} is {actual}, not {target}"
+	spec.Help = "Pass `{subject}` as a value compatible with the parameter type."
+	spec.Evidence = []Evidence{
+		{Anchor: AnchorPrimary, Kind: "abstract fact", Trust: "proven", Reason: "unspecified", Detail: "{argument} has {observed}"},
+		{Anchor: AnchorPrimary, Kind: "user assertion", Trust: "claimed", Reason: "unspecified", Detail: "{parameter} expects {target}"},
+		{Anchor: AnchorPrimary, Kind: "missing proof", Trust: "refuted", Reason: "unspecified", Detail: "no proof on this path shows {subject} satisfies the parameter type"},
+	}
+	entry := mustEntry(t, spec)
+	presentation, available := entry.Presentation(0)
+	if !available || presentation.Requirements != spec.Requirements {
+		t.Fatalf("direct-call presentation requirements = %d, want %d", presentation.Requirements, spec.Requirements)
+	}
+	for _, placeholder := range []Placeholder{PlaceholderArgument, PlaceholderParameter, PlaceholderObserved} {
+		if placeholder.Requires() == RequiresInvalid {
+			t.Fatalf("direct-call placeholder %d has no requirement", placeholder)
+		}
+	}
+	for _, missing := range []Requirement{RequiresArgument, RequiresParameter, RequiresObserved} {
+		damaged := *entry
+		damaged.requirements = spec.Requirements &^ missing
+		failure := sealEntries(t, []*Entry{&damaged})
+		if failure.Law != LawRequirementCovered || failure.Disposition != schema.DispositionIncomplete {
+			t.Fatalf("missing direct-call requirement %d sealed: law=%d disposition=%s", missing, failure.Law, failure.Disposition)
+		}
+	}
+}
+
 // TestDiagnosticWitnessAnchorRequiresTheWitnessRoster states that a row
 // anchoring evidence or a label at a located witness requires that roster, so
 // the place a reader is shown is always one the payload carries.
@@ -558,6 +592,16 @@ func TestDiagnosticLaneDeclaresItsSubjects(t *testing.T) {
 	}
 	if failure := sealEntries(t, []*Entry{entry}); failure.Available() {
 		t.Fatalf("declared row rejected: law=%d disposition=%s", failure.Law, failure.Disposition)
+	}
+	result := scratchSpec("send.isolation", scratchFamilyAdvice)
+	result.Lane, result.Observation, result.Fact, result.Collection = LaneResult, Reference{}, Reference{}, Reference{}
+	resultEntry := mustEntry(t, result)
+	if !resultEntry.Collectable() {
+		t.Fatal("result lane did not report its installed producer")
+	}
+	result.Observation = member(scratchObservationValue)
+	if _, ok := New(result); ok {
+		t.Fatal("result lane carrying an engine observation population admitted")
 	}
 }
 
@@ -909,6 +953,7 @@ func scratchVerdictVocabulary(t *testing.T) schema.Surface {
 // declares variants instead of one message.
 func scratchVariantSpec(code Code) Spec {
 	spec := scratchSpec(code, scratchFamilyType)
+	spec.VerdictCategory = structure.CategoryConformanceVerdict
 	spec.Observation = member(scratchObservationConformance)
 	spec.Collection = Reference{Surface: schema.SurfaceKindObservation, Key: "value-summary/type-conformance"}
 	spec.Sites = []Site{SiteAssignment, SiteMemberAbsent}
