@@ -375,7 +375,7 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 			registration.Population() != query.PopulationSelectedPoint || registration.Projection() != site.Projection {
 			return nil, false
 		}
-		if !contributor.contract.Available() || contributor.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.contract.Codec() != registration.Freezer() {
+		if !contributor.queryResultPublication.contract.Available() || contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
 			return nil, false
 		}
 		query, resolved := committed.Query(site.ID)
@@ -389,7 +389,7 @@ func (bound *ProgramBinding) QueryPublications(committed *engine.CommittedProgra
 		if !keyed {
 			return nil, false
 		}
-		publications = append(publications, QueryPublication{Site: site, Key: key, contract: &bound.catalog.queryContributors[position].contract, encode: contributor.encode, ordinal: uint32(position + 1)})
+		publications = append(publications, QueryPublication{Site: site, Key: key, contract: &bound.catalog.queryContributors[position].queryResultPublication.contract, encode: contributor.queryResultPublication.encode, ordinal: uint32(position + 1)})
 	}
 	return publications, true
 }

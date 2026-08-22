@@ -6,7 +6,10 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/structure"
+	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	effectowner "github.com/wippyai/go-lua/domain/effect/owner"
 	placementquery "github.com/wippyai/go-lua/domain/placement/query"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
@@ -217,6 +220,99 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, nil); admitted {
 		t.Fatal("value-summary was admitted without its owner result encoder")
 	}
+}
+
+// TestObservationProducerDoesNotNeedResultPublication states the population
+// split at the composition boundary. An observation family can seal its typed
+// declaration, binding, and recovery path while leaving Result admission and
+// encoding absent; construction can register that producer without inventing
+// a byte codec or a selected-point row.
+func TestObservationProducerDoesNotNeedResultPublication(t *testing.T) {
+	roles := queryCapabilityLawRoles(t)
+	spec := valueowner.QuerySpec()
+	spec.Family = "value-summary-observation-producer-law"
+	spec.Population = query.PopulationObservation
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil)
+	if !admitted || registration == nil {
+		t.Fatal("observation producer was rejected without Result callbacks")
+	}
+	if !contributor.producerComplete() {
+		t.Fatal("observation producer lost its typed producer capability")
+	}
+	if contributor.resultComplete() || contributor.complete() {
+		t.Fatal("observation producer acquired a fabricated Result capability")
+	}
+	if _, admitted := contributor.admit(nil, query.Cell{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, executioncontext.Context{}); admitted {
+		t.Fatal("producer-only observation exposed a selected-point admission")
+	}
+	if !contributor.registrable(registration) {
+		t.Fatal("observation producer is not registrable through the population law")
+	}
+}
+
+// TestSelectedPointProducerRequiresCompleteResultPublication is the converse
+// law: a selected-point row is a Result lane, so a typed producer with no
+// admission/encoder/contract cannot reach the query table.
+func TestSelectedPointProducerRequiresCompleteResultPublication(t *testing.T) {
+	roles := queryCapabilityLawRoles(t)
+	spec := valueowner.QuerySpec()
+	spec.Family = "value-summary-selected-result-law"
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, nil)
+	if admitted {
+		t.Fatal("selected-point producer without Result capability was admitted")
+	}
+	if registration != nil || contributor.producerComplete() {
+		t.Fatal("selected-point producer without Result capability escaped the fail-closed boundary")
+	}
+	if contributor.resultComplete() || contributor.complete() {
+		t.Fatal("incomplete selected-point Result capability reported complete")
+	}
+}
+
+// TestSelectedPointProducerWithResultPublicationRemainsAdmitted pins the
+// existing selected-point path: adding the capability split must not alter a
+// complete family's contract or its admission eligibility.
+func TestSelectedPointProducerWithResultPublicationRemainsAdmitted(t *testing.T) {
+	roles := queryCapabilityLawRoles(t)
+	spec := valueowner.QuerySpec()
+	spec.Family = "value-summary-selected-complete-law"
+	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, valueowner.EncodeQueryAnswer)
+	if !admitted || registration == nil || !contributor.producerComplete() || !contributor.resultComplete() || !contributor.complete() {
+		t.Fatal("complete selected-point producer did not retain Result publication capability")
+	}
+	if contributor.queryResultPublication.contract.FamilyID() != identity.ContentID(registration.ID()) || contributor.queryResultPublication.contract.Codec() != registration.Freezer() {
+		t.Fatal("selected-point Result contract drifted from registration identity")
+	}
+}
+
+// TestObservationPartialResultCapabilityDoesNotSilentlyPass exercises the
+// all-or-nothing Result unit. An observation may omit Result entirely, but a
+// partially supplied capability is malformed rather than a reason to retain a
+// callback that cannot publish a canonical cell.
+func TestObservationPartialResultCapabilityDoesNotSilentlyPass(t *testing.T) {
+	roles := queryCapabilityLawRoles(t)
+	spec := valueowner.QuerySpec()
+	spec.Family = "value-summary-observation-partial-result-law"
+	spec.Population = query.PopulationObservation
+	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, valueowner.EncodeQueryAnswer); admitted {
+		t.Fatal("observation accepted a partial Result capability")
+	}
+}
+
+func queryCapabilityLawRoles(t *testing.T) vocabulary.Roles {
+	t.Helper()
+	specs := queryRoleVocabulary()
+	specs = append(specs, vocabulary.RoleSpecs("query/population/observation")...)
+	specs = append(specs, vocabulary.RoleSpecs("query/value-summary", "query-result/value-summary", "factor/value/summary-coordinatewise")...)
+	entries, collected := structure.Collect(specs)
+	if !collected {
+		t.Fatal("query capability role inventory did not collect")
+	}
+	roles, resolved := vocabulary.NewRoles(entries)
+	if !resolved {
+		t.Fatal("query capability role inventory did not resolve")
+	}
+	return roles
 }
 
 // TestObservationProducersAreIssuedQueryFamilies states that every observation

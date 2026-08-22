@@ -24,11 +24,12 @@ const (
 	QueryFamilyPlacementSummary = placement.SummaryResultFamily
 )
 
-// queryRegistrations is the authored analyzer query inventory: the three families
-// the sealed schema opens a query slot for. Each row instantiates one owning
-// domain's own query declaration, which carries that family's identities, its
-// subject axes, its fold contract, and the contributor that folds and freezes
-// its answers.
+// queryRegistrations is the authored analyzer query inventory: the three
+// families the sealed schema opens a query slot for. Each row instantiates one
+// owning domain's own query declaration, which carries that family's
+// identities, subject axes, and fold contract. Selected-point rows also carry
+// the Result publication capability; observation rows may carry only their
+// typed producer.
 //
 // The declaration lives with the domain that owns the facts the family is
 // answered from, exactly as an axis declaration does, so the inventory here
@@ -40,7 +41,7 @@ func queryRegistrations(roles vocabulary.Roles) ([]*query.Registration, []queryC
 	var contributors []queryContributor
 	rejected := false
 	add := func(entry *query.Registration, contributor queryContributor, ok bool) {
-		if !ok || !contributor.complete() {
+		if !ok || !contributor.registrable(entry) {
 			rejected = true
 			return
 		}

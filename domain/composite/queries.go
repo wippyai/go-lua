@@ -86,6 +86,9 @@ func declareQueries(state *catalog, builder *engine.SchemaBuilder, fragments axi
 		return cells, false
 	}
 	for position, contributor := range state.queryContributors {
+		if !contributor.producerComplete() {
+			return cells, false
+		}
 		fragment, ok := contributor.declare(builder, subjects)
 		if !ok {
 			return cells, false
@@ -96,10 +99,11 @@ func declareQueries(state *catalog, builder *engine.SchemaBuilder, fragments axi
 }
 
 // bindQueries runs the table's hot query pass: every declared family installs
-// its fold and its result contract on the bound principal its subject axis
-// produced. It runs inside the binding transaction, after every rule slot is
-// registered and paired and before the binding becomes terminal, which is the
-// one position a query may be bound at.
+// its typed producer on the bound principal its subject axis produced. Result
+// publication is a separate selected-point capability and is not required for
+// an observation producer. This runs inside the binding transaction, after
+// every rule slot is registered and paired and before the binding becomes
+// terminal, which is the one position a query may be bound at.
 func bindQueries(state *catalog, binding *engine.SchemaBinding, fragments queryCells, bound axisCells) bool {
 	if state == nil || state.sealed == nil || !fragments.available(state.queries) {
 		return false
@@ -112,6 +116,9 @@ func bindQueries(state *catalog, binding *engine.SchemaBinding, fragments queryC
 		return false
 	}
 	for position, contributor := range state.queryContributors {
+		if !contributor.producerComplete() {
+			return false
+		}
 		if !contributor.bind(binding, fragments[position], subjects) {
 			return false
 		}
