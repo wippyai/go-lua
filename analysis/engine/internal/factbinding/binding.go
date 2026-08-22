@@ -353,12 +353,13 @@ func (binding *Binding[K, V]) DeclareDistributiveSummary(keys []K) (carrier.Unit
 }
 
 func (binding *Binding[K, V]) declareSummary(keys []K, distributive bool) (carrier.Unit, bool) {
-	if binding == nil || !binding.declaring || binding.phase > declareSummary || binding.algebra == nil || len(keys) == 0 && binding.algebra.keyEnd != 0 {
+	if binding == nil || !binding.declaring || binding.phase > declareSummary || binding.algebra == nil {
 		return carrier.Unit{}, false
 	}
-	// A zero-key summary is the schema-level optional-empty domain. It is
-	// legal only for a zero-width Factor, where there is no coordinate to
-	// issue and therefore no coordinate-level invalidation closure.
+	// A zero-key summary is one Factor's sealed empty projection: the limit
+	// of the proper coordinate subsets already admitted. It issues no
+	// coordinate, so it carries no coordinate-level invalidation closure, and
+	// its fold reads the declared constant.
 	frozen := append([]K(nil), keys...)
 	for index, key := range frozen {
 		if binding.algebra == nil || uint64(key) >= binding.algebra.keyEnd || index > 0 && frozen[index-1] >= key {

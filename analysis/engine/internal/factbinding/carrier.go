@@ -1680,12 +1680,6 @@ func (work *bindingWork[K, V]) ObserveUnder(root carrier.RootHandle, unit carrie
 	if !ok {
 		return false
 	}
-	// A zero-width Factor has one schema-level optional-empty summary unit.
-	// It carries no coordinate and therefore emits no observation rows; the
-	// caller still receives a successful empty fold over the declared domain.
-	if len(descriptor.keys) == 0 {
-		return binding.algebra != nil && binding.algebra.keyEnd == 0
-	}
 	if support.Empty(within) {
 		return true
 	}
@@ -1778,9 +1772,6 @@ func (work *bindingWork[K, V]) exactPiecesDistinct() bool {
 // declared fold makes the joint partition unobservable, so the whole of
 // within is one region.
 func (work *bindingWork[K, V]) observeDistributiveSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
-	if len(keys) == 0 {
-		return false
-	}
 	work.resetSpine()
 	cell, count := -1, 0
 	for _, key := range keys {
@@ -1800,13 +1791,12 @@ func (work *bindingWork[K, V]) observeDistributiveSummary(input semantic.Plane[p
 }
 
 func (work *bindingWork[K, V]) observeSummary(input semantic.Plane[planeFactor, K, V], root carrier.RootHandle, unit carrier.Unit, keys []K, within support.Mask, visit func(carrier.ObservationRow) bool) bool {
-	if len(keys) == 0 {
-		return false
-	}
 	// A declared summary of constant (including absent) keys has exactly one
-	// raw ordered sequence for all of within. It needs neither pairwise
-	// intersections nor a candidate support transaction; retain that work for
-	// the first genuinely branched declared key.
+	// raw ordered sequence for all of within. The sealed empty projection is
+	// the degenerate member of that class: it declares no key, so its single
+	// sequence is empty. Neither needs pairwise intersections or a candidate
+	// support transaction; retain that work for the first genuinely branched
+	// declared key.
 	work.resetSpine()
 	constant := true
 	cell, count := -1, 0
@@ -2063,9 +2053,11 @@ func (work *bindingWork[K, V]) emitGroups(root carrier.RootHandle, unit carrier.
 
 // appendSequence materializes one group's declared-order sequence into the
 // flat entry slab that observationEntry indexes by position. The spine links
-// terminal to prefix, so the sequence is filled from its last entry back.
+// terminal to prefix, so the sequence is filled from its last entry back. A
+// group of the sealed empty projection has no terminal cell and materializes
+// no entry, which the walk below expresses as a vacuous fill.
 func (work *bindingWork[K, V]) appendSequence(cell, count int) bool {
-	if count <= 0 {
+	if count < 0 {
 		return false
 	}
 	first := len(work.entries)

@@ -302,9 +302,13 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *Facto
 		if !represented || !matchesFactorReadShape(schema, implementation.ordinal, representative, summaryReadForm) {
 			return false
 		}
+		// The declared key vector is the Factor's own projection, and a
+		// Factor's coordinate universe is sealed. The empty vector is
+		// therefore that Factor's sealed empty projection, admitted here on
+		// the same terms as the proper subsets around it.
 		keyRange, ranged := graph.SummaryKeyRange(representative)
 		count := keyRange.Count()
-		if !ranged || count < 0 || count == 0 && keyEnd != 0 {
+		if !ranged || count < 0 {
 			return false
 		}
 		keys := make([]K, count)
