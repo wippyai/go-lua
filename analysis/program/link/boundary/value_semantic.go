@@ -160,7 +160,12 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 			if !tailOK {
 				return errors.New("link/boundary: malformed semantic Call tail")
 			}
-			if err := addTerm("Call tail", tailID, tailTerm, true); err != nil {
+			// A call's actuals are one authored Values row, and ValuesTailID is
+			// derived from that row and its tail term alone. The authored Values
+			// pass above therefore already published this exact inverse; the
+			// Calls pass asserts the mapping instead of submitting the same
+			// Values-owned identity a second time.
+			if err := assertMountedTermSemantic(table, mount, "Call tail", tailID, tailTerm); err != nil {
 				return err
 			}
 		}
@@ -338,6 +343,23 @@ func sealValueSemanticIDs(table *valueTable, p *program.Program, mount uint32) e
 		if err := assertMountedSpanSemantic(table, mount, "IndexRead", span); err != nil {
 			return errors.New("link/boundary: malformed semantic IndexRead row")
 		}
+	}
+	return nil
+}
+
+// assertMountedTermSemantic never writes table.semantic: it asserts that id
+// already resolves, at term's own Boundary ordinal, under the pass that owns
+// the identity. A consumer pass reaching a fact another pass publishes reads
+// it through here rather than republishing it.
+func assertMountedTermSemantic(table *valueTable, mount uint32, label string, id identity.ContentID, term keyspace.Term) error {
+	ordinal, ordinalOK := table.index.Lookup(radix.Index(mount), uint32(term))
+	if !ordinalOK || uint64(ordinal) >= uint64(len(table.rows)) {
+		return errors.New("link/boundary: semantic " + label + " has no Boundary ordinal")
+	}
+	row := table.rows[ordinal]
+	published, publishedOK := table.semantic[valueSemanticKey{mount: mount, id: id}]
+	if row.shard != mount || row.term != term || !publishedOK || published != ordinal {
+		return errors.New("link/boundary: semantic " + label + " has no Boundary ordinal")
 	}
 	return nil
 }
