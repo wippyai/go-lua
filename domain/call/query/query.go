@@ -115,13 +115,6 @@ func RecoverQuery(binding *engine.SchemaBinding, context queryschema.Sealed[*Exa
 	return engine.ExactQueryImplementationAt[calldomain.Value, calldispatch.CalleeSet](binding, context.Fragment.slot)
 }
 
-// EncodeQueryAnswer is intentionally blocked until the central schema/plane
-// result owner publishes this family's declared columns. A false result is a
-// refusal, never a fallback codec or a duplicate domain wire format.
-func EncodeQueryAnswer(answer engine.Answer) (present bool, rows uint64, payload []byte, ok bool) {
-	return false, 0, nil, false
-}
-
 // exactQuerySpec projects exactly one Call output cell. An unwritten cell or
 // Call Bottom is absence; no zero-cardinality CalleeSet is fabricated. Any
 // other value is classified only through dispatch's owner-issued classifier.

@@ -77,10 +77,3 @@ func TestObservationQueryOwnsOnlyItsDeclaredRoles(t *testing.T) {
 		}
 	}
 }
-
-func TestCallObservationEncodingIsBlockedUntilCentralPlaneRegistration(t *testing.T) {
-	present, rows, payload, encoded := EncodeQueryAnswer(engine.Answer{})
-	if present || rows != 0 || payload != nil || encoded {
-		t.Fatal("Call observation query exposed a local result codec before central plane registration")
-	}
-}
