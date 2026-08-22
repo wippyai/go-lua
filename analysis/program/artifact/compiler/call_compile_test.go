@@ -23,7 +23,7 @@ return identity(true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	transaction := compiler{input: compiled, pointIDsBySite: make(map[identity.ContentID][]identity.ContentID)}
+	transaction := compiler{input: compiled}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)
 	}
@@ -44,7 +44,6 @@ return identity(true)
 	}
 	transaction := compiler{
 		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
-		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)
@@ -74,8 +73,9 @@ return identity(true)
 		finish, finishOK := compiled.Flow().Causal().Sites().ForTerm(finishTerm)
 		geometry, geometryOK := transaction.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceCall, id: callID}]
 		activation, activationOK := transaction.occurrenceSpans[occurrenceLookup{kind: programschema.OccurrenceCallActivation, id: callID}]
-		wantEntry, wantFinish := canonicalPoints(transaction.pointIDs(entry)), canonicalPoints(transaction.pointIDs(finish))
-		if !callOK || !callTermOK || !spanOK || !entryOK || !finishOK || !geometryOK || !activationOK ||
+		wantEntry, wantEntryOK := copyPointPaths(compiled.Flow().LocalWTO().PointPathsForSite(entry))
+		wantFinish, wantFinishOK := copyPointPaths(compiled.Flow().LocalWTO().PointPathsForSite(finish))
+		if !callOK || !callTermOK || !spanOK || !entryOK || !finishOK || !wantEntryOK || !wantFinishOK || !geometryOK || !activationOK ||
 			!slices.Equal(geometry.entry, wantEntry) || !slices.Equal(geometry.finish, wantFinish) ||
 			len(activation.entry) != 0 || !slices.Equal(activation.finish, wantFinish) {
 			t.Fatalf("call %d did not preserve exact Entry/Finish geometry", index)
@@ -127,7 +127,6 @@ return result
 	}
 	transaction := compiler{
 		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
-		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)

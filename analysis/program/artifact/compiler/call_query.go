@@ -69,7 +69,7 @@ type callArmConstruction struct {
 	kind   causal.BoundaryArmKind
 	route  identity.ContentID
 	target identity.ContentID
-	points []identity.ContentID
+	points causal.SitePointPaths
 }
 
 // callConstruction reads only the canonical Flow/Authored, Source, Static,
@@ -280,8 +280,8 @@ func (compiler *compiler) callBoundary(term keyspace.Term, spanID identity.Conte
 		if !routeOK || !targetOK || !routeIdentity.Issued() || routeIdentity.Provenance() != flowView.Provenance() || !compiler.input.OwnsSite(target) || !routeDigest.Available() || !targetID.Available() {
 			return callBoundaryConstruction{}
 		}
-		points := compiler.pointIDs(target)
-		if len(points) == 0 {
+		points := compiler.input.Flow().LocalWTO().PointPathsForSite(target)
+		if points.Count() == 0 {
 			return callBoundaryConstruction{}
 		}
 		arms = append(arms, callArmConstruction{kind: armKind, route: routeDigest, target: targetID, points: points})

@@ -46,14 +46,6 @@ func valueRowForTerm(values []programschema.Values, term keyspace.Term) (program
 	return row, row.Available()
 }
 
-func pointIDs(index map[identity.ContentID][]identity.ContentID, site causal.Site) []identity.ContentID {
-	if !site.Available() || index == nil {
-		return nil
-	}
-	points := index[site.ContextID()]
-	return points
-}
-
 // Build emits the complete Body/Outcome plane and then the callable boundary
 // planes from the same canonical Flow snapshot. It intentionally performs no
 // parent mutation; the Bundle is the sole construction owner until transfer.
@@ -110,8 +102,8 @@ func Build(input Input) (*Bundle, programconstruction.Fault) {
 		}
 		entry, entryOK := body.EntrySite()
 		entryID := entry.PathID()
-		entryPoints := pointIDs(input.PointIDsBySite, entry)
-		if !context.Available() || !entryOK || !entryID.Available() || !input.Program.OwnsSite(entry) || len(entryPoints) == 0 {
+		entryPoints := input.Program.Flow().LocalWTO().PointPathsForSite(entry)
+		if !context.Available() || !entryOK || !entryID.Available() || !input.Program.OwnsSite(entry) || entryPoints.Count() == 0 {
 			return nil, programconstruction.New(programcatalog.Body(), programconstruction.IssueBodyUnavailable, bodyIndex, -1)
 		}
 		if _, duplicate := seenBodyContexts[context]; duplicate {
@@ -129,11 +121,15 @@ func Build(input Input) (*Bundle, programconstruction.Fault) {
 			}
 			callable = true
 		}
-		if !fitsUint32(len(bodyEntries)) || !fitsUint32(len(entryPoints)) {
+		if !fitsUint32(len(bodyEntries)) || !fitsUint32(entryPoints.Count()) {
 			return nil, programconstruction.New(programcatalog.Body(), programconstruction.IssueBodyRange, bodyIndex, -1)
 		}
 		entryOffset := uint32(len(bodyEntries))
-		for pointIndex, point := range entryPoints {
+		for pointIndex := 0; pointIndex < entryPoints.Count(); pointIndex++ {
+			point, pointOK := entryPoints.At(pointIndex)
+			if !pointOK {
+				return nil, programconstruction.New(programcatalog.BodyEntry(), programconstruction.IssueBodyUnavailable, bodyIndex, pointIndex)
+			}
 			row, rowOK := programschema.NewBodyEntry(bodyID, point)
 			if !rowOK {
 				return nil, programconstruction.New(programcatalog.BodyEntry(), programconstruction.IssueBodyUnavailable, bodyIndex, pointIndex)
@@ -259,18 +255,22 @@ func Build(input Input) (*Bundle, programconstruction.Fault) {
 					return nil, programconstruction.New(programcatalog.Outcome(), programconstruction.IssueOutcomePropagation, bodyIndex, outcomeIndex)
 				}
 			}
-			points := []identity.ContentID(nil)
+			pointPaths := causal.SitePointPaths{}
 			if site, siteOK := sites.ForTerm(exit.Outcome); siteOK {
 				if !site.Available() || !sites.Owns(site) {
 					return nil, programconstruction.New(programcatalog.OutcomePoint(), programconstruction.IssueOutcomeAttachment, bodyIndex, outcomeIndex)
 				}
-				points = pointIDs(input.PointIDsBySite, site)
+				pointPaths = input.Program.Flow().LocalWTO().PointPathsForSite(site)
 			}
-			if !fitsUint32(len(outcomePoints)) || !fitsUint32(len(points)) {
+			if !fitsUint32(len(outcomePoints)) || !fitsUint32(pointPaths.Count()) {
 				return nil, programconstruction.New(programcatalog.OutcomePoint(), programconstruction.IssueOutcomeRange, bodyIndex, outcomeIndex)
 			}
 			pointOffset := uint32(len(outcomePoints))
-			for pointIndex, point := range points {
+			for pointIndex := 0; pointIndex < pointPaths.Count(); pointIndex++ {
+				point, pointOK := pointPaths.At(pointIndex)
+				if !pointOK {
+					return nil, programconstruction.New(programcatalog.OutcomePoint(), programconstruction.IssueOutcomeAttachment, bodyIndex, pointIndex)
+				}
 				child, childOK := programschema.NewOutcomePoint(outcomeID, point)
 				if !childOK {
 					return nil, programconstruction.New(programcatalog.OutcomePoint(), programconstruction.IssueOutcomeAttachment, bodyIndex, pointIndex)

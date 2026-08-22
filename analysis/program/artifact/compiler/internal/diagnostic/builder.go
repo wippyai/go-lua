@@ -21,14 +21,13 @@ import (
 // owner bundles for body boundaries and allocations. No parent-private draft
 // or resolver callback crosses this boundary.
 type Input struct {
-	Program        *program.Program
-	Values         []programschema.Values
-	ValuesMembers  []programschema.ValuesMember
-	Calls          []programschema.Call
-	CallArguments  []programschema.CallArgument
-	BodyBoundary   *bodyboundary.Bundle
-	Allocations    *allocation.Bundle
-	PointIDsBySite map[identity.ContentID][]identity.ContentID
+	Program       *program.Program
+	Values        []programschema.Values
+	ValuesMembers []programschema.ValuesMember
+	Calls         []programschema.Call
+	CallArguments []programschema.CallArgument
+	BodyBoundary  *bodyboundary.Bundle
+	Allocations   *allocation.Bundle
 }
 
 func (input Input) Available() bool {
@@ -51,6 +50,7 @@ type compiler struct {
 	diagnosticPaths           []programdiagnostic.DiagnosticPath
 	diagnosticObservationByID map[identity.ContentID]int
 	diagnosticEvidenceScratch map[identity.ContentID]struct{}
+	diagnosticPointScratch    []identity.ContentID
 
 	branchScopeRewriteComputed   bool
 	branchScopeRewriteWellFormed bool
@@ -62,12 +62,30 @@ type compiler struct {
 	callArgumentSources                map[identity.ContentID]callArgumentSource
 }
 
+// pointPaths copies one owner-issued Causal span into reusable construction
+// scratch. Diagnostic identity and publication consume the slice before the
+// next call; no borrowed owner storage or per-observation allocation escapes.
+func (compiler *compiler) pointPaths(paths causal.SitePointPaths) ([]identity.ContentID, bool) {
+	if compiler == nil || !paths.Available() {
+		return nil, false
+	}
+	compiler.diagnosticPointScratch = compiler.diagnosticPointScratch[:0]
+	for index := 0; index < paths.Count(); index++ {
+		point, ok := paths.At(index)
+		if !ok {
+			return nil, false
+		}
+		compiler.diagnosticPointScratch = append(compiler.diagnosticPointScratch, point)
+	}
+	return compiler.diagnosticPointScratch, true
+}
+
 // Compile admits all diagnostic observations and returns the one canonical
 // publication. The returned publication owns the only slices retained by the
 // parent; all indexes and scratch state die with this child transaction.
 func Compile(input Input) (programdiagnostic.Publication, programconstruction.Fault) {
 	if input.Program == nil || !input.Program.Available() ||
-		input.BodyBoundary == nil || input.Allocations == nil || input.PointIDsBySite == nil {
+		input.BodyBoundary == nil || input.Allocations == nil {
 		return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticInvalidInput, -1, -1)
 	}
 	compiler := &compiler{
@@ -124,18 +142,6 @@ func (compiler *compiler) indexCallArgumentSources() bool {
 		}
 	}
 	return true
-}
-
-func (compiler *compiler) pointIDs(site causal.Site) []identity.ContentID {
-	if compiler == nil || !site.Available() || compiler.input.Program == nil ||
-		!compiler.input.Program.OwnsSite(site) {
-		return nil
-	}
-	points, known := compiler.input.PointIDsBySite[site.ContextID()]
-	if !known {
-		return nil
-	}
-	return points
 }
 
 func (compiler *compiler) valueRowForTerm(term keyspace.Term) (programschema.Values, bool) {

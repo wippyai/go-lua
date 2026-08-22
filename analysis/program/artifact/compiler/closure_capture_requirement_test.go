@@ -26,7 +26,7 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := &compiler{input: input, pointIDsBySite: make(map[identity.ContentID][]identity.ContentID)}
+	state := &compiler{input: input}
 	if failure := state.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("point fixture failed: %v", failure)
 	}
@@ -38,7 +38,7 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 		t.Fatalf("allocation fixture fault=%#v bundle=%v", fault, bundle)
 	}
 	boundaryBundle, boundaryFault := bodyboundary.Build(bodyboundary.Input{
-		Program: input, ProgramID: input.ContentID(), Values: state.publication.Values, PointIDsBySite: state.pointIDsBySite,
+		Program: input, ProgramID: input.ContentID(), Values: state.publication.Values,
 	})
 	if boundaryFault.Available() || boundaryBundle == nil {
 		t.Fatalf("boundary fixture fault=%#v bundle=%v", boundaryFault, boundaryBundle)

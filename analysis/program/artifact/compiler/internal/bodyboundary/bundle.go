@@ -14,10 +14,9 @@ import (
 // site-to-point relation are already issued by the parent; no callback or
 // compiler authority crosses this package boundary.
 type Input struct {
-	Program        *program.Program
-	ProgramID      identity.ContentID
-	Values         []programschema.Values
-	PointIDsBySite map[identity.ContentID][]identity.ContentID
+	Program   *program.Program
+	ProgramID identity.ContentID
+	Values    []programschema.Values
 }
 
 // Planes is the one canonical transfer from this child to publication.

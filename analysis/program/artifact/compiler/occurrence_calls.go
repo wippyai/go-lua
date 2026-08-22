@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
@@ -16,10 +17,11 @@ func (compiler *compiler) copyAllocations() CompileFailure {
 		occurrence, occurrenceOK := allocation.Occurrence()
 		template, templateOK := allocation.Template()
 		form, formOK := allocation.Form()
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !allocationOK || !entryOK || !finishOK || !occurrenceOK || !templateOK || !formOK || len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.appendOccurrence(programschema.OccurrenceAllocation, template, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{template, occurrence}, uint64(form)) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceAllocation, template, entryPoints, finishPoints) {
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !allocationOK || !entryOK || !finishOK || !occurrenceOK || !templateOK || !formOK ||
+			!compiler.appendOccurrencePaths(programschema.OccurrenceAllocation, template, identity.ContentID{}, entryPoints, finishPoints, []identity.ContentID{template, occurrence}, uint64(form)) ||
+			!compiler.recordOccurrencePaths(programschema.OccurrenceAllocation, template, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceAllocation)
 		}
 		for fieldIndex := 0; fieldIndex < allocation.FieldCount(); fieldIndex++ {
@@ -58,16 +60,17 @@ func (compiler *compiler) copyCalls() CompileFailure {
 		if call.receiver.id.Available() {
 			inputs = append(inputs, call.receiver.id)
 		}
-		entryPoints, finishPoints := compiler.pointIDs(call.entry), compiler.pointIDs(call.finish)
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(call.entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(call.finish)
 		disposition := uint64(1)
 		if call.executable {
 			disposition = uint64(2)
 		}
-		if len(entryPoints) == 0 || len(finishPoints) == 0 ||
-			!compiler.appendOccurrence(programschema.OccurrenceCall, call.id, call.bodyPath, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), inputs, disposition) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceCall, call.id, entryPoints, finishPoints) ||
-			!compiler.appendOccurrence(programschema.OccurrenceCallActivation, call.id, call.bodyPath, append([]identity.ContentID(nil), finishPoints...), inputs, disposition) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceCallActivation, call.id, nil, finishPoints) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 ||
+			!compiler.appendOccurrencePaths(programschema.OccurrenceCall, call.id, call.bodyPath, entryPoints, finishPoints, inputs, disposition) ||
+			!compiler.recordOccurrencePaths(programschema.OccurrenceCall, call.id, entryPoints, finishPoints) ||
+			!compiler.appendOccurrencePaths(programschema.OccurrenceCallActivation, call.id, call.bodyPath, causal.SitePointPaths{}, finishPoints, inputs, disposition) ||
+			!compiler.recordOccurrencePaths(programschema.OccurrenceCallActivation, call.id, causal.SitePointPaths{}, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 		}
 		for argIndex, argument := range call.arguments {
@@ -85,7 +88,7 @@ func (compiler *compiler) copyCalls() CompileFailure {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceCall)
 			}
 			for armIndex, arm := range call.boundary.arms {
-				if !compiler.appendOccurrence(programschema.OccurrenceCallArm, arm.id, call.bodyPath, arm.points, []identity.ContentID{call.boundary.id, arm.route, arm.target}, uint64(armIndex)) {
+				if !compiler.appendOccurrencePaths(programschema.OccurrenceCallArm, arm.id, call.bodyPath, causal.SitePointPaths{}, arm.points, []identity.ContentID{call.boundary.id, arm.route, arm.target}, uint64(armIndex)) {
 					return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, armIndex, CompileReasonOccurrenceCall)
 				}
 			}

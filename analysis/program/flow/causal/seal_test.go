@@ -74,6 +74,21 @@ func TestSemanticMatrixDirectCallPublishesExactBoundaryDenominator(t *testing.T)
 	if finish, ok := f.ports.Finish(call); !ok || finish != call {
 		t.Fatalf("root Call Finish = %v/%v", finish, ok)
 	}
+	callSite, callSiteOK := f.result.SiteForTerm(call)
+	pointPaths := f.result.LocalWTO().PointPathsForSite(callSite)
+	if !callSiteOK || !pointPaths.Available() || pointPaths.Count() == 0 {
+		t.Fatalf("Call Site→WTO points = site:%v paths:%v/%d", callSiteOK, pointPaths.Available(), pointPaths.Count())
+	}
+	for index := 0; index < pointPaths.Count(); index++ {
+		if point, ok := pointPaths.At(index); !ok || !point.Available() {
+			t.Fatalf("Call Site→WTO point %d = %v/%v", index, point, ok)
+		}
+	}
+	if allocs := testing.AllocsPerRun(1000, func() {
+		_, _ = f.result.LocalWTO().PointPathsForSite(callSite).At(0)
+	}); allocs != 0 {
+		t.Fatalf("Call Site→WTO point query allocates %v times", allocs)
+	}
 	if got, want := f.result.Successors().Count(call), 4; got != want {
 		t.Fatalf("direct Call successor denominator = %d, want %d", got, want)
 	}

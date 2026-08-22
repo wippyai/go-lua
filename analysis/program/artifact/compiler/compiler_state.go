@@ -34,8 +34,9 @@ type compiler struct {
 	issuance           issuance.Directory
 	pointGeometry      map[identity.ContentID]pointDraft
 	occurrenceSpans    map[occurrenceLookup]occurrenceSpanGeometry
+	pointScratch       []identity.ContentID
+	pointScratchSeen   map[identity.ContentID]struct{}
 	stages             *stageplan.Builder
-	pointIDsBySite     map[identity.ContentID][]identity.ContentID
 	environmentByRoute map[identity.ContentID]environmentRouteIndex
 }
 

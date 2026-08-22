@@ -95,22 +95,14 @@ func (compiler *compiler) admitDiagnosticBranchFailure(route causal.FinalRoute, 
 	finish, finishOK := span.Finish()
 	decisionPath, pathOK := guard.DecisionPathID()
 	if !spanOK || !compiler.input.Program.OwnsSpan(span) || !locationOK || !programdiagnostic.ValidSpan(location) ||
-		!finishOK || !compiler.input.Program.OwnsSite(finish) || len(compiler.pointIDs(finish)) == 0 ||
+		!finishOK || !compiler.input.Program.OwnsSite(finish) || compiler.input.Program.Flow().LocalWTO().PointPathsForSite(finish).Count() == 0 ||
 		!pathOK || !decisionPath.Available() {
 		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
-	attachments := compiler.pointIDs(finish)
-	points := make([]identity.ContentID, len(attachments))
-	seen := make(map[identity.ContentID]struct{}, len(points))
-	for index := range points {
-		points[index] = attachments[index]
-		if !points[index].Available() {
-			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, index)
-		}
-		if _, duplicate := seen[points[index]]; duplicate {
-			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, index)
-		}
-		seen[points[index]] = struct{}{}
+	attachments := compiler.input.Program.Flow().LocalWTO().PointPathsForSite(finish)
+	points, pointsOK := compiler.pointPaths(attachments)
+	if !pointsOK || !compiler.validUniqueEvidence(points) {
+		return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticRouteGuard, rowIndex, -1)
 	}
 	row, rowOK := programdiagnostic.NewDiagnosticObservationBranchCondition(
 		programdiagnostic.BranchConditionIdentity(compiler.input.Program.ContentID(), location, decisionPath, span.ContextID(), points),
@@ -388,8 +380,12 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			if !memberSpanOK || !compiler.input.Program.OwnsSpan(memberSpan) || !memberFinishOK || !compiler.input.Program.OwnsSite(memberFinish) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
-			points := compiler.pointIDs(memberFinish)
-			if len(points) == 0 {
+			pointPaths := compiler.input.Program.Flow().LocalWTO().PointPathsForSite(memberFinish)
+			if pointPaths.Count() == 0 {
+				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
+			}
+			points, pointsOK := compiler.pointPaths(pointPaths)
+			if !pointsOK {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			site := programdiagnostic.DiagnosticObservationSiteCallArgument
@@ -673,8 +669,12 @@ func (compiler *compiler) admitConformanceObservation(site programdiagnostic.Dia
 		!finishOK || !compiler.input.Program.OwnsSite(finish) {
 		return false
 	}
-	points := compiler.pointIDs(finish)
-	if len(points) == 0 {
+	pointPaths := compiler.input.Program.Flow().LocalWTO().PointPathsForSite(finish)
+	if pointPaths.Count() == 0 {
+		return false
+	}
+	points, pointsOK := compiler.pointPaths(pointPaths)
+	if !pointsOK {
 		return false
 	}
 	row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(

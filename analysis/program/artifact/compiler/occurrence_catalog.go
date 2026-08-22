@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/exactscalar"
 	artifactdigest "github.com/wippyai/go-lua/analysis/program/artifact/digest"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/valuesource"
 	"github.com/wippyai/go-lua/analysis/schema/program"
@@ -339,7 +340,7 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 		if !termOK || !values.Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
-		var points []identity.ContentID
+		var pointPaths causal.SitePointPaths
 		if span, spanOK := compiler.input.Span(term); spanOK {
 			finish, finishOK := span.Finish()
 			rootSpanID, rootSpanOK := values.RootSpanID()
@@ -347,9 +348,13 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 				!rootSpanOK || rootSpanID != span.ContextID() {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 			}
-			points = compiler.pointIDs(finish)
+			pointPaths = compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
 		}
-		if !compiler.appendOccurrence(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), points, nil, 0) {
+		appended := compiler.appendOccurrence(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), nil, nil, 0)
+		if pointPaths.Available() {
+			appended = compiler.appendOccurrencePaths(programschema.OccurrenceValues, values.ID(), values.BodyPathID(), causal.SitePointPaths{}, pointPaths, nil, 0)
+		}
+		if !appended {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, valuesIndex, -1, CompileReasonOccurrenceValues)
 		}
 		for memberIndex := 0; memberIndex < values.MemberCount(); memberIndex++ {

@@ -11,10 +11,9 @@ func (compiler *compiler) copyBodyBoundaryFailure() CompileFailure {
 		return CompileFailure{construction: fault}
 	}
 	bundle, fault := bodyboundary.Build(bodyboundary.Input{
-		Program:        compiler.input,
-		ProgramID:      compiler.key.ProgramID(),
-		Values:         compiler.publication.Values,
-		PointIDsBySite: compiler.pointIDsBySite,
+		Program:   compiler.input,
+		ProgramID: compiler.key.ProgramID(),
+		Values:    compiler.publication.Values,
 	})
 	if fault.Available() {
 		return CompileFailure{construction: fault}

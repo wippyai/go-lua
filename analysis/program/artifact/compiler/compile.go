@@ -34,7 +34,6 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 	transaction := compiler{
 		input: input, key: key, counts: counts, issuance: issuance, pointGeometry: make(map[identity.ContentID]pointDraft),
 		occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry), stages: stageplan.New(artifactFormat()), localTransfer: localtransfer.New(artifactFormat()),
-		pointIDsBySite:     make(map[identity.ContentID][]identity.ContentID),
 		environmentByRoute: make(map[identity.ContentID]environmentRouteIndex),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
@@ -80,23 +79,18 @@ func CompileDetailed(input *program.Program, executionSchema programartifact.Exe
 		return nil, failure
 	}
 	diagnosticPublication, diagnosticFault := diagnostic.Compile(diagnostic.Input{
-		Program:        transaction.input,
-		Values:         transaction.publication.Values,
-		ValuesMembers:  transaction.publication.ValuesMembers,
-		Calls:          transaction.publication.Calls,
-		CallArguments:  transaction.publication.CallArguments,
-		BodyBoundary:   transaction.bodyBoundary,
-		Allocations:    transaction.allocations,
-		PointIDsBySite: transaction.pointIDsBySite,
+		Program:       transaction.input,
+		Values:        transaction.publication.Values,
+		ValuesMembers: transaction.publication.ValuesMembers,
+		Calls:         transaction.publication.Calls,
+		CallArguments: transaction.publication.CallArguments,
+		BodyBoundary:  transaction.bodyBoundary,
+		Allocations:   transaction.allocations,
 	})
 	if diagnosticFault.Available() {
 		return nil, CompileFailure{construction: diagnosticFault}
 	}
 	transaction.publication.Diagnostic = diagnosticPublication
-	// Diagnostic construction is the final Site-to-point consumer. Its child
-	// package owns all diagnostic-only indexes and caches; only the immutable
-	// publication remains on the transaction for sealing.
-	transaction.pointIDsBySite = nil
 	if failure := transaction.copyStaticRowsFailure(); failure.Available() {
 		return nil, failure
 	}

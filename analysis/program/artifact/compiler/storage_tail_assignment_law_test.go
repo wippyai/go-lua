@@ -20,7 +20,6 @@ return second
 	}
 	transaction := compiler{
 		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
-		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)
@@ -180,7 +179,6 @@ func compileStorageTailTransaction(t *testing.T, source string) *compiler {
 	}
 	transaction := &compiler{
 		input: compiled, key: testCompileKey(t, compiled), occurrenceSpans: make(map[occurrenceLookup]occurrenceSpanGeometry),
-		pointIDsBySite: make(map[identity.ContentID][]identity.ContentID),
 	}
 	if failure := transaction.indexPointAttachmentsFailure(); failure.Available() {
 		t.Fatalf("index point attachments: %+v", failure)

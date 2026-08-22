@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	"github.com/wippyai/go-lua/analysis/schema/program/heapindex"
 )
@@ -16,15 +17,16 @@ func (compiler *compiler) copyStorage() CompileFailure {
 			// row.
 			continue
 		}
-		entryPoints, finishPoints := compiler.pointIDs(row.entry), compiler.pointIDs(row.finish)
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(row.entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(row.finish)
 		spanID := row.span.ContextID()
 		// A one-input rule cannot select an Entry attachment from the
 		// parent's deliberately multi-valued Site relation. Refuse such a
 		// Flow until it publishes an explicit occurrence-to-point pairing;
 		// never zip or cross-product attachments here.
-		if len(entryPoints) != 1 || !spanID.Available() ||
-			!compiler.appendOccurrence(programschema.OccurrenceStorageRead, row.id, row.body, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{row.cell, spanID}, 0) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceStorageRead, row.id, entryPoints, finishPoints) {
+		if entryPoints.Count() != 1 || finishPoints.Count() == 0 || !spanID.Available() ||
+			!compiler.appendOccurrencePaths(programschema.OccurrenceStorageRead, row.id, row.body, entryPoints, finishPoints, []identity.ContentID{row.cell, spanID}, 0) ||
+			!compiler.recordOccurrencePaths(programschema.OccurrenceStorageRead, row.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageRead)
 		}
 	}
@@ -35,23 +37,25 @@ func (compiler *compiler) copyStorage() CompileFailure {
 			continue
 		}
 		values, valuesOK := compiler.valueRowForTerm(bind.values)
-		entryPoints, finishPoints := compiler.pointIDs(bind.entry), compiler.pointIDs(bind.finish)
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(bind.entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(bind.finish)
 		bindInputs := make([]identity.ContentID, 1, 1+len(bind.cells))
 		bindInputs[0] = values.ID()
 		// The generic storage-bind occurrence owns the complete destination
 		// Cell column. Pack consumes this canonical row directly; it must not
 		// receive a second bind/Cell row plane.
 		bindInputs = append(bindInputs, bind.cells...)
-		if !valuesOK || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceStorageBind, bind.id, bind.body, append(entryPoints, finishPoints...), bindInputs, 0) {
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !valuesOK || !values.Available() || !compiler.appendOccurrencePaths(programschema.OccurrenceStorageBind, bind.id, bind.body, entryPoints, finishPoints, bindInputs, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageBind)
 		}
 		for _, transfer := range bind.transfers {
-			transferEntryPoints, transferFinishPoints := compiler.pointIDs(bind.entry), compiler.pointIDs(bind.finish)
+			transferEntryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(bind.entry)
+			transferFinishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(bind.finish)
 			// As with a read, this one-input transfer rule requires one
 			// unambiguous Entry attachment.
-			if len(transferEntryPoints) != 1 ||
-				!compiler.appendOccurrence(programschema.OccurrenceStorageBindTransfer, transfer.id, bind.body, transferFinishPoints, []identity.ContentID{bind.id, transfer.value, transfer.cell}, uint64(transfer.position)) ||
-				!compiler.recordOccurrenceSpan(programschema.OccurrenceStorageBindTransfer, transfer.id, transferEntryPoints, transferFinishPoints) {
+			if transferEntryPoints.Count() != 1 || transferFinishPoints.Count() == 0 ||
+				!compiler.appendOccurrencePaths(programschema.OccurrenceStorageBindTransfer, transfer.id, bind.body, causal.SitePointPaths{}, transferFinishPoints, []identity.ContentID{bind.id, transfer.value, transfer.cell}, uint64(transfer.position)) ||
+				!compiler.recordOccurrencePaths(programschema.OccurrenceStorageBindTransfer, transfer.id, transferEntryPoints, transferFinishPoints) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, transfer.position, CompileReasonOccurrenceStorageBind)
 			}
 		}
@@ -63,14 +67,15 @@ func (compiler *compiler) copyStorage() CompileFailure {
 			continue
 		}
 		values, valuesOK := compiler.valueRowForTerm(assignment.values)
-		entryPoints, finishPoints := compiler.pointIDs(assignment.entry), compiler.pointIDs(assignment.finish)
-		if !valuesOK || !values.Available() || !compiler.appendOccurrence(programschema.OccurrenceStorageAssignment, assignment.id, assignment.body, append(entryPoints, finishPoints...), []identity.ContentID{values.ID()}, 0) {
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(assignment.entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(assignment.finish)
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !valuesOK || !values.Available() || !compiler.appendOccurrencePaths(programschema.OccurrenceStorageAssignment, assignment.id, assignment.body, entryPoints, finishPoints, []identity.ContentID{values.ID()}, 0) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceStorageAssignment)
 		}
 		for _, write := range assignment.transfers {
-			writeFinishPoints := compiler.pointIDs(write.finish)
-			if !compiler.appendOccurrence(programschema.OccurrenceStorageWrite, write.id, assignment.body, writeFinishPoints, []identity.ContentID{assignment.id, write.value, write.cell, write.predecessor, write.route}, uint64(write.position)) ||
-				!compiler.recordOccurrencePredecessor(programschema.OccurrenceStorageWrite, write.id, write.route, writeFinishPoints) {
+			writeFinishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(write.finish)
+			if writeFinishPoints.Count() == 0 || !compiler.appendOccurrencePaths(programschema.OccurrenceStorageWrite, write.id, assignment.body, causal.SitePointPaths{}, writeFinishPoints, []identity.ContentID{assignment.id, write.value, write.cell, write.predecessor, write.route}, uint64(write.position)) ||
+				!compiler.recordOccurrencePredecessorPaths(programschema.OccurrenceStorageWrite, write.id, write.route, writeFinishPoints) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, write.position, CompileReasonOccurrenceStorageAssignment)
 			}
 		}
@@ -104,9 +109,10 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 		if !entryOK || !finishOK {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		entryPoints, finishPoints := compiler.pointIDs(entry), compiler.pointIDs(finish)
-		if !compiler.appendOccurrence(programschema.OccurrenceIndexRead, read.id, identity.ContentID{}, append(append([]identity.ContentID(nil), entryPoints...), finishPoints...), []identity.ContentID{read.baseID, read.lensID, read.resultID}, 0) ||
-			!compiler.recordOccurrenceSpan(programschema.OccurrenceIndexRead, read.id, entryPoints, finishPoints) {
+		entryPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(entry)
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(finish)
+		if entryPoints.Count() == 0 || finishPoints.Count() == 0 || !compiler.appendOccurrencePaths(programschema.OccurrenceIndexRead, read.id, identity.ContentID{}, entryPoints, finishPoints, []identity.ContentID{read.baseID, read.lensID, read.resultID}, 0) ||
+			!compiler.recordOccurrencePaths(programschema.OccurrenceIndexRead, read.id, entryPoints, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}
@@ -126,12 +132,12 @@ func (compiler *compiler) copyIndexAccess() CompileFailure {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
 		compiler.publication.HeapIndexes = append(compiler.publication.HeapIndexes, heapRow)
-		finishPoints := compiler.pointIDs(write.finish)
-		if len(finishPoints) == 0 {
+		finishPoints := compiler.input.Flow().LocalWTO().PointPathsForSite(write.finish)
+		if finishPoints.Count() == 0 {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexShape)
 		}
-		if !compiler.appendOccurrence(programschema.OccurrenceIndexWrite, write.id, identity.ContentID{}, finishPoints, []identity.ContentID{write.baseID, write.lensID, write.valuesID, write.predecessorID, write.route}, 0) ||
-			!compiler.recordOccurrencePredecessor(programschema.OccurrenceIndexWrite, write.id, write.route, finishPoints) {
+		if !compiler.appendOccurrencePaths(programschema.OccurrenceIndexWrite, write.id, identity.ContentID{}, causal.SitePointPaths{}, finishPoints, []identity.ContentID{write.baseID, write.lensID, write.valuesID, write.predecessorID, write.route}, 0) ||
+			!compiler.recordOccurrencePredecessorPaths(programschema.OccurrenceIndexWrite, write.id, write.route, finishPoints) {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceIndexAppend)
 		}
 	}

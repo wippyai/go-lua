@@ -318,5 +318,5 @@ func (compiler *compiler) conformanceObservationAddressable(measured keyspace.Te
 	span, spanOK := compiler.input.Program.Span(measured)
 	finish, finishOK := span.Finish()
 	return locationOK && programdiagnostic.ValidSpan(location) && spanOK && compiler.input.Program.OwnsSpan(span) &&
-		finishOK && compiler.input.Program.OwnsSite(finish) && len(compiler.pointIDs(finish)) != 0
+		finishOK && compiler.input.Program.OwnsSite(finish) && compiler.input.Program.Flow().LocalWTO().PointPathsForSite(finish).Count() != 0
 }

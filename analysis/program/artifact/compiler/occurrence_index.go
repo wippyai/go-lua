@@ -9,37 +9,15 @@ import (
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
 
-func (compiler *compiler) pointIDs(site causal.Site) []identity.ContentID {
-	if compiler == nil || !site.Available() || !compiler.input.OwnsSite(site) || compiler.pointIDsBySite == nil {
-		return nil
-	}
-	points, known := compiler.pointIDsBySite[site.ContextID()]
-	if !known {
-		return nil
-	}
-	return points
-}
-
-// indexPointAttachmentsFailure indexes the immutable Site-to-LocalWTO
-// relation once from canonical Flow schedule data. The lookup map is
-// compile-only geometry; each relation is emitted directly into the generic
-// occurrence catalog so Artifact retains no second attachment plane.
+// indexPointAttachmentsFailure publishes the immutable Site-to-LocalWTO
+// relation already owned by Flow. The relation is emitted directly into the
+// generic occurrence catalog; no compiler-side inverse or copied point-ID
+// map is built.
 func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 	if compiler == nil || !compiler.input.Available() {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceAttachment)
 	}
-	if compiler.pointIDsBySite == nil {
-		compiler.pointIDsBySite = make(map[identity.ContentID][]identity.ContentID)
-	}
-	for site := range compiler.pointIDsBySite {
-		delete(compiler.pointIDsBySite, site)
-	}
 	wto := compiler.input.Flow().LocalWTO()
-	seenPoints := make(map[identity.ContentID]struct{})
-	seenAttachments := make(map[struct {
-		site  identity.ContentID
-		point identity.ContentID
-	}]struct{})
 	for eventIndex := 0; eventIndex < wto.EventCount(); eventIndex++ {
 		event, eventOK := wto.EventAt(eventIndex)
 		if !eventOK || !event.Available() {
@@ -52,39 +30,19 @@ func (compiler *compiler) indexPointAttachmentsFailure() CompileFailure {
 		if !pointOK || !point.Available() || !point.PathID().Available() {
 			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, -1, CompileReasonOccurrenceAttachment)
 		}
-		if _, duplicate := seenPoints[point.PathID()]; duplicate {
-			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, -1, CompileReasonOccurrenceAttachment)
-		}
-		seenPoints[point.PathID()] = struct{}{}
 		for siteIndex := 0; siteIndex < point.SiteCount(); siteIndex++ {
 			site, siteOK := point.SiteAt(siteIndex)
-			if !siteOK || !site.Available() || !compiler.input.OwnsSite(site) || !site.ContextID().Available() {
-				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
-			}
-			key := struct {
-				site  identity.ContentID
-				point identity.ContentID
-			}{site: site.ContextID(), point: point.PathID()}
-			if _, duplicate := seenAttachments[key]; duplicate {
+			if !siteOK || !site.Available() || !compiler.input.OwnsSite(site) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
 			if uint64(len(compiler.publication.Occurrences)) > uint64(^uint32(0)) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
-			seenAttachments[key] = struct{}{}
-			id := artifactdigest.Digest("analysis/program-artifact/point-attachment", artifactFormat(), artifactdigest.ContentID(key.site), artifactdigest.ContentID(key.point))
-			if !id.Available() || !compiler.appendOccurrence(programschema.OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{key.point}, []identity.ContentID{key.site}, 0) {
+			id := artifactdigest.Digest("analysis/program-artifact/point-attachment", artifactFormat(), artifactdigest.ContentID(site.ContextID()), artifactdigest.ContentID(point.PathID()))
+			if !id.Available() || !compiler.appendOccurrence(programschema.OccurrencePointAttachment, id, identity.ContentID{}, []identity.ContentID{point.PathID()}, []identity.ContentID{site.ContextID()}, 0) {
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, eventIndex, siteIndex, CompileReasonOccurrenceAttachment)
 			}
-			compiler.pointIDsBySite[key.site] = append(compiler.pointIDsBySite[key.site], key.point)
 		}
-	}
-	// Freeze each site index at its exact length before any later compiler
-	// stage can append a temporary concatenation to the returned slice.
-	for site, points := range compiler.pointIDsBySite {
-		frozen := make([]identity.ContentID, len(points))
-		copy(frozen, points)
-		compiler.pointIDsBySite[site] = frozen
 	}
 	return CompileFailure{}
 }
@@ -93,17 +51,58 @@ func (compiler *compiler) appendOccurrence(kind programschema.OccurrenceKind, id
 	return compiler.appendOccurrencePayload(kind, id, body, points, inputs, code, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
 }
 
+// pointPathScratch projects one or two sealed owner ranges into compiler
+// scratch. The scratch is reused across rows; no Site→Point slice or map is
+// retained, and the owner remains the only authority for the relation.
+func (compiler *compiler) pointPathScratch(first, second causal.SitePointPaths) ([]identity.ContentID, bool) {
+	if compiler == nil {
+		return nil, false
+	}
+	if compiler.pointScratchSeen == nil {
+		compiler.pointScratchSeen = make(map[identity.ContentID]struct{})
+	}
+	clear(compiler.pointScratchSeen)
+	compiler.pointScratch = compiler.pointScratch[:0]
+	for _, paths := range [...]causal.SitePointPaths{first, second} {
+		if !paths.Available() {
+			continue
+		}
+		for index := 0; index < paths.Count(); index++ {
+			point, ok := paths.At(index)
+			if !ok {
+				return nil, false
+			}
+			if _, duplicate := compiler.pointScratchSeen[point]; duplicate {
+				continue
+			}
+			compiler.pointScratchSeen[point] = struct{}{}
+			compiler.pointScratch = append(compiler.pointScratch, point)
+		}
+	}
+	return compiler.pointScratch, true
+}
+
+// appendOccurrencePaths consumes sealed owner ranges directly into the
+// canonical occurrence publication. The only reusable temporary is the
+// compiler's bounded scratch plane; callers never receive owner storage.
+func (compiler *compiler) appendOccurrencePaths(kind programschema.OccurrenceKind, id, body identity.ContentID, first, second causal.SitePointPaths, inputs []identity.ContentID, code uint64) bool {
+	return compiler.appendOccurrencePathsPayload(kind, id, body, first, second, inputs, code, keyspace.FamilyInvalid, keyspace.LiteralValue{}, false)
+}
+
+func (compiler *compiler) appendOccurrencePathsPayload(kind programschema.OccurrenceKind, id, body identity.ContentID, first, second causal.SitePointPaths, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
+	points, ok := compiler.pointPathScratch(first, second)
+	return ok && compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK)
+}
+
 func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
+	points = canonicalPoints(points)
+	return compiler.appendOccurrencePayloadCanonical(kind, id, body, points, inputs, code, literalFamily, literal, literalOK)
+}
+
+func (compiler *compiler) appendOccurrencePayloadCanonical(kind programschema.OccurrenceKind, id, body identity.ContentID, points, inputs []identity.ContentID, code uint64, literalFamily keyspace.Family, literal keyspace.LiteralValue, literalOK bool) bool {
 	if compiler == nil || !fitsUint32(len(compiler.publication.Occurrences)) || !fitsUint32(len(compiler.publication.OccurrencePoints)) || !fitsUint32(len(compiler.publication.OccurrenceInputs)) {
 		return false
 	}
-	// A Rule occurrence is attached to a semantic phase, not once per route
-	// through which that phase was reached.  Source spans can legitimately
-	// expose the same phase as both entry and finish (notably at a branch
-	// join), so canonicalize that relation before it becomes an immutable
-	// artifact row. Inputs retain their parent-issued order; only the point
-	// membership relation is a set.
-	points = canonicalPoints(points)
 	if !fitsUint32(len(points)) || !fitsUint32(len(inputs)) ||
 		uint64(len(compiler.publication.OccurrencePoints))+uint64(len(points)) > uint64(^uint32(0)) ||
 		uint64(len(compiler.publication.OccurrenceInputs))+uint64(len(inputs)) > uint64(^uint32(0)) {
@@ -140,6 +139,49 @@ func (compiler *compiler) appendOccurrencePayload(kind programschema.OccurrenceK
 	}
 	compiler.publication.Occurrences = append(compiler.publication.Occurrences, row)
 	return true
+}
+
+func copyPointPaths(paths causal.SitePointPaths) ([]identity.ContentID, bool) {
+	if !paths.Available() {
+		return nil, false
+	}
+	points := make([]identity.ContentID, paths.Count())
+	for index := range points {
+		point, ok := paths.At(index)
+		if !ok {
+			return nil, false
+		}
+		points[index] = point
+	}
+	return points, true
+}
+
+func (compiler *compiler) recordOccurrencePaths(kind programschema.OccurrenceKind, id identity.ContentID, entry, finish causal.SitePointPaths) bool {
+	if compiler == nil || compiler.occurrenceSpans == nil || !kind.Valid() || !id.Available() || finish.Count() == 0 {
+		return false
+	}
+	key := occurrenceLookup{kind: kind, id: id}
+	if _, duplicate := compiler.occurrenceSpans[key]; duplicate {
+		return false
+	}
+	entryPoints, entryOK := []identity.ContentID(nil), true
+	if entry.Available() {
+		entryPoints, entryOK = copyPointPaths(entry)
+	}
+	finishPoints, finishOK := copyPointPaths(finish)
+	if !entryOK || !finishOK {
+		return false
+	}
+	// Causal seals each Site→Point range as an injective canonical sequence.
+	// These exact slices become the occurrence geometry; copying them again
+	// would create a second temporary representation without adding a law.
+	compiler.occurrenceSpans[key] = occurrenceSpanGeometry{entry: entryPoints, finish: finishPoints}
+	return true
+}
+
+func (compiler *compiler) recordOccurrencePredecessorPaths(kind programschema.OccurrenceKind, id, route identity.ContentID, finish causal.SitePointPaths) bool {
+	finishPoints, finishOK := copyPointPaths(finish)
+	return finishOK && compiler.recordOccurrencePredecessor(kind, id, route, finishPoints)
 }
 
 func (compiler *compiler) appendRuleOccurrence(key, writes schema.Key, occurrence uint32, point, input identity.ContentID, stage programschema.RuleStage, inputKind programschema.RuleInputKind, route identity.ContentID) bool {

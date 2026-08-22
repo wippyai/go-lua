@@ -380,6 +380,12 @@ type wtoStore struct {
 	byID        map[identity.ContentID]uint32
 	points      []wtoPoint
 	pointByPath map[identity.ContentID]uint32
+	// sitePointRanges and sitePointOrdinals are the one sealed Site→WTO-point
+	// inverse. Ranges are indexed by the owning Site ordinal; values point into
+	// the immutable WTO point table. The compiler must consume this owner
+	// projection rather than rebuilding a ContentID map from events.
+	sitePointRanges   []range32
+	sitePointOrdinals []uint32
 }
 
 const (
@@ -550,6 +556,57 @@ func (view LocalWTO) EventAt(index int) (WTOEvent, bool) {
 	}
 	event := WTOEvent{result: view.result, index: uint32(index)}
 	return event, event.Available()
+}
+
+// SitePointPaths is an opaque, allocation-free view of one sealed Site's WTO
+// points. It exposes scalar access only, so consumers cannot mutate or retain
+// a slice into the Causal owner's storage.
+type SitePointPaths struct {
+	result *Result
+	start  uint32
+	end    uint32
+}
+
+// PointPathsForSite opens the sealed WTO point relation for site. An
+// unavailable or foreign site returns an invalid zero view.
+func (view LocalWTO) PointPathsForSite(site Site) SitePointPaths {
+	if view.result == nil || site.result != view.result || !site.available() ||
+		uint64(site.index) >= uint64(len(view.result.sites.rows)) ||
+		len(view.result.wto.sitePointRanges) != len(view.result.sites.rows) {
+		return SitePointPaths{}
+	}
+	rangeRow := view.result.wto.sitePointRanges[site.index]
+	if rangeRow.end < rangeRow.start || uint64(rangeRow.end) > uint64(len(view.result.wto.sitePointOrdinals)) {
+		return SitePointPaths{}
+	}
+	return SitePointPaths{result: view.result, start: rangeRow.start, end: rangeRow.end}
+}
+
+// Available reports whether the owner issued this relation view.
+func (paths SitePointPaths) Available() bool {
+	return paths.result != nil && paths.end >= paths.start && uint64(paths.end) <= uint64(len(paths.result.wto.sitePointOrdinals))
+}
+
+// Count is the allocation-free cardinality query for the sealed Site→WTO
+// point relation.
+func (paths SitePointPaths) Count() int {
+	if !paths.Available() {
+		return 0
+	}
+	return int(paths.end - paths.start)
+}
+
+// At returns one parent-issued WTO point path without exposing owner storage.
+func (paths SitePointPaths) At(index int) (identity.ContentID, bool) {
+	if !paths.Available() || index < 0 || uint64(index) >= uint64(paths.end-paths.start) {
+		return identity.ContentID{}, false
+	}
+	ordinal := paths.result.wto.sitePointOrdinals[paths.start+uint32(index)]
+	if uint64(ordinal) >= uint64(len(paths.result.wto.points)) {
+		return identity.ContentID{}, false
+	}
+	path := paths.result.wto.points[ordinal].path
+	return path, path.Available()
 }
 
 // WTOEvent is one balanced parent-issued schedule action.  Point references
@@ -990,6 +1047,52 @@ func (r *Result) finalizeLocalWTO() error {
 	if err := r.classifyWTORoutes(&store, nodeRegion); err != nil {
 		return err
 	}
+	// Publish the Site inverse once, from the already sealed WTO point rows.
+	// The compiler used to rescan the event stream and retain a map keyed by
+	// copied Site/Point ContentIDs. Dense owner ranges preserve the exact same
+	// relation without a second authority or per-consumer reconstruction.
+	if len(r.sites.rows) > int(^uint32(0)) || len(store.points) > int(^uint32(0)) {
+		return failWTO(wtoFailurePhaseRows, wtoFailureReasonPointSiteSet, -1, -1, -1)
+	}
+	ranges := make([]range32, len(r.sites.rows))
+	for pointIndex, point := range store.points {
+		if !point.path.Available() {
+			return failWTO(wtoFailurePhaseRows, wtoFailureReasonPointUnavailable, pointIndex, -1, -1)
+		}
+		for _, site := range point.sites {
+			if uint64(site) >= uint64(len(ranges)) || ranges[site].end == ^uint32(0) {
+				return failWTO(wtoFailurePhaseRows, wtoFailureReasonPointSiteSet, pointIndex, -1, int(site))
+			}
+			ranges[site].end++
+		}
+	}
+	total := uint64(0)
+	for index := range ranges {
+		count := uint64(ranges[index].end)
+		if total+count > uint64(^uint32(0)) {
+			return failWTO(wtoFailurePhaseRows, wtoFailureReasonPointSiteSet, index, -1, -1)
+		}
+		ranges[index].start = uint32(total)
+		ranges[index].end = uint32(total + count)
+		total += count
+	}
+	ordinals := make([]uint32, int(total))
+	next := make([]uint32, len(ranges))
+	for index, rangeRow := range ranges {
+		next[index] = rangeRow.start
+	}
+	for pointIndex, point := range store.points {
+		for _, site := range point.sites {
+			position := next[site]
+			if uint64(position) >= uint64(len(ordinals)) {
+				return failWTO(wtoFailurePhaseRows, wtoFailureReasonPointSiteSet, pointIndex, -1, int(site))
+			}
+			ordinals[position] = uint32(pointIndex)
+			next[site] = position + 1
+		}
+	}
+	store.sitePointRanges = ranges
+	store.sitePointOrdinals = ordinals
 	r.pendingWTO = recurrence.HierarchyProof{}
 	r.pendingNodeSites = nil
 	r.pendingWTORoutes = nil
