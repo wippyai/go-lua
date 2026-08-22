@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis"
 )
 
 // The acceptance ratchet is the census ratchet's judgment applied to the other
@@ -34,6 +36,13 @@ import (
 // inversion a ratchet exists to prevent. Such a fixture therefore contributes
 // its whole expectation set as missing, and the counts stay monotone under a
 // repair anywhere else in the analyzer.
+//
+// The failure path is retained beside that unmet expectation count. The old
+// ratchet collapsed every pre-verdict outcome into one unjudged number, which
+// made an unsupported declaration, an invalid source, and an engine refusal
+// indistinguishable. Unjudged remains the umbrella used by the checked-in
+// high-water mark; explicit, mutually exclusive reason categories now explain
+// every unjudged row in the receipt.
 //
 // Unexpected findings are the one column that cannot be attributed that way: a
 // fixture that never reported cannot be known to over-report. A family whose
@@ -74,16 +83,24 @@ type acceptanceTally struct {
 	projects int
 	clean    int
 	unjudged int
-	// unsupported is the fixtures whose declared contract the analyzer cannot
-	// express at all. It is a strict subset of unjudged, reported beside it so
-	// the receipt distinguishes a fixture the analyzer failed on from one it was
-	// never asked to judge. It is not gated: the acceptance law's unsupported
-	// sub-test fails on the named list, which is a stronger contract than a
-	// ceiling.
-	unsupported       int
-	missingInline     int
-	missingStructured int
-	unexpected        int
+	// unsupported is the explicit contract-refusal subset retained by the old
+	// receipt: preflight and policy refusal. The reason counters below are
+	// mutually exclusive children of unjudged and include compile/solve refusals
+	// that are not contract support claims.
+	unsupported          int
+	preflightUnsupported int
+	policyUnsupported    int
+	compileInvalid       int
+	compileUnsupported   int
+	solveInvalid         int
+	solveUnsupported     int
+	solveIncomplete      int
+	detachedResult       int
+	reportUnavailable    int
+	otherPreVerdict      int
+	missingInline        int
+	missingStructured    int
+	unexpected           int
 	// other is every acceptance row that is none of the above: a structured
 	// row's own detail mismatch, an error-count contract, a native or placement
 	// mismatch. It is reported and not gated, because the columns this ratchet
@@ -96,10 +113,136 @@ func (tally *acceptanceTally) add(other acceptanceTally) {
 	tally.clean += other.clean
 	tally.unjudged += other.unjudged
 	tally.unsupported += other.unsupported
+	tally.preflightUnsupported += other.preflightUnsupported
+	tally.policyUnsupported += other.policyUnsupported
+	tally.compileInvalid += other.compileInvalid
+	tally.compileUnsupported += other.compileUnsupported
+	tally.solveInvalid += other.solveInvalid
+	tally.solveUnsupported += other.solveUnsupported
+	tally.solveIncomplete += other.solveIncomplete
+	tally.detachedResult += other.detachedResult
+	tally.reportUnavailable += other.reportUnavailable
+	tally.otherPreVerdict += other.otherPreVerdict
 	tally.missingInline += other.missingInline
 	tally.missingStructured += other.missingStructured
 	tally.unexpected += other.unexpected
 	tally.other += other.other
+}
+
+func (tally acceptanceTally) unjudgedReasonCount() int {
+	return tally.preflightUnsupported + tally.policyUnsupported + tally.compileInvalid + tally.compileUnsupported +
+		tally.solveInvalid + tally.solveUnsupported + tally.solveIncomplete + tally.detachedResult + tally.reportUnavailable + tally.otherPreVerdict
+}
+
+// acceptanceFixtureRun is the detached information the ratchet needs when a
+// fixture fails before acceptance can produce a verdict. It deliberately holds
+// status/class/error rather than a live Plan or Result; the latter must already
+// have been closed by corpusHarnessExecuteDetached.
+type acceptanceFixtureRun struct {
+	verdict     corpusSemanticAcceptanceVerdict
+	reached     bool
+	observed    bool
+	status      analysis.AnalyzeStatus
+	statusKnown bool
+	class       string
+	failure     string
+}
+
+type acceptancePreVerdictCategory uint8
+
+const (
+	acceptancePreVerdictUnknown acceptancePreVerdictCategory = iota
+	acceptancePreflightUnsupported
+	acceptanceCompileInvalid
+	acceptanceCompileUnsupported
+	acceptanceSolveInvalid
+	acceptanceSolveUnsupported
+	acceptanceSolveIncomplete
+	acceptanceDetachedResult
+	acceptanceReportUnavailable
+	acceptanceOtherFailure
+)
+
+func (category acceptancePreVerdictCategory) String() string {
+	switch category {
+	case acceptancePreflightUnsupported:
+		return "preflight-unsupported"
+	case acceptanceCompileInvalid:
+		return "compile-invalid"
+	case acceptanceCompileUnsupported:
+		return "compile-unsupported"
+	case acceptanceSolveInvalid:
+		return "solve-invalid"
+	case acceptanceSolveUnsupported:
+		return "solve-unsupported"
+	case acceptanceSolveIncomplete:
+		return "solve-incomplete"
+	case acceptanceDetachedResult:
+		return "detached-result"
+	case acceptanceReportUnavailable:
+		return "report-unavailable"
+	case acceptanceOtherFailure:
+		return "other-pre-verdict"
+	default:
+		return "unknown"
+	}
+}
+
+// acceptancePreVerdictCategoryOf is intentionally based on all three pieces
+// of detached harness evidence. Class names identify the phase, public status
+// identifies the analyzer's contract, and the error text is retained as a
+// fallback when a phase forgot to classify itself. This prevents a new failure
+// from silently becoming a reasonless unjudged count.
+func acceptancePreVerdictCategoryOf(run acceptanceFixtureRun) acceptancePreVerdictCategory {
+	if !run.observed {
+		return acceptancePreVerdictUnknown
+	}
+	switch run.class {
+	case "fixture-contract":
+		return acceptancePreflightUnsupported
+	case "compile":
+		if run.statusKnown && run.status == analysis.AnalyzeInvalid {
+			return acceptanceCompileInvalid
+		}
+		return acceptanceCompileUnsupported
+	case "invalid":
+		return acceptanceSolveInvalid
+	case "unsupported":
+		return acceptanceSolveUnsupported
+	case "incomplete":
+		return acceptanceSolveIncomplete
+	case "detached-result":
+		return acceptanceDetachedResult
+	case "plan-close", "workspace-close":
+		return acceptanceDetachedResult
+	case "report-unavailable":
+		return acceptanceReportUnavailable
+	}
+	// A named phase that is not one of the status-bearing solve phases is
+	// already a distinct failure class (link, workspace, composition, etc.).
+	// Do not let a stale zero/invalid status overwrite that evidence.
+	if run.class != "" {
+		return acceptanceOtherFailure
+	}
+	if run.statusKnown && run.status == analysis.AnalyzeInvalid {
+		return acceptanceSolveInvalid
+	}
+	if run.statusKnown && run.status == analysis.AnalyzeUnsupported {
+		return acceptanceSolveUnsupported
+	}
+	if run.statusKnown && run.status == analysis.AnalyzeIncomplete {
+		return acceptanceSolveIncomplete
+	}
+	if strings.Contains(run.failure, "detached-result") || strings.Contains(run.failure, "invalid source/content identity") {
+		return acceptanceDetachedResult
+	}
+	if strings.Contains(run.failure, "compile=") {
+		return acceptanceCompileUnsupported
+	}
+	if run.failure != "" {
+		return acceptanceOtherFailure
+	}
+	return acceptancePreVerdictUnknown
 }
 
 // acceptanceExpectationCounts is one fixture's source-authored expectation set:
@@ -117,17 +260,69 @@ func acceptanceExpectationCounts(project corpusHarnessProject) (inline, structur
 	return inline, structured
 }
 
-// acceptanceFixtureTally classifies one fixture's acceptance answer. A fixture
-// that failed before the acceptance verdict was reached at all - a link,
-// compile, solve, or detached-result defect - is unjudged for the same reason
-// an unsupported contract is, and is counted the same way.
+// acceptanceFixtureTally is retained as the small law-facing convenience
+// helper. A caller that has detached run evidence should use
+// acceptanceFixtureTallyOf so the pre-verdict category is not discarded.
 func acceptanceFixtureTally(project corpusHarnessProject, verdict corpusSemanticAcceptanceVerdict, reached bool) acceptanceTally {
+	return acceptanceFixtureTallyOf(project, acceptanceFixtureRun{
+		verdict:  verdict,
+		reached:  reached,
+		observed: reached,
+	})
+}
+
+// acceptanceFixtureTallyOf classifies one fixture's acceptance answer and the
+// detached failure that preceded it, if any. Every pre-verdict path contributes
+// its expectation set as missing and remains inside the legacy unjudged
+// umbrella; the reason counters explain which path produced that row.
+func acceptanceFixtureTallyOf(project corpusHarnessProject, run acceptanceFixtureRun) acceptanceTally {
 	tally := acceptanceTally{projects: 1}
-	if !reached || !verdict.judged() {
+	if !run.reached {
 		inline, structured := acceptanceExpectationCounts(project)
-		tally.unjudged = 1
 		tally.missingInline = inline
 		tally.missingStructured = structured
+		category := acceptancePreVerdictCategoryOf(run)
+		switch category {
+		case acceptancePreflightUnsupported:
+			tally.preflightUnsupported = 1
+		case acceptanceCompileInvalid:
+			tally.compileInvalid = 1
+		case acceptanceCompileUnsupported:
+			tally.compileUnsupported = 1
+		case acceptanceSolveInvalid:
+			tally.solveInvalid = 1
+		case acceptanceSolveUnsupported:
+			tally.solveUnsupported = 1
+		case acceptanceSolveIncomplete:
+			tally.solveIncomplete = 1
+		case acceptanceDetachedResult:
+			tally.detachedResult = 1
+		case acceptanceReportUnavailable:
+			tally.reportUnavailable = 1
+		case acceptanceOtherFailure:
+			tally.otherPreVerdict = 1
+		default:
+			// Even a missing detached record gets an explicit accounting
+			// reason. It remains unjudged, but cannot disappear into a
+			// reasonless umbrella.
+			tally.otherPreVerdict = 1
+		}
+		tally.unjudged = 1
+		tally.unsupported = tally.preflightUnsupported
+		return tally
+	}
+	verdict := run.verdict
+	if !verdict.judged() {
+		inline, structured := acceptanceExpectationCounts(project)
+		tally.missingInline = inline
+		tally.missingStructured = structured
+		if len(verdict.unsupported) != 0 {
+			tally.policyUnsupported = 1
+		} else if len(verdict.unavailable) != 0 {
+			tally.reportUnavailable = 1
+		}
+		tally.unjudged = 1
+		tally.unsupported = tally.policyUnsupported
 		return tally
 	}
 	for _, row := range verdict.diagnostics {
@@ -197,16 +392,23 @@ func acceptanceRatchetWalk(t *testing.T, projects []corpusHarnessProject) map[st
 	// walk worker is not a goroutine that may end a test.
 	corpusHarnessContract(t)
 	var recording sync.Mutex
-	verdicts := make(map[string]corpusSemanticAcceptanceVerdict, len(projects))
+	runs := make(map[string]acceptanceFixtureRun, len(projects))
 	mode := corpusSemanticAcceptanceMode()
-	// The ratchet counts rows; it does not fail on them. Recording the verdict
-	// and returning none leaves the harness error reserved for the failures
-	// that happen before a verdict exists at all, which is exactly the set the
-	// tally counts as unjudged.
+	// The ratchet counts rows; it does not fail on them. Record the verdict and
+	// leave the harness error reserved for the failures that happen before a
+	// verdict exists. The worker records that detached failure's status, class,
+	// and error instead of collapsing it into an absent verdict.
 	mode.judge = func(run *corpusHarnessRun) []string {
 		verdict := corpusSemanticAcceptanceVerdictOf(run)
 		recording.Lock()
-		verdicts[run.project.name] = verdict
+		record := runs[run.project.name]
+		record.verdict = verdict
+		record.reached = true
+		record.observed = true
+		record.status = run.status
+		record.statusKnown = true
+		record.class = "judged"
+		runs[run.project.name] = record
 		recording.Unlock()
 		return nil
 	}
@@ -222,28 +424,37 @@ func acceptanceRatchetWalk(t *testing.T, projects []corpusHarnessProject) map[st
 				if index >= len(projects) {
 					return
 				}
-				corpusHarnessExecuteDetached(t, projects[index], mode)
+				project := projects[index]
+				run, class, err := corpusHarnessExecuteDetached(t, project, mode)
+				recording.Lock()
+				record := runs[project.name]
+				record.observed = true
+				record.class = class
+				if err != nil {
+					record.failure = err.Error()
+					// A verdict may have been recorded before detached cleanup
+					// failed. It is not a valid acceptance result until the
+					// Plan/Workspace has detached, so classify that path too.
+					if record.reached {
+						record.reached = false
+					}
+				}
+				if run != nil {
+					record.status = run.status
+					record.statusKnown = true
+				}
+				runs[project.name] = record
+				recording.Unlock()
 			}
 		}()
 	}
 	walkers.Wait()
-	unsupported := corpusSemanticUnsupportedLedgerOf(t, projects)
-	unsupportedByProject := make(map[string]struct{}, len(unsupported.fixtures))
-	for _, fixture := range unsupported.fixtures {
-		unsupportedByProject[fixture.project] = struct{}{}
-	}
 	families := make(map[string]acceptanceTally, 32)
 	for _, project := range projects {
-		verdict, reached := verdicts[project.name]
 		family := acceptanceFamily(project.name)
 		tally := families[family]
-		fixture := acceptanceFixtureTally(project, verdict, reached)
-		// The unsupported column is read from the fixture's declared contract
-		// rather than from the verdict, so a fixture whose contract is fenced
-		// before compile is counted the same as one fenced at policy time.
-		if _, fenced := unsupportedByProject[project.name]; fenced {
-			fixture.unsupported = 1
-		}
+		record := runs[project.name]
+		fixture := acceptanceFixtureTallyOf(project, record)
 		tally.add(fixture)
 		families[family] = tally
 	}
@@ -349,16 +560,20 @@ func acceptanceRatchetReceipt(mark acceptanceHighWater, families map[string]acce
 		total.add(tally)
 	}
 	var receipt strings.Builder
-	fmt.Fprintf(&receipt, "acceptance: fixtures=%d clean=%d unjudged=%d unsupported=%d missing-inline=%d missing-structured=%d unexpected=%d other=%d (mark measured %s)",
-		total.projects, total.clean, total.unjudged, total.unsupported, total.missingInline, total.missingStructured, total.unexpected, total.other, mark.Measured)
+	fmt.Fprintf(&receipt, "acceptance: fixtures=%d clean=%d unjudged=%d unsupported=%d preflight-unsupported=%d policy-unsupported=%d compile-invalid=%d compile-unsupported=%d solve-invalid=%d solve-unsupported=%d solve-incomplete=%d detached-result=%d report-unavailable=%d other-pre-verdict=%d missing-inline=%d missing-structured=%d unexpected=%d other=%d (mark measured %s)",
+		total.projects, total.clean, total.unjudged, total.unsupported,
+		total.preflightUnsupported, total.policyUnsupported, total.compileInvalid, total.compileUnsupported,
+		total.solveInvalid, total.solveUnsupported, total.solveIncomplete, total.detachedResult, total.reportUnavailable, total.otherPreVerdict,
+		total.missingInline, total.missingStructured, total.unexpected, total.other, mark.Measured)
 	for _, family := range acceptanceRatchetNames(families) {
 		tally := families[family]
 		row := mark.Families[family]
-		fmt.Fprintf(&receipt, "\n  %-22s fixtures=%d clean=%d/%d unjudged=%d/%d unsupported=%d missing-inline=%d/%d missing-structured=%d/%d unexpected=%d/%d other=%d",
+		fmt.Fprintf(&receipt, "\n  %-22s fixtures=%d clean=%d/%d unjudged=%d/%d unsupported=%d preflight-unsupported=%d policy-unsupported=%d compile-invalid=%d compile-unsupported=%d solve-invalid=%d solve-unsupported=%d solve-incomplete=%d detached-result=%d report-unavailable=%d other-pre-verdict=%d missing-inline=%d/%d missing-structured=%d/%d unexpected=%d/%d other=%d",
 			family, tally.projects,
 			tally.clean, row.CleanMin,
 			tally.unjudged, row.UnjudgedMax,
-			tally.unsupported,
+			tally.unsupported, tally.preflightUnsupported, tally.policyUnsupported, tally.compileInvalid, tally.compileUnsupported,
+			tally.solveInvalid, tally.solveUnsupported, tally.solveIncomplete, tally.detachedResult, tally.reportUnavailable, tally.otherPreVerdict,
 			tally.missingInline, row.MissingInlineMax,
 			tally.missingStructured, row.MissingStructureMax,
 			tally.unexpected, row.UnexpectedMax,
@@ -373,18 +588,25 @@ func acceptanceRatchetReceipt(mark acceptanceHighWater, families map[string]acce
 // can only lower the recorded counts. Without this, a mark minted while a
 // fixture failed to compile would condemn the landing that made it compile.
 func TestAcceptanceRatchetCountsUnjudgedFixturesAsUnmetExpectations(t *testing.T) {
-	project := corpusHarnessFixture(t, "types/recursive-mismatch-rejected")
+	project := acceptanceSyntheticProject()
 	inline, structured := acceptanceExpectationCounts(project)
 	if inline+structured == 0 {
 		t.Fatalf("fixture %s declares no expectation; it cannot demonstrate the accounting", project.name)
 	}
 	unreached := acceptanceFixtureTally(project, corpusSemanticAcceptanceVerdict{}, false)
-	if unreached.unjudged != 1 || unreached.missingInline != inline || unreached.missingStructured != structured || unreached.clean != 0 {
-		t.Fatalf("a fixture that produced no verdict tallied %+v, want unjudged=1 missing-inline=%d missing-structured=%d", unreached, inline, structured)
+	if unreached.unjudged != 1 || unreached.unjudgedReasonCount() != unreached.unjudged || unreached.otherPreVerdict != 1 || unreached.missingInline != inline || unreached.missingStructured != structured || unreached.clean != 0 {
+		t.Fatalf("a fixture that produced no verdict tallied %+v, want unjudged=1 other-pre-verdict=1 missing-inline=%d missing-structured=%d", unreached, inline, structured)
 	}
 	contractRefused := acceptanceFixtureTally(project, corpusSemanticAcceptanceVerdict{unsupported: []string{"expected diagnostic \"type.assignment\" has no current collector"}}, true)
-	if contractRefused != unreached {
-		t.Fatalf("an unsupported contract tallied %+v, want the same unmet expectations as a fixture that never ran: %+v", contractRefused, unreached)
+	if contractRefused.unjudged != 1 || contractRefused.unjudgedReasonCount() != 1 || contractRefused.unsupported != 1 || contractRefused.policyUnsupported != 1 || contractRefused.missingInline != inline || contractRefused.missingStructured != structured {
+		t.Fatalf("an unsupported contract lost its category: %+v, want unjudged=1 unsupported=1 policy-unsupported=1 and the same unmet expectations", contractRefused)
+	}
+	combined := acceptanceFixtureTally(project, corpusSemanticAcceptanceVerdict{
+		unsupported: []string{"diagnostic contract unavailable"},
+		unavailable: []string{"DiagnosticReport unavailable"},
+	}, true)
+	if combined.unjudged != 1 || combined.unjudgedReasonCount() != 1 || combined.policyUnsupported != 1 || combined.reportUnavailable != 0 || combined.unsupported != 1 {
+		t.Fatalf("combined unsupported/unavailable verdict was assigned more than one reason: %+v", combined)
 	}
 	met := acceptanceFixtureTally(project, corpusSemanticAcceptanceVerdict{}, true)
 	if met.clean != 1 || met.unjudged != 0 || met.missingInline != 0 || met.missingStructured != 0 {
@@ -392,11 +614,72 @@ func TestAcceptanceRatchetCountsUnjudgedFixturesAsUnmetExpectations(t *testing.T
 	}
 }
 
+func acceptanceSyntheticProject() corpusHarnessProject {
+	return corpusHarnessProject{
+		name: "synthetic/acceptance-accounting",
+		expectation: &corpusDiagnosticProjectExpectations{
+			inline: []corpusInlineDiagnosticExpectationRow{{Severity: "error"}},
+			manifest: &corpusDiagnosticManifest{Check: &corpusDiagnosticManifestCheck{
+				Diagnostics: []corpusStructuredDiagnosticExpectation{{}},
+			}},
+		},
+	}
+}
+
+// TestAcceptanceRatchetRetainsPreVerdictFailureCategories proves that the
+// acceptance receipt does not turn distinct failures into one unjudged bucket.
+// These are synthetic detached records so the law remains bounded and does not
+// run the corpus just to test accounting.
+func TestAcceptanceRatchetRetainsPreVerdictFailureCategories(t *testing.T) {
+	project := acceptanceSyntheticProject()
+	cases := []struct {
+		name     string
+		status   analysis.AnalyzeStatus
+		class    string
+		failure  string
+		category func(acceptanceTally) int
+	}{
+		{"preflight contract", analysis.AnalyzeInvalid, "fixture-contract", "unsupported fixture contract", func(t acceptanceTally) int { return t.preflightUnsupported }},
+		{"compile invalid", analysis.AnalyzeInvalid, "compile", "compile=invalid", func(t acceptanceTally) int { return t.compileInvalid }},
+		{"compile unsupported", analysis.AnalyzeUnsupported, "compile", "compile=unsupported", func(t acceptanceTally) int { return t.compileUnsupported }},
+		{"solve invalid", analysis.AnalyzeInvalid, "invalid", "Analyze status = invalid", func(t acceptanceTally) int { return t.solveInvalid }},
+		{"solve unsupported", analysis.AnalyzeUnsupported, "unsupported", "Analyze status = unsupported", func(t acceptanceTally) int { return t.solveUnsupported }},
+		{"solve incomplete", analysis.AnalyzeIncomplete, "incomplete", "Analyze status = incomplete", func(t acceptanceTally) int { return t.solveIncomplete }},
+		{"detached result", analysis.AnalyzeComplete, "detached-result", "invalid source/content identity", func(t acceptanceTally) int { return t.detachedResult }},
+		{"other failure", analysis.AnalyzeInvalid, "link", "link: malformed source", func(t acceptanceTally) int { return t.otherPreVerdict }},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tally := acceptanceFixtureTallyOf(project, acceptanceFixtureRun{
+				observed:    true,
+				status:      testCase.status,
+				statusKnown: true,
+				class:       testCase.class,
+				failure:     testCase.failure,
+			})
+			reasons := tally.preflightUnsupported + tally.compileInvalid + tally.compileUnsupported + tally.solveInvalid + tally.solveUnsupported + tally.solveIncomplete + tally.detachedResult + tally.reportUnavailable + tally.otherPreVerdict
+			if got := testCase.category(tally); got != 1 || reasons != 1 || tally.unjudgedReasonCount() != tally.unjudged || tally.unjudged != 1 || tally.missingInline == 0 && tally.missingStructured == 0 {
+				t.Fatalf("pre-verdict accounting = %+v, want one %s, unjudged=1, and unmet expectations", tally, testCase.name)
+			}
+		})
+	}
+
+	var receiptTally acceptanceTally
+	receiptTally.add(acceptanceTally{projects: 1, preflightUnsupported: 1, unsupported: 1})
+	receiptTally.add(acceptanceTally{projects: 1, compileInvalid: 1})
+	receipt := acceptanceRatchetReceipt(acceptanceHighWater{Measured: "law"}, map[string]acceptanceTally{"types": receiptTally})
+	for _, column := range []string{"preflight-unsupported=1", "compile-invalid=1", "solve-invalid=0", "detached-result=0", "other-pre-verdict=0"} {
+		if !strings.Contains(receipt, column) {
+			t.Fatalf("receipt omitted %q: %s", column, receipt)
+		}
+	}
+}
+
 // TestAcceptanceRatchetClassifiesEveryAcceptanceRow proves the row
 // classification the counts are built from, so a reworded acceptance message
 // cannot silently move rows into the ungated "other" column.
 func TestAcceptanceRatchetClassifiesEveryAcceptanceRow(t *testing.T) {
-	project := corpusHarnessFixture(t, "types/recursive-mismatch-rejected")
+	project := acceptanceSyntheticProject()
 	verdict := corpusSemanticAcceptanceVerdict{diagnostics: []string{
 		`missing inline error at main.lua:6 ""`,
 		`missing structured diagnostic 0 type.assignment at main.lua:6:33`,

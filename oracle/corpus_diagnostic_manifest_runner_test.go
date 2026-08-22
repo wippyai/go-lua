@@ -23,7 +23,7 @@ type corpusDiagnosticFamilyStatus uint8
 
 const (
 	corpusDiagnosticFamilyInvalid corpusDiagnosticFamilyStatus = iota
-	corpusDiagnosticFamilySupported
+	corpusDiagnosticFamilyRegistered
 	corpusDiagnosticFamilyPassed
 	corpusDiagnosticFamilyFailed
 	corpusDiagnosticFamilyUnsupported
@@ -31,8 +31,8 @@ const (
 
 func (status corpusDiagnosticFamilyStatus) String() string {
 	switch status {
-	case corpusDiagnosticFamilySupported:
-		return "supported"
+	case corpusDiagnosticFamilyRegistered:
+		return "registered"
 	case corpusDiagnosticFamilyPassed:
 		return "passed"
 	case corpusDiagnosticFamilyFailed:
@@ -53,6 +53,36 @@ type corpusDiagnosticFamilyResult struct {
 	Actual      int
 	Mismatches  []string
 	Unsupported string
+}
+
+// corpusDiagnosticVerifiedEvidence is intentionally a different projection
+// from corpusDiagnosticRegistrationCensus. A declaration becomes verified
+// evidence only after the focused runner has produced a passed, one-to-one
+// result. In particular, a red registered case contributes zero here.
+func corpusDiagnosticVerifiedEvidence(result corpusDiagnosticFamilyResult) (cases, findings int) {
+	if result.Status != corpusDiagnosticFamilyPassed || !result.CoreMatched || len(result.Mismatches) != 0 || result.Unsupported != "" {
+		return 0, 0
+	}
+	return 1, result.Actual
+}
+
+// corpusDiagnosticNativeEvidenceReceipt is emitted by the bounded focused
+// runner, not by the static registration census. Registered counts describe
+// the cases requested by the table; verified counts describe only passed
+// one-to-one results. A failed registered case therefore increases failedCases
+// while contributing zero verified cases/findings.
+type corpusDiagnosticNativeEvidenceReceipt struct {
+	registeredCases, registeredFindings int
+	verifiedCases, verifiedFindings     int
+	failedCases                         int
+}
+
+func (receipt *corpusDiagnosticNativeEvidenceReceipt) add(other corpusDiagnosticNativeEvidenceReceipt) {
+	receipt.registeredCases += other.registeredCases
+	receipt.registeredFindings += other.registeredFindings
+	receipt.verifiedCases += other.verifiedCases
+	receipt.verifiedFindings += other.verifiedFindings
+	receipt.failedCases += other.failedCases
 }
 
 func unsupportedCorpusDiagnosticFamily(code string, expected int, reason string) corpusDiagnosticFamilyResult {
@@ -81,7 +111,7 @@ type corpusDiagnosticFixtureKey struct {
 func (key corpusDiagnosticFixtureKey) String() string { return key.project + "/" + key.code }
 
 // corpusDiagnosticNativeFamilies is the test runner's closed installation
-// fence. A producer is supported only after one registration supplies its
+// fence. A producer is registered only after one declaration supplies its
 // public code, exact enabled policy, and the focused corpus cases that must
 // pass. Fixture text and engine rules cannot widen this set implicitly.
 var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistration{
@@ -126,8 +156,9 @@ func corpusDiagnosticNativeFamily(code string) bool {
 
 // corpusDiagnosticNativeFixtureCaseRegistrationFor is deliberately stricter
 // than code-level producer capability. A native producer may know a code while
-// only selected fixture cases have been proven end-to-end. Other rows stay
-// explicitly pending instead of becoming false-clean by code association.
+// only selected fixture cases are installed as verification targets. Other
+// rows stay explicitly pending instead of becoming false-clean by code
+// association. Registration is not passing evidence.
 func corpusDiagnosticNativeFixtureCaseRegistrationFor(project, code string) (corpusDiagnosticNativeFamilyRegistration, corpusDiagnosticNativeFamilyCase, bool) {
 	family, familyOK := corpusDiagnosticNativeFamilyRegistrationFor(code)
 	if !familyOK {
@@ -145,64 +176,69 @@ func corpusDiagnosticFixtureKeyFor(project, code string) corpusDiagnosticFixture
 	return corpusDiagnosticFixtureKey{project: project, code: code}
 }
 
-type corpusDiagnosticSupportCounts struct {
-	registeredCases, supportedFindings  int
+// corpusDiagnosticRegistrationCounts is a cheap declaration census. It only
+// says which fixture/code rows have an installed native-family registration;
+// it never claims that the registered cases currently pass end to end.
+// Passing evidence is produced only by runCorpusDiagnosticNativeFamilyLaw.
+type corpusDiagnosticRegistrationCounts struct {
+	registeredCases, registeredFindings int
 	whollyPendingCodes, pendingFindings int
 	inlinePending                       int
 	pendingByFixture                    map[corpusDiagnosticFixtureKey]int
 }
 
-// corpusDiagnosticFrozenSupportCensus is the intentionally explicit current
-// coverage boundary. Installing a family changes its closed registration and
-// this one value; all census laws consume the same computed counts.
-var corpusDiagnosticFrozenSupportCensus = corpusDiagnosticSupportCounts{
-	registeredCases: 5, supportedFindings: 5,
+// corpusDiagnosticFrozenRegistrationCensus is the intentionally explicit
+// current declaration boundary. Installing a family changes its closed
+// registration and this one value; all census laws consume the same computed
+// counts. It is not a passing-evidence mark.
+var corpusDiagnosticFrozenRegistrationCensus = corpusDiagnosticRegistrationCounts{
+	registeredCases: 5, registeredFindings: 5,
 	whollyPendingCodes: 30, pendingFindings: 135, inlinePending: 731,
 }
 
-func (counts corpusDiagnosticSupportCounts) matches(want corpusDiagnosticSupportCounts) bool {
+func (counts corpusDiagnosticRegistrationCounts) matches(want corpusDiagnosticRegistrationCounts) bool {
 	return counts.registeredCases == want.registeredCases &&
-		counts.supportedFindings == want.supportedFindings &&
+		counts.registeredFindings == want.registeredFindings &&
 		counts.whollyPendingCodes == want.whollyPendingCodes &&
 		counts.pendingFindings == want.pendingFindings &&
 		counts.inlinePending == want.inlinePending
 }
 
-func corpusDiagnosticSupportCensus(catalog *corpusDiagnosticExpectationCatalog) (corpusDiagnosticSupportCounts, error) {
-	counts := corpusDiagnosticSupportCounts{pendingByFixture: make(map[corpusDiagnosticFixtureKey]int)}
+func corpusDiagnosticRegistrationCensus(catalog *corpusDiagnosticExpectationCatalog) (corpusDiagnosticRegistrationCounts, error) {
+	counts := corpusDiagnosticRegistrationCounts{pendingByFixture: make(map[corpusDiagnosticFixtureKey]int)}
 	registeredCases := make(map[corpusDiagnosticFixtureKey]struct{})
 	for _, family := range corpusDiagnosticNativeFamilies {
 		code := family.code.String()
 		for _, fixtureCase := range family.cases {
 			key := corpusDiagnosticFixtureKeyFor(fixtureCase.project, code)
 			if _, duplicate := registeredCases[key]; duplicate {
-				return corpusDiagnosticSupportCounts{}, fmt.Errorf("native diagnostic fixture registration duplicates %q", key)
+				return corpusDiagnosticRegistrationCounts{}, fmt.Errorf("native diagnostic fixture registration duplicates %q", key)
 			}
 			if got := corpusDiagnosticProjectExpectedCount(catalog.byProject[fixtureCase.project], code); got != fixtureCase.expect {
-				return corpusDiagnosticSupportCounts{}, fmt.Errorf("native diagnostic fixture registration %q expects %d rows, catalog has %d", key, fixtureCase.expect, got)
+				return corpusDiagnosticRegistrationCounts{}, fmt.Errorf("native diagnostic fixture registration %q expects %d rows, catalog has %d", key, fixtureCase.expect, got)
 			}
 			registeredCases[key] = struct{}{}
 		}
 	}
 	counts.registeredCases = len(registeredCases)
 	for code, refs := range catalog.structuredByCode {
-		codeSupported := false
+		codeRegistered := false
 		for _, ref := range refs {
 			if _, _, registered := corpusDiagnosticNativeFixtureCaseRegistrationFor(ref.project, code); registered {
-				counts.supportedFindings++
-				codeSupported = true
+				counts.registeredFindings++
+				codeRegistered = true
 				continue
 			}
 			counts.pendingFindings++
 			counts.pendingByFixture[corpusDiagnosticFixtureKeyFor(ref.project, code)]++
 		}
-		if !codeSupported {
+		if !codeRegistered {
 			counts.whollyPendingCodes++
 		}
 	}
 	counts.inlinePending = catalog.inventory.inlineErrors + catalog.inventory.inlineWarnings
-	if counts.supportedFindings+counts.pendingFindings != catalog.inventory.structuredFindings {
-		return corpusDiagnosticSupportCounts{}, fmt.Errorf("native/pending partition lost structured fixture rows: supported=%d pending=%d total=%d", counts.supportedFindings, counts.pendingFindings, catalog.inventory.structuredFindings)
+	if counts.registeredFindings+counts.pendingFindings != catalog.inventory.structuredFindings {
+		return corpusDiagnosticRegistrationCounts{}, fmt.Errorf("native/pending partition lost structured fixture rows: registered=%d pending=%d total=%d", counts.registeredFindings, counts.pendingFindings, catalog.inventory.structuredFindings)
 	}
 	return counts, nil
 }
@@ -472,7 +508,7 @@ func matchCorpusDiagnosticFamily(compilation composite.Compilation, project stri
 			expected = append(expected, row)
 		}
 	}
-	result.Status = corpusDiagnosticFamilySupported
+	result.Status = corpusDiagnosticFamilyRegistered
 	result.Expected = len(expected)
 	if report == nil || !report.Available() {
 		result.Status = corpusDiagnosticFamilyFailed
@@ -576,7 +612,10 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 	t.Helper()
 	catalog, err := frozenCorpusDiagnosticExpectationCatalog(t)
 	if err != nil {
-		t.Fatal(err)
+		return corpusDiagnosticFamilyResult{
+			Project: projectName, Code: code, Status: corpusDiagnosticFamilyFailed,
+			Mismatches: []string{fmt.Sprintf("expectation catalog: %v", err)},
+		}
 	}
 	project := catalog.byProject[projectName]
 	if project == nil || project.manifest == nil || project.manifest.Check == nil {
@@ -584,12 +623,15 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 	}
 	family, fixtureCase, registered := corpusDiagnosticNativeFixtureCaseRegistrationFor(projectName, code)
 	if !registered {
-		return unsupportedCorpusDiagnosticFamily(code, corpusDiagnosticProjectExpectedCount(project, code), "no officially verified native DiagnosticReport fixture case")
+		return unsupportedCorpusDiagnosticFamily(code, corpusDiagnosticProjectExpectedCount(project, code), "no registered native DiagnosticReport fixture case")
 	}
 	if expected := corpusDiagnosticProjectExpectedCount(project, code); expected != fixtureCase.expect {
-		t.Fatalf("native fixture registration %s/%s expects %d rows, catalog has %d", projectName, code, fixtureCase.expect, expected)
+		return corpusDiagnosticFamilyResult{
+			Project: projectName, Code: code, Status: corpusDiagnosticFamilyFailed, Expected: fixtureCase.expect,
+			Mismatches: []string{fmt.Sprintf("native fixture registration expects %d rows, catalog has %d", fixtureCase.expect, expected)},
+		}
 	}
-	run, _, err := corpusHarnessExecuteWithPlanCleanup(t, corpusHarnessFixture(t, projectName), corpusHarnessDiagnosticMode(), false)
+	run, class, err := corpusHarnessExecuteWithPlanCleanup(t, corpusHarnessFixture(t, projectName), corpusHarnessDiagnosticMode(), false)
 	if run != nil && run.plan != nil {
 		plan := run.plan
 		defer func() {
@@ -599,15 +641,24 @@ func runCorpusDiagnosticFamily(t *testing.T, projectName, code string) corpusDia
 		}()
 	}
 	if err != nil {
-		t.Fatal(err)
+		return corpusDiagnosticFamilyResult{
+			Project: projectName, Code: code, Status: corpusDiagnosticFamilyFailed, Expected: fixtureCase.expect,
+			Mismatches: []string{fmt.Sprintf("harness %s: %v", class, err)},
+		}
 	}
 	if run == nil || run.plan == nil {
-		t.Fatal("manifest runner has no compiled plan")
+		return corpusDiagnosticFamilyResult{
+			Project: projectName, Code: code, Status: corpusDiagnosticFamilyFailed, Expected: fixtureCase.expect,
+			Mismatches: []string{"manifest runner has no compiled plan"},
+		}
 	}
 	plan := run.plan
 	_, report, status, diagnostics := plan.SolveWithReport(context.Background(), corpusHarnessSolveOptions(), anadiag.DiagnosticPolicy{Enabled: family.enabled})
 	if status != analysis.AnalyzeComplete {
-		t.Fatalf("manifest runner solve %s = %v diagnostics=%+v", projectName, status, diagnostics)
+		return corpusDiagnosticFamilyResult{
+			Project: projectName, Code: code, Status: corpusDiagnosticFamilyFailed, Expected: fixtureCase.expect,
+			Mismatches: []string{fmt.Sprintf("manifest runner solve status=%v diagnostics=%+v", status, diagnostics)},
+		}
 	}
 	return matchCorpusDiagnosticFamily(run.compilation, projectName, project, report, code, func(file string) (string, bool) {
 		file = corpusDiagnosticProjectSourceFile(project, file)
@@ -636,11 +687,12 @@ func TestCorpusDiagnosticManifestRunnerUnresolvedValueReferenceFamilyLaw(t *test
 }
 
 // TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw makes every installed
-// producer prove its own narrow corpus cases. New native support is one table
-// registration, and may be run alone with -run
+// producer prove its own narrow corpus cases. New native registration is one
+// table entry, and may be run alone with -run
 // '^TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw/<code>$'.
 func TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw(t *testing.T) {
 	seenCodes := make(map[string]struct{}, len(corpusDiagnosticNativeFamilies))
+	var evidence corpusDiagnosticNativeEvidenceReceipt
 	for _, family := range corpusDiagnosticNativeFamilies {
 		code := family.code.String()
 		if family.code == anadiag.DiagnosticCodeInvalid || code == "" || len(family.enabled) == 0 || len(family.cases) == 0 {
@@ -655,22 +707,37 @@ func TestCorpusDiagnosticManifestRunnerNativeFamiliesLaw(t *testing.T) {
 				t.Fatalf("native family %q enables the foreign code %q", code, enabled.String())
 			}
 		}
-		t.Run(code, func(t *testing.T) { runCorpusDiagnosticNativeFamilyLaw(t, code) })
+		t.Run(code, func(t *testing.T) { evidence.add(runCorpusDiagnosticNativeFamilyLaw(t, code)) })
 	}
+	t.Logf("native diagnostic evidence: registered-cases=%d registered-findings=%d verified-cases=%d verified-findings=%d failed-cases=%d",
+		evidence.registeredCases, evidence.registeredFindings, evidence.verifiedCases, evidence.verifiedFindings, evidence.failedCases)
 }
 
-func runCorpusDiagnosticNativeFamilyLaw(t *testing.T, code string) {
+func runCorpusDiagnosticNativeFamilyLaw(t *testing.T, code string) corpusDiagnosticNativeEvidenceReceipt {
 	t.Helper()
 	family, native := corpusDiagnosticNativeFamilyRegistrationFor(code)
 	if !native {
 		t.Fatalf("native family %q is not registered", code)
 	}
+	receipt := corpusDiagnosticNativeEvidenceReceipt{registeredCases: len(family.cases)}
+	for _, test := range family.cases {
+		receipt.registeredFindings += test.expect
+	}
+	var failures []string
 	for _, test := range family.cases {
 		got := runCorpusDiagnosticFamily(t, test.project, code)
+		verifiedCases, verifiedFindings := corpusDiagnosticVerifiedEvidence(got)
+		receipt.verifiedCases += verifiedCases
+		receipt.verifiedFindings += verifiedFindings
 		if got.Status != corpusDiagnosticFamilyPassed || !got.CoreMatched || got.Expected != test.expect || got.Actual != test.expect || len(got.Mismatches) != 0 || got.Unsupported != "" {
-			t.Fatalf("manifest family %s = status:%s core:%t expected:%d actual:%d mismatches:%v unsupported:%q, want passed/%d", test.project, got.Status, got.CoreMatched, got.Expected, got.Actual, got.Mismatches, got.Unsupported, test.expect)
+			receipt.failedCases++
+			failures = append(failures, fmt.Sprintf("manifest family %s = status:%s core:%t expected:%d actual:%d mismatches:%v unsupported:%q, want passed/%d", test.project, got.Status, got.CoreMatched, got.Expected, got.Actual, got.Mismatches, got.Unsupported, test.expect))
 		}
 	}
+	for _, failure := range failures {
+		t.Error(failure)
+	}
+	return receipt
 }
 
 func TestCorpusDiagnosticManifestRunnerUnregisteredFamilyLaw(t *testing.T) {
@@ -691,7 +758,7 @@ func TestCorpusDiagnosticManifestRunnerUnregisteredFamilyLaw(t *testing.T) {
 	code := codes[0]
 	refs := catalog.structuredByCode[code]
 	got := runCorpusDiagnosticFamily(t, refs[0].project, code)
-	if got.Status != corpusDiagnosticFamilyUnsupported || got.CoreMatched || got.Expected != corpusDiagnosticProjectExpectedCount(catalog.byProject[refs[0].project], code) || got.Actual != 0 || got.Unsupported != "no officially verified native DiagnosticReport fixture case" || len(got.Mismatches) != 0 {
+	if got.Status != corpusDiagnosticFamilyUnsupported || got.CoreMatched || got.Expected != corpusDiagnosticProjectExpectedCount(catalog.byProject[refs[0].project], code) || got.Actual != 0 || got.Unsupported != "no registered native DiagnosticReport fixture case" || len(got.Mismatches) != 0 {
 		t.Fatalf("unregistered family became false-clean: %+v", got)
 	}
 }
@@ -703,11 +770,11 @@ func TestCorpusDiagnosticManifestRunnerInstalledCodePendingProjectLaw(t *testing
 		t.Fatalf("test requires installed code-level producer %q", code)
 	}
 	if _, _, registered := corpusDiagnosticNativeFixtureCaseRegistrationFor(project, code); registered {
-		t.Fatalf("unverified fixture %s/%s entered native support", project, code)
+		t.Fatalf("unverified fixture %s/%s entered the native verification set", project, code)
 	}
 	got := runCorpusDiagnosticFamily(t, project, code)
-	if got.Status != corpusDiagnosticFamilyUnsupported || got.CoreMatched || got.Expected != 2 || got.Actual != 0 || got.Unsupported != "no officially verified native DiagnosticReport fixture case" || len(got.Mismatches) != 0 {
-		t.Fatalf("installed code made unverified project false-clean: %+v", got)
+	if got.Status != corpusDiagnosticFamilyUnsupported || got.CoreMatched || got.Expected != 2 || got.Actual != 0 || got.Unsupported != "no registered native DiagnosticReport fixture case" || len(got.Mismatches) != 0 {
+		t.Fatalf("installed code made an unverified project false-clean: %+v", got)
 	}
 }
 
@@ -726,7 +793,7 @@ func TestCorpusDiagnosticManifestRunnerUnexpectedFindingLaw(t *testing.T) {
 		Diagnostics: []corpusStructuredDiagnosticExpectation{{File: "main.lua", Line: 2, Column: 1, Severity: "hint", Code: code}},
 	}}}
 	expected := project.manifest.Check.Diagnostics
-	seed := corpusDiagnosticFamilyResult{Project: "synthetic", Code: code, Status: corpusDiagnosticFamilySupported, Expected: len(expected)}
+	seed := corpusDiagnosticFamilyResult{Project: "synthetic", Code: code, Status: corpusDiagnosticFamilyRegistered, Expected: len(expected)}
 	got := judgeCorpusDiagnosticRows(compilation, seed, project, expected, []corpusDiagnosticActualRow{row, {index: 1, file: row.file, line: row.line, column: row.column, severity: row.severity}},
 		func(string) (string, bool) { return "\nif true then end\n", true })
 	if got.Status != corpusDiagnosticFamilyFailed || got.CoreMatched || got.Expected != 1 || got.Actual != 2 || len(got.Mismatches) != 1 || !strings.Contains(got.Mismatches[0], "unexpected row") {
@@ -739,22 +806,52 @@ func TestCorpusDiagnosticManifestRunnerUnsupportedFamilyLaw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts, err := corpusDiagnosticSupportCensus(catalog)
+	counts, err := corpusDiagnosticRegistrationCensus(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for fixture, expected := range counts.pendingByFixture {
-		status := unsupportedCorpusDiagnosticFamily(fixture.String(), expected, "no officially verified native DiagnosticReport fixture case")
+		status := unsupportedCorpusDiagnosticFamily(fixture.String(), expected, "no registered native DiagnosticReport fixture case")
 		if status.Status != corpusDiagnosticFamilyUnsupported {
 			t.Fatalf("pending fixture %q reported %s", fixture, status.Status)
 		}
 	}
-	if !counts.matches(corpusDiagnosticFrozenSupportCensus) {
-		t.Fatalf("official fixture support census changed: got=%+v want=%+v", counts, corpusDiagnosticFrozenSupportCensus)
+	if !counts.matches(corpusDiagnosticFrozenRegistrationCensus) {
+		t.Fatalf("official fixture registration census changed: got=%+v want=%+v", counts, corpusDiagnosticFrozenRegistrationCensus)
 	}
 	inlineUnsupported := unsupportedCorpusDiagnosticFamily("inline-no-code", counts.inlinePending, "inline markers have no structured DiagnosticReport code")
-	if inlineUnsupported.Status != corpusDiagnosticFamilyUnsupported || inlineUnsupported.Expected != corpusDiagnosticFrozenSupportCensus.inlinePending {
-		t.Fatalf("inline unsupported census = %+v, want %d explicit unsupported", inlineUnsupported, corpusDiagnosticFrozenSupportCensus.inlinePending)
+	if inlineUnsupported.Status != corpusDiagnosticFamilyUnsupported || inlineUnsupported.Expected != corpusDiagnosticFrozenRegistrationCensus.inlinePending {
+		t.Fatalf("inline unsupported census = %+v, want %d explicit unsupported", inlineUnsupported, corpusDiagnosticFrozenRegistrationCensus.inlinePending)
+	}
+}
+
+func TestCorpusDiagnosticManifestRunnerRegistrationIsNotPassingEvidence(t *testing.T) {
+	registered := corpusDiagnosticFamilyResult{
+		Status:   corpusDiagnosticFamilyRegistered,
+		Expected: 1,
+		Actual:   1,
+	}
+	if cases, findings := corpusDiagnosticVerifiedEvidence(registered); cases != 0 || findings != 0 {
+		t.Fatalf("registered-only diagnostic case became passing evidence: cases=%d findings=%d", cases, findings)
+	}
+	red := corpusDiagnosticFamilyResult{
+		Status:      corpusDiagnosticFamilyFailed,
+		CoreMatched: false,
+		Expected:    1,
+		Actual:      1,
+		Mismatches:  []string{"collection failure"},
+	}
+	if cases, findings := corpusDiagnosticVerifiedEvidence(red); cases != 0 || findings != 0 {
+		t.Fatalf("red registered diagnostic case became passing evidence: cases=%d findings=%d", cases, findings)
+	}
+	passed := corpusDiagnosticFamilyResult{
+		Status:      corpusDiagnosticFamilyPassed,
+		CoreMatched: true,
+		Expected:    1,
+		Actual:      1,
+	}
+	if cases, findings := corpusDiagnosticVerifiedEvidence(passed); cases != 1 || findings != 1 {
+		t.Fatalf("passed diagnostic case was not counted as evidence: cases=%d findings=%d", cases, findings)
 	}
 }
 

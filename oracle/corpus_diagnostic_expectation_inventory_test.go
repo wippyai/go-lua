@@ -424,12 +424,12 @@ func TestFrozenCorpusUnsupportedDiagnosticFamiliesRemainExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts, err := corpusDiagnosticSupportCensus(catalog)
+	counts, err := corpusDiagnosticRegistrationCensus(catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !counts.matches(corpusDiagnosticFrozenSupportCensus) {
-		t.Fatalf("official fixture support census changed: got=%+v want=%+v", counts, corpusDiagnosticFrozenSupportCensus)
+	if !counts.matches(corpusDiagnosticFrozenRegistrationCensus) {
+		t.Fatalf("official fixture registration census changed: got=%+v want=%+v", counts, corpusDiagnosticFrozenRegistrationCensus)
 	}
 }
 
