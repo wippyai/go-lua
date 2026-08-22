@@ -72,6 +72,54 @@ func TestGeneratedCountRowsRequireEveryRelationIncludingZero(t *testing.T) {
 	}
 }
 
+// TestLinkCountRowsCoverTheNineSealedLinkOwners states the Link column law in
+// both directions: a set carrying exactly the nine Link-sealed owners is
+// complete, a set that drops one of their rows is not, and a set that adds a
+// ProgramModule row is not, because that family is derived at the Program
+// artifact boundary and no Link authority publishes it.
+func TestLinkCountRowsCoverTheNineSealedLinkOwners(t *testing.T) {
+	linkOwners := []RelationOwner{
+		RelationOwnerProgramSource, RelationOwnerProgramFlow, RelationOwnerProgramStatic,
+		RelationOwnerTarget, RelationOwnerLinkProject, RelationOwnerLinkBoundary,
+		RelationOwnerLinkModule, RelationOwnerLinkStatic, RelationOwnerLinkHost,
+	}
+	rows := make([]CountRow, 0, len(GeneratedRelationEntries()))
+	for _, owner := range linkOwners {
+		for _, id := range generatedOwnerIDs(owner) {
+			row, ok := NewCountRow(id, 0)
+			if !ok {
+				t.Fatalf("owner %v count row was not admitted", owner)
+			}
+			rows = append(rows, row)
+		}
+	}
+	complete, completeOK := NewCountRows(rows)
+	if !completeOK || !LinkCountRowsComplete(complete) {
+		t.Fatal("the nine sealed Link owners were not accepted as a complete Link column")
+	}
+	if GeneratedCountRowsComplete(complete) {
+		t.Fatal("the Link column was accepted as the complete generated catalog")
+	}
+
+	missing, missingOK := NewCountRows(rows[:len(rows)-1])
+	if !missingOK || LinkCountRowsComplete(missing) {
+		t.Fatal("a Link column missing an owner row was accepted")
+	}
+
+	moduleIDs := generatedOwnerIDs(RelationOwnerProgramModule)
+	if len(moduleIDs) == 0 {
+		t.Fatal("the ProgramModule owner issued no generated identities")
+	}
+	stray, strayOK := NewCountRow(moduleIDs[0], 0)
+	if !strayOK {
+		t.Fatal("ProgramModule count row was not admitted")
+	}
+	extended, extendedOK := NewCountRows(append(append([]CountRow(nil), rows...), stray))
+	if !extendedOK || LinkCountRowsComplete(extended) {
+		t.Fatal("a Link column carrying a ProgramModule row was accepted")
+	}
+}
+
 func TestGeneratedOwnerIDsAreTheCatalogTotality(t *testing.T) {
 	owners := []RelationOwner{
 		RelationOwnerProgramSource, RelationOwnerProgramFlow, RelationOwnerProgramStatic, RelationOwnerProgramModule,

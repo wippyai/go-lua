@@ -55,6 +55,10 @@ func TestFixtureProjectLinksClosedSiblingModules(t *testing.T) {
 // The generic input builder derives only Link's required actor/cache ingress
 // rows from sealed Program Imports.  It does not consult a diagnostic oracle,
 // bytecode compiler, runtime, legacy analyzer, allowlist, or fixture adapter.
+//
+// Sealing is not the whole claim: every project that seals also owes the
+// complete sealed-Link denominator column, so a Link that publishes a partial
+// column fails here exactly like one that refuses to seal at all.
 func TestFrozenFixtureCorpusLinks(t *testing.T) {
 	contract, err := testfixture.StandardLibraryTarget()
 	if err != nil {
@@ -167,9 +171,13 @@ func roundTripFixtureProject(linked *link.Link, contract *contractvalue.Contract
 	return assertCompleteCountRows(rows)
 }
 
+// assertCompleteCountRows states the denominator law one sealed Link owes: its
+// column covers exactly the nine owners Link seals. The ProgramModule family is
+// deliberately absent, because it is derived at the Program artifact boundary
+// and no authority Link reads publishes it.
 func assertCompleteCountRows(rows denominator.CountRows) error {
-	if !denominator.GeneratedCountRowsComplete(rows) {
-		return fmt.Errorf("Link denominator rows = %d/%t, want exact generated relation coverage", rows.Count(), rows.Available())
+	if !denominator.LinkCountRowsComplete(rows) {
+		return fmt.Errorf("Link denominator rows = %d/%t, want exact sealed-Link owner coverage", rows.Count(), rows.Available())
 	}
 	return nil
 }

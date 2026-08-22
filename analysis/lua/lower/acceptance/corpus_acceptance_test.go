@@ -144,6 +144,11 @@ func TestFrozenFixtureCorpusLowersAndSeals(t *testing.T) {
 	t.Fatal(report.String())
 }
 
+// programCountRows states the denominator column a lowered Program root owes:
+// exactly the three cold owners the root freezes. The ProgramModule family is
+// not among them; the root holds no Module component, and those derived
+// cardinalities are first sealed at the artifact boundary, which this black-box
+// lowering census never reaches.
 func programCountRows(p *program.Program) (denominator.CountRows, error) {
 	if p == nil {
 		return denominator.CountRows{}, fmt.Errorf("nil Program")
@@ -153,7 +158,6 @@ func programCountRows(p *program.Program) (denominator.CountRows, error) {
 		denominator.RelationOwnerProgramSource,
 		denominator.RelationOwnerProgramFlow,
 		denominator.RelationOwnerProgramStatic,
-		denominator.RelationOwnerProgramModule,
 	) {
 		return denominator.CountRows{}, fmt.Errorf("Program denominator rows unavailable or incomplete")
 	}

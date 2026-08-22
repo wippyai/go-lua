@@ -160,6 +160,36 @@ func GeneratedCountRowsComplete(rows CountRows) bool {
 	)
 }
 
+// LinkCountRowsComplete reports exact coverage of the denominator column one
+// sealed Link owns: the three cold owners a published Program root freezes
+// (summed over every mount), Target, and the five Link owners.
+//
+// The ProgramModule family is outside this column by construction. A Program
+// root holds no Module component: its authored module rows live behind Flow
+// under the scalar ModuleID, and the derived ProgramModule cardinalities first
+// exist at the Program artifact boundary, which is downstream of Link and is
+// not reachable from a mounted Program. Link therefore proves totality over
+// nine owners, and GeneratedCountRowsComplete remains the complete-catalog law
+// for the Snapshot publication that joins this column with the artifact's
+// Module column.
+//
+// Coverage stays exact in both directions: a missing owner row is rejected, and
+// so is a row naming a relation outside these nine owners, including a
+// ProgramModule identity that reached Link through some other route.
+func LinkCountRowsComplete(rows CountRows) bool {
+	return GeneratedCountRowsCompleteForOwners(rows,
+		RelationOwnerProgramSource,
+		RelationOwnerProgramFlow,
+		RelationOwnerProgramStatic,
+		RelationOwnerTarget,
+		RelationOwnerLinkProject,
+		RelationOwnerLinkBoundary,
+		RelationOwnerLinkModule,
+		RelationOwnerLinkStatic,
+		RelationOwnerLinkHost,
+	)
+}
+
 // GeneratedCountRowsCompleteForOwners reports exact coverage for the selected
 // generated owners. It lets a cold owner validate only its own rows while the
 // Link/Snapshot boundary validates the complete catalog, without restating

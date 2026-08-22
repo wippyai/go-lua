@@ -14,6 +14,15 @@ var errCountRows = errors.New("link: invalid denominator counts")
 // each Link child contributes its own already-sealed column. The aggregation
 // is deliberately computed on demand; Link does not retain a second mutable
 // denominator authority.
+//
+// The column is total over the nine owners Link seals: the three cold owners a
+// published Program root freezes, Target, and the five Link owners. The
+// ProgramModule family is not among them, because a Program root holds no
+// Module component and those derived cardinalities first exist at the Program
+// artifact boundary, downstream of the mounted Programs Link reads. Link
+// therefore states LinkCountRowsComplete, not the complete-catalog law, and
+// refuses a column that drops one of its own rows or carries a relation
+// outside those nine owners.
 func (l *Link) CountRows() (denominator.CountRows, error) {
 	if l == nil || !l.id.Available() || l.project == nil || l.boundary == nil || l.module == nil || l.static == nil || l.host == nil {
 		return denominator.CountRows{}, errCountRows
@@ -81,7 +90,7 @@ func (l *Link) CountRows() (denominator.CountRows, error) {
 	parts = append(parts, hostRows)
 
 	rows, ok := denominator.SumCountRows(parts...)
-	if !ok || !denominator.GeneratedCountRowsComplete(rows) {
+	if !ok || !denominator.LinkCountRowsComplete(rows) {
 		return denominator.CountRows{}, errCountRows
 	}
 	return rows, nil
