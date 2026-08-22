@@ -40,7 +40,7 @@ func closureRequirementCompiler(t *testing.T, source string, want heapallocation
 	boundaryBundle, boundaryFault := bodyboundary.Build(bodyboundary.Input{
 		Program: input, ProgramID: input.ContentID(), Values: state.publication.Values, PointIDsBySite: state.pointIDsBySite,
 	})
-	if boundaryFault.Failed() || boundaryBundle == nil {
+	if boundaryFault.Available() || boundaryBundle == nil {
 		t.Fatalf("boundary fixture fault=%#v bundle=%v", boundaryFault, boundaryBundle)
 	}
 	var body programschema.Body
