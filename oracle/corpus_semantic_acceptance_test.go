@@ -31,8 +31,10 @@ func TestCanonicalCorpusSemanticAcceptance(t *testing.T) {
 	projects := corpusHarnessProjects(t)
 	outcomes := corpusHarnessWalk(t, projects, corpusSemanticAcceptanceMode())
 	unsupported := corpusSemanticUnsupportedLedgerOf(t, projects)
-	t.Log(corpusHarnessShardReceipt("acceptance", outcomes) + "\n" + unsupported.summary())
+	families := corpusNativeFamilyLedgerOf(projects)
+	t.Log(corpusHarnessShardReceipt("acceptance", outcomes) + "\n" + unsupported.summary() + "\n" + families.summary())
 	t.Run("unsupported", func(t *testing.T) { unsupported.report(t) })
+	t.Run("unimplemented-native-families", func(t *testing.T) { families.report(t) })
 }
 
 // corpusSemanticUnsupportedFixture is one fixture's unsupported contract: the
@@ -100,7 +102,7 @@ func corpusSemanticUnsupportedLedgerOf(t *testing.T, projects []corpusHarnessPro
 			case composite.DiagnosticCodeDeclared:
 				ledger.owners[match[1]] = declared.Owner
 			default:
-				ledger.owners[match[1]] = "unregistered"
+				ledger.owners[match[1]] = corpusNativeFamilyUnregisteredOwner
 			}
 		}
 		sort.Strings(codes)
@@ -388,7 +390,75 @@ func corpusSemanticFixtureInputUnsupported(expectation *corpusDiagnosticProjectE
 	if expectation.manifest.Check.RenderOptions != nil {
 		unsupported = append(unsupported, "check.render_options requires an unavailable current rendering contract")
 	}
+	unsupported = append(unsupported, corpusSemanticNativeFamilyUnsupported(expectation)...)
 	return unsupported
+}
+
+// corpusSemanticNativeFamilyUnsupported fences native selectors that name a
+// fact family no issuer publishes rows under. Such a selector cannot be
+// compared: it matches nothing because the family is absent from the
+// publication, not because the analyzed program lacks the fact, so a lower
+// bound fails for the wrong reason and an upper bound is satisfied without the
+// analyzer having decided anything. Fencing it before compile is what keeps
+// "the family answered zero rows" and "the family does not exist" different
+// answers.
+//
+// The family half of the vocabulary is read from analysis/result, which owns
+// the closed publication enum and the declared-not-implemented register beside
+// it. Nothing is restated here: an implemented family is one the enum spells,
+// and every other name carries the register's owner or is named as
+// unregistered.
+func corpusSemanticNativeFamilyUnsupported(expectation *corpusDiagnosticProjectExpectations) []string {
+	families := corpusNativeContractFamilies(expectation)
+	if len(families) == 0 {
+		return nil
+	}
+	unsupported := make([]string, 0, len(families))
+	for _, family := range families {
+		status, declared := result.NativeFamilyAnswer(family)
+		switch status {
+		case result.NativeFamilyStatusImplemented:
+			continue
+		case result.NativeFamilyStatusDeclared:
+			unsupported = append(unsupported, fmt.Sprintf("native fact family %s has no issuer; owed by %s: %s", strconv.Quote(family), declared.Owner, declared.Reason))
+		default:
+			unsupported = append(unsupported, fmt.Sprintf("native fact family %s has no issuer; owner %s: the family is in neither the closed publication enum nor the declared-not-implemented register", strconv.Quote(family), corpusNativeFamilyUnregisteredOwner))
+		}
+	}
+	return unsupported
+}
+
+// corpusNativeFamilyUnregisteredOwner is what an unsupported name renders as
+// when neither half of a vocabulary claims it. It is a defect in the naming
+// configuration rather than an owed judgment, and it is spelled once so both
+// ledgers render it identically.
+const corpusNativeFamilyUnregisteredOwner = "unregistered"
+
+// corpusNativeContractFamilies is the set of native fact families one fixture
+// manifest names, in first-appearance order. Both selector sections read the
+// same family column, so both are read here; a selector with no family column
+// names no family and contributes nothing.
+func corpusNativeContractFamilies(expectation *corpusDiagnosticProjectExpectations) []string {
+	if expectation == nil || expectation.manifest == nil || expectation.manifest.Check == nil || expectation.manifest.Check.Native == nil {
+		return nil
+	}
+	contract := expectation.manifest.Check.Native
+	families := make([]string, 0, len(contract.Facts)+len(contract.Invalidation))
+	seen := make(map[string]bool, cap(families))
+	record := func(family string) {
+		if family == "" || seen[family] {
+			return
+		}
+		seen[family] = true
+		families = append(families, family)
+	}
+	for _, fact := range contract.Facts {
+		record(fact.Family)
+	}
+	for _, invalidation := range contract.Invalidation {
+		record(invalidation.Family)
+	}
+	return families
 }
 
 // corpusSemanticDeclaredHostModulePaths is the canonical fixture Target's
