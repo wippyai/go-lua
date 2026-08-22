@@ -284,9 +284,9 @@ func Seal(linkID identity.ContentID, contexts []Context, roots []RootContext, tr
 	// have at least one ingress root.  The latter is the root-totality law:
 	// no free-floating Context can enter the directory.
 	rooted := make(map[identity.ContentID]struct{}, len(rootRows))
-	contextAt := make(map[identity.ContentID]struct{}, len(contextRows))
+	contextAt := make(map[identity.ContentID]Context, len(contextRows))
 	for _, row := range contextRows {
-		contextAt[row.ID()] = struct{}{}
+		contextAt[row.ID()] = row
 	}
 	for _, row := range rootRows {
 		if _, ok := contextAt[row.ContextID()]; !ok {
@@ -316,6 +316,13 @@ func Seal(linkID identity.ContentID, contexts []Context, roots []RootContext, tr
 		// the source of that edge ambiguous and would permit duplicate
 		// authorities at the directory boundary.
 		if row.FromContextID() == row.ToContextID() {
+			return Directory{}, false
+		}
+		// A module cache is actor-local, so the composition that authors these
+		// edges never crosses an actor.  Admitting one would put a transition
+		// in the relation that no execution reaches and would break the
+		// containment of the authored relation in the activation relation.
+		if contextAt[row.FromContextID()].ActorID() != contextAt[row.ToContextID()].ActorID() {
 			return Directory{}, false
 		}
 	}
@@ -445,6 +452,38 @@ func (directory Directory) Transition(fromID, toID identity.ContentID) (Transiti
 		}
 	}
 	return Transition{}, false
+}
+
+// ActivationEdge resolves the execution-context edge one activation route
+// occupies: the application is performed in the source Context and enters a
+// body whose module resides in the target Context.
+//
+// This is not the module-call relation. A module-call transition is authored
+// by one import: it names the exact require that instantiates a module cache.
+// An activation is a plain application of a callable value, and a callable
+// admitted into an actor may be applied at any call site that actor executes -
+// a callback handed down to an imported library, a value re-exported through
+// a third module, or an opaque call value that names no body at all. The
+// activation relation is therefore exactly co-residence in one actor of one
+// Link, and the edge is derived from the two authenticated Contexts rather
+// than materialized: the relation is quadratic in Context count while the
+// authored transition relation is not.
+//
+// Contexts in different actors are never activation-connected. A value that
+// crosses an actor boundary is transferred, not applied in place, so a route
+// between two actors names an application no execution reaches.
+//
+// The derived edge is identity-equal to the authored row whenever the same
+// pair also carries a module-call transition, because both derive the row
+// from the same Link and endpoint pair. The authored relation is a
+// subrelation of this one and neither becomes a second authority.
+func (directory Directory) ActivationEdge(fromID, toID identity.ContentID) (Transition, bool) {
+	from, fromOK := directory.Context(fromID)
+	to, toOK := directory.Context(toID)
+	if !fromOK || !toOK || from.ActorID() != to.ActorID() {
+		return Transition{}, false
+	}
+	return NewTransition(directory.link, from.ID(), to.ID())
 }
 
 // ContextsForModule resolves every sealed Context one module holds. Directory

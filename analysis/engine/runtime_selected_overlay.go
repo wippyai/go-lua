@@ -272,9 +272,9 @@ type selectedFactorDescriptor struct {
 }
 
 // validSelectedActivationContext authenticates the complete transition tuple
-// against the sealed Link directory and resolves exactly one source/target
-// StateOrdinal pair. It never searches same-module contexts or fans out a
-// graph-point edge.
+// against the sealed Link directory's activation relation and resolves exactly
+// one source/target StateOrdinal pair. It never searches same-module contexts
+// or fans out a graph-point edge.
 func (runtime *solverRuntime) validSelectedActivationContext(context equation.ActivationContext, source, target int) bool {
 	if runtime == nil || !runtime.artifactBacked {
 		return context.Empty()
@@ -284,7 +284,7 @@ func (runtime *solverRuntime) validSelectedActivationContext(context equation.Ac
 	}
 	from, fromOK := runtime.contexts.Context(context.FromContextID)
 	to, toOK := runtime.contexts.Context(context.ToContextID)
-	transition, transitionOK := runtime.contexts.Transition(context.FromContextID, context.ToContextID)
+	transition, transitionOK := runtime.contexts.ActivationEdge(context.FromContextID, context.ToContextID)
 	if !fromOK || !toOK || !from.Available() || !to.Available() || !transitionOK || !transition.Available() ||
 		transition.ID() != context.TransitionID || transition.LinkID() != runtime.contexts.LinkID() {
 		return false

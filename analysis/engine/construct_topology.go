@@ -1325,15 +1325,19 @@ func constructDeclaredCandidates(declaration topologyDeclaration, mounts constru
 // which activation candidate a higher-order library value selected. Missing
 // candidate context is therefore a hard admission refusal. The tuple is one
 // edge per admitted row because the owner already expanded a multi-context
-// module into one candidate per admissible pair; the callable-origin plane
-// covers cross-module imports only and never supplies an intra-module route.
+// module into one candidate per admissible pair.
+//
+// The directory answers on its activation relation, not on its authored
+// module-call relation: a callable value is applied wherever its actor
+// executes, so a candidate may name a body in a module the trigger's module
+// never imports.
 func declaredActivationCandidateContexts(declaration topologyDeclaration, candidate declaredActivationCandidate) ([]equation.ActivationContext, bool) {
 	if !candidate.Context.Available() || !declaration.contexts.Available() {
 		return nil, false
 	}
 	from, fromOK := declaration.contexts.Context(candidate.Context.FromContextID)
 	to, toOK := declaration.contexts.Context(candidate.Context.ToContextID)
-	transition, transitionOK := declaration.contexts.Transition(candidate.Context.FromContextID, candidate.Context.ToContextID)
+	transition, transitionOK := declaration.contexts.ActivationEdge(candidate.Context.FromContextID, candidate.Context.ToContextID)
 	if !fromOK || !toOK || !from.Available() || !to.Available() || !transitionOK || !transition.Available() ||
 		from.LinkID() != declaration.contexts.LinkID() || to.LinkID() != declaration.contexts.LinkID() ||
 		transition.ID() != candidate.Context.TransitionID || transition.LinkID() != declaration.contexts.LinkID() ||

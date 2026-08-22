@@ -51,8 +51,14 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 		if !bodyOK || !moduleOK || !pathOK || !routeOK {
 			return engine.MountedActivationAdmit{}, false
 		}
-		edges, edgesOK := activationRouteEdges(contexts, mountID, moduleKey)
-		if !edgesOK {
+		// A body whose module the directory does not hold is a route no
+		// mount declared and refuses the occurrence. A body the directory
+		// holds but connects to this trigger by no edge is a route the Link
+		// declares unreachable - another actor's copy of a shared library -
+		// and contributes no candidate while the occurrence keeps the routes
+		// that remain.
+		edges, residentOK := activationRouteEdges(contexts, mountID, moduleKey)
+		if !residentOK {
 			return engine.MountedActivationAdmit{}, false
 		}
 		for _, edge := range edges {
@@ -77,10 +83,22 @@ func (rule *HotRule) MountedAdmit(mountID, reusablePointID, occurrenceID identit
 // activationRouteEdges resolves the execution-context edges one candidate body
 // route may run on: from a Context of the trigger's module to a Context of the
 // body's module. A module can hold several Contexts, so the route is admitted
-// once per declared edge and the directory's Transition relation - not the
-// producer - decides which pairs exist. A body in the trigger's own module
-// therefore rides the canonical reflexive local edge Seal issues for every
-// Context. A route the directory connects by no edge is not admissible.
+// once per activation edge the directory derives, and the directory - not the
+// producer - decides which pairs are connected.
+//
+// The route table this walks is Call's global body table: a call value may
+// name any admitted body, so a trigger in one module carries a route to a body
+// in a module it never imports. The import relation therefore cannot decide
+// these pairs, and the directory answers on the activation relation instead:
+// two Contexts of one actor are connected in both directions, and a body in
+// the trigger's own module rides the reflexive edge of that same relation.
+//
+// The boolean reports residence, not reachability: it is false only when the
+// directory holds no Context for one of the two modules, which is a mount the
+// Link never made. Two resident modules that share no actor - the two copies
+// of one shared library in a same-Link deployment - are resident and produce
+// no edge, because a value applied in one actor is never the value another
+// actor holds.
 func activationRouteEdges(contexts executioncontext.Directory, triggerModuleID, bodyModuleID identity.ContentID) ([]executioncontext.Transition, bool) {
 	from, fromOK := contexts.ContextsForModule(triggerModuleID)
 	to, toOK := contexts.ContextsForModule(bodyModuleID)
@@ -90,12 +108,12 @@ func activationRouteEdges(contexts executioncontext.Directory, triggerModuleID, 
 	edges := make([]executioncontext.Transition, 0, len(from))
 	for _, source := range from {
 		for _, target := range to {
-			edge, ok := contexts.Transition(source.ID(), target.ID())
+			edge, ok := contexts.ActivationEdge(source.ID(), target.ID())
 			if !ok || !edge.Available() {
 				continue
 			}
 			edges = append(edges, edge)
 		}
 	}
-	return edges, len(edges) != 0
+	return edges, true
 }

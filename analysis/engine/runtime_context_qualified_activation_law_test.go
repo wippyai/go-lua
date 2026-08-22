@@ -73,8 +73,11 @@ func newContextQualifiedActivationLawFixture(t testing.TB) contextQualifiedActiv
 	moduleID := contextQualifiedActivationLawID(t, "shared-module")
 	rows := make([]executioncontext.Context, 0, 4)
 	roots := make([]executioncontext.RootContext, 0, 4)
+	// The four contexts are sibling cache instances of one module inside one
+	// actor. Activation is actor-local, so a route between two actors is not
+	// an edge any directory carries and could not stand in for a sibling here.
+	actor := contextQualifiedActivationLawID(t, "actor")
 	for index := 0; index < 4; index++ {
-		actor := contextQualifiedActivationLawID(t, "actor-"+string(rune('a'+index)))
 		representative := contextQualifiedActivationLawID(t, "representative-"+string(rune('a'+index)))
 		row, rowOK := executioncontext.NewContext(linkID, moduleID, actor, representative)
 		root, rootOK := executioncontext.NewRootContext(linkID, contextQualifiedActivationLawID(t, "root-"+string(rune('a'+index))), row.ID())
