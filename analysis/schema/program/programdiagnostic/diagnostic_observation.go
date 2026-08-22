@@ -130,12 +130,13 @@ func NewDiagnosticObservationTypeConformance(
 	site DiagnosticObservationSite,
 	owner, measured, declared, span identity.ContentID,
 	position uint32,
+	subject string,
 ) (DiagnosticObservation, bool) {
 	row := DiagnosticObservation{
 		id: id, kind: structure.DiagnosticObservationTypeConformance, location: location,
 		evidenceOffset: evidenceOffset, evidenceCount: evidenceCount,
 		site: site, owner: owner, measured: measured, declared: declared,
-		span: span, position: position,
+		span: span, position: position, name: subject,
 	}
 	return row, row.Available()
 }
@@ -179,7 +180,7 @@ func (row DiagnosticObservation) Available() bool {
 	case structure.DiagnosticObservationTypeConformance:
 		return row.site.Valid() && row.owner.Available() && row.measured.Available() && row.declared.Available() && row.span.Available() &&
 			!emptyEvidence && emptyPath && row.decision == zero && row.value == zero && row.reference == zero && row.root == zero &&
-			row.read == zero && row.cell == zero && row.name == ""
+			row.read == zero && row.cell == zero
 	default:
 		return false
 	}
@@ -253,11 +254,21 @@ func (row DiagnosticObservation) CellID() identity.ContentID {
 	return row.cell
 }
 
+// Name is the authored spelling of the row's subject: the global identifier an
+// unresolved read named, or the authored access path a conformance site
+// measured. A conformance site whose subject the authored projection does not
+// spell carries none, so the column is required on the first population and
+// optional on the second.
 func (row DiagnosticObservation) Name() string {
-	if !row.Available() || row.kind != structure.DiagnosticObservationValueReferenceUnresolved {
+	if !row.Available() {
 		return ""
 	}
-	return row.name
+	switch row.kind {
+	case structure.DiagnosticObservationValueReferenceUnresolved, structure.DiagnosticObservationTypeConformance:
+		return row.name
+	default:
+		return ""
+	}
 }
 
 func (row DiagnosticObservation) Site() DiagnosticObservationSite {

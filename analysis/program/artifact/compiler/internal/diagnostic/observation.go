@@ -300,10 +300,12 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 			site := programdiagnostic.DiagnosticObservationSiteCallArgument
+			argumentSubject, _ := compiler.input.Program.SubjectSpelling(memberTerm)
 			row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(
 				programdiagnostic.TypeConformanceIdentity(compiler.input.Program.ContentID(), location, site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex), points),
 				location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
 				site, call.ID(), argument.MemberID(), declared, argument.SpanID(), uint32(argumentIndex),
+				argumentSubject,
 			)
 			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
@@ -519,6 +521,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 // coordinates every site shares: the owning statement, the measured value, the
 // declaration, and the measured value's own evaluation span.
 func (compiler *compiler) admitConformanceObservation(site programdiagnostic.DiagnosticObservationSite, owner, value, declared identity.ContentID, measured keyspace.Term, position uint32) bool {
+	subject, _ := compiler.input.Program.SubjectSpelling(measured)
 	location, locationOK := compiler.input.Program.Source().Identity().Span(measured)
 	span, spanOK := compiler.input.Program.Span(measured)
 	finish, finishOK := span.Finish()
@@ -537,7 +540,7 @@ func (compiler *compiler) admitConformanceObservation(site programdiagnostic.Dia
 	row, rowOK := programdiagnostic.NewDiagnosticObservationTypeConformance(
 		programdiagnostic.TypeConformanceIdentity(compiler.input.Program.ContentID(), location, site, owner, value, declared, span.ContextID(), position, points),
 		location, uint32(len(compiler.diagnosticEvidence)), uint32(len(points)),
-		site, owner, value, declared, span.ContextID(), position,
+		site, owner, value, declared, span.ContextID(), position, subject,
 	)
 	return rowOK && compiler.admitDiagnosticObservation(row, points, nil)
 }

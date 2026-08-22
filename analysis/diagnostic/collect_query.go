@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/runtimekind"
@@ -16,6 +17,7 @@ import (
 // evidence points its measured value is observed at.
 type ConformanceSubject struct {
 	ID, FindingID, Mount identity.ContentID
+	Context              executioncontext.Context
 	Location             DiagnosticLocation
 	Site                 schemadiag.Site
 	Actual               uint32
@@ -25,6 +27,10 @@ type ConformanceSubject struct {
 	// site is the finding itself, so its member is what the finding renders;
 	// an established member names the field its value was measured against.
 	Member string
+	// Subject is the authored spelling of the measured expression, published
+	// by the compiler that holds the authored access relations. It is empty
+	// for a subject the authored projection does not spell.
+	Subject string
 	// Points are the execution points of the occurrences that produce the
 	// measured value. A statement carries one base evidence point and as many
 	// producing occurrences as it has measured values, so a subject addresses
@@ -61,7 +67,7 @@ func CollectConformance(
 		return false
 	}
 	for _, subject := range subjects {
-		if !subject.ID.Available() || !subject.FindingID.Available() || !subject.Mount.Available() || !subject.Location.Available() ||
+		if !subject.ID.Available() || !subject.FindingID.Available() || !subject.Mount.Available() || !subject.Context.Available() || !subject.Location.Available() ||
 			!subject.Site.Available() || !subject.DeclaredMay.Valid() || len(subject.Points) == 0 {
 			return false
 		}
@@ -147,7 +153,7 @@ func observedValue(
 ) (observed runtimekind.Set, exact diagnosticObservedSpelling, anyEvidence, readable bool) {
 	agreed := true
 	for _, point := range subject.Points {
-		publicationKey, addressed := ValueObservationAddress(report.compilation, structure.DiagnosticObservationTypeConformance, subject.Mount, point)
+		publicationKey, addressed := ValueObservationAddress(report.compilation, structure.DiagnosticObservationTypeConformance, subject.Mount, point, subject.Context)
 		if !point.Available() || !addressed {
 			return 0, exact, false, false
 		}
@@ -244,7 +250,7 @@ func appendConformanceFinding(
 	if !targetOK {
 		return false
 	}
-	name, nameOK := NewSemanticName(conformanceSubjectName(subject.Site))
+	name, nameOK := NewSemanticName(conformanceSubjectName(subject.Site, subject.Subject))
 	member, memberOK := NewSemanticName(subject.Member)
 	if !nameOK {
 		return false
@@ -280,12 +286,16 @@ func conformanceTemplateData(
 	}
 }
 
-// conformanceSubjectName is the name a finding refers to its subject by. It is
-// the geometry's own word and not the program's: the binder, argument, and
-// member spellings the source authored are established at issuance and are not
-// published into the artifact, so this layer has no path to them. Closing that
-// is a publication the issuing compiler owes, not a name this layer may invent.
-func conformanceSubjectName(site schemadiag.Site) string {
+// conformanceSubjectName is the name a finding refers to its subject by. The
+// authored spelling is the answer whenever the issuing compiler published one,
+// because that is the text the reader wrote and can find again. A site whose
+// subject the authored projection does not spell - a dynamic key, a value with
+// no authored name of its own - falls back to the geometry's own word, which
+// names the position rather than the expression.
+func conformanceSubjectName(site schemadiag.Site, subject string) string {
+	if _, spelled := NewSemanticName(subject); spelled && subject != "" {
+		return subject
+	}
 	switch site {
 	case schemadiag.SiteCallArgument:
 		return "argument"

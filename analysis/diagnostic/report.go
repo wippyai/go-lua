@@ -73,8 +73,8 @@ func ForgedFinding(report *DiagnosticReport, ordinal uint32) Finding {
 	return Finding{owner: report, ordinal: ordinal}
 }
 
-func UnsafeTemplateData(subject, target string, claim diagnosticClaimForm, proof DiagnosticLocation) diagnosticTemplateData {
-	return diagnosticTemplateData{subject: diagnosticSemanticName{value: subject}, target: diagnosticTargetType{value: target}, claim: claim, proof: proof}
+func UnsafeTemplateData(subject, target string, claim diagnosticClaimForm, witnesses ...DiagnosticLocation) diagnosticTemplateData {
+	return diagnosticTemplateData{subject: diagnosticSemanticName{value: subject}, target: diagnosticTargetType{value: target}, claim: claim, witnesses: append([]DiagnosticLocation(nil), witnesses...)}
 }
 
 func diagnosticDeclaration(table schemadiag.Table, code DiagnosticCode) (*schemadiag.Entry, bool) {
@@ -103,34 +103,126 @@ const (
 type diagnosticSemanticName struct{ value string }
 type diagnosticTargetType struct{ value string }
 
+// diagnosticTemplateTokenValid admits exactly the closed access-path grammar a
+// finding names its subject by. Report templates interpolate this value into
+// message and evidence text, so the grammar exists to keep that interpolation
+// closed over names and paths rather than opening it to a prose fragment.
+//
+// The grammar is one identifier followed by any number of authored access
+// steps:
+//
+//	path   := ident step*
+//	step   := "." ident | "[" index "]" | ":" ident "(...)" | "(...)"
+//	index  := integer | quoted-string
+//
+// A plain dotted name (LocalPoint, missing_count, module.Type) is the one-step
+// subset of it, so every token the earlier declaration-name grammar admitted is
+// still admitted. Anything with whitespace, an unbalanced bracket, an
+// unterminated string, or an actual list that is not the elision is prose and
+// is refused.
 func diagnosticTemplateTokenValid(value string) bool {
-	// Report templates interpolate this value into message/evidence text. Keep
-	// that interpolation closed over semantic names rather than accepting a
-	// one-line prose fragment: only ASCII identifier segments separated by '.'
-	// are valid (for example LocalPoint, missing_count, or module.Type).
-	if value == "" {
+	cursor, ok := templateTokenIdentifier(value, 0)
+	if !ok {
 		return false
 	}
-	segmentStart := true
-	for index := 0; index < len(value); index++ {
-		character := value[index]
-		if character == '.' {
-			if segmentStart {
-				return false
+	for cursor < len(value) {
+		cursor, ok = templateTokenStep(value, cursor)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// templateTokenStep consumes one authored access step at cursor.
+func templateTokenStep(value string, cursor int) (int, bool) {
+	switch value[cursor] {
+	case '.':
+		return templateTokenIdentifier(value, cursor+1)
+	case '[':
+		return templateTokenIndex(value, cursor+1)
+	case ':':
+		next, ok := templateTokenIdentifier(value, cursor+1)
+		if !ok {
+			return 0, false
+		}
+		return templateTokenElision(value, next)
+	case '(':
+		return templateTokenElision(value, cursor)
+	default:
+		return 0, false
+	}
+}
+
+// templateTokenIdentifier consumes one ASCII identifier at cursor.
+func templateTokenIdentifier(value string, cursor int) (int, bool) {
+	start := cursor
+	for cursor < len(value) {
+		character := value[cursor]
+		letter := character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character == '_'
+		digit := character >= '0' && character <= '9'
+		if !letter && !(digit && cursor > start) {
+			break
+		}
+		cursor++
+	}
+	return cursor, cursor > start
+}
+
+// templateTokenIndex consumes one bracket subscript body and its closing
+// bracket. The body is a decimal integer or a double-quoted string with no
+// control characters and no escape other than an escaped quote or backslash.
+func templateTokenIndex(value string, cursor int) (int, bool) {
+	if cursor >= len(value) {
+		return 0, false
+	}
+	if value[cursor] == '"' {
+		cursor++
+		for cursor < len(value) {
+			switch character := value[cursor]; {
+			case character == '"':
+				return templateTokenByte(value, cursor+1, ']')
+			case character == '\\':
+				if cursor+1 >= len(value) || (value[cursor+1] != '"' && value[cursor+1] != '\\') {
+					return 0, false
+				}
+				cursor += 2
+			case character < 0x20 || character == 0x7f:
+				return 0, false
+			default:
+				cursor++
 			}
-			segmentStart = true
-			continue
 		}
-		if character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character == '_' {
-			segmentStart = false
-			continue
-		}
-		if !segmentStart && character >= '0' && character <= '9' {
-			continue
-		}
-		return false
+		return 0, false
 	}
-	return !segmentStart
+	start := cursor
+	if cursor < len(value) && value[cursor] == '-' {
+		cursor++
+	}
+	for cursor < len(value) && value[cursor] >= '0' && value[cursor] <= '9' {
+		cursor++
+	}
+	if cursor == start || (cursor == start+1 && value[start] == '-') {
+		return 0, false
+	}
+	return templateTokenByte(value, cursor, ']')
+}
+
+// templateTokenElision consumes the authored actual-list elision.
+func templateTokenElision(value string, cursor int) (int, bool) {
+	const elision = "(...)"
+	if len(value)-cursor < len(elision) || value[cursor:cursor+len(elision)] != elision {
+		return 0, false
+	}
+	return cursor + len(elision), true
+}
+
+// templateTokenByte consumes one expected byte at cursor.
+func templateTokenByte(value string, cursor int, expected byte) (int, bool) {
+	if cursor >= len(value) || value[cursor] != expected {
+		return 0, false
+	}
+	return cursor + 1, true
 }
 
 func newDiagnosticSemanticName(value string) (diagnosticSemanticName, bool) {
@@ -354,11 +446,23 @@ type diagnosticTemplateData struct {
 	subject diagnosticSemanticName
 	target  diagnosticTargetType
 	claim   diagnosticClaimForm
-	proof   DiagnosticLocation
-	handled diagnosticNameList
-	missing diagnosticNameList
-	actual  diagnosticObservedSpelling
-	member  diagnosticSemanticName
+	// witnesses is the located roster a row's non-primary anchors read, in the
+	// order the row declares them. An anchor names one by its one-based ordinal,
+	// so a finding whose proof spans several places carries every one of them.
+	witnesses []DiagnosticLocation
+	handled   diagnosticNameList
+	missing   diagnosticNameList
+	actual    diagnosticObservedSpelling
+	member    diagnosticSemanticName
+}
+
+// witnessAt resolves one declared witness ordinal.
+func (data diagnosticTemplateData) witnessAt(witness uint8) (DiagnosticLocation, bool) {
+	if witness == 0 || int(witness) > len(data.witnesses) {
+		return DiagnosticLocation{}, false
+	}
+	location := data.witnesses[witness-1]
+	return location, location.Available()
 }
 
 // validFor states the payload contract of one declaration: exactly the fields
@@ -396,7 +500,25 @@ func (data diagnosticTemplateData) validFor(entry *schemadiag.Entry, verdict uin
 	if !payloadFieldValid(requirements&schemadiag.RequiresMember != 0, data.member.valid(), data.member == diagnosticSemanticName{}) {
 		return false
 	}
-	return payloadFieldValid(requirements&schemadiag.RequiresProofLocation != 0, data.proof.Available(), data.proof == DiagnosticLocation{})
+	return data.witnessRosterValid(requirements&schemadiag.RequiresWitness != 0, entry.Witnesses())
+}
+
+// witnessRosterValid states the located-witness half of the payload contract:
+// a row that reads witnesses is supplied exactly the count it declares, each
+// one locatable, and a row that reads none is supplied none.
+func (data diagnosticTemplateData) witnessRosterValid(required bool, declared uint8) bool {
+	if !required {
+		return len(data.witnesses) == 0
+	}
+	if declared == 0 || len(data.witnesses) != int(declared) {
+		return false
+	}
+	for _, location := range data.witnesses {
+		if !location.Available() {
+			return false
+		}
+	}
+	return true
 }
 
 // payloadFieldValid states one payload field's contract: a required field is
@@ -409,12 +531,12 @@ func payloadFieldValid(required, valid, absent bool) bool {
 	return absent
 }
 
-func (data diagnosticTemplateData) location(anchor schemadiag.Anchor, primary DiagnosticLocation) (DiagnosticLocation, bool) {
+func (data diagnosticTemplateData) location(anchor schemadiag.Anchor, witness uint8, primary DiagnosticLocation) (DiagnosticLocation, bool) {
 	switch anchor {
 	case schemadiag.AnchorPrimary:
 		return primary, primary.Available()
-	case schemadiag.AnchorProof:
-		return data.proof, data.proof.Available()
+	case schemadiag.AnchorWitness:
+		return data.witnessAt(witness)
 	default:
 		return DiagnosticLocation{}, false
 	}
@@ -680,7 +802,7 @@ func (finding Finding) EvidenceAt(index int) (DiagnosticEvidence, bool) {
 		return DiagnosticEvidence{}, false
 	}
 	declared := presentation.Evidence[index]
-	location, locationOK := row.data.location(declared.Anchor, row.location)
+	location, locationOK := row.data.location(declared.Anchor, declared.Witness, row.location)
 	detail := renderDiagnosticLine(declared.Detail, row.data)
 	evidence := DiagnosticEvidence{location: location, kind: declared.Kind, trust: declared.Trust, reason: declared.Reason, detail: detail}
 	return evidence, locationOK && evidence.Available()
@@ -698,7 +820,7 @@ func (finding Finding) LabelAt(index int) (DiagnosticLabel, bool) {
 		return DiagnosticLabel{}, false
 	}
 	declared := presentation.Labels[index]
-	location, locationOK := row.data.location(declared.Anchor, row.location)
+	location, locationOK := row.data.location(declared.Anchor, declared.Witness, row.location)
 	label := DiagnosticLabel{location: location, text: renderDiagnosticLine(declared.Text, row.data)}
 	return label, locationOK && label.Available()
 }
@@ -737,11 +859,10 @@ func (finding Finding) RenderSource(sourceFile, sourceText string) (string, bool
 	if !ok || sourceFile == "" || sourceFile != row.location.File() {
 		return "", false
 	}
-	line, ok := sourceLine(sourceText, row.location.startLine)
-	if !ok {
+	if _, ok := sourceLine(sourceText, row.location.startLine); !ok {
 		return "", false
 	}
-	return finding.render(row, strings.TrimSpace(line), true), true
+	return finding.render(row, sourceText, true), true
 }
 
 func sourceLine(sourceText string, line uint32) (string, bool) {
@@ -759,7 +880,7 @@ func sourceLine(sourceText string, line uint32) (string, bool) {
 	return lines[line-1], true
 }
 
-func (finding Finding) render(row diagnosticFinding, sourceLineText string, includeSource bool) string {
+func (finding Finding) render(row diagnosticFinding, sourceText string, includeSource bool) string {
 	line, column := row.location.Start()
 	entry, entryOK := finding.owner.declarations.ForCode(row.code)
 	severity, severityOK := findingSeveritySpelling(finding.owner.vocabulary, row.severity)
@@ -783,7 +904,7 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 			fmt.Fprintf(&rendered, "--> %s:%d:%d\n", row.location.File(), line, column)
 		case schemadiag.SectionSource:
 			if includeSource {
-				fmt.Fprintf(&rendered, "%d | %s\n", line, sourceLineText)
+				renderSourceLine(&rendered, sourceText, line)
 			}
 		case schemadiag.SectionEvidence:
 			if len(presentation.Evidence) == 0 {
@@ -796,7 +917,23 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 					return ""
 				}
 				fmt.Fprintf(&rendered, "%d. %s: %s\n", index+1, evidenceRenderLabel(evidence), evidence.Detail())
+				// A proof line established somewhere other than the reported site
+				// names that place. Repeating the finding's own location under
+				// every line would say nothing, so a line anchored at the primary
+				// location renders exactly as it always has.
+				evidenceLocation, evidenceLocationOK := evidence.Location()
+				if !evidenceLocationOK {
+					return ""
+				}
+				renderElsewhere(&rendered, evidenceLocation, row.location, sourceText, includeSource)
 			}
+		case schemadiag.SectionContext:
+			location, locationOK := row.data.witnessAt(entry.Context())
+			if !locationOK {
+				return ""
+			}
+			rendered.WriteString("where:\n")
+			renderLocated(&rendered, location, sourceText, includeSource)
 		case schemadiag.SectionHelp:
 			if help := renderDiagnosticLine(presentation.Help, row.data); help != "" {
 				fmt.Fprintf(&rendered, "help: %s\n", help)
@@ -804,6 +941,38 @@ func (finding Finding) render(row diagnosticFinding, sourceLineText string, incl
 		}
 	}
 	return strings.TrimSuffix(rendered.String(), "\n")
+}
+
+// renderElsewhere shows one located line only when it is somewhere other than
+// the finding's own reported position.
+func renderElsewhere(rendered *strings.Builder, location, primary DiagnosticLocation, sourceText string, includeSource bool) {
+	if !location.Available() || location == primary {
+		return
+	}
+	renderLocated(rendered, location, sourceText, includeSource)
+}
+
+// renderLocated shows one place: its coordinates, and the source line at those
+// coordinates when the caller supplied the text they belong to.
+func renderLocated(rendered *strings.Builder, location DiagnosticLocation, sourceText string, includeSource bool) {
+	if !location.Available() {
+		return
+	}
+	line, column := location.Start()
+	fmt.Fprintf(rendered, "--> %s:%d:%d\n", location.File(), line, column)
+	if includeSource {
+		renderSourceLine(rendered, sourceText, line)
+	}
+}
+
+// renderSourceLine shows the numbered source line at one position. A position
+// the caller's text does not hold shows nothing rather than a blank frame.
+func renderSourceLine(rendered *strings.Builder, sourceText string, line uint32) {
+	text, ok := sourceLine(sourceText, line)
+	if !ok {
+		return
+	}
+	fmt.Fprintf(rendered, "%d | %s\n", line, strings.TrimSpace(text))
 }
 
 // NewReport opens one sealed collector for a completed Result.
@@ -859,8 +1028,8 @@ func EmptyName() diagnosticSemanticName { return diagnosticSemanticName{} }
 
 func EmptyTarget() diagnosticTargetType { return diagnosticTargetType{} }
 
-func NewTemplateData(subject diagnosticSemanticName, target diagnosticTargetType, claim diagnosticClaimForm, proof DiagnosticLocation) diagnosticTemplateData {
-	return diagnosticTemplateData{subject: subject, target: target, claim: claim, proof: proof}
+func NewTemplateData(subject diagnosticSemanticName, target diagnosticTargetType, claim diagnosticClaimForm, witnesses ...DiagnosticLocation) diagnosticTemplateData {
+	return diagnosticTemplateData{subject: subject, target: target, claim: claim, witnesses: append([]DiagnosticLocation(nil), witnesses...)}
 }
 
 func NewNameList(names []string) (diagnosticNameList, bool) {

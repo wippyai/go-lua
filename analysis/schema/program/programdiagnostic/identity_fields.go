@@ -8,7 +8,7 @@ import (
 // DiagnosticRowsLawVersion is the pinned closed-observation replay law used
 // by the CompileKey and Artifact identity. The diagnostic publication owns
 // both the tagged parent payload and its dense evidence/path child planes.
-const DiagnosticRowsLawVersion uint64 = 5
+const DiagnosticRowsLawVersion uint64 = 6
 
 // WriteArtifactIdentityFields replays the canonical diagnostic portion of an
 // Artifact identity from one sealed diagnostic View. Offset fields are cold
@@ -70,7 +70,7 @@ func (view View) WriteArtifactIdentityFields(writer identity.StringIdentityWrite
 			if !writer.WriteUint(uint64(row.Site())) || !writer.WriteContentID(row.OwnerID()) ||
 				!writer.WriteContentID(row.MeasuredValueID()) || !writer.WriteContentID(row.DeclaredStaticTypeID()) ||
 				!writer.WriteContentID(row.SpanID()) || !writer.WriteUint(uint64(position)) ||
-				!writer.WriteUint(uint64(evidenceWidth)) {
+				!writer.WriteString(row.Name()) || !writer.WriteUint(uint64(evidenceWidth)) {
 				return false
 			}
 			for position := uint32(0); position < evidenceWidth; position++ {
