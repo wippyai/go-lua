@@ -1,6 +1,7 @@
 package directfunction
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -90,19 +91,9 @@ func (r *Result) SelectedBodyPath(path identity.ContentID) (bool, bool) {
 		return false, false
 	}
 	index := sort.Search(len(r.selectedBodyPaths), func(index int) bool {
-		return !contentIDLess(r.selectedBodyPaths[index], path)
+		return bytes.Compare(r.selectedBodyPaths[index][:], path[:]) >= 0
 	})
 	return index < len(r.selectedBodyPaths) && r.selectedBodyPaths[index] == path, true
-}
-
-func contentIDLess(left, right identity.ContentID) bool {
-	for index := range left {
-		if left[index] == right[index] {
-			continue
-		}
-		return left[index] < right[index]
-	}
-	return false
 }
 
 func (r *Result) plane(plane []keyspace.Term, term keyspace.Term, family keyspace.Family) (keyspace.Term, bool) {

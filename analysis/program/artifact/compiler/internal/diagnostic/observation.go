@@ -371,7 +371,8 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			if !formalOK || !declaredOK {
 				continue
 			}
-			memberTerm, sourceIndex, memberOK := compiler.callArgumentSource(argument.ID())
+			source, memberOK := compiler.input.Program.Flow().CallArgumentSource(argument.ID())
+			memberTerm, sourceIndex := source.Term(), source.CallIndex()
 			location, locationOK := compiler.input.Program.Source().Identity().Span(memberTerm)
 			if !memberOK || !locationOK || !programdiagnostic.ValidSpan(location) || !argument.SpanID().Available() {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)

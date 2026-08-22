@@ -34,11 +34,6 @@ func (input Input) Available() bool {
 	return input.Program != nil && input.Program.Available()
 }
 
-type callArgumentSource struct {
-	term  keyspace.Term
-	index int
-}
-
 type compiler struct {
 	input        Input
 	bodyBoundary *bodyboundary.Bundle
@@ -55,8 +50,6 @@ type compiler struct {
 	branchScopeRewriteComputed   bool
 	branchScopeRewriteWellFormed bool
 	branchScopeRewriteOwners     map[keyspace.Term]struct{}
-
-	callArgumentSources map[identity.ContentID]callArgumentSource
 }
 
 // pointPaths copies one owner-issued Causal span into reusable construction
@@ -92,9 +85,6 @@ func Compile(input Input) (programdiagnostic.Publication, programconstruction.Fa
 		calls:                     input.Calls,
 		diagnosticObservationByID: make(map[identity.ContentID]int),
 	}
-	if !compiler.indexCallArgumentSources() {
-		return programdiagnostic.Publication{}, programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, -1, -1)
-	}
 	if fault := compiler.copyDiagnosticObservationsFailure(); fault.Available() {
 		return programdiagnostic.Publication{}, fault
 	}
@@ -109,36 +99,6 @@ func Compile(input Input) (programdiagnostic.Publication, programconstruction.Fa
 		DiagnosticEvidence:     compiler.diagnosticEvidence,
 		DiagnosticPaths:        compiler.diagnosticPaths,
 	}, programconstruction.Fault{}
-}
-
-func (compiler *compiler) indexCallArgumentSources() bool {
-	if compiler == nil || compiler.input.Program == nil {
-		return false
-	}
-	compiler.callArgumentSources = make(map[identity.ContentID]callArgumentSource)
-	view := compiler.input.Program.Flow()
-	calls := view.Authored().Calls()
-	values := view.Authored().Values()
-	for index := 0; index < calls.Count(); index++ {
-		term, termOK := calls.At(index)
-		_, _, _, actuals, relationOK := calls.Get(term)
-		width, widthOK := values.Len(actuals)
-		if !termOK || !relationOK || !widthOK || width < 0 {
-			return false
-		}
-		for position := 0; position < width; position++ {
-			member, memberOK := values.Member(actuals, position)
-			argumentID, argumentOK := view.CallArgumentID(term, position)
-			if !memberOK || !argumentOK || !argumentID.Available() {
-				return false
-			}
-			if prior, duplicate := compiler.callArgumentSources[argumentID]; duplicate && (prior.term != member || prior.index != index) {
-				return false
-			}
-			compiler.callArgumentSources[argumentID] = callArgumentSource{term: member, index: index}
-		}
-	}
-	return true
 }
 
 func (compiler *compiler) valueRowForTerm(term keyspace.Term) (programschema.Values, bool) {
@@ -163,12 +123,4 @@ func (compiler *compiler) valueMemberAt(row programschema.Values, index int) (pr
 	}
 	member := compiler.input.ValuesMembers[int(offset)+index]
 	return member, member.Available()
-}
-
-func (compiler *compiler) callArgumentSource(id identity.ContentID) (keyspace.Term, int, bool) {
-	if compiler == nil || !id.Available() {
-		return 0, -1, false
-	}
-	source, ok := compiler.callArgumentSources[id]
-	return source.term, source.index, ok && source.term != 0 && source.index >= 0
 }

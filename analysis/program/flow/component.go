@@ -89,6 +89,7 @@ type Component struct {
 	continuation         *continuation.Result
 	subjectFlow          *subjectflow.Result
 	semanticPaths        *semanticpath.Certificate
+	callArgumentSources  *callArgumentSourceIndex
 	callResultAdmissions []callResultAdmission
 	callResultTailSlots  []callResultTailSlotAdmission
 }

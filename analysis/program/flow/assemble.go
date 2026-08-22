@@ -277,6 +277,11 @@ func Assemble(
 		callResultAdmissions: callResultAdmissions,
 		callResultTailSlots:  callResultTailSlots,
 	}
+	callArgumentSources, callArgumentSourcesOK := buildCallArgumentSourceIndex(component.View())
+	if !callArgumentSourcesOK {
+		return fail("Call argument sources", errors.New("call argument source projection unavailable or inconsistent"))
+	}
+	component.callArgumentSources = callArgumentSources
 	return &Assembly{state: &assemblyState{
 		source:   sourceComponent,
 		flow:     component,
