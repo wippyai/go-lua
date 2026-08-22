@@ -15,6 +15,7 @@ import (
 
 	coldcomposition "github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/identity"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 const schemaSlotMax = uint64(^uint32(0))
@@ -1000,8 +1001,9 @@ func (builder *SchemaBuilder) addStructuralRule(spec SchemaStructuralRuleSpec, a
 
 // SchemaQuerySpec is the callback-free Query family shape.
 type SchemaQuerySpec struct {
-	Semantic identity.SemanticKey
-	Freezer  identity.SemanticKey
+	Semantic   identity.SemanticKey
+	Freezer    identity.SemanticKey
+	Population queryschema.PopulationKind
 }
 
 type QuerySlot[R any] struct{ slotHandle[schemaQueryDraft] }
@@ -1038,7 +1040,7 @@ func (slot *QuerySlot[R]) Ordinal() (uint64, bool) {
 }
 
 func DeclareQuerySlot[R any](builder *SchemaBuilder, spec SchemaQuerySpec) (*QuerySlot[R], bool) {
-	if builder == nil || builder.phase != schemaBuilderFactors && builder.phase != schemaBuilderChildren || !spec.Semantic.Available() || !spec.Freezer.Available() {
+	if builder == nil || builder.phase != schemaBuilderFactors && builder.phase != schemaBuilderChildren || !spec.Semantic.Available() || !spec.Freezer.Available() || !spec.Population.Available() {
 		if builder != nil {
 			builder.poison()
 		}
@@ -1053,7 +1055,9 @@ func DeclareQuerySlot[R any](builder *SchemaBuilder, spec SchemaQuerySpec) (*Que
 		builder.poison()
 		return nil, false
 	}
-	builder.candidate.Queries = append(builder.candidate.Queries, coldcomposition.QueryFamily{Key: compositionKeyOf(spec.Semantic), Freezer: compositionKeyOf(spec.Freezer)})
+	builder.candidate.Queries = append(builder.candidate.Queries, coldcomposition.QueryFamily{
+		Key: compositionKeyOf(spec.Semantic), Freezer: compositionKeyOf(spec.Freezer), Population: spec.Population,
+	})
 	draft := &schemaQueryDraft{builder: builder, index: index}
 	builder.queries = append(builder.queries, draft)
 	return &QuerySlot[R]{issue(builder, draft, SchemaFormInvalid)}, true
@@ -1117,6 +1121,7 @@ func (builder *SchemaBuilder) Seal() (*Schema, bool) {
 	sealedID := sealed.ID()
 	copy(digest[:], sealedID[:])
 	schema := &Schema{cold: sealed, id: CompositionID{digest: digest}}
+	schema.available = schema.completeGrammar()
 	if !schema.Available() || !builder.bindSealed(schema, sealed) {
 		builder.poison()
 		return nil, false

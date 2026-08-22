@@ -16,7 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
-	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/population"
 )
 
 // memberRow retains exactly one canonical runtime member. Scheduling metadata,
@@ -253,7 +253,7 @@ func sealRuntimeProgram(schema *Schema, graph *equation.Graph, runtime *carrier.
 			return nil, false
 		}
 		shape, shapeOK := schema.queryShapeAt(row.queryOrdinal)
-		if !shapeOK || shape.Population != queryschema.PopulationKindSelectedPoint {
+		if !shapeOK || shape.Population != population.SelectedPoint {
 			return nil, false
 		}
 		if row.heterogeneous != nil {

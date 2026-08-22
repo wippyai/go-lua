@@ -31,6 +31,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
+	"github.com/wippyai/go-lua/analysis/schema/population"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
@@ -68,6 +69,44 @@ const (
 	ProjectionSummary     schema.Key = "semantic/query/projection/summary"
 	ProjectionExact       schema.Key = "semantic/query/projection/exact"
 )
+
+// PopulationKind is kept as the query declaration ABI, but its vocabulary is
+// owned by the schema-neutral population leaf. The authored role keys above
+// remain this package's concern; resolving one of them produces this token.
+type PopulationKind = population.Kind
+
+const (
+	PopulationKindInvalid       = population.Invalid
+	PopulationKindSelectedPoint = population.SelectedPoint
+	PopulationKindObservation   = population.Observation
+)
+
+// ProducerEnvelope is the owner-issued compatibility witness an observation
+// may borrow from a sealed query family. Population is the query's execution
+// lane (selected-point or explicit-observation), while Codec is the complete
+// versioned identity under which the family freezes its answers. Neither field
+// says what an observation's diagnostic population is: a selected-point query
+// is a valid producer for a diagnostic observation just as an observation-only
+// query is.
+type ProducerEnvelope struct {
+	Population PopulationKind
+	Codec      identity.SemanticKey
+}
+
+func (envelope ProducerEnvelope) Available() bool {
+	return envelope.Population.Available() && envelope.Codec.Available()
+}
+
+func populationKindFor(key schema.Key) (PopulationKind, bool) {
+	switch key {
+	case PopulationSelectedPoint:
+		return PopulationKindSelectedPoint, true
+	case PopulationObservation:
+		return PopulationKindObservation, true
+	default:
+		return population.Invalid, false
+	}
+}
 
 // Fold is the closed catalog of ways a family's partial results compose.
 type Fold uint8
@@ -133,9 +172,10 @@ type Declaration struct {
 	// the identity its results are published and opened under. Both are
 	// resolved from the roles the family named, so a contributor installs the
 	// identities its registration carries and cannot open a slot under another.
-	Semantic identity.SemanticKey
-	Freezer  identity.SemanticKey
-	Subjects Subjects
+	Semantic   identity.SemanticKey
+	Freezer    identity.SemanticKey
+	Population PopulationKind
+	Subjects   Subjects
 }
 
 // Binding is the hot context one family's Bind hook receives: the cold
@@ -200,14 +240,15 @@ func Payload[T any](cell Cell) (T, bool) {
 // fragment and sealed implementation but carrying the typed contributor that
 // produces both. It is immutable once built.
 type Registration struct {
-	family     schema.Key
-	id         schema.EntryID
-	codec      identity.ContentID
-	fold       Fold
-	contract   identity.ContentID
-	subjects   []schema.Key
-	population schema.Key
-	projection schema.Key
+	family         schema.Key
+	id             schema.EntryID
+	codec          identity.ContentID
+	fold           Fold
+	contract       identity.ContentID
+	subjects       []schema.Key
+	population     schema.Key
+	populationKind PopulationKind
+	projection     schema.Key
 
 	semantic identity.SemanticKey
 	freezer  identity.SemanticKey
@@ -225,9 +266,10 @@ func New(spec Spec, roles vocabulary.Roles) (*Registration, bool) {
 	semantic, semanticOK := roles.Key(spec.Semantic)
 	codec, codecOK := roles.Key(spec.Codec)
 	contract, contractOK := roles.Key(spec.Contract)
-	_, populationOK := roles.Key(spec.Population)
+	_, populationRoleOK := roles.Key(spec.Population)
+	populationKind, populationKindOK := populationKindFor(spec.Population)
 	_, projectionOK := roles.Key(spec.Projection)
-	if !semanticOK || !codecOK || !contractOK || !populationOK || !projectionOK {
+	if !semanticOK || !codecOK || !contractOK || !populationRoleOK || !populationKindOK || !projectionOK {
 		return nil, false
 	}
 	if !projectionAgrees(spec.Fold, spec.Projection) {
@@ -241,16 +283,17 @@ func New(spec Spec, roles vocabulary.Roles) (*Registration, bool) {
 		seen[subject] = true
 	}
 	registration := &Registration{
-		family:     spec.Family,
-		id:         schema.NewEntryID(schema.SurfaceKindQuery, spec.Family),
-		codec:      identity.ContentID(codec.Digest()),
-		fold:       spec.Fold,
-		contract:   identity.ContentID(contract.Digest()),
-		subjects:   append([]schema.Key(nil), spec.Subjects...),
-		population: spec.Population,
-		projection: spec.Projection,
-		semantic:   semantic,
-		freezer:    codec,
+		family:         spec.Family,
+		id:             schema.NewEntryID(schema.SurfaceKindQuery, spec.Family),
+		codec:          identity.ContentID(codec.Digest()),
+		fold:           spec.Fold,
+		contract:       identity.ContentID(contract.Digest()),
+		subjects:       append([]schema.Key(nil), spec.Subjects...),
+		population:     spec.Population,
+		populationKind: populationKind,
+		projection:     spec.Projection,
+		semantic:       semantic,
+		freezer:        codec,
 	}
 	return registration, registration.EntryAvailable() && registration.declarationComplete()
 }
@@ -315,6 +358,37 @@ func (registration *Registration) SubjectAt(index int) (schema.Key, bool) {
 
 func (registration *Registration) Population() schema.Key { return registration.population }
 
+// PopulationKind is the resolved execution meaning of Population. It is
+// carried into the engine schema without asking the engine to interpret an
+// authored role key or a domain family name.
+func (registration *Registration) PopulationKind() PopulationKind {
+	if registration == nil {
+		return PopulationKindInvalid
+	}
+	return registration.populationKind
+}
+
+// ProducerEnvelope returns the query owner's canonical compatibility witness.
+// The stored population kind and codec digest are checked against the
+// declaration-derived values before they cross the owner boundary, so a
+// caller cannot pair an observation with a query row whose metadata was
+// rewritten after admission.
+func (registration *Registration) ProducerEnvelope() (ProducerEnvelope, bool) {
+	if registration == nil || !registration.EntryAvailable() ||
+		!registration.population.Available() || !registration.populationKind.Available() ||
+		!registration.freezer.Available() {
+		return ProducerEnvelope{}, false
+	}
+	population, populationOK := populationKindFor(registration.population)
+	codec := registration.freezer
+	expectedCodec := identity.ContentID(codec.Digest())
+	if !populationOK || population != registration.populationKind || !expectedCodec.Available() || registration.codec != expectedCodec {
+		return ProducerEnvelope{}, false
+	}
+	envelope := ProducerEnvelope{Population: population, Codec: codec}
+	return envelope, envelope.Available()
+}
+
 func (registration *Registration) Projection() schema.Key { return registration.projection }
 
 // EntryAvailable is the root's admissibility question: does this row identify
@@ -359,7 +433,7 @@ func (registration *Registration) EntryContent(content *framing.Writer) error {
 func (registration *Registration) declarationComplete() bool {
 	return registration.codec.Available() && registration.fold.Available() &&
 		registration.contract.Available() && len(registration.subjects) > 0 &&
-		registration.population.Available() && registration.projection.Available()
+		registration.population.Available() && registration.populationKind.Available() && registration.projection.Available()
 }
 
 func projectionAgrees(fold Fold, projection schema.Key) bool {

@@ -9,13 +9,14 @@ import (
 	"reflect"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/schema/population"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
 // codecVersion changes whenever a cold semantic term changes meaning. Rule
 // admission is no longer a cold schema term, so previous CompositionIDs must
 // not be reused for the reduced declaration grammar.
-const codecVersion = 17
+const codecVersion = 18
 
 // ID is a fixed semantic digest.  It is not a Program artifact identity.
 type ID [sha256.Size]byte
@@ -201,10 +202,22 @@ type RulePruneShape struct {
 	Semantic Key
 }
 
+// PopulationKind is the resolved query population carried by a sealed
+// family. It aliases the schema-neutral leaf so the declaration surface
+// remains an ingress vocabulary owner rather than an engine dependency.
+type PopulationKind = population.Kind
+
+const (
+	PopulationKindInvalid       = population.Invalid
+	PopulationKindSelectedPoint = population.SelectedPoint
+	PopulationKindObservation   = population.Observation
+)
+
 // QueryShape is the scalar, immutable header of one sealed Query family.
 // Hot binding uses this projection instead of detaching the cold Query row.
 type QueryShape struct {
 	Freezer         Key
+	Population      population.Kind
 	ProjectionCount uint64
 }
 
@@ -243,6 +256,7 @@ type Rule struct {
 type QueryFamily struct {
 	Key         Key
 	Freezer     Key
+	Population  population.Kind
 	Projections []QueryProjection
 }
 
@@ -461,7 +475,7 @@ func (c *Composition) QueryShapeAt(index uint64) (QueryShape, bool) {
 		return QueryShape{}, false
 	}
 	row := c.queries[index]
-	return QueryShape{Freezer: row.Freezer, ProjectionCount: uint64(len(row.Projections))}, true
+	return QueryShape{Freezer: row.Freezer, Population: row.Population, ProjectionCount: uint64(len(row.Projections))}, true
 }
 
 func (c *Composition) QueryProjectionShapeAt(query, projection uint64) (QueryProjectionShape, bool) {
@@ -696,7 +710,7 @@ func validFactorFreeStructuralCandidate(completion Completion, activations []Act
 }
 
 func validQueryFamily(query QueryFamily, factors map[Key]uint64, forms map[Key]map[Key]FactorFormKind, completion Completion) bool {
-	if !query.Key.Available() || !query.Freezer.Available() {
+	if !query.Key.Available() || !query.Freezer.Available() || !query.Population.Available() {
 		return false
 	}
 	if len(query.Projections) == 0 {
@@ -1060,7 +1074,7 @@ func compositionID(factors []Factor, completion Completion, activations []Activa
 		return ID{}, false
 	}
 	for _, query := range queries {
-		if !key(query.Key) || !key(query.Freezer) || writer.Count(uint64(len(query.Projections))) != nil {
+		if !key(query.Key) || !key(query.Freezer) || writer.Uint(uint64(query.Population)) != nil || writer.Count(uint64(len(query.Projections))) != nil {
 			return ID{}, false
 		}
 		for _, projection := range query.Projections {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
+	"github.com/wippyai/go-lua/analysis/schema/population"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
 
@@ -662,7 +663,28 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 	if len(families) == 0 {
 		return nil, len(rows) == 0
 	}
-	if len(rows) < len(families) || len(rows) == 0 {
+	// Observation-populated families are sealed producers, not graph query
+	// roots. Their rows are attached later through the solve-local observation
+	// boundary. Only selected-point families contribute to this topology's
+	// concrete-row denominator.
+	required := 0
+	for _, family := range families {
+		switch family.Population {
+		case population.SelectedPoint:
+			required++
+		case population.Observation:
+		default:
+			return nil, false
+		}
+	}
+	if required == 0 {
+		// A schema composed only of observation producers has no graph query
+		// roots by design. Solve-local observation roots may still request the
+		// already-declared Points later; accepting an empty graph-query plane
+		// here keeps that population distinct from a deferred-all-family mode.
+		return nil, len(rows) == 0
+	}
+	if len(rows) < required || len(rows) == 0 {
 		return nil, false
 	}
 	queries := make([]Query, len(rows))
@@ -677,6 +699,11 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 		if !indexed || familyIndex >= uint64(len(families)) || families[familyIndex].Key != row.Family {
 			return nil, false
 		}
+		if families[familyIndex].Population != population.SelectedPoint {
+			// An observation family must never be smuggled into the graph as a
+			// synthetic point row. It is attached by its owner-issued admission.
+			return nil, false
+		}
 		key, ok := deriveQueryKey(row, point, catalog)
 		if !ok {
 			return nil, false
@@ -688,8 +715,8 @@ func buildQueries(source *composition.Composition, declared map[PointRef]Point, 
 		seen[familyIndex] = true
 		queries[index] = Query{key: key, context: row.Context, point: point, family: row.Family, surfaces: append([]Surface(nil), row.Surfaces...)}
 	}
-	for _, present := range seen {
-		if !present {
+	for index, present := range seen {
+		if families[index].Population == population.SelectedPoint && !present {
 			return nil, false
 		}
 	}
@@ -1029,6 +1056,9 @@ func validQueryInstance(source *composition.Composition, query QueryInstance) bo
 		return false
 	}
 	family := families[index]
+	if family.Population != population.SelectedPoint {
+		return false
+	}
 	if len(family.Projections) == 1 && family.Projections[0].Kind == composition.QuerySupport {
 		return len(query.Surfaces) == 0
 	}

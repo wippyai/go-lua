@@ -113,7 +113,10 @@ func wireQuery[F, R any](
 				if !narrowedOK {
 					return query.Cell{}, false
 				}
-				fragment, declared := declare(builder, query.Declaration{Semantic: semantic, Freezer: freezer, Subjects: narrowed})
+				fragment, declared := declare(builder, query.Declaration{
+					Semantic: semantic, Freezer: freezer,
+					Population: registration.PopulationKind(), Subjects: narrowed,
+				})
 				if !declared {
 					return query.Cell{}, false
 				}

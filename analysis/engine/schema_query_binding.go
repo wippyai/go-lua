@@ -3,7 +3,7 @@ package engine
 import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/composition"
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
-	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
+	"github.com/wippyai/go-lua/analysis/schema/population"
 )
 
 // QueryFold is the ordered projection reducer used by a query row. A fold is
@@ -91,7 +91,7 @@ func validBindingQueryInstance(schema *Schema, ordinal uint64, query equation.Qu
 		return false
 	}
 	shape, ok := schema.queryShapeAt(ordinal)
-	if !ok || shape.Population != queryschema.PopulationKindSelectedPoint || shape.ProjectionCount == 0 || uint64(len(query.Surfaces)) != shape.ProjectionCount {
+	if !ok || shape.Population != population.SelectedPoint || shape.ProjectionCount == 0 || uint64(len(query.Surfaces)) != shape.ProjectionCount {
 		return false
 	}
 	for index, surface := range query.Surfaces {

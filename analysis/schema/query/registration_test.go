@@ -445,7 +445,7 @@ func TestObservationPopulationIsASealedPopulationRole(t *testing.T) {
 	spec.Subjects = []schema.Key{"call"}
 	spec.Population = PopulationObservation
 	registration := mustRegistration(t, spec)
-	if registration.Population() != PopulationObservation {
+	if registration.Population() != PopulationObservation || registration.PopulationKind() != PopulationKindObservation {
 		t.Fatalf("observation family population = %q, want %q", registration.Population(), PopulationObservation)
 	}
 	if failure := sealRegistrations(t, []*Registration{registration}); failure.Available() {
