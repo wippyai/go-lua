@@ -113,21 +113,20 @@ type constructedSitePlane struct {
 // artifact rows themselves, and each declared row already holds the sealed
 // equation instance its owner issued.
 type topologyDeclaration struct {
-	binding            *SchemaBinding
-	batch              *equation.Batch
-	mounts             []sealedProgramMount
-	contexts           executioncontext.Directory
-	bootstrap          LinkBootstrapWitness
-	sites              constructedSitePlane
-	points             []declaredPointRow
-	members            []declaredMemberRow
-	queries            []declaredQueryRow
-	pointTransitions   []ProgramPointTransitionAdmission
-	environmentEdges   []equation.EnvironmentEdge
-	factorEdges        []equation.FactorEdge
-	summaries          []equation.SummaryMapping
-	candidates         []declaredActivationCandidate
-	observationQueries bool
+	binding          *SchemaBinding
+	batch            *equation.Batch
+	mounts           []sealedProgramMount
+	contexts         executioncontext.Directory
+	bootstrap        LinkBootstrapWitness
+	sites            constructedSitePlane
+	points           []declaredPointRow
+	members          []declaredMemberRow
+	queries          []declaredQueryRow
+	pointTransitions []ProgramPointTransitionAdmission
+	environmentEdges []equation.EnvironmentEdge
+	factorEdges      []equation.FactorEdge
+	summaries        []equation.SummaryMapping
+	candidates       []declaredActivationCandidate
 }
 
 func (declaration topologyDeclaration) mounted() bool { return len(declaration.mounts) != 0 }
@@ -1488,11 +1487,12 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 	}
 	var topology *equation.Topology
 	var sealed bool
-	if declaration.observationQueries {
-		topology, _, sealed = equation.SealObservationTopologyWithFailure(source.schema.cold, spec)
-	} else {
-		topology, _, sealed = equation.SealTopologyWithFailure(source.schema.cold, spec)
-	}
+	// Query population is sealed per family by equation topology: selected
+	// families contribute concrete QueryInstances, while observation families
+	// remain producer roots satisfied by ProgramObservationAdmission. There is
+	// no construction-wide observation mode that could defer or fabricate the
+	// wrong population.
+	topology, _, sealed = equation.SealTopologyWithFailure(source.schema.cold, spec)
 	if !sealed || topology == nil || !topology.OwnsComposition(source.schema.cold) {
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepTopologySeal, 0)
 	}
