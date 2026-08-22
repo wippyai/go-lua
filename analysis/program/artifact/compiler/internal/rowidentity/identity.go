@@ -52,11 +52,13 @@ func StorageBindID(input *program.Program, programID identity.ContentID, index i
 	return programstorage.StorageBindIdentity(programID, bodyPath, width, bodyID, entry.ContextID(), finish.ContextID())
 }
 
-// DeclaredStaticTypeID resolves an optional declaration through the canonical
-// Static view. An absent declaration is represented by an unavailable ID.
-func DeclaredStaticTypeID(programID identity.ContentID, view staticquery.View, cell keyspace.Term) (identity.ContentID, bool) {
+// DeclaredStaticType resolves an authored Cell declaration through Static's
+// canonical DeclaredTypes relation. It returns the authored target term and
+// its published node identity together, so consumers never have to recover a
+// term by inverting an identity or maintain a second index.
+func DeclaredStaticType(programID identity.ContentID, view staticquery.View, cell keyspace.Term) (keyspace.Term, identity.ContentID, bool) {
 	if !programID.Available() || !view.Available() || cell == 0 {
-		return identity.ContentID{}, false
+		return 0, identity.ContentID{}, false
 	}
 	declarations := view.Declarations().DeclaredTypes()
 	declaration, declarationOK := declarations.ForCell(cell)
@@ -64,7 +66,15 @@ func DeclaredStaticTypeID(programID identity.ContentID, view staticquery.View, c
 	ref, refOK := view.StaticTypes().Ref(target)
 	id, idOK := staticquery.TypeReferenceID(programID, ref)
 	if !declarationOK || !rowOK || declaredCell != cell || !refOK || ref.Term() != target || !idOK {
-		return identity.ContentID{}, false
+		return 0, identity.ContentID{}, false
 	}
-	return id, true
+	return target, id, id.Available()
+}
+
+// DeclaredStaticTypeID resolves the published identity of an authored Cell
+// declaration. DeclaredStaticType is the canonical query; this narrow helper
+// remains for callers that only need the identity.
+func DeclaredStaticTypeID(programID identity.ContentID, view staticquery.View, cell keyspace.Term) (identity.ContentID, bool) {
+	_, id, ok := DeclaredStaticType(programID, view, cell)
+	return id, ok
 }

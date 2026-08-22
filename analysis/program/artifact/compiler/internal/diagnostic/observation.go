@@ -341,12 +341,25 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 		if _, hasTail := call.TailID(); call.Form() != programschema.CallFormPlain || hasTail || call.TypeArgumentCount() != 0 {
 			continue
 		}
-		boundary, boundaryOK := compiler.bodyBoundary.FunctionBoundaryForBody(targetBody)
-		if !boundaryOK || !boundary.Available() {
+		boundaries := compiler.input.Program.Flow().FunctionBoundaries()
+		if boundaries == nil {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
+		}
+		bodyBoundary, bodyBoundaryOK := boundaries.ResolveBodyContextID(targetBody)
+		if !bodyBoundaryOK {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
+		}
+		bodyTerm, bodyTermOK := bodyBoundary.Body()
+		if !bodyTermOK {
+			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
+		}
+		functionBoundary, functionBoundaryOK := boundaries.ForFunctionBody(bodyTerm)
+		if !functionBoundaryOK || !functionBoundary.Available() {
 			return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, -1)
 		}
 		argumentOffset, argumentCount, argumentSpanOK := call.ArgumentSpan()
-		if !argumentSpanOK || boundary.HasVararg() || boundary.FormalCount() != int(argumentCount) {
+		_, hasVararg := functionBoundary.Vararg()
+		if !argumentSpanOK || hasVararg || functionBoundary.FormalCount() != int(argumentCount) {
 			continue
 		}
 		for argumentIndex := 0; argumentIndex < int(argumentCount); argumentIndex++ {
@@ -357,8 +370,8 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			if !argument.Available() || argument.CallID() != call.ID() || argument.Index() != uint32(argumentIndex) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, index, argumentIndex)
 			}
-			formal, formalOK := compiler.bodyBoundary.FunctionFormalAt(boundary, argumentIndex)
-			declared, declaredOK := formal.DeclaredStaticTypeID()
+			formalTerm, formalOK := functionBoundary.FormalAt(argumentIndex)
+			declaredTerm, declared, declaredOK := rowidentity.DeclaredStaticType(compiler.input.Program.ContentID(), compiler.input.Program.Static(), formalTerm)
 			if !formalOK || !declaredOK {
 				continue
 			}
@@ -385,7 +398,7 @@ func (compiler *compiler) copyTypeConformanceObservationsFailure() programconstr
 			if !rowOK || !compiler.admitDiagnosticObservation(row, points, nil) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
-			if !compiler.copyStructuralMemberConformanceObservationsFailure(call.ID(), argument.MemberID(), declared, memberTerm) {
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(call.ID(), argument.MemberID(), declared, declaredTerm, memberTerm) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticCall, sourceIndex, argumentIndex)
 			}
 		}
@@ -629,7 +642,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 			if !writeOK || !writeRelationOK || writeAssign != term {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.Program.ContentID(), compiler.input.Program.Static(), target)
+			declaredTerm, declared, declaredOK := rowidentity.DeclaredStaticType(compiler.input.Program.ContentID(), compiler.input.Program.Static(), target)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
@@ -638,7 +651,7 @@ func (compiler *compiler) copyWriteConformanceObservationsFailure() programconst
 			if !compiler.admitConformanceObservation(programdiagnostic.DiagnosticObservationSiteAssignment, assignmentID, member.ID(), declared, memberTerm, uint32(position)) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			if !compiler.copyStructuralMemberConformanceObservationsFailure(assignmentID, member.ID(), declared, memberTerm) {
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(assignmentID, member.ID(), declared, declaredTerm, memberTerm) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 		}
@@ -720,7 +733,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 			if !cellOK {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			declared, declaredOK := rowidentity.DeclaredStaticTypeID(compiler.input.Program.ContentID(), compiler.input.Program.Static(), cellTerm)
+			declaredTerm, declared, declaredOK := rowidentity.DeclaredStaticType(compiler.input.Program.ContentID(), compiler.input.Program.Static(), cellTerm)
 			memberTerm, memberOK := authoredValues.Member(valuesTerm, position)
 			member, memberRowOK := compiler.valueMemberAt(valueRow, position)
 			if !declaredOK || !memberOK || !memberRowOK || !member.Available() {
@@ -729,7 +742,7 @@ func (compiler *compiler) copyAssignmentConformanceObservationsFailure() program
 			if !compiler.admitConformanceObservation(programdiagnostic.DiagnosticObservationSiteAssignment, bindID, member.ID(), declared, memberTerm, uint32(position)) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
-			if !compiler.copyStructuralMemberConformanceObservationsFailure(bindID, member.ID(), declared, memberTerm) {
+			if !compiler.copyStructuralMemberConformanceObservationsFailure(bindID, member.ID(), declared, declaredTerm, memberTerm) {
 				return programconstruction.New(programcatalog.DiagnosticObservation(), programconstruction.IssueDiagnosticUnavailable, index, position)
 			}
 		}

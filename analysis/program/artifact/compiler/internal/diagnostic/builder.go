@@ -59,7 +59,6 @@ type compiler struct {
 	selectedDirectCalleeBodiesComputed bool
 	selectedDirectCalleeBodiesOK       bool
 	selectedDirectCalleeBodiesValue    map[identity.ContentID]struct{}
-	staticTypeTermsByID                map[identity.ContentID]keyspace.Term
 	callArgumentSources                map[identity.ContentID]callArgumentSource
 }
 

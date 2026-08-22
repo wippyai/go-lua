@@ -20,26 +20,27 @@ import (
 // judgment is taken here and no verdict is decided at this altitude.
 func (compiler *compiler) copyStructuralMemberConformanceObservationsFailure(
 	owner, measuredValue, declared identity.ContentID,
+	declaredTerm keyspace.Term,
 	measured keyspace.Term,
 ) bool {
 	if compiler == nil || !compiler.input.Available() {
 		return false
 	}
-	if !owner.Available() || !measuredValue.Available() || !declared.Available() {
+	if !owner.Available() || !measuredValue.Available() || !declared.Available() || declaredTerm == 0 {
+		return false
+	}
+	canonicalID, canonicalOK := compiler.staticTypeNodeIDForTerm(declaredTerm)
+	if !canonicalOK || canonicalID != declared {
 		return false
 	}
 	if keyspace.TermFamily(measured) != keyspace.FamilyTable {
-		return true
-	}
-	declaredTerm, declaredTermOK := compiler.staticTypeTermForID(declared)
-	if !declaredTermOK {
 		return true
 	}
 	// The published allocation tree is finite and a member is a distinct row,
 	// so the walk terminates on structure alone; the visited set states the
 	// bound rather than relying on it.
 	visited := make(map[keyspace.Term]struct{}, 4)
-	return compiler.admitStructuralMemberObservations(owner, measuredValue, measured, declaredTerm, visited)
+	return compiler.admitStructuralMemberObservations(owner, measuredValue, measured, declared, declaredTerm, visited)
 }
 
 // admitStructuralMemberObservations measures one allocation's established
@@ -55,10 +56,15 @@ func (compiler *compiler) copyStructuralMemberConformanceObservationsFailure(
 func (compiler *compiler) admitStructuralMemberObservations(
 	owner, measuredValue identity.ContentID,
 	table keyspace.Term,
+	declaredID identity.ContentID,
 	declaredTerm keyspace.Term,
 	visited map[keyspace.Term]struct{},
 ) bool {
-	if compiler == nil || !owner.Available() || !measuredValue.Available() || table == 0 || visited == nil {
+	if compiler == nil || !owner.Available() || !measuredValue.Available() || !declaredID.Available() || declaredTerm == 0 || table == 0 || visited == nil {
+		return false
+	}
+	canonicalID, canonicalOK := compiler.staticTypeNodeIDForTerm(declaredTerm)
+	if !canonicalOK || canonicalID != declaredID {
 		return false
 	}
 	if _, seen := visited[table]; seen {
@@ -105,7 +111,10 @@ func (compiler *compiler) admitStructuralMemberObservations(
 			continue
 		}
 		memberDeclaredID, memberDeclaredIDOK := compiler.staticTypeNodeIDForTerm(memberDeclared)
-		if !memberDeclaredIDOK || !compiler.conformanceObservationAddressable(memberTerm) {
+		if !memberDeclaredIDOK {
+			return false
+		}
+		if !compiler.conformanceObservationAddressable(memberTerm) {
 			continue
 		}
 		if !compiler.admitConformanceObservation(programdiagnostic.DiagnosticObservationSiteMember, owner, member.ID(), memberDeclaredID, memberTerm, uint32(index)) {
@@ -114,7 +123,7 @@ func (compiler *compiler) admitStructuralMemberObservations(
 		if keyspace.TermFamily(memberTerm) != keyspace.FamilyTable {
 			continue
 		}
-		if !compiler.admitStructuralMemberObservations(owner, member.ID(), memberTerm, memberDeclared, visited) {
+		if !compiler.admitStructuralMemberObservations(owner, member.ID(), memberTerm, memberDeclaredID, memberDeclared, visited) {
 			return false
 		}
 	}
@@ -295,33 +304,6 @@ func (compiler *compiler) staticTypeNodeIDForTerm(term keyspace.Term) (identity.
 	}
 	id, idOK := staticquery.TypeReferenceID(compiler.input.Program.ContentID(), ref)
 	return id, idOK && id.Available()
-}
-
-// staticTypeTermForID inverts the node identity equation over the published
-// type forest. The identity is a function of owner and term alone, so the
-// inverse is a function; it is built once per program and read per site.
-func (compiler *compiler) staticTypeTermForID(id identity.ContentID) (keyspace.Term, bool) {
-	if compiler == nil || !id.Available() {
-		return 0, false
-	}
-	if compiler.staticTypeTermsByID == nil {
-		types := compiler.input.Program.Static().StaticTypes()
-		index := make(map[identity.ContentID]keyspace.Term, types.Count())
-		for position := 0; position < types.Count(); position++ {
-			ref, refOK := types.At(position)
-			if !refOK {
-				continue
-			}
-			nodeID, nodeOK := staticquery.TypeReferenceID(compiler.input.Program.ContentID(), ref)
-			if !nodeOK || !nodeID.Available() {
-				continue
-			}
-			index[nodeID] = ref.Term()
-		}
-		compiler.staticTypeTermsByID = index
-	}
-	term, found := compiler.staticTypeTermsByID[id]
-	return term, found && term != 0
 }
 
 // conformanceObservationAddressable reports whether the measured term carries
