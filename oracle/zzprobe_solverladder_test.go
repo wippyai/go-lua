@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/canonical"
+	"github.com/wippyai/go-lua/internal/zzprobedump"
 )
 
 // ZZPROBE: solver-ladder stage 0 measurement lane. It runs the frozen corpus
@@ -531,58 +532,19 @@ func TestZZProbeSolverLadderSiteTable(t *testing.T) {
 	t.Logf("ZZPROBE site table entries=%d", len(zzProbeSiteTable))
 }
 
-// zzProbeDumpCountersLine is the reproducible A/B strip: fixture class, solve
-// counters, and the failure signature. It carries no wall-clock durations.
-func zzProbeDumpCountersLine(sample zzProbeSolverSample) string {
-	return fmt.Sprintf(
-		"counters\tfixture=%s\tclass=%s\tstatus=%s\terr=%t\tepochs=%d\tpasses=%d\tevaluates=%d\tfails=%d\tfolds=%d\trestarts=%d\tsig=%s\terrtext=%s",
-		sample.name, zzProbeOr(sample.class, "-"), zzProbeOr(sample.status, "-"), sample.err,
-		sample.epochs, sample.passes, sample.evaluates, sample.evaluateFailures, sample.folds, sample.restarts,
-		sample.signature, zzProbeOr(sample.errText, "-"))
-}
-
-// zzProbeDumpTimingLine is the per-fixture wall-clock line. Lanes compare the
-// counters strip, not this line.
-func zzProbeDumpTimingLine(sample zzProbeSolverSample) string {
-	return fmt.Sprintf(
-		"timing\tfixture=%s\tsolve=%s\tcompile=%s\tseal=%s",
-		sample.name,
-		sample.solve.Round(time.Microsecond),
-		sample.compile.Round(time.Microsecond),
-		sample.seal.Round(time.Microsecond),
-	)
+func zzProbeDumpRecord(sample zzProbeSolverSample) zzprobedump.Record {
+	return zzprobedump.Record{
+		Fixture: sample.name, Class: sample.class, Status: sample.status,
+		Signature: sample.signature, ErrText: sample.errText, Err: sample.err,
+		Epochs: sample.epochs, Passes: sample.passes, Evaluates: sample.evaluates,
+		Fails: sample.evaluateFailures, Folds: sample.folds, Restarts: sample.restarts,
+		Solve: sample.solve, Compile: sample.compile, Seal: sample.seal,
+	}
 }
 
 // zzProbeDumpLine is the per-fixture dump record: counters then timing.
 func zzProbeDumpLine(sample zzProbeSolverSample) string {
-	return zzProbeDumpCountersLine(sample) + "\n" + zzProbeDumpTimingLine(sample)
-}
-
-func TestZZProbeDumpCountersLineIsIndependentOfTiming(t *testing.T) {
-	left := zzProbeSolverSample{
-		name: "bench/fibonacci", class: "ok", status: "complete", errText: "none",
-		signature: "sig", epochs: 2, passes: 3, evaluates: 4, evaluateFailures: 1, folds: 5, restarts: 6,
-		solve: time.Millisecond, compile: 2 * time.Millisecond, seal: 3 * time.Millisecond,
-	}
-	right := left
-	right.solve = time.Second
-	right.compile = 2 * time.Second
-	right.seal = 3 * time.Second
-	counters := zzProbeDumpCountersLine(left)
-	if counters != zzProbeDumpCountersLine(right) {
-		t.Fatal("counters line followed wall-clock durations")
-	}
-	for _, field := range []string{"solve=", "compile=", "seal="} {
-		if strings.Contains(counters, field) {
-			t.Fatalf("counters line carries %s", field)
-		}
-		if !strings.Contains(zzProbeDumpTimingLine(left), field) {
-			t.Fatalf("timing line omits %s", field)
-		}
-	}
-	if got := zzProbeDumpLine(left); got != counters+"\n"+zzProbeDumpTimingLine(left) {
-		t.Fatalf("dump record is not counters then timing: %q", got)
-	}
+	return zzprobedump.RecordLines(zzProbeDumpRecord(sample))
 }
 
 // zzProbeClassCensus names every walk class with its own count. A walk that
