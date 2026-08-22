@@ -17,6 +17,7 @@ import (
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	engineprobe "github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	"github.com/wippyai/go-lua/internal/canonical"
 )
@@ -189,7 +190,7 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 	failedRule := composite.DiagnosticRuleForSemantic(run.compilation, engineFailure.Rule())
 	return fmt.Sprintf(
 		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s vseal=%s pseal=%s alloc=%s "+
-			"aseal=%s@%d alower=%s acommit=%s@%d crow=%d obsattach=%s constr=%s "+
+			"aseal=%s@%d alower=%s acommit=%s@%d crow=%d obsattach=%s constr=%s comp=%s@%s "+
 			"efail={avail=%t reason=%d site=%s owner=%s point=%v group=%v member=%v rule=%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule, diagnostics.Axis,
 		diagnostics.AssembleStage, diagnostics.Binding, diagnostics.BindingRuleStage,
@@ -200,10 +201,20 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 		diagnostics.AssembleConstructionRow,
 		zzProbeSolveFailure(diagnostics.ObservationAttach),
 		zzProbeSolveFailure(diagnostics.Construction),
+		diagnostics.Composition, zzProbeCompositionAxis(diagnostics.CompositionAxis),
 		engineFailure.Available(), engineFailure.Reason(),
 		zzProbeSolveFailure(engineFailure.Failure()), failedRule,
 		engineFailure.Point().Available(), engineFailure.Group().Available(),
 		engineFailure.Member().Available(), engineFailure.Rule().Available())
+}
+
+// zzProbeCompositionAxis spells the column a composition refusal is about. A
+// step that refused before reaching any one column names none.
+func zzProbeCompositionAxis(key schema.Key) string {
+	if key == "" {
+		return "none"
+	}
+	return string(key)
 }
 
 // The site decoder. Every engine boundary identity is a framed digest over a

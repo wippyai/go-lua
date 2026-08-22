@@ -2,6 +2,7 @@ package diagnostic
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
@@ -116,12 +117,16 @@ const (
 	AnalyzeDiagnosticAssembleStageArtifactRows
 	AnalyzeDiagnosticAssembleStageQueryPlan
 	AnalyzeDiagnosticAssembleStageBootstrapRules
+	// AnalyzeDiagnosticAssembleStageComposition is the Link-lifetime
+	// composition publication. It runs after the schema binding seals, so a
+	// refusal there is its own boundary rather than a binding verdict.
+	AnalyzeDiagnosticAssembleStageComposition
 )
 
 var analyzeDiagnosticAssembleStageNames = [...]string{
 	"none", "binding", "mount", "lowering", "commit", "runtime", "solve",
 	"artifact-rules", "source-seal", "query-rows", "artifact-rows",
-	"query-plan", "bootstrap-rules",
+	"query-plan", "bootstrap-rules", "composition",
 }
 
 func (stage AnalyzeDiagnosticAssembleStage) String() string {
@@ -161,6 +166,40 @@ func (failure AnalyzeDiagnosticItemIssuanceFailure) String() string {
 	default:
 		return "none"
 	}
+}
+
+// AnalyzeDiagnosticCompositionFailure is the closed Link-lifetime composition
+// publication boundary. The publication writes the StorageEngine prefix after
+// the schema binding has sealed, so its steps are not binding verdicts: each
+// names the act that refused. Which column a per-column step refused for is
+// the schema key's own identity and travels beside this verdict in
+// AnalyzeDiagnostics.CompositionAxis.
+type AnalyzeDiagnosticCompositionFailure uint8
+
+const (
+	AnalyzeDiagnosticCompositionFailureNone AnalyzeDiagnosticCompositionFailure = iota
+	AnalyzeDiagnosticCompositionFailureInput
+	AnalyzeDiagnosticCompositionFailurePublicationSchema
+	AnalyzeDiagnosticCompositionFailureSelectColumn
+	AnalyzeDiagnosticCompositionFailureDenominator
+	AnalyzeDiagnosticCompositionFailureRows
+	AnalyzeDiagnosticCompositionFailureContent
+	AnalyzeDiagnosticCompositionFailureColumnGrant
+	AnalyzeDiagnosticCompositionFailureWrite
+	AnalyzeDiagnosticCompositionFailureSeal
+	AnalyzeDiagnosticCompositionFailureSelectSite
+)
+
+var analyzeDiagnosticCompositionFailureNames = [...]string{
+	"none", "input", "publication-schema", "select-column", "denominator",
+	"rows", "content", "column-grant", "write", "seal", "select-site",
+}
+
+func (failure AnalyzeDiagnosticCompositionFailure) String() string {
+	if int(failure) >= len(analyzeDiagnosticCompositionFailureNames) {
+		return "invalid"
+	}
+	return analyzeDiagnosticCompositionFailureNames[failure]
 }
 
 // ProgramBindingFailure is the closed Link-local binding boundary. It names
@@ -355,7 +394,12 @@ type AnalyzeDiagnostics struct {
 	// disposition, and opaque site. The constructor's internal stage names
 	// stay inside the engine.
 	Construction engine.SolveFailure
-	Engine       engine.SolveDiagnostics
+	// Composition names the step of the Link-lifetime composition publication
+	// that refused, and CompositionAxis the column that step was refused for.
+	// A step that refuses before reaching any one column leaves the key empty.
+	Composition     AnalyzeDiagnosticCompositionFailure
+	CompositionAxis schema.Key
+	Engine          engine.SolveDiagnostics
 }
 
 func (diagnostics *AnalyzeDiagnostics) Enter(phase AnalyzeDiagnosticPhase) {

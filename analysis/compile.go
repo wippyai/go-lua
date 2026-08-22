@@ -6,6 +6,7 @@ package analysis
 import (
 	analysiscatalog "github.com/wippyai/go-lua/analysis/catalog"
 	"github.com/wippyai/go-lua/analysis/engine/rows/scalarlower"
+	"github.com/wippyai/go-lua/analysis/schema"
 
 	anadiag "github.com/wippyai/go-lua/analysis/diagnostic"
 	"github.com/wippyai/go-lua/analysis/engine"
@@ -156,34 +157,34 @@ func (state *compiledState) newProgramBinding(source *link.Link, compilation com
 
 // publishComposition writes the Link-lifetime StorageEngine prefix. ChannelSelect
 // occupies snapshot slot 0, so a select-only column seals without factor facts.
-func (state *compiledState) publishComposition(module *linkmodule.Component, contextDirectory executioncontext.Directory) bool {
+func (state *compiledState) publishComposition(module *linkmodule.Component, contextDirectory executioncontext.Directory) (anadiag.AnalyzeDiagnosticCompositionFailure, schema.Key) {
 	if state == nil || module == nil || state.binding == nil || state.binding.SchemaBinding() == nil || state.artifacts == nil ||
 		!contextDirectory.Available() || contextDirectory.LinkID() != state.sourceID {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureInput, ""
 	}
 	publication, publicationOK := state.compilation.Publication()
 	schemaID, schemaOK := publication.SchemaID()
 	store, storeOK := identity.IssueStore()
 	if !publicationOK || !schemaOK || !storeOK || !schemaID.Available() {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailurePublicationSchema, ""
 	}
 	selectColumn, selectProjected := analysiscatalog.ProjectAxis[identity.ContentID, channelselect.CaseFact](publication, selectapply.OutputKey)
 	if !selectProjected || !selectColumn.Available() {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureSelectColumn, selectapply.AxisKey
 	}
 	write, minted := engine.MintColumnWrite[identity.ContentID, channelselect.CaseFact](state.binding.SchemaBinding(), selectapply.OutputKey, selectapply.AxisKey)
 	if !minted || !write.Available() {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, selectapply.AxisKey
 	}
 	apps := state.artifacts.selectApplications
 	handlers := state.artifacts.selectHandlers
 	mountWrite, mountMinted := engine.MintColumnWrite[identity.ContentID, programmount.Program](state.binding.SchemaBinding(), programmount.OutputKey, programmount.AxisKey)
 	if !mountMinted || !mountWrite.Available() {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, programmount.AxisKey
 	}
 	denominator, denominatorOK := programmount.DenominatorID(state.sourceID)
 	if !denominatorOK {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, programmount.AxisKey
 	}
 	directoryRows := make([]programmount.Program, len(state.artifacts.mounts))
 	for index, mount := range state.artifacts.mounts {
@@ -191,11 +192,11 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	}
 	directory, directoryOK := programmount.Content(directoryRows, denominator)
 	if !directoryOK {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureContent, programmount.AxisKey
 	}
 	imports, caches, transitions, generations, outcomes, terminals, origins, compositionOK := module.BuildCompositionRows(state.sourceID, state.artifacts.mounts, contextDirectory)
 	if !compositionOK {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureRows, ""
 	}
 	importDenominator, importDenominatorOK := modulecomposition.ImportDenominatorID(state.sourceID)
 	cacheDenominator, cacheDenominatorOK := modulecomposition.CacheDenominatorID(state.sourceID)
@@ -211,9 +212,21 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	outcomeContent, outcomeContentOK := modulecomposition.OutcomeContent(outcomes, outcomeDenominator)
 	terminalContent, terminalContentOK := modulecomposition.TerminalContent(terminals, terminalDenominator)
 	originContent, originContentOK := modulecomposition.ModuleExportCallableOriginContent(origins, originDenominator)
-	if !importDenominatorOK || !cacheDenominatorOK || !transitionDenominatorOK || !generationDenominatorOK || !outcomeDenominatorOK || !terminalDenominatorOK || !originDenominatorOK ||
-		!importContentOK || !cacheContentOK || !transitionContentOK || !generationContentOK || !outcomeContentOK || !terminalContentOK || !originContentOK {
-		return false
+	for _, minted := range []compositionRowStep{
+		{importDenominatorOK, importContentOK, modulecomposition.ImportAxisKey},
+		{cacheDenominatorOK, cacheContentOK, modulecomposition.CacheAxisKey},
+		{transitionDenominatorOK, transitionContentOK, modulecomposition.ModuleCallTransitionAxisKey},
+		{generationDenominatorOK, generationContentOK, modulecomposition.GenerationAxisKey},
+		{outcomeDenominatorOK, outcomeContentOK, modulecomposition.OutcomeAxisKey},
+		{terminalDenominatorOK, terminalContentOK, modulecomposition.TerminalAxisKey},
+		{originDenominatorOK, originContentOK, modulecomposition.ModuleExportCallableOriginAxisKey},
+	} {
+		if !minted.denominator {
+			return anadiag.AnalyzeDiagnosticCompositionFailureDenominator, minted.axis
+		}
+		if !minted.content {
+			return anadiag.AnalyzeDiagnosticCompositionFailureContent, minted.axis
+		}
 	}
 	importWrite, importMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ResolvedImport](state.binding.SchemaBinding(), modulecomposition.ImportOutputKey, modulecomposition.ImportAxisKey)
 	cacheWrite, cacheMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.CacheIngress](state.binding.SchemaBinding(), modulecomposition.CacheOutputKey, modulecomposition.CacheAxisKey)
@@ -222,41 +235,50 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	outcomeWrite, outcomeMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitOutcome](state.binding.SchemaBinding(), modulecomposition.OutcomeOutputKey, modulecomposition.OutcomeAxisKey)
 	terminalWrite, terminalMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.InitTerminal](state.binding.SchemaBinding(), modulecomposition.TerminalOutputKey, modulecomposition.TerminalAxisKey)
 	originWrite, originMinted := engine.MintColumnWrite[identity.ContentID, modulecomposition.ModuleExportCallableOrigin](state.binding.SchemaBinding(), modulecomposition.ModuleExportCallableOriginOutputKey, modulecomposition.ModuleExportCallableOriginAxisKey)
-	if !importMinted || !cacheMinted || !transitionMinted || !generationMinted || !outcomeMinted || !terminalMinted || !originMinted ||
-		!importWrite.Available() || !cacheWrite.Available() || !transitionWrite.Available() || !generationWrite.Available() || !outcomeWrite.Available() || !terminalWrite.Available() || !originWrite.Available() {
-		return false
+	for _, grant := range []compositionGrantStep{
+		{importMinted && importWrite.Available(), modulecomposition.ImportAxisKey},
+		{cacheMinted && cacheWrite.Available(), modulecomposition.CacheAxisKey},
+		{transitionMinted && transitionWrite.Available(), modulecomposition.ModuleCallTransitionAxisKey},
+		{generationMinted && generationWrite.Available(), modulecomposition.GenerationAxisKey},
+		{outcomeMinted && outcomeWrite.Available(), modulecomposition.OutcomeAxisKey},
+		{terminalMinted && terminalWrite.Available(), modulecomposition.TerminalAxisKey},
+		{originMinted && originWrite.Available(), modulecomposition.ModuleExportCallableOriginAxisKey},
+	} {
+		if !grant.granted {
+			return anadiag.AnalyzeDiagnosticCompositionFailureColumnGrant, grant.axis
+		}
 	}
 	builder := snapshot.NewBuilder(schemaID, store, identity.Generation(1))
 	if err := selectapply.Publish(write, &builder, apps); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, selectapply.AxisKey
 	}
 	if err := engine.PublishColumn(mountWrite, &builder, directory); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, programmount.AxisKey
 	}
 	if err := engine.PublishColumn(importWrite, &builder, importContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ImportAxisKey
 	}
 	if err := engine.PublishColumn(cacheWrite, &builder, cacheContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.CacheAxisKey
 	}
 	if err := engine.PublishColumn(transitionWrite, &builder, transitionContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleCallTransitionAxisKey
 	}
 	if err := engine.PublishColumn(generationWrite, &builder, generationContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.GenerationAxisKey
 	}
 	if err := engine.PublishColumn(outcomeWrite, &builder, outcomeContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.OutcomeAxisKey
 	}
 	if err := engine.PublishColumn(terminalWrite, &builder, terminalContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.TerminalAxisKey
 	}
 	if err := engine.PublishColumn(originWrite, &builder, originContent); err != nil {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureWrite, modulecomposition.ModuleExportCallableOriginAxisKey
 	}
 	sealed, err := builder.Seal()
 	if err != nil || !sealed.Published() {
-		return false
+		return anadiag.AnalyzeDiagnosticCompositionFailureSeal, ""
 	}
 	sites := make([]anadiag.SelectSite, len(apps))
 	for index, app := range apps {
@@ -267,7 +289,7 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 			}
 		}
 		if !app.Site.Available() {
-			return false
+			return anadiag.AnalyzeDiagnosticCompositionFailureSelectSite, selectapply.AxisKey
 		}
 		sites[index] = anadiag.SelectSite{Site: app.Site, Bound: bound}
 	}
@@ -275,7 +297,21 @@ func (state *compiledState) publishComposition(module *linkmodule.Component, con
 	state.selectColumn = selectColumn
 	state.selectSites = sites
 	state.selectHandlers = handlers
-	return true
+	return anadiag.AnalyzeDiagnosticCompositionFailureNone, ""
+}
+
+// compositionRowStep and compositionGrantStep pair one composition column's
+// predicate with the key that names it, so a refusal reports the column it is
+// about rather than the whole family.
+type compositionRowStep struct {
+	denominator bool
+	content     bool
+	axis        schema.Key
+}
+
+type compositionGrantStep struct {
+	granted bool
+	axis    schema.Key
 }
 
 type compiledArtifactSet struct {

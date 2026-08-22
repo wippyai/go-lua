@@ -222,8 +222,17 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 	}
 	state.binding = binding
 	contextDirectory := source.ContextDirectory()
-	if !state.publishComposition(source.Module(), contextDirectory) {
+	// The composition publication runs past a sealed binding, so its refusal
+	// is its own assemble boundary. It names the step it refused at and the
+	// column that step is about; leaving it at the binding stage would report
+	// a binding verdict no binder produced.
+	compositionFailure, compositionAxis := state.publishComposition(source.Module(), contextDirectory)
+	if compositionFailure != anadiag.AnalyzeDiagnosticCompositionFailureNone {
 		state.release()
+		diagnostics.AssembleStage = anadiag.AnalyzeDiagnosticAssembleStageComposition
+		diagnostics.Composition = compositionFailure
+		diagnostics.CompositionAxis = compositionAxis
+		diagnostics.Axis = composite.DiagnosticAxisForKey(compilation, compositionAxis)
 		diagnostics.FailCurrentPhase()
 		return nil, CompileUnsupported, diagnostics
 	}

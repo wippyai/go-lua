@@ -8,17 +8,20 @@ import (
 )
 
 func TestPublicAssembleStageDoesNotNameConstructionInteriors(t *testing.T) {
-	for stage := AnalyzeDiagnosticAssembleStageNone; stage <= AnalyzeDiagnosticAssembleStageBootstrapRules; stage++ {
+	// The declared set is the name table's own extent, so a stage added to the
+	// vocabulary is covered by this law without restating where it ends.
+	last := AnalyzeDiagnosticAssembleStage(len(analyzeDiagnosticAssembleStageNames) - 1)
+	for stage := AnalyzeDiagnosticAssembleStageNone; stage <= last; stage++ {
 		rendered := stage.String()
 		if rendered == "" || rendered == "invalid" {
 			t.Fatalf("declared stage %d renders %q", stage, rendered)
 		}
 	}
-	if rendered := (AnalyzeDiagnosticAssembleStageBootstrapRules + 1).String(); rendered != "invalid" {
+	if rendered := (last + 1).String(); rendered != "invalid" {
 		t.Fatalf("the ordinal past the analysis-owned set renders %q", rendered)
 	}
 	for _, leaked := range []string{"admission", "topology-seal", "query-address", "observation-address", "factor-bind", "member-bind", "program-seal", "solver-mint"} {
-		for stage := AnalyzeDiagnosticAssembleStageNone; stage <= AnalyzeDiagnosticAssembleStageBootstrapRules; stage++ {
+		for stage := AnalyzeDiagnosticAssembleStageNone; stage <= last; stage++ {
 			if stage.String() == leaked {
 				t.Fatalf("public assemble stage names construction interior %q", leaked)
 			}
