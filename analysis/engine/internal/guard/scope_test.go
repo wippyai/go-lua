@@ -150,3 +150,94 @@ func sealTestScope(t *testing.T, manager *Manager, atoms []Atom) Scope {
 	}
 	return scope
 }
+
+// TestScopeValidIsSealedAtConstruction pins that Scope.Valid reads the
+// completeness verdict SealScope/AllScope reached once, rather than
+// re-deriving it from manager/ranks on every call.  Detaching those fields
+// from an already-issued scope therefore cannot flip the verdict, and the
+// read allocates nothing.
+func TestScopeValidIsSealedAtConstruction(t *testing.T) {
+	manager := newTestManager(t)
+	issued := sealTestScope(t, manager, []Atom{testA})
+	if !issued.Valid() {
+		t.Fatal("issued scope unavailable")
+	}
+	detached := *issued.value
+	detached.manager = nil
+	detached.ranks = nil
+	view := Scope{value: &detached}
+	if !view.Valid() {
+		t.Fatal("Valid re-derives from manager/ranks instead of reading the sealed verdict")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = issued.Valid() }); allocs != 0 {
+		t.Fatalf("Valid allocates %v per call", allocs)
+	}
+	if (Scope{}).Valid() {
+		t.Fatal("zero scope available")
+	}
+}
+
+// TestScopeRefusesMalformedConstruction pins that SealScope is the sole
+// authenticator: an unowned or unsorted atom set never reaches a published
+// Scope, so a caller can never observe a false-verdict scope becoming true
+// verdict later.
+func TestScopeRefusesMalformedConstruction(t *testing.T) {
+	manager := newTestManager(t)
+	if scope, ok := manager.SealScope([]Atom{testC, testA}); ok || scope.Valid() {
+		t.Fatal("unsorted atom set sealed")
+	}
+	if scope, ok := manager.SealScope([]Atom{9999}); ok || scope.Valid() {
+		t.Fatal("unowned atom sealed")
+	}
+	var nilManager *Manager
+	if scope, ok := nilManager.SealScope([]Atom{testA}); ok || scope.Valid() {
+		t.Fatal("nil-manager scope sealed")
+	}
+}
+
+// TestReindexValidIsSealedAtConstruction pins that Reindex.Valid reads the
+// completeness verdict Seal/ComposeReindex reached once over the relation's
+// manager, scopes, and entries, rather than re-deriving it. Detaching those
+// fields from an already-sealed plan therefore cannot flip the verdict, and
+// the read allocates nothing.
+func TestReindexValidIsSealedAtConstruction(t *testing.T) {
+	manager := newTestManager(t)
+	scope := sealTestScope(t, manager, []Atom{testA})
+	builder, ok := manager.NewReindex(scope, manager.AllScope())
+	if !ok || !builder.Identity(testA) {
+		t.Fatal("identity reindex construction")
+	}
+	plan, ok := builder.Seal()
+	if !ok || !plan.Valid() {
+		t.Fatal("issued reindex plan unavailable")
+	}
+	detached := *plan.value
+	detached.manager = nil
+	detached.entries = nil
+	view := Reindex{value: &detached}
+	if !view.Valid() {
+		t.Fatal("Valid re-derives from manager/entries instead of reading the sealed verdict")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = plan.Valid() }); allocs != 0 {
+		t.Fatalf("Valid allocates %v per call", allocs)
+	}
+	if (Reindex{}).Valid() {
+		t.Fatal("zero reindex plan available")
+	}
+}
+
+// TestReindexRefusesMalformedConstruction pins that Seal is the sole
+// authenticator: an incomplete source-coordinate assignment never reaches a
+// published Reindex.
+func TestReindexRefusesMalformedConstruction(t *testing.T) {
+	manager := newTestManager(t)
+	scope := sealTestScope(t, manager, []Atom{testA, testC})
+	builder, ok := manager.NewReindex(scope, manager.AllScope())
+	if !ok || !builder.Identity(testA) {
+		t.Fatal("partial reindex construction")
+	}
+	// testC is left unassigned: Seal must reject an incomplete relation.
+	if plan, ok := builder.Seal(); ok || plan.Valid() {
+		t.Fatal("incomplete source relation sealed")
+	}
+}

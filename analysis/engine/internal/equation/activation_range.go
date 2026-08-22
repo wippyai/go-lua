@@ -86,9 +86,10 @@ func (locator PairLocator) Available() bool {
 // typed (binding, application, target, endpoint) tuple itself, never a
 // portable hash or a candidate ordinal.
 type Member struct {
-	owner   *Topology
-	binding composition.Key
-	locator PairLocator
+	owner     *Topology
+	binding   composition.Key
+	locator   PairLocator
+	available bool
 }
 
 type memberTuple struct {
@@ -111,8 +112,13 @@ func writeMemberTuple(writer *canonical.DigestWriter, member Member) bool {
 	return tuple.binding.Available() && writeKey(writer, tuple.binding) && writeKey(writer, tuple.application) && writeKey(writer, tuple.target) && writeKey(writer, tuple.endpoint) && writeActivationContext(writer, tuple.context)
 }
 
+// Available reports whether member is a sealed activation tuple.
+// SelectActivationMember and SelectActivationMemberForContext are the sole
+// constructors of a non-zero Member and prove the binding and locator
+// available before ever setting this field, so the accessor reads that
+// settled verdict instead of re-checking them.
 func (member Member) Available() bool {
-	return member.owner != nil && member.binding.Available() && member.locator.Available()
+	return member.available
 }
 
 func (member Member) Binding() composition.Key {
@@ -167,13 +173,18 @@ func (member Member) Compare(other Member) (int, bool) {
 func (member Member) Same(other Member) bool { return sameMember(member, other) }
 
 type AcceptedMember struct {
-	member   Member
-	premise  Expr
-	evidence composition.Key
+	member    Member
+	premise   Expr
+	evidence  composition.Key
+	available bool
 }
 
+// Available reports whether accepted is a sealed admission record. Accept and
+// MergeAccepted are the sole constructors of a non-zero AcceptedMember and
+// prove the member, premise, and evidence available before ever setting this
+// field, so the accessor reads that settled verdict instead of re-checking them.
 func (accepted AcceptedMember) Available() bool {
-	return accepted.member.Available() && accepted.premise.Available() && accepted.evidence.Available()
+	return accepted.available
 }
 
 func (accepted AcceptedMember) Member() Member {

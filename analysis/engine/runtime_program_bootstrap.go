@@ -21,9 +21,16 @@ type LinkBootstrapWitness struct {
 	occurrences         []identity.ContentID
 	byCapability        map[RuleSlotCapability]map[identity.ContentID]struct{}
 	catalogCapabilities []RuleSlotCapability
+
+	available bool
 }
 
-func (witness LinkBootstrapWitness) Available() bool {
+// Available reports whether this witness seals one owner-issued bootstrap
+// point. Both constructors decide it once over their own arguments; the zero
+// witness names no seam.
+func (witness LinkBootstrapWitness) Available() bool { return witness.available }
+
+func (witness LinkBootstrapWitness) completeSeam() bool {
 	return witness.owner.Available() && witness.point.Known && witness.point.PointID.Available()
 }
 
@@ -50,7 +57,9 @@ func NewLinkBootstrapWitness(owner identity.ContentID, point LinkBootstrapPoint,
 		seen[id] = struct{}{}
 	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	return LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]identity.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}, true
+	witness := LinkBootstrapWitness{owner: owner, point: point, occurrences: append([]identity.ContentID(nil), occurrences...), byCapability: make(map[RuleSlotCapability]map[identity.ContentID]struct{})}
+	witness.available = witness.completeSeam()
+	return witness, witness.available
 }
 
 // LinkBootstrapCatalog is one occurrence namespace admitted under one
@@ -107,7 +116,9 @@ func NewLinkBootstrapWitnessByCapability(owner identity.ContentID, point LinkBoo
 		capabilities = append(capabilities, catalog.Capability)
 	}
 	point.DecisionID = append([]identity.ContentID(nil), point.DecisionID...)
-	return LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, catalogCapabilities: capabilities}, true
+	witness := LinkBootstrapWitness{owner: owner, point: point, occurrences: combined, byCapability: byCapability, catalogCapabilities: capabilities}
+	witness.available = witness.completeSeam()
+	return witness, witness.available
 }
 
 func (witness LinkBootstrapWitness) catalogCapabilityCount() int {

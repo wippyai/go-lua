@@ -48,6 +48,7 @@ type templateBindingData struct {
 	authority *templateBindingAuthority
 	rows      []templateBindingRow
 	bySite    []uint32 // formal Site row -> one-based row in rows
+	available bool
 }
 
 type templateBindingRow struct {
@@ -330,14 +331,19 @@ func SealTemplateBinding(formals, actuals *Batch, values []FormalPortActual) (Te
 		formals: formals, actuals: actuals, key: key,
 		authority: &templateBindingAuthority{marker: 1}, rows: rows, bySite: bySite,
 	}
-	return TemplateBinding{data: data}, true
-}
-
-func (binding TemplateBinding) Available() bool {
-	data := binding.data
-	return data != nil && data.formals != nil && data.actuals != nil && data.formals != data.actuals &&
+	data.available = data.formals != nil && data.actuals != nil && data.formals != data.actuals &&
 		data.formals.Sealed() && data.actuals.Sealed() && data.key.Available() && data.authority != nil &&
 		data.authority.marker == 1 && len(data.rows) != 0 && len(data.bySite) == len(data.formals.sites)
+	return TemplateBinding{data: data}, data.available
+}
+
+// Available reports whether binding names a sealed formal-to-concrete
+// assignment. SealTemplateBinding is the sole constructor of a non-nil data
+// pointer and proves this verdict once there; every wrapper that carries the
+// same pointer forward reads that settled bit instead of re-authenticating it.
+func (binding TemplateBinding) Available() bool {
+	data := binding.data
+	return data != nil && data.available
 }
 
 func (binding TemplateBinding) Key() composition.Key {

@@ -11,10 +11,26 @@ import (
 type Scope struct {
 	composition *Composition
 	guard       guard.Scope
+	// available is the completeness verdict newScope reached once, at
+	// construction: composition is non-nil and guard is a sealed guard.Scope
+	// issued by composition's exact guard universe.  validFor reads this
+	// settled fact instead of re-deriving it from guard on every call.
+	available bool
+}
+
+// newScope is the sole Scope constructor. Every carrier route that builds a
+// Scope value goes through it, so the completeness verdict is always decided
+// exactly once, at construction.
+func newScope(composition *Composition, g guard.Scope) Scope {
+	return Scope{
+		composition: composition,
+		guard:       g,
+		available:   composition != nil && g.Valid() && g.Manager() == composition.guards,
+	}
 }
 
 func (scope Scope) validFor(composition *Composition) bool {
-	return composition != nil && scope.composition == composition && scope.guard.Valid() && scope.guard.Manager() == composition.guards
+	return composition != nil && scope.composition == composition && scope.available
 }
 
 func (scope Scope) same(other Scope) bool {
@@ -58,6 +74,21 @@ type Expr struct {
 type ReindexPlan struct {
 	composition *Composition
 	relation    guard.Reindex
+	// available is the completeness verdict newReindexPlan reached once, at
+	// construction.  Valid reads this settled fact instead of re-deriving it
+	// from relation on every call.
+	available bool
+}
+
+// newReindexPlan is the sole ReindexPlan constructor. Every carrier route
+// that builds a ReindexPlan value goes through it, so the completeness
+// verdict is always decided exactly once, at construction.
+func newReindexPlan(composition *Composition, relation guard.Reindex) ReindexPlan {
+	return ReindexPlan{
+		composition: composition,
+		relation:    relation,
+		available:   composition != nil && relation.Valid() && relation.Source().Manager() == composition.guards && relation.Target().Manager() == composition.guards,
+	}
 }
 
 // Valid reports whether this is a sealed complete carrier relation.  It is
@@ -100,21 +131,21 @@ func (plan ReindexPlan) RelationIdentity() (guard.FormulaID, bool) {
 }
 
 func (plan ReindexPlan) validFor(composition *Composition) bool {
-	return composition != nil && plan.composition == composition && plan.relation.Valid() && plan.relation.Source().Manager() == composition.guards && plan.relation.Target().Manager() == composition.guards
+	return composition != nil && plan.composition == composition && plan.available
 }
 
 func (plan ReindexPlan) source() Scope {
 	if !plan.validFor(plan.composition) {
 		return Scope{}
 	}
-	return Scope{composition: plan.composition, guard: plan.relation.Source()}
+	return newScope(plan.composition, plan.relation.Source())
 }
 
 func (plan ReindexPlan) target() Scope {
 	if !plan.validFor(plan.composition) {
 		return Scope{}
 	}
-	return Scope{composition: plan.composition, guard: plan.relation.Target()}
+	return newScope(plan.composition, plan.relation.Target())
 }
 
 func (plan ReindexPlan) identity() bool {
@@ -143,7 +174,7 @@ func (composition *Composition) Scope() Scope {
 	// Its inherited field still names the original owner, so reissue the one
 	// complete scope wrapper without altering the shared guard universe.
 	if !composition.scope.validFor(composition) {
-		return Scope{composition: composition, guard: composition.guards.AllScope()}
+		return newScope(composition, composition.guards.AllScope())
 	}
 	return composition.scope
 }
@@ -163,7 +194,7 @@ func (composition *Composition) SealScope(atoms []guard.Atom) (Scope, bool) {
 	if !ok {
 		return Scope{}, false
 	}
-	return Scope{composition: composition, guard: sealed}, true
+	return newScope(composition, sealed), true
 }
 
 // NewReindex starts a cold total relation between two scopes issued by this
@@ -226,7 +257,7 @@ func (builder *ReindexBuilder) Seal() (ReindexPlan, bool) {
 	if !ok {
 		return ReindexPlan{}, false
 	}
-	plan := ReindexPlan{composition: builder.composition, relation: relation}
+	plan := newReindexPlan(builder.composition, relation)
 	if !plan.validFor(builder.composition) || !plan.source().same(builder.source) || !plan.target().same(builder.target) {
 		return ReindexPlan{}, false
 	}
@@ -247,7 +278,7 @@ func (composition *Composition) IdentityReindex(scope Scope) (ReindexPlan, bool)
 	if !ok {
 		return ReindexPlan{}, false
 	}
-	return ReindexPlan{composition: composition, relation: relation}, true
+	return newReindexPlan(composition, relation), true
 }
 
 // ComposeReindex seals the exact composed relation for two adjoining plans.
@@ -282,5 +313,5 @@ func (composition *Composition) composeReindex(first, second ReindexPlan, runtim
 	if !ok {
 		return ReindexPlan{}, false
 	}
-	return ReindexPlan{composition: composition, relation: relation}, true
+	return newReindexPlan(composition, relation), true
 }

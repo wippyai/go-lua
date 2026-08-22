@@ -50,7 +50,21 @@ type reindex struct {
 	// a State wrapper is not.
 	coordinateIdentity bool
 	pureProjection     bool
-	sealed             bool
+	// available is the completeness verdict reached once, at construction.
+	// Every constructor computes it through complete() before publishing the
+	// relation; Valid reads this settled fact instead of re-deriving it.
+	available bool
+}
+
+// complete proves the one-time structural invariant a sealed relation must
+// carry: a complete source/target scope pair from the same Manager, and one
+// entry per source coordinate. It is called exactly once, by each
+// constructor, before the relation is published.
+func (r *reindex) complete() bool {
+	return r != nil && r.manager != nil &&
+		r.source.Valid() && r.target.Valid() &&
+		r.source.Manager() == r.manager && r.target.Manager() == r.manager &&
+		len(r.entries) == len(r.source.value.ranks)
 }
 
 type reindexEntry struct {
@@ -91,10 +105,7 @@ func (plan Reindex) Target() Scope {
 // Valid reports whether plan is a complete immutable relation issued by its
 // Manager. The entries are fixed by source rank and cannot be caller-mutated.
 func (plan Reindex) Valid() bool {
-	return plan.value != nil && plan.value.manager != nil && plan.value.sealed &&
-		plan.value.source.Valid() && plan.value.target.Valid() &&
-		plan.value.source.Manager() == plan.value.manager && plan.value.target.Manager() == plan.value.manager &&
-		len(plan.value.entries) == len(plan.value.source.value.ranks)
+	return plan.value != nil && plan.value.available
 }
 
 // Identity reports the complete proof that this relation preserves every
@@ -254,13 +265,14 @@ func (builder *ReindexBuilder) Seal() (Reindex, bool) {
 			break
 		}
 	}
-	plan := Reindex{value: &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, pureProjection: pureProjection, sealed: true}}
-	if !plan.Valid() {
+	value := &reindex{manager: builder.manager, source: builder.source, target: builder.target, entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, pureProjection: pureProjection}
+	value.available = value.complete()
+	if !value.available {
 		return Reindex{}, false
 	}
 	builder.entries = nil
 	builder.set = nil
-	return plan, true
+	return Reindex{value: value}, true
 }
 
 // IdentityReindex seals the unique complete identity relation for scope.
@@ -556,9 +568,10 @@ func (m *Manager) ComposeReindex(first, second Reindex) (Reindex, bool) {
 			entries[index].identity = true
 		}
 	}
-	result := Reindex{value: &reindex{manager: m, source: first.Source(), target: second.Target(), entries: entries, identity: identity, coordinateIdentity: coordinateIdentity, sealed: true}}
-	if !result.Valid() {
+	value := &reindex{manager: m, source: first.Source(), target: second.Target(), entries: entries, identity: identity, coordinateIdentity: coordinateIdentity}
+	value.available = value.complete()
+	if !value.available {
 		return Reindex{}, false
 	}
-	return result, true
+	return Reindex{value: value}, true
 }

@@ -194,7 +194,7 @@ func (committed *CommittedProgram) deriveAdmission() bool {
 		return false
 	}
 	for _, transition := range committed.pointTransitions {
-		if !transition.available() {
+		if !transition.available {
 			return false
 		}
 	}
@@ -348,8 +348,9 @@ func (committed *CommittedProgram) MountedNativeCallStage(role RuleSlotCapabilit
 	}
 	key := artifactMountedRuleOccurrence{role: role, mount: mount, occurrence: occurrence}
 	stage, ok := committed.nativeCallStages[key]
-	result := ProgramCallStage{handle: programCallRow{program: committed, key: key, stage: stage}}
-	return result, ok && result.Available()
+	handle := programCallRow{program: committed, key: key, stage: stage}
+	handle.available = ok && handle.completeStage()
+	return ProgramCallStage{handle: handle}, handle.available
 }
 
 // ActivationMember is one exact activation member from the committed graph.

@@ -450,7 +450,7 @@ func (prepared *PreparedComposition) Attach() (*Composition, bool) {
 		return nil, false
 	}
 	composition := &Composition{shape: value.shape, layout: value.layout, operations: value.operations, initial: make([]RootHandle, len(value.operations)), zeroScopes: make([]uint64, len(value.operations)), guards: value.guards}
-	composition.scope = Scope{composition: composition, guard: value.guards.AllScope()}
+	composition.scope = newScope(composition, value.guards.AllScope())
 	composition.authority = &stateAuthority{composition: composition}
 	for index, operation := range composition.operations {
 		slot := SlotOwner{value: &slotOwner{layout: composition.layout, slot: shape.Slot(index)}}

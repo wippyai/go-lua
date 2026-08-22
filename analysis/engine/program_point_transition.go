@@ -37,11 +37,14 @@ type ProgramPointTransition struct {
 	fromContextID, toContextID   identity.ContentID
 	source, target               equation.Point
 	sourceOrdinal, targetOrdinal contextfiber.PointOrdinal
+
+	available bool
 }
 
-// available checks the row without calling CommittedProgram.valid.  The
-// latter checks the retained rows in turn, so using it here would recurse.
-func (row ProgramPointTransition) available() bool {
+// completeGeometry checks the row without calling CommittedProgram.valid.  The
+// latter checks the retained rows in turn, so using it here would recurse.  It
+// runs once, in constructProgramPointTransitions, which is the sole issuer.
+func (row ProgramPointTransition) completeGeometry() bool {
 	program := row.program
 	if program == nil || program.self != program || program.graph == nil || len(program.pointOwners) != program.graph.PointCount() || !program.contexts.Available() ||
 		!row.transition.Available() || !row.generation.Available() || row.transition.ID() != row.transitionID || row.generation.ID() != row.generationID ||
@@ -80,13 +83,14 @@ func (row ProgramPointTransition) available() bool {
 		sourceOwner.ModuleKey() == row.transition.SourceModuleKey() && targetOwner.ModuleKey() == row.generation.ModuleKey()
 }
 
-// Available reports whether this row still names the exact graph and context
-// directory that issued it.
-func (row ProgramPointTransition) Available() bool { return row.available() }
+// Available reports whether this row names the exact graph and context
+// directory that issued it.  The verdict is sealed by the constructor; a
+// committed program never exchanges the graph or the directory it committed.
+func (row ProgramPointTransition) Available() bool { return row.available }
 
 // TransitionID returns the exact schema ModuleCallTransition identity.
 func (row ProgramPointTransition) TransitionID() identity.ContentID {
-	if !row.available() {
+	if !row.available {
 		return identity.ContentID{}
 	}
 	return row.transitionID
@@ -94,7 +98,7 @@ func (row ProgramPointTransition) TransitionID() identity.ContentID {
 
 // GenerationID returns the exact schema InitGeneration identity.
 func (row ProgramPointTransition) GenerationID() identity.ContentID {
-	if !row.available() {
+	if !row.available {
 		return identity.ContentID{}
 	}
 	return row.generationID
@@ -102,7 +106,7 @@ func (row ProgramPointTransition) GenerationID() identity.ContentID {
 
 // Transition returns the exact schema row that authenticated this geometry.
 func (row ProgramPointTransition) Transition() modulecomposition.ModuleCallTransition {
-	if !row.available() {
+	if !row.available {
 		return modulecomposition.ModuleCallTransition{}
 	}
 	return row.transition
@@ -110,7 +114,7 @@ func (row ProgramPointTransition) Transition() modulecomposition.ModuleCallTrans
 
 // Generation returns the exact schema row that authenticated the target body.
 func (row ProgramPointTransition) Generation() modulecomposition.InitGeneration {
-	if !row.available() {
+	if !row.available {
 		return modulecomposition.InitGeneration{}
 	}
 	return row.generation
@@ -118,7 +122,7 @@ func (row ProgramPointTransition) Generation() modulecomposition.InitGeneration 
 
 // FromContextID returns the exact source execution-context identity.
 func (row ProgramPointTransition) FromContextID() identity.ContentID {
-	if !row.available() {
+	if !row.available {
 		return identity.ContentID{}
 	}
 	return row.fromContextID
@@ -126,7 +130,7 @@ func (row ProgramPointTransition) FromContextID() identity.ContentID {
 
 // ToContextID returns the exact target execution-context identity.
 func (row ProgramPointTransition) ToContextID() identity.ContentID {
-	if !row.available() {
+	if !row.available {
 		return identity.ContentID{}
 	}
 	return row.toContextID
@@ -134,7 +138,7 @@ func (row ProgramPointTransition) ToContextID() identity.ContentID {
 
 // SourcePoint returns the exact graph-owned source Point handle.
 func (row ProgramPointTransition) SourcePoint() equation.Point {
-	if !row.available() {
+	if !row.available {
 		return equation.Point{}
 	}
 	return row.source
@@ -142,7 +146,7 @@ func (row ProgramPointTransition) SourcePoint() equation.Point {
 
 // TargetPoint returns the exact graph-owned target Point handle.
 func (row ProgramPointTransition) TargetPoint() equation.Point {
-	if !row.available() {
+	if !row.available {
 		return equation.Point{}
 	}
 	return row.target
@@ -150,7 +154,7 @@ func (row ProgramPointTransition) TargetPoint() equation.Point {
 
 // SourceContext resolves the exact source Context retained by the row.
 func (row ProgramPointTransition) SourceContext() (executioncontext.Context, bool) {
-	if !row.available() {
+	if !row.available {
 		return executioncontext.Context{}, false
 	}
 	return row.program.contexts.Context(row.fromContextID)
@@ -158,7 +162,7 @@ func (row ProgramPointTransition) SourceContext() (executioncontext.Context, boo
 
 // TargetContext resolves the exact target Context retained by the row.
 func (row ProgramPointTransition) TargetContext() (executioncontext.Context, bool) {
-	if !row.available() {
+	if !row.available {
 		return executioncontext.Context{}, false
 	}
 	return row.program.contexts.Context(row.toContextID)
@@ -179,7 +183,7 @@ func (committed *CommittedProgram) PointTransitionAt(index int) (ProgramPointTra
 		return ProgramPointTransition{}, false
 	}
 	row := committed.pointTransitions[index]
-	return row, row.available()
+	return row, row.available
 }
 
 // PointTransitions returns a detached copy of the committed rows.  The rows
@@ -191,7 +195,7 @@ func (committed *CommittedProgram) PointTransitions() []ProgramPointTransition {
 	}
 	result := append([]ProgramPointTransition(nil), committed.pointTransitions...)
 	for _, row := range result {
-		if !row.available() {
+		if !row.available {
 			return nil
 		}
 	}
@@ -309,6 +313,11 @@ func constructProgramPointTransitions(committed *CommittedProgram, declaration t
 				source: sourcePoint, target: targetPoint,
 				sourceOrdinal: sourceOrdinal, targetOrdinal: targetOrdinal,
 			})
+			issued := &result[len(result)-1]
+			issued.available = issued.completeGeometry()
+			if !issued.available {
+				return nil, false
+			}
 		}
 	}
 	return result, true

@@ -24,8 +24,11 @@ type Relation struct {
 }
 
 // Available reports whether relation names a published activation set.
+// Publish and sealInitialRelation are the only constructors, and both prove
+// the generation and digest available before ever setting owner, so a set
+// owner already is the complete verdict.
 func (relation Relation) Available() bool {
-	return relation.owner != nil && relation.generation.Available() && relation.digest.Available()
+	return relation.owner != nil
 }
 
 // Generation returns this publication's monotone stamp within its Topology.

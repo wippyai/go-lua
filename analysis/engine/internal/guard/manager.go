@@ -102,7 +102,9 @@ func New(order []Atom) (*Manager, error) {
 	for index := range all {
 		all[index] = uint64(index)
 	}
-	manager.all = Scope{value: &scope{manager: manager, ranks: all, sealed: true}}
+	allScope := &scope{manager: manager, ranks: all}
+	allScope.available = allScope.complete()
+	manager.all = Scope{value: allScope}
 	return manager, nil
 }
 
@@ -172,12 +174,22 @@ type Scope struct{ value *scope }
 
 type scope struct {
 	manager *Manager
-	sealed  bool
 	// ranks is the immutable, strictly ascending Manager-rank set owned by
 	// this scope. It is deliberately compact: a scope remains valid when its
 	// Manager later gains an appended atom, while the new rank is absent until
 	// a new scope explicitly includes it.
 	ranks []uint64
+	// available is the completeness verdict reached once, at construction.
+	// Every constructor computes it through complete() before publishing the
+	// scope; Valid reads this settled fact instead of re-deriving it.
+	available bool
+}
+
+// complete proves the one-time structural invariant a sealed scope must
+// carry. It is called exactly once, by each constructor, before the scope is
+// published.
+func (s *scope) complete() bool {
+	return s != nil && s.manager != nil
 }
 
 // AllScope returns the Manager's complete presealed coordinate universe.
@@ -202,12 +214,14 @@ func (m *Manager) SealScope(atoms []Atom) (Scope, bool) {
 		}
 		ranks[index] = rank
 	}
-	return Scope{value: &scope{manager: m, ranks: ranks, sealed: true}}, true
+	sealed := &scope{manager: m, ranks: ranks}
+	sealed.available = sealed.complete()
+	return Scope{value: sealed}, sealed.available
 }
 
 // Valid reports whether this is a Manager-issued immutable scope.
 func (s Scope) Valid() bool {
-	return s.value != nil && s.value.manager != nil && s.value.sealed
+	return s.value != nil && s.value.available
 }
 
 // Manager returns the one guard universe for this scope.

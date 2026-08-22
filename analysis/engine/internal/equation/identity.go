@@ -93,7 +93,10 @@ func NewScope(decisions ...Decision) (Scope, bool) {
 	return Scope{row: &scopeRow{key: key, decisions: normalized}}, true
 }
 
-func (scope Scope) Available() bool { return scope.row != nil && scope.row.key.Available() }
+// Available reports whether scope names a sealed decision universe. NewScope
+// is the sole issuer and never returns a row whose key failed to derive, so a
+// non-nil row is already the complete verdict.
+func (scope Scope) Available() bool { return scope.row != nil }
 func (scope Scope) Key() composition.Key {
 	if !scope.Available() {
 		return composition.Key{}
@@ -280,6 +283,7 @@ type Input struct {
 	point      Point
 	key        composition.Key
 	identity   bool
+	available  bool
 }
 
 // BoundaryInput is the sole input constructor.  It retains no mutable or raw
@@ -295,10 +299,15 @@ func BoundaryInput(source, target Site, provenance composition.Key, pre Expr, om
 	}
 	input.key = key
 	input.identity = input.identityTransport()
+	input.available = true
 	return input
 }
 
-func (input Input) Available() bool             { return input.key.Available() && input.validBoundary() }
+// Available reports whether this Input is a sealed boundary edge. BoundaryInput
+// is the sole constructor and proves validBoundary before it ever sets this
+// field, so the accessor reads that settled verdict instead of re-walking the
+// source/target Sites and Reindex on every call.
+func (input Input) Available() bool             { return input.available }
 func (input Input) Point() Point                { return input.point }
 func (input Input) Source() Site                { return input.source }
 func (input Input) Target() Site                { return input.target }

@@ -372,7 +372,7 @@ func (topology *Topology) sealActivationDirectory(directory *activationRowDirect
 // Members are deliberately issued on demand, not retained in a candidate
 // catalog, so pointer ownership alone is not an authority check.
 func (topology *Topology) ownsMember(member Member) bool {
-	if topology == nil || member.owner != topology || !member.binding.Available() || !member.locator.Available() {
+	if topology == nil || member.owner != topology || !member.available {
 		return false
 	}
 	if topology.activation != nil {
@@ -417,7 +417,7 @@ func (topology *Topology) SelectActivationMember(trigger composition.Key, locato
 			}
 		}
 		if found {
-			return Member{owner: topology, binding: selected.key, locator: PairLocator{Application: selected.locator.application, Target: selected.locator.target, Endpoint: selected.locator.endpoint, Context: selected.locator.context}}, true
+			return Member{owner: topology, binding: selected.key, locator: PairLocator{Application: selected.locator.application, Target: selected.locator.target, Endpoint: selected.locator.endpoint, Context: selected.locator.context}, available: true}, true
 		}
 		return Member{}, false
 	}
@@ -464,7 +464,7 @@ func (topology *Topology) SelectActivationMemberForContext(trigger composition.K
 		Target:      selected.locator.target,
 		Endpoint:    selected.locator.endpoint,
 		Context:     selected.locator.context,
-	}}, true
+	}, available: true}, true
 }
 
 func (topology *Topology) deriveKey(base composition.Key) (composition.Key, bool) {
@@ -550,7 +550,7 @@ func (topology *Topology) Accept(member Member, premise Expr) (AcceptedMember, b
 	if !ok {
 		return AcceptedMember{}, false
 	}
-	return AcceptedMember{member: member, premise: premise, evidence: evidence}, true
+	return AcceptedMember{member: member, premise: premise, evidence: evidence, available: true}, true
 }
 
 // acceptedEvidenceKey is the one evidence constructor for admission and
@@ -765,7 +765,7 @@ func (topology *Topology) MergeAccepted(left, right AcceptedMember) (AcceptedMem
 	if !ok {
 		return AcceptedMember{}, false
 	}
-	return AcceptedMember{member: left.member, premise: premise, evidence: evidence}, true
+	return AcceptedMember{member: left.member, premise: premise, evidence: evidence, available: true}, true
 }
 
 // graphSemanticKeyWithFailure retains the graph-key failure boundary for the

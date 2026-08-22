@@ -137,7 +137,7 @@ func factorRowAvailable(row schemaFactorBinding) bool {
 	}
 	state, schema := row.schemaFactorBindingState(), row.schemaFactorSchema()
 	ordinal := row.schemaFactorOrdinal()
-	return state != nil && state.phase == schemaBindingSealed && state.authority != nil && schema != nil && state.schema == schema && ordinal < uint64(len(state.factors)) && state.factors[ordinal] == row
+	return state != nil && state.phase == schemaBindingSealed && schema != nil && state.schema == schema && ordinal < uint64(len(state.factors)) && state.factors[ordinal] == row
 }
 
 type FactorImplementation[K ~uint32 | ~uint64, V any] struct {

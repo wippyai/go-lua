@@ -13,9 +13,16 @@ type FactorSlotCapability struct {
 	state     *schemaBindingState
 	authority *schemaBindingAuthority
 	ordinal   uint64
+	available bool
 }
 
-func (capability FactorSlotCapability) Available() bool {
+// Available reports whether this capability names a Factor row of the exact
+// sealed binding that issued it. The verdict is sealed by the issuer: a sealed
+// binding is terminal, so the row geometry the issuer proved cannot change
+// underneath the capability afterwards.
+func (capability FactorSlotCapability) Available() bool { return capability.available }
+
+func (capability FactorSlotCapability) completeRow() bool {
 	if capability.state == nil || capability.authority == nil ||
 		capability.state.phase != schemaBindingSealed ||
 		capability.state.authority != capability.authority ||
@@ -38,7 +45,8 @@ func FactorCapabilityForSemantic(binding *SchemaBinding, semantic identity.Seman
 	}
 	ordinal, ok := state.schema.factorOrdinalOf(compositionKeyOf(semantic))
 	capability := FactorSlotCapability{state: state, authority: state.authority, ordinal: ordinal}
-	return capability, ok && capability.Available()
+	capability.available = ok && capability.completeRow()
+	return capability, capability.available
 }
 
 func (capability FactorSlotCapability) semantic(state *schemaBindingState, authority *schemaBindingAuthority) (composition.Key, bool) {

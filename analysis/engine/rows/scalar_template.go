@@ -75,8 +75,12 @@ func (template *ArtifactScalarTemplate) OwnsFactor(factor ArtifactScalarFactor) 
 	return false
 }
 
+// Available reports whether this template is a sealed structural input. The
+// verdict is the one NewArtifactScalarTemplate reached over the admitted spec,
+// which is where the artifact, program, and schema identities are proved; the
+// zero template is unavailable.
 func (template *ArtifactScalarTemplate) Available() bool {
-	return template != nil && template.sealed && template.artifact.Available() && template.program.Available() && template.schema.Available()
+	return template != nil && template.sealed
 }
 func (template *ArtifactScalarTemplate) ArtifactID() identity.ContentID {
 	if !template.Available() {

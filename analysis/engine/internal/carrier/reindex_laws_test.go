@@ -265,6 +265,115 @@ func TestNewStateRejectsScopeIssuedByForeignComposition(t *testing.T) {
 	}
 }
 
+// TestScopeValidIsSealedAtConstruction pins that Scope.Valid reads the
+// completeness verdict newScope reached once, at construction, rather than
+// re-deriving it from composition/guard on every call.  Detaching those
+// fields from an already-issued scope therefore cannot flip the verdict, and
+// the read allocates nothing.
+func TestScopeValidIsSealedAtConstruction(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	scope, ok := composition.SealScope([]guard.Atom{1})
+	if !ok || !scope.Valid() {
+		t.Fatal("issued scope unavailable")
+	}
+	detached := scope
+	detached.guard = guard.Scope{}
+	if !detached.Valid() {
+		t.Fatal("Valid re-derives from guard instead of reading the sealed verdict")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = scope.Valid() }); allocs != 0 {
+		t.Fatalf("Valid allocates %v per call", allocs)
+	}
+	if (Scope{}).Valid() {
+		t.Fatal("zero scope available")
+	}
+}
+
+// TestScopeRefusesMalformedConstruction pins that SealScope is the sole
+// authenticator: an atom outside the composition's guard universe never
+// reaches a published Scope.
+func TestScopeRefusesMalformedConstruction(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	if scope, ok := composition.SealScope([]guard.Atom{99}); ok || scope.Valid() {
+		t.Fatal("unowned atom sealed into a published scope")
+	}
+	var nilComposition *Composition
+	if scope, ok := nilComposition.SealScope([]guard.Atom{1}); ok || scope.Valid() {
+		t.Fatal("nil-composition scope sealed")
+	}
+}
+
+// TestReindexPlanValidIsSealedAtConstruction pins that ReindexPlan.Valid reads
+// the completeness verdict newReindexPlan reached once, at construction,
+// rather than re-deriving it from composition/relation on every call.
+// Detaching those fields from an already-sealed plan therefore cannot flip
+// the verdict, and the read allocates nothing.
+func TestReindexPlanValidIsSealedAtConstruction(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	plan, ok := composition.IdentityReindex(composition.Scope())
+	if !ok || !plan.Valid() {
+		t.Fatal("issued reindex plan unavailable")
+	}
+	detached := plan
+	detached.relation = guard.Reindex{}
+	if !detached.Valid() {
+		t.Fatal("Valid re-derives from relation instead of reading the sealed verdict")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = plan.Valid() }); allocs != 0 {
+		t.Fatalf("Valid allocates %v per call", allocs)
+	}
+	if (ReindexPlan{}).Valid() {
+		t.Fatal("zero reindex plan available")
+	}
+}
+
+// TestReindexPlanRefusesMalformedConstruction pins that Seal is the sole
+// authenticator: an incomplete source-coordinate assignment never reaches a
+// published ReindexPlan.
+func TestReindexPlanRefusesMalformedConstruction(t *testing.T) {
+	manager, err := guard.New([]guard.Atom{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	composition, ok := attachTestComposition(t, []FactorOperation{&carryOnlyOperation{guards: manager}})
+	if !ok {
+		t.Fatal("composition")
+	}
+	source, ok := composition.SealScope([]guard.Atom{1, 2})
+	if !ok {
+		t.Fatal("source scope")
+	}
+	builder, ok := composition.NewReindex(source, composition.Scope())
+	if !ok || !builder.Identity(1) {
+		t.Fatal("partial reindex construction")
+	}
+	// atom 2 is left unassigned: Seal must reject an incomplete relation.
+	if plan, ok := builder.Seal(); ok || plan.Valid() {
+		t.Fatal("incomplete source relation sealed")
+	}
+}
+
 func TestNewStateAcceptsEmptyIssuedScopeWithConstantSupport(t *testing.T) {
 	manager, err := guard.New([]guard.Atom{1})
 	if err != nil {

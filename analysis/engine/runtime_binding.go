@@ -44,7 +44,7 @@ func newRuntimeBinding(state *schemaBindingState, graph *equation.Graph) (*runti
 		return nil, false
 	}
 	state.mu.Lock()
-	schema, authority, sealed := state.schema, state.authority, state.phase == schemaBindingSealed && state.authority != nil
+	schema, authority, sealed := state.schema, state.authority, state.phase == schemaBindingSealed
 	state.mu.Unlock()
 	if !sealed || schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
 		return nil, false

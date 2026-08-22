@@ -26,6 +26,8 @@ type BoundEdge struct {
 
 	transition modulecomposition.ModuleCallTransition
 	generation modulecomposition.InitGeneration
+
+	available bool
 }
 
 // NewBoundEdge authenticates one module-call edge against the exact equation
@@ -104,64 +106,15 @@ func NewBoundEdge(
 		sourceContext: sourceContext, targetContext: targetContext,
 		from: from, to: to,
 		transition: transition, generation: generation,
+		available:  true,
 	}
-	return edge, edge.Available()
+	return edge, true
 }
 
-// Available reports whether this edge still carries a complete, internally
-// authenticated binding.  It does not accept any replacement authority.
-func (edge BoundEdge) Available() bool {
-	if edge.graph == nil || !edge.layout.Available() || !edge.directory.Available() ||
-		edge.layout.Graph() != edge.graph ||
-		!edge.sourcePoint.Available() || !edge.targetPoint.Available() ||
-		!edge.transition.Available() || !edge.generation.Available() ||
-		!edge.graph.OwnsPoint(edge.sourcePoint) || !edge.graph.OwnsPoint(edge.targetPoint) ||
-		edge.layout.PointCount() != edge.graph.PointCount() {
-		return false
-	}
-	if !contextLayoutDirectoryMatch(edge.layout, edge.directory) ||
-		edge.transition.LinkID() != edge.directory.LinkID() ||
-		edge.generation.LinkID() != edge.directory.LinkID() ||
-		edge.transition.CacheIngressID() != edge.generation.CacheIngressID() ||
-		edge.transition.GenerationID() != edge.generation.ID() {
-		return false
-	}
-	sourceIndex, sourceIndexOK := edge.graph.PointIndex(edge.sourcePoint)
-	targetIndex, targetIndexOK := edge.graph.PointIndex(edge.targetPoint)
-	if !sourceIndexOK || !targetIndexOK ||
-		contextfiber.PointOrdinal(sourceIndex) != edge.sourceOrdinal ||
-		contextfiber.PointOrdinal(targetIndex) != edge.targetOrdinal {
-		return false
-	}
-	sourceOwner, sourceOwnerOK := edge.layout.PointOwnerAt(edge.sourceOrdinal)
-	targetOwner, targetOwnerOK := edge.layout.PointOwnerAt(edge.targetOrdinal)
-	if !sourceOwnerOK || !targetOwnerOK || !sourceOwner.Mounted() || !targetOwner.Mounted() ||
-		sourceOwner.ModuleKey() != edge.transition.SourceModuleKey() ||
-		targetOwner.ModuleKey() != edge.generation.ModuleKey() {
-		return false
-	}
-	canonicalTransition, transitionOK := edge.directory.Transition(edge.transition.FromContextID(), edge.transition.ToContextID())
-	if !transitionOK || canonicalTransition.ID() != edge.transition.TransitionID() ||
-		canonicalTransition.LinkID() != edge.transition.LinkID() ||
-		canonicalTransition.FromContextID() != edge.transition.FromContextID() ||
-		canonicalTransition.ToContextID() != edge.transition.ToContextID() {
-		return false
-	}
-	sourceContext, sourceContextOK := contextOrdinal(edge.layout, edge.transition.FromContextID())
-	targetContext, targetContextOK := contextOrdinal(edge.layout, edge.transition.ToContextID())
-	if !sourceContextOK || !targetContextOK || sourceContext != edge.sourceContext || targetContext != edge.targetContext {
-		return false
-	}
-	sourceContextModule, sourceContextModuleOK := edge.layout.ContextModuleKey(edge.sourceContext)
-	targetContextModule, targetContextModuleOK := edge.layout.ContextModuleKey(edge.targetContext)
-	if !sourceContextModuleOK || !targetContextModuleOK ||
-		sourceContextModule != sourceOwner.ModuleKey() || targetContextModule != targetOwner.ModuleKey() {
-		return false
-	}
-	from, fromOK := edge.layout.Lookup(edge.sourceContext, edge.sourceOrdinal)
-	to, toOK := edge.layout.Lookup(edge.targetContext, edge.targetOrdinal)
-	return fromOK && toOK && from == edge.from && to == edge.to
-}
+// Available reports whether this edge carries a complete, internally
+// authenticated binding.  NewBoundEdge is the sole issuer and seals the
+// verdict; the zero BoundEdge is unavailable.
+func (edge BoundEdge) Available() bool { return edge.available }
 
 // From returns the source compact state row.
 func (edge BoundEdge) From() contextfiber.StateOrdinal {

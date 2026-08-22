@@ -301,7 +301,7 @@ func assembleRuntimeOwned(graph *equation.Graph, runtime *carrier.Composition, p
 		}
 		boundEdges := make([]linkexecutionplan.BoundEdge, len(pointTransitions))
 		for index, transition := range pointTransitions {
-			if !transition.available() {
+			if !transition.available {
 				return nil, false
 			}
 			edge, bound := linkexecutionplan.NewBoundEdge(graph, contextLayout, contexts, transition.SourcePoint(), transition.TargetPoint(), transition.Transition(), transition.Generation())

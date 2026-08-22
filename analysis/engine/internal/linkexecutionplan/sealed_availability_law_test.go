@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/contextfiber"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // TestPlanAvailabilityIsSealedAtConstruction pins that a plan's availability is
@@ -40,5 +41,57 @@ func TestPlanAvailabilityIsSealedAtConstruction(t *testing.T) {
 	}
 	if (&LinkExecutionPlan{}).StateCount() != 0 || (&LinkExecutionPlan{}).Layout().Available() {
 		t.Fatal("unconstructed plan published a projection")
+	}
+}
+
+// TestBoundEdgeAvailabilityIsSealedAtConstruction pins that NewBoundEdge is the
+// sole authenticator: the accessors read the verdict it sealed rather than
+// re-authenticating the graph, layout, and directory on every call.  Detaching
+// the authorities from an already-issued edge therefore cannot flip the verdict,
+// the read allocates nothing, and an unissued edge stays unavailable.
+func TestBoundEdgeAvailabilityIsSealedAtConstruction(t *testing.T) {
+	fixture := newBoundEdgeSCCFixture(t)
+	edge := fixture.forward
+	if !edge.Available() {
+		t.Fatal("issued edge unavailable")
+	}
+	detached := edge
+	detached.graph = nil
+	detached.layout = contextfiber.Layout{}
+	detached.directory = executioncontext.Directory{}
+	if !detached.Available() {
+		t.Fatal("Available re-authenticates the issuing authorities instead of reading the sealed verdict")
+	}
+	if allocs := testing.AllocsPerRun(100, func() { _ = edge.Available() }); allocs != 0 {
+		t.Fatalf("Available allocates %v per call", allocs)
+	}
+	if (BoundEdge{}).Available() {
+		t.Fatal("unissued edge available")
+	}
+	if (BoundEdge{}).From() != 0 || (BoundEdge{}).SourcePoint().Available() {
+		t.Fatal("unissued edge published a projection")
+	}
+}
+
+// TestBoundEdgeRefusesMalformedConstruction pins that every authentication the
+// accessors once repeated is decided once, at issuance: a foreign graph, an
+// unavailable layout, and a transition that is not the directory's canonical
+// row are all refused by NewBoundEdge, which never issues an unavailable edge.
+func TestBoundEdgeRefusesMalformedConstruction(t *testing.T) {
+	fixture := newBoundEdgeSCCFixture(t)
+	if edge, ok := NewBoundEdge(nil, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+		t.Fatal("graphless edge issued")
+	}
+	if edge, ok := NewBoundEdge(fixture.graph, contextfiber.Layout{}, fixture.directory, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+		t.Fatal("layoutless edge issued")
+	}
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, executioncontext.Directory{}, fixture.points[0], fixture.points[1], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+		t.Fatal("directoryless edge issued")
+	}
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[0], fixture.points[1], fixture.reverseRow, fixture.forwardGen); ok || edge.Available() {
+		t.Fatal("edge issued for a transition that does not join its generation")
+	}
+	if edge, ok := NewBoundEdge(fixture.graph, fixture.layout, fixture.directory, fixture.points[1], fixture.points[0], fixture.forwardRow, fixture.forwardGen); ok || edge.Available() {
+		t.Fatal("edge issued for endpoints that contradict the transition owners")
 	}
 }

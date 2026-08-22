@@ -10,12 +10,13 @@ import (
 type activationTargetRows struct{ data *activationTargetRowsData }
 
 type activationTargetRowsData struct {
-	source  *composition.Composition
-	binding *templateBindingData
-	batch   *Batch
-	key     composition.Key
-	sites   []Site // formal Batch Site row -> exact target-owned Site
-	inputs  []Input
+	source    *composition.Composition
+	binding   *templateBindingData
+	batch     *Batch
+	key       composition.Key
+	sites     []Site // formal Batch Site row -> exact target-owned Site
+	inputs    []Input
+	available bool
 }
 
 // lowerActivationTargetRows consumes one exact TemplateBinding and the
@@ -363,7 +364,9 @@ func lowerActivationTargetRows(source *composition.Composition, binding Template
 	result := &activationTargetRowsData{
 		source: source, binding: binding.data, batch: target, key: key, sites: targetSites, inputs: loweredInputs,
 	}
-	return activationTargetRows{data: result}, true
+	result.available = result.source != nil && result.source.ID().Available() && result.binding != nil && result.batch != nil && result.batch.Sealed() &&
+		(TemplateBinding{data: result.binding}).Available() && result.key.Available() && len(result.sites) == len(result.binding.formals.sites)
+	return activationTargetRows{data: result}, result.available
 }
 
 // activationTargetMetadata reissues the formal metadata rows through the
@@ -616,10 +619,13 @@ func activationTargetKey(source *composition.Composition, binding TemplateBindin
 	})
 }
 
+// Available reports whether value is a sealed activation-target row set.
+// lowerActivationTargetRows is the sole constructor of a non-nil data pointer
+// and proves this verdict once there, so the accessor reads that settled bit
+// instead of re-deriving it from the source/binding/batch on every call.
 func (value activationTargetRows) Available() bool {
 	data := value.data
-	return data != nil && data.source != nil && data.source.ID().Available() && data.binding != nil && data.batch != nil && data.batch.Sealed() &&
-		(TemplateBinding{data: data.binding}).Available() && data.key.Available() && len(data.sites) == len(data.binding.formals.sites)
+	return data != nil && data.available
 }
 
 func (value activationTargetRows) Key() composition.Key {

@@ -98,59 +98,62 @@ type programCallRow struct {
 	program *CommittedProgram
 	key     artifactMountedRuleOccurrence
 	stage   artifactNativeCallStage
+
+	available bool
 }
 
-func (handle programCallRow) resolve() (artifactNativeCallStage, bool) {
+// completeStage proves that the handed key names exactly this stage row in the
+// committed program and that the row carries its four authenticated points. A
+// committed program is immutable, so the issuer decides this once.
+func (handle programCallRow) completeStage() bool {
 	if !handle.program.valid() || handle.program.nativeCallStages == nil {
-		return artifactNativeCallStage{}, false
+		return false
 	}
 	row, ok := handle.program.nativeCallStages[handle.key]
-	return row, ok && row == handle.stage && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
+	return ok && row == handle.stage && row.point.Available() && row.input.Available() && row.mountedPoint.Available() && row.mountedInput.Available()
 }
 
-func (handle programCallRow) Available() bool { _, ok := handle.resolve(); return ok }
+// Available reports whether this handle was issued against a committed stage
+// row. MountedNativeCallStage is the sole issuer and seals the verdict.
+func (handle programCallRow) Available() bool { return handle.available }
 func (handle programCallRow) Stage() schema.Key {
-	row, ok := handle.resolve()
-	if !ok {
+	if !handle.available {
 		return ""
 	}
-	return row.stage
+	return handle.stage.stage
 }
 func (handle programCallRow) MountID() identity.ContentID {
-	if _, ok := handle.resolve(); !ok {
+	if !handle.available {
 		return identity.ContentID{}
 	}
 	return handle.key.mount
 }
 func (handle programCallRow) OccurrenceID() identity.ContentID {
-	if _, ok := handle.resolve(); !ok {
+	if !handle.available {
 		return identity.ContentID{}
 	}
 	return handle.key.occurrence
 }
 func (handle programCallRow) ReusablePointID() identity.ContentID {
-	row, ok := handle.resolve()
-	if !ok {
+	if !handle.available {
 		return identity.ContentID{}
 	}
-	return row.point
+	return handle.stage.point
 }
 func (handle programCallRow) ReusableInputPointID() identity.ContentID {
-	row, ok := handle.resolve()
-	if !ok {
+	if !handle.available {
 		return identity.ContentID{}
 	}
-	return row.input
+	return handle.stage.input
 }
 
 // RuleMember resolves the already-attached member authenticated by this
 // stage proof. The caller cannot substitute another point or occurrence.
 func (handle programCallRow) RuleMember() (ProgramMember, bool) {
-	row, ok := handle.resolve()
-	if !ok {
+	if !handle.available {
 		return ProgramMember{}, false
 	}
-	locator, found := handle.program.directory.member(mountedRuleMemberID(handle.key.role, handle.key.mount, row.point, handle.key.occurrence))
+	locator, found := handle.program.directory.member(mountedRuleMemberID(handle.key.role, handle.key.mount, handle.stage.point, handle.key.occurrence))
 	if !found {
 		return ProgramMember{}, false
 	}

@@ -143,7 +143,10 @@ func OrExpr(left, right Expr) (Expr, bool) {
 	return combineExpr(left, right, exprOr)
 }
 
-func (expr Expr) Available() bool { return expr.valid && expr.root <= uint32(len(expr.nodes)+1) }
+// Available reports whether expr is a sealed reduced decision DAG. Every
+// constructor proves root <= len(nodes)+1 before it ever sets valid, so the
+// accessor reads that settled bit instead of re-checking the bound.
+func (expr Expr) Available() bool { return expr.valid }
 func (expr Expr) IsFalse() bool   { return expr.Available() && expr.root == 0 }
 func (expr Expr) IsTrue() bool    { return expr.Available() && expr.root == 1 }
 

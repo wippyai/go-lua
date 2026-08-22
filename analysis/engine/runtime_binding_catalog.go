@@ -528,7 +528,7 @@ func buildGraphBindingCatalog(state *schemaBindingState, graph *equation.Graph) 
 		return nil, false
 	}
 	state.mu.Lock()
-	schema, sealed := state.schema, state.phase == schemaBindingSealed && state.authority != nil
+	schema, sealed := state.schema, state.phase == schemaBindingSealed
 	state.mu.Unlock()
 	if !sealed || schema == nil || !schema.Available() || graph == nil || !graph.OwnsComposition(schema.cold) || graph.CompositionID() != schema.cold.ID() {
 		return nil, false
