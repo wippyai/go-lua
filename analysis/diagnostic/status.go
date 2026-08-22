@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
+	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -184,7 +185,6 @@ const (
 	ProgramBindingFailureAxisAuthority
 	ProgramBindingFailureHeapIndex
 	ProgramBindingFailureTarget
-	ProgramBindingFailureTargetCatalog
 	ProgramBindingFailureTable
 	ProgramBindingFailureCompilation
 	ProgramBindingFailureBinding
@@ -201,7 +201,7 @@ const (
 var programBindingFailureNames = [...]string{
 	"none", "input", "types", "static",
 	"axis-authority", "heap-index",
-	"target", "target-catalog", "table", "compilation", "binding", "principal",
+	"target", "table", "compilation", "binding", "principal",
 	"allocation-catalog", "query-catalog", "seal", "allocations",
 }
 
@@ -254,9 +254,9 @@ func ProgramBindingFailureFromBind(failure composite.BindFailure) ProgramBinding
 // coordinate space this boundary re-enumerates, so the verdict is one and the
 // axis travels with it.
 //
-// A post-mount derivation is owned by no axis, so it keeps its own verdict:
+// Post-mount derivations are owned by no axis, so each keeps its own verdict:
 // which derivation refused is the phase's whole evidence, and each is spelled
-// here as the boundary member that derivation has always published.
+// here as the boundary member that derivation publishes.
 func ProgramBindingFailureFromMount(failure composite.MountFailure) ProgramBindingFailure {
 	if !failure.Available() {
 		return ProgramBindingFailureNone
@@ -264,8 +264,8 @@ func ProgramBindingFailureFromMount(failure composite.MountFailure) ProgramBindi
 	switch failure.Stage {
 	case composite.MountStageTopology:
 		return ProgramBindingFailureHeapIndex
-	case composite.MountStageActivation:
-		return ProgramBindingFailureTargetCatalog
+	case composite.MountStageFormal:
+		return ProgramBindingFailureTarget
 	case composite.MountStageAxis:
 		if failure.Axis == composite.DiagnosticAxisUnknown {
 			return ProgramBindingFailureInput
@@ -319,8 +319,13 @@ type AnalyzeDiagnostics struct {
 	// BindingRuleStage names the binder pass a per-rule verdict is about. It is
 	// the pass half of a ProgramBindingFailure rule ordinal, which names only
 	// which rule refused.
-	BindingRuleStage  AnalyzeDiagnosticRuleBindStage
-	ValueSeal         valuedomain.SealFailure
+	BindingRuleStage AnalyzeDiagnosticRuleBindStage
+	ValueSeal        valuedomain.SealFailure
+	// PackSeal recovers a rejected pack-axis mount at pack's own evidence
+	// type. A mount rejection from another axis leaves it absent: which axis
+	// rejected is composite.MountFailure.Axis, and only that axis's own type
+	// recovers its reason.
+	PackSeal          packowner.MountRejection
 	AllocationCatalog allocationcatalog.SealFailure
 	// AssembleSeal, AssembleLowering, AssembleCommit, and ObservationAttach
 	// each carry one engine boundary as its lifecycle family, universal
@@ -329,11 +334,22 @@ type AnalyzeDiagnostics struct {
 	// their site digests. ObservationAttach spans the whole ordered runtime
 	// attach path: a compile-family value names the attach phase that
 	// rejected, an observation-family value the branch observation itself.
-	AssembleSeal            engine.SolveFailure
-	AssembleOrdinal         uint32
-	AssembleLowering        engine.SolveFailure
-	AssembleCommit          engine.SolveFailure
+	//
+	// AssembleSeal also carries the declaration-seal boundary of a refused
+	// ProgramAdmissionLink, ProgramAdmissionMounted, or ProgramAdmissionQuery
+	// stage, with AssembleOrdinal beside it naming the admission row that
+	// stage rejected.
+	AssembleSeal     engine.SolveFailure
+	AssembleOrdinal  uint32
+	AssembleLowering engine.SolveFailure
+	AssembleCommit   engine.SolveFailure
+	// AssembleScheduleOrdinal is the declared composition-schedule row a
+	// refused construction stopped on; it is zero for a construction refused
+	// at any other step. AssembleConstructionRow is that same refused
+	// construction's declared row for every step, schedule included, so a
+	// non-schedule construction step still publishes the row it stopped on.
 	AssembleScheduleOrdinal uint32
+	AssembleConstructionRow uint32
 	ObservationAttach       engine.SolveFailure
 	// Construction carries one program-constructor refusal as family,
 	// disposition, and opaque site. The constructor's internal stage names
@@ -377,10 +393,20 @@ func (diagnostics *AnalyzeDiagnostics) EnterProgramAssemble(refusal engine.Progr
 	switch refusal.Stage() {
 	case engine.ProgramAdmissionLink:
 		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageBootstrapRules
+		diagnostics.AssembleSeal = refusal.Seal()
+		diagnostics.AssembleOrdinal, _ = refusal.AdmissionRow()
 	case engine.ProgramAdmissionMounted:
 		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageArtifactRules
+		diagnostics.AssembleSeal = refusal.Seal()
+		diagnostics.AssembleOrdinal, _ = refusal.AdmissionRow()
 	case engine.ProgramAdmissionQuery:
 		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageQueryRows
+		diagnostics.AssembleSeal = refusal.Seal()
+		if ordinal, artifactRows := refusal.ArtifactRowOrdinal(); artifactRows {
+			diagnostics.AssembleOrdinal = ordinal
+		} else {
+			diagnostics.AssembleOrdinal, _ = refusal.AdmissionRow()
+		}
 	case engine.ProgramAdmissionSeal:
 		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageSourceSeal
 		diagnostics.AssembleSeal = refusal.Seal()
@@ -398,6 +424,7 @@ func (diagnostics *AnalyzeDiagnostics) EnterProgramAssemble(refusal engine.Progr
 		diagnostics.AssembleStage = AnalyzeDiagnosticAssembleStageCommit
 		diagnostics.AssembleCommit = commit
 		diagnostics.AssembleScheduleOrdinal = refusal.ScheduleRow()
+		diagnostics.AssembleConstructionRow, _ = refusal.ConstructionRow()
 	}
 }
 

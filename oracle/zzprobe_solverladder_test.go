@@ -188,15 +188,16 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 	// would consult.
 	failedRule := composite.DiagnosticRuleForSemantic(run.compilation, engineFailure.Rule())
 	return fmt.Sprintf(
-		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s vseal=%s alloc=%s "+
-			"aseal=%s@%d alower=%s acommit=%s@%d obsattach=%s constr=%s "+
+		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s vseal=%s pseal=%s alloc=%s "+
+			"aseal=%s@%d alower=%s acommit=%s@%d crow=%d obsattach=%s constr=%s "+
 			"efail={avail=%t reason=%d site=%s owner=%s point=%v group=%v member=%v rule=%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule, diagnostics.Axis,
 		diagnostics.AssembleStage, diagnostics.Binding, diagnostics.BindingRuleStage,
-		diagnostics.ItemIssuance, diagnostics.ValueSeal, diagnostics.AllocationCatalog,
+		diagnostics.ItemIssuance, diagnostics.ValueSeal, diagnostics.PackSeal, diagnostics.AllocationCatalog,
 		zzProbeSolveFailure(diagnostics.AssembleSeal), diagnostics.AssembleOrdinal,
 		zzProbeSolveFailure(diagnostics.AssembleLowering),
 		zzProbeSolveFailure(diagnostics.AssembleCommit), diagnostics.AssembleScheduleOrdinal,
+		diagnostics.AssembleConstructionRow,
 		zzProbeSolveFailure(diagnostics.ObservationAttach),
 		zzProbeSolveFailure(diagnostics.Construction),
 		engineFailure.Available(), engineFailure.Reason(),
@@ -475,6 +476,32 @@ func zzProbeDumpLine(sample zzProbeSolverSample) string {
 		engineDigest, zzProbeOr(sample.errText, "-"))
 }
 
+// zzProbeClassCensus names every walk class with its own count. A walk that
+// reported only solved/failed folded every refusal into one number, so an
+// unsupported fixture read the same as a compile failure; each class is its own
+// column here, and none is summed into another.
+func zzProbeClassCensus(samples []zzProbeSolverSample) string {
+	counts := make(map[string]int, 8)
+	for _, sample := range samples {
+		counts[zzProbeOr(sample.class, "ok")]++
+	}
+	classes := make([]string, 0, len(counts))
+	for class := range counts {
+		classes = append(classes, class)
+	}
+	sort.Strings(classes)
+	var census strings.Builder
+	census.WriteString(" classes{")
+	for index, class := range classes {
+		if index != 0 {
+			census.WriteString(" ")
+		}
+		fmt.Fprintf(&census, "%s=%d", class, counts[class])
+	}
+	census.WriteString("}")
+	return census.String()
+}
+
 func zzProbeOr(value, fallback string) string {
 	if value == "" {
 		return fallback
@@ -590,7 +617,7 @@ func TestZZProbeSolverLadderWalk(t *testing.T) {
 	}
 
 	sort.SliceStable(samples, func(left, right int) bool { return samples[left].solve > samples[right].solve })
-	t.Logf("ZZPROBE walk shard=%q fixtures=%d solved=%d failed=%d", prefix, len(samples), len(samples)-failures, failures)
+	t.Logf("ZZPROBE walk shard=%q fixtures=%d solved=%d failed=%d%s", prefix, len(samples), len(samples)-failures, failures, zzProbeClassCensus(samples))
 	for index, sample := range samples {
 		if index >= top {
 			break

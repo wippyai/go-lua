@@ -9,6 +9,8 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/engine/rows"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 )
 
 func issuanceRefusalID(value int) identity.ContentID {
@@ -26,6 +28,7 @@ type issuanceRefusalFixture struct {
 	binding    *SchemaBinding
 	mount      MountedProgramArtifact
 	bootstrap  ProgramBootstrap
+	contexts   executioncontext.Directory
 	admission  MountedProgramAdmission
 	capability RuleSlotCapability
 	mountID    identity.ContentID
@@ -33,11 +36,13 @@ type issuanceRefusalFixture struct {
 	occurrence identity.ContentID
 }
 
-func (fixture issuanceRefusalFixture) construct(admission MountedProgramAdmission) (*CommittedProgram, ProgramAssembleRefusal, bool) {
+func (fixture issuanceRefusalFixture) construct(t testing.TB, admission MountedProgramAdmission) (*CommittedProgram, ProgramAssembleRefusal, bool) {
+	t.Helper()
 	return ConstructProgram(ProgramDeclaration{
 		Binding:   fixture.binding,
 		Mounts:    []MountedProgramArtifact{fixture.mount},
 		Bootstrap: fixture.bootstrap,
+		Contexts:  fixture.contexts,
 		Admission: admission,
 	})
 }
@@ -85,7 +90,6 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 		Roles: 1, Points: 2, Regions: 1, Events: 4, Rules: 1, Bodies: 1,
 	})
 	role, roleOK := spec.DeclareRole(issuanceRefusalID(4))
-	stageLawsOK := spec.InstallStageLaws([]rows.ArtifactStageLaw{{Stage: rows.ArtifactRuleStageIssued3, Native: true}})
 	initial, output := issuanceRefusalID(5), issuanceRefusalID(6)
 	_, initialOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: initial, Initial: true})
 	_, outputOK := spec.AddPoint(rows.ArtifactScalarPoint{ID: output})
@@ -98,12 +102,14 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 	body, bodyOK := spec.AddBody(rows.ArtifactScalarBody{ID: issuanceRefusalID(8)})
 	bodyOK = bodyOK && spec.AddBodyEntry(body, initial) && spec.AddBodyExit(body, output)
 	occurrence := issuanceRefusalID(9)
-	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: rows.ArtifactRuleStageIssued3, Point: output, Input: initial, ID: occurrence})
+	ruleRowOK := spec.AddRule(rows.ArtifactScalarRule{Role: role, Stage: programissuance.StageCallDispatch, Point: output, Input: initial, ID: occurrence, Native: true})
 	template, templateOK := rows.NewArtifactScalarTemplate(spec)
 	bootstrap, bootstrapOK := NewProgramBootstrap(issuanceRefusalID(10), issuanceRefusalID(11))
+	contexts := explicitTestContextDirectory(t, issuanceRefusalID(10), []identity.ContentID{mountID}, issuanceRefusalID(13), issuanceRefusalID(14))
+	queryContext := explicitTestContext(t, contexts, mountID)
 	cell, cellOK := ruleImplementation.sealedRuleCell()
-	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, issuanceRefusalID(12), mountID, output)
-	if !specOK || !roleOK || !stageLawsOK || !initialOK || !outputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowOK ||
+	queryAdmission, queryAdmissionOK := NewExactQueryAdmission(queryImplementation, issuanceRefusalID(12), mountID, output, queryContext)
+	if !specOK || !roleOK || !initialOK || !outputOK || !regionOK || !eventsOK || !bodyOK || !ruleRowOK ||
 		!templateOK || !bootstrapOK || !cellOK || cell == nil || !queryAdmissionOK {
 		t.Fatal("issuance refusal artifact")
 	}
@@ -111,6 +117,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 		binding:   binding,
 		mount:     MountedProgramArtifact{Template: template, Roles: []MountedProgramRole{{Scalar: role, Capability: capability}}, Module: mountID},
 		bootstrap: bootstrap,
+		contexts:  contexts,
 		admission: MountedProgramAdmission{
 			Mounted: []MountedRuleAdmission{{Capability: capability, Mount: mountID, Point: output, Occurrence: occurrence}},
 			Queries: []ProgramQueryAdmission{queryAdmission},
@@ -128,7 +135,7 @@ func newIssuanceRefusalFixture(t testing.TB) issuanceRefusalFixture {
 // stopped nowhere, and two planes never share one refusal identity.
 func TestIssuanceRefusalsNameTheirOwnPhase(t *testing.T) {
 	fixture := newIssuanceRefusalFixture(t)
-	if program, refusal, ok := fixture.construct(fixture.admission); !ok || program == nil {
+	if program, refusal, ok := fixture.construct(t, fixture.admission); !ok || program == nil {
 		t.Fatalf("the admissible declaration was refused: stage=%v seal=%v commit=%v", refusal.Stage(), refusal.Seal(), refusal.Commit())
 	}
 	mounted := fixture.admission
@@ -153,7 +160,7 @@ func TestIssuanceRefusalsNameTheirOwnPhase(t *testing.T) {
 	}
 	sites := make(map[identity.ContentID]string, len(cases))
 	for _, testcase := range cases {
-		program, refusal, ok := fixture.construct(testcase.admission)
+		program, refusal, ok := fixture.construct(t, testcase.admission)
 		if ok || program != nil {
 			t.Fatalf("%s: an inadmissible issuance published a program", testcase.name)
 		}
@@ -219,5 +226,53 @@ func TestRefusedConstructionPublishesItsRow(t *testing.T) {
 	}
 	if row, published := (ProgramAssembleRefusal{}).ConstructionRow(); published || row != 0 {
 		t.Fatalf("an assemble that reached no construction published row %d/%t", row, published)
+	}
+}
+
+// TestConstructionRowSurvivesOffTheScheduleStep states that ConstructionRow
+// names the row a construction stopped on at every step, not only Schedule.
+// ScheduleRow is the composition-schedule row alone and stays zero for a
+// refusal at any other step, so the two accessors diverge on purpose; a caller
+// that reads only ScheduleRow loses the row of every other refused step.
+func TestConstructionRowSurvivesOffTheScheduleStep(t *testing.T) {
+	refusal := ProgramAssembleRefusal{construction: refuseAdmission(topologyConstructionStepCandidateRow, 9)}
+	row, published := refusal.ConstructionRow()
+	if !published || row != 9 {
+		t.Fatalf("a refused candidate-row construction published row %d/%t", row, published)
+	}
+	if schedule := refusal.ScheduleRow(); schedule != 0 {
+		t.Fatalf("a non-schedule construction step published schedule row %d", schedule)
+	}
+}
+
+// TestAdmissionRowNamesTheRejectedIssuanceRow states that a Link, Mounted, or
+// Query stage refusal publishes the exact declared admission row it stopped
+// on beside its boundary identity, the same law ConstructionRow already
+// states for a refused construction. A phase that carries no admission row -
+// the equation source seal - publishes none rather than a stray zero.
+func TestAdmissionRowNamesTheRejectedIssuanceRow(t *testing.T) {
+	cases := []struct {
+		name  string
+		phase programSealFailurePhase
+		stage ProgramAdmissionStage
+	}{
+		{name: "link-issuance", phase: programSealFailureLinkIssuance, stage: ProgramAdmissionLink},
+		{name: "mounted-issuance", phase: programSealFailureMountedIssuance, stage: ProgramAdmissionMounted},
+		{name: "activation-issuance", phase: programSealFailureActivationIssuance, stage: ProgramAdmissionMounted},
+		{name: "query-batch", phase: programSealFailureQueryBatch, stage: ProgramAdmissionQuery},
+	}
+	for _, testcase := range cases {
+		refusal := ProgramAssembleRefusal{stage: testcase.stage, seal: programSealFailure{phase: testcase.phase, ordinal: 6}}
+		row, published := refusal.AdmissionRow()
+		if !published || row != 6 {
+			t.Fatalf("%s: admission row published %d/%t", testcase.name, row, published)
+		}
+		if !refusal.Seal().Available() {
+			t.Fatalf("%s: the admission refusal minted no boundary", testcase.name)
+		}
+	}
+	sources := ProgramAssembleRefusal{stage: ProgramAdmissionSeal, seal: programSealFailure{phase: programSealFailureSources}}
+	if row, published := sources.AdmissionRow(); published || row != 0 {
+		t.Fatalf("a sources-phase refusal published admission row %d/%t", row, published)
 	}
 }

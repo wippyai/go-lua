@@ -12,10 +12,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/link"
 	"github.com/wippyai/go-lua/analysis/result"
 	schemadiag "github.com/wippyai/go-lua/analysis/schema/diagnostic"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	"github.com/wippyai/go-lua/analysis/schema/modulecomposition"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/snapshot"
 	"github.com/wippyai/go-lua/domain/composite"
+	packowner "github.com/wippyai/go-lua/domain/pack/owner"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	"github.com/wippyai/go-lua/domain/type/channelselect"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -200,6 +203,9 @@ func (workspace *Workspace) compileWithDiagnostics(source *link.Link) (*Plan, Co
 	// projection's job; a verdict from another axis carries no value evidence
 	// and leaves the field absent.
 	diagnostics.ValueSeal, _ = composite.MountRejection[valuedomain.SealFailure](mountFailure)
+	// Recovering the pack axis's own rejection evidence follows the same rule:
+	// a mount rejected outside pack leaves this field absent too.
+	diagnostics.PackSeal, _ = composite.MountRejection[packowner.MountRejection](mountFailure)
 	// The axis-authority verdict names one rejection; which axis raised it is
 	// the sealed table's identity and travels here beside it.
 	diagnostics.Axis = mountFailure.Axis

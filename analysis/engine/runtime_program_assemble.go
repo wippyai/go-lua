@@ -326,6 +326,21 @@ func (refusal ProgramAssembleRefusal) LinkRole() (RuleSlotCapability, bool) {
 	return refusal.seal.LinkCapability()
 }
 
+// AdmissionRow is the ordinal of the declared Link, Mounted, or Query
+// admission row a refused ProgramAdmissionLink, ProgramAdmissionMounted, or
+// ProgramAdmissionQuery stage rejected. The boundary itself travels as the
+// Seal identity; the row is data published beside it. It is absent for every
+// other seal phase, including one that reached no admission row at all.
+func (refusal ProgramAssembleRefusal) AdmissionRow() (uint32, bool) {
+	switch refusal.seal.Phase() {
+	case programSealFailureLinkIssuance, programSealFailureMountedIssuance,
+		programSealFailureActivationIssuance, programSealFailureQueryBatch:
+		return refusal.seal.Ordinal(), true
+	default:
+		return 0, false
+	}
+}
+
 // Commit projects the geometry construction refusal onto the public failure
 // vocabulary. A construction that published no geometry carries the stage it
 // refused at; a construction that never ran carries nothing.
