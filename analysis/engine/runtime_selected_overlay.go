@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/engine/internal/schedule"
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 )
 
 // preparedSelectedFactorOverlay is a stale-fenced, uninstalled structural
@@ -289,19 +290,12 @@ func (runtime *solverRuntime) validSelectedActivationContext(context equation.Ac
 		transition.ID() != context.TransitionID || transition.LinkID() != runtime.contexts.LinkID() {
 		return false
 	}
-	sourceOwner, sourceOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(source))
-	targetOwner, targetOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(target))
-	if !sourceOwnerOK || !targetOwnerOK || !sourceOwner.Mounted() || !targetOwner.Mounted() ||
-		sourceOwner.ModuleKey() != from.ModuleKey() || targetOwner.ModuleKey() != to.ModuleKey() {
+	sourceOrdinal, targetOrdinal, orientedOK := runtime.selectedActivationEndpointContexts(context, from, to, source, target)
+	if !orientedOK {
 		return false
 	}
-	fromOrdinal, fromOrdinalOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
-	toOrdinal, toOrdinalOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
-	if !fromOrdinalOK || !toOrdinalOK {
-		return false
-	}
-	sourceState, sourceStateOK := runtime.executionPlan.Lookup(fromOrdinal, contextfiber.PointOrdinal(source))
-	targetState, targetStateOK := runtime.executionPlan.Lookup(toOrdinal, contextfiber.PointOrdinal(target))
+	sourceState, sourceStateOK := runtime.executionPlan.Lookup(sourceOrdinal, contextfiber.PointOrdinal(source))
+	targetState, targetStateOK := runtime.executionPlan.Lookup(targetOrdinal, contextfiber.PointOrdinal(target))
 	if !sourceStateOK || !targetStateOK {
 		return false
 	}
@@ -312,7 +306,61 @@ func (runtime *solverRuntime) validSelectedActivationContext(context equation.Ac
 	sourcePoint, sourcePointOK := sourceCell.PointOrdinal()
 	targetPoint, targetPointOK := targetCell.PointOrdinal()
 	return sourceCellOK && targetCellOK && sourceContextOK && targetContextOK && sourcePointOK && targetPointOK &&
-		sourceContext == fromOrdinal && targetContext == toOrdinal && sourcePoint == contextfiber.PointOrdinal(source) && targetPoint == contextfiber.PointOrdinal(target)
+		sourceContext == sourceOrdinal && targetContext == targetOrdinal && sourcePoint == contextfiber.PointOrdinal(source) && targetPoint == contextfiber.PointOrdinal(target)
+}
+
+// selectedActivationEndpointContextIDs assigns the two Contexts of one
+// activation transition to the two endpoint Points of one transport edge. A
+// state cell exists only for a Point of its Context's own module, so the
+// endpoint modules decide the assignment and no caller may assume one.
+//
+// A candidate declares one transition and a transport vector that crosses it
+// in both directions: the imports enter the body from the trigger and the
+// export leaves the body for the trigger. Exactly one assignment therefore
+// places both endpoints in their own module's Context, and a transition whose
+// two Contexts belong to one module makes the two assignments identical. An
+// edge whose endpoints name neither end of the transition is refused.
+func selectedActivationEndpointContextIDs(context equation.ActivationContext, fromModule, toModule, sourceModule, targetModule identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
+	switch {
+	case sourceModule == fromModule && targetModule == toModule:
+		return context.FromContextID, context.ToContextID, true
+	case sourceModule == toModule && targetModule == fromModule:
+		return context.ToContextID, context.FromContextID, true
+	default:
+		return identity.ContentID{}, identity.ContentID{}, false
+	}
+}
+
+// selectedActivationEndpointContexts resolves the StateOrdinal-space Context of
+// each endpoint Point of one selected transport edge. It is the sole authority
+// on that assignment.
+func (runtime *solverRuntime) selectedActivationEndpointContexts(context equation.ActivationContext, from, to executioncontext.Context, source, target int) (contextfiber.ContextOrdinal, contextfiber.ContextOrdinal, bool) {
+	sourceOwner, sourceOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(source))
+	targetOwner, targetOwnerOK := runtime.contextLayout.PointOwnerAt(contextfiber.PointOrdinal(target))
+	if !sourceOwnerOK || !targetOwnerOK || !sourceOwner.Mounted() || !targetOwner.Mounted() {
+		return 0, 0, false
+	}
+	sourceContextID, targetContextID, orientedOK := selectedActivationEndpointContextIDs(context, from.ModuleKey(), to.ModuleKey(), sourceOwner.ModuleKey(), targetOwner.ModuleKey())
+	if !orientedOK {
+		return 0, 0, false
+	}
+	sourceOrdinal, sourceOrdinalOK := runtime.contextIndex.ContextOrdinal(sourceContextID)
+	targetOrdinal, targetOrdinalOK := runtime.contextIndex.ContextOrdinal(targetContextID)
+	if !sourceOrdinalOK || !targetOrdinalOK {
+		return 0, 0, false
+	}
+	return sourceOrdinal, targetOrdinal, true
+}
+
+// selectedActivationEdgeContexts resolves one edge's endpoint Contexts after
+// reading the two directory rows its transition names.
+func (runtime *solverRuntime) selectedActivationEdgeContexts(context equation.ActivationContext, source, target int) (contextfiber.ContextOrdinal, contextfiber.ContextOrdinal, bool) {
+	from, fromOK := runtime.contexts.Context(context.FromContextID)
+	to, toOK := runtime.contexts.Context(context.ToContextID)
+	if !fromOK || !toOK || !from.Available() || !to.Available() {
+		return 0, 0, false
+	}
+	return runtime.selectedActivationEndpointContexts(context, from, to, source, target)
 }
 
 func (runtime *solverRuntime) prevalidateSelectedFactorEdges(selected []equation.SelectedStructuralFactorEdge) ([]selectedFactorDescriptor, []schedule.Edge, map[[2]int]struct{}, bool, *schedule.Schedule, bool) {
@@ -441,10 +489,9 @@ func (runtime *solverRuntime) bindSelectedFactorEdge(descriptor selectedFactorDe
 	context := edge.Context()
 	var fromContext, toContext contextfiber.ContextOrdinal
 	if context.Available() {
-		var fromOK, toOK bool
-		fromContext, fromOK = runtime.contextIndex.ContextOrdinal(context.FromContextID)
-		toContext, toOK = runtime.contextIndex.ContextOrdinal(context.ToContextID)
-		if !fromOK || !toOK {
+		var orientedOK bool
+		fromContext, toContext, orientedOK = runtime.selectedActivationEdgeContexts(context, descriptor.source, descriptor.target)
+		if !orientedOK {
 			return boundSelectedFactorEdge{}, false
 		}
 	}
@@ -638,9 +685,8 @@ func (prepared *preparedSelectedFactorOverlay) bindArtifactStateOverlay(runtime 
 		if !context.Available() {
 			return prepared.refuse("state-edge-context")
 		}
-		from, fromOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
-		to, toOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
-		if !fromOK || !toOK {
+		from, to, orientedOK := runtime.selectedActivationEdgeContexts(context, edge.source, edge.target)
+		if !orientedOK {
 			return prepared.refuse("state-context-ordinal")
 		}
 		sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(edge.source))
@@ -794,9 +840,8 @@ func (runtime *solverRuntime) liftGraphPairStates(sourcePoint, targetPoint int, 
 	if runtime == nil || !runtime.artifactBacked || runtime.executionPlan == nil || !context.Available() || !runtime.validSelectedActivationContext(context, sourcePoint, targetPoint) {
 		return nil, false
 	}
-	from, fromOK := runtime.contextIndex.ContextOrdinal(context.FromContextID)
-	to, toOK := runtime.contextIndex.ContextOrdinal(context.ToContextID)
-	if !fromOK || !toOK {
+	from, to, orientedOK := runtime.selectedActivationEdgeContexts(context, sourcePoint, targetPoint)
+	if !orientedOK {
 		return nil, false
 	}
 	sourceState, sourceOK := runtime.executionPlan.Lookup(from, contextfiber.PointOrdinal(sourcePoint))

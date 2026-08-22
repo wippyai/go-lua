@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	artifactcompiler "github.com/wippyai/go-lua/analysis/program/artifact/compiler"
 	"github.com/wippyai/go-lua/analysis/schema"
+	callactivation "github.com/wippyai/go-lua/domain/call/activation"
 	"github.com/wippyai/go-lua/domain/composite"
 	allocationcatalog "github.com/wippyai/go-lua/domain/heap/allocation/catalog"
 	packowner "github.com/wippyai/go-lua/domain/pack/owner"
@@ -399,6 +400,13 @@ type AnalyzeDiagnostics struct {
 	// which is itself the statement that the compiler admitted every mounted
 	// Program and the Workspace-owned join refused.
 	ArtifactCompile artifactcompiler.CompileFailure
+	// Admission carries one refused mounted-admission walk: the pass that
+	// refused, the rule it reached, and that rule's own refusal evidence
+	// erased. ActivationAdmit recovers the activation lane's half of it at
+	// activation's own type, so a refused occurrence names the predicate and
+	// the two module identities it refused about instead of only its rule.
+	Admission       composite.AdmissionFailure
+	ActivationAdmit callactivation.Refusal
 	// Construction carries one program-constructor refusal as family,
 	// disposition, and opaque site. The constructor's internal stage names
 	// stay inside the engine.
@@ -479,6 +487,18 @@ func (diagnostics *AnalyzeDiagnostics) EnterProgramAssemble(refusal engine.Progr
 		diagnostics.AssembleScheduleOrdinal = refusal.ScheduleRow()
 		diagnostics.AssembleConstructionRow, _ = refusal.ConstructionRow()
 	}
+}
+
+// EnterAdmission records one refused mounted-admission walk and recovers the
+// activation lane's own evidence beside it. A walk refused by another lane
+// leaves ActivationAdmit absent, which is itself the statement that the
+// activation lane admitted every occurrence it reached.
+func (diagnostics *AnalyzeDiagnostics) EnterAdmission(failure composite.AdmissionFailure) {
+	if diagnostics == nil || !failure.Available() {
+		return
+	}
+	diagnostics.Admission = failure
+	diagnostics.ActivationAdmit, _ = composite.AdmissionRejection[callactivation.Refusal](failure)
 }
 
 func (diagnostics *AnalyzeDiagnostics) Fail(reason AnalyzeDiagnosticReason) {

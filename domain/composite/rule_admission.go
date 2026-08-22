@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/programmount"
 )
@@ -110,16 +111,18 @@ func (rules *RuleBinding) BootstrapCatalogs() ([]engine.ProgramBootstrapCatalog,
 // the engine admits them through different construction-plane requests. The
 // Link's sealed execution-context directory reaches activation admission
 // because each candidate body route names the context edge it runs on.
-func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, DiagnosticRule, bool) {
+func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifact, contexts executioncontext.Directory) ([]engine.MountedRuleAdmission, []engine.MountedActivationAdmit, AdmissionFailure) {
 	if rules == nil || !contexts.Available() {
-		return nil, nil, DiagnosticRuleUnknown, false
+		return nil, nil, RefusedAdmission(AdmissionStagePlacement, DiagnosticRuleUnknown, axis.Cell{})
 	}
 	mounted := make([]engine.MountedRuleAdmission, 0)
 	activations := make([]engine.MountedActivationAdmit, 0)
+	refusal := AdmissionFailure{}
 	key, ok := WalkSealedPlacements(mounts, func(key schema.Key, mount, point, occurrence identity.ContentID) bool {
 		if key == "call-activation" && rules.activation != nil {
-			admit, admitOK := rules.activation.MountedAdmit(mount, point, occurrence, contexts)
+			admit, reason, admitOK := rules.activation.MountedAdmit(mount, point, occurrence, contexts)
 			if !admitOK {
+				refusal = RefusedAdmission(AdmissionStageActivation, diagnosticRuleForKey(rules.catalog, key), reason)
 				return false
 			}
 			activations = append(activations, admit)
@@ -127,15 +130,19 @@ func (rules *RuleBinding) MountedAdmissions(mounts []programmount.MountedArtifac
 		}
 		capability, capabilityOK := rules.CapabilityByKey(key)
 		if !capabilityOK || !capability.Mounted() || capability.Activation() {
+			refusal = RefusedAdmission(AdmissionStageCapability, diagnosticRuleForKey(rules.catalog, key), axis.Cell{})
 			return false
 		}
 		mounted = append(mounted, engine.MountedRuleAdmission{Capability: capability, Mount: mount, Point: point, Occurrence: occurrence})
 		return true
 	})
 	if !ok {
-		return nil, nil, diagnosticRuleForKey(rules.catalog, key), false
+		if refusal.Available() {
+			return nil, nil, refusal
+		}
+		return nil, nil, RefusedAdmission(AdmissionStagePlacement, diagnosticRuleForKey(rules.catalog, key), axis.Cell{})
 	}
-	return mounted, activations, DiagnosticRuleUnknown, true
+	return mounted, activations, AdmissionFailure{}
 }
 
 func walkLinkCatalogs(rules *RuleBinding, admit func(schema.Key, identity.ContentID) bool) bool {

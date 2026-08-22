@@ -15,9 +15,9 @@ func TestMountedAdmissionsMatchSealedIngressPlacements(t *testing.T) {
 	if rules == nil {
 		t.Fatal("sealed rule binding")
 	}
-	mounted, activations, failed, ok := rules.MountedAdmissions(record.Artifacts)
-	if !ok || failed != DiagnosticRuleUnknown {
-		t.Fatalf("mounted admissions refused: ok=%v failed=%v", ok, failed)
+	mounted, activations, failed := rules.MountedAdmissions(record.Artifacts, record.Source.ContextDirectory())
+	if failed.Available() {
+		t.Fatalf("mounted admissions refused: %s", failed)
 	}
 	type placement struct {
 		key        schema.Key
@@ -95,9 +95,9 @@ func TestOwnerRejectedCallShapeIsNeverPlaced(t *testing.T) {
 	if rules == nil {
 		t.Fatal("sealed rule binding")
 	}
-	mounted, _, failed, ok := rules.MountedAdmissions(record.Artifacts)
-	if !ok || failed != DiagnosticRuleUnknown {
-		t.Fatalf("mounted admissions refused: ok=%v failed=%v", ok, failed)
+	mounted, _, failed := rules.MountedAdmissions(record.Artifacts, record.Source.ContextDirectory())
+	if failed.Available() {
+		t.Fatalf("mounted admissions refused: %s", failed)
 	}
 	const runtimeKind = schema.Key("value-runtime-kind-call")
 	placed, admitted := 0, 0
@@ -261,9 +261,9 @@ func TestBodylessCallActivationIsFullyAdmitted(t *testing.T) {
 	if rules == nil {
 		t.Fatal("sealed rule binding")
 	}
-	_, activations, failed, ok := rules.MountedAdmissions(record.Artifacts)
-	if !ok || failed != DiagnosticRuleUnknown {
-		t.Fatalf("mounted admissions refused: ok=%v failed=%v", ok, failed)
+	_, activations, failed := rules.MountedAdmissions(record.Artifacts, record.Source.ContextDirectory())
+	if failed.Available() {
+		t.Fatalf("mounted admissions refused: %s", failed)
 	}
 	const callActivation = schema.Key("call-activation")
 	placed := 0

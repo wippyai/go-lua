@@ -82,9 +82,9 @@ func TestActivationRouteEdgesAdmitEveryBodyOfOneActor(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			edges, resident := activationRouteEdges(link.directory, link.modules[testCase.trigger], link.modules[testCase.body])
-			if !resident {
-				t.Fatal("a module the directory holds was reported unmounted")
+			edges, refusal := activationRouteEdges(link.directory, link.modules[testCase.trigger], link.modules[testCase.body])
+			if refusal.Available() {
+				t.Fatalf("a module the directory holds was refused as %s", refusal)
 			}
 			if len(edges) != testCase.edges {
 				t.Fatalf("route produced %d edges, want %d", len(edges), testCase.edges)
@@ -102,14 +102,46 @@ func TestActivationRouteEdgesAdmitEveryBodyOfOneActor(t *testing.T) {
 
 // Residence is the one condition the producer refuses on. A module the
 // directory holds no Context for is a mount the Link never made, and no edge
-// may be invented for it.
-func TestActivationRouteEdgesRefuseModulesOutsideTheDirectory(t *testing.T) {
+// may be invented for it. Nothing is silent: the refusal names which of the
+// two modules is not resident and carries both module identities, so the
+// envelope reports the operands rather than only the rule.
+func TestActivationRouteEdgesNameTheModuleOutsideTheDirectory(t *testing.T) {
 	link := routeLawLink(t)
 	unmounted := routeLawID(t, "module/unmounted")
-	if _, resident := activationRouteEdges(link.directory, link.modules["main"], unmounted); resident {
-		t.Fatal("a body module the directory never sealed was reported resident")
+	cases := []struct {
+		name          string
+		trigger, body identity.ContentID
+		reason        RefusalReason
+	}{
+		{"an absent body module", link.modules["main"], unmounted, RefusalBodyNotResident},
+		{"an absent trigger module", unmounted, link.modules["main"], RefusalTriggerNotResident},
 	}
-	if _, resident := activationRouteEdges(link.directory, unmounted, link.modules["main"]); resident {
-		t.Fatal("a trigger module the directory never sealed was reported resident")
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			edges, refusal := activationRouteEdges(link.directory, testCase.trigger, testCase.body)
+			if len(edges) != 0 {
+				t.Fatalf("a refused route produced %d edges", len(edges))
+			}
+			if !refusal.Available() || refusal.Reason != testCase.reason {
+				t.Fatalf("refusal is %s, want reason %s", refusal, testCase.reason)
+			}
+			if refusal.Trigger != testCase.trigger || refusal.Body != testCase.body {
+				t.Fatalf("refusal names %s, want both module identities of the refused route", refusal)
+			}
+		})
+	}
+}
+
+// A body another actor holds is resident, reached by no activation edge, and
+// refuses nothing: the occurrence keeps the routes that remain. Residence and
+// reachability are separate verdicts and only the first refuses.
+func TestActivationRouteEdgesLeaveAnotherActorsBodySilentlyUnreached(t *testing.T) {
+	link := routeLawLink(t)
+	edges, refusal := activationRouteEdges(link.directory, link.modules["main"], link.modules["worker"])
+	if refusal.Available() {
+		t.Fatalf("a resident body in another actor was refused as %s", refusal)
+	}
+	if len(edges) != 0 {
+		t.Fatalf("a body in another actor contributed %d candidate edges", len(edges))
 	}
 }

@@ -111,9 +111,9 @@ func queryCanonicalProgram(t testing.TB, record LinkInputs, bound *ProgramBindin
 	if !mountedPointOK {
 		t.Fatal("mounted-point admissions")
 	}
-	mounted, activations, _, mountedOK := rules.MountedAdmissions(record.Artifacts, contexts)
-	if !mountedOK {
-		t.Fatal("mounted admissions")
+	mounted, activations, mountedFailure := rules.MountedAdmissions(record.Artifacts, contexts)
+	if mountedFailure.Available() {
+		t.Fatalf("mounted admissions refused: %s", mountedFailure)
 	}
 	queries, queriesOK := bound.QueryAdmissions(sites)
 	if !queriesOK {

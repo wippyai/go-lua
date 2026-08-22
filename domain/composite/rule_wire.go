@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -11,8 +12,12 @@ import (
 
 // ActivationRule is the typed mounted activation admission surface retained
 // by the composed binding. Ordinary operand rules never implement it.
+//
+// A refusal carries the rule's own evidence erased, exactly as an axis mount
+// hook does: the composition names which rule refused and hands that evidence
+// on unread, so no activation vocabulary crosses this interface.
 type ActivationRule interface {
-	MountedAdmit(mount, point, occurrence identity.ContentID, contexts executioncontext.Directory) (engine.MountedActivationAdmit, bool)
+	MountedAdmit(mount, point, occurrence identity.ContentID, contexts executioncontext.Directory) (engine.MountedActivationAdmit, axis.Cell, bool)
 }
 
 // RuleContributor is the compose-owned typed pass for one catalog row. The

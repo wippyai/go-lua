@@ -190,12 +190,13 @@ func zzProbeFailureSignature(run *corpusHarnessRun, class string) string {
 	// would consult.
 	failedRule := composite.DiagnosticRuleForSemantic(run.compilation, engineFailure.Rule())
 	return fmt.Sprintf(
-		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s acompile=%s vseal=%s pseal=%s alloc=%s "+
+		"phase=%s reason=%s rule=%s axis=%s astage=%s binding=%s brstage=%s issuance=%s admit=%s(%s) acompile=%s vseal=%s pseal=%s alloc=%s "+
 			"aseal=%s@%d alower=%s acommit=%s@%d crow=%d obsattach=%s constr=%s comp=%s@%s "+
 			"efail={avail=%t reason=%d site=%s owner=%s point=%v group=%v member=%v rule=%v}",
 		diagnostics.Phase, diagnostics.Reason, diagnostics.Rule, diagnostics.Axis,
 		diagnostics.AssembleStage, diagnostics.Binding, diagnostics.BindingRuleStage,
-		diagnostics.ItemIssuance, zzProbeArtifactCompile(diagnostics.ArtifactCompile),
+		diagnostics.ItemIssuance, diagnostics.Admission, diagnostics.ActivationAdmit,
+		zzProbeArtifactCompile(diagnostics.ArtifactCompile),
 		diagnostics.ValueSeal, diagnostics.PackSeal, diagnostics.AllocationCatalog,
 		zzProbeSolveFailure(diagnostics.AssembleSeal), diagnostics.AssembleOrdinal,
 		zzProbeSolveFailure(diagnostics.AssembleLowering),
@@ -272,6 +273,25 @@ var zzProbeBoundarySites = []string{
 	"region-ascent-monotone", "region-discharge", "region-interface", "region-merge",
 	"region-publication", "region-rhs", "validation",
 	"narrow", "postfix", "visit", "narrow-no-progress", "postfix-stalled", "visit-no-progress",
+	"activation-context",
+}
+
+// zzProbeSelectedOverlaySteps are the refusal steps of the selected-edge
+// overlay. The engine frames each one as "selected-overlay/" plus the step, so
+// the step name is part of the site preimage and the whole space stays
+// enumerable rather than decoding as a hex prefix.
+var zzProbeSelectedOverlaySteps = []string{
+	"bind", "delta", "duplicate-origin", "eligibility", "empty-delta", "feedback",
+	"feedback-demand", "feedback-demand-narrows", "feedback-demand-point",
+	"feedback-duplicate-key", "feedback-group-identity", "feedback-instance",
+	"feedback-oracle", "feedback-point-identity", "feedback-point-region", "feedback-regions",
+	"feedback-replacement-index", "feedback-root-point", "feedback-selected-target",
+	"feedback-state-overlay", "finalize", "finalize-backing", "finalize-instance",
+	"finalize-replacement-index", "materialize", "origin", "precondition", "prevalidate",
+	"replacement", "state-active-width", "state-addition-lift", "state-context-ordinal",
+	"state-demand-closure", "state-edge-context", "state-edge-lookup", "state-factor-index",
+	"state-instance", "state-regions", "state-replacement-index", "state-replacement-lift",
+	"state-schedule", "state-shape", "state-target", "state-target-empty", "static-origin",
 }
 
 var zzProbeFamilyNames = [...]string{"none", "compile", "execution", "refresh", "schedule", "observation"}
@@ -382,11 +402,22 @@ func zzProbeRegisterSite(table map[identity.ContentID]string, site identity.Cont
 	table[site] = name
 }
 
+// zzProbeSelectedOverlaySites spells the selected-overlay steps as the engine
+// frames them.
+func zzProbeSelectedOverlaySites() []string {
+	sites := make([]string, len(zzProbeSelectedOverlaySteps))
+	for index, step := range zzProbeSelectedOverlaySteps {
+		sites[index] = "selected-overlay/" + step
+	}
+	return sites
+}
+
 func zzProbeBuildSiteTable() map[identity.ContentID]string {
 	table := make(map[identity.ContentID]string, 1<<18)
+	sites := append(append([]string(nil), zzProbeBoundarySites...), zzProbeSelectedOverlaySites()...)
 	for family := uint64(1); family < uint64(len(zzProbeFamilyNames)); family++ {
 		prefix := zzProbeFamilyNames[family] + ":"
-		for _, site := range zzProbeBoundarySites {
+		for _, site := range sites {
 			for transport := uint64(0); transport <= 13; transport++ {
 				name := prefix + site
 				if transport != 0 {

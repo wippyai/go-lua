@@ -25,9 +25,9 @@ func TestMountedActivationCandidatesCarryTheirDirectoryEdge(t *testing.T) {
 	if !contexts.Available() {
 		t.Fatal("sealed execution-context directory")
 	}
-	_, activations, failed, ok := rules.MountedAdmissions(record.Artifacts, contexts)
-	if !ok || failed != DiagnosticRuleUnknown {
-		t.Fatalf("mounted admissions refused: ok=%v failed=%v", ok, failed)
+	_, activations, failed := rules.MountedAdmissions(record.Artifacts, contexts)
+	if failed.Available() {
+		t.Fatalf("mounted admissions refused: %s", failed)
 	}
 	observed := 0
 	for index, admit := range activations {
