@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/equation"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/executioncontext"
+	queryschema "github.com/wippyai/go-lua/analysis/schema/query"
 )
 
 // declareMountedQuery states one mounted query row. The row is addressed by
@@ -45,7 +46,8 @@ func declareMountedQueryRow(state *schemaBindingState, ordinal uint64, context e
 	}
 	family := state.schema.querySemanticAt(ordinal)
 	projection, ok := state.schema.queryProjectionShapeAt(ordinal, 0)
-	if !ok || !family.Available() || projection.Kind != kind || !projection.Factor.Available() {
+	shape, shapeOK := state.schema.queryShapeAt(ordinal)
+	if !ok || !shapeOK || shape.Population != queryschema.PopulationKindSelectedPoint || !family.Available() || projection.Kind != kind || !projection.Factor.Available() {
 		return declaredQueryRow{}, equation.Surface{}, false
 	}
 	surface := equation.Surface{Factor: projection.Factor, Form: equation.SurfaceReadExact, Local: 1}
@@ -89,7 +91,7 @@ func bindProgramQueryRow(plane *programPlane, query equation.Query, state *schem
 	schema := state.schema
 	shape, shapeOK := schema.queryShapeAt(queryOrdinal)
 	projection, projectionOK := schema.queryProjectionShapeAt(queryOrdinal, 0)
-	if !shapeOK || !projectionOK || shape.ProjectionCount != 1 || projection.Kind != kind || projection.Factor != schema.factorSemanticAt(factorOrdinal) || query.Family() != schema.querySemanticAt(queryOrdinal) {
+	if !shapeOK || shape.Population != queryschema.PopulationKindSelectedPoint || !projectionOK || shape.ProjectionCount != 1 || projection.Kind != kind || projection.Factor != schema.factorSemanticAt(factorOrdinal) || query.Family() != schema.querySemanticAt(queryOrdinal) {
 		return queryRow{}, false
 	}
 	surfaces := query.Surfaces()
