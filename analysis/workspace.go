@@ -43,6 +43,19 @@ func newWorkspace(ephemeral bool) *Workspace {
 	return workspace
 }
 
+// Compilation is the sealed analyzer composition this Workspace compiles
+// through. Every Plan compiled here was bound to exactly this instance, so a
+// caller that judges those Plans reads the authority from its Workspace
+// instead of sealing a second independent compilation of its own.
+func (workspace *Workspace) Compilation() composite.Compilation {
+	if workspace == nil {
+		return composite.Compilation{}
+	}
+	workspace.lifecycleMu.Lock()
+	defer workspace.lifecycleMu.Unlock()
+	return workspace.compilation
+}
+
 func (workspace *Workspace) beginCompile() (*analysisworkspace.Artifacts, bool) {
 	if workspace == nil {
 		return nil, false

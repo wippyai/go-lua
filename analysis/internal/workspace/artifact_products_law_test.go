@@ -162,3 +162,67 @@ func TestArtifactsLeaderGoexitTerminatesFailedEntry(t *testing.T) {
 		t.Fatal("Artifacts.Close failed after compiler Goexit")
 	}
 }
+
+// TestArtifactsServeEqualKeyWithoutASecondSeal is the directory's count law.
+// A product is addressed by the complete CompileKey of its Program, so two
+// independent Links carrying equal content name one key, and the second caller
+// must be answered with the first caller's product rather than with an equal
+// one compiled again. The final probe states that as a count: a warm key never
+// reaches the builder at all.
+func TestArtifactsServeEqualKeyWithoutASecondSeal(t *testing.T) {
+	target, err := testfixture.StandardLibraryTarget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const source = `local reuse_probe = 29
+return reuse_probe`
+	left, err := testfixture.SealSource(target, "workspace-reuse-law", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := testfixture.SealSource(target, "workspace-reuse-law", []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftShard, leftShardOK := left.Project().Mounts().At(0)
+	rightShard, rightShardOK := right.Project().Mounts().At(0)
+	leftInput, leftInputOK := left.Project().Mounts().Program(leftShard)
+	rightInput, rightInputOK := right.Project().Mounts().Program(rightShard)
+	compilation, compilationOK := composite.Build()
+	key, keyOK := programartifact.NewCompileKey(leftInput, compilation.ExecutionSchemaID())
+	if !leftShardOK || !rightShardOK || !leftInputOK || !rightInputOK || !compilationOK || !keyOK {
+		t.Fatal("workspace reuse fixture is unavailable")
+	}
+	if leftInput == rightInput {
+		t.Fatal("independent Link fixtures aliased one Program")
+	}
+
+	artifacts := NewArtifacts()
+	defer artifacts.Close()
+	first, firstOK := artifacts.Compile(leftInput, compilation)
+	second, secondOK := artifacts.Compile(rightInput, compilation)
+	if !firstOK || !secondOK || first.Artifact == nil {
+		t.Fatalf("equal-content compile = %t/%t", firstOK, secondOK)
+	}
+	if second.Artifact != first.Artifact || second.Snapshot != first.Snapshot || second.Template != first.Template || second.Bindings != first.Bindings {
+		t.Fatal("equal CompileKeys sealed two independent products")
+	}
+	artifacts.mu.Lock()
+	entries := len(artifacts.entries)
+	artifacts.mu.Unlock()
+	if entries != 1 {
+		t.Fatalf("workspace directory holds %d entries for one CompileKey", entries)
+	}
+
+	seals := 0
+	served, servedOK := artifacts.compile(key.ID(), func() (ArtifactProduct, bool) {
+		seals++
+		return ArtifactProduct{}, true
+	})
+	if !servedOK || served.Artifact != first.Artifact {
+		t.Fatal("warm CompileKey was not served the retained product")
+	}
+	if seals != 0 {
+		t.Fatalf("warm CompileKey reached the compiler %d times", seals)
+	}
+}

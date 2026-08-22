@@ -65,7 +65,13 @@ const (
 // without having exercised the path it guards.
 func TestSequentialCorpusFixturesRetainNoHeapAfterClose(t *testing.T) {
 	batches := retainedHeapBatches(t)
-	mode := corpusHarnessMode{name: "retained-heap", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions()}
+	// The measured boundary is the compile's own: a fixture's products must be
+	// gone once its Plan and the Workspace that owns them are closed. Each
+	// fixture therefore runs in a private Workspace it closes itself. The
+	// shared Workspace of a long-lived process answers a different question -
+	// it retains its products until Close by declared design - and would report
+	// its own reuse cache as this gate's leak.
+	mode := corpusHarnessMode{name: "retained-heap", execution: corpusHarnessDiagnosticSolve, options: corpusHarnessSolveOptions(), workspace: corpusHarnessWorkspacePerFixture}
 
 	// The warmup batch pays every one-time cost the analyzer defers to first
 	// use: the sealed standard-library target, engine templates, package-level

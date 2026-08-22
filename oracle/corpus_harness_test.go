@@ -88,6 +88,9 @@ type corpusHarnessMode struct {
 	policy func(*corpusHarnessRun) (anadiag.DiagnosticPolicy, []string)
 	// judge is the mode's verdict on one completed run.
 	judge func(*corpusHarnessRun) []string
+	// workspace selects the analyzer Workspace lifetime this mode compiles
+	// through. The zero value shares the run's one Workspace.
+	workspace corpusHarnessWorkspaceLifetime
 }
 
 // corpusHarnessProject is one fixture as both an executable Link source and a
@@ -115,6 +118,8 @@ func (cost corpusHarnessCost) total() time.Duration {
 
 type corpusHarnessRun struct {
 	project            corpusHarnessProject
+	workspace          *analysis.Workspace
+	ownedWorkspace     bool
 	compilation        composite.Compilation
 	linked             *link.Link
 	plan               *analysis.Plan
@@ -415,19 +420,41 @@ func corpusHarnessExecute(t testing.TB, project corpusHarnessProject, mode corpu
 // until the entire census ended.
 func corpusHarnessExecuteDetached(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode) (*corpusHarnessRun, string, error) {
 	run, class, err := corpusHarnessExecuteWithPlanCleanup(t, project, mode, false)
-	if run == nil || run.plan == nil {
+	if run == nil {
 		return run, class, err
 	}
-	plan := run.plan
-	run.plan = nil
-	if plan.Close() {
-		return run, class, err
+	if plan := run.plan; plan != nil {
+		run.plan = nil
+		if !plan.Close() {
+			class, err = corpusHarnessCarryFailure(class, err, "plan-close", fmt.Errorf("close compiled fixture plan"))
+		}
 	}
-	closeErr := fmt.Errorf("close compiled fixture plan")
+	// A private Workspace owns products the Plan above was still reading, so it
+	// is released only once that Plan is closed.
+	if !run.releaseWorkspace() {
+		class, err = corpusHarnessCarryFailure(class, err, "workspace-close", fmt.Errorf("close private fixture Workspace"))
+	}
+	return run, class, err
+}
+
+// corpusHarnessCarryFailure joins a teardown failure to whatever verdict the
+// fixture already carried, so a close defect is never lost behind an earlier
+// judgment and never replaces one.
+func corpusHarnessCarryFailure(class string, err error, teardownClass string, teardownErr error) (string, error) {
 	if err == nil {
-		return run, "plan-close", closeErr
+		return teardownClass, teardownErr
 	}
-	return run, class, fmt.Errorf("%v; %w", err, closeErr)
+	return class, fmt.Errorf("%v; %w", err, teardownErr)
+}
+
+// releaseWorkspace closes a run's private analyzer Workspace. It is idempotent,
+// and a no-op for the shared Workspace, whose lifetime is the whole run.
+func (run *corpusHarnessRun) releaseWorkspace() bool {
+	if run == nil || !run.ownedWorkspace || run.workspace == nil {
+		return true
+	}
+	run.ownedWorkspace = false
+	return run.workspace.Close()
 }
 
 // corpusHarnessExecuteWithPlanCleanup is the shared fixture spine. A
@@ -437,11 +464,33 @@ func corpusHarnessExecuteDetached(t testing.TB, project corpusHarnessProject, mo
 func corpusHarnessExecuteWithPlanCleanup(t testing.TB, project corpusHarnessProject, mode corpusHarnessMode, cleanupPlan bool) (*corpusHarnessRun, string, error) {
 	t.Helper()
 	run := &corpusHarnessRun{project: project}
-	compilation, compilationOK := composite.Build()
-	if !compilationOK {
+	// The analyzer composition and every content-equal compiler product are
+	// sealed by the Workspace, not by the fixture. Reading both from the
+	// Workspace the fixture actually compiles through is what makes them a
+	// compute-once cost of the run and keeps the judgment below bound to the
+	// exact authority the Plan was compiled against.
+	switch mode.workspace {
+	case corpusHarnessWorkspacePerFixture:
+		run.workspace = analysis.NewWorkspace()
+		run.ownedWorkspace = true
+		if cleanupPlan {
+			// Cleanup runs last-registered-first, so registering the Workspace
+			// release before the compiled Plan's release is what closes them in
+			// the only admissible order: the Plan reads products this Workspace
+			// owns.
+			t.Cleanup(func() {
+				if !run.releaseWorkspace() {
+					t.Error("close private fixture Workspace")
+				}
+			})
+		}
+	default:
+		run.workspace = corpusHarnessSharedWorkspace(t)
+	}
+	run.compilation = run.workspace.Compilation()
+	if !run.compilation.Available() {
 		return run, "composition", fmt.Errorf("sealed composition unavailable")
 	}
-	run.compilation = compilation
 	if project.name == "" || project.expectation == nil {
 		return run, "fixture", fmt.Errorf("unavailable fixture project or expectation")
 	}
@@ -469,9 +518,12 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		return run, "link", fmt.Errorf("unavailable sealed Link")
 	}
 	linked := run.linked
+	if run.workspace == nil {
+		return run, "workspace", fmt.Errorf("unavailable analyzer Workspace")
+	}
 	if mode.execution == corpusHarnessAnalyzeOnce {
 		started := time.Now()
-		run.result, run.status = analysis.Analyze(context.Background(), linked)
+		run.result, run.status = run.workspace.Analyze(context.Background(), linked)
 		run.cost.solve = time.Since(started)
 		if run.status != analysis.AnalyzeComplete {
 			class := corpusHarnessStatusName(run.status)
@@ -479,7 +531,7 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		}
 	} else {
 		started := time.Now()
-		plan, compileStatus, compileDiagnostics := analysis.CompileWithDiagnostics(linked)
+		plan, compileStatus, compileDiagnostics := run.workspace.CompileWithDiagnostics(linked)
 		run.cost.compile = time.Since(started)
 		run.compileDiagnostics = compileDiagnostics
 		if compileStatus != analysis.CompileComplete || plan == nil {
@@ -495,9 +547,9 @@ func corpusHarnessExecuteLink(t testing.TB, run *corpusHarnessRun, mode corpusHa
 		run.placementSchema = placementSchema
 		// A fixture is a sequential acceptance unit. Close the assembled Link
 		// topology on every post-compile path, including policy, solve, report,
-		// and matcher failures; the owning ephemeral Workspace releases its
-		// products with the Plan. An explicitly shared Workspace, when used by a
-		// caller outside this spine, retains products until Workspace.Close.
+		// and matcher failures. A private Workspace releases its products with
+		// that Plan; the shared Workspace retains them by design until Close,
+		// which is what lets a later fixture reuse a library it already sealed.
 		if cleanupPlan {
 			t.Cleanup(func() {
 				if !plan.Close() {
@@ -903,4 +955,44 @@ func corpusHarnessDiagnosticMode() corpusHarnessMode {
 // compile receipt boundary without depending on a later solve.
 func corpusHarnessCompileMode() corpusHarnessMode {
 	return corpusHarnessMode{name: "compile", execution: corpusHarnessCompileOnly}
+}
+
+// corpusHarnessWorkspaceLifetime selects the analyzer Workspace lifetime one
+// mode compiles through.
+type corpusHarnessWorkspaceLifetime uint8
+
+const (
+	// corpusHarnessWorkspaceShared compiles every fixture of the run through
+	// the one Workspace this package owns. That is the production lint and LSP
+	// lifetime: the sealed analyzer composition is built once, and every
+	// content-equal compiler product is sealed once, for the whole corpus.
+	corpusHarnessWorkspaceShared corpusHarnessWorkspaceLifetime = iota
+	// corpusHarnessWorkspacePerFixture gives one fixture a private Workspace
+	// that is closed as soon as that fixture's Plan closes. A mode whose
+	// subject is the per-compile retention boundary itself selects this,
+	// because the shared Workspace retains its products by declared design
+	// until Close and would answer that measurement with its own lifetime.
+	corpusHarnessWorkspacePerFixture
+)
+
+var (
+	corpusHarnessWorkspaceOnce  sync.Once
+	corpusHarnessWorkspaceValue *analysis.Workspace
+)
+
+// corpusHarnessSharedWorkspace is the one analyzer Workspace of this test
+// binary. It is deliberately never closed: its lifetime is the process, which
+// is what makes the sealed composition and every content-addressed compiler
+// product a compute-once cost of the whole corpus rather than a per-fixture
+// one. Per-fixture ownership remains available through
+// corpusHarnessWorkspacePerFixture.
+func corpusHarnessSharedWorkspace(t testing.TB) *analysis.Workspace {
+	t.Helper()
+	corpusHarnessWorkspaceOnce.Do(func() {
+		corpusHarnessWorkspaceValue = analysis.NewWorkspace()
+	})
+	if corpusHarnessWorkspaceValue == nil || !corpusHarnessWorkspaceValue.Compilation().Available() {
+		t.Fatal("shared corpus analyzer Workspace is unavailable")
+	}
+	return corpusHarnessWorkspaceValue
 }
