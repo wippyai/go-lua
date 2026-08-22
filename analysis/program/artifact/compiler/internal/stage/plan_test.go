@@ -32,9 +32,9 @@ func TestSealOrdersComputationDependenciesAndKeepsPredecessorAxes(t *testing.T) 
 		t.Fatal("second predecessor request")
 	}
 
-	plan, fault := builder.Seal()
-	if fault.Failed() || plan.Count() != 1 {
-		t.Fatalf("sealed plan fault/count=%v/%d, want clear/1", fault, plan.Count())
+	plan, planOK := builder.Seal()
+	if !planOK || plan.Count() != 1 {
+		t.Fatalf("sealed plan ok/count=%v/%d, want true/1", planOK, plan.Count())
 	}
 	placement, placementOK := plan.At(0)
 	if !placementOK || placement.Base() != base || placement.ComputationCount() != 2 {
@@ -60,20 +60,20 @@ func TestLocalSuccessorRequiresAndFollowsLocalCut(t *testing.T) {
 	builder := New(1)
 	local, localOK := builder.Local(base, "local")
 	successor, successorOK := builder.Successor(base, "successor")
-	plan, fault := builder.Seal()
+	plan, planOK := builder.Seal()
 	placement, placementOK := plan.At(0)
 	gotLocal, gotLocalOK := placement.Local()
 	gotSuccessor, gotSuccessorOK := placement.Successor()
-	if !localOK || !successorOK || local == successor || fault.Failed() || plan.Count() != 1 || !placementOK ||
+	if !localOK || !successorOK || local == successor || !planOK || plan.Count() != 1 || !placementOK ||
 		!gotLocalOK || gotLocal != local || !gotSuccessorOK || gotSuccessor != successor {
-		t.Fatalf("local/successor plan = %v/%v fault=%v count=%d", gotLocal, gotSuccessor, fault, plan.Count())
+		t.Fatalf("local/successor plan = %v/%v ok=%v count=%d", gotLocal, gotSuccessor, planOK, plan.Count())
 	}
 
 	orphan := New(1)
 	if _, ok := orphan.Successor(base, "successor"); !ok {
 		t.Fatal("successor request was rejected before plan closure")
 	}
-	if orphanPlan, orphanFault := orphan.Seal(); !orphanFault.Failed() || orphanPlan.Count() != 0 || orphanFault.Base() != base {
-		t.Fatalf("orphan successor = fault=%v count=%d base=%x", orphanFault, orphanPlan.Count(), orphanFault.Base())
+	if orphanPlan, orphanOK := orphan.Seal(); orphanOK || orphanPlan.Count() != 0 {
+		t.Fatalf("orphan successor = ok=%v count=%d", orphanOK, orphanPlan.Count())
 	}
 }

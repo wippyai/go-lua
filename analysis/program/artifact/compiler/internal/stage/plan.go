@@ -12,15 +12,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 )
 
-// Fault identifies a base whose staged plan could not be sealed.
-type Fault struct {
-	base   identity.ContentID
-	failed bool
-}
-
-func (fault Fault) Failed() bool             { return fault.failed }
-func (fault Fault) Base() identity.ContentID { return fault.base }
-
 type computation struct {
 	point      identity.ContentID
 	occurrence identity.ContentID
@@ -258,9 +249,9 @@ func (call Call) Effect() identity.ContentID   { return call.effect }
 
 // Seal closes all computation dependencies with deterministic Kahn order and
 // transfers the resulting declarative plan out of the mutable builder.
-func (builder *Builder) Seal() (Plan, Fault) {
+func (builder *Builder) Seal() (Plan, bool) {
 	if builder == nil || builder.sealed {
-		return Plan{}, Fault{failed: true}
+		return Plan{}, false
 	}
 	bases := make(map[identity.ContentID]struct{}, len(builder.locals)+len(builder.successors)+len(builder.predecessors)+len(builder.computations)+len(builder.calls))
 	for base := range builder.locals {
@@ -287,7 +278,7 @@ func (builder *Builder) Seal() (Plan, Fault) {
 	for _, base := range orderedBases {
 		placement := Placement{base: base, local: builder.locals[base], successor: builder.successors[base]}
 		if placement.successor.Available() && !placement.local.Available() {
-			return Plan{}, Fault{base: base, failed: true}
+			return Plan{}, false
 		}
 		if predecessor, known := builder.predecessors[base]; known {
 			placement.predecessor = predecessor.point
@@ -302,7 +293,7 @@ func (builder *Builder) Seal() (Plan, Fault) {
 		if bucket := builder.computations[base]; bucket != nil {
 			ordered, ok := orderComputations(bucket.rows)
 			if !ok {
-				return Plan{}, Fault{base: base, failed: true}
+				return Plan{}, false
 			}
 			placement.computations = ordered
 		}
@@ -313,7 +304,7 @@ func (builder *Builder) Seal() (Plan, Fault) {
 	}
 	builder.locals, builder.successors, builder.predecessors, builder.computations, builder.calls = nil, nil, nil, nil, nil
 	builder.sealed = true
-	return Plan{placements: placements}, Fault{}
+	return Plan{placements: placements}, true
 }
 
 func orderComputations(rows []computation) ([]Computation, bool) {

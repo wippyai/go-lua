@@ -87,8 +87,8 @@ func (compiler *compiler) installLocalStagesFailure() CompileFailure {
 	if compiler == nil || compiler.stages == nil {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	plan, planFault := compiler.stages.Seal()
-	if planFault.Failed() {
+	plan, planOK := compiler.stages.Seal()
+	if !planOK {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
 	if plan.Count() == 0 {
